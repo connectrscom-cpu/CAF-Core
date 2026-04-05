@@ -1,210 +1,136 @@
-import Link from "next/link";
-import { Suspense } from "react";
-import { PROJECT_SLUG } from "@/lib/env";
-import {
-  getQueueTab,
-  getQueueCounts,
-  getFacets,
-  type ReviewTab,
-  type ReviewQueueJob,
-  type QueueFilters,
-} from "@/lib/caf-core-client";
-import { FilterPanel } from "@/components/FilterPanel";
+"use client";
 
-const TABS: { key: ReviewTab; label: string }[] = [
-  { key: "in_review", label: "In Review" },
-  { key: "needs_edit", label: "Waiting for Rework" },
-  { key: "approved", label: "Approved" },
-  { key: "rejected", label: "Rejected" },
-];
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { WorkbenchFilters } from "@/components/WorkbenchFilters";
+import { TaskTable } from "@/components/TaskTable";
+import type { ReviewQueueRow } from "@/lib/types";
+import type { GroupBy } from "@/components/TaskTable";
 
-interface PageProps {
-  searchParams: {
-    status?: string;
-    tab?: string;
-    search?: string;
-    platform?: string;
-    flow_type?: string;
-    recommended_route?: string;
-    qc_status?: string;
-    review_status?: string;
-    decision?: string;
-    has_preview?: string;
-    risk_score_min?: string;
-    run_id?: string;
-    sort?: string;
-    group_by?: string;
-  };
+interface TasksResponse {
+  items: ReviewQueueRow[];
+  total: number;
+  page: number;
+  limit: number;
+  statusCounts?: Record<string, number>;
+  missingPreviewCount?: number;
 }
 
-export default async function Home({ searchParams }: PageProps) {
-  const tabKey = searchParams.status ?? searchParams.tab ?? "in_review";
-  const currentTab = (TABS.find((t) => t.key === tabKey)?.key ?? "in_review") as ReviewTab;
+interface FacetsResponse {
+  project?: string[];
+  run_id?: string[];
+  platform?: string[];
+  flow_type?: string[];
+  recommended_route?: string[];
+}
 
-  const filters: QueueFilters = {
-    search: searchParams.search,
-    platform: searchParams.platform,
-    flow_type: searchParams.flow_type,
-    recommended_route: searchParams.recommended_route,
-    qc_status: searchParams.qc_status,
-    review_status: searchParams.review_status,
-    decision: searchParams.decision,
-    has_preview: searchParams.has_preview,
-    risk_score_min: searchParams.risk_score_min,
-    run_id: searchParams.run_id,
-    sort: searchParams.sort,
-    group_by: searchParams.group_by,
-  };
+function WorkbenchContent() {
+  const searchParams = useSearchParams();
+  const [data, setData] = useState<TasksResponse | null>(null);
+  const [facets, setFacets] = useState<FacetsResponse>({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const [jobs, counts, facets] = await Promise.all([
-    getQueueTab(PROJECT_SLUG, currentTab, filters),
-    getQueueCounts(PROJECT_SLUG),
-    getFacets(PROJECT_SLUG),
-  ]);
+  const status = (searchParams.get("status") ?? "in_review") as string;
+  const validStatus = ["in_review", "approved", "rejected", "needs_edit"].includes(status) ? status : "in_review";
 
-  const groupBy = searchParams.group_by;
-  const grouped = groupBy ? groupJobs(jobs, groupBy) : null;
+  const queryString = useMemo(() => {
+    const q = new URLSearchParams();
+    searchParams.forEach((v, k) => q.set(k, v));
+    if (!q.has("status")) q.set("status", "in_review");
+    return q.toString();
+  }, [searchParams]);
+
+  const fetchTasks = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tasks?${queryString}`);
+      if (!res.ok) throw new Error(await res.text());
+      const json: TasksResponse = await res.json();
+      setData(json);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load tasks");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [queryString]);
+
+  useEffect(() => { fetchTasks(); }, [fetchTasks]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/facets")
+      .then((r) => r.ok ? r.json() : {})
+      .then((f: FacetsResponse) => { if (!cancelled) setFacets(f); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const groupBy = (searchParams.get("group") ?? "") as GroupBy;
+
+  const tabStatuses = [
+    { key: "in_review" as const, label: "In Review" },
+    { key: "needs_edit" as const, label: "Waiting for Rework" },
+    { key: "approved" as const, label: "Approved" },
+    { key: "rejected" as const, label: "Rejected" },
+  ];
 
   return (
-    <>
-      <div className="page-header">
-        <div>
-          <h2>CAF Review Console</h2>
-          <div className="page-header-sub">Workbench</div>
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
+        <h1 className="text-lg font-semibold text-card-foreground sm:text-xl">CAF Review Console</h1>
+        <p className="text-xs text-muted-foreground sm:text-sm">Workbench</p>
+        <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
+          {tabStatuses.map(({ key, label }) => {
+            const isActive = validStatus === key;
+            const q = new URLSearchParams(searchParams.toString());
+            q.set("status", key);
+            return (
+              <a key={key} href={`/?${q.toString()}`}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium no-underline ${isActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}>
+                {label}
+              </a>
+            );
+          })}
         </div>
-      </div>
-
-      <div className="tabs">
-        {TABS.map((t) => (
-          <Link
-            key={t.key}
-            href={`/?status=${t.key}`}
-            className={`tab ${currentTab === t.key ? "active" : ""}`}
-          >
-            {t.label}
-            <span className="tab-count">{counts[t.key]}</span>
-          </Link>
-        ))}
-      </div>
-
-      <div className="workbench">
-        <Suspense fallback={<div className="workbench-filters" />}>
-          <FilterPanel facets={facets} />
-        </Suspense>
-
-        <div className="workbench-table">
-          {jobs.length === 0 ? (
-            <div className="table-empty">
-              No tasks found in this tab.
-            </div>
-          ) : grouped ? (
-            Object.entries(grouped).map(([group, groupJobs]) => (
-              <div key={group}>
-                <div className="group-header">{group || "—"}</div>
-                <JobTable jobs={groupJobs} />
-              </div>
-            ))
-          ) : (
-            <JobTable jobs={jobs} />
+      </header>
+      <main className="flex flex-col gap-4 p-4 sm:flex-row sm:gap-6 sm:p-6">
+        <div className="w-full shrink-0 sm:w-64">
+          <WorkbenchFilters
+            projectValues={facets.project ?? []}
+            runIdValues={facets.run_id ?? []}
+            platformValues={facets.platform ?? []}
+            flowTypeValues={facets.flow_type ?? []}
+            recommendedRouteValues={facets.recommended_route ?? []}
+            reviewStatusValues={data?.statusCounts ? Object.keys(data.statusCounts) : undefined}
+          />
+        </div>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          {error && (<div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>)}
+          {loading && !data && (<div className="text-muted-foreground">Loading…</div>)}
+          {data && !loading && (
+            <TaskTable items={data.items} groupBy={groupBy} page={data.page} limit={data.limit} total={data.total} missingPreviewCount={data.missingPreviewCount} statusCounts={data.statusCounts} contentSlug={validStatus === "in_review" ? "t" : "content"} />
           )}
         </div>
-      </div>
-    </>
+      </main>
+    </div>
   );
 }
 
-function JobTable({ jobs }: { jobs: ReviewQueueJob[] }) {
+export default function WorkbenchPage() {
   return (
-    <table>
-      <thead>
-        <tr>
-          <th>Task ID</th>
-          <th>Platform</th>
-          <th>Flow</th>
-          <th>Route</th>
-          <th>Status</th>
-          <th>QC</th>
-          <th>Hook</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {jobs.map((j) => {
-          const gp = j.generation_payload ?? {};
-          const hook = (gp.hook ?? gp.generated_hook ?? "") as string;
-          return (
-            <tr key={j.task_id}>
-              <td className="task-id-cell">
-                <Link href={`/t/${encodeURIComponent(j.task_id)}`}>
-                  {j.task_id}
-                </Link>
-              </td>
-              <td className="text-sm">{j.platform ?? "—"}</td>
-              <td className="text-sm">{j.flow_type ?? "—"}</td>
-              <td className="text-sm">{j.recommended_route ?? "—"}</td>
-              <td>
-                <StatusBadge decision={j.latest_decision} status={j.status} />
-              </td>
-              <td>
-                {j.qc_status ? (
-                  <span className="badge badge-qc">{j.qc_status}</span>
-                ) : (
-                  <span className="text-muted text-xs">—</span>
-                )}
-              </td>
-              <td className="hook-cell">{hook || "—"}</td>
-              <td>
-                <Link
-                  href={`/t/${encodeURIComponent(j.task_id)}`}
-                  className="btn-open-row"
-                >
-                  Open →
-                </Link>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <Suspense fallback={
+      <div className="min-h-screen bg-background">
+        <header className="border-b bg-card px-6 py-4">
+          <h1 className="text-xl font-semibold">CAF Review Console</h1>
+          <p className="text-sm text-muted-foreground">Workbench</p>
+        </header>
+        <main className="flex gap-6 p-6"><div className="text-muted-foreground">Loading…</div></main>
+      </div>
+    }>
+      <WorkbenchContent />
+    </Suspense>
   );
-}
-
-function StatusBadge({
-  decision,
-  status,
-}: {
-  decision?: string | null;
-  status?: string | null;
-}) {
-  const d = (decision ?? "").toUpperCase();
-  if (d === "APPROVED")
-    return <span className="badge badge-approved">Approved</span>;
-  if (d === "REJECTED")
-    return <span className="badge badge-rejected">Rejected</span>;
-  if (d === "NEEDS_EDIT")
-    return <span className="badge badge-needs-edit">Needs Edit</span>;
-  return <span className="badge badge-review">{status ?? "Review"}</span>;
-}
-
-function groupJobs(
-  jobs: ReviewQueueJob[],
-  key: string
-): Record<string, ReviewQueueJob[]> {
-  const groups: Record<string, ReviewQueueJob[]> = {};
-  for (const job of jobs) {
-    const val =
-      key === "platform"
-        ? job.platform
-        : key === "flow_type"
-          ? job.flow_type
-          : key === "recommended_route"
-            ? job.recommended_route
-            : key === "project"
-              ? job.project_id
-              : null;
-    const groupKey = val ?? "—";
-    if (!groups[groupKey]) groups[groupKey] = [];
-    groups[groupKey].push(job);
-  }
-  return groups;
 }

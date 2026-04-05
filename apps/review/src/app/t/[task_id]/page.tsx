@@ -1,211 +1,187 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { PROJECT_SLUG } from "@/lib/env";
-import { getJobDetail } from "@/lib/caf-core-client";
-import { DecisionForm } from "./DecisionForm";
+import { DecisionPanel } from "@/components/DecisionPanel";
+import type { ReviewQueueRow } from "@/lib/types";
 
-export default async function TaskPage({ params }: { params: { task_id: string } }) {
-  const taskId = decodeURIComponent(params.task_id);
-  const job = await getJobDetail(PROJECT_SLUG, taskId);
+interface TaskDetailResponse {
+  rowIndex: number;
+  data: ReviewQueueRow;
+}
 
-  if (!job) {
-    return (
-      <>
-        <Link href="/" className="detail-back">← Back to queue</Link>
-        <div style={{ padding: "60px 28px", textAlign: "center", color: "var(--muted)" }}>
-          Task <strong>{taskId}</strong> not found.
-        </div>
-      </>
-    );
-  }
+interface AssetsResponse {
+  assets: { position: number; public_url: string }[];
+}
 
-  const gp = job.generation_payload ?? {};
-  const hook = (gp.hook ?? gp.generated_hook ?? "") as string;
-  const title = (gp.title ?? gp.generated_title ?? "") as string;
-  const caption = (gp.caption ?? gp.generated_caption ?? "") as string;
-  let slides: unknown[] = [];
-  try {
-    const raw = gp.slides ?? gp.generated_slides_json;
-    if (typeof raw === "string") slides = JSON.parse(raw);
-    else if (Array.isArray(raw)) slides = raw;
-  } catch { /* ignore */ }
-
-  const videoAsset = job.assets.find((a) => a.asset_type === "final_video")
-    ?? job.assets.find((a) => a.asset_type === "merged_video");
-  const videoUrl = videoAsset?.public_url ?? null;
-
-  const isDecided = !!job.latest_decision;
-  const backTab = isDecided
-    ? (job.latest_decision === "APPROVED" ? "approved" : job.latest_decision === "REJECTED" ? "rejected" : "needs_edit")
-    : "in_review";
-
+function InfoRow({ label, value }: { label: string; value: string | undefined }) {
+  if (!value) return null;
   return (
-    <>
-      <Link href={`/?status=${backTab}`} className="detail-back">← Back to queue</Link>
-      <h2 className="detail-title">{taskId}</h2>
-      <div className="detail-subtitle">
-        {job.platform ?? "—"} · {job.flow_type ?? "—"} · {job.recommended_route ?? "—"}
-      </div>
-
-      <div className="detail-grid">
-        {/* Left: Content */}
-        <div>
-          <div className="card mb-3">
-            <div className="card-header">Content</div>
-
-            {title && (
-              <div className="content-block">
-                <div className="content-block-label">Title</div>
-                <div className="content-block-text">{title}</div>
-              </div>
-            )}
-
-            {hook && (
-              <div className="content-block">
-                <div className="content-block-label">Hook</div>
-                <div className="content-block-text">{hook}</div>
-              </div>
-            )}
-
-            {caption && (
-              <div className="content-block">
-                <div className="content-block-label">Caption</div>
-                <div className="content-block-text">{caption}</div>
-              </div>
-            )}
-
-            {videoUrl && (
-              <div className="content-block">
-                <div className="content-block-label">Video</div>
-                <video src={videoUrl} controls style={{ width: "100%", borderRadius: 8, marginTop: 4 }} />
-              </div>
-            )}
-
-            {slides.length > 0 && (
-              <div className="content-block">
-                <div className="content-block-label">Slides ({slides.length})</div>
-                <pre className="slides-json">{JSON.stringify(slides, null, 2)}</pre>
-              </div>
-            )}
-          </div>
-
-          {job.assets.length > 0 && (
-            <div className="card">
-              <div className="card-header">Assets ({job.assets.length})</div>
-              <div className="assets-grid">
-                {job.assets.map((a, i) => (
-                  <a
-                    key={a.id}
-                    href={a.public_url ?? "#"}
-                    target="_blank"
-                    rel="noopener"
-                    className="asset-link"
-                  >
-                    {a.asset_type ?? "asset"} #{i + 1}
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Info + Decision */}
-        <div>
-          <div className="card mb-3">
-            <div className="card-header">Details</div>
-            {([
-              ["Platform", job.platform],
-              ["Flow type", job.flow_type],
-              ["Recommended route", job.recommended_route],
-              ["QC status", job.qc_status],
-              ["Pre-gen score", job.pre_gen_score],
-              ["Run ID", job.run_id],
-              ["Status", job.status],
-              ["Created", job.created_at ? new Date(job.created_at).toLocaleString() : null],
-            ] as [string, string | null][]).map(([k, v]) => (
-              <div key={k} className="info-row">
-                <span className="info-label">{k}</span>
-                <span className="info-value">{v ?? "—"}</span>
-              </div>
-            ))}
-          </div>
-
-          {job.auto_validation && (
-            <div className="card mb-3">
-              <div className="card-header">Auto-validation</div>
-              {([
-                ["Overall", job.auto_validation.overall_score],
-                ["Hook score", job.auto_validation.hook_score],
-                ["Clarity", job.auto_validation.clarity_score],
-                ["Format OK", job.auto_validation.format_ok ? "Yes" : "No"],
-                ["Pass", job.auto_validation.pass_auto ? "Yes" : "No"],
-              ] as [string, string | null][]).map(([k, v]) => (
-                <div key={k} className="info-row">
-                  <span className="info-label">{k}</span>
-                  <span className="info-value">{v ?? "—"}</span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="card mb-3">
-            <div className="card-header">Decision</div>
-            {!isDecided ? (
-              <DecisionForm taskId={taskId} project={PROJECT_SLUG} />
-            ) : (
-              <div>
-                <div className="info-row">
-                  <span className="info-label">Verdict</span>
-                  <span className="info-value">
-                    <StatusBadge decision={job.latest_decision} />
-                  </span>
-                </div>
-                {job.latest_notes && (
-                  <div className="info-row">
-                    <span className="info-label">Notes</span>
-                    <span className="info-value" style={{ fontSize: 12 }}>{job.latest_notes}</span>
-                  </div>
-                )}
-                {job.latest_validator && (
-                  <div className="info-row">
-                    <span className="info-label">Reviewer</span>
-                    <span className="info-value">{job.latest_validator}</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {job.reviews.length > 1 && (
-            <div className="card">
-              <div className="card-header">Review History</div>
-              {job.reviews.map((r) => (
-                <div key={r.id} className="review-history-item">
-                  <span style={{ color: "var(--fg)", fontWeight: 600 }}>
-                    {r.decision ?? "—"}
-                  </span>
-                  {r.validator && (
-                    <span className="text-muted"> by {r.validator}</span>
-                  )}
-                  {r.submitted_at && (
-                    <span className="text-muted"> · {new Date(r.submitted_at).toLocaleString()}</span>
-                  )}
-                  {r.notes && (
-                    <div className="text-muted text-xs mt-2">{r.notes}</div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </>
+    <div className="flex justify-between gap-4 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium">{value}</span>
+    </div>
   );
 }
 
-function StatusBadge({ decision }: { decision?: string | null }) {
-  const d = (decision ?? "").toUpperCase();
-  if (d === "APPROVED") return <span className="badge badge-approved">Approved</span>;
-  if (d === "REJECTED") return <span className="badge badge-rejected">Rejected</span>;
-  if (d === "NEEDS_EDIT") return <span className="badge badge-needs-edit">Needs Edit</span>;
-  return <span className="badge badge-review">Pending</span>;
+export default function TaskPage() {
+  const params = useParams();
+  const router = useRouter();
+  const task_id = typeof params.task_id === "string" ? params.task_id : "";
+
+  const [data, setData] = useState<ReviewQueueRow | null>(null);
+  const [assetUrls, setAssetUrls] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchTask = useCallback(async () => {
+    if (!task_id) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const [taskRes, assetsRes] = await Promise.all([
+        fetch(`/api/task/${encodeURIComponent(task_id)}`),
+        fetch(`/api/task/${encodeURIComponent(task_id)}/assets`),
+      ]);
+      if (taskRes.status === 404) {
+        setError("Task not found");
+        setData(null);
+        return;
+      }
+      if (!taskRes.ok) throw new Error(await taskRes.text());
+      const taskJson: TaskDetailResponse = await taskRes.json();
+      setData(taskJson.data);
+      if (assetsRes.ok) {
+        const assetsJson: AssetsResponse = await assetsRes.json();
+        setAssetUrls(
+          (assetsJson.assets ?? [])
+            .sort((a, b) => a.position - b.position)
+            .map((a) => a.public_url)
+            .filter(Boolean) as string[]
+        );
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load task");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [task_id]);
+
+  useEffect(() => {
+    fetchTask();
+  }, [fetchTask]);
+
+  const decision = (data?.decision ?? "").trim();
+  const notes = (data?.notes ?? "").trim();
+  const runId = (data?.run_id ?? "").trim();
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
+            ← Workbench
+          </Link>
+          {runId && (
+            <Link
+              href={`/r/${encodeURIComponent(runId)}`}
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Run: {runId}
+            </Link>
+          )}
+          <h1 className="min-w-0 truncate text-base font-semibold text-card-foreground sm:text-lg">
+            {task_id}
+          </h1>
+        </div>
+      </header>
+
+      <main className="p-4 sm:p-6">
+        {error && (
+          <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+            {error}
+          </div>
+        )}
+        {loading && !data && <div className="text-muted-foreground">Loading…</div>}
+
+        {data && !loading && (
+          <div className="grid gap-6 lg:grid-cols-[1fr,340px] lg:gap-8">
+            <div className="min-w-0 space-y-4">
+              {assetUrls.length > 0 && (
+                <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+                  <p className="text-sm font-medium">Assets</p>
+                  <div className="flex flex-col gap-4 overflow-auto max-h-[70vh]">
+                    {assetUrls.map((url, i) => (
+                      <img
+                        key={i}
+                        src={url}
+                        alt={`Asset ${i + 1}`}
+                        className="max-h-[500px] w-auto rounded border object-contain"
+                      />
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-lg border bg-card p-4 space-y-3">
+                <h2 className="text-sm font-semibold">Task Details</h2>
+                <InfoRow label="Task ID" value={data.task_id} />
+                <InfoRow label="Run ID" value={data.run_id} />
+                <InfoRow label="Platform" value={data.platform} />
+                <InfoRow label="Flow Type" value={data.flow_type} />
+                <InfoRow label="Recommended Route" value={data.recommended_route} />
+                <InfoRow label="QC Status" value={data.qc_status} />
+                <InfoRow label="Risk Score" value={data.risk_score} />
+                <InfoRow label="Review Status" value={data.review_status} />
+              </div>
+
+              {data.generated_title && (
+                <div className="rounded-lg border bg-card p-4 space-y-2">
+                  <h2 className="text-sm font-semibold">Generated Content</h2>
+                  {data.generated_title && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Title</p>
+                      <p className="text-sm">{data.generated_title}</p>
+                    </div>
+                  )}
+                  {data.generated_hook && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Hook</p>
+                      <p className="text-sm">{data.generated_hook}</p>
+                    </div>
+                  )}
+                  {data.generated_caption && (
+                    <div>
+                      <p className="text-xs text-muted-foreground">Caption</p>
+                      <p className="text-sm whitespace-pre-wrap">{data.generated_caption}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {data.generated_slides_json && (
+                <div className="rounded-lg border bg-card p-4 space-y-2">
+                  <h2 className="text-sm font-semibold">Slides JSON</h2>
+                  <pre className="max-h-[30vh] overflow-auto whitespace-pre-wrap rounded bg-background p-3 text-xs">
+                    {data.generated_slides_json}
+                  </pre>
+                </div>
+              )}
+            </div>
+
+            <div className="flex min-w-0 flex-col gap-6">
+              <DecisionPanel
+                taskId={task_id}
+                onSuccess={() => router.push("/")}
+                existingDecision={decision}
+                existingNotes={notes}
+              />
+            </div>
+          </div>
+        )}
+      </main>
+    </div>
+  );
 }

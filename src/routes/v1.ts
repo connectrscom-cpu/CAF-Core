@@ -21,6 +21,13 @@ import { z } from "zod";
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
 
+  app.get("/", async () => ({
+    ok: true,
+    service: "caf-core",
+    version: config.DECISION_ENGINE_VERSION,
+    docs: "/health for health check, /v1/* for API",
+  }));
+
   app.get("/health", async () => ({
     ok: true,
     service: "caf-core",
