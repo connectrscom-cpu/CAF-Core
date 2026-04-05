@@ -14,7 +14,7 @@ import {
   insertSuppressionRule,
   insertPromptVersion,
 } from "../repositories/ops.js";
-import { listReviewQueue, countReviewQueue, getReviewJobDetail } from "../repositories/review-queue.js";
+import { listReviewQueue, countReviewQueue, getReviewJobDetail, getDistinctValues, type ReviewQueueFilters } from "../repositories/review-queue.js";
 import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { z } from "zod";
 
@@ -418,17 +418,53 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
 
   const reviewTabSchema = z.enum(["in_review", "approved", "rejected", "needs_edit"]);
 
+  app.get("/v1/review-queue/:project_slug/facets", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const facets = await getDistinctValues(db, project.id);
+    return { ok: true, facets };
+  });
+
+  const filterQuerySchema = z.object({
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    offset: z.coerce.number().int().min(0).optional(),
+    search: z.string().optional(),
+    platform: z.string().optional(),
+    flow_type: z.string().optional(),
+    recommended_route: z.string().optional(),
+    qc_status: z.string().optional(),
+    review_status: z.string().optional(),
+    decision: z.string().optional(),
+    has_preview: z.enum(["true", "false"]).optional(),
+    risk_score_min: z.coerce.number().optional(),
+    run_id: z.string().optional(),
+    sort: z.enum(["task_id", "newest", "oldest", "status"]).optional(),
+    group_by: z.enum(["project", "platform", "flow_type", "recommended_route"]).optional(),
+  });
+
   app.get("/v1/review-queue/:project_slug/:tab", async (request, reply) => {
     const params = z.object({ project_slug: z.string(), tab: reviewTabSchema }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
-    const query = z.object({
-      limit: z.coerce.number().int().min(1).max(500).optional(),
-      offset: z.coerce.number().int().min(0).optional(),
-    }).safeParse(request.query);
+    const query = filterQuerySchema.safeParse(request.query);
     const limit = query.data?.limit ?? 100;
     const offset = query.data?.offset ?? 0;
+    const filters: ReviewQueueFilters = {
+      search: query.data?.search,
+      platform: query.data?.platform,
+      flow_type: query.data?.flow_type,
+      recommended_route: query.data?.recommended_route,
+      qc_status: query.data?.qc_status,
+      review_status: query.data?.review_status,
+      decision: query.data?.decision,
+      has_preview: query.data?.has_preview === "true" ? true : undefined,
+      risk_score_min: query.data?.risk_score_min,
+      run_id: query.data?.run_id,
+      sort: query.data?.sort,
+      group_by: query.data?.group_by,
+    };
     const project = await ensureProject(db, params.data.project_slug);
-    const jobs = await listReviewQueue(db, project.id, params.data.tab, limit, offset);
+    const jobs = await listReviewQueue(db, project.id, params.data.tab, limit, offset, filters);
     return { ok: true, tab: params.data.tab, count: jobs.length, jobs };
   });
 

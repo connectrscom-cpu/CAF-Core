@@ -8,10 +8,12 @@ export default async function ContentPage({ params }: { params: { task_id: strin
 
   if (!job) {
     return (
-      <main className="container">
-        <Link href="/">&larr; Home</Link>
-        <p className="mt-4" style={{ color: "var(--muted)" }}>Content not found.</p>
-      </main>
+      <>
+        <Link href="/" className="detail-back">← Home</Link>
+        <div style={{ padding: "60px 28px", textAlign: "center", color: "var(--muted)" }}>
+          Content not found.
+        </div>
+      </>
     );
   }
 
@@ -23,30 +25,44 @@ export default async function ContentPage({ params }: { params: { task_id: strin
   const videoUrl = videoAsset?.public_url ?? null;
 
   return (
-    <main className="container">
-      <Link href="/">&larr; Home</Link>
-      <h2 className="mt-4" style={{ fontSize: 20, fontWeight: 600 }}>{taskId}</h2>
-      <div className="card mt-4">
-        {hook && <p><strong>Hook:</strong> {hook}</p>}
-        {caption && <p className="mt-4" style={{ whiteSpace: "pre-wrap" }}>{caption}</p>}
-        {videoUrl && (
-          <div className="mt-4">
-            <video src={videoUrl} controls style={{ width: "100%", maxWidth: 640, borderRadius: 8 }} />
-          </div>
-        )}
-        {job.assets.length > 0 && (
-          <div className="mt-4">
-            <strong>Assets ({job.assets.length})</strong>
-            <div className="flex gap-2 mt-4" style={{ flexWrap: "wrap", gap: 8 }}>
-              {job.assets.map((a, i) => (
-                <a key={a.id} href={a.public_url ?? "#"} target="_blank" rel="noopener" style={{ fontSize: 12, color: "var(--accent)" }}>
-                  {a.asset_type ?? "asset"} #{i + 1}
-                </a>
-              ))}
+    <>
+      <Link href="/" className="detail-back">← Home</Link>
+      <h2 className="detail-title">{taskId}</h2>
+
+      <div style={{ padding: "0 28px 28px" }}>
+        <div className="card">
+          {hook && (
+            <div className="content-block">
+              <div className="content-block-label">Hook</div>
+              <div className="content-block-text">{hook}</div>
             </div>
-          </div>
-        )}
+          )}
+          {caption && (
+            <div className="content-block">
+              <div className="content-block-label">Caption</div>
+              <div className="content-block-text">{caption}</div>
+            </div>
+          )}
+          {videoUrl && (
+            <div className="content-block">
+              <div className="content-block-label">Video</div>
+              <video src={videoUrl} controls style={{ width: "100%", maxWidth: 640, borderRadius: 8, marginTop: 4 }} />
+            </div>
+          )}
+          {job.assets.length > 0 && (
+            <div className="content-block">
+              <div className="content-block-label">Assets ({job.assets.length})</div>
+              <div className="assets-grid">
+                {job.assets.map((a, i) => (
+                  <a key={a.id} href={a.public_url ?? "#"} target="_blank" rel="noopener" className="asset-link">
+                    {a.asset_type ?? "asset"} #{i + 1}
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </main>
+    </>
   );
 }

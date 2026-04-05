@@ -3,6 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+const DECISIONS = [
+  { val: "APPROVED", cls: "decision-btn-approve", label: "Approve" },
+  { val: "NEEDS_EDIT", cls: "decision-btn-edit", label: "Needs Edit" },
+  { val: "REJECTED", cls: "decision-btn-reject", label: "Reject" },
+] as const;
+
 export function DecisionForm({ taskId, project }: { taskId: string; project: string }) {
   const router = useRouter();
   const [decision, setDecision] = useState("");
@@ -22,12 +28,14 @@ export function DecisionForm({ taskId, project }: { taskId: string; project: str
           task_id: taskId,
           decision,
           notes: notes || undefined,
-          rejection_tags: rejectionTags ? rejectionTags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+          rejection_tags: rejectionTags
+            ? rejectionTags.split(",").map((t) => t.trim()).filter(Boolean)
+            : undefined,
           validator: "reviewer",
         }),
       });
       if (res.ok) {
-        router.push("/?tab=in_review");
+        router.push("/?status=in_review");
         router.refresh();
       } else {
         const data = await res.json().catch(() => ({}));
@@ -40,40 +48,47 @@ export function DecisionForm({ taskId, project }: { taskId: string; project: str
 
   return (
     <div>
-      <div className="flex gap-2 mb-4" style={{ gap: 8 }}>
-        {[
-          { val: "APPROVED", cls: "btn-approve", label: "Approve" },
-          { val: "NEEDS_EDIT", cls: "btn-edit", label: "Needs Edit" },
-          { val: "REJECTED", cls: "btn-reject", label: "Reject" },
-        ].map((b) => (
+      <div className="decision-buttons">
+        {DECISIONS.map((b) => (
           <button
             key={b.val}
             type="button"
-            className={b.cls}
-            onClick={() => setDecision(b.val)}
-            style={{ opacity: decision === b.val ? 1 : 0.4, transform: decision === b.val ? "scale(1.05)" : "none" }}
+            className={`decision-btn ${b.cls} ${decision === b.val ? "selected" : ""}`}
+            onClick={() => setDecision(decision === b.val ? "" : b.val)}
           >
             {b.label}
           </button>
         ))}
       </div>
+
       {decision === "REJECTED" && (
-        <input
-          placeholder="Rejection tags (comma separated)"
-          value={rejectionTags}
-          onChange={(e) => setRejectionTags(e.target.value)}
-          className="mb-4"
-        />
+        <div className="mb-3">
+          <label className="filter-label">Rejection tags</label>
+          <input
+            placeholder="e.g. low-quality, off-brand, wrong-format"
+            value={rejectionTags}
+            onChange={(e) => setRejectionTags(e.target.value)}
+          />
+        </div>
       )}
-      <textarea
-        placeholder="Notes (optional)"
-        value={notes}
-        onChange={(e) => setNotes(e.target.value)}
-        rows={3}
-        className="mb-4"
-      />
-      <button className="btn-primary" disabled={!decision || submitting} onClick={submit} style={{ width: "100%" }}>
-        {submitting ? "Submitting..." : "Submit Decision"}
+
+      <div className="mb-3">
+        <label className="filter-label">Notes (optional)</label>
+        <textarea
+          placeholder="Add review notes..."
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+        />
+      </div>
+
+      <button
+        className="btn-primary"
+        disabled={!decision || submitting}
+        onClick={submit}
+        style={{ width: "100%" }}
+      >
+        {submitting ? "Submitting..." : `Submit — ${decision || "select decision"}`}
       </button>
     </div>
   );

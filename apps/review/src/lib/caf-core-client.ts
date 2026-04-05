@@ -31,7 +31,7 @@ async function corePost<T = unknown>(path: string, body: unknown): Promise<T | n
   return res.json() as Promise<T>;
 }
 
-// ── Review Queue ────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────
 
 export type ReviewTab = "in_review" | "approved" | "rejected" | "needs_edit";
 
@@ -91,6 +91,31 @@ export interface ReviewJobDetail extends ReviewQueueJob {
   } | null;
 }
 
+export interface Facets {
+  platforms: string[];
+  flow_types: string[];
+  routes: string[];
+  runs: string[];
+  statuses: string[];
+}
+
+export interface QueueFilters {
+  search?: string;
+  platform?: string;
+  flow_type?: string;
+  recommended_route?: string;
+  qc_status?: string;
+  review_status?: string;
+  decision?: string;
+  has_preview?: string;
+  risk_score_min?: string;
+  run_id?: string;
+  sort?: string;
+  group_by?: string;
+}
+
+// ── API Calls ────────────────────────────────────────────────────────────
+
 export async function getQueueCounts(projectSlug: string): Promise<ReviewQueueCounts> {
   const data = await coreGet<{ ok: boolean; counts: ReviewQueueCounts }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/counts`
@@ -98,11 +123,26 @@ export async function getQueueCounts(projectSlug: string): Promise<ReviewQueueCo
   return data?.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
 }
 
-export async function getQueueTab(projectSlug: string, tab: ReviewTab): Promise<ReviewQueueJob[]> {
-  const data = await coreGet<{ ok: boolean; jobs: ReviewQueueJob[] }>(
-    `/v1/review-queue/${encodeURIComponent(projectSlug)}/${tab}`
-  );
+export async function getQueueTab(
+  projectSlug: string,
+  tab: ReviewTab,
+  filters: QueueFilters = {}
+): Promise<ReviewQueueJob[]> {
+  const params = new URLSearchParams();
+  for (const [key, val] of Object.entries(filters)) {
+    if (val) params.set(key, val);
+  }
+  const qs = params.toString();
+  const path = `/v1/review-queue/${encodeURIComponent(projectSlug)}/${tab}${qs ? `?${qs}` : ""}`;
+  const data = await coreGet<{ ok: boolean; jobs: ReviewQueueJob[] }>(path);
   return data?.jobs ?? [];
+}
+
+export async function getFacets(projectSlug: string): Promise<Facets> {
+  const data = await coreGet<{ ok: boolean; facets: Facets }>(
+    `/v1/review-queue/${encodeURIComponent(projectSlug)}/facets`
+  );
+  return data?.facets ?? { platforms: [], flow_types: [], routes: [], runs: [], statuses: [] };
 }
 
 export async function getJobDetail(projectSlug: string, taskId: string): Promise<ReviewJobDetail | null> {
