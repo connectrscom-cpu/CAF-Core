@@ -1,0 +1,30 @@
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#0a0a0a;--fg:#ededed;--accent:#3b82f6;--card:#161616;--border:#262626;--muted:#888;--green:#22c55e;--red:#ef4444;--yellow:#eab308;font-family:system-ui,-apple-system,sans-serif}
+html,body{background:var(--bg);color:var(--fg);min-height:100vh}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+button{cursor:pointer;border:none;border-radius:6px;padding:8px 16px;font-size:14px;font-weight:500;transition:opacity .15s}
+button:hover{opacity:.85}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-approve{background:var(--green);color:#fff}
+.btn-reject{background:var(--red);color:#fff}
+.btn-edit{background:var(--yellow);color:#000}
+.btn-ghost{background:transparent;color:var(--fg);border:1px solid var(--border)}
+input,textarea,select{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:14px;width:100%}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+tr:hover{background:var(--card)}
+.badge{display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;text-transform:uppercase}
+.badge-approved{background:#16a34a22;color:var(--green)}
+.badge-rejected{background:#dc262622;color:var(--red)}
+.badge-needs-edit{background:#ca8a0422;color:var(--yellow)}
+.badge-review{background:#3b82f622;color:var(--accent)}
+.container{max-width:1280px;margin:0 auto;padding:24px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px}
+.tabs{display:flex;gap:4px;margin-bottom:20px}
+.tab{padding:8px 18px;border-radius:8px 8px 0 0;background:transparent;color:var(--muted);font-size:14px;font-weight:500;border:1px solid transparent;border-bottom:none}
+.tab.active{background:var(--card);color:var(--fg);border-color:var(--border)}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:768px){.grid-2{grid-template-columns:1fr}}
+.mt-4{margin-top:16px}.mb-4{margin-bottom:16px}.gap-2{gap:8px}.flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}

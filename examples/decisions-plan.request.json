@@ -1,0 +1,33 @@
+{
+  "project_slug": "SNS",
+  "run_id": "SNS_2026W09",
+  "dry_run": true,
+  "max_candidates": 10,
+  "max_variations_per_candidate": 1,
+  "candidates": [
+    {
+      "candidate_id": "SNS_2026W09_Instagram_0001",
+      "flow_type": "FLOW_CAROUSEL",
+      "platform": "Instagram",
+      "target_platform": "Instagram",
+      "confidence_score": 0.78,
+      "platform_fit": 0.85,
+      "novelty_score": 0.5,
+      "past_performance_similarity": 0.55,
+      "recommended_route": "HUMAN_REVIEW",
+      "content_idea": "Weekly reset carousel",
+      "payload": { "format": "carousel_5_slide" }
+    },
+    {
+      "candidate_id": "SNS_2026W09_Multi_0002",
+      "flow_type": "FLOW_VIDEO",
+      "platform": "TikTok",
+      "confidence_score": 0.35,
+      "platform_fit": 0.4,
+      "novelty_score": 0.6,
+      "past_performance_similarity": 0.5,
+      "recommended_route": "HUMAN_REVIEW",
+      "content_idea": "Low-signal idea — likely dropped by min_score"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+# Local Postgres for CAF Core (optional). Usage:
+#   docker compose up -d
+#   DATABASE_URL=postgresql://caf:caf@localhost:5433/caf_core npm run migrate
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: caf-core-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: caf
+      POSTGRES_PASSWORD: caf
+      POSTGRES_DB: caf_core
+    volumes:
+      - caf_core_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caf -d caf_core"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  caf_core_pgdata:

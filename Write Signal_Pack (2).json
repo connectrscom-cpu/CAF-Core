@@ -1,0 +1,585 @@
+{
+  "name": "Write Signal_Pack",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        112
+      ],
+      "id": "740626a8-844c-4597-9420-ddcc55db8941",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1363559024,
+          "mode": "list",
+          "cachedResultName": "Overall",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=1363559024"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        208
+      ],
+      "id": "548bed50-3e8f-476d-937b-7bec2f0ee3c1",
+      "name": "Get Overall Insights",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1622094070,
+          "mode": "list",
+          "cachedResultName": "IG Summary",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=1622094070"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        0
+      ],
+      "id": "4f9b106e-4aec-4992-93f0-28ef4fbb9cda",
+      "name": "Get IG Summary",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1315759553,
+          "mode": "list",
+          "cachedResultName": "Reddit Summary",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=1315759553"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        -336
+      ],
+      "id": "19fe5309-75d8-4746-b068-0fe1539db337",
+      "name": "Get Reddit Summary",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1352468766,
+          "mode": "list",
+          "cachedResultName": "TikTok Summary",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=1352468766"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        -176
+      ],
+      "id": "e833292f-0752-46d6-b387-8b917320f157",
+      "name": "Get TikTok Summary",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 2084215548,
+          "mode": "list",
+          "cachedResultName": "FB Summary",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=2084215548"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        384
+      ],
+      "id": "953f0bfb-602c-4b75-bf2d-35c4860b39e0",
+      "name": "Get FB Summary",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4",
+          "mode": "list",
+          "cachedResultName": "PROCESSING - SNS Insights",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 228538162,
+          "mode": "list",
+          "cachedResultName": "HTML Summary",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1T4AcFdDqd3JFvlzflqobjqo7xl1jy6giJL7IyyM2Ga4/edit#gid=228538162"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        208,
+        592
+      ],
+      "id": "c52afeae-3816-4a91-b4e8-730d370f9eb2",
+      "name": "Get HTML Summary",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// =====================\n// SIGNAL PACK BUILDER (with cleaned keyword extraction)\n// Mode: Run once for all items\n// =====================\n\n// ---- CONFIG ----\nconst PROJECT = \"SNS\";\nconst SOURCE_WINDOW = \"last_7_days\";\nconst DAYS = 7;\n\n// ---- TIME WINDOW ----\nconst now = new Date();\nconst cutoff = new Date(now);\ncutoff.setDate(cutoff.getDate() - DAYS);\n\n// ---- HELPERS ----\nfunction parseDate(x) {\n  const d = new Date(x);\n  return isNaN(d) ? null : d;\n}\n\nfunction newestRow(rows, dateField = \"generated_at\") {\n  const valid = rows\n    .map(r => ({ r, d: parseDate(r[dateField]) }))\n    .filter(x => x.d);\n\n  valid.sort((a, b) => b.d - a.d);\n  return valid.length ? valid[0].r : null;\n}\n\nfunction filterRecent(rows, dateField = \"generated_at\") {\n  return rows.filter(r => {\n    const d = parseDate(r[dateField]);\n    return d && d >= cutoff;\n  });\n}\n\nfunction isoWeekId(d) {\n  const date = new Date(d);\n  const tmp = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));\n  const dayNum = tmp.getUTCDay() || 7;\n  tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);\n  const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));\n  const weekNo = Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);\n  return `${tmp.getUTCFullYear()}W${String(weekNo).padStart(2, \"0\")}`;\n}\n\nfunction uniq(arr) {\n  return [...new Set(arr.map(x => String(x ?? \"\").trim()).filter(Boolean))];\n}\n\n/**\n * Clean keyword splitter:\n * - removes hashtags\n * - removes punctuation\n * - splits into tokens\n * - lowercases\n * - drops tiny tokens (<=2 chars)\n */\nfunction splitKeywords(s) {\n  return String(s ?? \"\")\n    .replace(/#/g, \"\")\n    .replace(/[^\\w\\s-]/g, \" \")\n    .split(/\\s+|,|;|\\||\\n/g)\n    .map(x => x.trim().toLowerCase())\n    .filter(x => x && x.length > 2);\n}\n\nfunction joinSemi(arr, limit = 25) {\n  return uniq(arr).slice(0, limit).join(\"; \");\n}\n\n// ---- READ UPSTREAM DATA (by node name) ----\n// IMPORTANT: rename these strings if your node names differ exactly\nconst igRows = $items(\"Get IG Summary\").map(i => i.json);\nconst ttRows = $items(\"Get TikTok Summary\").map(i => i.json);\nconst rdRows = $items(\"Get Reddit Summary\").map(i => i.json);\nconst fbRows = $items(\"Get FB Summary\").map(i => i.json);\nconst htmlRows = $items(\"Get HTML Summary\").map(i => i.json);\n\n// Overall is flowing into this node as `items` (from your Get Overall Insights connection)\nconst overallAll = items.map(i => i.json);\n\n// ---- PICK NEWEST SUMMARIES (or null) ----\nconst ig = newestRow(igRows, \"generated_at\");\nconst tiktok = newestRow(ttRows, \"generated_at\");\nconst reddit = newestRow(rdRows, \"generated_at\");\nconst fb = newestRow(fbRows, \"generated_at\");\nconst html = newestRow(htmlRows, \"generated_at\");\n\n// ---- CLEAN + FILTER OVERALL CANDIDATES ----\n// Keep ONLY true candidate rows (prevents summary rows contaminating candidates_json)\nconst overallCandidatesOnly = overallAll.filter(r =>\n  r.platform && r.format && r.content_idea\n);\n\n// Filter to last 7 days\nconst overallRecent = filterRecent(overallCandidatesOnly, \"generated_at\");\n\n// If no candidates in last 7 days, stop (write nothing)\nif (overallRecent.length === 0) return [];\n\n// created_at = newest overall candidate time\noverallRecent.sort((a, b) => new Date(b.generated_at) - new Date(a.generated_at));\nconst created_at = overallRecent[0].generated_at || new Date().toISOString();\n\n// run_id weekly\nconst run_id = `${PROJECT}_${isoWeekId(created_at)}`;\n\n// ---- FLATTENED GLOBAL FIELDS (ROUTER-FRIENDLY) ----\nconst global_winning_formats = joinSemi(overallRecent.map(r => r.format), 10);\n\nconst global_engagement_triggers = joinSemi(\n  overallRecent.flatMap(r => splitKeywords(r.trend_or_trigger)),\n  20\n);\n\nconst global_rising_keywords = joinSemi(\n  overallRecent\n    .flatMap(r => splitKeywords(r.trend_or_trigger))\n    .concat(overallRecent.flatMap(r => splitKeywords(r.keywords_hashtags))),\n  30\n);\n\n// v1 themes: from content ideas (replace later with true themes)\nconst cross_platform_themes = joinSemi(overallRecent.map(r => r.content_idea), 15);\n\n// OPTIONAL: flattened evidence URLs for traceability (not in headers yet)\nconst reference_post_ids = joinSemi(\n  overallRecent.map(r => r.evidence_urls).filter(Boolean),\n  20\n);\n\n// platform alignment summary (works with your current IG/TikTok summary schema)\nconst igHeadline = ig ? String(ig[\"key_takeaways (short bullets)\"] || \"\").split(\"\\n\")[0] : \"\";\nconst ttHeadline = tiktok ? String(tiktok[\"key_takeaways (short bullets)\"] || \"\").split(\"\\n\")[0] : \"\";\n\nconst platform_alignment_summary = [\n  ig ? `IG → ${igHeadline || \"summary\"}` : \"IG → (empty)\",\n  tiktok ? `TikTok → ${ttHeadline || \"summary\"}` : \"TikTok → (empty)\",\n  reddit ? `Reddit → ${reddit.winning_formats || \"summary\"}` : \"Reddit → (empty)\",\n  fb ? `FB → ${fb.winning_post_types || fb.winning_formats || \"summary\"}` : \"FB → (empty)\",\n  html ? `HTML → ${html.winning_formats || html.winning_angles || \"summary\"}` : \"HTML → (empty)\"\n].join(\" | \");\n\n// ---- META ----\nconst total_candidates_count = overallRecent.length;\n\nconst confNums = overallRecent\n  .map(r => Number(r.confidence_score))\n  .filter(n => !isNaN(n));\n\nconst confidence_score_avg = confNums.length\n  ? (confNums.reduce((a, b) => a + b, 0) / confNums.length).toFixed(1)\n  : \"\";\n\n// ---- FINAL SIGNAL PACK ROW (matches your Signal_Packs headers) ----\nconst signalPack = {\n  run_id,\n  project: PROJECT,\n  created_at,\n  source_window: SOURCE_WINDOW,\n\n  ig_summary_json: ig ? JSON.stringify(ig) : \"\",\n  tiktok_summary_json: tiktok ? JSON.stringify(tiktok) : \"\",\n  reddit_summary_json: reddit ? JSON.stringify(reddit) : \"\",\n  fb_summary_json: fb ? JSON.stringify(fb) : \"\",\n  html_summary_json: html ? JSON.stringify(html) : \"\",\n\n  overall_candidates_json: JSON.stringify(overallRecent),\n\n  platform_alignment_summary,\n  cross_platform_themes,\n  global_rising_keywords,\n  global_winning_formats,\n  global_engagement_triggers,\n\n  total_candidates_count,\n  confidence_score_avg,\n\n  // Keep notes simple; you can append reference_post_ids here if you want\n  notes: `Signal pack built from summaries + Overall (>= ${DAYS} days cutoff). Evidence_urls_flat: ${reference_post_ids || \"(none)\"}`\n};\n\nreturn [{ json: signalPack }];\n\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        112
+      ],
+      "id": "e1ad453c-8a99-4a4b-bbeb-153f965fcdb5",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "numberInputs": 6
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        560,
+        48
+      ],
+      "id": "c18d7e31-3cd3-49d1-b6aa-d227201f3bc4",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1fUl6iIhCRe9dzM2Ueq4HOZV_fg1x6DvsgVZzqp3qlcI",
+          "mode": "list",
+          "cachedResultName": "CREATION - Runtime",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1fUl6iIhCRe9dzM2Ueq4HOZV_fg1x6DvsgVZzqp3qlcI/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Signal_Packs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1fUl6iIhCRe9dzM2Ueq4HOZV_fg1x6DvsgVZzqp3qlcI/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "project",
+              "displayName": "project",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_window",
+              "displayName": "source_window",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ig_summary_json",
+              "displayName": "ig_summary_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tiktok_summary_json",
+              "displayName": "tiktok_summary_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reddit_summary_json",
+              "displayName": "reddit_summary_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fb_summary_json",
+              "displayName": "fb_summary_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "html_summary_json",
+              "displayName": "html_summary_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "overall_candidates_json",
+              "displayName": "overall_candidates_json",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "platform_alignment_summary",
+              "displayName": "platform_alignment_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cross_platform_themes",
+              "displayName": "cross_platform_themes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "global_rising_keywords",
+              "displayName": "global_rising_keywords",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "global_winning_formats",
+              "displayName": "global_winning_formats",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "global_engagement_triggers",
+              "displayName": "global_engagement_triggers",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_candidates_count",
+              "displayName": "total_candidates_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence_score_avg",
+              "displayName": "confidence_score_avg",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        112
+      ],
+      "id": "8ce5a0be-2c2c-4830-ad18-f19bf99b099b",
+      "name": "Append or update row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uyjDwVzW2uXVpnSe",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get IG Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Overall Insights",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get FB Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get HTML Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get TikTok Summary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Reddit Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Overall Insights": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 3
+          }
+        ]
+      ]
+    },
+    "Get IG Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Get TikTok Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Get Reddit Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get FB Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 4
+          }
+        ]
+      ]
+    },
+    "Get HTML Summary": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 5
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Append or update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3be4a6e1-7234-4875-a28b-ca943a7b2a6a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "6abea67af66562825734a0b250ebfce444812b3dad0455de5e7827c041d420d4"
+  },
+  "id": "r5a5A0jClWjuFAlvPxJQJ",
+  "tags": []
+}

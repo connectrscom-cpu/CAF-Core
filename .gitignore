@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.next/
+.env
+.env.local
+.env.production.local
+*.log
+.DS_Store
+Thumbs.db
+
+# Renderer output
+services/renderer/output/
+services/video-assembly/workdir/
+
+# IDE
+.vscode/
+.idea/

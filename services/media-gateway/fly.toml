@@ -1,0 +1,25 @@
+app = "caf-media-gateway"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3300"
+  RENDERER_PORT = "3333"
+  VIDEO_PORT = "3334"
+  SPAWN_CHILDREN = "true"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3300
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 2

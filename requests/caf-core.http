@@ -1,0 +1,54 @@
+### CAF Core — REST Client (VS Code / IntelliJ)
+### Set @base and @token in this file or your environment
+
+@base = http://localhost:3847
+@token = your-caf-core-token-if-auth-enabled
+
+### Health (no auth)
+GET {{base}}/health
+
+### Decision plan (dry run — no trace write if dry_run true; trace written if false)
+POST {{base}}/v1/decisions/plan
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+< ../examples/decisions-plan.request.json
+
+### Ingest job
+POST {{base}}/v1/jobs/ingest
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "project_slug": "SNS",
+  "task_id": "SNS_2026W09__Instagram__FLOW_CAROUSEL__row0001__v1",
+  "run_id": "SNS_2026W09",
+  "flow_type": "FLOW_CAROUSEL",
+  "platform": "Instagram",
+  "pre_gen_score": 0.72
+}
+
+### Project constraints
+PUT {{base}}/v1/projects/SNS/constraints
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "max_daily_jobs": 100,
+  "min_score_to_generate": 0.35,
+  "default_variation_cap": 2,
+  "auto_validation_pass_threshold": 0.72
+}
+
+### Register prompt version
+POST {{base}}/v1/prompt-versions
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "project_slug": "SNS",
+  "flow_type": "FLOW_CAROUSEL",
+  "prompt_id": "carousel_main",
+  "version": "1.0.0",
+  "status": "active"
+}
