@@ -21,9 +21,28 @@ export interface DecisionPanelProps {
   onSuccess?: () => void;
   existingDecision?: string;
   existingNotes?: string;
+  finalTitleOverride?: string;
+  finalHookOverride?: string;
+  finalCaptionOverride?: string;
+  finalHashtagsOverride?: string;
+  finalSlidesJsonOverride?: string;
+  hasEdits?: boolean;
+  editsSummary?: string[];
 }
 
-export function DecisionPanel({ taskId, onSuccess, existingDecision, existingNotes = "" }: DecisionPanelProps) {
+export function DecisionPanel({
+  taskId,
+  onSuccess,
+  existingDecision,
+  existingNotes = "",
+  finalTitleOverride,
+  finalHookOverride,
+  finalCaptionOverride,
+  finalHashtagsOverride,
+  finalSlidesJsonOverride,
+  hasEdits = false,
+  editsSummary = [],
+}: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
   const [tags, setTags] = useState<string[]>([]);
@@ -34,30 +53,41 @@ export function DecisionPanel({ taskId, onSuccess, existingDecision, existingNot
 
   const submit = useCallback(async () => {
     if (!decision || !["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
-      setError("Select a decision");
+      setError("Select a decision: Approve, Needs Edit, or Reject");
       return;
     }
     setSubmitting(true);
     setError(null);
+    const effectiveDecision = decision === "APPROVED" && hasEdits ? "NEEDS_EDIT" : decision;
     try {
       const res = await fetch(`/api/task/${encodeURIComponent(taskId)}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ decision, notes: notes.trim() || undefined, rejection_tags: tags, validator: validator.trim() || undefined }),
+        body: JSON.stringify({
+          decision: effectiveDecision,
+          notes: notes.trim() || undefined,
+          rejection_tags: tags,
+          validator: validator.trim() || undefined,
+          ...(finalTitleOverride !== undefined && { final_title_override: finalTitleOverride }),
+          ...(finalHookOverride !== undefined && { final_hook_override: finalHookOverride }),
+          ...(finalCaptionOverride !== undefined && { final_caption_override: finalCaptionOverride }),
+          ...(finalHashtagsOverride !== undefined && { final_hashtags_override: finalHashtagsOverride }),
+          ...(finalSlidesJsonOverride !== undefined && { final_slides_json_override: finalSlidesJsonOverride }),
+        }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(json.error ?? `HTTP ${res.status}`);
         return;
       }
-      setSubmittedMessage(decision === "APPROVED" ? "Approved" : "Decision submitted");
+      setSubmittedMessage(effectiveDecision === "APPROVED" ? "Approved" : "Decision submitted");
       setTimeout(() => onSuccess?.(), 1500);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Request failed");
     } finally {
       setSubmitting(false);
     }
-  }, [decision, notes, tags, validator, taskId, onSuccess]);
+  }, [decision, notes, tags, validator, taskId, onSuccess, finalTitleOverride, finalHookOverride, finalCaptionOverride, finalHashtagsOverride, finalSlidesJsonOverride, hasEdits]);
 
   const toggleTag = (tag: string) => {
     setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -66,37 +96,110 @@ export function DecisionPanel({ taskId, onSuccess, existingDecision, existingNot
   return (
     <div className="space-y-4 rounded-lg border bg-card p-4 text-card-foreground">
       <h3 className="text-sm font-semibold">Decision</h3>
+
       <div className="flex flex-wrap gap-2">
-        <Button variant={decision === "APPROVED" ? "success" : "outline"} size="sm" onClick={() => setDecision("APPROVED")}>Approve</Button>
-        <Button variant={decision === "NEEDS_EDIT" ? "warning" : "outline"} size="sm" onClick={() => setDecision("NEEDS_EDIT")}>Needs Edit</Button>
-        <Button variant={decision === "REJECTED" ? "destructive" : "outline"} size="sm" onClick={() => setDecision("REJECTED")}>Reject</Button>
+        <Button
+          data-decision="APPROVED"
+          variant={decision === "APPROVED" ? "success" : "outline"}
+          size="sm"
+          onClick={() => setDecision("APPROVED")}
+          title={hasEdits ? "Not available when edits are made (use Needs Edit)" : "Shortcut: A"}
+          disabled={hasEdits}
+        >
+          Approve
+        </Button>
+        <Button
+          data-decision="NEEDS_EDIT"
+          variant={decision === "NEEDS_EDIT" ? "warning" : "outline"}
+          size="sm"
+          onClick={() => setDecision("NEEDS_EDIT")}
+          title="Shortcut: E"
+        >
+          Needs Edit
+        </Button>
+        <Button
+          data-decision="REJECTED"
+          variant={decision === "REJECTED" ? "destructive" : "outline"}
+          size="sm"
+          onClick={() => setDecision("REJECTED")}
+          title="Shortcut: R"
+        >
+          Reject
+        </Button>
       </div>
+      {hasEdits && (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">
+            Approve is only for no edits. Use <strong>Needs Edit</strong> when you changed:
+          </p>
+          <p className="text-xs font-medium text-amber-700 dark:text-amber-400" title="Revert these to allow Approve">
+            {editsSummary.length > 0 ? editsSummary.join(" · ") : "—"}
+          </p>
+        </div>
+      )}
 
       <div className="grid gap-2">
         <Label className="text-xs">Notes</Label>
-        <textarea className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="Optional notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <textarea
+          className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          placeholder="Optional notes for downstream"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
       </div>
 
       <div className="grid gap-3">
-        <Label className="text-xs">Issue tags</Label>
-        <div className="flex flex-wrap gap-1.5 rounded-md border p-3">
-          {REVIEW_ISSUE_TAGS.map((tag) => (
-            <button key={tag} type="button" onClick={() => toggleTag(tag)} className={cn("rounded-md border px-2 py-1 text-xs transition-colors", tags.includes(tag) ? "border-primary bg-primary text-primary-foreground" : "border-input bg-background hover:bg-muted")}>{tag}</button>
-          ))}
+        <Label className="text-xs">Issue tags (what went wrong — for the next generation)</Label>
+        <div className="space-y-2 rounded-md border border-border/80 bg-muted/30 p-3">
+          <p className="text-xs text-muted-foreground">
+            Rework is always a new generation. Use hook, caption, and hashtags in{" "}
+            <strong className="text-foreground">Edits for rework</strong> for concrete overrides.
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {REVIEW_ISSUE_TAGS.map((tag) => (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTag(tag)}
+                className={cn(
+                  "rounded-md border px-2 py-1 text-xs transition-colors",
+                  tags.includes(tag)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-input bg-background hover:bg-muted"
+                )}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       <div className="grid gap-2">
         <Label className="text-xs">Validator</Label>
-        <input type="text" className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" placeholder="Your name or ID" value={validator} onChange={(e) => setValidator(e.target.value)} />
+        <input
+          type="text"
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          placeholder="Your name or ID"
+          value={validator}
+          onChange={(e) => setValidator(e.target.value)}
+        />
       </div>
 
-      {submittedMessage && <p className="text-sm font-medium text-green-700 dark:text-green-400">{submittedMessage}. Taking you back…</p>}
+      {submittedMessage && (
+        <p className="text-sm font-medium text-green-700 dark:text-green-400">
+          {submittedMessage}. Taking you back to queue…
+        </p>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <Button onClick={submit} disabled={submitting || !!submittedMessage}>
         {submitting ? "Submitting…" : submittedMessage ? "Submitted" : "Submit decision"}
       </Button>
+
+      <p className="text-xs text-muted-foreground">
+        Shortcuts: A (Approve), E (Needs Edit), R (Reject)
+      </p>
     </div>
   );
 }

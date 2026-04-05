@@ -1,10 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
+import { CarouselEdits, CarouselEditsExport } from "@/components/CarouselEdits";
+import { buildSlidesJson, createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
+import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
+
+function hashtagsInitialFromRow(data: ReviewQueueRow): string {
+  const override = (data.final_hashtags_override ?? "").trim();
+  if (override) return override;
+  const plain = (data.generated_hashtags ?? "").trim();
+  if (plain) return plain;
+  const json = (data.generated_hashtags_json ?? "").trim();
+  if (!json) return "";
+  try {
+    const parsed = JSON.parse(json) as unknown;
+    if (Array.isArray(parsed)) return parsed.map((x) => String(x)).join(" ");
+    if (typeof parsed === "string") return parsed;
+  } catch { /* use raw */ }
+  return json;
+}
 
 interface TaskDetailResponse {
   rowIndex: number;
@@ -13,16 +32,6 @@ interface TaskDetailResponse {
 
 interface AssetsResponse {
   assets: { position: number; public_url: string }[];
-}
-
-function InfoRow({ label, value }: { label: string; value: string | undefined }) {
-  if (!value) return null;
-  return (
-    <div className="flex justify-between gap-4 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="text-right font-medium">{value}</span>
-    </div>
-  );
 }
 
 export default function TaskPage() {
@@ -34,6 +43,39 @@ export default function TaskPage() {
   const [assetUrls, setAssetUrls] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const { slides: initialSlides, raw: rawPayload } = useMemo(
+    () => parseSlidesFromJson(data?.generated_slides_json?.trim() || undefined),
+    [data?.generated_slides_json]
+  );
+
+  const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
+  const [editedCaption, setEditedCaption] = useState("");
+  const [editedTitle, setEditedTitle] = useState("");
+  const [editedHook, setEditedHook] = useState("");
+  const [editedHashtags, setEditedHashtags] = useState("");
+
+  useEffect(() => { setEditedSlides([]); }, [task_id]);
+
+  useEffect(() => {
+    if (initialSlides.length > 0) {
+      setEditedSlides(initialSlides);
+      return;
+    }
+    if (assetUrls.length > 0) {
+      setEditedSlides((prev) =>
+        prev.length !== assetUrls.length ? createSyntheticSlides(assetUrls.length) : prev
+      );
+    }
+  }, [initialSlides, initialSlides.length, assetUrls.length]);
+
+  useEffect(() => {
+    if (!data) return;
+    setEditedCaption((data.final_caption_override ?? data.generated_caption ?? "").trim());
+    setEditedTitle((data.final_title_override ?? data.generated_title ?? "").trim());
+    setEditedHook((data.final_hook_override ?? data.generated_hook ?? "").trim());
+    setEditedHashtags(hashtagsInitialFromRow(data));
+  }, [data]);
 
   const fetchTask = useCallback(async () => {
     if (!task_id) return;
@@ -47,6 +89,7 @@ export default function TaskPage() {
       if (taskRes.status === 404) {
         setError("Task not found");
         setData(null);
+        setAssetUrls([]);
         return;
       }
       if (!taskRes.ok) throw new Error(await taskRes.text());
@@ -60,22 +103,77 @@ export default function TaskPage() {
             .map((a) => a.public_url)
             .filter(Boolean) as string[]
         );
+      } else {
+        setAssetUrls([]);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load task");
       setData(null);
+      setAssetUrls([]);
     } finally {
       setLoading(false);
     }
   }, [task_id]);
 
-  useEffect(() => {
-    fetchTask();
-  }, [fetchTask]);
+  useEffect(() => { fetchTask(); }, [fetchTask]);
 
-  const decision = (data?.decision ?? "").trim();
-  const notes = (data?.notes ?? "").trim();
+  const decision = useMemo(() => (data?.decision ?? "").trim(), [data?.decision]);
+  const notes = useMemo(() => (data?.notes ?? "").trim(), [data?.notes]);
   const runId = (data?.run_id ?? "").trim();
+
+  const { hasEdits, editsSummary } = useMemo(() => {
+    const summary: string[] = [];
+    if (!data) return { hasEdits: false, editsSummary: [] };
+    const initialTitle = (data.final_title_override ?? data.generated_title ?? "").trim();
+    const initialHook = (data.final_hook_override ?? data.generated_hook ?? "").trim();
+    const initialCaption = (data.final_caption_override ?? data.generated_caption ?? "").trim();
+    const initialHashtags = hashtagsInitialFromRow(data);
+    if (editedTitle !== initialTitle) summary.push("Title");
+    if (editedHook !== initialHook) summary.push("Hook");
+    if (editedCaption !== initialCaption) summary.push("Caption");
+    if (editedHashtags !== initialHashtags) summary.push("Hashtags");
+    const hadParsedSlides = initialSlides.length > 0;
+    if (hadParsedSlides) {
+      if (editedSlides.length !== initialSlides.length) {
+        summary.push("Slides (count)");
+      } else {
+        for (let i = 0; i < editedSlides.length; i++) {
+          const a = editedSlides[i];
+          const b = initialSlides[i];
+          if (!b || a.headline !== b.headline || a.body !== b.body) summary.push(`Slide ${i + 1}`);
+        }
+      }
+    }
+    return { hasEdits: summary.length > 0, editsSummary: summary };
+  }, [data, editedTitle, editedHook, editedCaption, editedHashtags, editedSlides, initialSlides]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        if (!hasEdits) {
+          const btn = document.querySelector('[data-decision="APPROVED"]') as HTMLButtonElement;
+          btn?.click();
+        }
+      }
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        (document.querySelector('[data-decision="NEEDS_EDIT"]') as HTMLButtonElement)?.click();
+      }
+      if (e.key === "r" || e.key === "R") {
+        e.preventDefault();
+        (document.querySelector('[data-decision="REJECTED"]') as HTMLButtonElement)?.click();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [hasEdits]);
+
+  const finalSlidesJsonOverride =
+    editedSlides.length > 0 && rawPayload !== undefined
+      ? JSON.stringify(buildSlidesJson(editedSlides, rawPayload))
+      : undefined;
 
   return (
     <div className="min-h-screen bg-background">
@@ -108,75 +206,61 @@ export default function TaskPage() {
 
         {data && !loading && (
           <div className="grid gap-6 lg:grid-cols-[1fr,340px] lg:gap-8">
-            <div className="min-w-0 space-y-4">
-              {assetUrls.length > 0 && (
-                <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-                  <p className="text-sm font-medium">Assets</p>
-                  <div className="flex flex-col gap-4 overflow-auto max-h-[70vh]">
-                    {assetUrls.map((url, i) => (
-                      <img
-                        key={i}
-                        src={url}
-                        alt={`Asset ${i + 1}`}
-                        className="max-h-[500px] w-auto rounded border object-contain"
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="rounded-lg border bg-card p-4 space-y-3">
-                <h2 className="text-sm font-semibold">Task Details</h2>
-                <InfoRow label="Task ID" value={data.task_id} />
-                <InfoRow label="Run ID" value={data.run_id} />
-                <InfoRow label="Platform" value={data.platform} />
-                <InfoRow label="Flow Type" value={data.flow_type} />
-                <InfoRow label="Recommended Route" value={data.recommended_route} />
-                <InfoRow label="QC Status" value={data.qc_status} />
-                <InfoRow label="Risk Score" value={data.risk_score} />
-                <InfoRow label="Review Status" value={data.review_status} />
-              </div>
-
-              {data.generated_title && (
-                <div className="rounded-lg border bg-card p-4 space-y-2">
-                  <h2 className="text-sm font-semibold">Generated Content</h2>
-                  {data.generated_title && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">Title</p>
-                      <p className="text-sm">{data.generated_title}</p>
-                    </div>
-                  )}
-                  {data.generated_hook && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">Hook</p>
-                      <p className="text-sm">{data.generated_hook}</p>
-                    </div>
-                  )}
-                  {data.generated_caption && (
-                    <div>
-                      <p className="text-xs text-muted-foreground">Caption</p>
-                      <p className="text-sm whitespace-pre-wrap">{data.generated_caption}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {data.generated_slides_json && (
-                <div className="rounded-lg border bg-card p-4 space-y-2">
-                  <h2 className="text-sm font-semibold">Slides JSON</h2>
-                  <pre className="max-h-[30vh] overflow-auto whitespace-pre-wrap rounded bg-background p-3 text-xs">
-                    {data.generated_slides_json}
-                  </pre>
-                </div>
-              )}
+            <div className="min-w-0">
+              <TaskViewer
+                data={data}
+                assetUrls={assetUrls}
+                editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
+                onSlidesChange={setEditedSlides}
+                fallbackPreviewUrl={assetUrls?.[0]}
+              />
             </div>
-
             <div className="flex min-w-0 flex-col gap-6">
+              <CarouselEdits
+                taskId={task_id}
+                runId={runId || undefined}
+                editedSlides={editedSlides}
+                rawPayload={rawPayload ?? null}
+                finalTitleOverride={editedTitle}
+                onFinalTitleOverrideChange={setEditedTitle}
+                finalHookOverride={editedHook}
+                onFinalHookOverrideChange={setEditedHook}
+                generatedCaption={editedCaption}
+                onCaptionChange={setEditedCaption}
+                finalHashtagsOverride={editedHashtags}
+                onFinalHashtagsOverrideChange={setEditedHashtags}
+                extraFields={{
+                  generated_title: (data.generated_title ?? "").trim(),
+                  generated_hook: (data.generated_hook ?? "").trim(),
+                }}
+                exportAtEnd
+              />
               <DecisionPanel
                 taskId={task_id}
                 onSuccess={() => router.push("/")}
                 existingDecision={decision}
                 existingNotes={notes}
+                finalTitleOverride={editedTitle}
+                finalHookOverride={editedHook}
+                finalCaptionOverride={editedCaption}
+                finalHashtagsOverride={editedHashtags}
+                finalSlidesJsonOverride={finalSlidesJsonOverride}
+                hasEdits={hasEdits}
+                editsSummary={editsSummary}
+              />
+              <CarouselEditsExport
+                taskId={task_id}
+                runId={runId || undefined}
+                editedSlides={editedSlides}
+                rawPayload={rawPayload ?? null}
+                finalTitleOverride={editedTitle}
+                finalHookOverride={editedHook}
+                generatedCaption={editedCaption}
+                finalHashtagsOverride={editedHashtags}
+                extraFields={{
+                  generated_title: (data.generated_title ?? "").trim(),
+                  generated_hook: (data.generated_hook ?? "").trim(),
+                }}
               />
             </div>
           </div>
