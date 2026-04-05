@@ -176,96 +176,101 @@ export default function TaskPage() {
       : undefined;
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-            ← Workbench
-          </Link>
-          {runId && (
-            <Link
-              href={`/r/${encodeURIComponent(runId)}`}
-              className="text-sm text-muted-foreground hover:text-foreground"
-            >
-              Run: {runId}
-            </Link>
-          )}
-          <h1 className="min-w-0 truncate text-base font-semibold text-card-foreground sm:text-lg">
-            {task_id}
-          </h1>
+    <>
+      <div className="detail-back">
+        <Link href="/">← Back to Workbench</Link>
+        {runId && (
+          <> · <Link href={`/r/${encodeURIComponent(runId)}`}>Run: {runId}</Link></>
+        )}
+      </div>
+      <h1 className="detail-title">{data?.generated_title || task_id}</h1>
+      <p className="detail-subtitle">
+        {data?.platform && <>{data.platform} · </>}
+        {data?.flow_type && <>{data.flow_type} · </>}
+        {task_id}
+      </p>
+
+      {error && (
+        <div style={{ margin: "0 28px 16px", padding: 12, background: "var(--red-bg)", color: "var(--red)", borderRadius: 8, fontSize: 13 }}>
+          {error}
         </div>
-      </header>
+      )}
+      {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
 
-      <main className="p-4 sm:p-6">
-        {error && (
-          <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-            {error}
-          </div>
-        )}
-        {loading && !data && <div className="text-muted-foreground">Loading…</div>}
+      {data && !loading && (
+        <div className="detail-grid">
+          <div style={{ minWidth: 0 }}>
+            <TaskViewer
+              data={data}
+              assetUrls={assetUrls}
+              editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
+              onSlidesChange={setEditedSlides}
+              fallbackPreviewUrl={assetUrls?.[0]}
+            />
 
-        {data && !loading && (
-          <div className="grid gap-6 lg:grid-cols-[1fr,340px] lg:gap-8">
-            <div className="min-w-0">
-              <TaskViewer
-                data={data}
-                assetUrls={assetUrls}
-                editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
-                onSlidesChange={setEditedSlides}
-                fallbackPreviewUrl={assetUrls?.[0]}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col gap-6">
-              <CarouselEdits
-                taskId={task_id}
-                runId={runId || undefined}
-                editedSlides={editedSlides}
-                rawPayload={rawPayload ?? null}
-                finalTitleOverride={editedTitle}
-                onFinalTitleOverrideChange={setEditedTitle}
-                finalHookOverride={editedHook}
-                onFinalHookOverrideChange={setEditedHook}
-                generatedCaption={editedCaption}
-                onCaptionChange={setEditedCaption}
-                finalHashtagsOverride={editedHashtags}
-                onFinalHashtagsOverrideChange={setEditedHashtags}
-                extraFields={{
-                  generated_title: (data.generated_title ?? "").trim(),
-                  generated_hook: (data.generated_hook ?? "").trim(),
-                }}
-                exportAtEnd
-              />
-              <DecisionPanel
-                taskId={task_id}
-                onSuccess={() => router.push("/")}
-                existingDecision={decision}
-                existingNotes={notes}
-                finalTitleOverride={editedTitle}
-                finalHookOverride={editedHook}
-                finalCaptionOverride={editedCaption}
-                finalHashtagsOverride={editedHashtags}
-                finalSlidesJsonOverride={finalSlidesJsonOverride}
-                hasEdits={hasEdits}
-                editsSummary={editsSummary}
-              />
-              <CarouselEditsExport
-                taskId={task_id}
-                runId={runId || undefined}
-                editedSlides={editedSlides}
-                rawPayload={rawPayload ?? null}
-                finalTitleOverride={editedTitle}
-                finalHookOverride={editedHook}
-                generatedCaption={editedCaption}
-                finalHashtagsOverride={editedHashtags}
-                extraFields={{
-                  generated_title: (data.generated_title ?? "").trim(),
-                  generated_hook: (data.generated_hook ?? "").trim(),
-                }}
-              />
+            {/* Metadata card */}
+            <div className="card mt-4">
+              <div className="card-header">Task Info</div>
+              <div className="info-row"><span className="info-label">Task ID</span><span className="info-value font-mono">{task_id}</span></div>
+              <div className="info-row"><span className="info-label">Platform</span><span className="info-value">{data.platform || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Flow type</span><span className="info-value">{data.flow_type || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Route</span><span className="info-value">{data.recommended_route || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Run ID</span><span className="info-value">{runId || "—"}</span></div>
+              <div className="info-row"><span className="info-label">Risk</span><span className="info-value">{data.risk_score || "—"}</span></div>
+              <div className="info-row"><span className="info-label">QC</span><span className="info-value">{data.qc_status || "—"}</span></div>
             </div>
           </div>
-        )}
-      </main>
-    </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <CarouselEdits
+              taskId={task_id}
+              runId={runId || undefined}
+              editedSlides={editedSlides}
+              rawPayload={rawPayload ?? null}
+              finalTitleOverride={editedTitle}
+              onFinalTitleOverrideChange={setEditedTitle}
+              finalHookOverride={editedHook}
+              onFinalHookOverrideChange={setEditedHook}
+              generatedCaption={editedCaption}
+              onCaptionChange={setEditedCaption}
+              finalHashtagsOverride={editedHashtags}
+              onFinalHashtagsOverrideChange={setEditedHashtags}
+              extraFields={{
+                generated_title: (data.generated_title ?? "").trim(),
+                generated_hook: (data.generated_hook ?? "").trim(),
+              }}
+              exportAtEnd
+            />
+            <DecisionPanel
+              taskId={task_id}
+              onSuccess={() => router.push("/")}
+              existingDecision={decision}
+              existingNotes={notes}
+              finalTitleOverride={editedTitle}
+              finalHookOverride={editedHook}
+              finalCaptionOverride={editedCaption}
+              finalHashtagsOverride={editedHashtags}
+              finalSlidesJsonOverride={finalSlidesJsonOverride}
+              hasEdits={hasEdits}
+              editsSummary={editsSummary}
+            />
+            <CarouselEditsExport
+              taskId={task_id}
+              runId={runId || undefined}
+              editedSlides={editedSlides}
+              rawPayload={rawPayload ?? null}
+              finalTitleOverride={editedTitle}
+              finalHookOverride={editedHook}
+              generatedCaption={editedCaption}
+              finalHashtagsOverride={editedHashtags}
+              extraFields={{
+                generated_title: (data.generated_title ?? "").trim(),
+                generated_hook: (data.generated_hook ?? "").trim(),
+              }}
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

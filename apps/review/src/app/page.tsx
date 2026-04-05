@@ -2,6 +2,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
 import type { ReviewQueueRow } from "@/lib/types";
@@ -78,26 +79,31 @@ function WorkbenchContent() {
   ];
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-        <h1 className="text-lg font-semibold text-card-foreground sm:text-xl">CAF Review Console</h1>
-        <p className="text-xs text-muted-foreground sm:text-sm">Workbench</p>
-        <div className="mt-3 flex gap-2 border-t border-border/50 pt-3">
-          {tabStatuses.map(({ key, label }) => {
-            const isActive = validStatus === key;
-            const q = new URLSearchParams(searchParams.toString());
-            q.set("status", key);
-            return (
-              <a key={key} href={`/?${q.toString()}`}
-                className={`rounded-md px-3 py-1.5 text-sm font-medium no-underline ${isActive ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground"}`}>
-                {label}
-              </a>
-            );
-          })}
+    <>
+      <div className="page-header">
+        <div>
+          <h2>Review Console</h2>
+          <span className="page-header-sub">Workbench</span>
         </div>
-      </header>
-      <main className="flex flex-col gap-4 p-4 sm:flex-row sm:gap-6 sm:p-6">
-        <div className="w-full shrink-0 sm:w-64">
+      </div>
+
+      <div className="tabs">
+        {tabStatuses.map(({ key, label }) => {
+          const isActive = validStatus === key;
+          const q = new URLSearchParams(searchParams.toString());
+          q.set("status", key);
+          const count = data?.statusCounts?.[key];
+          return (
+            <Link key={key} href={`/?${q.toString()}`} className={`tab ${isActive ? "active" : ""}`}>
+              {label}
+              {count !== undefined && <span className="tab-count">{count}</span>}
+            </Link>
+          );
+        })}
+      </div>
+
+      <div className="workbench">
+        <div className="workbench-filters">
           <WorkbenchFilters
             projectValues={facets.project ?? []}
             runIdValues={facets.run_id ?? []}
@@ -107,27 +113,33 @@ function WorkbenchContent() {
             reviewStatusValues={data?.statusCounts ? Object.keys(data.statusCounts) : undefined}
           />
         </div>
-        <div className="min-w-0 flex-1 overflow-hidden">
-          {error && (<div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>)}
-          {loading && !data && (<div className="text-muted-foreground">Loading…</div>)}
+        <div className="workbench-table">
+          {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
+          {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
           {data && !loading && (
-            <TaskTable items={data.items} groupBy={groupBy} page={data.page} limit={data.limit} total={data.total} missingPreviewCount={data.missingPreviewCount} statusCounts={data.statusCounts} contentSlug={validStatus === "in_review" ? "t" : "content"} />
+            <TaskTable
+              items={data.items}
+              groupBy={groupBy}
+              page={data.page}
+              limit={data.limit}
+              total={data.total}
+              missingPreviewCount={data.missingPreviewCount}
+              statusCounts={data.statusCounts}
+              contentSlug={validStatus === "in_review" ? "t" : "content"}
+            />
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
 
 export default function WorkbenchPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-background">
-        <header className="border-b bg-card px-6 py-4">
-          <h1 className="text-xl font-semibold">CAF Review Console</h1>
-          <p className="text-sm text-muted-foreground">Workbench</p>
-        </header>
-        <main className="flex gap-6 p-6"><div className="text-muted-foreground">Loading…</div></main>
+      <div>
+        <div className="page-header"><h2>Review Console</h2></div>
+        <div style={{ padding: "28px", color: "var(--muted)" }}>Loading…</div>
       </div>
     }>
       <WorkbenchContent />

@@ -1,10 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 
 const SWIPE_THRESHOLD = 50;
@@ -77,39 +73,43 @@ export function CarouselSlider({
 
   if (slides.length === 0) {
     return (
-      <div className={cn("rounded-lg border bg-muted/30 p-4", className)}>
-        <p className="text-sm text-muted-foreground">No slides in this carousel.</p>
+      <div className={`card ${className ?? ""}`}>
+        <p style={{ fontSize: 13, color: "var(--fg-secondary)" }}>No slides in this carousel.</p>
       </div>
     );
   }
 
   return (
-    <div className={cn("space-y-4 rounded-lg border bg-muted/30 p-3 sm:p-4", className)}>
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold">Carousel slides</h3>
-        <span className="text-xs text-muted-foreground">Slide {currentIndex + 1} of {total}</span>
+    <div className={`card ${className ?? ""}`}>
+      <div className="flex items-center justify-between mb-3">
+        <h3 style={{ fontSize: 13, fontWeight: 600 }}>Carousel slides</h3>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
       </div>
 
       {imageUrl && (
-        <div className="flex items-center gap-1 sm:gap-2">
+        <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
           <button
             type="button"
             aria-label="Previous slide"
             onClick={goPrev}
             disabled={!canPrev}
-            className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-black text-white shadow-md disabled:cursor-not-allowed disabled:opacity-40 hover:enabled:bg-black/90 sm:h-10 sm:w-10"
+            style={{
+              width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
+              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 20, flexShrink: 0, opacity: canPrev ? 1 : 0.4,
+            }}
           >
-            <span className="text-xl leading-none">&#8249;</span>
+            &#8249;
           </button>
           <div
-            className="min-w-0 flex-1 overflow-hidden rounded-lg border bg-card touch-pan-y"
+            style={{ flex: 1, minWidth: 0, overflow: "hidden", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
             onTouchStart={onTouchStart}
             onTouchEnd={onTouchEnd}
           >
             <img
               src={imageUrl}
               alt={`Slide ${currentIndex + 1}`}
-              className="h-auto max-h-[50vh] w-full max-w-full object-contain select-none"
+              style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
               draggable={false}
             />
           </div>
@@ -118,83 +118,87 @@ export function CarouselSlider({
             aria-label="Next slide"
             onClick={goNext}
             disabled={!canNext}
-            className="flex h-11 w-11 shrink-0 touch-manipulation items-center justify-center rounded-full bg-black text-white shadow-md disabled:cursor-not-allowed disabled:opacity-40 hover:enabled:bg-black/90 sm:h-10 sm:w-10"
+            style={{
+              width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
+              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 20, flexShrink: 0, opacity: canNext ? 1 : 0.4,
+            }}
           >
-            <span className="text-xl leading-none">&#8250;</span>
+            &#8250;
           </button>
         </div>
       )}
 
       {!readOnly && (
-        <div className="space-y-3 rounded border bg-card p-4">
-          {slide.type === "cover" && (
+        <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>
+          {(slide.type === "cover" || slide.type === "body") && (
             <>
-              <div className="grid gap-2">
-                <Label className="text-xs">Headline / Title</Label>
-                <Input value={slide.headline} onChange={(e) => updateSlide(currentIndex, { headline: e.target.value })} placeholder="Cover headline" className="font-medium" />
+              <div style={{ marginBottom: 10 }}>
+                <label className="filter-label">{slide.type === "cover" ? "Headline / Title" : "Headline"}</label>
+                <input
+                  type="text"
+                  value={slide.headline}
+                  onChange={(e) => updateSlide(currentIndex, { headline: e.target.value })}
+                  placeholder={slide.type === "cover" ? "Cover headline" : "Slide headline"}
+                  style={{ fontWeight: 500 }}
+                />
               </div>
-              <div className="grid gap-2">
-                <Label className="text-xs">Subtitle / Body</Label>
-                <textarea value={slide.body} onChange={(e) => updateSlide(currentIndex, { body: e.target.value })} placeholder="Cover subtitle" className="min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm" rows={2} />
-              </div>
-            </>
-          )}
-          {slide.type === "body" && (
-            <>
-              <div className="grid gap-2">
-                <Label className="text-xs">Headline</Label>
-                <Input value={slide.headline} onChange={(e) => updateSlide(currentIndex, { headline: e.target.value })} placeholder="Slide headline" className="font-medium" />
-              </div>
-              <div className="grid gap-2">
-                <Label className="text-xs">Body</Label>
-                <textarea value={slide.body} onChange={(e) => updateSlide(currentIndex, { body: e.target.value })} placeholder="Slide body text" className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm" rows={3} />
+              <div style={{ marginBottom: 10 }}>
+                <label className="filter-label">{slide.type === "cover" ? "Subtitle / Body" : "Body"}</label>
+                <textarea
+                  value={slide.body}
+                  onChange={(e) => updateSlide(currentIndex, { body: e.target.value })}
+                  placeholder={slide.type === "cover" ? "Cover subtitle" : "Slide body text"}
+                  rows={slide.type === "cover" ? 2 : 3}
+                  style={{ minHeight: slide.type === "cover" ? 60 : 80 }}
+                />
               </div>
             </>
           )}
           {slide.type === "cta" && (
             <>
-              <div className="grid gap-2">
-                <Label className="text-xs">CTA text</Label>
-                <Input value={slide.body} onChange={(e) => updateSlide(currentIndex, { body: e.target.value })} placeholder="Call to action text" />
+              <div style={{ marginBottom: 10 }}>
+                <label className="filter-label">CTA text</label>
+                <input type="text" value={slide.body} onChange={(e) => updateSlide(currentIndex, { body: e.target.value })} placeholder="Call to action text" />
               </div>
-              <div className="grid gap-2">
-                <Label className="text-xs">Handle / Link</Label>
-                <Input value={slide.handle} onChange={(e) => updateSlide(currentIndex, { handle: e.target.value })} placeholder="e.g. @handle or link" />
+              <div style={{ marginBottom: 10 }}>
+                <label className="filter-label">Handle / Link</label>
+                <input type="text" value={slide.handle} onChange={(e) => updateSlide(currentIndex, { handle: e.target.value })} placeholder="e.g. @handle or link" />
               </div>
             </>
           )}
-          <div className="pt-2">
-            <Button type="button" size="sm" onClick={handleSaveSlide} disabled={savedAt === currentIndex}>
-              {savedAt === currentIndex ? "Saved" : "Save slide"}
-            </Button>
-          </div>
+          <button type="button" className="btn-primary" onClick={handleSaveSlide} disabled={savedAt === currentIndex} style={{ fontSize: 12, padding: "6px 14px" }}>
+            {savedAt === currentIndex ? "Saved" : "Save slide"}
+          </button>
         </div>
       )}
 
       {readOnly && (slide.headline || slide.body || slide.handle) && (
-        <div className="rounded border bg-card p-4 text-sm">
-          {slide.headline && <p className="font-medium">{slide.headline}</p>}
-          {slide.body && <p className="mt-1 text-muted-foreground">{slide.body}</p>}
-          {slide.handle && <p className="mt-1 text-muted-foreground">{slide.handle}</p>}
+        <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
+          {slide.headline && <p style={{ fontWeight: 500 }}>{slide.headline}</p>}
+          {slide.body && <p style={{ marginTop: 4, color: "var(--fg-secondary)" }}>{slide.body}</p>}
+          {slide.handle && <p style={{ marginTop: 4, color: "var(--fg-secondary)" }}>{slide.handle}</p>}
         </div>
       )}
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={goPrev} disabled={!canPrev}>← Previous</Button>
-          <Button type="button" variant="outline" size="sm" onClick={goNext} disabled={!canNext}>Next →</Button>
+      <div className="flex items-center justify-between">
+        <div className="flex gap-2">
+          <button type="button" className="btn-ghost" onClick={goPrev} disabled={!canPrev}>← Previous</button>
+          <button type="button" className="btn-ghost" onClick={goNext} disabled={!canNext}>Next →</button>
         </div>
-        <div className="flex flex-wrap justify-center gap-1 sm:justify-start">
+        <div className="flex gap-2" style={{ alignItems: "center" }}>
           {slides.map((_, i) => (
             <button
               key={i}
               type="button"
               aria-label={`Go to slide ${i + 1}`}
               onClick={() => setCurrentIndex(i)}
-              className={cn(
-                "h-2 w-2 rounded-full transition-colors touch-manipulation",
-                i === currentIndex ? "bg-primary ring-2 ring-primary/30 ring-offset-2" : "bg-muted-foreground/40 hover:bg-muted-foreground/60"
-              )}
+              style={{
+                width: 8, height: 8, borderRadius: "50%", padding: 0, border: "none",
+                background: i === currentIndex ? "var(--accent)" : "rgba(255,255,255,0.3)",
+                transition: "background 0.15s",
+                boxShadow: i === currentIndex ? "0 0 0 3px rgba(59,130,246,0.3)" : "none",
+              }}
             />
           ))}
         </div>

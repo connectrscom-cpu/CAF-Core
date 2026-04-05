@@ -34,25 +34,26 @@ export default function ApprovedPage() {
   useEffect(() => { fetchApproved(); }, [fetchApproved]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-        <h1 className="text-lg font-semibold text-card-foreground sm:text-xl">Approved content</h1>
-        <p className="text-xs text-muted-foreground sm:text-sm">Tasks with status Approved.</p>
-      </header>
-      <main className="flex flex-col gap-4 p-4 sm:p-6">
-        <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">← Review Console</Link>
-        {error && (
-          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
-        )}
-        {loading && !data && <div className="text-muted-foreground">Loading…</div>}
+    <>
+      <div className="page-header">
+        <div>
+          <h2>Approved Content</h2>
+          <span className="page-header-sub">Tasks with status Approved</span>
+        </div>
+      </div>
+
+      <div style={{ padding: "20px 28px 28px" }}>
+        <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 16, display: "inline-block" }}>← Review Console</Link>
+        {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
+        {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
         {data && !loading && (
           data.items.length === 0 ? (
-            <p className="text-muted-foreground">No approved content yet.</p>
+            <p style={{ color: "var(--muted)" }}>No approved content yet.</p>
           ) : (
             <TaskTable items={data.items} groupBy="" page={1} limit={data.total} total={data.total} contentSlug="content" />
           )
         )}
-      </main>
-    </div>
+      </div>
+    </>
   );
 }

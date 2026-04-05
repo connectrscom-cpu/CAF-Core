@@ -1,8 +1,6 @@
 "use client";
 
 import { useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { buildSlidesJson } from "@/lib/carousel-slides";
 import type { NormalizedSlide, CarouselSlidesPayload } from "@/lib/carousel-slides";
 
@@ -61,59 +59,57 @@ export function CarouselEdits({
   }, [taskId, runId, editedSlides, rawPayload, finalTitleOverride, finalHookOverride, generatedCaption, finalHashtagsOverride, extraFields]);
 
   return (
-    <div className="space-y-4 rounded-lg border bg-card p-4 text-card-foreground">
-      <h3 className="text-sm font-semibold">Edits for rework</h3>
+    <div className="card">
+      <div className="card-header">Edits for rework</div>
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Final title override</Label>
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Final title override</label>
         <input
           type="text"
           value={finalTitleOverride}
           onChange={(e) => onFinalTitleOverrideChange(e.target.value)}
           placeholder="Override title (saved with decision)"
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
       </div>
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Hook / opening line (override for next generation)</Label>
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Hook / opening line (override for next generation)</label>
         <input
           type="text"
           value={finalHookOverride}
           onChange={(e) => onFinalHookOverrideChange(e.target.value)}
           placeholder="Suggested opening or on-screen hook text"
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
         />
       </div>
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Caption suggestion (for next generation)</Label>
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Caption suggestion (for next generation)</label>
         <textarea
           value={generatedCaption}
           onChange={(e) => onCaptionChange(e.target.value)}
           placeholder="Full post caption you want the next run to aim for"
-          className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           rows={3}
+          style={{ minHeight: 80 }}
         />
       </div>
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Hashtags (for next generation)</Label>
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Hashtags (for next generation)</label>
         <textarea
           value={finalHashtagsOverride}
           onChange={(e) => onFinalHashtagsOverrideChange(e.target.value)}
           placeholder="#example #hashtags or space-separated — saved with decision"
-          className="min-h-[64px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           rows={2}
+          style={{ minHeight: 64 }}
         />
       </div>
 
       {!exportAtEnd && (
         <>
-          <Button type="button" variant="outline" onClick={exportEdited} className="w-full">
+          <button type="button" className="btn-ghost" onClick={exportEdited} style={{ width: "100%" }}>
             Export edited JSON (for rework flow)
-          </Button>
-          <p className="text-xs text-muted-foreground">
+          </button>
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
             Downloads a JSON file with edited slides, caption, and task id for the rework pipeline.
           </p>
         </>
@@ -167,12 +163,12 @@ export function CarouselEditsExport({
   }, [taskId, runId, editedSlides, rawPayload, finalTitleOverride, finalHookOverride, generatedCaption, finalHashtagsOverride, extraFields]);
 
   return (
-    <div className="space-y-2 rounded-lg border bg-card p-4 text-card-foreground">
-      <h3 className="text-sm font-semibold">End of review</h3>
-      <Button type="button" variant="outline" onClick={exportEdited} className="w-full">
+    <div className="card">
+      <div className="card-header">End of review</div>
+      <button type="button" className="btn-ghost" onClick={exportEdited} style={{ width: "100%" }}>
         Export edited JSON (for rework flow)
-      </Button>
-      <p className="text-xs text-muted-foreground">
+      </button>
+      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
         Download JSON with edited slides, caption, and task id for the rework pipeline.
       </p>
     </div>

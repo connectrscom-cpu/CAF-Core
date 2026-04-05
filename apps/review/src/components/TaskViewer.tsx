@@ -79,9 +79,9 @@ export function TaskViewer({
 
   if (showCarouselPreferred) {
     return (
-      <div className="space-y-4">
+      <div>
         {previewUrl && (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline">
+          <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, display: "inline-block", marginBottom: 12 }}>
             Open link in new tab
           </a>
         )}
@@ -97,23 +97,19 @@ export function TaskViewer({
 
   if (showVideo) {
     return (
-      <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-        <p className="mb-2 text-sm font-medium">Preview</p>
+      <div className="card">
+        <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
         <video
           src={effectiveVideoUrl}
           controls
           playsInline
-          className="max-h-[70vh] w-full max-w-full rounded bg-black"
+          style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
           onError={() => setVideoLoadFailed(true)}
         />
-        <div className="flex flex-wrap gap-3 text-sm">
-          <a href={effectiveVideoUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-            Open video in new tab
-          </a>
+        <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
+          <a href={effectiveVideoUrl} target="_blank" rel="noopener noreferrer">Open video in new tab</a>
           {previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground hover:underline">
-              Open content link
-            </a>
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>Open content link</a>
           )}
         </div>
       </div>
@@ -122,21 +118,17 @@ export function TaskViewer({
 
   if (showSingleImage) {
     return (
-      <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-        <p className="mb-2 text-sm font-medium">Preview</p>
+      <div className="card">
+        <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
         <img
           src={singleImageSrc}
           alt={flowType ? `${flowType} preview` : "Preview"}
-          className="max-h-[70vh] w-full max-w-full rounded object-contain"
+          style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, objectFit: "contain" }}
         />
-        <div className="flex flex-wrap gap-3 text-sm">
-          <a href={singleImageSrc} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
-            Open image in new tab
-          </a>
+        <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
+          <a href={singleImageSrc} target="_blank" rel="noopener noreferrer">Open image in new tab</a>
           {previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-foreground hover:underline">
-              Open content link
-            </a>
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>Open content link</a>
           )}
         </div>
       </div>
@@ -145,13 +137,13 @@ export function TaskViewer({
 
   if (slides && slides.length > 0) {
     return (
-      <div className="space-y-4">
-        <p className="text-sm font-medium">Carousel (generated_slides_json)</p>
-        <div className="flex flex-col gap-4 rounded-lg border bg-muted/30 p-4">
+      <div>
+        <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Carousel (generated_slides_json)</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {slides.map((slide: Record<string, unknown>, i: number) => (
-            <div key={i} className="rounded border bg-card p-4 text-card-foreground shadow-sm">
+            <div key={i} className="card">
               {typeof slide === "object" && slide !== null && (
-                <pre className="whitespace-pre-wrap text-sm">{JSON.stringify(slide, null, 2)}</pre>
+                <pre className="slides-json">{JSON.stringify(slide, null, 2)}</pre>
               )}
             </div>
           ))}
@@ -166,20 +158,20 @@ export function TaskViewer({
   if (!slidesJson) reasons.push("no generated_slides_json");
 
   return (
-    <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-      <p className="text-sm font-medium">No inline preview</p>
-      <p className="text-sm text-muted-foreground">
+    <div className="card">
+      <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>No inline preview</p>
+      <p style={{ fontSize: 13, color: "var(--fg-secondary)" }}>
         {reasons.length ? reasons.join(" · ") : "Nothing to render."}
         {flowType ? ` Flow: ${flowType}.` : ""}
       </p>
       {previewUrl && (
-        <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="inline-block text-sm text-primary hover:underline">
+        <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 8, fontSize: 13 }}>
           Open content page
         </a>
       )}
-      <details className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Raw task data</summary>
-        <pre className="mt-2 max-h-[50vh] overflow-auto whitespace-pre-wrap rounded bg-background p-4 text-xs">
+      <details style={{ marginTop: 12, fontSize: 13 }}>
+        <summary style={{ cursor: "pointer", color: "var(--fg-secondary)" }}>Raw task data</summary>
+        <pre className="slides-json" style={{ marginTop: 8 }}>
           {JSON.stringify(data, null, 2)}
         </pre>
       </details>

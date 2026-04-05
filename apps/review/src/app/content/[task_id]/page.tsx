@@ -90,34 +90,34 @@ export default function ContentPage() {
   useEffect(() => { fetchContent(); }, [fetchContent]);
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-            ← Workbench
-          </Link>
-          <h1 className="min-w-0 truncate text-base font-semibold text-card-foreground sm:text-lg">
-            Content: {task_id}
-          </h1>
+    <>
+      <div className="detail-back">
+        <Link href="/">← Back to Workbench</Link>
+      </div>
+      <h1 className="detail-title">Content: {task_id}</h1>
+      <p className="detail-subtitle">
+        {data?.platform && <>{data.platform} · </>}
+        {data?.flow_type && <>{data.flow_type}</>}
+      </p>
+
+      {error && (
+        <div style={{ margin: "0 28px 16px", padding: 12, background: "var(--red-bg)", color: "var(--red)", borderRadius: 8, fontSize: 13 }}>
+          {error}
         </div>
-      </header>
-      <main className="p-4 sm:p-6">
-        {error && (
-          <div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">{error}</div>
-        )}
-        {loading && !data && <div className="text-muted-foreground">Loading…</div>}
-        {data && !loading && (
-          <div className="w-full max-w-4xl">
-            <TaskViewer
-              data={data}
-              assetUrls={assetUrls}
-              editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
-              fallbackPreviewUrl={assetUrls?.[0]}
-              readOnly
-            />
-          </div>
-        )}
-      </main>
-    </div>
+      )}
+      {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
+
+      {data && !loading && (
+        <div style={{ padding: "20px 28px 28px", maxWidth: 900 }}>
+          <TaskViewer
+            data={data}
+            assetUrls={assetUrls}
+            editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
+            fallbackPreviewUrl={assetUrls?.[0]}
+            readOnly
+          />
+        </div>
+      )}
+    </>
   );
 }

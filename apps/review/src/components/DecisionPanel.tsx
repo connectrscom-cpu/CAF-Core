@@ -1,9 +1,6 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
 import type { DecisionValue } from "@/lib/types";
 
 const REVIEW_ISSUE_TAGS = [
@@ -94,79 +91,84 @@ export function DecisionPanel({
   };
 
   return (
-    <div className="space-y-4 rounded-lg border bg-card p-4 text-card-foreground">
-      <h3 className="text-sm font-semibold">Decision</h3>
+    <div className="card">
+      <div className="card-header">Decision</div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button
+      <div className="decision-buttons">
+        <button
+          type="button"
           data-decision="APPROVED"
-          variant={decision === "APPROVED" ? "success" : "outline"}
-          size="sm"
+          className={`decision-btn decision-btn-approve ${decision === "APPROVED" ? "selected" : ""}`}
           onClick={() => setDecision("APPROVED")}
-          title={hasEdits ? "Not available when edits are made (use Needs Edit)" : "Shortcut: A"}
+          title={hasEdits ? "Not available when edits are made" : "Shortcut: A"}
           disabled={hasEdits}
         >
           Approve
-        </Button>
-        <Button
+        </button>
+        <button
+          type="button"
           data-decision="NEEDS_EDIT"
-          variant={decision === "NEEDS_EDIT" ? "warning" : "outline"}
-          size="sm"
+          className={`decision-btn decision-btn-edit ${decision === "NEEDS_EDIT" ? "selected" : ""}`}
           onClick={() => setDecision("NEEDS_EDIT")}
           title="Shortcut: E"
         >
           Needs Edit
-        </Button>
-        <Button
+        </button>
+        <button
+          type="button"
           data-decision="REJECTED"
-          variant={decision === "REJECTED" ? "destructive" : "outline"}
-          size="sm"
+          className={`decision-btn decision-btn-reject ${decision === "REJECTED" ? "selected" : ""}`}
           onClick={() => setDecision("REJECTED")}
           title="Shortcut: R"
         >
           Reject
-        </Button>
+        </button>
       </div>
+
       {hasEdits && (
-        <div className="space-y-1">
-          <p className="text-xs text-muted-foreground">
+        <div style={{ marginBottom: 14 }}>
+          <p style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
             Approve is only for no edits. Use <strong>Needs Edit</strong> when you changed:
           </p>
-          <p className="text-xs font-medium text-amber-700 dark:text-amber-400" title="Revert these to allow Approve">
+          <p style={{ fontSize: 12, fontWeight: 600, color: "var(--yellow)", marginTop: 4 }}>
             {editsSummary.length > 0 ? editsSummary.join(" · ") : "—"}
           </p>
         </div>
       )}
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Notes</Label>
+      <div style={{ marginBottom: 14 }}>
+        <label className="filter-label">Notes</label>
         <textarea
-          className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           placeholder="Optional notes for downstream"
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
+          rows={3}
+          style={{ minHeight: 80 }}
         />
       </div>
 
-      <div className="grid gap-3">
-        <Label className="text-xs">Issue tags (what went wrong — for the next generation)</Label>
-        <div className="space-y-2 rounded-md border border-border/80 bg-muted/30 p-3">
-          <p className="text-xs text-muted-foreground">
-            Rework is always a new generation. Use hook, caption, and hashtags in{" "}
-            <strong className="text-foreground">Edits for rework</strong> for concrete overrides.
+      <div style={{ marginBottom: 14 }}>
+        <label className="filter-label">Issue tags (what went wrong — for the next generation)</label>
+        <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: 8, marginTop: 6, border: "1px solid var(--border-subtle)" }}>
+          <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 8 }}>
+            Rework is always a new generation. Use hook, caption, and hashtags in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong> for concrete overrides.
           </p>
-          <div className="flex flex-wrap gap-1.5">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {REVIEW_ISSUE_TAGS.map((tag) => (
               <button
                 key={tag}
                 type="button"
                 onClick={() => toggleTag(tag)}
-                className={cn(
-                  "rounded-md border px-2 py-1 text-xs transition-colors",
-                  tags.includes(tag)
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-input bg-background hover:bg-muted"
-                )}
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  border: `1px solid ${tags.includes(tag) ? "var(--accent)" : "var(--border)"}`,
+                  background: tags.includes(tag) ? "var(--accent)" : "var(--card)",
+                  color: tags.includes(tag) ? "#fff" : "var(--fg-secondary)",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                }}
               >
                 {tag}
               </button>
@@ -175,11 +177,10 @@ export function DecisionPanel({
         </div>
       </div>
 
-      <div className="grid gap-2">
-        <Label className="text-xs">Validator</Label>
+      <div style={{ marginBottom: 14 }}>
+        <label className="filter-label">Validator</label>
         <input
           type="text"
-          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
           placeholder="Your name or ID"
           value={validator}
           onChange={(e) => setValidator(e.target.value)}
@@ -187,17 +188,23 @@ export function DecisionPanel({
       </div>
 
       {submittedMessage && (
-        <p className="text-sm font-medium text-green-700 dark:text-green-400">
+        <p style={{ fontSize: 13, fontWeight: 500, color: "var(--green)", marginBottom: 12 }}>
           {submittedMessage}. Taking you back to queue…
         </p>
       )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p style={{ fontSize: 13, color: "var(--red)", marginBottom: 12 }}>{error}</p>}
 
-      <Button onClick={submit} disabled={submitting || !!submittedMessage}>
+      <button
+        type="button"
+        className="btn-primary"
+        onClick={submit}
+        disabled={submitting || !!submittedMessage}
+        style={{ width: "100%" }}
+      >
         {submitting ? "Submitting…" : submittedMessage ? "Submitted" : "Submit decision"}
-      </Button>
+      </button>
 
-      <p className="text-xs text-muted-foreground">
+      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 10 }}>
         Shortcuts: A (Approve), E (Needs Edit), R (Reject)
       </p>
     </div>

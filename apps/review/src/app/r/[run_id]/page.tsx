@@ -5,7 +5,6 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
-import { Button } from "@/components/ui/button";
 import type { ReviewQueueRow } from "@/lib/types";
 
 interface TasksResponse {
@@ -69,23 +68,21 @@ function RunContent() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-10 border-b bg-card px-4 py-3 sm:px-6 sm:py-4">
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          <Link href="/" className="text-sm text-muted-foreground hover:text-foreground">
-            ← Workbench
-          </Link>
-          <h1 className="truncate text-base font-semibold text-card-foreground sm:text-xl">Run: {run_id}</h1>
-          {firstReadyTaskId && (
-            <Button size="sm" onClick={reviewNext} className="shrink-0">
-              Review next pending
-            </Button>
-          )}
+    <>
+      <div className="page-header">
+        <div>
+          <h2>Run: {run_id}</h2>
+          <span className="page-header-sub">Tasks belonging to this run</span>
         </div>
-      </header>
+        {firstReadyTaskId && (
+          <button type="button" className="btn-primary" onClick={reviewNext}>
+            Review next pending
+          </button>
+        )}
+      </div>
 
-      <main className="flex flex-col gap-4 p-4 sm:flex-row sm:gap-6 sm:p-6">
-        <div className="w-full shrink-0 sm:w-64">
+      <div className="workbench">
+        <div className="workbench-filters">
           <WorkbenchFilters
             basePath={`/r/${encodeURIComponent(run_id)}`}
             projectValues={facets.project ?? []}
@@ -96,8 +93,8 @@ function RunContent() {
             reviewStatusValues={data?.statusCounts ? Object.keys(data.statusCounts) : undefined}
           />
         </div>
-        <div className="min-w-0 flex-1 overflow-hidden">
-          {loading && !data && <div className="text-muted-foreground">Loading…</div>}
+        <div className="workbench-table">
+          {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
           {data && !loading && (
             <TaskTable
               items={data.items}
@@ -110,19 +107,17 @@ function RunContent() {
             />
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }
 
 export default function RunPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen bg-background">
-        <header className="border-b bg-card px-6 py-4">
-          <Link href="/" className="text-muted-foreground hover:text-foreground">← Workbench</Link>
-        </header>
-        <main className="p-6"><div className="text-muted-foreground">Loading…</div></main>
+      <div>
+        <div className="page-header"><h2>Run</h2></div>
+        <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>
       </div>
     }>
       <RunContent />
