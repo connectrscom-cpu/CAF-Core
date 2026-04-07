@@ -8,7 +8,8 @@ import { listHeygenConfig } from "../repositories/project-config.js";
 import { insertAsset } from "../repositories/assets.js";
 import { uploadBuffer, downloadUrl } from "./supabase-storage.js";
 import {
-  mergeHeygenConfig,
+  mergeHeygenConfigForJob,
+  resolveHeygenRenderMode,
   buildHeyGenRequestBody,
   runHeygenVideoWithBody,
 } from "./heygen-renderer.js";
@@ -49,7 +50,10 @@ export async function runScenePipeline(
     generation_payload: Record<string, unknown>;
   },
 ): Promise<void> {
-  await ensureSceneBundleInPayload(db, config, job.id);
+  const bundlePrep = await ensureSceneBundleInPayload(db, config, job.id);
+  if (!bundlePrep.ok) {
+    throw new Error(bundlePrep.error ?? "scene bundle preparation failed");
+  }
   const fresh = await qOne<{
     id: string;
     task_id: string;
@@ -74,8 +78,8 @@ export async function runScenePipeline(
   }
 
   const rows = await listHeygenConfig(db, job.project_id);
-  const renderMode = String(job.generation_payload.render_mode ?? gen.render_mode ?? "HEYGEN_AVATAR");
-  const mergedCfg = mergeHeygenConfig(rows, job.platform, job.flow_type, renderMode);
+  const renderMode = resolveHeygenRenderMode(job.flow_type, job.generation_payload.render_mode ?? gen.render_mode);
+  const mergedCfg = mergeHeygenConfigForJob(rows, job.platform, job.flow_type, renderMode);
 
   const sceneUrls: string[] = [];
   let ord = 0;

@@ -1432,6 +1432,36 @@ function copyJobLastErr(ev,ix){
     flashOk();
   }
 }
+/** Copy expanded job detail (summary, content preview, API audit, render state, etc.) as plain text for debugging. */
+function copyJobDetailFull(ev){
+  if(ev)ev.stopPropagation();
+  var btn=ev&&ev.currentTarget;
+  var root=btn&&btn.closest('.job-detail-body');
+  if(!root)return;
+  var parts=[];
+  for(var i=0;i<root.children.length;i++){
+    var n=root.children[i];
+    if(n.classList&&n.classList.contains('job-detail-toolbar'))continue;
+    var chunk=(n.innerText!=null?n.innerText:String(n.textContent||'')).trim();
+    if(chunk)parts.push(chunk);
+  }
+  var text=parts.join('\\n\\n');
+  if(!text)return;
+  function flashOk(){
+    if(btn&&btn.tagName==='BUTTON'){
+      var o=btn.textContent;
+      btn.textContent='Copied';
+      btn.disabled=true;
+      setTimeout(function(){btn.textContent=o;btn.disabled=false;},1400);
+    }
+  }
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(flashOk).catch(function(){fallbackCopyPlainText(text);flashOk();});
+  }else{
+    fallbackCopyPlainText(text);
+    flashOk();
+  }
+}
 function prettyJson(v){if(v==null)return '—';if(typeof v==='object'){try{return JSON.stringify(v,null,2);}catch(e){return String(v)}}return String(v);}
 function badge(s){const u=(s||'').toUpperCase();let c='badge-b';if(u.includes('APPROVED')||u.includes('COMPLETE'))c='badge-g';else if(u==='REJECTED'||u==='FAILED')c='badge-r';else if(u.includes('EDIT')||u==='GENERATING'||u==='RENDERING')c='badge-y';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
 function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch(e){return d}}
@@ -1463,6 +1493,10 @@ function renderJobDetailHtml(d){
   var gen=prettyJson(j.generation_payload);
   if(gen.length>14000)gen=gen.slice(0,14000)+'\\n… truncated';
   var lines=[];
+  lines.push('<div class="job-detail-toolbar" style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap">');
+  lines.push('<button type="button" class="btn btn-sm" onclick="copyJobDetailFull(event)">Copy all for debug</button>');
+  lines.push('<span style="font-size:11px;color:var(--muted)">Summary, content preview, API audit, render state, payloads, transitions</span>');
+  lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
   lines.push('<pre class="job-detail-pre">'+esc(prettyJson({task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,created_at:j.created_at,updated_at:j.updated_at}))+'</pre>');
   if(d.content_preview){
@@ -1569,7 +1603,7 @@ async function loadJobs(p,silent){
     h+='<td>'+esc(j.pre_gen_score||'—')+'</td>';
     h+='<td>'+esc(j.qc_status||'—')+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td></tr>';
-    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="12"><div id="job-detail-body-'+i+'" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
+    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="12"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
   }
   h+='</tbody></table>';
   document.getElementById('jobs-table').innerHTML=h;

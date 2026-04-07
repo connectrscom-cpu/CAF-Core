@@ -9,14 +9,23 @@ import { uploadBuffer, downloadUrl } from "./supabase-storage.js";
 import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 
+function rowMatchesPlatformAndFlow(
+  r: HeygenConfigRow,
+  platform: string | null,
+  flowType: string | null
+): boolean {
+  if (r.platform && platform && r.platform.toLowerCase() !== platform.toLowerCase()) return false;
+  if (r.flow_type && flowType && r.flow_type !== flowType) return false;
+  return true;
+}
+
 function rowMatchesTarget(
   r: HeygenConfigRow,
   platform: string | null,
   flowType: string | null,
   renderMode: string | null
 ): boolean {
-  if (r.platform && platform && r.platform.toLowerCase() !== platform.toLowerCase()) return false;
-  if (r.flow_type && flowType && r.flow_type !== flowType) return false;
+  if (!rowMatchesPlatformAndFlow(r, platform, flowType)) return false;
   if (r.render_mode && renderMode && r.render_mode !== renderMode) return false;
   return true;
 }
@@ -38,6 +47,58 @@ export function mergeHeygenConfig(
     out[r.config_key] = v;
   }
   return out;
+}
+
+/** When the job payload omits render_route, infer from flow_type so heygen_config rows scoped to HEYGEN_NO_AVATAR match. */
+export function inferHeygenRenderModeFromFlowType(flowType: string | null | undefined): string | null {
+  const ft = flowType ?? "";
+  if (/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)) return "HEYGEN_NO_AVATAR";
+  if (/Video_Script_HeyGen_Avatar|Video_Prompt_HeyGen_Avatar|HeyGen_Avatar|FLOW_HEYGEN_AVATAR|HEYGEN_AVATAR_SCRIPT/i.test(ft)) {
+    return "HEYGEN_AVATAR";
+  }
+  return null;
+}
+
+/** Resolve render mode: explicit payload wins, then flow_type inference, then HEYGEN_AVATAR. */
+export function resolveHeygenRenderMode(flowType: string | null | undefined, explicit: unknown): string {
+  const ex = explicit != null && String(explicit).trim() !== "" ? String(explicit).trim() : null;
+  return ex ?? inferHeygenRenderModeFromFlowType(flowType) ?? "HEYGEN_AVATAR";
+}
+
+const VOICE_CONFIG_KEYS = new Set(["voice", "voice_id", "default_voice"]);
+
+function heygenMergedHasVoiceKey(merged: Record<string, unknown>): boolean {
+  const v = merged.voice ?? merged.default_voice ?? merged.voice_id;
+  return v != null && String(v).trim() !== "";
+}
+
+/** If strict render_mode merge omitted voice, reuse a voice* row that matches platform+flow (any render_mode). */
+function pickVoiceFromRowsIgnoringRenderMode(
+  rows: HeygenConfigRow[],
+  platform: string | null,
+  flowType: string | null
+): string | undefined {
+  for (const r of rows) {
+    if (!r.config_key || !VOICE_CONFIG_KEYS.has(r.config_key)) continue;
+    if (!rowMatchesPlatformAndFlow(r, platform, flowType)) continue;
+    const v = r.value?.trim();
+    if (v) return v;
+  }
+  return undefined;
+}
+
+/** Merge HeyGen rows for a job, then fill voice from platform/flow when render_mode scoping hid it. */
+export function mergeHeygenConfigForJob(
+  rows: HeygenConfigRow[],
+  platform: string | null,
+  flowType: string | null,
+  renderMode: string | null
+): Record<string, unknown> {
+  const merged = mergeHeygenConfig(rows, platform, flowType, renderMode);
+  if (heygenMergedHasVoiceKey(merged)) return merged;
+  const fallback = pickVoiceFromRowsIgnoringRenderMode(rows, platform, flowType);
+  if (fallback) return { ...merged, voice: fallback };
+  return merged;
 }
 
 function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
@@ -154,13 +215,71 @@ export interface HeygenJobContext {
   generation_payload: Record<string, unknown>;
 }
 
+function trimVoiceId(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s === "" ? undefined : s;
+}
+
+/** HeyGen sheets/legacy rows often use `voice_id` or `default_voice_id`; nested character may carry voice. */
 function pickVoiceFromBody(body: Record<string, unknown>, defaultVoiceId?: string | null): string | undefined {
-  const fromBody = body.voice ?? body.default_voice ?? body.voice_id;
-  if (fromBody != null && String(fromBody).trim() !== "") return String(fromBody).trim();
-  if (defaultVoiceId != null && String(defaultVoiceId).trim() !== "") return String(defaultVoiceId).trim();
-  const ev = process.env.HEYGEN_DEFAULT_VOICE_ID;
-  if (ev != null && String(ev).trim() !== "") return String(ev).trim();
-  return undefined;
+  for (const k of ["voice", "default_voice", "voice_id", "default_voice_id"] as const) {
+    const t = trimVoiceId(body[k]);
+    if (t) return t;
+  }
+  const char = body.character;
+  if (char && typeof char === "object" && !Array.isArray(char)) {
+    const c = char as Record<string, unknown>;
+    for (const k of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
+      const t = trimVoiceId(c[k]);
+      if (t) return t;
+    }
+  }
+  const tDef = trimVoiceId(defaultVoiceId);
+  if (tDef) return tDef;
+  return trimVoiceId(process.env.HEYGEN_DEFAULT_VOICE_ID);
+}
+
+/** DB / sheet imports sometimes store JSON arrays or objects as strings. */
+function coerceHeyGenMergedFields(body: Record<string, unknown>): void {
+  const vi = body.video_inputs;
+  if (typeof vi === "string") {
+    const t = vi.trim();
+    if (t.startsWith("[")) {
+      try {
+        const p = JSON.parse(t) as unknown;
+        if (Array.isArray(p)) body.video_inputs = p;
+      } catch {
+        /* keep string */
+      }
+    }
+  }
+  const ch = body.character;
+  if (typeof ch === "string") {
+    const t = ch.trim();
+    if (t.startsWith("{")) {
+      try {
+        const p = JSON.parse(t) as unknown;
+        if (p && typeof p === "object" && !Array.isArray(p)) body.character = p;
+      } catch {
+        /* keep string */
+      }
+    }
+  }
+}
+
+function resolveVoiceForVideoInput(
+  first: Record<string, unknown>,
+  body: Record<string, unknown>,
+  defaultVoiceId?: string | null
+): string | undefined {
+  const fromFirst =
+    trimVoiceId(first.voice) ??
+    trimVoiceId(first.voice_id) ??
+    trimVoiceId(first.default_voice) ??
+    trimVoiceId(first.default_voice_id);
+  if (fromFirst) return fromFirst;
+  return pickVoiceFromBody(body, defaultVoiceId);
 }
 
 /**
@@ -177,6 +296,7 @@ export function buildHeyGenRequestBody(
   const prompt = extractVideoPromptText(gen, 1);
 
   let body: Record<string, unknown> = { ...mergedConfig };
+  coerceHeyGenMergedFields(body);
 
   if (typeof body.video_inputs === "undefined" && (script || prompt)) {
     const voice = pickVoiceFromBody(body, opts?.defaultVoiceId);
@@ -216,9 +336,7 @@ export function buildHeyGenRequestBody(
     const first = (typeof viRaw[0] === "object" && viRaw[0] && !Array.isArray(viRaw[0])
       ? ({ ...(viRaw[0] as Record<string, unknown>) } as Record<string, unknown>)
       : {}) as Record<string, unknown>;
-    const voice =
-      (first.voice != null && String(first.voice).trim() !== "" ? String(first.voice).trim() : undefined) ??
-      pickVoiceFromBody(body, opts?.defaultVoiceId);
+    const voice = resolveVoiceForVideoInput(first, body, opts?.defaultVoiceId);
     const mergedFirst: Record<string, unknown> = {
       ...first,
       ...(first.character == null && body.character != null ? { character: body.character } : {}),
@@ -234,7 +352,7 @@ export function buildHeyGenRequestBody(
   const vi0 = (body.video_inputs as Record<string, unknown>[])[0];
   if (!vi0 || vi0.voice == null || String(vi0.voice).trim() === "") {
     throw new Error(
-      "HeyGen: video_inputs[0].voice is required. Add a `voice` key in heygen_config for this flow/platform, or set HEYGEN_DEFAULT_VOICE_ID in the environment."
+      "HeyGen: video_inputs[0].voice is required. In heygen_config use config_key `voice` or `voice_id` (or nest voice on `character`), or set HEYGEN_DEFAULT_VOICE_ID in the environment."
     );
   }
 
@@ -305,11 +423,12 @@ export async function runHeygenForContentJob(
 
   const rows = await listHeygenConfig(db, job.project_id);
   const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
-  const renderMode =
-    String(job.generation_payload.render_mode ?? gen.render_mode ?? gen.production_route ?? "HEYGEN_AVATAR") ||
-    "HEYGEN_AVATAR";
+  const renderMode = resolveHeygenRenderMode(
+    job.flow_type,
+    job.generation_payload.render_mode ?? gen.render_mode ?? gen.production_route
+  );
 
-  const merged = mergeHeygenConfig(rows, job.platform, job.flow_type, renderMode);
+  const merged = mergeHeygenConfigForJob(rows, job.platform, job.flow_type, renderMode);
   const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
   const body = buildHeyGenRequestBody(merged, gen, override, {
     defaultVoiceId: appConfig.HEYGEN_DEFAULT_VOICE_ID,

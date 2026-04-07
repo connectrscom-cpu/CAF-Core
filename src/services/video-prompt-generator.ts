@@ -47,7 +47,18 @@ export async function ensureVideoPromptInPayload(
   if (!job) return { ok: false, error: "job not found" };
 
   const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
-  if (extractVideoPromptText(gen, 10).length > 0) {
+  const resolved = extractVideoPromptText(gen, 10);
+  if (resolved.length > 0) {
+    if (!String(gen.video_prompt ?? "").trim()) {
+      const canonical = extractVideoPromptText(gen, 1);
+      if (canonical.trim()) {
+        const merged = { ...gen, video_prompt: canonical.trim() };
+        await db.query(
+          `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
+          [JSON.stringify({ generated_output: merged }), job.id]
+        );
+      }
+    }
     return { ok: true };
   }
 
