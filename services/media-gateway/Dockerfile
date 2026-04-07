@@ -14,9 +14,9 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 
 WORKDIR /app
 
-COPY services/renderer/package*.json services/renderer/
-COPY services/video-assembly/package*.json services/video-assembly/
-COPY services/media-gateway/package*.json services/media-gateway/
+COPY services/renderer/package*.json renderer/
+COPY services/video-assembly/package*.json video-assembly/
+COPY services/media-gateway/package*.json media-gateway/
 
 RUN cd renderer && npm install --production && cd .. && \
     cd video-assembly && npm install --production && cd .. && \
