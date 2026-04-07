@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <title>Carousel — Cosmic Kitchen (Stir the Universe)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;1,400&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --safe: 80px;
+      --cream: #fdf8f3;
+      --terracotta: #c47a6a;
+      --sage: #6b8f7a;
+      --gold: #c9a227;
+      --ink: #2a2522;
+      --muted: #6b6158;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Outfit', sans-serif; background: #1e1c1a; color: var(--ink); }
+    .slide {
+      width: 1080px;
+      height: 1350px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .slide-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: var(--safe);
+      text-align: center;
+      background: linear-gradient(180deg, #2d2830 0%, #1a1820 100%);
+    }
+    .planet {
+      position: absolute;
+      border-radius: 50%;
+      z-index: 0;
+    }
+    .planet.pot {
+      width: 320px;
+      height: 320px;
+      background: radial-gradient(circle at 30% 30%, #8b7355, #5c4a38);
+      top: 8%;
+      left: 50%;
+      transform: translateX(-50%);
+      box-shadow: inset -20px -20px 40px rgba(0,0,0,0.4);
+    }
+    .planet.pot::after {
+      content: '';
+      position: absolute;
+      inset: -25px;
+      border: 2px solid rgba(201,162,39,0.3);
+      border-radius: 50%;
+    }
+    .planet.tomato {
+      width: 100px;
+      height: 100px;
+      background: radial-gradient(circle at 35% 35%, #d46a5c, #8b3a32);
+      top: 22%;
+      left: 22%;
+    }
+    .planet.herb {
+      width: 70px;
+      height: 70px;
+      background: radial-gradient(circle at 40% 40%, #7a9b6e, #4a6b42);
+      bottom: 28%;
+      right: 20%;
+    }
+    .planet.salt {
+      width: 55px;
+      height: 55px;
+      background: radial-gradient(circle at 40% 40%, #e8e4dc, #b8b4a8);
+      bottom: 35%;
+      left: 18%;
+    }
+    .orbit {
+      position: absolute;
+      border: 1px dashed rgba(201,162,39,0.25);
+      border-radius: 50%;
+      z-index: 0;
+    }
+    .orbit.o1 {
+      width: 420px;
+      height: 420px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-12deg);
+    }
+    .orbit.o2 {
+      width: 580px;
+      height: 580px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(8deg);
+    }
+    .title-text {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(64px, 7vw, 84px);
+      font-weight: 600;
+      color: var(--cream);
+      position: relative;
+      z-index: 2;
+      line-height: 1.2;
+      max-width: 780px;
+    }
+    .subtitle-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(36px, 3.6vw, 44px);
+      color: var(--gold);
+      margin-top: 20px;
+      z-index: 2;
+      letter-spacing: 0.06em;
+    }
+    .body-title {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(52px, 5.5vw, 64px);
+      color: var(--cream);
+      margin-bottom: 24px;
+      z-index: 2;
+    }
+    .body-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(36px, 3.6vw, 44px);
+      line-height: 1.45;
+      color: rgba(253,248,243,0.88);
+      max-width: 680px;
+      z-index: 2;
+      text-align: center;
+    }
+    .cta-text {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(62px, 6.5vw, 78px);
+      font-weight: 600;
+      color: var(--gold);
+      z-index: 2;
+    }
+    .cta-handle {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(38px, 3.8vw, 44px);
+      color: var(--sage);
+      margin-top: 14px;
+      z-index: 2;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="orbit o1"></span>
+      <span class="orbit o2"></span>
+      <span class="planet pot"></span>
+      <span class="planet tomato"></span>
+      <span class="planet herb"></span>
+      <span class="planet salt"></span>
+      <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+      {{#if cover_subtitle}}<span class="subtitle-text">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-text">{{cover_slide.body}}</span>{{/if}}{{/if}}
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="orbit o1"></span>
+      <span class="planet tomato"></span>
+      <span class="planet herb"></span>
+      <span class="body-title">{{headline}}</span>
+      <p class="body-text">{{body}}</p>
+    </div>
+  </div>
+  {{/each}}
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="planet pot"></span>
+      <span class="orbit o2"></span>
+      <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+      {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+    </div>
+  </div>
+
+</body>
+</html>

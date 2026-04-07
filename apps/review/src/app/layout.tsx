@@ -3,8 +3,8 @@ import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "CAF Backend",
-  description: "Content Automation Framework — Review Console",
+  title: "CAF Review",
+  description: "Review and approve CAF-generated content",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

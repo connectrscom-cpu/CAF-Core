@@ -1,3 +1,7 @@
+# Build context MUST be the CAF-Core repository root:
+#   fly deploy -c fly.caf-renderer.toml
+# (Paths use services/… so COPY sees renderer + video-assembly + gateway.)
+
 FROM node:20-slim
 
 RUN apt-get update && \
@@ -10,18 +14,18 @@ ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
 
 WORKDIR /app
 
-COPY renderer/package.json renderer/package-lock.json* renderer/
-COPY video-assembly/package.json video-assembly/package-lock.json* video-assembly/
-COPY media-gateway/package.json media-gateway/package-lock.json* media-gateway/
+COPY services/renderer/package*.json services/renderer/
+COPY services/video-assembly/package*.json services/video-assembly/
+COPY services/media-gateway/package*.json services/media-gateway/
 
 RUN cd renderer && npm install --production && cd .. && \
     cd video-assembly && npm install --production && cd .. && \
     cd media-gateway && npm install --production
 
-COPY renderer/ renderer/
-COPY video-assembly/ video-assembly/
-COPY media-gateway/ media-gateway/
+COPY services/renderer/ renderer/
+COPY services/video-assembly/ video-assembly/
+COPY services/media-gateway/ media-gateway/
 
-EXPOSE 3300
+EXPOSE 8080
 
 CMD ["node", "media-gateway/server.js"]

@@ -10,8 +10,14 @@
     "dev": "node --watch --import tsx src/server.ts",
     "migrate": "node --import tsx src/cli/migrate.ts",
     "seed:demo": "node --import tsx src/cli/seed-demo.ts",
+    "seed:canonical-flows": "node --import tsx src/cli/seed-canonical-flows.ts",
+    "seed:demo-sns": "node --import tsx src/cli/seed-canonical-flows.ts",
+    "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",
     "sync:sheets": "node --import tsx src/cli/sync-sheets.ts",
     "sync:supabase": "node --import tsx src/cli/sync-supabase.ts",
+    "start-run:xlsx": "node --import tsx src/cli/start-run-from-xlsx.ts",
+    "process-run": "node --import tsx src/cli/process-run.ts",
+    "replan-run": "node --import tsx src/cli/replan-run.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -20,11 +26,13 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@fastify/multipart": "^9.4.0",
+    "@supabase/supabase-js": "^2.49.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",
-    "@supabase/supabase-js": "^2.49.1",
     "googleapis": "^144.0.0",
     "pg": "^8.13.1",
+    "xlsx": "^0.18.5",
     "zod": "^3.24.1"
   },
   "devDependencies": {

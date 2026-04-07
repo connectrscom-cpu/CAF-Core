@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --pad-x: 78px;
+      --pad-y: 88px;
+      /* iOS Notes–like: flat paper, system-adjacent sans */
+      --paper: #fffef9;
+      --ink: #1c1c1e;
+      --body: #3a3a3c;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:var(--paper);}
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:var(--paper);
+      font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      color:var(--ink);
+      -webkit-font-smoothing:antialiased;
+    }
+    .page{
+      width:100%;
+      height:100%;
+      padding: var(--pad-y) var(--pad-x);
+      display:flex;
+      flex-direction:column;
+      align-items:stretch;
+    }
+    .headline{
+      font-weight:700;
+      font-size:68px;
+      line-height:1.12;
+      letter-spacing:-0.028em;
+      color:var(--ink);
+    }
+    .cover .headline{
+      font-size:76px;
+      line-height:1.08;
+    }
+    .sub,
+    .body{
+      margin-top:28px;
+      font-weight:400;
+      font-size:38px;
+      line-height:1.45;
+      color:var(--body);
+      white-space:pre-wrap;
+    }
+    .body-slide .headline{
+      font-size:64px;
+    }
+    .cta .headline{
+      font-size:70px;
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide cover">
+    <div class="page">
+      <div class="headline">
+        {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+      </div>
+      {{#if cover_subtitle}}
+      <div class="sub">{{cover_subtitle}}</div>
+      {{else}}
+      {{#if cover_slide.body}}<div class="sub">{{cover_slide.body}}</div>{{/if}}
+      {{/if}}
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide body-slide">
+    <div class="page">
+      <div class="headline">{{headline}}</div>
+      <div class="body">{{body}}</div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide cta">
+    <div class="page">
+      <div class="headline">
+        {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+      </div>
+      {{#if cta_slide.sub}}<div class="sub">{{cta_slide.sub}}</div>{{/if}}
+    </div>
+  </div>
+</body>
+</html>

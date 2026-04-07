@@ -89,6 +89,24 @@ async function stitchImages(imageUrls, outputOptions = {}) {
   return { localPath: outPath, jobDir };
 }
 
+async function concatVideoFiles(videoUrls, jobDir) {
+  const files = [];
+  for (let i = 0; i < videoUrls.length; i++) {
+    const dest = path.join(jobDir, `part_${String(i).padStart(3, "0")}.mp4`);
+    await downloadFile(videoUrls[i], dest);
+    files.push(dest);
+  }
+  const listFile = path.join(jobDir, "concat.txt");
+  const lines = files.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n");
+  fs.writeFileSync(listFile, lines);
+  const outPath = path.join(jobDir, "merged.mp4");
+  await runFfmpeg([
+    "-f", "concat", "-safe", "0", "-i", listFile,
+    "-c", "copy", "-movflags", "+faststart", "-y", outPath,
+  ], "concat");
+  return outPath;
+}
+
 async function muxAudio(videoPath, audioUrl, outputOptions = {}) {
   const jobDir = path.dirname(videoPath);
   const audioExt = audioUrl.match(/\.(mp3|wav|m4a|aac|ogg)/i)?.[1] || "mp3";
@@ -154,6 +172,49 @@ app.post("/stitch", async (req, res) => {
       cleanupJob(jobDir);
     }
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : localPath });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/concat-videos", async (req, res) => {
+  try {
+    const { video_urls, task_id, run_id } = req.body;
+    if (!video_urls?.length) return res.status(400).json({ ok: false, error: "video_urls required" });
+
+    const isAsync = req.query.async === "1";
+    if (isAsync) {
+      const requestId = randomUUID();
+      asyncJobs.set(requestId, { status: "pending" });
+      (async () => {
+        try {
+          const jobDir = path.join(WORK_DIR, randomUUID());
+          fs.mkdirSync(jobDir, { recursive: true });
+          const merged = await concatVideoFiles(video_urls, jobDir);
+          let publicUrl = null;
+          if (SUPABASE_URL) {
+            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
+            publicUrl = await uploadToSupabase(merged, remotePath);
+          }
+          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: merged });
+          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+        } catch (e) {
+          asyncJobs.set(requestId, { status: "error", error: e.message });
+        }
+      })();
+      return res.status(202).json({ ok: true, request_id: requestId, status: "pending" });
+    }
+
+    const jobDir = path.join(WORK_DIR, randomUUID());
+    fs.mkdirSync(jobDir, { recursive: true });
+    const merged = await concatVideoFiles(video_urls, jobDir);
+    let publicUrl = null;
+    if (SUPABASE_URL) {
+      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
+      publicUrl = await uploadToSupabase(merged, remotePath);
+      cleanupJob(jobDir);
+    }
+    res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : merged });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

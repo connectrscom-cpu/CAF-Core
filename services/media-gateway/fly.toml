@@ -1,3 +1,7 @@
+# Legacy app name. Production “caf-renderer” on Fly should use the repo-root config:
+#   fly deploy -c fly.caf-renderer.toml
+# (Build context is the monorepo root; see services/media-gateway/Dockerfile.)
+
 app = "caf-media-gateway"
 primary_region = "ams"
 

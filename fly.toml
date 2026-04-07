@@ -1,3 +1,10 @@
+# CAF Core API — deploy: fly deploy (app must be linked to caf-core)
+# Fly secrets: DATABASE_URL (required); RENDERER_BASE_URL + VIDEO_ASSEMBLY_BASE_URL → caf-renderer;
+# Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
+# On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
+# OPENAI_API_KEY; optional SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
+# Do not set MUX_* / VIDEO_ASSEMBLY_* timeouts on Core unless you wire them in code (those belong on caf-renderer).
+
 app = "caf-core"
 primary_region = "ams"
 
@@ -16,6 +23,10 @@ primary_region = "ams"
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
+
+  # POST /v1/runs/.../process runs the whole job loop in one request; default proxy idle limits can drop the connection while work continues or mid-render → jobs left RENDERING.
+  [http_service.http_options]
+    idle_timeout = 1800
 
 [[vm]]
   memory = "512mb"

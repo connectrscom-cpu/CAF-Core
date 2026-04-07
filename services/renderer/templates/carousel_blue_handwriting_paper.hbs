@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  {{!-- No external fonts: Fly/Puppeteer often misbehave on fonts.googleapis.com (stalls, IPv6); OOM risk with heavy SVG filters × many slides. --}}
+  <style>
+    :root{
+      --safe: 96px;
+      --paper: #efe9dc;
+      --ink: #1a2636;
+      --blue: #1f6fe6;
+      --muted: rgba(26,38,54,0.55);
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#111;}
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:
+        radial-gradient(circle at 16% 18%, rgba(255,255,255,0.26), transparent 42%),
+        radial-gradient(circle at 84% 78%, rgba(31,111,230,0.10), transparent 46%),
+        linear-gradient(180deg, #f3efe6, #ebe2d2);
+      position:relative;
+      font-family: "Segoe Script", "Bradley Hand ITC", "Apple Chancery", "Snell Roundhand", "Brush Script MT", "Comic Sans MS", cursive, system-ui, sans-serif;
+    }
+    .grain{
+      position:absolute; inset:0;
+      opacity:0.07;
+      /* Cheap paper texture (no feTurbulence): one GPU-heavy filter × N slides was a common OOM path on Fly */
+      background-image:
+        repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(26,38,54,0.04) 2px, rgba(26,38,54,0.04) 3px),
+        repeating-linear-gradient(90deg, transparent, transparent 2px, rgba(26,38,54,0.03) 2px, rgba(26,38,54,0.03) 3px);
+      background-size: 5px 5px, 7px 7px;
+      pointer-events:none;
+    }
+    .wrap{
+      width:100%;height:100%;
+      padding:var(--safe);
+      position:relative;
+    }
+    .lines{
+      position:absolute;
+      left: var(--safe);
+      right: var(--safe);
+      top: 250px;
+      bottom: 220px;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(26,38,54,0.00),
+          rgba(26,38,54,0.00) 58px,
+          rgba(26,38,54,0.08) 59px,
+          rgba(26,38,54,0.08) 60px
+        );
+      opacity: 0.55;
+      pointer-events:none;
+    }
+    .kicker{
+      font-size: 16px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(26,38,54,0.45);
+    }
+    .title{
+      margin-top: 42px;
+      font-size: 92px;
+      line-height: 1.02;
+      color: var(--blue);
+      letter-spacing: 0.01em;
+      max-width: 940px;
+    }
+    .body{
+      margin-top: 32px;
+      font-size: 54px;
+      line-height: 1.22;
+      color: var(--blue);
+      max-width: 940px;
+      white-space: pre-wrap;
+    }
+    .cta{
+      position:absolute;
+      left: var(--safe);
+      right: var(--safe);
+      bottom: 84px;
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap: 18px;
+      color: rgba(26,38,54,0.52);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      font-size: 18px;
+    }
+    .handle{
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="grain"></div>
+    <div class="wrap">
+      <div class="kicker">Slide 01 / Cover</div>
+      <div class="lines"></div>
+      <div class="title">
+        {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+      </div>
+      <div class="body">
+        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+      </div>
+      <div class="cta">
+        <div>{{#if cover_slide.date}}{{cover_slide.date}}{{else}}April 2026{{/if}}</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="grain"></div>
+    <div class="wrap">
+      <div class="kicker">Slide / Note</div>
+      <div class="lines"></div>
+      <div class="title" style="font-size:86px;">{{headline}}</div>
+      <div class="body">{{body}}</div>
+      <div class="cta">
+        <div>Swipe</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="grain"></div>
+    <div class="wrap">
+      <div class="kicker">Slide / CTA</div>
+      <div class="lines"></div>
+      <div class="title" style="font-size:90px;">
+        {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+      </div>
+      <div class="body" style="font-size:52px;">
+        Save this and share it with your sign.
+      </div>
+      <div class="cta">
+        <div>End</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

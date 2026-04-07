@@ -74,5 +74,11 @@ export interface GenerationPlanResult {
     max_daily_jobs: number | null;
     min_score_used: number;
     variation_cap: number;
+    max_carousel_jobs_per_run?: number | null;
+    max_video_jobs_per_run?: number | null;
+    default_other_flow_plan_cap?: number;
+    max_jobs_per_flow_type?: Record<string, number>;
+    planned_carousel_jobs?: number;
+    planned_video_jobs?: number;
   };
 }

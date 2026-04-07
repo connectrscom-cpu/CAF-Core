@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Outfit:wght@300;400;500;600&family=Italiana&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --safe: 80px;
+      --void: #060812;
+      --void-mid: #0c0e1a;
+      --deep: #12162a;
+      --twilight: #1a1f38;
+      --starlight: #e8e6e0;
+      --gold: #d4af37;
+      --gold-soft: rgba(212, 175, 55, 0.85);
+      --gold-dim: rgba(212, 175, 55, 0.5);
+      --silver: rgba(230, 228, 220, 0.9);
+      --silver-muted: rgba(230, 228, 220, 0.65);
+      --nebula: rgba(88, 72, 140, 0.25);
+      --nebula-blue: rgba(52, 82, 120, 0.2);
+      --text-h1: clamp(76px, 8.2vw, 102px);
+      --text-h2: clamp(58px, 6.2vw, 74px);
+      --text-body: clamp(38px, 4vw, 46px);
+      --text-small: clamp(34px, 3.6vw, 42px);
+      --text-tiny: clamp(30px, 3.2vw, 36px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Outfit', sans-serif; background: var(--void); color: var(--starlight); }
+    .slide {
+      width: 1080px;
+      height: 1350px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .slide-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: var(--safe);
+      text-align: center;
+      background: linear-gradient(165deg, var(--void) 0%, var(--void-mid) 35%, var(--deep) 60%, var(--twilight) 100%);
+    }
+    /* Layered starfield – kept light to avoid Puppeteer timeout on long carousels */
+    .starry .sky {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .starry .stars-tiny {
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(1.5px 1.5px at 20% 20%, var(--starlight), transparent),
+        radial-gradient(1px 1px at 80% 25%, var(--silver-muted), transparent),
+        radial-gradient(1.5px 1.5px at 50% 15%, var(--gold-dim), transparent),
+        radial-gradient(1px 1px at 15% 70%, var(--starlight), transparent),
+        radial-gradient(1.5px 1.5px at 85% 75%, var(--gold-dim), transparent),
+        radial-gradient(1px 1px at 45% 85%, var(--silver-muted), transparent);
+      opacity: 0.95;
+    }
+    .starry .stars-glow {
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(3px 3px at 25% 30%, rgba(255,255,255,0.35), transparent 70%),
+        radial-gradient(3px 3px at 75% 25%, var(--gold-dim), transparent 70%),
+        radial-gradient(3px 3px at 15% 75%, var(--gold-dim), transparent 70%),
+        radial-gradient(3px 3px at 60% 80%, var(--silver-muted), transparent 70%);
+      opacity: 0.9;
+    }
+    .starry .nebula {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 90% 50% at 50% -20%, var(--nebula) 0%, transparent 50%),
+        radial-gradient(ellipse 70% 60% at 80% 110%, var(--nebula-blue) 0%, transparent 45%);
+      opacity: 0.85;
+      pointer-events: none;
+    }
+    .starry .vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 90% 90% at 50% 50%, transparent 42%, rgba(0,0,0,0.35) 75%, rgba(0,0,0,0.6) 100%);
+      pointer-events: none;
+    }
+    .starry .constellation {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .starry .constellation svg {
+      position: absolute;
+      width: 100%; height: 100%;
+      stroke: rgba(212, 175, 55, 0.35);
+      stroke-width: 1;
+      fill: none;
+    }
+    .starry .constellation .star {
+      position: absolute;
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--gold-soft);
+      box-shadow: 0 0 8px var(--gold-dim);
+    }
+    .starry .constellation .star.s1 { top: 18%; left: 20%; }
+    .starry .constellation .star.s2 { top: 24%; left: 32%; }
+    .starry .constellation .star.s3 { top: 20%; left: 48%; }
+    .starry .constellation .star.s4 { top: 28%; left: 58%; }
+    .starry .constellation .star.s5 { top: 22%; left: 72%; }
+    .starry .constellation .star.s6 { bottom: 32%; right: 24%; }
+    .starry .constellation .star.s7 { bottom: 38%; right: 38%; }
+    .starry .constellation .star.s8 { bottom: 30%; right: 52%; }
+    .starry .constellation .star.s9 { bottom: 26%; right: 68%; }
+    .starry .moon {
+      position: absolute;
+      top: 100px; right: 90px;
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: transparent;
+      box-shadow: -20px 0 0 -14px var(--gold-soft);
+      opacity: 0.9;
+      z-index: 0;
+    }
+    .starry .shooting {
+      position: absolute;
+      top: 14%; left: 15%;
+      width: 120px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--gold-soft) 0%, transparent 100%);
+      transform: rotate(-35deg);
+      opacity: 0.6;
+      z-index: 0;
+    }
+    .starry .shooting::after {
+      content: '';
+      position: absolute;
+      left: 0; top: 50%;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--starlight);
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 12px var(--gold-soft);
+    }
+    .starry .title-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h1);
+      font-weight: 700;
+      color: var(--starlight);
+      text-shadow: 0 0 40px rgba(212, 175, 55, 0.2);
+      letter-spacing: 0.06em;
+      line-height: 1.08;
+      position: relative;
+      z-index: 1;
+      max-width: 860px;
+    }
+    .starry .subtitle {
+      font-family: 'Outfit', sans-serif;
+      font-size: var(--text-small);
+      font-weight: 400;
+      color: var(--silver-muted);
+      margin-top: 28px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      position: relative;
+      z-index: 1;
+    }
+    .starry .heading {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h2);
+      font-weight: 600;
+      color: var(--gold);
+      letter-spacing: 0.05em;
+      margin-bottom: 36px;
+      position: relative;
+      z-index: 1;
+    }
+    .starry .body-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: var(--text-body);
+      font-weight: 400;
+      line-height: 1.5;
+      color: var(--silver);
+      max-width: 660px;
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+    .starry .swipe {
+      font-family: 'Italiana', serif;
+      font-size: var(--text-tiny);
+      color: var(--gold-dim);
+      margin-top: 44px;
+      letter-spacing: 0.2em;
+      position: relative;
+      z-index: 1;
+    }
+    .starry .cta-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h2);
+      font-weight: 700;
+      color: var(--gold);
+      position: relative;
+      z-index: 1;
+      margin-bottom: 20px;
+      letter-spacing: 0.06em;
+    }
+    .starry .cta-handle {
+      font-family: 'Outfit', sans-serif;
+      font-size: var(--text-small);
+      font-weight: 500;
+      color: var(--silver-muted);
+      position: relative;
+      z-index: 1;
+      letter-spacing: 0.12em;
+    }
+    .starry .logo-mark {
+      position: absolute;
+      bottom: var(--safe);
+      right: var(--safe);
+      width: 48px;
+      height: 48px;
+      border: 2px solid var(--gold-dim);
+      border-radius: 50%;
+      z-index: 1;
+    }
+    .starry .logo-mark::before {
+      content: '';
+      position: absolute;
+      inset: 10px;
+      border: 1px solid var(--gold-dim);
+      border-radius: 50%;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="slide">
+    <div class="slide-inner starry">
+      <div class="sky">
+        <div class="stars-tiny"></div>
+        <div class="stars-glow"></div>
+        <div class="nebula"></div>
+      </div>
+      <div class="vignette"></div>
+      <div class="constellation">
+        <svg viewBox="0 0 1080 1350" preserveAspectRatio="none">
+          <path d="M 216 243 L 346 324 L 518 270 L 630 313 L 778 297" />
+          <path d="M 259 918 L 388 864 L 518 918 L 648 864" />
+        </svg>
+        <span class="star s1"></span><span class="star s2"></span><span class="star s3"></span><span class="star s4"></span><span class="star s5"></span>
+        <span class="star s6"></span><span class="star s7"></span><span class="star s8"></span><span class="star s9"></span>
+      </div>
+      <span class="moon"></span>
+      <span class="shooting"></span>
+      <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+      {{#if cover_subtitle}}<span class="subtitle">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle">{{cover_slide.body}}</span>{{/if}}{{/if}}
+      <span class="swipe">Swipe →</span>
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="slide-inner starry">
+      <div class="sky">
+        <div class="stars-tiny"></div>
+        <div class="stars-glow"></div>
+        <div class="nebula"></div>
+      </div>
+      <div class="vignette"></div>
+      <div class="constellation">
+        <span class="star s6"></span><span class="star s7"></span><span class="star s8"></span><span class="star s9"></span>
+      </div>
+      <span class="moon"></span>
+      <span class="heading">{{headline}}</span>
+      <p class="body-text">{{body}}</p>
+      <span class="swipe">Swipe →</span>
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+  {{/each}}
+
+  <div class="slide">
+    <div class="slide-inner starry">
+      <div class="sky">
+        <div class="stars-tiny"></div>
+        <div class="stars-glow"></div>
+        <div class="nebula"></div>
+      </div>
+      <div class="vignette"></div>
+      <div class="constellation">
+        <span class="star s1"></span><span class="star s2"></span><span class="star s3"></span>
+      </div>
+      <span class="moon"></span>
+      <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+      {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+
+</body>
+</html>

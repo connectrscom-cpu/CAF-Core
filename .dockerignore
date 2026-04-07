@@ -1,0 +1,11 @@
+# Speed up `docker build` when context is the repo root (caf-core + media-gateway images).
+.git
+.cursor
+.env
+.env.*
+node_modules
+**/node_modules
+apps/review/.next
+dist
+*.tsbuildinfo
+coverage

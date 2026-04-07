@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --safe: 84px;
+      --pink: #ff4fa0;
+      --hot: #ff2e79;
+      --purple: #7a5cff;
+      --yellow: #ffd26a;
+      --cream: #fff5ef;
+      --paper: #ffd9e8;
+      --ink: #1c1820;
+      --muted: rgba(28,24,32,0.72);
+      --shadow: 0 22px 70px rgba(0,0,0,0.24);
+      --stroke: rgba(255,255,255,0.92);
+      --sticker: rgba(255,255,255,0.95);
+      --radius: 46px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:"Fredoka",system-ui,Arial,sans-serif;background:#111;}
+
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:
+        radial-gradient(circle at 14% 10%, rgba(255,210,106,0.55), transparent 42%),
+        radial-gradient(circle at 88% 16%, rgba(122,92,255,0.42), transparent 40%),
+        radial-gradient(circle at 20% 88%, rgba(255,79,160,0.38), transparent 42%),
+        linear-gradient(180deg, #ff7bbf, #ff3e8f 55%, #e23a8e);
+      position: relative;
+    }
+    .wrap{
+      width:100%;height:100%;
+      padding:var(--safe);
+      position:relative;
+    }
+
+    /* doodle stars background */
+    .stars{
+      position:absolute; inset: 0;
+      opacity: 0.55;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='320'%3E%3Cg fill='none' stroke='%23ffd26a' stroke-width='4' stroke-linecap='round'%3E%3Cpath d='M44 52l10 22 24 4-18 16 5 24-21-12-22 12 6-24-18-16 24-4z' opacity='.6'/%3E%3Cpath d='M250 68l6 14 15 2-11 10 3 15-13-7-13 7 3-15-11-10 15-2z' opacity='.55'/%3E%3Cpath d='M88 214l6 14 15 2-11 10 3 15-13-7-13 7 3-15-11-10 15-2z' opacity='.5'/%3E%3Cpath d='M260 232l10 22 24 4-18 16 5 24-21-12-22 12 6-24-18-16 24-4z' opacity='.45'/%3E%3C/g%3E%3Cg fill='none' stroke='%23ffffff' stroke-width='3'%3E%3Cpath d='M150 30c10 8 18 14 30 18' opacity='.35'/%3E%3Cpath d='M24 170c14 0 24 6 36 14' opacity='.28'/%3E%3Cpath d='M210 150c8 12 14 18 26 26' opacity='.22'/%3E%3C/g%3E%3C/svg%3E");
+      background-size: 520px 520px;
+      pointer-events:none;
+    }
+
+    .kicker{
+      font-size:18px;
+      letter-spacing:0.18em;
+      text-transform:uppercase;
+      color: rgba(255,255,255,0.9);
+      opacity:0.9;
+    }
+
+    .sticker{
+      background: var(--sticker);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      border: 10px solid var(--stroke);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cover-sticker{
+      height: 100%;
+      padding: 58px 54px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      background:
+        radial-gradient(circle at 10% 20%, rgba(255,79,160,0.14), transparent 42%),
+        radial-gradient(circle at 85% 10%, rgba(122,92,255,0.16), transparent 45%),
+        radial-gradient(circle at 85% 82%, rgba(255,210,106,0.16), transparent 45%),
+        #ffd3e5;
+    }
+
+    .cover-title{
+      font-family:"Baloo 2","Fredoka",system-ui,Arial,sans-serif;
+      font-weight: 800;
+      font-size: 112px;
+      line-height: 0.92;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      text-transform: uppercase;
+      text-shadow:
+        0 6px 0 rgba(255,255,255,0.85),
+        0 14px 30px rgba(0,0,0,0.12);
+      max-width: 940px;
+    }
+
+    .chip-row{display:flex; gap:14px; flex-wrap:wrap; margin-top: 22px;}
+    .chip{
+      padding: 12px 16px;
+      border-radius:999px;
+      font-size:18px;
+      letter-spacing:0.12em;
+      text-transform:uppercase;
+      background: rgba(255,255,255,0.65);
+      border: 2px solid rgba(28,24,32,0.12);
+      color: rgba(28,24,32,0.78);
+    }
+
+    .avatar{
+      width: 420px; height: 420px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.65), rgba(255,255,255,0.18)),
+        radial-gradient(circle at 55% 60%, rgba(122,92,255,0.28), transparent 58%),
+        radial-gradient(circle at 25% 70%, rgba(255,79,160,0.26), transparent 60%);
+      border: 10px solid rgba(255,255,255,0.96);
+      box-shadow: 0 28px 80px rgba(0,0,0,0.22);
+      display:grid;
+      place-items:center;
+      font-size: 160px;
+      font-weight: 800;
+      color: rgba(28,24,32,0.82);
+      align-self:center;
+      margin: 34px 0;
+      position:relative;
+    }
+    .avatar::after{
+      content:"";
+      position:absolute; inset:-26px;
+      border-radius:50%;
+      border: 4px dashed rgba(255,255,255,0.55);
+      transform: rotate(-8deg);
+    }
+
+    .sub{
+      font-size:40px;
+      line-height:1.35;
+      color: rgba(28,24,32,0.72);
+      max-width: 940px;
+    }
+
+    /* body slides */
+    .panel{
+      height: 100%;
+      padding: 54px 54px;
+      display:flex;
+      flex-direction:column;
+      gap: 26px;
+      background: #fff3f7;
+    }
+    .h1{
+      font-family:"Baloo 2","Fredoka",system-ui,Arial,sans-serif;
+      font-weight: 800;
+      font-size: 84px;
+      line-height: 0.98;
+      letter-spacing: -0.03em;
+      color: var(--ink);
+      text-transform: uppercase;
+    }
+    .p{
+      font-size: 38px;
+      line-height: 1.38;
+      color: rgba(28,24,32,0.78);
+      max-width: 940px;
+    }
+    .bullets{
+      margin-top: 8px;
+      display:flex;
+      flex-direction:column;
+      gap: 10px;
+      padding-left: 10px;
+    }
+    .bullets li{
+      list-style:none;
+      display:flex;
+      gap: 12px;
+      align-items:flex-start;
+      font-size: 36px;
+      line-height: 1.35;
+      color: rgba(28,24,32,0.78);
+    }
+    .dot{
+      margin-top: 12px;
+      width: 12px; height: 12px;
+      border-radius:50%;
+      background: var(--hot);
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 6px rgba(255,46,121,0.18);
+    }
+
+    .cta{
+      height: 100%;
+      padding: 58px 54px;
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      background: linear-gradient(180deg, #ffe3f0, #fff3f7);
+    }
+    .cta .big{
+      font-family:"Baloo 2","Fredoka",system-ui,Arial,sans-serif;
+      font-weight:800;
+      font-size: 86px;
+      line-height: 0.98;
+      letter-spacing:-0.03em;
+      color: var(--ink);
+      text-transform: uppercase;
+    }
+    .cta .small{
+      font-size: 38px;
+      line-height: 1.35;
+      color: rgba(28,24,32,0.72);
+      max-width: 940px;
+    }
+    .handle{
+      margin-top: 14px;
+      font-weight: 700;
+      font-size: 36px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(28,24,32,0.62);
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="stars"></div>
+    <div class="wrap">
+      <div class="sticker cover-sticker">
+        <div>
+          <div class="kicker">Slide 01 / Cover</div>
+          <div class="cover-title">
+            {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+          </div>
+          <div class="chip-row">
+            {{#if cover_slide.sign}}<div class="chip">{{cover_slide.sign}}</div>{{/if}}
+            {{#if cover_slide.date_range}}<div class="chip">{{cover_slide.date_range}}</div>{{/if}}
+            {{#if cover_slide.version}}<div class="chip">{{cover_slide.version}}</div>{{/if}}
+          </div>
+        </div>
+
+        <div class="avatar">{{#if cover_slide.glyph}}{{cover_slide.glyph}}{{else}}✶{{/if}}</div>
+
+        <div class="sub">
+          {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="stars"></div>
+    <div class="wrap">
+      <div class="sticker panel">
+        <div class="kicker">{{#if kicker}}{{kicker}}{{else}}Slide / Horoscope{{/if}}</div>
+        <div class="h1">{{headline}}</div>
+        <div class="p">{{body}}</div>
+        {{#if bullets}}
+          <ul class="bullets">
+            {{#each bullets}}
+              <li><span class="dot"></span><span>{{this}}</span></li>
+            {{/each}}
+          </ul>
+        {{/if}}
+      </div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="stars"></div>
+    <div class="wrap">
+      <div class="sticker cta">
+        <div>
+          <div class="kicker">Slide / CTA</div>
+          <div class="big">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</div>
+          {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+        </div>
+        <div class="small">Save this. Share it. Pick your sign.</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

@@ -46,6 +46,16 @@ export interface JobListRow {
   qc_status: string | null;
   created_at: string;
   updated_at: string;
+  candidate_id: string | null;
+  variation_name: string | null;
+  render_provider: string | null;
+  render_status: string | null;
+  /** From render_state JSON (e.g. carousel / video step). */
+  render_phase: string | null;
+  /** Human-readable pipeline position (where a stuck job is waiting). */
+  pipeline_phase: string | null;
+  /** Best-effort pipeline/render failure text. */
+  last_error: string | null;
 }
 
 export interface JobListFilters {
@@ -63,28 +73,28 @@ export async function listJobs(
   limit = 50,
   offset = 0
 ): Promise<{ rows: JobListRow[]; total: number }> {
-  const clauses: string[] = ["project_id = $1"];
+  const clauses: string[] = ["c.project_id = $1"];
   const params: unknown[] = [projectId];
   let idx = 2;
 
   if (filters.status) {
-    clauses.push(`status = $${idx++}`);
+    clauses.push(`c.status = $${idx++}`);
     params.push(filters.status);
   }
   if (filters.platform) {
-    clauses.push(`platform = $${idx++}`);
+    clauses.push(`c.platform = $${idx++}`);
     params.push(filters.platform);
   }
   if (filters.flow_type) {
-    clauses.push(`flow_type = $${idx++}`);
+    clauses.push(`c.flow_type = $${idx++}`);
     params.push(filters.flow_type);
   }
   if (filters.run_id) {
-    clauses.push(`run_id = $${idx++}`);
+    clauses.push(`c.run_id = $${idx++}`);
     params.push(filters.run_id);
   }
   if (filters.search) {
-    clauses.push(`(task_id ILIKE $${idx} OR run_id ILIKE $${idx})`);
+    clauses.push(`(c.task_id ILIKE $${idx} OR c.run_id ILIKE $${idx})`);
     params.push(`%${filters.search}%`);
     idx++;
   }
@@ -92,7 +102,7 @@ export async function listJobs(
   const where = clauses.join(" AND ");
   const countRow = await qOne<{ c: string }>(
     db,
-    `SELECT COUNT(*)::text AS c FROM caf_core.content_jobs WHERE ${where}`,
+    `SELECT COUNT(*)::text AS c FROM caf_core.content_jobs c WHERE ${where}`,
     params
   );
   const total = countRow ? parseInt(countRow.c, 10) : 0;
@@ -100,10 +110,72 @@ export async function listJobs(
   params.push(limit, offset);
   const rows = await q<JobListRow>(
     db,
-    `SELECT id, task_id, run_id, platform, flow_type, status, recommended_route,
-            pre_gen_score::text, qc_status, created_at::text, updated_at::text
-     FROM caf_core.content_jobs WHERE ${where}
-     ORDER BY created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
+    `SELECT c.id, c.task_id, c.run_id, c.platform, c.flow_type, c.status, c.recommended_route,
+            c.pre_gen_score::text, c.qc_status, c.created_at::text, c.updated_at::text,
+            c.candidate_id, c.variation_name, c.render_provider, c.render_status,
+            COALESCE(NULLIF(trim(c.render_state->>'status'), ''), NULLIF(trim(c.render_state->>'provider'), '')) AS render_phase,
+            (
+              CASE c.status
+                WHEN 'PLANNED' THEN
+                  CASE
+                    WHEN (c.generation_payload ? 'generated_output')
+                         AND jsonb_typeof(c.generation_payload->'generated_output') IS NOT NULL
+                         AND jsonb_typeof(c.generation_payload->'generated_output') <> 'null'
+                    THEN 'PLANNED · has LLM output — run Process or retry this job'
+                    ELSE 'PLANNED · waiting for pipeline pickup (not processed yet)'
+                  END
+                WHEN 'GENERATING' THEN 'GENERATING · LLM (OpenAI)'
+                WHEN 'GENERATED' THEN 'GENERATED · QC, diagnostic, routing (before render)'
+                WHEN 'RENDERING' THEN
+                  CASE COALESCE(NULLIF(trim(c.render_state->>'status'), ''), '')
+                    WHEN 'pending' THEN
+                      CASE lower(trim(COALESCE(c.render_state->>'provider', '')))
+                        WHEN 'carousel-renderer' THEN
+                          'RENDERING · carousel — ' ||
+                          CASE
+                            WHEN (c.render_state ? 'slide_index') AND (c.render_state ? 'slide_total')
+                                 AND trim(c.render_state->>'slide_index') <> ''
+                                 AND trim(c.render_state->>'slide_total') <> ''
+                            THEN 'slide ' || trim(c.render_state->>'slide_index') || '/' || trim(c.render_state->>'slide_total') || ' · '
+                            ELSE ''
+                          END ||
+                          'PNG from renderer'
+                        WHEN 'video' THEN 'RENDERING · video — scene bundle / HeyGen / assembly (see expand → render_state)'
+                        WHEN 'heygen' THEN 'RENDERING · HeyGen — API submit → poll → download'
+                        WHEN 'video-assembly' THEN 'RENDERING · video-assembly service'
+                        WHEN 'scene-pipeline' THEN 'RENDERING · scene pipeline — merge / mux / assets'
+                        ELSE 'RENDERING · pending (' || COALESCE(trim(c.render_state->>'provider'), '?') || ')'
+                      END
+                    WHEN 'failed' THEN 'RENDERING · failed — ' || left(COALESCE(trim(c.render_state->>'error'), 'unknown'), 120)
+                    WHEN 'skipped' THEN 'RENDERING · skipped — ' || COALESCE(trim(c.render_state->>'reason'), '?')
+                    WHEN 'completed' THEN 'RENDERING · render finished — updating job status'
+                    ELSE 'RENDERING · ' || COALESCE(NULLIF(trim(c.render_state->>'status'), ''), NULLIF(trim(c.render_state->>'provider'), ''), 'in progress')
+                  END
+                WHEN 'IN_REVIEW' THEN 'IN_REVIEW · human review queue'
+                WHEN 'NEEDS_EDIT' THEN 'NEEDS_EDIT · awaiting edits / rework'
+                WHEN 'APPROVED' THEN 'APPROVED · done'
+                WHEN 'BLOCKED' THEN 'BLOCKED · QC or policy'
+                WHEN 'REJECTED' THEN 'REJECTED'
+                WHEN 'FAILED' THEN 'FAILED · see error column or state transitions'
+                ELSE COALESCE(c.status, '—')
+              END
+            ) ||
+            CASE
+              WHEN c.status = 'RENDERING'
+                   AND c.qc_status IS NOT NULL
+                   AND upper(trim(c.qc_status)) NOT IN ('PASS', 'OK', '')
+              THEN ' · QC=' || trim(c.qc_status)
+              ELSE ''
+            END AS pipeline_phase,
+            COALESCE(
+              NULLIF(trim(c.render_state->>'error'), ''),
+              (SELECT NULLIF(trim(jt.metadata_json->>'error'), '')
+               FROM caf_core.job_state_transitions jt
+               WHERE jt.project_id = c.project_id AND jt.task_id = c.task_id AND jt.to_state = 'FAILED'
+               ORDER BY jt.created_at DESC LIMIT 1)
+            ) AS last_error
+     FROM caf_core.content_jobs c WHERE ${where}
+     ORDER BY c.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
     params
   );
   return { rows, total };
@@ -129,6 +201,23 @@ export async function listDecisionTraces(
      FROM caf_core.decision_traces WHERE project_id = $1
      ORDER BY created_at DESC LIMIT $2`,
     [projectId, limit]
+  );
+}
+
+export async function listDecisionTracesForRun(
+  db: Pool,
+  projectId: string,
+  runIdText: string,
+  limit = 20
+): Promise<DecisionTraceRow[]> {
+  return q<DecisionTraceRow>(
+    db,
+    `SELECT trace_id, run_id, engine_version, input_snapshot, output_snapshot, created_at::text
+     FROM caf_core.decision_traces
+     WHERE project_id = $1 AND run_id = $2
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [projectId, runIdText, limit]
   );
 }
 
@@ -184,4 +273,39 @@ export async function getJobFacets(
     flow_types: flow_types.map((r) => r.v),
     run_ids: run_ids.map((r) => r.v),
   };
+}
+
+export interface JobAdminTransitionRow {
+  id: string;
+  from_state: string | null;
+  to_state: string;
+  triggered_by: string;
+  actor: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+}
+
+/** Full job row + recent state transitions for admin drill-down. */
+export async function getJobAdminDetail(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<{ job: Record<string, unknown>; transitions: JobAdminTransitionRow[] } | null> {
+  const job = await qOne<Record<string, unknown>>(
+    db,
+    `SELECT id::text, task_id, run_id, candidate_id, variation_name, flow_type, platform, origin_platform, target_platform,
+            status, recommended_route, qc_status, render_provider, render_status, asset_id,
+            pre_gen_score::text, generation_payload, render_state, scene_bundle_state, review_snapshot,
+            created_at::text, updated_at::text
+     FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
+    [projectId, taskId]
+  );
+  if (!job) return null;
+  const transitions = await q<JobAdminTransitionRow>(
+    db,
+    `SELECT id::text, from_state, to_state, triggered_by, actor, metadata_json, created_at::text
+     FROM caf_core.job_state_transitions WHERE project_id = $1 AND task_id = $2 ORDER BY created_at DESC LIMIT 40`,
+    [projectId, taskId]
+  );
+  return { job, transitions };
 }

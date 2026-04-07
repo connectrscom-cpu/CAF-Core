@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --safe: 92px;
+      --bg1:#12121a;
+      --bg2:#1a1a26;
+      --text:#f5f5f7;
+      --muted:#b7b7c2;
+      --accent:#9b5cff;
+      --pill-bg: rgba(155,92,255,0.16);
+      --pill-border: rgba(155,92,255,0.28);
+      --radius: 44px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{
+      font-family:Inter,system-ui,Arial,sans-serif;
+      background:linear-gradient(180deg,var(--bg1),var(--bg2));
+      color:var(--text);
+      counter-reset: bodySlide;
+    }
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:linear-gradient(180deg,var(--bg1),var(--bg2));
+    }
+    .inner{
+      width:100%;height:100%;
+      padding:var(--safe);
+      display:flex;flex-direction:column;justify-content:space-between;
+      position:relative;
+      border:1px solid rgba(255,255,255,0.06);
+    }
+    .kicker{
+      font-size:18px;
+      letter-spacing:0.18em;
+      text-transform:uppercase;
+      color:rgba(245,245,247,0.75);
+    }
+    .cover-title{
+      margin-top: 28px;
+      font-size:92px;
+      line-height:0.98;
+      letter-spacing:-0.04em;
+      font-weight:800;
+      max-width: 920px;
+    }
+    .cover-sub{
+      font-size:44px;
+      line-height:1.35;
+      color:var(--muted);
+      max-width: 920px;
+    }
+    .body-slide{ counter-increment: bodySlide; }
+    .big-num{
+      position:absolute;
+      top: 36px;
+      right: 56px;
+      font-weight:800;
+      font-size:220px;
+      line-height:0.8;
+      letter-spacing:-0.08em;
+      color: rgba(255,255,255,0.10);
+      user-select:none;
+      pointer-events:none;
+    }
+    .big-num::before{ content: counter(bodySlide); }
+    .pill{
+      align-self:flex-start;
+      padding:14px 18px;
+      border-radius:999px;
+      background:var(--pill-bg);
+      border:1px solid var(--pill-border);
+      color:#dbcfff;
+      font-size:18px;
+      letter-spacing:0.16em;
+      text-transform:uppercase;
+    }
+    .headline{
+      margin-top: 26px;
+      font-size:86px;
+      line-height:0.98;
+      letter-spacing:-0.04em;
+      font-weight:800;
+      max-width: 900px;
+    }
+    .body{
+      font-size:44px;
+      line-height:1.32;
+      color:var(--muted);
+      max-width: 920px;
+    }
+    .cta{
+      font-weight:800;
+      font-size:88px;
+      line-height:0.98;
+      letter-spacing:-0.04em;
+      max-width: 920px;
+    }
+    .handle{
+      margin-top:18px;
+      font-weight:700;
+      font-size:40px;
+      color:#dbcfff;
+      letter-spacing:0.06em;
+    }
+    .accent{ color: var(--accent); }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="inner">
+      <div>
+        <div class="kicker">Slide 01 / Topic</div>
+        <div class="cover-title">
+          {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+        </div>
+      </div>
+      <div class="cover-sub">
+        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide body-slide">
+    <div class="inner">
+      <div class="big-num"></div>
+      <div>
+        <div class="pill">{{headline}}</div>
+        <div class="headline">{{headline}}</div>
+        <div class="body" style="margin-top: 22px;">{{body}}</div>
+      </div>
+      <div class="body" style="opacity:0.9;">Swipe for the next point.</div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="inner">
+      <div>
+        <div class="kicker">Final / CTA</div>
+        <div class="cta"><span class="accent">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span></div>
+        {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      </div>
+      <div class="body">Repeatable layout. Easy to scale.</div>
+    </div>
+  </div>
+</body>
+</html>

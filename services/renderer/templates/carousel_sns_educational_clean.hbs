@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --safe: 96px;
+      --bg1:#faf6f0;
+      --bg2:#f4efe8;
+      --text:#1d1b22;
+      --muted:#6c6874;
+      --accent:#8f66f5;
+      --border: rgba(29,27,34,0.12);
+      --card: rgba(255,255,255,0.78);
+      --radius: 42px;
+      --shadow: 0 22px 60px rgba(0,0,0,0.14);
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Inter,system-ui,Arial,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);}
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:linear-gradient(180deg,var(--bg1),var(--bg2));
+    }
+    .inner{
+      width:100%;height:100%;
+      padding:var(--safe);
+      display:flex;flex-direction:column;justify-content:space-between;
+      position:relative;
+    }
+    .top-row{display:flex;flex-direction:column;gap:18px;}
+    .kicker{
+      font-size:18px;
+      letter-spacing:0.18em;
+      text-transform:uppercase;
+      color:var(--muted);
+    }
+    .title{
+      font-family:"Playfair Display",serif;
+      font-weight:700;
+      font-size:90px;
+      line-height:1.02;
+      letter-spacing:-0.03em;
+      max-width: 900px;
+    }
+    .accent{color:var(--accent);}
+    .divider{
+      width:100%;height:1px;margin-top:10px;
+      background: linear-gradient(90deg, transparent, rgba(0,0,0,0.22), transparent);
+    }
+    .card{
+      background:var(--card);
+      border:1px solid rgba(29,27,34,0.08);
+      border-radius:28px;
+      padding:34px 34px;
+      box-shadow:var(--shadow);
+    }
+    .card h3{
+      font-family:Inter,sans-serif;
+      font-size:46px;
+      letter-spacing:-0.02em;
+    }
+    .card p{
+      margin-top:16px;
+      font-size:40px;
+      line-height:1.38;
+      color:var(--muted);
+    }
+    .body{
+      font-size:42px;
+      line-height:1.4;
+      color:var(--muted);
+      max-width: 920px;
+    }
+    .cta{
+      font-family:"Playfair Display",serif;
+      font-size:72px;
+      line-height:1.06;
+      letter-spacing:-0.03em;
+      max-width: 900px;
+    }
+    .handle{
+      margin-top:18px;
+      font-weight:600;
+      font-size:40px;
+      color:var(--accent);
+      letter-spacing:0.06em;
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="inner">
+      <div class="top-row">
+        <div class="kicker">Slide 01 / Topic</div>
+        <div class="title">
+          {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+        </div>
+        <div class="divider"></div>
+      </div>
+      <div class="body">
+        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="inner">
+      <div class="top-row">
+        <div class="card">
+          <h3>{{headline}}</h3>
+          <p>{{body}}</p>
+        </div>
+      </div>
+      <div class="body">Slide for more Cosmic Insights</div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="inner">
+      <div class="top-row">
+        <div class="kicker">Summary</div>
+        <div class="cta">
+          {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+        </div>
+      </div>
+      {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+    </div>
+  </div>
+</body>
+</html>

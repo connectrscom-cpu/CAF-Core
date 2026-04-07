@@ -1,0 +1,26 @@
+# Standalone renderer image (Puppeteer only). For gateway + video on one host use repo root:
+#   fly deploy -c fly.caf-renderer.toml
+# Or from here: cd services/renderer && fly deploy
+# Set secrets: fly secrets set CAF_TEMPLATE_API_URL=https://your-review-or-core-host RENDERER_SHUTDOWN_SECRET=...
+app = "caf-renderer"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3333"
+  NODE_ENV = "production"
+
+[http_service]
+  internal_port = 3333
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 2

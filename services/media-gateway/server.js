@@ -117,6 +117,15 @@ app.use(
 );
 
 app.use(
+  "/concat-videos",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${VIDEO_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/concat-videos": "/concat-videos" },
+  })
+);
+
+app.use(
   "/full-pipeline",
   createProxyMiddleware({
     target: `http://127.0.0.1:${VIDEO_PORT}`,

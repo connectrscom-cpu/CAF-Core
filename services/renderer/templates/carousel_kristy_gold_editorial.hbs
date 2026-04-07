@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --safe: 92px;
+      /* Sign & Sound–style: deep bronze → warm antique gold */
+      --gold-deep: #3d2f18;
+      --gold-mid: #5c451c;
+      --gold-rich: #7a5a22;
+      --cream: #f4ead4;
+      --cream-soft: #e8dcc4;
+      --champagne: #d4c4a0;
+      --rule: rgba(212,196,160,0.42);
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#111;font-family:Inter,system-ui,Arial,sans-serif;}
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background:
+        radial-gradient(ellipse 120% 80% at 50% 0%, rgba(212,180,96,0.22), transparent 55%),
+        linear-gradient(168deg, var(--gold-deep) 0%, var(--gold-mid) 45%, var(--gold-rich) 100%);
+      position: relative;
+    }
+    .wrap{
+      width:100%;height:100%;
+      padding:var(--safe);
+      display:flex;
+      flex-direction:column;
+      justify-content:space-between;
+      position:relative;
+    }
+    .kicker{
+      font-size:16px;
+      letter-spacing:0.18em;
+      text-transform:uppercase;
+      color: rgba(232,220,196,0.58);
+    }
+    .sign{
+      font-family:"DM Serif Display",serif;
+      font-size: 132px;
+      line-height: 0.96;
+      letter-spacing: -0.02em;
+      color: var(--cream);
+      text-align:center;
+      margin-top: 36px;
+    }
+    .subtitle{
+      text-align:center;
+      margin-top: 18px;
+      font-size: 22px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(212,196,160,0.78);
+    }
+    .body{
+      margin-top: 34px;
+      font-size: 34px;
+      line-height: 1.48;
+      color: var(--cream-soft);
+      text-align:center;
+      max-width: 920px;
+      align-self:center;
+      white-space: pre-wrap;
+    }
+    .rule{
+      height: 1px;
+      width: 100%;
+      background: linear-gradient(90deg, transparent, var(--rule), transparent);
+      margin: 26px 0 0;
+    }
+    .footer{
+      text-align:center;
+      font-family: Inter,system-ui,Arial,sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--champagne);
+      font-size: 34px;
+      margin-top: 18px;
+    }
+    .cover-title{
+      font-family:"DM Serif Display",serif;
+      font-size: 122px;
+      line-height: 0.94;
+      letter-spacing: -0.02em;
+      color: var(--cream);
+      text-align:center;
+      margin-top: 30px;
+      text-transform: uppercase;
+    }
+    .cover-sub{
+      text-align:center;
+      margin-top: 18px;
+      font-size: 28px;
+      line-height: 1.35;
+      color: rgba(232,220,196,0.82);
+      max-width: 920px;
+      align-self:center;
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="wrap">
+      <div style="text-align:center;">
+        <div class="kicker">Slide 01 / Cover</div>
+        <div class="cover-title">
+          {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+        </div>
+        <div class="cover-sub">
+          {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+        </div>
+      </div>
+      <div style="text-align:center;">
+        <div class="rule"></div>
+        <div class="footer">{{#if cover_slide.author}}{{cover_slide.author}}{{else}}{{#if cta_handle}}{{cta_handle}}{{else}}KRISTY GRAY{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="wrap">
+      <div style="text-align:center;">
+        <div class="kicker">Slide / Reading</div>
+        <div class="sign">{{headline}}</div>
+        {{#if kicker}}<div class="subtitle">{{kicker}}</div>{{else}}{{#if subheadline}}<div class="subtitle">{{subheadline}}</div>{{/if}}{{/if}}
+        <div class="body">{{body}}</div>
+      </div>
+      <div style="text-align:center;">
+        <div class="rule"></div>
+        <div class="footer">{{#if footer}}{{footer}}{{else}}{{#if cta_handle}}{{cta_handle}}{{else}}KRISTY GRAY{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="wrap">
+      <div style="text-align:center;">
+        <div class="kicker">Slide / CTA</div>
+        <div class="cover-title" style="font-size:110px;">
+          {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+        </div>
+        {{#if cta_slide.sub}}<div class="cover-sub">{{cta_slide.sub}}</div>{{/if}}
+      </div>
+      <div style="text-align:center;">
+        <div class="rule"></div>
+        <div class="footer">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}KRISTY GRAY{{/if}}{{/if}}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

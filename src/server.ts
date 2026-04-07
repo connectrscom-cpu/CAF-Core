@@ -8,6 +8,10 @@ import { registerAdminRoutes } from "./routes/admin.js";
 import { registerProjectConfigRoutes } from "./routes/project-config.js";
 import { registerSignalPackRoutes } from "./routes/signal-packs.js";
 import { registerRunRoutes } from "./routes/runs.js";
+import { registerFlowEngineRoutes } from "./routes/flow-engine.js";
+import { registerPipelineRoutes } from "./routes/pipeline.js";
+import { registerLearningRoutes } from "./routes/learning.js";
+import { registerRendererTemplateRoutes, isRendererTemplatesPublicPath } from "./routes/renderer-templates.js";
 
 async function main() {
   const config = loadConfig();
@@ -18,9 +22,19 @@ async function main() {
   await app.register(cors, { origin: true });
   await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 
+  app.get("/robots.txt", async (_request, reply) => {
+    return reply
+      .type("text/plain; charset=utf-8")
+      .send("User-agent: *\nDisallow: /\n");
+  });
+
+  registerRendererTemplateRoutes(app, config.CAROUSEL_TEMPLATES_DIR);
+
   if (config.CAF_CORE_REQUIRE_AUTH && config.CAF_CORE_API_TOKEN) {
     app.addHook("preHandler", async (request, reply) => {
       if (request.url === "/health" || request.url.startsWith("/health?")) return;
+      if (request.url === "/robots.txt" || request.url.startsWith("/robots.txt?")) return;
+      if (request.method === "GET" && isRendererTemplatesPublicPath(request.url)) return;
       const token =
         (request.headers["x-caf-core-token"] as string | undefined) ||
         (request.headers.authorization?.startsWith("Bearer ")
@@ -37,6 +51,9 @@ async function main() {
   registerProjectConfigRoutes(app, { db });
   registerSignalPackRoutes(app, { db, config });
   registerRunRoutes(app, { db, config });
+  registerFlowEngineRoutes(app, { db });
+  registerPipelineRoutes(app, { db, config });
+  registerLearningRoutes(app, { db, config });
 
   app.addHook("onClose", async () => {
     await db.end();

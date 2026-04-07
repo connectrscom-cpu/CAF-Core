@@ -5,6 +5,7 @@ import {
   countJobsCreatedToday,
   ensureProject,
   getConstraints,
+  normalizePerFlowCaps,
   insertDecisionTrace,
   listActiveAppliedLearningRules,
   listActiveSuppressionRules,
@@ -14,9 +15,17 @@ import { selectPromptVersion } from "./prompt_selector.js";
 import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
 import { defaultWeights, scoreCandidate } from "./scoring.js";
 import { selectRoute } from "./route_selector.js";
+import {
+  defaultMaxJobsPerFlowType,
+  DEFAULT_CAROUSEL_FLOW_PLAN_CAP,
+  DEFAULT_VIDEO_FLOW_PLAN_CAP,
+} from "./default-plan-caps.js";
 import type { GenerationPlanRequest, GenerationPlanResult, PlannedJob, ScoredCandidate } from "./types.js";
+import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 
 export type { GenerationPlanRequest, GenerationPlanResult } from "./types.js";
+
+export { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 export { generationPlanRequestSchema } from "./types.js";
 
 export async function decideGenerationPlan(
@@ -144,15 +153,50 @@ export async function decideGenerationPlan(
   sorted = sorted.slice(0, maxCand);
 
   const maxPrompts = constraints?.max_active_prompt_versions ?? null;
+  const maxCarouselPlan =
+    constraints?.max_carousel_jobs_per_run ?? config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN;
+  const maxVideoPlan = constraints?.max_video_jobs_per_run ?? config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN;
+  const perFlowOverrides = normalizePerFlowCaps(constraints?.max_jobs_per_flow_type);
+  const perFlowCaps: Record<string, number> = { ...defaultMaxJobsPerFlowType(), ...perFlowOverrides };
+  for (const c of sorted) {
+    const ft = c.flow_type;
+    if (perFlowCaps[ft] !== undefined) continue;
+    if (isCarouselFlow(ft)) perFlowCaps[ft] = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
+    else if (isVideoFlow(ft)) perFlowCaps[ft] = DEFAULT_VIDEO_FLOW_PLAN_CAP;
+    else perFlowCaps[ft] = config.DEFAULT_OTHER_FLOW_PLAN_CAP;
+  }
   const selected: PlannedJob[] = [];
   let remainingSlots =
     maxDaily === null ? Number.POSITIVE_INFINITY : Math.max(0, maxDaily - jobsToday);
+  let plannedCarousel = 0;
+  let plannedVideo = 0;
+  const perFlowPlanned: Record<string, number> = {};
 
   for (const c of sorted) {
     if (remainingSlots <= 0) break;
     const prompt = await selectPromptVersion(db, project.id, c.flow_type, maxPrompts);
     const route = selectRoute(c, { autoValidationThreshold: autoValThreshold });
-    const varsThisCandidate = Math.min(variationCap, remainingSlots);
+    const ft = c.flow_type;
+    let varsThisCandidate = Math.min(variationCap, remainingSlots);
+
+    const usedFt = perFlowPlanned[ft] ?? 0;
+    const capFt = perFlowCaps[ft] ?? 0;
+    varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, capFt - usedFt));
+    if (isCarouselFlow(ft)) {
+      varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, maxCarouselPlan - plannedCarousel));
+    }
+    if (isVideoFlow(ft)) {
+      varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, maxVideoPlan - plannedVideo));
+    }
+
+    if (varsThisCandidate <= 0) {
+      dropped.push({
+        candidate_id: c.candidate_id,
+        reason: "plan_cap",
+        pre_gen_score: c.pre_gen_score,
+      });
+      continue;
+    }
 
     for (let v = 0; v < varsThisCandidate; v++) {
       selected.push({
@@ -168,6 +212,9 @@ export async function decideGenerationPlan(
         pre_gen_score: c.pre_gen_score,
       });
       remainingSlots -= 1;
+      if (isCarouselFlow(ft)) plannedCarousel += 1;
+      if (isVideoFlow(ft)) plannedVideo += 1;
+      perFlowPlanned[ft] = (perFlowPlanned[ft] ?? 0) + 1;
     }
   }
 
@@ -185,6 +232,12 @@ export async function decideGenerationPlan(
       max_daily_jobs: maxDaily,
       min_score_used: minScore,
       variation_cap: variationCap,
+      max_carousel_jobs_per_run: maxCarouselPlan,
+      max_video_jobs_per_run: maxVideoPlan,
+      default_other_flow_plan_cap: config.DEFAULT_OTHER_FLOW_PLAN_CAP,
+      max_jobs_per_flow_type: Object.keys(perFlowOverrides).length ? perFlowOverrides : undefined,
+      planned_carousel_jobs: plannedCarousel,
+      planned_video_jobs: plannedVideo,
     },
   };
 

@@ -14,6 +14,12 @@ export interface ConstraintRow {
   max_active_prompt_versions: number | null;
   default_variation_cap: number;
   auto_validation_pass_threshold: string | null;
+  /** Max planned jobs (incl. variations) classified as carousel per generation plan. */
+  max_carousel_jobs_per_run: number | null;
+  /** Max planned jobs (incl. variations) classified as video/reel per generation plan. */
+  max_video_jobs_per_run: number | null;
+  /** Per flow_type caps (override engine defaults; see default-plan-caps for built-in video caps). */
+  max_jobs_per_flow_type: Record<string, unknown>;
 }
 
 export interface SuppressionRuleRow {
@@ -69,10 +75,94 @@ export async function getConstraints(db: Pool, projectId: string): Promise<Const
   return qOne<ConstraintRow>(
     db,
     `SELECT max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap,
-            auto_validation_pass_threshold
+            auto_validation_pass_threshold,
+            max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type
      FROM caf_core.project_system_constraints WHERE project_id = $1`,
     [projectId]
   );
+}
+
+/** Normalize JSON/unknown into non-negative integer caps per flow_type key. */
+export function normalizePerFlowCaps(raw: unknown): Record<string, number> {
+  if (raw == null) return {};
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return {};
+    try {
+      return normalizePerFlowCaps(JSON.parse(s));
+    } catch {
+      return {};
+    }
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+    const n = typeof val === "number" ? val : Number(val);
+    if (Number.isFinite(n) && n >= 0) out[k] = Math.min(Math.floor(n), 1_000_000);
+  }
+  return out;
+}
+
+export type ConstraintsPatch = {
+  max_daily_jobs?: number | null;
+  min_score_to_generate?: number | null;
+  max_active_prompt_versions?: number | null;
+  default_variation_cap?: number | null;
+  auto_validation_pass_threshold?: number | null;
+  max_carousel_jobs_per_run?: number | null;
+  max_video_jobs_per_run?: number | null;
+  max_jobs_per_flow_type?: unknown;
+};
+
+export function mergeConstraintUpdate(
+  existing: ConstraintRow | null,
+  patch: ConstraintsPatch
+): {
+  max_daily_jobs: number | null;
+  min_score_to_generate: number | null;
+  max_active_prompt_versions: number | null;
+  default_variation_cap: number;
+  auto_validation_pass_threshold: number | null;
+  max_carousel_jobs_per_run: number | null;
+  max_video_jobs_per_run: number | null;
+  max_jobs_per_flow_type: Record<string, number>;
+} {
+  return {
+    max_daily_jobs:
+      patch.max_daily_jobs !== undefined ? patch.max_daily_jobs : existing?.max_daily_jobs ?? null,
+    min_score_to_generate:
+      patch.min_score_to_generate !== undefined
+        ? patch.min_score_to_generate
+        : existing?.min_score_to_generate != null
+          ? Number(existing.min_score_to_generate)
+          : null,
+    max_active_prompt_versions:
+      patch.max_active_prompt_versions !== undefined
+        ? patch.max_active_prompt_versions
+        : existing?.max_active_prompt_versions ?? null,
+    default_variation_cap:
+      patch.default_variation_cap !== undefined
+        ? Math.max(1, Math.floor(Number(patch.default_variation_cap)) || 1)
+        : existing?.default_variation_cap ?? 1,
+    auto_validation_pass_threshold:
+      patch.auto_validation_pass_threshold !== undefined
+        ? patch.auto_validation_pass_threshold
+        : existing?.auto_validation_pass_threshold != null
+          ? Number(existing.auto_validation_pass_threshold)
+          : null,
+    max_carousel_jobs_per_run:
+      patch.max_carousel_jobs_per_run !== undefined
+        ? patch.max_carousel_jobs_per_run
+        : existing?.max_carousel_jobs_per_run ?? null,
+    max_video_jobs_per_run:
+      patch.max_video_jobs_per_run !== undefined
+        ? patch.max_video_jobs_per_run
+        : existing?.max_video_jobs_per_run ?? null,
+    max_jobs_per_flow_type:
+      patch.max_jobs_per_flow_type !== undefined
+        ? normalizePerFlowCaps(patch.max_jobs_per_flow_type)
+        : normalizePerFlowCaps(existing?.max_jobs_per_flow_type),
+  };
 }
 
 export async function upsertConstraints(
@@ -84,18 +174,25 @@ export async function upsertConstraints(
     max_active_prompt_versions: number | null;
     default_variation_cap: number;
     auto_validation_pass_threshold: number | null;
+    max_carousel_jobs_per_run: number | null;
+    max_video_jobs_per_run: number | null;
+    max_jobs_per_flow_type: Record<string, number>;
   }
 ): Promise<void> {
   await db.query(
     `INSERT INTO caf_core.project_system_constraints
-      (project_id, max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap, auto_validation_pass_threshold)
-     VALUES ($1, $2, $3, $4, $5, $6)
+      (project_id, max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap, auto_validation_pass_threshold,
+       max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
      ON CONFLICT (project_id) DO UPDATE SET
        max_daily_jobs = EXCLUDED.max_daily_jobs,
        min_score_to_generate = EXCLUDED.min_score_to_generate,
        max_active_prompt_versions = EXCLUDED.max_active_prompt_versions,
        default_variation_cap = EXCLUDED.default_variation_cap,
        auto_validation_pass_threshold = EXCLUDED.auto_validation_pass_threshold,
+       max_carousel_jobs_per_run = EXCLUDED.max_carousel_jobs_per_run,
+       max_video_jobs_per_run = EXCLUDED.max_video_jobs_per_run,
+       max_jobs_per_flow_type = EXCLUDED.max_jobs_per_flow_type,
        updated_at = now()`,
     [
       projectId,
@@ -104,6 +201,9 @@ export async function upsertConstraints(
       row.max_active_prompt_versions,
       row.default_variation_cap,
       row.auto_validation_pass_threshold,
+      row.max_carousel_jobs_per_run,
+      row.max_video_jobs_per_run,
+      JSON.stringify(row.max_jobs_per_flow_type),
     ]
   );
 }

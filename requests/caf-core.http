@@ -52,3 +52,45 @@ x-caf-core-token: {{token}}
   "version": "1.0.0",
   "status": "active"
 }
+
+### --- Full run (signal pack → plan jobs → generate content) ---
+### Prerequisites: migrations applied; OPENAI_API_KEY + DATABASE_URL on Core;
+### RENDERER_BASE_URL (and VIDEO_ASSEMBLY for video) reachable from Core;
+### SUPABASE_* for asset uploads; project has enabled flow types (project-config).
+
+### List signal packs (use returned id for PATCH run)
+GET {{base}}/v1/signal-packs/SNS
+x-caf-core-token: {{token}}
+
+### Create run (status CREATED; attach pack via PATCH or include signal_pack_id here)
+POST {{base}}/v1/runs/SNS
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "run_id": "SNS_2026W09",
+  "source_window": "2026-W09"
+}
+
+### Attach signal pack (UUID from list or POST /v1/signal-packs/upload response)
+PATCH {{base}}/v1/runs/SNS/SNS_2026W09
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "signal_pack_id": "00000000-0000-0000-0000-000000000000"
+}
+
+### Start run + process all jobs (LLM, QC, carousel/video render, assets)
+POST {{base}}/v1/runs/SNS/SNS_2026W09/start-and-process
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{}
+
+### Or: start only (creates PLANNED jobs), then process in a second call
+# POST {{base}}/v1/runs/SNS/SNS_2026W09/start
+# POST {{base}}/v1/runs/SNS/SNS_2026W09/process
+
+### Process a single job by task_id
+# POST {{base}}/v1/jobs/SNS/{{task_id}}/process

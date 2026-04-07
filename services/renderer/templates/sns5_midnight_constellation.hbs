@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;0,700;1,400&family=Outfit:wght@400;500;600&family=Italiana&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --safe: 80px;
+      --rose: #b76e79;
+      --rose-soft: rgba(183, 110, 121, 0.35);
+      --gold: #c9a962;
+      --gold-soft: rgba(201, 169, 98, 0.7);
+      --navy: #15192e;
+      --navy-mid: #1e2340;
+      --white: #ffffff;
+      --text-h1: clamp(72px, 8vw, 96px);
+      --text-h2: clamp(56px, 6vw, 72px);
+      --text-body: clamp(44px, 4.5vw, 52px);
+      --text-small: clamp(38px, 3.8vw, 44px);
+      --text-tiny: clamp(34px, 3.2vw, 40px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Outfit', sans-serif; background: #0d0f1a; color: var(--white); }
+    .slide {
+      width: 1080px;
+      height: 1350px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .slide-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: var(--safe);
+      text-align: center;
+      background: linear-gradient(180deg, var(--navy) 0%, var(--navy-mid) 50%, #12162a 100%);
+    }
+    .sns5 .stars {
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(2px 2px at 15% 25%, var(--gold-soft), transparent),
+        radial-gradient(1.5px 1.5px at 85% 20%, var(--gold-soft), transparent),
+        radial-gradient(1px 1px at 50% 15%, rgba(255,255,255,0.5), transparent),
+        radial-gradient(2px 2px at 25% 75%, var(--rose-soft), transparent),
+        radial-gradient(1.5px 1.5px at 75% 80%, var(--gold-soft), transparent),
+        radial-gradient(1px 1px at 10% 50%, rgba(255,255,255,0.4), transparent),
+        radial-gradient(1px 1px at 90% 55%, rgba(255,255,255,0.35), transparent),
+        radial-gradient(1.5px 1.5px at 45% 88%, var(--gold-soft), transparent);
+      opacity: 0.9;
+      pointer-events: none;
+    }
+    .sns5 .constellation {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .sns5 .constellation svg {
+      position: absolute;
+      width: 100%; height: 100%;
+      opacity: 0.4;
+    }
+    .sns5 .constellation .dot {
+      position: absolute;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--gold);
+    }
+    .sns5 .constellation .dot.d1 { top: 22%; left: 18%; }
+    .sns5 .constellation .dot.d2 { top: 28%; left: 28%; }
+    .sns5 .constellation .dot.d3 { top: 24%; left: 40%; }
+    .sns5 .constellation .dot.d4 { top: 32%; left: 52%; }
+    .sns5 .constellation .dot.d5 { top: 26%; left: 65%; }
+    .sns5 .constellation .dot.d6 { bottom: 28%; right: 22%; }
+    .sns5 .constellation .dot.d7 { bottom: 34%; right: 35%; }
+    .sns5 .constellation .dot.d8 { bottom: 30%; right: 48%; }
+    .sns5 .crescent {
+      position: absolute;
+      top: 120px; right: 100px;
+      width: 70px; height: 70px;
+      border-radius: 50%;
+      background: transparent;
+      box-shadow: -18px 0 0 -12px var(--gold-soft);
+      opacity: 0.85;
+      z-index: 0;
+    }
+    .sns5 .vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 85% 85% at 50% 50%, transparent 45%, rgba(0,0,0,0.5) 100%);
+      pointer-events: none;
+    }
+    .sns5 .title-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h1);
+      font-weight: 700;
+      color: var(--gold);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      position: relative;
+      z-index: 1;
+      line-height: 1.1;
+    }
+    .sns5 .subtitle {
+      font-family: 'Outfit', sans-serif;
+      font-size: var(--text-small);
+      color: rgba(255,255,255,0.88);
+      margin-top: 32px;
+      position: relative;
+      z-index: 1;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+    .sns5 .body-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(38px, 4vw, 46px);
+      line-height: 1.45;
+      color: rgba(255,255,255,0.9);
+      max-width: 640px;
+      position: relative;
+      z-index: 1;
+      text-align: center;
+    }
+    .sns5 .heading {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h2);
+      font-weight: 600;
+      color: var(--gold);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 32px;
+      position: relative;
+      z-index: 1;
+    }
+    .sns5 .swipe {
+      font-family: 'Italiana', serif;
+      font-size: var(--text-small);
+      color: var(--gold);
+      margin-top: 48px;
+      letter-spacing: 0.12em;
+      position: relative;
+      z-index: 1;
+    }
+    .sns5 .cta-text {
+      font-family: 'Cormorant Garamond', serif;
+      font-size: var(--text-h2);
+      font-weight: 700;
+      color: var(--rose);
+      position: relative;
+      z-index: 1;
+      margin-bottom: 16px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .sns5 .cta-handle {
+      font-family: 'Outfit', sans-serif;
+      font-size: var(--text-small);
+      color: rgba(255,255,255,0.8);
+      position: relative;
+      z-index: 1;
+      font-weight: 500;
+    }
+    .sns5 .logo-mark {
+      position: absolute;
+      bottom: var(--safe);
+      right: var(--safe);
+      width: 52px;
+      height: 52px;
+      border: 2px solid var(--gold);
+      border-radius: 50%;
+      opacity: 0.9;
+      z-index: 1;
+    }
+    .sns5 .logo-mark::before {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border: 2px solid var(--gold);
+      border-radius: 50%;
+      opacity: 0.65;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="slide">
+    <div class="slide-inner sns5">
+      <div class="stars"></div>
+      <div class="constellation">
+        <svg viewBox="0 0 1080 1350" fill="none" stroke="rgba(201,169,98,0.5)" stroke-width="1">
+          <path d="M 194 297 L 302 378 L 432 324 L 562 351 L 702 351" />
+          <path d="M 778 972 L 648 918 L 518 945" />
+        </svg>
+        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span><span class="dot d4"></span><span class="dot d5"></span>
+        <span class="dot d6"></span><span class="dot d7"></span><span class="dot d8"></span>
+      </div>
+      <span class="crescent"></span>
+      <div class="vignette"></div>
+      <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+      {{#if cover_subtitle}}<span class="subtitle">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle">{{cover_slide.body}}</span>{{/if}}{{/if}}
+      <span class="swipe">Swipe →</span>
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="slide-inner sns5">
+      <div class="stars"></div>
+      <div class="constellation">
+        <span class="dot d6"></span><span class="dot d7"></span><span class="dot d8"></span>
+      </div>
+      <span class="crescent"></span>
+      <div class="vignette"></div>
+      <span class="heading">{{headline}}</span>
+      <p class="body-text">{{body}}</p>
+      <span class="swipe">Swipe →</span>
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+  {{/each}}
+
+  <div class="slide">
+    <div class="slide-inner sns5">
+      <div class="stars"></div>
+      <div class="constellation">
+        <span class="dot d1"></span><span class="dot d2"></span><span class="dot d3"></span>
+      </div>
+      <div class="vignette"></div>
+      <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+      {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      <div class="logo-mark"></div>
+    </div>
+  </div>
+
+</body>
+</html>

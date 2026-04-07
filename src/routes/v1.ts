@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { decideGenerationPlan, generationPlanRequestSchema } from "../decision_engine/index.js";
-import { ensureProject, upsertConstraints } from "../repositories/core.js";
+import { ensureProject, upsertConstraints, getConstraints, mergeConstraintUpdate } from "../repositories/core.js";
 import { upsertContentJob, getContentJobByTaskId } from "../repositories/jobs.js";
 import { insertLearningRule, applyLearningRule, listLearningRules } from "../repositories/learning.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
@@ -15,6 +15,7 @@ import {
   insertPromptVersion,
 } from "../repositories/ops.js";
 import { listReviewQueue, countReviewQueue, getReviewJobDetail, getDistinctValues, type ReviewQueueFilters } from "../repositories/review-queue.js";
+import { buildCarouselPublishUrls, mergePublishUrlsIntoJob } from "../services/validation-router.js";
 import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { z } from "zod";
 
@@ -356,6 +357,17 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     max_active_prompt_versions: z.number().nullable().optional(),
     default_variation_cap: z.number().optional(),
     auto_validation_pass_threshold: z.number().nullable().optional(),
+    max_carousel_jobs_per_run: z.number().int().nonnegative().nullable().optional(),
+    max_video_jobs_per_run: z.number().int().nonnegative().nullable().optional(),
+    max_jobs_per_flow_type: z.record(z.number().int().nonnegative()).optional(),
+  });
+
+  app.get("/v1/projects/:project_slug/constraints", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "invalid_request" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await getConstraints(db, project.id);
+    return { ok: true, constraints: row };
   });
 
   app.put("/v1/projects/:project_slug/constraints", async (request, reply) => {
@@ -365,14 +377,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       return reply.code(400).send({ ok: false, error: "invalid_request" });
     }
     const project = await ensureProject(db, params.data.project_slug);
-    await upsertConstraints(db, project.id, {
-      max_daily_jobs: body.data.max_daily_jobs ?? null,
-      min_score_to_generate: body.data.min_score_to_generate ?? null,
-      max_active_prompt_versions: body.data.max_active_prompt_versions ?? null,
-      default_variation_cap: body.data.default_variation_cap ?? 1,
-      auto_validation_pass_threshold: body.data.auto_validation_pass_threshold ?? null,
-    });
-    return { ok: true };
+    const existing = await getConstraints(db, project.id);
+    const merged = mergeConstraintUpdate(existing, body.data);
+    await upsertConstraints(db, project.id, merged);
+    return { ok: true, constraints: merged };
   });
 
   const promptVerSchema = z.object({
@@ -531,6 +539,15 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       actor: body.data.validator ?? null,
       metadata: {},
     });
+
+    if (body.data.decision === "APPROVED") {
+      const jobRow = await getContentJobByTaskId(db, project.id, params.data.task_id);
+      const flow = String(jobRow?.flow_type ?? "");
+      if (/carousel/i.test(flow) || flow === "Flow_Carousel_Copy") {
+        const urls = await buildCarouselPublishUrls(db, project.id, params.data.task_id);
+        await mergePublishUrlsIntoJob(db, project.id, params.data.task_id, urls);
+      }
+    }
 
     return { ok: true, task_id: params.data.task_id, decision: body.data.decision };
   });

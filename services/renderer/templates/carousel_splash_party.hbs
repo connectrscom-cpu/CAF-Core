@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <title>Carousel — Splash Party (Paint · Chaos · Brush)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Dancing+Script:wght@600;700&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --safe: 80px;
+      --ink: #252228;
+      --rose: #d47682;
+      --gold: #d6ad6a;
+      --mint: #7a9b8e;
+      --cream: #fcf8f5;
+      --plum: #6b5c7a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Outfit', sans-serif; background: #1c1a1e; color: var(--ink); }
+    .slide {
+      width: 1080px; height: 1350px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .slide-inner {
+      width: 100%; height: 100%;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: var(--safe);
+      text-align: center;
+      background: var(--cream);
+    }
+    .splatter {
+      position: absolute;
+      z-index: 0;
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .splatter.r { background: rgba(212, 118, 130, 0.4); }
+    .splatter.g { background: rgba(214, 173, 106, 0.35); }
+    .splatter.m { background: rgba(122, 155, 142, 0.3); }
+    .splatter.p { background: rgba(107, 92, 122, 0.3); }
+    .splatter.s1 { width: 220px; height: 220px; top: 5%; right: 10%; }
+    .splatter.s2 { width: 140px; height: 140px; top: 25%; left: 5%; }
+    .splatter.s3 { width: 180px; height: 180px; bottom: 20%; right: 8%; }
+    .splatter.s4 { width: 100px; height: 100px; bottom: 30%; left: 15%; }
+    .splatter.s5 { width: 80px; height: 80px; top: 50%; left: 8%; }
+    .splatter.s6 { width: 120px; height: 120px; top: 15%; left: 35%; }
+    .splatter.s7 { width: 160px; height: 160px; bottom: 10%; left: 40%; }
+    .splatter.s8 { width: 90px; height: 90px; top: 60%; right: 18%; }
+    .brush-underline {
+      position: absolute;
+      bottom: -12px;
+      left: 50%;
+      transform: translateX(-50%) rotate(-0.5deg);
+      width: 85%;
+      height: 14px;
+      background: linear-gradient(90deg, transparent, var(--rose), var(--gold), transparent);
+      opacity: 0.5;
+      border-radius: 50%;
+      z-index: 1;
+    }
+    .title-holder { position: relative; z-index: 2; }
+    .title-brush {
+      font-family: 'Caveat Brush', cursive;
+      font-size: clamp(84px, 9vw, 112px);
+      color: var(--ink);
+      line-height: 1.1;
+      max-width: 820px;
+      transform: rotate(-1.8deg);
+    }
+    .subtitle-script {
+      font-family: 'Dancing Script', cursive;
+      font-size: clamp(50px, 5.2vw, 62px);
+      font-weight: 700;
+      color: var(--plum);
+      margin-top: 28px;
+      transform: rotate(2deg);
+      z-index: 2;
+      position: relative;
+    }
+    .body-title {
+      font-family: 'Caveat Brush', cursive;
+      font-size: clamp(60px, 6.5vw, 78px);
+      color: var(--rose);
+      margin-bottom: 28px;
+      transform: rotate(0.8deg);
+      z-index: 2;
+      position: relative;
+    }
+    .body-text {
+      font-family: 'Outfit', sans-serif;
+      font-size: clamp(36px, 3.6vw, 44px);
+      line-height: 1.45;
+      color: #5a5360;
+      max-width: 720px;
+      position: relative;
+      z-index: 2;
+      text-align: left;
+    }
+    .cta-brush {
+      font-family: 'Caveat Brush', cursive;
+      font-size: clamp(82px, 8.5vw, 108px);
+      color: var(--rose);
+      z-index: 2;
+      position: relative;
+      transform: rotate(2.2deg);
+    }
+    .cta-script {
+      font-family: 'Dancing Script', cursive;
+      font-size: clamp(46px, 4.8vw, 56px);
+      font-weight: 600;
+      color: var(--gold);
+      margin-top: 16px;
+      z-index: 2;
+      position: relative;
+      transform: rotate(-1.5deg);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="splatter r s1"></span>
+      <span class="splatter g s2"></span>
+      <span class="splatter m s3"></span>
+      <span class="splatter p s4"></span>
+      <span class="splatter r s6"></span>
+      <span class="splatter g s8"></span>
+      <div class="title-holder">
+        <span class="brush-underline"></span>
+        <span class="title-brush">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+      </div>
+      {{#if cover_subtitle}}<span class="subtitle-script">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-script">{{cover_slide.body}}</span>{{/if}}{{/if}}
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="splatter p s2"></span>
+      <span class="splatter r s3"></span>
+      <span class="splatter m s5"></span>
+      <span class="splatter g s7"></span>
+      <span class="body-title">{{headline}}</span>
+      <p class="body-text">{{body}}</p>
+    </div>
+  </div>
+  {{/each}}
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="splatter r s1"></span>
+      <span class="splatter g s4"></span>
+      <span class="splatter m s6"></span>
+      <span class="splatter p s7"></span>
+      <span class="splatter r s8"></span>
+      <span class="cta-brush">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+      {{#if cta_handle}}<span class="cta-script">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-script">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+    </div>
+  </div>
+
+</body>
+</html>

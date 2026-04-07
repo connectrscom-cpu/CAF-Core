@@ -4,6 +4,7 @@
  */
 import pg from "pg";
 import "dotenv/config";
+import { seedCanonicalAllowedFlowTypes } from "../repositories/project-config.js";
 
 async function main() {
   const url = process.env.DATABASE_URL;
@@ -42,10 +43,12 @@ async function main() {
     await client.query(
       `INSERT INTO caf_core.prompt_versions
         (project_id, flow_type, prompt_id, version, status, temperature, max_tokens, metadata_json)
-       VALUES ($1, 'FLOW_CAROUSEL', 'carousel_seed', '1.0.0', 'active', 0.7, 2000, '{}')
+       VALUES ($1, 'Flow_Carousel_Copy', 'carousel_seed', '1.0.0', 'active', 0.7, 2000, '{}')
        ON CONFLICT (project_id, flow_type, prompt_id, version) DO UPDATE SET status = 'active'`,
       [projectId]
     );
+
+    await seedCanonicalAllowedFlowTypes(pool, projectId);
 
     console.log("Seed OK — project:", slug, "id:", projectId);
   } finally {

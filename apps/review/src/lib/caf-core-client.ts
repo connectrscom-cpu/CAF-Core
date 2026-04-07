@@ -31,6 +31,31 @@ async function corePost<T = unknown>(path: string, body: unknown): Promise<T | n
   return res.json() as Promise<T>;
 }
 
+async function corePut<T = unknown>(path: string, body: unknown): Promise<T | null> {
+  const res = await fetch(`${CAF_CORE_URL}${path}`, {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    console.error("CAF Core PUT error", res.status, await res.text());
+    return null;
+  }
+  return res.json() as Promise<T>;
+}
+
+async function coreDelete<T = unknown>(path: string): Promise<T | null> {
+  const res = await fetch(`${CAF_CORE_URL}${path}`, {
+    method: "DELETE",
+    headers: headers(),
+  });
+  if (!res.ok) {
+    console.error("CAF Core DELETE error", res.status, await res.text());
+    return null;
+  }
+  return res.json() as Promise<T>;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────
 
 export type ReviewTab = "in_review" | "approved" | "rejected" | "needs_edit";
@@ -167,4 +192,165 @@ export async function submitDecision(
     body
   );
   return data?.ok ?? false;
+}
+
+// ── Project Config ──────────────────────────────────────────────────────
+
+export async function getProjectProfile(projectSlug: string) {
+  return coreGet<{ ok: boolean; project: { id: string; slug: string; display_name: string }; strategy: unknown; brand: unknown; platforms: unknown[]; risk_rules: unknown[]; flow_types: unknown[]; reference_posts: unknown[]; heygen_config: unknown[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/profile`
+  );
+}
+
+export async function getStrategy(projectSlug: string) {
+  return coreGet<{ ok: boolean; strategy: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/strategy`
+  );
+}
+
+export async function saveStrategy(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; strategy: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/strategy`, data
+  );
+}
+
+export async function getBrand(projectSlug: string) {
+  return coreGet<{ ok: boolean; brand: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand`
+  );
+}
+
+export async function saveBrand(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; brand: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand`, data
+  );
+}
+
+export async function getSystemConstraints(projectSlug: string) {
+  return coreGet<{ ok: boolean; constraints: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/constraints`
+  );
+}
+
+export async function saveSystemConstraints(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; constraints: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/constraints`, data
+  );
+}
+
+export async function getPlatforms(projectSlug: string) {
+  return coreGet<{ ok: boolean; platforms: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/platforms`
+  );
+}
+
+export async function savePlatform(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; platform: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/platforms`, data
+  );
+}
+
+export async function getFlowTypes(projectSlug: string) {
+  return coreGet<{ ok: boolean; flow_types: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/flow-types`
+  );
+}
+
+export async function saveFlowType(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; flow_type: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/flow-types`, data
+  );
+}
+
+export async function getRiskRules(projectSlug: string) {
+  return coreGet<{ ok: boolean; risk_rules: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/risk-rules`
+  );
+}
+
+export async function saveRiskRule(projectSlug: string, data: Record<string, unknown>) {
+  return corePost<{ ok: boolean; risk_rule: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/risk-rules`, data
+  );
+}
+
+export async function getHeygenConfig(projectSlug: string) {
+  return coreGet<{ ok: boolean; heygen_config: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/heygen-config`
+  );
+}
+
+export async function saveHeygenConfig(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; heygen_config: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/heygen-config`, data
+  );
+}
+
+// ── Flow Engine (CAF-level) ──────────────────────────────────────────────
+
+export async function getFlowEngine() {
+  return coreGet<{
+    flows: Record<string, unknown>[];
+    prompts: Record<string, unknown>[];
+    schemas: Record<string, unknown>[];
+    carousels: Record<string, unknown>[];
+    qc_checks: Record<string, unknown>[];
+    risk_policies: Record<string, unknown>[];
+  }>("/v1/flow-engine");
+}
+
+export async function getFlowDefinitions() {
+  return coreGet<Record<string, unknown>[]>("/v1/flow-engine/flows");
+}
+
+export async function saveFlowDefinition(flowType: string, data: Record<string, unknown>) {
+  return corePut<Record<string, unknown>>(`/v1/flow-engine/flows/${encodeURIComponent(flowType)}`, data);
+}
+
+export async function deleteFlowDefinition(flowType: string) {
+  return coreDelete<{ ok: boolean }>(`/v1/flow-engine/flows/${encodeURIComponent(flowType)}`);
+}
+
+export async function getPromptTemplates(flowType?: string) {
+  const qs = flowType ? `?flow_type=${encodeURIComponent(flowType)}` : "";
+  return coreGet<Record<string, unknown>[]>(`/v1/flow-engine/prompts${qs}`);
+}
+
+export async function savePromptTemplate(data: Record<string, unknown>) {
+  return corePut<Record<string, unknown>>("/v1/flow-engine/prompts", data);
+}
+
+export async function getQcChecks(flowType?: string) {
+  const qs = flowType ? `?flow_type=${encodeURIComponent(flowType)}` : "";
+  return coreGet<Record<string, unknown>[]>(`/v1/flow-engine/qc-checks${qs}`);
+}
+
+export async function getRiskPolicies() {
+  return coreGet<Record<string, unknown>[]>("/v1/flow-engine/risk-policies");
+}
+
+export async function getCarouselTemplates() {
+  return coreGet<Record<string, unknown>[]>("/v1/flow-engine/carousel-templates");
+}
+
+// ── Learning ────────────────────────────────────────────────────────────
+
+export async function getLearningRules(projectSlug: string) {
+  return coreGet<{ ok: boolean; rules: Record<string, unknown>[] }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules`
+  );
+}
+
+export async function triggerEditorialAnalysis(projectSlug: string, windowDays?: number) {
+  return corePost<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/editorial-analysis`,
+    { window_days: windowDays ?? 30 }
+  );
+}
+
+export async function triggerMarketAnalysis(projectSlug: string, windowDays?: number) {
+  return corePost<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/market-analysis`,
+    { window_days: windowDays ?? 60 }
+  );
 }

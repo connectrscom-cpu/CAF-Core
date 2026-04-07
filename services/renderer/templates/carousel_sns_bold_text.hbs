@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --safe: 92px;
+      --bg: #0a0a0e;
+      --text: #f5f5f7;
+      --muted: #b7b7c2;
+      --accent: #9b5cff;
+      --accent2: #ff5c8a;
+      --border: rgba(255,255,255,0.08);
+      --shadow: 0 28px 70px rgba(0,0,0,0.45);
+      --radius: 40px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{font-family:Inter,system-ui,Arial,sans-serif;background:var(--bg);color:var(--text);}
+    .slide{
+      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      background: radial-gradient(circle at 12% 10%, rgba(155,92,255,0.18), transparent 40%),
+                  radial-gradient(circle at 92% 92%, rgba(255,92,138,0.18), transparent 45%),
+                  var(--bg);
+    }
+    .frame{
+      position:relative;width:100%;height:100%;
+      padding:var(--safe);
+      display:flex;flex-direction:column;justify-content:space-between;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .frame::before{
+      content:"";position:absolute;inset:38px;border-radius:var(--radius);
+      border:1px solid var(--border);
+      box-shadow:var(--shadow);
+      pointer-events:none;
+    }
+    .kicker{font-size:18px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.9;color:var(--muted);}
+    .kicker-line{
+      width:140px;height:6px;border-radius:999px;margin:28px 0 34px;
+      background:linear-gradient(90deg,var(--accent),var(--accent2));
+      box-shadow:0 0 24px rgba(155,92,255,0.25);
+    }
+    h1,h2,h3{letter-spacing:-0.04em;}
+    .headline{
+      font-weight:800;
+      font-size:96px;
+      line-height:0.92;
+      max-width: 860px;
+    }
+    .accent{color:var(--accent);}
+    .accent2{color:var(--accent2);}
+    .body{
+      font-size:44px;line-height:1.25;color:var(--muted);
+      max-width: 880px;
+    }
+    .cta{
+      font-weight:800;font-size:86px;line-height:0.95;max-width:900px;
+    }
+    .handle{
+      margin-top:18px;
+      font-weight:700;
+      font-size:42px;
+      letter-spacing:0.06em;
+      color:rgba(245,245,247,0.85);
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide">
+    <div class="frame">
+      <div>
+        <div class="kicker">Slide 01 / Hook</div>
+        <div class="kicker-line"></div>
+        <div class="headline">
+          {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+        </div>
+      </div>
+      <div class="body">
+        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+  <!-- Body -->
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="frame">
+      <div>
+        <div class="headline">
+          {{headline}}
+        </div>
+      </div>
+      <div class="body">{{body}}</div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide">
+    <div class="frame">
+      <div>
+        <div class="kicker">Final / CTA</div>
+        <div class="kicker-line"></div>
+        <div class="cta">
+          <span class="accent2">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+        </div>
+        {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      </div>
+      <div class="body">Keep it short. Keep it swipeable.</div>
+    </div>
+  </div>
+</body>
+</html>
