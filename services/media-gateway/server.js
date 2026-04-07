@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
-const { createProxyMiddleware } = require("http-proxy-middleware");
+/** v3 removed req.url patching when mounted on a path — without legacy adapter, POST /render-binary hits upstream as POST /. */
+const { legacyCreateProxyMiddleware: createProxyMiddleware } = require("http-proxy-middleware");
 const { spawn } = require("child_process");
 const path = require("path");
 
