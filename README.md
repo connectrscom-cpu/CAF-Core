@@ -1,65 +1,58 @@
 # CAF Core
 
-CAF Core is the new backend platform for the CAF (Content Automation Framework) system.
+CAF Core is the **backend platform** for CAF (Content Automation Framework): a content operating system that turns **signals → candidates → decisions → jobs → drafts → rendering → review → publishing → learning**.
 
-## What this repo owns
+This repo exists because the legacy CAF stack (n8n + Google Sheets + Supabase + Fly services + review UI) can produce outputs, but **too much operational truth and business logic is trapped in flows and spreadsheets**. CAF Core’s job is to centralize the domain model, state, and learning loops while remaining compatible with the legacy control plane during migration.
 
-This repo should own:
-- CAF’s explicit domain model
-- database-first state for core entities
-- learning loops
-- diagnostics
-- structured editorial memory
-- performance memory
-- APIs / services that gradually centralize business logic outside n8n
+---
 
-## What this repo now contains
+## What CAF Core owns (north star)
+
+- **Domain model + IDs**: preserves the existing text-ID hierarchy (`run_id`, `candidate_id`, `task_id`, `asset_id`) and the state machines around them.
+- **Database-first state**: the canonical, queryable history for jobs, drafts, audits, reviews, and metrics.
+- **Decisioning**: selection, suppression, routing, and traceability for “why did we pick this”.
+- **Learning**:
+  - diagnostic learning (why outputs are weak/strong)
+  - editorial learning (what humans approve/reject/edit)
+  - market learning (what performs after publishing)
+- **Interfaces**: APIs + adapters that pull contracts out of n8n nodes and sheet columns into explicit modules.
+
+---
+
+## Repo layout (what’s in here today)
 
 | Package | Path | Tech | Purpose |
 |---------|------|------|---------|
-| **CAF Core API** | `/` (root) | Fastify + Postgres | Decision engine, learning rules, suppression, jobs, state transitions |
-| **Review App** | `apps/review/` | Next.js 14 | Human review workbench — reads Sheets + Supabase, dual-writes to Core |
+| **CAF Core API** | `/` (root) | Fastify + Postgres | Decisions, jobs, learning rules, suppression, state transitions |
+| **Review App** | `apps/review/` | Next.js 14 | Human review workbench (reads Sheets + Supabase; dual-writes to Core) |
 | **Carousel Renderer** | `services/renderer/` | Express + Puppeteer + Handlebars | Renders carousel slide PNGs from templates |
 | **Video Assembly** | `services/video-assembly/` | Express + ffmpeg | Stitches images into video, muxes audio, uploads to Supabase |
 | **Media Gateway** | `services/media-gateway/` | Express + http-proxy | Single-port proxy that spawns renderer + video-assembly children |
-| **Sheets Adapter** | `src/adapters/sheets/` | googleapis | Syncs Runtime / Review Queue tabs into caf_core DB |
-| **Supabase Adapter** | `src/adapters/supabase/` | @supabase/supabase-js | Mirrors public.tasks + assets into caf_core DB |
+| **Sheets Adapter** | `src/adapters/sheets/` | googleapis | Syncs Sheets runtime/review state into `caf_core` DB |
+| **Supabase Adapter** | `src/adapters/supabase/` | @supabase/supabase-js | Mirrors Supabase tasks + assets into `caf_core` DB |
 
-## Where legacy orchestration still lives
+---
 
-Today, major orchestration still lives in n8n workflows, Google Sheets workbooks, and provider-specific service calls. CAF Core integrates with that system during migration.
+## The operational reality (during migration)
 
-## Current north star
+Right now, CAF still runs as a distributed system:
 
-Turn CAF from:
-- a system that produces content
+- **n8n**: orchestration and external calls (LLMs, renderers, polling)
+- **Google Sheets**: visible control plane (runtime queue, review queue, config)
+- **Supabase**: durable tasks/assets tables + hosted media binaries/URLs
+- **Fly.io services**: rendering + assembly workers behind stable HTTP endpoints
+- **Review App**: human decisions surface
 
-into:
-- a system that produces better content over time
+CAF Core integrates into that world by making the system **more explicit and queryable** without breaking the legacy workflows.
 
-That means CAF Core must eventually own:
-- explicit state
-- diagnostics
-- editorial learning
-- market learning
-- experiment memory
+---
 
-## First milestone
-
-First milestone for this repo:
-
-1. define core schema
-2. ingest ContentJobs
-3. run DiagnosticAudits
-4. store audit results
-5. expose them for review UI / ops
-
-## Quick Start
+## Quick start (local dev)
 
 ### CAF Core API (port 3847)
 
 ```bash
-cp .env.example .env          # fill DATABASE_URL at minimum
+cp .env.example .env           # fill DATABASE_URL at minimum
 docker compose up -d           # local Postgres
 npm install
 npm run migrate
@@ -92,9 +85,11 @@ npm run sync:sheets            # Sheets Runtime + Review Queue → caf_core
 npm run sync:supabase          # Supabase tasks + assets → caf_core
 ```
 
-### Deploy (Fly.io)
+---
 
-Each service has its own `fly.toml` + `Dockerfile`:
+## Deploy (Fly.io)
+
+Each deployable service has its own `fly.toml` + `Dockerfile`:
 
 | Service | fly.toml | Dockerfile |
 |---------|----------|------------|
@@ -102,23 +97,32 @@ Each service has its own `fly.toml` + `Dockerfile`:
 | Review App | `apps/review/fly.toml` | `apps/review/Dockerfile` |
 | Media Gateway | `services/media-gateway/fly.toml` | `services/media-gateway/Dockerfile` |
 
-**Auth:** set `CAF_CORE_REQUIRE_AUTH=1` and `CAF_CORE_API_TOKEN`; send `x-caf-core-token` or `Authorization: Bearer …` on all routes except `GET /health`.
+- **Auth**: set `CAF_CORE_REQUIRE_AUTH=1` and `CAF_CORE_API_TOKEN`; send `x-caf-core-token` or `Authorization: Bearer …` on all routes except `GET /health`.
+- **Migrations**: tracked in `caf_core.schema_migrations` — safe to re-run `npm run migrate`.
 
-**Migrations** are tracked in `caf_core.schema_migrations` — safe to re-run `npm run migrate`.
+---
 
-**Primary endpoint:** `POST /v1/decisions/plan` — body: `project_slug`, `candidates[]`. Returns selected jobs, dropped candidates, suppression reasons, and stores a `decision_traces` row unless `dry_run: true`.
+## Key API endpoints (today)
 
-See route registrations in [`src/routes/v1.ts`](src/routes/v1.ts).
+- **Health**: `GET /health`
+- **Decisioning**: `POST /v1/decisions/plan`
+  - body: `project_slug`, `candidates[]`
+  - returns: selected jobs, dropped candidates, suppression reasons
+  - persists: a `decision_traces` row unless `dry_run: true`
 
-## Documentation
+Route registrations live in `src/routes/v1.ts`.
 
-- **Master checklist (all inputs from you):** [`docs/USER_INPUT_AND_SECRETS.md`](docs/USER_INPUT_AND_SECRETS.md)
-- **HTTP API reference:** [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
-- **Stack + architecture + signal pack → output + publishing metadata (`suggested_*`):** [`docs/CAF_CORE_OVERVIEW_AND_SIGNAL_TO_OUTPUT.md`](docs/CAF_CORE_OVERVIEW_AND_SIGNAL_TO_OUTPUT.md)
-- **Secrets and env template:** [`.env.example`](.env.example) — CAF Core + legacy stack variables to fill in your vault.
-- **Secrets inventory (reference):** [`ENV_AND_SECRETS_INVENTORY.md`](ENV_AND_SECRETS_INVENTORY.md) — narrative checklist for Vercel/Fly/n8n.
-- **Numbered series:** [`01_project_overview.md`](01_project_overview.md) … [`10_migration_strategy.md`](10_migration_strategy.md) — doctrine and pipeline.
-- **Domain model:** [`03_domain_model.md`](03_domain_model.md).
-- **Rebuild pack (legacy review app slice):** [`CAF-REBUILD-PACK-V1.md`](CAF-REBUILD-PACK-V1.md).
-- **Services & DB refs:** [`caf-services-media-renderer-video.md`](caf-services-media-renderer-video.md), [`supabase-schema-architecture.md`](supabase-schema-architecture.md), [`video-assembly.md`](video-assembly.md).
-- **Legacy Sheets:** [`google-sheets-architecture-legacy-caf.md`](google-sheets-architecture-legacy-caf.md).
+---
+
+## Documentation map (recommended reading order)
+
+- **Start here**: `01_project_overview.md` (why CAF exists; rebuild rationale)
+- **How it works today**: `02_current_architecture.md` (ownership & state split)
+- **Core entities**: `03_domain_model.md` (Project/Run/SignalPack/Candidate/Job/Draft/Asset/Review/Audit/Metrics/LearningRule)
+- **Roadmap gaps → implementable spec**: `CAF_SUMMARY_AND_GAPS.md` (rework + publishing workflow specs)
+- **Learning spec**: `07_learning_layer_spec.md` (diagnostic/editorial/market loops)
+- **IDs & states**: `08_current_ids_and_state_conventions.md`
+- **Integration inventory**: `09_external_integrations.md`, `ENV_AND_SECRETS_INVENTORY.md`
+- **API**: `docs/API_REFERENCE.md`
+- **Legacy reference**: `google-sheets-architecture-legacy-caf.md`
+
