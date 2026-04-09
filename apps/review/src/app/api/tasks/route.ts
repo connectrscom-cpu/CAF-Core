@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PROJECT_SLUG, reviewUsesAllProjects } from "@/lib/env";
+import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import {
   getQueueTab,
   getQueueTabAll,
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 
     const items = jobs.map((j) => ({
       task_id: j.task_id,
-      project: (j.project_slug ?? PROJECT_SLUG ?? "").trim(),
+      project: (j.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
       run_id: j.run_id,
       platform: j.platform ?? "",
       flow_type: j.flow_type ?? "",

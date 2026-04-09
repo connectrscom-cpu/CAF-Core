@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PROJECT_SLUG, reviewUsesAllProjects } from "@/lib/env";
+import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { getJobDetail, getJobDetailAll } from "@/lib/caf-core-client";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!job) return NextResponse.json({ error: "Task not found" }, { status: 404 });
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
-      project: (job.project_slug ?? PROJECT_SLUG ?? "").trim(),
+      project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
       run_id: job.run_id,
       platform: job.platform ?? "",
       flow_type: job.flow_type ?? "",

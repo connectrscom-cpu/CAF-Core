@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { CAF_CORE_URL, CAF_CORE_TOKEN, PROJECT_SLUG, reviewUsesAllProjects } from "@/lib/env";
+import {
+  CAF_CORE_URL,
+  CAF_CORE_TOKEN,
+  PROJECT_SLUG,
+  reviewQueueFallbackSlug,
+  reviewUsesAllProjects,
+} from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -37,17 +43,29 @@ export async function GET() {
     });
   }
 
-  const countsPath = reviewUsesAllProjects()
-    ? "/v1/review-queue-all/counts"
-    : `/v1/review-queue/${encodeURIComponent(PROJECT_SLUG || "SNS")}/counts`;
+  const allPath = "/v1/review-queue-all/counts";
+  const singlePath = `/v1/review-queue/${encodeURIComponent(PROJECT_SLUG || reviewQueueFallbackSlug())}/counts`;
 
+  let countsPath = reviewUsesAllProjects() ? allPath : singlePath;
   let countsStatus = 0;
   let counts: Record<string, unknown> | null = null;
   let countsError: string | null = null;
+  let counts_fallback_from_all = false;
   try {
-    const res = await fetch(`${base}${countsPath}`, { headers: coreHeaders(), cache: "no-store" });
+    let res = await fetch(`${base}${countsPath}`, { headers: coreHeaders(), cache: "no-store" });
     countsStatus = res.status;
-    if (res.ok) {
+    if (reviewUsesAllProjects() && res.status === 404) {
+      const trySingle = await fetch(`${base}${singlePath}`, { headers: coreHeaders(), cache: "no-store" });
+      if (trySingle.ok) {
+        countsPath = singlePath;
+        countsStatus = trySingle.status;
+        counts = (await trySingle.json()) as Record<string, unknown>;
+        counts_fallback_from_all = true;
+        countsError = null;
+      } else {
+        countsError = (await res.text()).slice(0, 500);
+      }
+    } else if (res.ok) {
       counts = (await res.json()) as Record<string, unknown>;
     } else {
       countsError = (await res.text()).slice(0, 500);
@@ -67,6 +85,7 @@ export async function GET() {
     counts_http_status: countsStatus,
     counts_body: counts,
     counts_error: countsError,
+    counts_fallback_legacy_core: counts_fallback_from_all,
     token_configured: Boolean(CAF_CORE_TOKEN),
     explain:
       "Local admin (localhost:3847) uses your PC database. This probe uses CAF_CORE_URL from env — if that Core uses another DATABASE_URL, counts differ from local.",

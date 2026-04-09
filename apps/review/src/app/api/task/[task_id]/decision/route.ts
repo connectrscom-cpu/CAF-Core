@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PROJECT_SLUG, reviewUsesAllProjects } from "@/lib/env";
+import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { submitDecision } from "@/lib/caf-core-client";
 
 export const dynamic = "force-dynamic";
@@ -15,13 +15,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     const slug =
       (typeof body.project_slug === "string" && body.project_slug.trim()) ||
-      (!reviewUsesAllProjects() ? PROJECT_SLUG : "");
-    if (!slug) {
-      return NextResponse.json(
-        { error: "project_slug is required when the workbench spans multiple projects" },
-        { status: 400 }
-      );
-    }
+      (!reviewUsesAllProjects() ? PROJECT_SLUG : "") ||
+      reviewQueueFallbackSlug();
     const ok = await submitDecision(slug, decodedId, {
       decision,
       notes: body.notes,

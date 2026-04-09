@@ -1,4 +1,9 @@
-import { CAF_CORE_URL, CAF_CORE_TOKEN } from "./env";
+import { CAF_CORE_URL, CAF_CORE_TOKEN, reviewQueueFallbackSlug } from "./env";
+
+function isMissingReviewQueueAllRoute(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return msg.includes("404") && msg.includes("/v1/review-queue-all/");
+}
 
 function headers(): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" };
@@ -187,8 +192,15 @@ export async function getQueueCounts(projectSlug: string): Promise<ReviewQueueCo
 
 /** Tab counts aggregated over all active projects. */
 export async function getQueueCountsAll(): Promise<ReviewQueueCounts> {
-  const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(`/v1/review-queue-all/counts`);
-  return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
+  try {
+    const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(
+      `/v1/review-queue-all/counts`
+    );
+    return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
+  } catch (e) {
+    if (!isMissingReviewQueueAllRoute(e)) throw e;
+    return getQueueCounts(reviewQueueFallbackSlug());
+  }
 }
 
 export async function getQueueTab(
@@ -227,18 +239,23 @@ export async function getQueueTabAll(
   }
   const qs = params.toString();
   const path = `/v1/review-queue-all/${tab}${qs ? `?${qs}` : ""}`;
-  const data = await coreGetRequired<{
-    ok: boolean;
-    jobs: ReviewQueueJob[];
-    total?: number;
-    status_breakdown?: Record<string, number>;
-  }>(path);
-  const jobs = data.jobs ?? [];
-  return {
-    jobs,
-    total: typeof data.total === "number" ? data.total : jobs.length,
-    status_breakdown: data.status_breakdown ?? {},
-  };
+  try {
+    const data = await coreGetRequired<{
+      ok: boolean;
+      jobs: ReviewQueueJob[];
+      total?: number;
+      status_breakdown?: Record<string, number>;
+    }>(path);
+    const jobs = data.jobs ?? [];
+    return {
+      jobs,
+      total: typeof data.total === "number" ? data.total : jobs.length,
+      status_breakdown: data.status_breakdown ?? {},
+    };
+  } catch (e) {
+    if (!isMissingReviewQueueAllRoute(e)) throw e;
+    return getQueueTab(reviewQueueFallbackSlug(), tab, filters);
+  }
 }
 
 export async function getFacets(projectSlug: string): Promise<Facets> {
@@ -249,16 +266,21 @@ export async function getFacets(projectSlug: string): Promise<Facets> {
 }
 
 export async function getFacetsAll(): Promise<Facets> {
-  const data = await coreGetRequired<{ ok: boolean; facets: Facets }>(`/v1/review-queue-all/facets`);
-  const f = data.facets;
-  return {
-    projects: f?.projects ?? [],
-    platforms: f?.platforms ?? [],
-    flow_types: f?.flow_types ?? [],
-    routes: f?.routes ?? [],
-    runs: f?.runs ?? [],
-    statuses: f?.statuses ?? [],
-  };
+  try {
+    const data = await coreGetRequired<{ ok: boolean; facets: Facets }>(`/v1/review-queue-all/facets`);
+    const f = data.facets;
+    return {
+      projects: f?.projects ?? [],
+      platforms: f?.platforms ?? [],
+      flow_types: f?.flow_types ?? [],
+      routes: f?.routes ?? [],
+      runs: f?.runs ?? [],
+      statuses: f?.statuses ?? [],
+    };
+  } catch (e) {
+    if (!isMissingReviewQueueAllRoute(e)) throw e;
+    return getFacets(reviewQueueFallbackSlug());
+  }
 }
 
 export async function getJobDetail(projectSlug: string, taskId: string): Promise<ReviewJobDetail | null> {
@@ -274,10 +296,19 @@ export async function getJobDetailAll(
   projectSlug?: string
 ): Promise<ReviewJobDetail | null> {
   const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug)}` : "";
-  const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(
-    `/v1/review-queue-all/task/${encodeURIComponent(taskId)}${qs}`
-  );
-  return data?.job ?? null;
+  const path = `/v1/review-queue-all/task/${encodeURIComponent(taskId)}${qs}`;
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const res = await fetch(`${base}${path}`, { headers: headers(), next: { revalidate: 5 } });
+  if (res.ok) {
+    const data = (await res.json()) as { ok?: boolean; job?: ReviewJobDetail };
+    return data?.job ?? null;
+  }
+  if (res.status === 404) {
+    const slug = projectSlug || reviewQueueFallbackSlug();
+    return getJobDetail(slug, taskId);
+  }
+  console.error("CAF Core GET error", res.status, await res.text());
+  return null;
 }
 
 export async function submitDecision(
@@ -507,5 +538,30 @@ export async function getLearningObservations(projectSlug: string, limit?: numbe
 export async function getLearningTransparency(projectSlug: string) {
   return coreGet<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/transparency`
+  );
+}
+
+/** LLM multimodal review of human-approved jobs only. Requires OPENAI_API_KEY on Core. */
+export async function triggerLlmApprovalReview(
+  projectSlug: string,
+  body: {
+    limit?: number;
+    task_ids?: string[];
+    skip_if_reviewed_within_days?: number;
+    force_rereview?: boolean;
+    /** e.g. 0.55 — scores below this mint a pending GENERATION_GUIDANCE rule from improvement bullets */
+    mint_pending_hints_below_score?: number | null;
+  }
+) {
+  return corePost<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/llm-review-approved`,
+    body
+  );
+}
+
+export async function getLlmApprovalReviews(projectSlug: string, limit?: number) {
+  const qs = limit != null ? `?limit=${limit}` : "";
+  return coreGet<{ ok: boolean; reviews: Record<string, unknown>[] }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/llm-approval-reviews${qs}`
   );
 }
