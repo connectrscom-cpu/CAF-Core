@@ -45,6 +45,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (!parsed) return u;
     const signed = await createSignedUrlForObjectKey(config, parsed.bucket, parsed.objectPath, 7200);
     if ("signedUrl" in signed) return signed.signedUrl;
+    app.log.warn({ err: signed.error, bucket: parsed.bucket, objectPath: parsed.objectPath }, "createSignedUrlForObjectKey failed; returning public_url");
     return u;
   }
 
