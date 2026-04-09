@@ -292,13 +292,28 @@ export default function LearningPage() {
       </div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <button className="btn-primary" onClick={() => runAnalysis("editorial")} disabled={running}>
+        <button
+          className="btn-primary"
+          onClick={() => runAnalysis("editorial")}
+          disabled={running}
+          title="Analyzes human review history (APPROVED / NEEDS_EDIT / REJECTED, tags, overrides) and proposes pending learning rules that can improve future ranking/volume decisions."
+        >
           {running ? "Running..." : "Run Editorial Analysis"}
         </button>
-        <button className="btn-primary" onClick={() => runAnalysis("market")} disabled={running}>
+        <button
+          className="btn-primary"
+          onClick={() => runAnalysis("market")}
+          disabled={running}
+          title="Analyzes ingested social performance metrics (likes/saves/shares/etc.) and proposes pending learning rules to boost or penalize patterns/flows that perform better or worse."
+        >
           {running ? "Running..." : "Run Market Analysis"}
         </button>
-        <button type="button" className="btn-primary" onClick={loadContextPreview}>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={loadContextPreview}
+          title="Shows the compiled learning context that will be injected into generation prompts (global → project). This is a preview only; it does not change rules."
+        >
           Preview compiled context
         </button>
       </div>
@@ -342,7 +357,13 @@ export default function LearningPage() {
             Force re-review (ignore 7-day skip)
           </label>
         </div>
-        <button type="button" className="btn-primary" onClick={runLlmApprovalReview} disabled={llmBusy}>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={runLlmApprovalReview}
+          disabled={llmBusy}
+          title="Runs an LLM QA pass on content whose latest editorial decision is APPROVED. Uses text + (optional) image assets to produce a score and improvement bullets; can mint pending generation hints if configured."
+        >
           {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
         </button>
         {llmResult && (
@@ -416,7 +437,11 @@ export default function LearningPage() {
           rows={2}
           style={{ width: "100%", marginBottom: 8, fontFamily: "monospace", fontSize: 12 }}
         />
-        <button type="submit" className="btn-primary">
+        <button
+          type="submit"
+          className="btn-primary"
+          title="Uploads a social platform export CSV, maps columns to CAF metrics, writes performance_metrics rows, and creates an observation for learning/analysis."
+        >
           Upload &amp; ingest
         </button>
         {csvStatus && <p style={{ marginTop: 8, fontSize: 13 }}>{csvStatus}</p>}
