@@ -340,6 +340,44 @@ export async function getProjectProfile(projectSlug: string) {
   );
 }
 
+export type ProjectAdminRow = {
+  id: string;
+  slug: string;
+  display_name: string | null;
+  active: boolean;
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+  run_count?: number;
+  job_count?: number;
+};
+
+export async function listProjects(): Promise<{ ok: boolean; projects: ProjectAdminRow[] } | null> {
+  return coreGet<{ ok: boolean; projects: ProjectAdminRow[] }>(`/v1/projects`);
+}
+
+export async function createProject(slug: string, displayName?: string | null) {
+  return corePost<{ ok: boolean; project: { id: string; slug: string; display_name: string | null; active: boolean; color?: string | null } }>(
+    `/v1/projects`,
+    { slug, display_name: displayName ?? undefined }
+  );
+}
+
+export async function updateProject(
+  slug: string,
+  patch: { display_name?: string | null; active?: boolean; color?: string | null }
+) {
+  return corePut<{ ok: boolean; project: { id: string; slug: string; display_name: string | null; active: boolean; color?: string | null } }>(
+    `/v1/projects/${encodeURIComponent(slug)}`,
+    patch
+  );
+}
+
+export async function deleteProject(slug: string, force?: boolean) {
+  const qs = force ? `?force=true` : "";
+  return coreDelete<{ ok: boolean; deleted: string }>(`/v1/projects/${encodeURIComponent(slug)}${qs}`);
+}
+
 export async function getStrategy(projectSlug: string) {
   return coreGet<{ ok: boolean; strategy: Record<string, unknown> | null }>(
     `/v1/projects/${encodeURIComponent(projectSlug)}/strategy`

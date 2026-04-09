@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
-import { ensureProject } from "../repositories/core.js";
+import { ensureProject, updateProjectBySlug } from "../repositories/core.js";
 import {
   getStrategyDefaults, upsertStrategyDefaults,
   getBrandConstraints, upsertBrandConstraints,
@@ -20,8 +20,14 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
   // ── List all projects ────────────────────────────────────────────────
   app.get("/v1/projects", async () => {
     const { q } = await import("../db/queries.js");
-    const projects = await q(db,
-      `SELECT id, slug, display_name, active, created_at, updated_at FROM caf_core.projects ORDER BY slug`);
+    const projects = await q(
+      db,
+      `SELECT p.id, p.slug, p.display_name, p.active, p.color, p.created_at, p.updated_at,
+              (SELECT COUNT(*)::int FROM caf_core.runs r WHERE r.project_id = p.id) AS run_count,
+              (SELECT COUNT(*)::int FROM caf_core.content_jobs j WHERE j.project_id = p.id) AS job_count
+       FROM caf_core.projects p
+       ORDER BY p.slug`
+    );
     return { ok: true, projects };
   });
 
@@ -34,6 +40,54 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body" });
     const project = await ensureProject(db, body.data.slug, body.data.display_name);
     return { ok: true, project };
+  });
+
+  // ── Patch project metadata (admin) ────────────────────────────────────
+  app.put("/v1/projects/:project_slug", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = z
+      .object({
+        display_name: z.string().nullish(),
+        active: z.boolean().optional(),
+        color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullish(),
+      })
+      .safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request", details: body.success ? undefined : body.error.flatten() });
+    }
+    const updated = await updateProjectBySlug(db, params.data.project_slug, {
+      display_name: body.data.display_name ?? null,
+      active: body.data.active,
+      color: body.data.color ?? null,
+    });
+    if (!updated) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, project: updated };
+  });
+
+  // ── Delete project (admin) ────────────────────────────────────────────
+  app.delete("/v1/projects/:project_slug", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ force: z.coerce.boolean().default(false) }).safeParse(request.query);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+
+    const { qOne } = await import("../db/queries.js");
+    const counts = await qOne<{ run_count: number; job_count: number }>(
+      db,
+      `SELECT
+         (SELECT COUNT(*)::int FROM caf_core.runs r WHERE r.project_id = p.id) AS run_count,
+         (SELECT COUNT(*)::int FROM caf_core.content_jobs j WHERE j.project_id = p.id) AS job_count
+       FROM caf_core.projects p
+       WHERE p.slug = $1`,
+      [params.data.project_slug]
+    );
+    if (!counts) return reply.code(404).send({ ok: false, error: "not_found" });
+    const force = query.success ? query.data.force : false;
+    if (!force && (counts.run_count > 0 || counts.job_count > 0)) {
+      return reply.code(409).send({ ok: false, error: "project_not_empty", counts });
+    }
+
+    await db.query(`DELETE FROM caf_core.projects WHERE slug = $1`, [params.data.project_slug]);
+    return { ok: true, deleted: params.data.project_slug };
   });
 
   // ── Full profile ─────────────────────────────────────────────────────

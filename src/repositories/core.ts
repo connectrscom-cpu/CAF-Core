@@ -6,6 +6,7 @@ export interface ProjectRow {
   slug: string;
   display_name: string | null;
   active: boolean;
+  color?: string | null;
 }
 
 export interface ConstraintRow {
@@ -54,7 +55,7 @@ export interface PromptVersionRow {
 export async function getProjectBySlug(db: Pool, slug: string): Promise<ProjectRow | null> {
   return qOne<ProjectRow>(
     db,
-    `SELECT id, slug, display_name, active FROM caf_core.projects WHERE slug = $1`,
+    `SELECT id, slug, display_name, active, color FROM caf_core.projects WHERE slug = $1`,
     [slug]
   );
 }
@@ -66,10 +67,29 @@ export async function ensureProject(db: Pool, slug: string, displayName?: string
     db,
     `INSERT INTO caf_core.projects (slug, display_name) VALUES ($1, $2)
      ON CONFLICT (slug) DO UPDATE SET display_name = COALESCE(EXCLUDED.display_name, caf_core.projects.display_name)
-     RETURNING id, slug, display_name, active`,
+     RETURNING id, slug, display_name, active, color`,
     [slug, displayName ?? slug]
   );
   if (!row) throw new Error("Failed to upsert project");
+  return row;
+}
+
+export async function updateProjectBySlug(
+  db: Pool,
+  slug: string,
+  patch: { display_name?: string | null; active?: boolean; color?: string | null }
+): Promise<ProjectRow | null> {
+  const row = await qOne<ProjectRow>(
+    db,
+    `UPDATE caf_core.projects
+     SET display_name = COALESCE($2, display_name),
+         active = COALESCE($3, active),
+         color = COALESCE($4, color),
+         updated_at = now()
+     WHERE slug = $1
+     RETURNING id, slug, display_name, active, color`,
+    [slug, patch.display_name ?? null, patch.active ?? null, patch.color ?? null]
+  );
   return row;
 }
 
