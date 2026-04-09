@@ -3,6 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
+import { isVideoUrl } from "@/lib/media-url";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
 
@@ -51,6 +52,7 @@ function TaskRow({
   const reviewStatus = getVal(row, "review_status");
   const decision = getVal(row, "decision");
   const title = getVal(row, "generated_title") || taskId;
+  const thumb = getVal(row, "preview_url");
   const taskHref =
     showProjectColumn && project
       ? `/${contentSlug}/${encodeURIComponent(taskId)}?project=${encodeURIComponent(project)}`
@@ -58,6 +60,30 @@ function TaskRow({
 
   return (
     <tr>
+      <td className="task-thumb-cell" style={{ width: 72, verticalAlign: "middle" }}>
+        {thumb ? (
+          isVideoUrl(thumb) ? (
+            <video
+              src={thumb}
+              muted
+              playsInline
+              preload="metadata"
+              style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", background: "#111", display: "block" }}
+            />
+          ) : (
+            <img
+              src={thumb}
+              alt=""
+              width={56}
+              height={56}
+              style={{ borderRadius: 8, objectFit: "cover", display: "block", background: "#111" }}
+              referrerPolicy="no-referrer"
+            />
+          )
+        ) : (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span>
+        )}
+      </td>
       <td className="task-id-cell">
         <Link href={taskHref}>{taskId}</Link>
       </td>
@@ -86,7 +112,7 @@ function TableBody({
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
 }) {
-  const colSpan = showProjectColumn ? 9 : 8;
+  const colSpan = showProjectColumn ? 10 : 9;
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
@@ -148,6 +174,7 @@ export function TaskTable({
       <table>
         <thead>
           <tr>
+            <th style={{ width: 72 }}>Preview</th>
             <th>Task ID</th>
             {showProjectColumn && <th>Project</th>}
             <th>Title / Hook</th>

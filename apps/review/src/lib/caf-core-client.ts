@@ -117,6 +117,8 @@ export interface ReviewQueueJob {
   /** Present on `/v1/review-queue-all/...` responses. */
   project_slug?: string;
   project_display_name?: string | null;
+  /** First asset URL for list thumbnails (prefers images). */
+  preview_thumb_url?: string | null;
 }
 
 export interface ReviewQueueCounts {
@@ -127,6 +129,8 @@ export interface ReviewQueueCounts {
 }
 
 export interface ReviewJobDetail extends ReviewQueueJob {
+  /** Flat slides JSON for review UI (merged from candidate_data + generated_output). */
+  review_slides_json?: string | null;
   assets: Array<{
     id: string;
     asset_type: string | null;

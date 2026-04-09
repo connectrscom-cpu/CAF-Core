@@ -5,22 +5,17 @@ import { CarouselSlider } from "@/components/CarouselSlider";
 import { createSyntheticSlides } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
+import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 
 function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
 }
 
-function isImageUrl(url: string): boolean {
-  return /\.(png|jpg|jpeg|gif|webp|avif)(\?|#|$)/i.test(url);
-}
-
-function isVideoUrl(url: string): boolean {
-  return /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(url);
-}
-
 export interface TaskViewerProps {
   data: ReviewQueueRow;
   assetUrls?: string[];
+  /** Full asset rows (position, url, type) — preferred for mixed image/video carousels. */
+  taskAssets?: TaskAssetPreview[];
   editedSlides?: NormalizedSlide[];
   onSlidesChange?: (slides: NormalizedSlide[]) => void;
   fallbackPreviewUrl?: string;
@@ -30,6 +25,7 @@ export interface TaskViewerProps {
 export function TaskViewer({
   data,
   assetUrls,
+  taskAssets,
   editedSlides,
   onSlidesChange,
   fallbackPreviewUrl,
@@ -37,13 +33,33 @@ export function TaskViewer({
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
-  const videoUrl =
+  const rowVideoUrl =
     getVal(data, "video_url") ||
     getVal(data, "final_video_url") ||
     getVal(data, "merged_video_url") ||
-    fallbackPreviewUrl ||
     "";
   const slidesJson = getVal(data, "generated_slides_json");
+
+  const mediaRows = useMemo(() => {
+    if (taskAssets && taskAssets.length > 0) return taskAssets;
+    return taskAssetsToPreviewRows(
+      (assetUrls ?? []).map((public_url, i) => ({
+        position: i,
+        public_url,
+        asset_type: null as string | null,
+      }))
+    );
+  }, [taskAssets, assetUrls]);
+
+  const mediaItems: CarouselMediaItem[] = useMemo(
+    () => mediaRows.map((r) => ({ url: r.public_url, kind: r.kind === "video" ? "video" : "image" })),
+    [mediaRows]
+  );
+
+  const imageUrlsLegacy = useMemo(
+    () => mediaRows.filter((r) => r.kind === "image").map((r) => r.public_url),
+    [mediaRows]
+  );
 
   const slides = useMemo(() => {
     if (!slidesJson) return null;
@@ -55,39 +71,58 @@ export function TaskViewer({
     }
   }, [slidesJson]);
 
-  const urls = (assetUrls ?? []).map((u) => u?.trim()).filter(Boolean);
-  const imageUrls = urls.filter((u) => isImageUrl(u));
-  const videoUrls = urls.filter((u) => isVideoUrl(u));
-  const effectiveVideoUrl = (videoUrls[0] ?? "").trim() || (isVideoUrl(videoUrl) ? videoUrl : "");
-  const rowImageFromVideoField = videoUrl && isImageUrl(videoUrl) ? videoUrl : "";
-
   const [videoLoadFailed, setVideoLoadFailed] = useState(false);
-  useEffect(() => { setVideoLoadFailed(false); }, [effectiveVideoUrl]);
+  useEffect(() => {
+    setVideoLoadFailed(false);
+  }, [rowVideoUrl, mediaRows]);
 
   const sliderSlides =
     editedSlides && editedSlides.length > 0
       ? editedSlides
-      : imageUrls.length > 1
-        ? createSyntheticSlides(imageUrls.length)
+      : mediaRows.length > 1
+        ? createSyntheticSlides(mediaRows.length)
         : [];
 
-  const showVideo = !!effectiveVideoUrl && !videoLoadFailed;
-  const showCarouselPreferred = !showVideo && imageUrls.length > 1 && sliderSlides.length > 0;
-  const singleImageSrc =
-    imageUrls.length === 1 ? imageUrls[0] : imageUrls.length === 0 && rowImageFromVideoField ? rowImageFromVideoField : "";
-  const showSingleImage = !showVideo && !showCarouselPreferred && !!singleImageSrc;
+  const singleAssetVideo = mediaRows.length === 1 && mediaRows[0]!.kind === "video" ? mediaRows[0]!.public_url : "";
+  const singleAssetImage = mediaRows.length === 1 && mediaRows[0]!.kind === "image" ? mediaRows[0]!.public_url : "";
+  const fallbackIfImage = fallbackPreviewUrl && isImageUrl(fallbackPreviewUrl) ? fallbackPreviewUrl : "";
+  const rowVideo =
+    rowVideoUrl && isVideoUrl(rowVideoUrl)
+      ? rowVideoUrl
+      : fallbackPreviewUrl && isVideoUrl(fallbackPreviewUrl)
+        ? fallbackPreviewUrl
+        : "";
 
-  if (showCarouselPreferred) {
+  const fullBleedVideoUrl = singleAssetVideo || rowVideo;
+  const showCarouselBlock = sliderSlides.length > 0;
+
+  const showFullVideo =
+    !showCarouselBlock && !!fullBleedVideoUrl && !videoLoadFailed;
+
+  const singleImageSrc =
+    singleAssetImage ||
+    (imageUrlsLegacy.length === 1 ? imageUrlsLegacy[0]! : "") ||
+    (mediaRows.length <= 1 ? fallbackIfImage : "");
+
+  const showSingleImage = !showCarouselBlock && !showFullVideo && !!singleImageSrc;
+
+  if (showCarouselBlock) {
     return (
       <div>
         {previewUrl && (
-          <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13, display: "inline-block", marginBottom: 12 }}>
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 13, display: "inline-block", marginBottom: 12 }}
+          >
             Open link in new tab
           </a>
         )}
         <CarouselSlider
           slides={sliderSlides}
-          imageUrls={imageUrls}
+          mediaItems={mediaItems}
+          imageUrls={imageUrlsLegacy}
           onSlidesChange={readOnly ? undefined : onSlidesChange}
           readOnly={readOnly}
         />
@@ -95,28 +130,32 @@ export function TaskViewer({
     );
   }
 
-  if (showVideo) {
+  if (showFullVideo) {
     return (
       <div className="card">
         <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
         <video
-          src={effectiveVideoUrl}
+          src={fullBleedVideoUrl}
           controls
           playsInline
           style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
           onError={() => setVideoLoadFailed(true)}
         />
         <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
-          <a href={effectiveVideoUrl} target="_blank" rel="noopener noreferrer">Open video in new tab</a>
+          <a href={fullBleedVideoUrl} target="_blank" rel="noopener noreferrer">
+            Open video in new tab
+          </a>
           {previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>Open content link</a>
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>
+              Open content link
+            </a>
           )}
         </div>
       </div>
     );
   }
 
-  if (showSingleImage) {
+  if (showSingleImage && singleImageSrc) {
     return (
       <div className="card">
         <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
@@ -124,11 +163,16 @@ export function TaskViewer({
           src={singleImageSrc}
           alt={flowType ? `${flowType} preview` : "Preview"}
           style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, objectFit: "contain" }}
+          referrerPolicy="no-referrer"
         />
         <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
-          <a href={singleImageSrc} target="_blank" rel="noopener noreferrer">Open image in new tab</a>
+          <a href={singleImageSrc} target="_blank" rel="noopener noreferrer">
+            Open image in new tab
+          </a>
           {previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>Open content link</a>
+            <a href={previewUrl} target="_blank" rel="noopener noreferrer" style={{ color: "var(--fg-secondary)" }}>
+              Open content link
+            </a>
           )}
         </div>
       </div>
@@ -153,7 +197,7 @@ export function TaskViewer({
   }
 
   const reasons: string[] = [];
-  if (!effectiveVideoUrl) reasons.push("no video or image URL from task or assets");
+  if (!fullBleedVideoUrl && mediaRows.length === 0) reasons.push("no video or image URL from task or assets");
   else if (videoLoadFailed) reasons.push("video URL did not load");
   if (!slidesJson) reasons.push("no generated_slides_json");
 

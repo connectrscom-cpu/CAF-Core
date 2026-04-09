@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { getJobDetail, getJobDetailAll } from "@/lib/caf-core-client";
+import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       generated_title: (job.generation_payload?.title ?? job.generation_payload?.generated_title ?? "") as string,
       generated_hook: (job.generation_payload?.hook ?? job.generation_payload?.generated_hook ?? "") as string,
       generated_caption: (job.generation_payload?.caption ?? job.generation_payload?.generated_caption ?? "") as string,
-      generated_slides_json: job.generation_payload?.slides ? JSON.stringify(job.generation_payload.slides) : "",
+      generated_slides_json: jobGeneratedSlidesJson(job),
       validator: job.latest_validator ?? "",
     };
     return NextResponse.json({ rowIndex: 0, data });

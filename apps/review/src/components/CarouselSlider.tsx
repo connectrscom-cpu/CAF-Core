@@ -2,12 +2,21 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
+import { isVideoUrl } from "@/lib/media-url";
 
 const SWIPE_THRESHOLD = 50;
 
+export interface CarouselMediaItem {
+  url: string;
+  kind: "image" | "video";
+}
+
 export interface CarouselSliderProps {
   slides: NormalizedSlide[];
+  /** @deprecated Prefer `mediaItems` for mixed image/video decks. */
   imageUrls?: string[];
+  /** Per-slide media aligned by index; falls back to `imageUrls[i]` when missing. */
+  mediaItems?: (CarouselMediaItem | null | undefined)[];
   onSlidesChange?: (slides: NormalizedSlide[]) => void;
   className?: string;
   readOnly?: boolean;
@@ -16,6 +25,7 @@ export interface CarouselSliderProps {
 export function CarouselSlider({
   slides: initialSlides,
   imageUrls = [],
+  mediaItems,
   onSlidesChange,
   className,
   readOnly = false,
@@ -66,7 +76,11 @@ export function CarouselSlider({
   );
 
   const slide = slides[currentIndex];
-  const imageUrl = imageUrls[currentIndex];
+  const fromMedia = mediaItems?.[currentIndex];
+  const fallbackUrl = imageUrls[currentIndex]?.trim();
+  const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
+  const mediaKind: "image" | "video" =
+    fromMedia?.kind ?? (mediaUrl && isVideoUrl(mediaUrl) ? "video" : "image");
   const total = slides.length;
   const canPrev = currentIndex > 0;
   const canNext = currentIndex < total - 1;
@@ -86,48 +100,72 @@ export function CarouselSlider({
         <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
       </div>
 
-      {imageUrl && (
-        <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
-          <button
-            type="button"
-            aria-label="Previous slide"
-            onClick={goPrev}
-            disabled={!canPrev}
-            style={{
-              width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
-              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 20, flexShrink: 0, opacity: canPrev ? 1 : 0.4,
-            }}
-          >
-            &#8249;
-          </button>
-          <div
-            style={{ flex: 1, minWidth: 0, overflow: "hidden", borderRadius: 8, border: "1px solid var(--border)", background: "var(--card)" }}
-            onTouchStart={onTouchStart}
-            onTouchEnd={onTouchEnd}
-          >
-            <img
-              src={imageUrl}
-              alt={`Slide ${currentIndex + 1}`}
-              style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
-              draggable={false}
-            />
-          </div>
-          <button
-            type="button"
-            aria-label="Next slide"
-            onClick={goNext}
-            disabled={!canNext}
-            style={{
-              width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
-              color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: 20, flexShrink: 0, opacity: canNext ? 1 : 0.4,
-            }}
-          >
-            &#8250;
-          </button>
+      <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          aria-label="Previous slide"
+          onClick={goPrev}
+          disabled={!canPrev}
+          style={{
+            width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
+            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, flexShrink: 0, opacity: canPrev ? 1 : 0.4,
+          }}
+        >
+          &#8249;
+        </button>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 200,
+            overflow: "hidden",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "#0a0a0c",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+        >
+          {mediaUrl ? (
+            mediaKind === "video" ? (
+              <video
+                key={mediaUrl}
+                src={mediaUrl}
+                controls
+                playsInline
+                style={{ width: "100%", maxHeight: "50vh", objectFit: "contain" }}
+              />
+            ) : (
+              <img
+                src={mediaUrl}
+                alt={`Slide ${currentIndex + 1}`}
+                style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
+                draggable={false}
+                referrerPolicy="no-referrer"
+              />
+            )
+          ) : (
+            <span style={{ fontSize: 13, color: "var(--muted)", padding: 24 }}>No rendered asset for this slide</span>
+          )}
         </div>
-      )}
+        <button
+          type="button"
+          aria-label="Next slide"
+          onClick={goNext}
+          disabled={!canNext}
+          style={{
+            width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
+            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 20, flexShrink: 0, opacity: canNext ? 1 : 0.4,
+          }}
+        >
+          &#8250;
+        </button>
+      </div>
 
       {!readOnly && (
         <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>

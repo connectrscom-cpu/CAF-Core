@@ -7,13 +7,14 @@ import { TaskViewer } from "@/components/TaskViewer";
 import { createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
+import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 
 interface ContentResponse {
   data: ReviewQueueRow;
 }
 
 interface AssetsResponse {
-  assets: { position: number; public_url: string }[];
+  assets: { position: number; public_url: string | null; asset_type: string | null }[];
 }
 
 export default function ContentPage() {
@@ -23,7 +24,7 @@ export default function ContentPage() {
   const projectQs = searchParams.get("project")?.trim() ?? "";
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
-  const [assetUrls, setAssetUrls] = useState<string[]>([]);
+  const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,20 +37,15 @@ export default function ContentPage() {
 
   useEffect(() => {
     if (initialSlides.length > 0) {
-      setEditedSlides((prev) =>
-        prev.length !== initialSlides.length ? initialSlides : prev
-      );
+      setEditedSlides((prev) => (prev.length !== initialSlides.length ? initialSlides : prev));
       return;
     }
-    const imageUrls = assetUrls.filter((u) => /\.(png|jpg|jpeg|gif|webp|avif)(\?|$)/i.test(u));
-    const videoUrls = assetUrls.filter((u) => /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u));
-    if (videoUrls.length > 0) return;
-    if (imageUrls.length > 1) {
+    if (taskAssets.length > 1) {
       setEditedSlides((prev) =>
-        prev.length !== imageUrls.length ? createSyntheticSlides(imageUrls.length) : prev
+        prev.length !== taskAssets.length ? createSyntheticSlides(taskAssets.length) : prev
       );
     }
-  }, [initialSlides, initialSlides.length, assetUrls]);
+  }, [initialSlides, initialSlides.length, taskAssets.length]);
 
   const fetchContent = useCallback(async () => {
     if (!task_id) return;
@@ -64,7 +60,7 @@ export default function ContentPage() {
       if (contentRes.status === 404) {
         setError("Content not found");
         setData(null);
-        setAssetUrls([]);
+        setTaskAssets([]);
         return;
       }
       if (!contentRes.ok) throw new Error(await contentRes.text());
@@ -72,19 +68,15 @@ export default function ContentPage() {
       setData(contentJson.data);
       if (assetsRes.ok) {
         const assetsJson: AssetsResponse = await assetsRes.json();
-        setAssetUrls(
-          (assetsJson.assets ?? [])
-            .sort((a, b) => a.position - b.position)
-            .map((a) => a.public_url)
-            .filter(Boolean) as string[]
-        );
+        const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
+        setTaskAssets(taskAssetsToPreviewRows(rows));
       } else {
-        setAssetUrls([]);
+        setTaskAssets([]);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load content");
       setData(null);
-      setAssetUrls([]);
+      setTaskAssets([]);
     } finally {
       setLoading(false);
     }
@@ -114,9 +106,9 @@ export default function ContentPage() {
         <div style={{ padding: "20px 28px 28px", maxWidth: 900 }}>
           <TaskViewer
             data={data}
-            assetUrls={assetUrls}
+            taskAssets={taskAssets}
             editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
-            fallbackPreviewUrl={assetUrls?.[0]}
+            fallbackPreviewUrl={taskAssets[0]?.public_url}
             readOnly
           />
         </div>

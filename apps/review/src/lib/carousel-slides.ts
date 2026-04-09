@@ -29,8 +29,37 @@ export function createSyntheticSlides(count: number): NormalizedSlide[] {
   }));
 }
 
-const HEADLINE_KEYS = ["headline", "title", "heading", "slide_headline", "slide headline", "Headline", "Title", "Heading"];
-const BODY_KEYS = ["body", "text", "content", "slide_body", "slide body", "Body", "Text", "Content"];
+const HEADLINE_KEYS = [
+  "headline",
+  "title",
+  "heading",
+  "slide_headline",
+  "slide headline",
+  "hook",
+  "slide_hook",
+  "main_title",
+  "hero",
+  "Headline",
+  "Title",
+  "Heading",
+];
+const BODY_KEYS = [
+  "body",
+  "text",
+  "content",
+  "slide_body",
+  "slide body",
+  "caption",
+  "subtitle",
+  "main_copy",
+  "slide_copy",
+  "description",
+  "supporting_copy",
+  "deck",
+  "Body",
+  "Text",
+  "Content",
+];
 
 export function parseSlidesFromJson(json: string | undefined): {
   slides: NormalizedSlide[];

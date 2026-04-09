@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
+import { slidesJsonForReviewUi } from "../services/review-ui-slides.js";
 
 export interface ReviewQueueJob {
   id: string;
@@ -22,6 +23,8 @@ export interface ReviewQueueJob {
   latest_rejection_tags: unknown[];
   latest_validator: string | null;
   latest_submitted_at: string | null;
+  /** First asset URL for workbench thumbnails (prefers image-like assets). */
+  preview_thumb_url?: string | null;
 }
 
 export type ReviewTab = "in_review" | "approved" | "rejected" | "needs_edit";
@@ -60,6 +63,25 @@ const JOBS_FROM_WITH_LATEST_REVIEW = `
     LIMIT 1
   ) lr ON true`;
 
+const PREVIEW_THUMB_SUBQUERY = `
+  (
+    SELECT a.public_url
+    FROM caf_core.assets a
+    WHERE a.project_id = j.project_id AND a.task_id = j.task_id
+      AND a.public_url IS NOT NULL AND TRIM(a.public_url) <> ''
+    ORDER BY
+      CASE
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%image%' THEN 0
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%carousel%' THEN 0
+        WHEN a.public_url ~* '\\.(png|jpg|jpeg|gif|webp|avif)(\\?|#|$)' THEN 0
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%video%' THEN 1
+        WHEN a.public_url ~* '\\.(mp4|webm|mov|m4v)(\\?|#|$)' THEN 1
+        ELSE 2
+      END,
+      a.position ASC NULLS LAST
+    LIMIT 1
+  )`;
+
 const REVIEW_QUEUE_ROW_SELECT = `
   SELECT
     j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
@@ -70,7 +92,8 @@ const REVIEW_QUEUE_ROW_SELECT = `
     lr.notes AS latest_notes,
     lr.rejection_tags AS latest_rejection_tags,
     lr.validator AS latest_validator,
-    lr.submitted_at AS latest_submitted_at
+    lr.submitted_at AS latest_submitted_at,
+    ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
   ${JOBS_FROM_WITH_LATEST_REVIEW}`;
 
 function buildTabWhere(tab: ReviewTab): string {
@@ -282,6 +305,8 @@ export async function getDistinctValues(
 export interface ReviewJobDetail extends ReviewQueueJob {
   /** Set when resolving a task across projects (workbench “all tenants”). */
   project_slug?: string;
+  /** Flat slides JSON derived from merged generation payload (review UI copy). */
+  review_slides_json?: string | null;
   assets: Array<{
     id: string;
     asset_type: string | null;
@@ -383,7 +408,8 @@ export async function getReviewJobDetail(
     [projectId, taskId]
   );
 
-  return { ...job, assets, reviews, auto_validation: autoVal };
+  const review_slides_json = slidesJsonForReviewUi(job.flow_type, job.generation_payload as Record<string, unknown>);
+  return { ...job, assets, reviews, auto_validation: autoVal, review_slides_json };
 }
 
 // ── Cross-project review queue (active projects only) ─────────────────────
@@ -411,7 +437,8 @@ const REVIEW_QUEUE_GLOBAL_ROW_SELECT = `
     lr.validator AS latest_validator,
     lr.submitted_at AS latest_submitted_at,
     p.slug AS project_slug,
-    p.display_name AS project_display_name
+    p.display_name AS project_display_name,
+    ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
   ${JOBS_GLOBAL_FROM}`;
 
 export async function listReviewQueueAllProjects(

@@ -65,7 +65,7 @@ export async function GET(request: NextRequest) {
       generated_hook: (j.generation_payload?.hook ?? j.generation_payload?.generated_hook ?? "") as string,
       generated_caption: (j.generation_payload?.caption ?? j.generation_payload?.generated_caption ?? "") as string,
       generated_slides_json: j.generation_payload?.slides ? JSON.stringify(j.generation_payload.slides) : "",
-      preview_url: "",
+      preview_url: (j.preview_thumb_url ?? "").trim(),
       video_url: "",
     }));
 

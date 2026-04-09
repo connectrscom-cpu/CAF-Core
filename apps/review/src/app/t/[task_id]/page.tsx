@@ -9,6 +9,7 @@ import { CarouselEdits, CarouselEditsExport } from "@/components/CarouselEdits";
 import { buildSlidesJson, createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
+import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -31,7 +32,7 @@ interface TaskDetailResponse {
 }
 
 interface AssetsResponse {
-  assets: { position: number; public_url: string }[];
+  assets: { position: number; public_url: string | null; asset_type: string | null }[];
 }
 
 export default function TaskPage() {
@@ -42,7 +43,7 @@ export default function TaskPage() {
   const task_id = typeof params.task_id === "string" ? params.task_id : "";
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
-  const [assetUrls, setAssetUrls] = useState<string[]>([]);
+  const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,19 +58,34 @@ export default function TaskPage() {
   const [editedHook, setEditedHook] = useState("");
   const [editedHashtags, setEditedHashtags] = useState("");
 
-  useEffect(() => { setEditedSlides([]); }, [task_id]);
+  useEffect(() => {
+    setEditedSlides([]);
+    setTaskAssets([]);
+  }, [task_id]);
 
   useEffect(() => {
     if (initialSlides.length > 0) {
-      setEditedSlides(initialSlides);
+      if (taskAssets.length > initialSlides.length) {
+        const nExtra = taskAssets.length - initialSlides.length;
+        const extra: NormalizedSlide[] = Array.from({ length: nExtra }, (_, i) => ({
+          index: initialSlides.length + i,
+          type: "body",
+          headline: "",
+          body: "",
+          handle: "",
+        }));
+        setEditedSlides([...initialSlides, ...extra]);
+      } else {
+        setEditedSlides(initialSlides);
+      }
       return;
     }
-    if (assetUrls.length > 0) {
+    if (taskAssets.length > 0) {
       setEditedSlides((prev) =>
-        prev.length !== assetUrls.length ? createSyntheticSlides(assetUrls.length) : prev
+        prev.length !== taskAssets.length ? createSyntheticSlides(taskAssets.length) : prev
       );
     }
-  }, [initialSlides, initialSlides.length, assetUrls.length]);
+  }, [initialSlides, taskAssets]);
 
   useEffect(() => {
     if (!data) return;
@@ -92,7 +108,7 @@ export default function TaskPage() {
       if (taskRes.status === 404) {
         setError("Task not found");
         setData(null);
-        setAssetUrls([]);
+        setTaskAssets([]);
         return;
       }
       if (!taskRes.ok) throw new Error(await taskRes.text());
@@ -100,19 +116,15 @@ export default function TaskPage() {
       setData(taskJson.data);
       if (assetsRes.ok) {
         const assetsJson: AssetsResponse = await assetsRes.json();
-        setAssetUrls(
-          (assetsJson.assets ?? [])
-            .sort((a, b) => a.position - b.position)
-            .map((a) => a.public_url)
-            .filter(Boolean) as string[]
-        );
+        const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
+        setTaskAssets(taskAssetsToPreviewRows(rows));
       } else {
-        setAssetUrls([]);
+        setTaskAssets([]);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load task");
       setData(null);
-      setAssetUrls([]);
+      setTaskAssets([]);
     } finally {
       setLoading(false);
     }
@@ -205,10 +217,10 @@ export default function TaskPage() {
           <div style={{ minWidth: 0 }}>
             <TaskViewer
               data={data}
-              assetUrls={assetUrls}
+              taskAssets={taskAssets}
               editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
               onSlidesChange={setEditedSlides}
-              fallbackPreviewUrl={assetUrls?.[0]}
+              fallbackPreviewUrl={taskAssets[0]?.public_url}
             />
 
             {/* Metadata card */}
