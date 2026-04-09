@@ -344,6 +344,7 @@ export async function runLlmApprovalReviewsForProject(
           minted_pending_rule: minted,
         },
         confidence: overall,
+        observed_at: new Date().toISOString(),
       });
 
       results.push({

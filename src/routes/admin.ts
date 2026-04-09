@@ -407,19 +407,28 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         candidateData: b.candidate_data,
       });
       if (!out.ok) return reply.code(400).send(out);
+      const okOut = out as unknown as {
+        ok: true;
+        mode?: string;
+        run_id?: string;
+        run_uuid?: string;
+        task_id: string;
+        job_id?: string;
+        generation?: unknown;
+      };
       let pipeline: { ran: boolean; ok?: boolean; job_status?: string; skipped?: boolean; error?: string } = {
         ran: false,
       };
       if (startPipeline) {
         pipeline = { ran: true };
         try {
-          const pr = await processJobByTaskId(db, config, project.id, out.task_id);
+          const pr = await processJobByTaskId(db, config, project.id, okOut.task_id);
           pipeline.ok = true;
           pipeline.job_status = pr.status;
           if (pr.skipped) pipeline.skipped = true;
-          if (out.run_uuid) {
+          if (okOut.run_uuid) {
             const runState = pr.status === "FAILED" ? "FAILED" : "REVIEWING";
-            await updateRunStatus(db, out.run_uuid, runState, {
+            await updateRunStatus(db, okOut.run_uuid, runState, {
               completed_at: new Date().toISOString(),
               jobs_completed: pr.status === "FAILED" ? 0 : 1,
               total_jobs: 1,
@@ -429,8 +438,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           const msg = e instanceof Error ? e.message : String(e);
           pipeline.ok = false;
           pipeline.error = msg;
-          if (out.run_uuid) {
-            await updateRunStatus(db, out.run_uuid, "FAILED", {
+          if (okOut.run_uuid) {
+            await updateRunStatus(db, okOut.run_uuid, "FAILED", {
               completed_at: new Date().toISOString(),
               jobs_completed: 0,
               total_jobs: 1,
@@ -440,12 +449,12 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       }
       return {
         ok: true,
-        mode: out.mode,
-        run_id: out.run_id,
-        run_uuid: out.run_uuid,
-        task_id: out.task_id,
-        job_id: out.job_id,
-        generation: out.generation,
+        mode: okOut.mode,
+        run_id: okOut.run_id,
+        run_uuid: okOut.run_uuid,
+        task_id: okOut.task_id,
+        job_id: okOut.job_id,
+        generation: okOut.generation,
         start_pipeline: startPipeline,
         pipeline,
       };
@@ -460,19 +469,28 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       startPipeline,
     });
     if (!out.ok) return reply.code(400).send(out);
+    const okOut = out as unknown as {
+      ok: true;
+      mode?: string;
+      run_id?: string;
+      run_uuid?: string;
+      task_id: string;
+      job_id?: string;
+      generation?: unknown;
+    };
     let pipeline: { ran: boolean; ok?: boolean; job_status?: string; skipped?: boolean; error?: string } = {
       ran: false,
     };
     if (startPipeline) {
       pipeline = { ran: true };
       try {
-        const pr = await processJobByTaskId(db, config, project.id, out.task_id);
+        const pr = await processJobByTaskId(db, config, project.id, okOut.task_id);
         pipeline.ok = true;
         pipeline.job_status = pr.status;
         if (pr.skipped) pipeline.skipped = true;
-        if (out.run_uuid) {
+        if (okOut.run_uuid) {
           const runState = pr.status === "FAILED" ? "FAILED" : "REVIEWING";
-          await updateRunStatus(db, out.run_uuid, runState, {
+          await updateRunStatus(db, okOut.run_uuid, runState, {
             completed_at: new Date().toISOString(),
             jobs_completed: pr.status === "FAILED" ? 0 : 1,
             total_jobs: 1,
@@ -482,8 +500,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         const msg = e instanceof Error ? e.message : String(e);
         pipeline.ok = false;
         pipeline.error = msg;
-        if (out.run_uuid) {
-          await updateRunStatus(db, out.run_uuid, "FAILED", {
+        if (okOut.run_uuid) {
+          await updateRunStatus(db, okOut.run_uuid, "FAILED", {
             completed_at: new Date().toISOString(),
             jobs_completed: 0,
             total_jobs: 1,
@@ -493,12 +511,12 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     }
     return {
       ok: true,
-      mode: out.mode,
-      run_id: out.run_id,
-      run_uuid: out.run_uuid,
-      task_id: out.task_id,
-      job_id: out.job_id,
-      generation: out.generation,
+      mode: okOut.mode,
+      run_id: okOut.run_id,
+      run_uuid: okOut.run_uuid,
+      task_id: okOut.task_id,
+      job_id: okOut.job_id,
+      generation: okOut.generation,
       start_pipeline: startPipeline,
       pipeline,
     };

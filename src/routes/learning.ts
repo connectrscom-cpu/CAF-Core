@@ -476,6 +476,8 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         scope_type: "project",
         project_id: project.id,
         source_type: "performance",
+        flow_type: null,
+        platform: null,
         observation_type: "social_metrics_csv_ingest",
         entity_ref: batchId,
         payload_json: {
@@ -487,6 +489,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
           errors: result.errors.slice(0, 30),
         },
         confidence: 1,
+        observed_at: new Date().toISOString(),
       }).catch(() => {});
 
       return {
