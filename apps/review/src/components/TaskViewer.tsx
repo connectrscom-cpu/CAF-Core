@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CarouselSlider } from "@/components/CarouselSlider";
+import type { CarouselMediaItem } from "@/components/CarouselSlider";
 import { createSyntheticSlides } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
