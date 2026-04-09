@@ -29,11 +29,27 @@ export default function LearningPage() {
   const [contextPreview, setContextPreview] = useState<Record<string, unknown> | null>(null);
   const [observations, setObservations] = useState<Record<string, unknown>[]>([]);
   const [transparency, setTransparency] = useState<Record<string, unknown> | null>(null);
+  const [llmBusy, setLlmBusy] = useState(false);
+  const [llmResult, setLlmResult] = useState<Record<string, unknown> | null>(null);
+  const [llmReviews, setLlmReviews] = useState<Record<string, unknown>[]>([]);
+  const [llmLimit, setLlmLimit] = useState(3);
+  const [llmMintBelow, setLlmMintBelow] = useState("");
+  const [llmForceRereview, setLlmForceRereview] = useState(false);
 
   const fetchTransparency = useCallback(async () => {
     const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=transparency`);
     if (res.ok) setTransparency(await res.json());
     else setTransparency(null);
+  }, [project]);
+
+  const fetchLlmReviews = useCallback(async () => {
+    const res = await fetch(
+      `/api/learning?project=${encodeURIComponent(project)}&section=llm_approval_reviews&limit=25`
+    );
+    if (res.ok) {
+      const j = await res.json();
+      setLlmReviews(j.reviews ?? []);
+    }
   }, [project]);
 
   const fetchRules = useCallback(async () => {
@@ -61,7 +77,8 @@ export default function LearningPage() {
     fetchRules();
     fetchObservations();
     fetchTransparency();
-  }, [fetchRules, fetchObservations, fetchTransparency]);
+    fetchLlmReviews();
+  }, [fetchRules, fetchObservations, fetchTransparency, fetchLlmReviews]);
 
   const runAnalysis = async (action: "editorial" | "market") => {
     setRunning(true);
@@ -86,6 +103,35 @@ export default function LearningPage() {
   const loadContextPreview = async () => {
     const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=context`);
     if (res.ok) setContextPreview(await res.json());
+  };
+
+  const runLlmApprovalReview = async () => {
+    setLlmBusy(true);
+    setLlmResult(null);
+    try {
+      const body: Record<string, unknown> = {
+        action: "llm_review_approved",
+        project,
+        limit: llmLimit,
+        force_rereview: llmForceRereview,
+      };
+      const trimmed = llmMintBelow.trim();
+      if (trimmed !== "") {
+        const n = parseFloat(trimmed);
+        if (!Number.isNaN(n)) body.mint_pending_hints_below_score = n;
+      }
+      const res = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      setLlmResult(json);
+      fetchLlmReviews();
+      fetchRules();
+    } finally {
+      setLlmBusy(false);
+    }
   };
 
   const applyRule = async (rule: LearningRule) => {
@@ -158,7 +204,9 @@ export default function LearningPage() {
           <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 14, color: "var(--fg-secondary)" }}>
             {String(transparency.summary ?? "")}
           </p>
-          {transparency.snapshot && typeof transparency.snapshot === "object" && (
+          {transparency.snapshot != null &&
+          typeof transparency.snapshot === "object" &&
+          !Array.isArray(transparency.snapshot) ? (
             <div
               style={{
                 display: "flex",
@@ -181,7 +229,7 @@ export default function LearningPage() {
                 </div>
               ))}
             </div>
-          )}
+          ) : null}
           <div style={{ fontSize: 13, lineHeight: 1.45 }}>
             <div style={{ fontWeight: 600, marginBottom: 8 }}>How each part runs</div>
             <ul style={{ paddingLeft: 18, margin: 0 }}>
@@ -254,6 +302,105 @@ export default function LearningPage() {
           Preview compiled context
         </button>
       </div>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginBottom: 8 }}>LLM review (approved content only)</h3>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>
+          Uses OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
+          rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
+          scores to Core, creates a <code>learning_observations</code> row, and optionally mints{" "}
+          <strong>pending</strong> generation hints if you set a score threshold.
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12 }}>
+          <label style={{ fontSize: 13 }}>
+            Batch size{" "}
+            <input
+              type="number"
+              min={1}
+              max={20}
+              value={llmLimit}
+              onChange={(e) => setLlmLimit(parseInt(e.target.value, 10) || 3)}
+              style={{ width: 56, padding: 4, marginLeft: 6 }}
+            />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Mint hints if score &lt;{" "}
+            <input
+              placeholder="off"
+              value={llmMintBelow}
+              onChange={(e) => setLlmMintBelow(e.target.value)}
+              style={{ width: 56, padding: 4 }}
+            />{" "}
+            <span style={{ color: "var(--muted)" }}>(e.g. 0.55, leave empty to skip)</span>
+          </label>
+          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="checkbox"
+              checked={llmForceRereview}
+              onChange={(e) => setLlmForceRereview(e.target.checked)}
+            />
+            Force re-review (ignore 7-day skip)
+          </label>
+        </div>
+        <button type="button" className="btn-primary" onClick={runLlmApprovalReview} disabled={llmBusy}>
+          {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
+        </button>
+        {llmResult && (
+          <pre
+            style={{
+              marginTop: 12,
+              fontSize: 11,
+              maxHeight: 220,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              background: "var(--card)",
+              padding: 8,
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+            }}
+          >
+            {JSON.stringify(llmResult, null, 2)}
+          </pre>
+        )}
+      </div>
+
+      {llmReviews.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3 style={{ marginBottom: 8 }}>Recent LLM approval reviews ({llmReviews.length})</h3>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>task_id</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>score</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>images</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>hint rule</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>when</th>
+              </tr>
+            </thead>
+            <tbody>
+              {llmReviews.slice(0, 15).map((r) => (
+                <tr key={String(r.review_id)}>
+                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)", fontFamily: "monospace" }}>
+                    {String(r.task_id).length > 28 ? `${String(r.task_id).slice(0, 28)}…` : String(r.task_id)}
+                  </td>
+                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
+                    {r.overall_score != null ? Number(r.overall_score).toFixed(2) : "—"}
+                  </td>
+                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
+                    {Array.isArray(r.vision_image_urls) ? r.vision_image_urls.length : 0}
+                  </td>
+                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
+                    {r.minted_pending_rule ? "yes" : "—"}
+                  </td>
+                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)", color: "var(--muted)" }}>
+                    {String(r.created_at ?? "").slice(0, 16)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <form className="card" style={{ marginBottom: 20 }} onSubmit={uploadCsv}>
         <h3 style={{ marginBottom: 8 }}>Upload social performance CSV</h3>
