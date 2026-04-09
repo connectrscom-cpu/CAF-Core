@@ -14,7 +14,7 @@ function headers(): Record<string, string> {
 async function coreGet<T = unknown>(path: string): Promise<T | null> {
   const res = await fetch(`${CAF_CORE_URL}${path}`, {
     headers: headers(),
-    next: { revalidate: 5 },
+    cache: "no-store",
   });
   if (!res.ok) {
     console.error("CAF Core GET error", res.status, await res.text());
@@ -29,7 +29,7 @@ async function coreGetRequired<T>(path: string): Promise<T> {
   const url = `${base}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, { headers: headers(), next: { revalidate: 5 } });
+    res = await fetch(url, { headers: headers(), cache: "no-store" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const localhostHint =
