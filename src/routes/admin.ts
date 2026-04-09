@@ -70,10 +70,34 @@ import { z } from "zod";
 
 interface Deps { db: Pool; config: AppConfig; }
 
-interface ProjectRow { id: string; slug: string; display_name: string | null; active: boolean; }
+interface ProjectRow {
+  id: string;
+  slug: string;
+  display_name: string | null;
+  active: boolean;
+  color?: string | null;
+  updated_at?: string;
+  run_count?: number | string | null;
+  job_count?: number | string | null;
+}
 
 async function listProjects(db: Pool): Promise<ProjectRow[]> {
-  return q<ProjectRow>(db, `SELECT id, slug, display_name, active FROM caf_core.projects ORDER BY slug`);
+  return q<ProjectRow>(
+    db,
+    `
+      SELECT
+        p.id,
+        p.slug,
+        p.display_name,
+        p.active,
+        p.color,
+        p.updated_at,
+        (SELECT count(*) FROM caf_core.runs r WHERE r.project_id = p.id) AS run_count,
+        (SELECT count(*) FROM caf_core.content_jobs j WHERE j.project_id = p.id) AS job_count
+      FROM caf_core.projects p
+      ORDER BY p.slug
+    `
+  );
 }
 
 /** Trim and strip CR/LF (pasted URLs / form noise); empty → undefined */
@@ -199,6 +223,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   ];
 
   const globalLinks = [
+    { href: "/admin/projects", label: "Projects", key: "projects" },
     { href: "/admin/engine", label: "Decision Engine", key: "engine" },
     { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
     { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
@@ -286,6 +311,56 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     if (slug.length < 2 || slug.length > 30) return { ok: false, error: "Slug must be 2-30 characters" };
     const project = await ensureProject(db, slug, displayName);
     return { ok: true, project };
+  });
+
+  app.put("/v1/admin/projects", async (request, reply) => {
+    const body = request.body as Record<string, unknown>;
+    const slug = String(body.slug || "").trim().toUpperCase();
+    if (!slug) return reply.code(400).send({ ok: false, error: "Slug is required" });
+
+    const displayNameRaw = body.display_name != null ? String(body.display_name).trim() : "";
+    const display_name = displayNameRaw === "" ? null : displayNameRaw;
+    const active = body.active === true || body.active === "true" || body.active === "1";
+
+    const colorRaw = body.color != null ? String(body.color).trim() : "";
+    const color = colorRaw === "" ? null : colorRaw;
+    if (color != null && !/^#[0-9A-Fa-f]{6}$/.test(color)) {
+      return reply.code(400).send({ ok: false, error: "Color must be a hex string like #RRGGBB" });
+    }
+
+    const rows = await q<{ id: string }>(
+      db,
+      `UPDATE caf_core.projects
+       SET display_name = $2, active = $3, color = $4, updated_at = now()
+       WHERE slug = $1
+       RETURNING id`,
+      [slug, display_name, active, color]
+    );
+    if (!rows[0]) return reply.code(404).send({ ok: false, error: "project_not_found" });
+    return { ok: true };
+  });
+
+  app.delete("/v1/admin/projects", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const slug = String(query.slug || "").trim().toUpperCase();
+    const force = query.force === "true" || query.force === "1";
+    if (!slug) return reply.code(400).send({ ok: false, error: "slug required" });
+
+    const proj = await getProjectBySlug(db, slug);
+    if (!proj) return reply.code(404).send({ ok: false, error: "project_not_found" });
+
+    if (!force) {
+      const runs = await q<{ c: number | string }>(db, `SELECT count(*)::int AS c FROM caf_core.runs WHERE project_id = $1`, [proj.id]);
+      const jobs = await q<{ c: number | string }>(db, `SELECT count(*)::int AS c FROM caf_core.content_jobs WHERE project_id = $1`, [proj.id]);
+      const runCount = Number((runs[0] as any)?.c ?? 0);
+      const jobCount = Number((jobs[0] as any)?.c ?? 0);
+      if (runCount > 0 || jobCount > 0) {
+        return reply.code(400).send({ ok: false, error: "project_not_empty" });
+      }
+    }
+
+    await q(db, `DELETE FROM caf_core.projects WHERE id = $1`, [proj.id]);
+    return { ok: true };
   });
 
   app.get("/v1/admin/stats", async (request) => {
@@ -1157,6 +1232,216 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
 });
 </script>`;
     reply.type("text/html").send(page("New Project", "", body, projects, "", adminHeadTokenScript(config)));
+  });
+
+  // --- Projects list / management ---
+  app.get("/admin/projects", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? "";
+
+    const rows = projects.map((p) => {
+      const runCount = p.run_count ?? "—";
+      const jobCount = p.job_count ?? "—";
+      const updated = p.updated_at ? new Date(p.updated_at).toLocaleString() : "—";
+      const color = (p.color ?? "#94a3b8").trim();
+      return `<tr>
+  <td style="max-width:520px">
+    <div style="display:flex;gap:10px;align-items:center">
+      <span title="${esc(color)}" style="width:10px;height:10px;border-radius:999px;background:${esc(color)};box-shadow:0 0 0 1px rgba(255,255,255,0.12) inset"></span>
+      <div style="display:flex;flex-direction:column">
+        <span style="font-weight:600">${esc(p.display_name ?? p.slug)}</span>
+        <span style="color:var(--muted);font-size:12px">${esc(p.slug)}</span>
+      </div>
+    </div>
+  </td>
+  <td>${p.active ? "Yes" : "No"}</td>
+  <td>${esc(runCount)}</td>
+  <td>${esc(jobCount)}</td>
+  <td style="color:var(--muted)">${esc(updated)}</td>
+  <td>
+    <button class="btn" style="padding:8px 12px" data-manage="1"
+      data-slug="${esc(p.slug)}"
+      data-display-name="${esc(p.display_name ?? "")}"
+      data-active="${p.active ? "1" : "0"}"
+      data-color="${esc(p.color ?? "#64748b")}"
+    >Manage</button>
+    <a class="btn" style="padding:8px 12px;margin-left:8px;background:transparent;border:1px solid var(--border);color:var(--fg2)"
+      href="/admin?project=${encodeURIComponent(p.slug)}">Open</a>
+  </td>
+</tr>`;
+    }).join("\n");
+
+    const body = `
+<div class="ph">
+  <div>
+    <h2>Projects</h2>
+    <span class="ph-sub">Browse and manage CAF Core projects (slug, name, active, color)</span>
+  </div>
+  <div class="page-actions" style="display:flex;gap:10px;align-items:center">
+    <a href="/admin/new-project" class="btn">+ New Project</a>
+  </div>
+</div>
+
+<div class="content">
+  <div id="p-msg" class="card" style="display:none;margin-bottom:16px"></div>
+  <div class="card">
+    <div class="card-h">All projects</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Project</th>
+          <th>Active</th>
+          <th>Runs</th>
+          <th>Jobs</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows || `<tr><td colspan="6" style="color:var(--muted);padding:24px">No projects found</td></tr>`}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<dialog id="p-dlg">
+  <h3>Manage project</h3>
+  <div class="form-group"><label>Slug</label><input id="p-slug" disabled></div>
+  <div class="form-group"><label>Display name</label><input id="p-name" placeholder="Optional"></div>
+  <div class="form-group">
+    <label>Color</label>
+    <div style="display:flex;gap:10px;align-items:center">
+      <input id="p-color" type="color" value="#64748b" style="width:44px;height:36px;padding:0;background:transparent;border:none" aria-label="Project color">
+      <input id="p-color-hex" placeholder="#RRGGBB">
+    </div>
+  </div>
+  <div class="form-group" style="flex-direction:row;align-items:center;gap:10px">
+    <input id="p-active" type="checkbox" style="width:auto;accent-color:var(--accent)">
+    <label for="p-active" style="margin:0">Active</label>
+  </div>
+  <div class="form-group" style="flex-direction:row;align-items:center;gap:10px;margin-top:8px">
+    <input id="p-force" type="checkbox" style="width:auto;accent-color:var(--red)">
+    <label for="p-force" style="margin:0">Force delete (also deletes runs/jobs)</label>
+  </div>
+  <div class="form-actions" style="justify-content:space-between">
+    <button id="p-del" class="btn" style="background:transparent;border:1px solid var(--border);color:var(--red)">Delete</button>
+    <div style="display:flex;gap:10px;align-items:center">
+      <button id="p-close" class="btn" style="background:transparent;border:1px solid var(--border);color:var(--fg2)">Close</button>
+      <button id="p-save" class="btn">Save changes</button>
+    </div>
+  </div>
+  <div id="p-dlg-msg" class="form-msg" style="margin-top:10px"></div>
+</dialog>
+
+<script>
+(function(){
+  var dlg = document.getElementById('p-dlg');
+  var msg = document.getElementById('p-msg');
+  var dlgMsg = document.getElementById('p-dlg-msg');
+  var slugEl = document.getElementById('p-slug');
+  var nameEl = document.getElementById('p-name');
+  var activeEl = document.getElementById('p-active');
+  var colorEl = document.getElementById('p-color');
+  var colorHexEl = document.getElementById('p-color-hex');
+  var forceEl = document.getElementById('p-force');
+
+  function showTopMessage(type, text){
+    msg.style.display = 'block';
+    msg.style.padding = '10px 16px';
+    msg.style.borderRadius = '10px';
+    msg.style.border = '1px solid var(--border)';
+    msg.style.background = type === 'success' ? 'var(--green-bg)' : 'var(--red-bg)';
+    msg.style.color = type === 'success' ? 'var(--green)' : 'var(--red)';
+    msg.textContent = text;
+  }
+  function setDlgMessage(type, text){
+    dlgMsg.textContent = text || '';
+    dlgMsg.style.color = type === 'success' ? 'var(--green)' : (type === 'error' ? 'var(--red)' : 'var(--muted)');
+  }
+
+  function openManage(btn){
+    slugEl.value = btn.getAttribute('data-slug') || '';
+    nameEl.value = btn.getAttribute('data-display-name') || '';
+    activeEl.checked = (btn.getAttribute('data-active') || '0') === '1';
+    var c = btn.getAttribute('data-color') || '#64748b';
+    if(!/^#[0-9A-Fa-f]{6}$/.test(c)) c = '#64748b';
+    colorEl.value = c;
+    colorHexEl.value = c;
+    forceEl.checked = false;
+    setDlgMessage('', '');
+    dlg.showModal();
+  }
+
+  document.querySelectorAll('button[data-manage="1"]').forEach(function(b){
+    b.addEventListener('click', function(){ openManage(b); });
+  });
+
+  colorEl.addEventListener('input', function(){ colorHexEl.value = colorEl.value; });
+  colorHexEl.addEventListener('input', function(){
+    var v = String(colorHexEl.value || '').trim();
+    if(/^#[0-9A-Fa-f]{6}$/.test(v)) colorEl.value = v;
+  });
+
+  document.getElementById('p-close').addEventListener('click', function(){
+    dlg.close();
+  });
+
+  document.getElementById('p-save').addEventListener('click', async function(){
+    var slug = String(slugEl.value || '').trim().toUpperCase();
+    var display_name = String(nameEl.value || '').trim();
+    var active = !!activeEl.checked;
+    var color = String(colorHexEl.value || '').trim();
+    if(color !== '' && !/^#[0-9A-Fa-f]{6}$/.test(color)){
+      setDlgMessage('error', 'Color must be like #RRGGBB');
+      return;
+    }
+    setDlgMessage('', 'Saving…');
+    try{
+      var r = await cafFetch('/v1/admin/projects', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ slug: slug, display_name: display_name || null, active: active, color: color || null })
+      });
+      var d = await r.json();
+      if(!r.ok || d.ok === false){
+        setDlgMessage('error', d.error || 'Save failed');
+        return;
+      }
+      dlg.close();
+      showTopMessage('success','Saved');
+      window.location.reload();
+    }catch(err){
+      setDlgMessage('error', 'Network error while saving');
+    }
+  });
+
+  document.getElementById('p-del').addEventListener('click', async function(){
+    var slug = String(slugEl.value || '').trim().toUpperCase();
+    var force = !!forceEl.checked;
+    if(!confirm(force ? 'Delete project AND all runs/jobs? This cannot be undone.' : 'Delete project?')) return;
+    setDlgMessage('', 'Deleting…');
+    try{
+      var r = await cafFetch('/v1/admin/projects?slug='+encodeURIComponent(slug)+'&force='+(force?'true':'false'), { method:'DELETE' });
+      var d = await r.json();
+      if(!r.ok || d.ok === false){
+        var hint = d.error === 'project_not_empty' ? 'Project has runs/jobs. Enable Force delete to proceed.' : (d.error || 'Delete failed');
+        setDlgMessage('error', hint);
+        return;
+      }
+      dlg.close();
+      showTopMessage('success','Deleted');
+      window.location.reload();
+    }catch(err){
+      setDlgMessage('error', 'Network error while deleting');
+    }
+  });
+})();
+</script>
+`;
+
+    reply.type("text/html").send(page("Projects", "projects", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Overview ---

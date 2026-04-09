@@ -20,7 +20,7 @@ const NAV_ITEMS = [
   },
   {
     section: "Admin",
-    items: [{ href: "/admin/projects", label: "Projects", icon: ProjectsIcon }],
+    items: [],
   },
   {
     section: "Settings",
@@ -91,17 +91,6 @@ function ProjectIcon() {
     <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z" />
       <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
-    </svg>
-  );
-}
-
-function ProjectsIcon() {
-  return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="4" width="18" height="16" rx="2" />
-      <path d="M7 8h10" />
-      <path d="M7 12h10" />
-      <path d="M7 16h10" />
     </svg>
   );
 }
