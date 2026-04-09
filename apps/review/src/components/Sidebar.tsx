@@ -9,20 +9,7 @@ const NAV_ITEMS = [
     items: [
       { href: "/", label: "Review Console", icon: ReviewIcon },
       { href: "/playground", label: "Template Playground", icon: TemplateIcon },
-    ],
-  },
-  {
-    section: "CAF Engine",
-    items: [
-      { href: "/flow-engine", label: "Flow Engine", icon: FlowIcon },
-      { href: "/learning", label: "Learning", icon: LearningIcon },
-    ],
-  },
-  {
-    section: "Settings",
-    items: [
-      { href: "/settings/project", label: "Project Config", icon: ProjectIcon },
-      { href: "/settings/renderer", label: "Renderer", icon: SettingsIcon },
+      { href: "/settings/renderer", label: "Renderer Settings", icon: SettingsIcon },
     ],
   },
 ];
@@ -33,8 +20,8 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <h1>CAF Review</h1>
-        <span>Output &amp; approval</span>
+        <h1>CAF Backend</h1>
+        <span>Content Automation</span>
       </div>
       <nav className="sidebar-nav">
         {NAV_ITEMS.map((section) => (
@@ -78,35 +65,6 @@ function TemplateIcon() {
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       <line x1="3" y1="9" x2="21" y2="9" />
       <line x1="9" y1="21" x2="9" y2="9" />
-    </svg>
-  );
-}
-
-function ProjectIcon() {
-  return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z" />
-      <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
-    </svg>
-  );
-}
-
-function FlowIcon() {
-  return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="16 18 22 12 16 6" />
-      <polyline points="8 6 2 12 8 18" />
-    </svg>
-  );
-}
-
-function LearningIcon() {
-  return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z" />
-      <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z" />
-      <line x1="6" y1="8" x2="6" y2="8" />
-      <line x1="18" y1="8" x2="18" y2="8" />
     </svg>
   );
 }

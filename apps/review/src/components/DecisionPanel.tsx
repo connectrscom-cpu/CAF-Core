@@ -15,8 +15,6 @@ const REVIEW_ISSUE_TAGS = [
 
 export interface DecisionPanelProps {
   taskId: string;
-  /** Required when the workbench aggregates multiple CAF projects (sent to Core as `project_slug`). */
-  projectSlug?: string;
   onSuccess?: () => void;
   existingDecision?: string;
   existingNotes?: string;
@@ -31,7 +29,6 @@ export interface DecisionPanelProps {
 
 export function DecisionPanel({
   taskId,
-  projectSlug,
   onSuccess,
   existingDecision,
   existingNotes = "",
@@ -65,7 +62,6 @@ export function DecisionPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           decision: effectiveDecision,
-          ...(projectSlug ? { project_slug: projectSlug } : {}),
           notes: notes.trim() || undefined,
           rejection_tags: tags,
           validator: validator.trim() || undefined,
@@ -88,7 +84,7 @@ export function DecisionPanel({
     } finally {
       setSubmitting(false);
     }
-  }, [decision, notes, tags, validator, taskId, projectSlug, onSuccess, finalTitleOverride, finalHookOverride, finalCaptionOverride, finalHashtagsOverride, finalSlidesJsonOverride, hasEdits]);
+  }, [decision, notes, tags, validator, taskId, onSuccess, finalTitleOverride, finalHookOverride, finalCaptionOverride, finalHashtagsOverride, finalSlidesJsonOverride, hasEdits]);
 
   const toggleTag = (tag: string) => {
     setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));

@@ -13,10 +13,6 @@ interface TasksResponse {
   total: number;
   page: number;
   limit: number;
-  scope?: "all" | "single";
-  /** Per-queue-tab totals (from CAF Core DB). */
-  tabCounts?: { in_review: number; approved: number; rejected: number; needs_edit: number };
-  /** Breakdown of `content_jobs.status` within the current tab + filters. */
   statusCounts?: Record<string, number>;
   missingPreviewCount?: number;
 }
@@ -96,7 +92,7 @@ function WorkbenchContent() {
           const isActive = validStatus === key;
           const q = new URLSearchParams(searchParams.toString());
           q.set("status", key);
-          const count = data?.tabCounts?.[key];
+          const count = data?.statusCounts?.[key];
           return (
             <Link key={key} href={`/?${q.toString()}`} className={`tab ${isActive ? "active" : ""}`}>
               {label}
@@ -129,7 +125,6 @@ function WorkbenchContent() {
               total={data.total}
               missingPreviewCount={data.missingPreviewCount}
               statusCounts={data.statusCounts}
-              showProjectColumn={data.scope === "all"}
               contentSlug={validStatus === "in_review" ? "t" : "content"}
             />
           )}
