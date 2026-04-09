@@ -47,7 +47,7 @@ export function Sidebar() {
             {section.items.map((item) => {
               const isActive =
                 item.href === "/"
-                  ? pathname === "/" || pathname.startsWith("/t/") || pathname.startsWith("/r/") || pathname.startsWith("/approved")
+                  ? pathname === "/" || pathname.startsWith("/t/") || pathname.startsWith("/r/") || pathname.startsWith("/approved") || pathname.startsWith("/content/")
                   : pathname.startsWith(item.href);
               return (
                 <Link

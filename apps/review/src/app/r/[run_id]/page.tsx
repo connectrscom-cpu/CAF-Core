@@ -6,6 +6,7 @@ import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
 import type { ReviewQueueRow } from "@/lib/types";
+import { taskReviewHref } from "@/lib/task-links";
 
 interface TasksResponse {
   items: ReviewQueueRow[];
@@ -67,8 +68,7 @@ function RunContent() {
     const tid = (row.task_id ?? "").trim();
     if (!tid) return null;
     const proj = (row.project ?? "").trim();
-    const qs = proj ? `?project=${encodeURIComponent(proj)}` : "";
-    return { href: `/t/${encodeURIComponent(tid)}${qs}` };
+    return { href: taskReviewHref("t", tid, proj || undefined) };
   }, [data?.items]);
 
   const reviewNext = () => {

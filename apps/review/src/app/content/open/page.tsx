@@ -1,21 +1,20 @@
 "use client";
 
 import { Suspense } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { ContentReviewClient } from "@/components/ContentReviewClient";
 
-function ContentPageInner() {
-  const params = useParams();
+function OpenContentInner() {
   const searchParams = useSearchParams();
-  const raw = typeof params.task_id === "string" ? params.task_id : "";
+  const taskIdParam = searchParams.get("task_id")?.trim() ?? "";
   const projectFromUrl = searchParams.get("project")?.trim() ?? "";
-  return <ContentReviewClient taskIdParam={raw} projectFromUrl={projectFromUrl} />;
+  return <ContentReviewClient taskIdParam={taskIdParam} projectFromUrl={projectFromUrl} />;
 }
 
-export default function ContentPage() {
+export default function OpenContentPage() {
   return (
     <Suspense fallback={<div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}>
-      <ContentPageInner />
+      <OpenContentInner />
     </Suspense>
   );
 }

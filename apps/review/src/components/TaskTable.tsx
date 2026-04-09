@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isVideoUrl } from "@/lib/media-url";
+import { taskReviewHref } from "@/lib/task-links";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
 
@@ -53,10 +54,7 @@ function TaskRow({
   const decision = getVal(row, "decision");
   const title = getVal(row, "generated_title") || taskId;
   const thumb = getVal(row, "preview_url");
-  const taskHref =
-    showProjectColumn && project
-      ? `/${contentSlug}/${encodeURIComponent(taskId)}?project=${encodeURIComponent(project)}`
-      : `/${contentSlug}/${encodeURIComponent(taskId)}`;
+  const taskHref = taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined);
 
   return (
     <tr>

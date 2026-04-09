@@ -60,10 +60,11 @@ export function DecisionPanel({
     setError(null);
     const effectiveDecision = decision === "APPROVED" && hasEdits ? "NEEDS_EDIT" : decision;
     try {
-      const res = await fetch(`/api/task/${encodeURIComponent(taskId)}/decision`, {
+      const res = await fetch("/api/task/decision", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          task_id: taskId,
           decision: effectiveDecision,
           ...(projectSlug ? { project_slug: projectSlug } : {}),
           notes: notes.trim() || undefined,
