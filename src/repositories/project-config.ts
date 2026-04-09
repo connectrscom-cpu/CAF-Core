@@ -29,6 +29,7 @@ export interface StrategyDefaultsRow {
   time_horizon: string | null;
   owner: string | null;
   notes: string | null;
+  instagram_handle: string | null;
 }
 
 export async function getStrategyDefaults(db: Pool, projectId: string): Promise<StrategyDefaultsRow | null> {
@@ -47,8 +48,8 @@ export async function upsertStrategyDefaults(
       transformation_promise, positioning_statement, primary_business_goal, primary_content_goal,
       north_star_metric, monetization_model, traffic_destination, funnel_stage_focus,
       brand_archetype, strategic_content_pillars, authority_angle, differentiation_angle,
-      growth_strategy, publishing_intensity, time_horizon, owner, notes
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+      growth_strategy, publishing_intensity, time_horizon, owner, notes, instagram_handle
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
     ON CONFLICT (project_id) DO UPDATE SET
       project_type = EXCLUDED.project_type, core_offer = EXCLUDED.core_offer,
       target_audience = EXCLUDED.target_audience, audience_problem = EXCLUDED.audience_problem,
@@ -60,6 +61,7 @@ export async function upsertStrategyDefaults(
       authority_angle = EXCLUDED.authority_angle, differentiation_angle = EXCLUDED.differentiation_angle,
       growth_strategy = EXCLUDED.growth_strategy, publishing_intensity = EXCLUDED.publishing_intensity,
       time_horizon = EXCLUDED.time_horizon, owner = EXCLUDED.owner, notes = EXCLUDED.notes,
+      instagram_handle = EXCLUDED.instagram_handle,
       updated_at = now()
     RETURNING *`,
     [
@@ -68,6 +70,7 @@ export async function upsertStrategyDefaults(
       data.north_star_metric, data.monetization_model, data.traffic_destination, data.funnel_stage_focus,
       data.brand_archetype, data.strategic_content_pillars, data.authority_angle, data.differentiation_angle,
       data.growth_strategy, data.publishing_intensity, data.time_horizon, data.owner, data.notes,
+      data.instagram_handle,
     ]);
   if (!row) throw new Error("Failed to upsert strategy_defaults");
   return row;

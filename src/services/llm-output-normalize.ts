@@ -129,6 +129,50 @@ export function normalizeLlmParsedForSchemaValidation(
   const carouselish = /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
   if (!carouselish) return out;
 
+  const slideDeck = out.slide_deck;
+  if (slideDeck && typeof slideDeck === "object" && !Array.isArray(slideDeck)) {
+    const sv = (slideDeck as Record<string, unknown>).structure_variables;
+    if (sv && typeof sv === "object" && !Array.isArray(sv) && out.structure_variables == null) {
+      out.structure_variables = sv;
+    }
+  }
+
+  if (out.slide_count != null) {
+    const scTop = out.slide_count;
+    const nTop =
+      typeof scTop === "number" && Number.isFinite(scTop)
+        ? Math.floor(scTop)
+        : parseInt(String(scTop).trim(), 10);
+    if (Number.isFinite(nTop) && nTop >= 0) {
+      const existing =
+        out.structure_variables && typeof out.structure_variables === "object" && !Array.isArray(out.structure_variables)
+          ? (out.structure_variables as Record<string, unknown>)
+          : null;
+      const base: Record<string, unknown> = existing ? { ...existing } : {};
+      if (base.slide_count == null) base.slide_count = nTop;
+      if (typeof out.narrative_arc === "string" && base.narrative_arc == null) base.narrative_arc = out.narrative_arc;
+      if (typeof out.hook_type === "string" && base.hook_type == null) base.hook_type = out.hook_type;
+      if (typeof out.cta_type === "string" && base.cta_type == null) base.cta_type = out.cta_type;
+      if (typeof out.cta_placement === "string" && base.cta_placement == null) base.cta_placement = out.cta_placement;
+      out.structure_variables = base;
+    }
+  }
+
+  /** LLM drift: `structure: { slide_count, narrative_arc, ... }` instead of `structure_variables`. */
+  const struct = out.structure;
+  if (struct && typeof struct === "object" && !Array.isArray(struct)) {
+    const src = struct as Record<string, unknown>;
+    const existing =
+      out.structure_variables && typeof out.structure_variables === "object" && !Array.isArray(out.structure_variables)
+        ? { ...(out.structure_variables as Record<string, unknown>) }
+        : {};
+    const merged: Record<string, unknown> = { ...existing, ...src };
+    if (Array.isArray(merged.narrative_arc)) {
+      merged.narrative_arc = merged.narrative_arc.map(String).join(",");
+    }
+    out.structure_variables = merged;
+  }
+
   if (isCarouselInsightVariationsShape(out.variations)) {
     return ensureNestedVariationDefaults(out);
   }

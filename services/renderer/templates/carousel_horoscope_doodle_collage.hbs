@@ -242,7 +242,7 @@
         <div class="cta-big">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</div>
         {{#if cta_handle}}<div class="cta-small" style="margin-top:14px;"><strong>{{cta_handle}}</strong></div>{{else}}{{#if cta_slide.handle}}<div class="cta-small" style="margin-top:14px;"><strong>{{cta_slide.handle}}</strong></div>{{/if}}{{/if}}
       </div>
-      <div class="cta-small">Save this for later and share with your favorite sign.</div>
+      <div class="cta-small">{{#if cta_handle}}Follow {{cta_handle}} for more.{{else}}Follow · Save · Share for more content.{{/if}}</div>
     </div>
   </div>
 </body>

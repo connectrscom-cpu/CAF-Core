@@ -1,21 +1,40 @@
 import type { ScoredCandidate } from "./types.js";
 import type { LearningRuleRow } from "../repositories/core.js";
 
-/** Apply rank boosts from learning rules (BOOST_RANK in action_payload) */
+function ruleMatchesCandidate(
+  r: LearningRuleRow,
+  c: ScoredCandidate
+): boolean {
+  if (r.scope_flow_type && r.scope_flow_type !== c.flow_type) return false;
+  if (r.scope_platform && r.scope_platform !== (c.target_platform ?? c.platform)) return false;
+  return true;
+}
+
+/** Apply rank boosts / penalties from learning rules (ranking family). */
 export function applyLearningBoosts(
   scored: ScoredCandidate[],
   rules: LearningRuleRow[]
 ): ScoredCandidate[] {
-  const boosts = rules.filter((r) => r.action_type === "BOOST_RANK");
-  if (boosts.length === 0) return scored;
+  const relevant = rules.filter((r) =>
+    ["BOOST_RANK", "SCORE_BOOST", "SCORE_PENALTY"].includes(r.action_type)
+  );
+  if (relevant.length === 0) return scored;
 
   return scored.map((c) => {
     let mult = 1;
-    for (const r of boosts) {
-      if (r.scope_flow_type && r.scope_flow_type !== c.flow_type) continue;
-      if (r.scope_platform && r.scope_platform !== (c.target_platform ?? c.platform)) continue;
-      const delta = typeof r.action_payload?.multiplier === "number" ? r.action_payload.multiplier : 1.05;
-      mult *= delta;
+    for (const r of relevant) {
+      if (!ruleMatchesCandidate(r, c)) continue;
+      const p = r.action_payload ?? {};
+      if (r.action_type === "BOOST_RANK") {
+        const delta = typeof p.multiplier === "number" ? p.multiplier : 1.05;
+        mult *= delta;
+      } else if (r.action_type === "SCORE_BOOST") {
+        const b = typeof p.boost === "number" ? p.boost : typeof p.multiplier === "number" ? p.multiplier - 1 : 0.05;
+        mult *= Math.min(2, Math.max(1, 1 + b));
+      } else if (r.action_type === "SCORE_PENALTY") {
+        const pen = typeof p.penalty === "number" ? p.penalty : -0.1;
+        mult *= Math.max(0.05, 1 + pen);
+      }
     }
     return {
       ...c,

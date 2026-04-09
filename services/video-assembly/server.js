@@ -9,9 +9,10 @@ const { createClient } = require("@supabase/supabase-js");
 const PORT = parseInt(process.env.PORT || "3334", 10);
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || "public";
+/** Must match CAF Core `SUPABASE_ASSETS_BUCKET` (default assets). */
+const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_ASSETS_BUCKET || "assets";
 const WORK_DIR = path.join(__dirname, "workdir");
-const VERSION = "0.1.0";
+const VERSION = "0.1.2";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -26,9 +27,9 @@ function ffmpegAvailable() {
 
 const asyncJobs = new Map();
 
-function runFfmpeg(args, label) {
+function runFfmpeg(args, label, spawnOpts = {}) {
   return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args, { stdio: "pipe" });
+    const proc = spawn("ffmpeg", args, { stdio: "pipe", ...spawnOpts });
     let stderr = "";
     proc.stderr.on("data", (d) => (stderr += d.toString()));
     proc.on("close", (code) => {
@@ -39,7 +40,75 @@ function runFfmpeg(args, label) {
   });
 }
 
+/** Collapse duplicate bucket prefix only (e.g. assets/assets/scenes → assets/scenes). */
+function normalizeStorageObjectPath(bucket, objectPath) {
+  let p = String(objectPath || "").replace(/^\/+/, "").trim();
+  if (!bucket) return p;
+  const double = `${bucket}/${bucket}/`;
+  while (p.startsWith(double)) {
+    p = p.slice(bucket.length + 1);
+  }
+  return p;
+}
+
+function assetObjectKeyInBucket(bucket, relativePath) {
+  const b = String(bucket || "assets").trim() || "assets";
+  let p = String(relativePath || "").replace(/^\/+/, "").trim();
+  if (!p) return `${b}/unnamed`;
+  if (p.startsWith(`${b}/`)) return p;
+  return `${b}/${p}`;
+}
+
+function storageDownloadKeyCandidates(bucket, objectPath) {
+  const n = normalizeStorageObjectPath(bucket, objectPath);
+  const ordered = [];
+  const add = (s) => {
+    const t = String(s || "").replace(/^\/+/, "").trim();
+    if (t && !ordered.includes(t)) ordered.push(t);
+  };
+  add(n);
+  add(assetObjectKeyInBucket(bucket, n));
+  if (n.startsWith(`${bucket}/`)) {
+    add(n.slice(bucket.length + 1));
+  }
+  return ordered;
+}
+
 async function downloadFile(url, dest) {
+  const sb = supabase();
+  if (sb && SUPABASE_URL) {
+    try {
+      const u = new URL(url);
+      const supHost = new URL(SUPABASE_URL).hostname;
+      if (u.hostname === supHost) {
+        const m = u.pathname.match(/^\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/);
+        if (m) {
+          const bucket = m[1];
+          const decoded = decodeURIComponent(m[2]);
+          const candidates = storageDownloadKeyCandidates(bucket, decoded);
+          for (const objectPath of candidates) {
+            const { data, error } = await sb.storage.from(bucket).download(objectPath);
+            if (!error && data) {
+              const buf = Buffer.from(await data.arrayBuffer());
+              fs.writeFileSync(dest, buf);
+              return dest;
+            }
+          }
+          for (const objectPath of candidates) {
+            const { data, error } = await sb.storage.from(bucket).createSignedUrl(objectPath, 7200);
+            if (error || !data?.signedUrl) continue;
+            const sr = await fetch(data.signedUrl);
+            if (!sr.ok) continue;
+            const buf = Buffer.from(await sr.arrayBuffer());
+            fs.writeFileSync(dest, buf);
+            return dest;
+          }
+        }
+      }
+    } catch {
+      /* fall through to HTTP */
+    }
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Download failed: ${url} (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
@@ -50,13 +119,14 @@ async function downloadFile(url, dest) {
 async function uploadToSupabase(localPath, remotePath) {
   const sb = supabase();
   if (!sb) return null;
+  const key = assetObjectKeyInBucket(SUPABASE_BUCKET, remotePath);
   const file = fs.readFileSync(localPath);
-  const { data, error } = await sb.storage.from(SUPABASE_BUCKET).upload(remotePath, file, {
+  const { data, error } = await sb.storage.from(SUPABASE_BUCKET).upload(key, file, {
     contentType: "video/mp4",
     upsert: true,
   });
   if (error) throw new Error(`Upload failed: ${error.message}`);
-  const { data: urlData } = sb.storage.from(SUPABASE_BUCKET).getPublicUrl(remotePath);
+  const { data: urlData } = sb.storage.from(SUPABASE_BUCKET).getPublicUrl(key);
   return urlData.publicUrl;
 }
 
@@ -107,23 +177,129 @@ async function concatVideoFiles(videoUrls, jobDir) {
   return outPath;
 }
 
+function audioExtFromUrl(audioUrl) {
+  const base = String(audioUrl || "").split(/[#?]/)[0];
+  return base.match(/\.(mp3|wav|m4a|aac|ogg)$/i)?.[1] || "mp3";
+}
+
+/**
+ * Chain ffmpeg atempo filters so ∏(atempo) ≈ product (each stage in [0.5, 2]).
+ * product = T_audio / T_video → stretched audio duration matches video for mux -shortest alignment.
+ */
+function buildAtempoFilterChain(product) {
+  const p0 = Number(product);
+  if (!Number.isFinite(p0) || p0 <= 0) return null;
+  if (p0 >= 0.995 && p0 <= 1.005) return null;
+  const parts = [];
+  let p = p0;
+  while (p > 2.001) {
+    parts.push("atempo=2.0");
+    p /= 2;
+  }
+  while (p < 0.499) {
+    parts.push("atempo=0.5");
+    p /= 0.5;
+  }
+  if (p > 1.005 || p < 0.995) {
+    parts.push(`atempo=${p.toFixed(5)}`);
+  }
+  return parts.length ? parts.join(",") : null;
+}
+
 async function muxAudio(videoPath, audioUrl, outputOptions = {}) {
   const jobDir = path.dirname(videoPath);
-  const audioExt = audioUrl.match(/\.(mp3|wav|m4a|aac|ogg)/i)?.[1] || "mp3";
+  const audioExt = audioExtFromUrl(audioUrl);
   const audioPath = path.join(jobDir, `audio.${audioExt}`);
   await downloadFile(audioUrl, audioPath);
 
   const outPath = path.join(jobDir, "final.mp4");
+  const audioChain = buildAtempoFilterChain(outputOptions.audio_atempo_product);
   const args = ["-i", videoPath, "-i", audioPath];
   if (outputOptions.max_duration_s) {
     args.push("-t", String(outputOptions.max_duration_s));
   }
-  args.push(
-    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-    "-map", "0:v:0", "-map", "1:a:0", "-shortest",
-    "-movflags", "+faststart", "-y", outPath,
-  );
+  if (audioChain) {
+    args.push(
+      "-filter_complex", `[1:a]${audioChain}[aout]`,
+      "-map", "0:v:0", "-map", "[aout]",
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-shortest", "-movflags", "+faststart", "-y", outPath,
+    );
+  } else {
+    args.push(
+      "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+      "-map", "0:v:0", "-map", "1:a:0", "-shortest",
+      "-movflags", "+faststart", "-y", outPath,
+    );
+  }
   await runFfmpeg(args, "mux");
+  return outPath;
+}
+
+/**
+ * Mux video + audio and burn in subtitles (SRT). Re-encodes video (libx264) — required for subtitles filter.
+ * Runs ffmpeg with cwd = jobDir so subtitles=captions.srt resolves safely.
+ */
+async function muxAudioBurnSubtitles(videoPath, audioUrl, subtitlesUrl, outputOptions = {}) {
+  const jobDir = path.dirname(videoPath);
+  const audioExt = audioExtFromUrl(audioUrl);
+  const audioBasename = `audio.${audioExt}`;
+  const audioPath = path.join(jobDir, audioBasename);
+  await downloadFile(audioUrl, audioPath);
+
+  const srtBasename = "captions.srt";
+  const srtPath = path.join(jobDir, srtBasename);
+  await downloadFile(subtitlesUrl, srtPath);
+
+  const videoBasename = path.basename(videoPath);
+  const outBasename = "final.mp4";
+  const outPath = path.join(jobDir, outBasename);
+
+  const preset = process.env.MUX_BURN_ENCODE_PRESET || "fast";
+  const crf = process.env.MUX_BURN_ENCODE_CRF || "23";
+  let vf = process.env.MUX_SUBTITLE_VF?.trim();
+  if (!vf) {
+    const base = "subtitles=captions.srt:charenc=UTF-8";
+    const fsStyle = process.env.MUX_BURN_SUBTITLE_FORCE_STYLE?.trim();
+    vf = fsStyle ? `${base}:force_style='${fsStyle.replace(/'/g, "\\'")}'` : base;
+  }
+
+  const audioChain = buildAtempoFilterChain(outputOptions.audio_atempo_product);
+  const args = ["-i", videoBasename, "-i", audioBasename];
+  if (outputOptions.max_duration_s) {
+    args.push("-t", String(outputOptions.max_duration_s));
+  }
+  if (audioChain) {
+    args.push(
+      "-filter_complex", `[0:v]${vf}[vout];[1:a]${audioChain}[aout]`,
+      "-map", "[vout]", "-map", "[aout]",
+      "-c:v", "libx264",
+      "-preset", preset,
+      "-crf", String(crf),
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-shortest",
+      "-movflags", "+faststart",
+      "-y", outBasename,
+    );
+  } else {
+    args.push(
+      "-vf", vf,
+      "-c:v", "libx264",
+      "-preset", preset,
+      "-crf", String(crf),
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-map", "0:v:0",
+      "-map", "1:a:0",
+      "-shortest",
+      "-movflags", "+faststart",
+      "-y", outBasename,
+    );
+  }
+  await runFfmpeg(args, "mux+burn-subs", { cwd: jobDir });
   return outPath;
 }
 
@@ -222,7 +398,7 @@ app.post("/concat-videos", async (req, res) => {
 
 app.post("/mux", async (req, res) => {
   try {
-    const { video_url, audio_url, task_id, run_id, options } = req.body;
+    const { video_url, audio_url, subtitles_url, task_id, run_id, options } = req.body;
     if (!video_url || !audio_url) return res.status(400).json({ ok: false, error: "video_url and audio_url required" });
 
     const isAsync = req.query.async === "1";
@@ -235,7 +411,9 @@ app.post("/mux", async (req, res) => {
           fs.mkdirSync(jobDir, { recursive: true });
           const vidPath = path.join(jobDir, "video.mp4");
           await downloadFile(video_url, vidPath);
-          const muxed = await muxAudio(vidPath, audio_url, options);
+          const muxed = subtitles_url?.trim()
+            ? await muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
+            : await muxAudio(vidPath, audio_url, options);
           let publicUrl = null;
           if (SUPABASE_URL) {
             const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
@@ -254,7 +432,9 @@ app.post("/mux", async (req, res) => {
     fs.mkdirSync(jobDir, { recursive: true });
     const vidPath = path.join(jobDir, "video.mp4");
     await downloadFile(video_url, vidPath);
-    const muxed = await muxAudio(vidPath, audio_url, options);
+    const muxed = subtitles_url?.trim()
+      ? await muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
+      : await muxAudio(vidPath, audio_url, options);
     let publicUrl = null;
     if (SUPABASE_URL) {
       const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;

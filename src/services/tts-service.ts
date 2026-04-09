@@ -2,6 +2,7 @@
  * OpenAI speech API → Supabase storage.
  */
 import type { AppConfig } from "../config.js";
+import { probeMediaDurationSec } from "./media-duration.js";
 import { uploadBuffer } from "./supabase-storage.js";
 
 const OPENAI_SPEECH_URL = "https://api.openai.com/v1/audio/speech";
@@ -11,7 +12,12 @@ export async function synthesizeSpeechToStorage(
   apiKey: string,
   text: string,
   objectPath: string
-): Promise<{ public_url: string | null; bucket: string; object_path: string }> {
+): Promise<{
+  public_url: string | null;
+  bucket: string;
+  object_path: string;
+  duration_sec: number | null;
+}> {
   const res = await fetch(OPENAI_SPEECH_URL, {
     method: "POST",
     headers: {
@@ -31,6 +37,12 @@ export async function synthesizeSpeechToStorage(
   }
 
   const buf = Buffer.from(await res.arrayBuffer());
+  const duration_sec = await probeMediaDurationSec(buf);
   const up = await uploadBuffer(config, objectPath, buf, "audio/mpeg");
-  return { public_url: up.public_url, bucket: up.bucket, object_path: up.object_path };
+  return {
+    public_url: up.public_url,
+    bucket: up.bucket,
+    object_path: up.object_path,
+    duration_sec,
+  };
 }

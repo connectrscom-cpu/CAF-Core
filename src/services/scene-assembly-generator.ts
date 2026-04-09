@@ -9,9 +9,50 @@ import { openaiChat } from "./openai-chat.js";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-types.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { expandSceneAssemblyToMinScenes } from "./scene-min-count-expand.js";
+import { applySceneTargetsToScenes, withSceneAssemblyPolicy } from "./video-content-policy.js";
+import {
+  creationContextHasUnreplacedPlaceholders,
+  sceneBundleFallbackUserPrompt,
+  userPromptLooksLikePerSceneVideoTemplate,
+} from "./scene-bundle-fallback-prompt.js";
+import { ensureVideoScriptInPayload } from "./video-script-generator.js";
+import { extractSpokenScriptText } from "./video-gen-fields.js";
+import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
+import { enrichGeneratedOutputForReview, maxHashtagsFromPlatformConstraints } from "./publish-metadata-enrich.js";
+
+const SCENE_CLIP_URL_KEYS = [
+  "rendered_scene_url",
+  "video_url",
+  "scene_video_url",
+  "rendered_video_url",
+  "clip_url",
+  "mp4_url",
+] as const;
+
+/**
+ * Public HTTP(S) URL for an already-rendered scene clip (upstream, OpenAI Sora upload in Core, HeyGen, n8n, etc.).
+ * Stitch/mux expect fetchable URLs.
+ */
+export function extractSceneClipUrl(scene: Record<string, unknown>): string | undefined {
+  for (const k of SCENE_CLIP_URL_KEYS) {
+    const v = scene[k];
+    if (typeof v === "string") {
+      const t = v.trim();
+      if (/^https?:\/\//i.test(t)) return t;
+    }
+  }
+  const u = scene.url;
+  if (typeof u === "string") {
+    const t = u.trim();
+    if (/^https?:\/\//i.test(t)) return t;
+  }
+  return undefined;
+}
 
 /**
  * Per-scene entries use video_prompt | prompt | direction | scene_prompt (Video_Scene_Generator often emits scene_prompt only).
+ * After external scene render (e.g. n8n OpenAI video), each row should include rendered_scene_url | video_url (see extractSceneClipUrl).
  * If scenes[] is missing or empty but a flat scene_prompt / video_prompt exists on the bundle (or on generated_output), synthesize one scene.
  */
 export function normalizeSceneBundleScenes(
@@ -26,12 +67,13 @@ export function normalizeSceneBundleScenes(
       if (!item || typeof item !== "object") continue;
       const s = item as Record<string, unknown>;
       const prompt = String(s.video_prompt ?? s.prompt ?? s.direction ?? s.scene_prompt ?? "").trim();
-      if (!prompt) continue;
+      const clipUrl = extractSceneClipUrl(s);
+      if (!prompt && !clipUrl) continue;
       out.push({
         ...s,
         scene_id: String(s.scene_id ?? ord),
         order: Number(s.order ?? ord) > 0 ? Number(s.order ?? ord) : ord,
-        video_prompt: prompt,
+        ...(prompt ? { video_prompt: prompt } : {}),
       });
       ord++;
     }
@@ -71,10 +113,15 @@ export async function ensureSceneBundleInPayload(
   config: AppConfig,
   jobId: string
 ): Promise<{ ok: boolean; error?: string }> {
+  const policyMeta = {
+    scene_target_min: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
+    scene_target_max: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
+    clip_duration_sec: config.SCENE_ASSEMBLY_CLIP_DURATION_SEC,
+  };
   const apiKey = config.OPENAI_API_KEY;
   if (!apiKey) return { ok: false, error: "OPENAI_API_KEY not set" };
 
-  const job = await qOne<{
+  let job = await qOne<{
     id: string;
     task_id: string;
     project_id: string;
@@ -85,6 +132,18 @@ export async function ensureSceneBundleInPayload(
   }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
   if (!job) return { ok: false, error: "job not found" };
 
+  await ensureVideoScriptInPayload(db, config, jobId).catch(() => {});
+  const jobReload = await qOne<{
+    id: string;
+    task_id: string;
+    project_id: string;
+    run_id: string;
+    flow_type: string;
+    platform: string | null;
+    generation_payload: Record<string, unknown>;
+  }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
+  if (jobReload) job = jobReload;
+
   const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
   const bundle = gen.scene_bundle as Record<string, unknown> | undefined;
   const scenes = bundle?.scenes;
@@ -94,7 +153,7 @@ export async function ensureSceneBundleInPayload(
 
   // Heal payloads where the LLM used Video_Scene_Generator shape (scene_prompt) but never filled scenes[].
   if (bundle && typeof bundle === "object") {
-    const healed = normalizeSceneBundleScenes(bundle, gen);
+    const healed = applySceneTargetsToScenes(normalizeSceneBundleScenes(bundle, gen), config);
     if (healed.length > 0) {
       const { scenes: _drop, ...rest } = bundle;
       const merged: Record<string, unknown> = {
@@ -103,11 +162,23 @@ export async function ensureSceneBundleInPayload(
           ...rest,
           scenes: healed,
           parent_id: job.task_id,
+          content_policy: policyMeta,
         },
       };
+      const packHeal = await buildCreationPack(
+        db,
+        job.project_id,
+        (job.generation_payload.signal_pack_id as string) ?? null,
+        (job.generation_payload.candidate_data as Record<string, unknown>) ?? {},
+        job.platform,
+        job.flow_type
+      );
+      const mergedEnriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
+        maxHashtags: maxHashtagsFromPlatformConstraints(packHeal.platform_constraints),
+      });
       await db.query(
         `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
-        [JSON.stringify({ generated_output: merged }), job.id]
+        [JSON.stringify({ generated_output: mergedEnriched }), job.id]
       );
       return { ok: true };
     }
@@ -129,20 +200,47 @@ export async function ensureSceneBundleInPayload(
     job.project_id,
     (job.generation_payload.signal_pack_id as string) ?? null,
     (job.generation_payload.candidate_data as Record<string, unknown>) ?? {},
-    job.platform
+    job.platform,
+    job.flow_type
   );
 
-  const userPrompt = interpolateTemplate(tpl.user_prompt_template, pack);
+  const cand = (job.generation_payload.candidate_data as Record<string, unknown>) ?? {};
+  const includeVs = extractSpokenScriptText(gen, 1).length > 0;
+  const packCtx: Record<string, unknown> = {
+    ...pack,
+    script_input: buildVideoScriptInputJsonString(cand, gen, { includeVideoScript: includeVs }),
+  };
 
-  const llm = await openaiChat(
+  let userPrompt = interpolateTemplate(tpl.user_prompt_template, packCtx);
+  const roleOk = (tpl.prompt_role ?? "").toLowerCase() === "scene_assembly";
+  let usedBundleFallbackUser =
+    !roleOk ||
+    creationContextHasUnreplacedPlaceholders(userPrompt) ||
+    userPromptLooksLikePerSceneVideoTemplate(userPrompt);
+  const sceneTargets = {
+    min: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
+    max: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
+  };
+  if (usedBundleFallbackUser) {
+    userPrompt = sceneBundleFallbackUserPrompt(packCtx, sceneTargets);
+  }
+
+  const defaultSceneSys =
+    "Return scene_bundle with scenes[] (scene_id, order, direction, video_prompt) inside one JSON object (markdown fence ok).";
+  const strictBundleSys =
+    "You are a video scene planner. Return only one JSON object. No markdown or commentary.";
+  const systemPrompt = usedBundleFallbackUser
+    ? withSceneAssemblyPolicy(strictBundleSys, config)
+    : withSceneAssemblyPolicy(tpl.system_prompt ?? defaultSceneSys, config);
+
+  const maxTok = Number(tpl.max_tokens_default ?? 4000);
+  let llm = await openaiChat(
     apiKey,
     {
       model: config.OPENAI_MODEL,
-      system_prompt:
-        tpl.system_prompt ??
-        "Return scene_bundle with scenes[] (scene_id, order, direction, video_prompt) inside one JSON object (markdown fence ok).",
+      system_prompt: systemPrompt,
       user_prompt: userPrompt,
-      max_tokens: Number(tpl.max_tokens_default ?? 4000),
+      max_tokens: maxTok,
     },
     {
       db,
@@ -154,14 +252,74 @@ export async function ensureSceneBundleInPayload(
     }
   );
 
-  const parsed = parseJsonObjectFromLlmText(llm.content);
+  let parsed = parseJsonObjectFromLlmText(llm.content);
+  if (!parsed) {
+    const retryUser = sceneBundleFallbackUserPrompt(packCtx, sceneTargets);
+    const retrySys = withSceneAssemblyPolicy(strictBundleSys, config);
+    llm = await openaiChat(
+      apiKey,
+      {
+        model: config.OPENAI_MODEL,
+        system_prompt: retrySys,
+        user_prompt: retryUser,
+        max_tokens: maxTok,
+      },
+      {
+        db,
+        projectId: job.project_id,
+        runId: job.run_id,
+        taskId: job.task_id,
+        signalPackId: (job.generation_payload.signal_pack_id as string) ?? null,
+        step: `llm_scene_assembly_bundle_${templateFt}_retry`,
+      }
+    );
+    parsed = parseJsonObjectFromLlmText(llm.content);
+  }
   if (!parsed) {
     return { ok: false, error: "scene assembly: could not extract JSON object from reply" };
   }
 
   const sceneBundle = (parsed.scene_bundle as Record<string, unknown>) ?? parsed;
   const { scenes: _dropScenes, ...restBundle } = sceneBundle;
-  const normalizedScenes = normalizeSceneBundleScenes(sceneBundle, gen);
+  let normalizedScenes = applySceneTargetsToScenes(normalizeSceneBundleScenes(sceneBundle, gen), config);
+  const minScenes = config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN;
+  const maxScenes = config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX;
+
+  if (normalizedScenes.length > 0 && normalizedScenes.length < minScenes) {
+    const fixBlock = `---\nYour previous answer had only ${normalizedScenes.length} scene(s). Regenerate the **complete** JSON object with between ${minScenes} and ${maxScenes} scenes inclusive. Add distinct beats or B-roll moments (each with video_prompt); do not merge into fewer than ${minScenes} scenes.`;
+    const fixUser = `${userPrompt}\n\n${fixBlock}`;
+    const fixLlm = await openaiChat(
+      apiKey,
+      {
+        model: config.OPENAI_MODEL,
+        system_prompt: systemPrompt,
+        user_prompt: fixUser,
+        max_tokens: maxTok,
+      },
+      {
+        db,
+        projectId: job.project_id,
+        runId: job.run_id,
+        taskId: job.task_id,
+        signalPackId: (job.generation_payload.signal_pack_id as string) ?? null,
+        step: `llm_scene_assembly_bundle_${templateFt}_scene_count_fixup`,
+      }
+    );
+    const parsedFix = parseJsonObjectFromLlmText(fixLlm.content);
+    if (parsedFix) {
+      const sbFix = (parsedFix.scene_bundle as Record<string, unknown>) ?? parsedFix;
+      const nextScenes = applySceneTargetsToScenes(normalizeSceneBundleScenes(sbFix, gen), config);
+      if (nextScenes.length >= minScenes || nextScenes.length > normalizedScenes.length) {
+        const { scenes: _dFix, ...restFix } = sbFix;
+        Object.assign(restBundle, restFix);
+        normalizedScenes = nextScenes;
+      }
+    }
+  }
+
+  const expandedMin = expandSceneAssemblyToMinScenes(normalizedScenes, gen, config);
+  normalizedScenes = expandedMin.scenes;
+
   if (normalizedScenes.length === 0) {
     return {
       ok: false,
@@ -176,12 +334,17 @@ export async function ensureSceneBundleInPayload(
       ...restBundle,
       scenes: normalizedScenes,
       parent_id: job.task_id,
+      content_policy: policyMeta,
     },
   };
 
+  const mergedEnriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
+    maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),
+  });
+
   await db.query(
     `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
-    [JSON.stringify({ generated_output: merged }), job.id]
+    [JSON.stringify({ generated_output: mergedEnriched }), job.id]
   );
   return { ok: true };
 }

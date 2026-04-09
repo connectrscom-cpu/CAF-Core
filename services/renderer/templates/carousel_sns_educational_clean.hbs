@@ -111,14 +111,13 @@
   <!-- Body -->
   {{#each body_slides}}
   <div class="slide">
-    <div class="inner">
-      <div class="top-row">
+    <div class="inner" style="justify-content:center;">
+      <div class="top-row" style="width:100%;">
         <div class="card">
           <h3>{{headline}}</h3>
           <p>{{body}}</p>
         </div>
       </div>
-      <div class="body">Slide for more Cosmic Insights</div>
     </div>
   </div>
   {{/each}}
@@ -127,7 +126,7 @@
   <div class="slide">
     <div class="inner">
       <div class="top-row">
-        <div class="kicker">Summary</div>
+        <div class="kicker">Follow · Save · Share</div>
         <div class="cta">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>

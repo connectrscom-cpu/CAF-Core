@@ -148,6 +148,9 @@ export async function analyzeEditorialPatterns(
 
       if (autoCreateRules) {
         const ruleId = `editorial_tag_${tag.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase()}_${Date.now()}`;
+        const tagTaskIds = reviews
+          .filter((r) => Array.isArray(r.rejection_tags) && r.rejection_tags.includes(tag))
+          .map((r) => r.task_id);
         await insertLearningRule(db, {
           rule_id: ruleId,
           project_id: projectId,
@@ -160,9 +163,10 @@ export async function analyzeEditorialPatterns(
             observation: insight.detail,
           },
           confidence: insight.confidence,
-          source_entity_ids: reviews.filter((r) =>
-            Array.isArray(r.rejection_tags) && r.rejection_tags.includes(tag)
-          ).map((r) => r.task_id),
+          source_entity_ids: tagTaskIds,
+          evidence_refs: tagTaskIds,
+          rule_family: "ranking",
+          provenance: "editorial_analysis",
         });
         insight.rule_created = true;
         insight.rule_id = ruleId;
@@ -203,6 +207,9 @@ export async function analyzeEditorialPatterns(
             },
             confidence: insight.confidence,
             source_entity_ids: [],
+            evidence_refs: [`flow_stats:${flowType}:${windowDays}d`],
+            rule_family: "suppression",
+            provenance: "editorial_analysis",
           });
           insight.rule_created = true;
           insight.rule_id = ruleId;

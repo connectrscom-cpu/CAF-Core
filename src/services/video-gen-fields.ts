@@ -112,6 +112,36 @@ export function extractSpokenScriptText(gen: Record<string, unknown>, minLen = 2
   return "";
 }
 
+/**
+ * Scene-bundle LLM output is usually only `{ scene_bundle }`. Persisting it must not replace the
+ * prior `generated_output` from `ensureVideoScriptInPayload` (spoken_script, beats, hook, …).
+ */
+export function mergeSceneBundleParsedIntoGeneratedOutput(
+  prior: Record<string, unknown> | null | undefined,
+  bundleParsed: Record<string, unknown>
+): Record<string, unknown> {
+  const p = prior && typeof prior === "object" && !Array.isArray(prior) ? { ...prior } : {};
+  return { ...p, ...bundleParsed };
+}
+
+/** Subset of generated script JSON to inject into scene-assembly `script_input` (beat alignment, TTS, captions). */
+export function buildVideoScriptInputSlice(gen: Record<string, unknown>): Record<string, unknown> {
+  const slice: Record<string, unknown> = {
+    spoken_script: extractSpokenScriptText(gen, 1),
+  };
+  if (Array.isArray(gen.beats)) slice.beats = gen.beats;
+  if (Array.isArray(gen.dialogue)) slice.dialogue = gen.dialogue;
+  if (gen.hook_line != null || gen.hook != null) {
+    slice.hook_line = gen.hook_line ?? gen.hook;
+  }
+  if (gen.cta_line != null || gen.cta != null) {
+    slice.cta_line = gen.cta_line ?? gen.cta;
+  }
+  if (gen.estimated_runtime_seconds != null) slice.estimated_runtime_seconds = gen.estimated_runtime_seconds;
+  if (Array.isArray(gen.on_screen_text)) slice.on_screen_text = gen.on_screen_text;
+  return slice;
+}
+
 export function extractVideoPromptText(gen: Record<string, unknown>, minLen = 10): string {
   for (const k of PROMPT_KEYS) {
     const v = gen[k];

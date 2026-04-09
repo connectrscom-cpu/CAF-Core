@@ -111,7 +111,7 @@
       </div>
       <div class="cta">
         <div>{{#if cover_slide.date}}{{cover_slide.date}}{{else}}April 2026{{/if}}</div>
-        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>
   </div>
@@ -127,7 +127,7 @@
       <div class="body">{{body}}</div>
       <div class="cta">
         <div>Swipe</div>
-        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>
   </div>
@@ -143,11 +143,11 @@
         {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
       </div>
       <div class="body" style="font-size:52px;">
-        Save this and share it with your sign.
+        {{#if cta_handle}}Follow {{cta_handle}} for more.{{else}}Follow · Save · Share for more content.{{/if}}
       </div>
       <div class="cta">
         <div>End</div>
-        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{else}}@signandsound{{/if}}{{/if}}</div>
+        <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>
   </div>

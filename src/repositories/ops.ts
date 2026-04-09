@@ -95,13 +95,15 @@ export async function insertPerformanceMetric(
     watch_time_sec?: number | null;
     engagement_rate?: number | null;
     raw_json?: Record<string, unknown>;
+    ingestion_batch_id?: string | null;
   }
 ): Promise<void> {
   await db.query(
     `INSERT INTO caf_core.performance_metrics (
        project_id, candidate_id, task_id, platform, metric_window, window_label, metric_date,
-       posted_at, likes, comments, shares, saves, watch_time_sec, engagement_rate, raw_json
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
+       posted_at, likes, comments, shares, saves, watch_time_sec, engagement_rate, raw_json,
+       ingestion_batch_id
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16)`,
     [
       row.project_id,
       row.candidate_id ?? null,
@@ -118,6 +120,7 @@ export async function insertPerformanceMetric(
       row.watch_time_sec ?? null,
       row.engagement_rate ?? null,
       JSON.stringify(row.raw_json ?? {}),
+      row.ingestion_batch_id ?? null,
     ]
   );
 }

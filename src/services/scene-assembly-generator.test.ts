@@ -52,4 +52,13 @@ describe("normalizeSceneBundleScenes", () => {
   it("returns [] when nothing usable", () => {
     expect(normalizeSceneBundleScenes({ scenes: [] }, {})).toEqual([]);
   });
+
+  it("keeps scenes that only have a public clip URL (post upstream render)", () => {
+    const out = normalizeSceneBundleScenes(
+      { scenes: [{ scene_id: "1", video_url: "https://cdn.example.com/a.mp4" }] },
+      {}
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0].video_url).toBe("https://cdn.example.com/a.mp4");
+  });
 });

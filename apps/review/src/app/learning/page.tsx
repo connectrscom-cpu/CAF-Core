@@ -28,6 +28,13 @@ export default function LearningPage() {
   const [mappingJson, setMappingJson] = useState("");
   const [contextPreview, setContextPreview] = useState<Record<string, unknown> | null>(null);
   const [observations, setObservations] = useState<Record<string, unknown>[]>([]);
+  const [transparency, setTransparency] = useState<Record<string, unknown> | null>(null);
+
+  const fetchTransparency = useCallback(async () => {
+    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=transparency`);
+    if (res.ok) setTransparency(await res.json());
+    else setTransparency(null);
+  }, [project]);
 
   const fetchRules = useCallback(async () => {
     setLoading(true);
@@ -53,7 +60,8 @@ export default function LearningPage() {
   useEffect(() => {
     fetchRules();
     fetchObservations();
-  }, [fetchRules, fetchObservations]);
+    fetchTransparency();
+  }, [fetchRules, fetchObservations, fetchTransparency]);
 
   const runAnalysis = async (action: "editorial" | "market") => {
     setRunning(true);
@@ -143,6 +151,86 @@ export default function LearningPage() {
           Evidence-backed rules, editorial and market analyzers, social CSV ingest, and compiled generation context.
         </p>
       </div>
+
+      {transparency && (
+        <div className="card" style={{ marginBottom: 20, borderLeft: "4px solid var(--accent)" }}>
+          <h3 style={{ marginBottom: 8 }}>Transparency — automation and LLM role</h3>
+          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 14, color: "var(--fg-secondary)" }}>
+            {String(transparency.summary ?? "")}
+          </p>
+          {transparency.snapshot && typeof transparency.snapshot === "object" && (
+            <div
+              style={{
+                display: "flex",
+                gap: 16,
+                flexWrap: "wrap",
+                fontSize: 13,
+                marginBottom: 16,
+                padding: "10px 12px",
+                background: "var(--card)",
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+              }}
+            >
+              {Object.entries(transparency.snapshot as Record<string, unknown>).map(([k, v]) => (
+                <div key={k}>
+                  <span style={{ color: "var(--muted)" }}>{k.replace(/_/g, " ")}</span>{" "}
+                  <strong>
+                    {v === -1 && k === "observations_last_30d" ? "n/a (run DB migrations)" : String(v)}
+                  </strong>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 13, lineHeight: 1.45 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>How each part runs</div>
+            <ul style={{ paddingLeft: 18, margin: 0 }}>
+              {(Array.isArray(transparency.loops) ? transparency.loops : []).map((loop: unknown) => {
+                const L = loop as Record<string, unknown>;
+                const llm = Boolean(L.llm_involved);
+                return (
+                  <li key={String(L.id)} style={{ marginBottom: 12 }}>
+                    <strong>{String(L.name ?? L.id)}</strong>{" "}
+                    <span
+                      style={{
+                        fontSize: 11,
+                        padding: "2px 6px",
+                        borderRadius: 4,
+                        background: llm ? "rgba(120, 80, 200, 0.2)" : "rgba(80, 120, 80, 0.2)",
+                      }}
+                    >
+                      {llm ? "LLM consumes output" : "No LLM in analyzer"}
+                    </span>
+                    <div style={{ color: "var(--fg-secondary)", marginTop: 4 }}>{String(L.analyzer ?? "")}</div>
+                    <div style={{ color: "var(--muted)", marginTop: 2 }}>
+                      Automation: <code>{String(L.automation ?? "")}</code>
+                    </div>
+                    {L.llm_role ? (
+                      <div style={{ marginTop: 4 }}>{String(L.llm_role)}</div>
+                    ) : null}
+                    <div style={{ marginTop: 4, color: "var(--fg-secondary)" }}>
+                      {String(L.requires_human ?? "")}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          {Array.isArray(transparency.not_implemented_yet) && transparency.not_implemented_yet.length > 0 && (
+            <div style={{ marginTop: 16, fontSize: 13 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Not automatic in Core today</div>
+              <ul style={{ paddingLeft: 18, margin: 0, color: "var(--fg-secondary)" }}>
+                {transparency.not_implemented_yet.map((x: unknown) => (
+                  <li key={String(x)}>{String(x)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 14, marginBottom: 0 }}>
+            API: <code>GET /v1/learning/&lt;slug&gt;/transparency</code> — same data for tools and dashboards.
+          </p>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 16 }}>
         <label style={{ display: "block", marginBottom: 8, fontSize: 13 }}>

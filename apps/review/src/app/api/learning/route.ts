@@ -4,6 +4,7 @@ import {
   getLearningContextPreview,
   getLearningObservations,
   getLearningRules,
+  getLearningTransparency,
   retireLearningRule,
   triggerEditorialAnalysis,
   triggerMarketAnalysis,
@@ -26,6 +27,12 @@ export async function GET(req: NextRequest) {
     const platform = req.nextUrl.searchParams.get("platform") ?? undefined;
     const data = await getLearningContextPreview(projectSlug, flowType, platform);
     if (!data) return NextResponse.json({ error: "Failed to fetch context preview" }, { status: 502 });
+    return NextResponse.json(data);
+  }
+
+  if (section === "transparency") {
+    const data = await getLearningTransparency(projectSlug);
+    if (!data) return NextResponse.json({ error: "Failed to fetch transparency" }, { status: 502 });
     return NextResponse.json(data);
   }
 

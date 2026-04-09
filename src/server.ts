@@ -12,6 +12,11 @@ import { registerFlowEngineRoutes } from "./routes/flow-engine.js";
 import { registerPipelineRoutes } from "./routes/pipeline.js";
 import { registerLearningRoutes } from "./routes/learning.js";
 import { registerRendererTemplateRoutes, isRendererTemplatesPublicPath } from "./routes/renderer-templates.js";
+import {
+  warnIfRendererBaseUrlIsCafCore,
+  warnIfVideoAssemblyIsStandaloneRenderer,
+} from "./services/renderer-url-guard.js";
+import { ensureSupabaseAssetFolderPrefixes } from "./services/supabase-storage.js";
 
 async function main() {
   const config = loadConfig();
@@ -32,7 +37,8 @@ async function main() {
 
   if (config.CAF_CORE_REQUIRE_AUTH && config.CAF_CORE_API_TOKEN) {
     app.addHook("preHandler", async (request, reply) => {
-      if (request.url === "/health" || request.url.startsWith("/health?")) return;
+      const pathNoQuery = request.url.split("?")[0] ?? request.url;
+      if (pathNoQuery === "/health" || pathNoQuery === "/health/rendering") return;
       if (request.url === "/robots.txt" || request.url.startsWith("/robots.txt?")) return;
       if (request.method === "GET" && isRendererTemplatesPublicPath(request.url)) return;
       const token =
@@ -59,6 +65,13 @@ async function main() {
     await db.end();
   });
 
+  await warnIfRendererBaseUrlIsCafCore(config.RENDERER_BASE_URL, (msg) => app.log.warn(msg));
+  await warnIfVideoAssemblyIsStandaloneRenderer(config.VIDEO_ASSEMBLY_BASE_URL, (msg) =>
+    app.log.warn(msg)
+  );
+  await ensureSupabaseAssetFolderPrefixes(config).catch((err) => {
+    app.log.warn({ err }, "ensureSupabaseAssetFolderPrefixes failed (non-fatal)");
+  });
   await app.listen({ port: config.PORT, host: config.HOST });
 }
 

@@ -17,25 +17,32 @@ import {
 } from "./validation-router.js";
 import { uploadBuffer } from "./supabase-storage.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
+import { getStrategyDefaults } from "../repositories/project-config.js";
 import {
   carouselSlideCount,
   buildSlideRenderContext,
   slidesFromGeneratedOutput,
   pickCarouselTemplateForRender,
+  slideHasRenderableContent,
+  stripNonRenderableDeckFields,
 } from "./carousel-render-pack.js";
+import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { runHeygenForContentJob } from "./heygen-renderer.js";
 import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
 import { runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
+import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 
 export interface PipelineConfig {
   rendererBaseUrl: string;
   videoAssemblyBaseUrl: string;
   carouselRendererSlideTimeoutMs: number;
+  carouselRendererSlideRetryAttempts: number;
 }
 
 export function getPipelineConfig(config: AppConfig): PipelineConfig {
@@ -43,6 +50,7 @@ export function getPipelineConfig(config: AppConfig): PipelineConfig {
     rendererBaseUrl: config.RENDERER_BASE_URL.replace(/\/$/, ""),
     videoAssemblyBaseUrl: config.VIDEO_ASSEMBLY_BASE_URL.replace(/\/$/, ""),
     carouselRendererSlideTimeoutMs: config.CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS,
+    carouselRendererSlideRetryAttempts: config.CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS,
   };
 }
 
@@ -57,6 +65,65 @@ type JobRow = {
   generation_payload: Record<string, unknown>;
 };
 
+/** Phase-2 video render concurrency for `processRunJobs` (carousel lane stays one-at-a-time). */
+const PIPELINE_VIDEO_RENDER_CONCURRENCY = 3;
+
+type PreRenderStep =
+  | { kind: "terminal" }
+  | { kind: "render_carousel"; recommended_route: string | null }
+  | { kind: "render_video"; recommended_route: string | null };
+
+type RenderTicket = {
+  jobId: string;
+  task_id: string;
+  kind: "carousel" | "video";
+  recommended_route: string | null;
+};
+
+async function mapWithConcurrency<T>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<void>
+): Promise<void> {
+  if (items.length === 0) return;
+  const n = Math.min(Math.max(1, limit), items.length);
+  let next = 0;
+  const workers = Array.from({ length: n }, async () => {
+    while (true) {
+      const idx = next++;
+      if (idx >= items.length) return;
+      await fn(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+}
+
+async function markJobFailedPipeline(
+  db: Pool,
+  run: RunRow,
+  taskId: string,
+  jobId: string,
+  msg: string,
+  errors: string[]
+): Promise<void> {
+  errors.push(`${taskId}: ${msg}`);
+  const prior = await qOne<{ status: string }>(
+    db,
+    `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+    [jobId]
+  );
+  await updateJobStatus(db, jobId, "FAILED");
+  await insertJobStateTransition(db, {
+    task_id: taskId,
+    project_id: run.project_id,
+    from_state: prior?.status ?? "GENERATING",
+    to_state: "FAILED",
+    triggered_by: "system",
+    actor: "job-pipeline",
+    metadata: { error: msg },
+  });
+}
+
 async function reloadJobRow(db: Pool, jobId: string): Promise<JobRow | null> {
   return qOne<JobRow>(
     db,
@@ -66,15 +133,15 @@ async function reloadJobRow(db: Pool, jobId: string): Promise<JobRow | null> {
   );
 }
 
-async function processOneJob(
+async function processJobUpToRender(
   db: Pool,
   config: AppConfig,
   job: JobRow,
   run: RunRow | null,
-  pipeConfig: PipelineConfig
-): Promise<void> {
+  _pipeConfig: PipelineConfig
+): Promise<PreRenderStep> {
   if (isOfflinePipelineFlow(job.flow_type)) {
-    return;
+    return { kind: "terminal" };
   }
 
   const openaiKey = config.OPENAI_API_KEY;
@@ -115,7 +182,7 @@ async function processOneJob(
 
   if (!qcResult.qc_passed && qcResult.recommended_route === "BLOCKED") {
     await updateJobStatus(db, job.id, "BLOCKED");
-    return;
+    return { kind: "terminal" };
   }
 
   const earlyStop = await routeJobAfterQc(db, job.id, qcResult.recommended_route);
@@ -130,20 +197,38 @@ async function processOneJob(
         actor: "validation-router",
       });
     }
-    return;
+    return { kind: "terminal" };
   }
 
   await runDiagnosticAudit(db, job.id);
 
-  // generation_payload in `job` is stale after generateForJob — carousel/video read slides/scripts from DB.
-  const jobForMedia = (await reloadJobRow(db, job.id)) ?? job;
-
+  const route = qcResult.recommended_route;
   if (isCarouselFlow(job.flow_type)) {
-    await processCarouselJob(db, config, pipeConfig, jobForMedia, run, qcResult.recommended_route);
-  } else if (isVideoFlow(job.flow_type)) {
-    await processVideoJob(db, config, pipeConfig, jobForMedia, run, qcResult.recommended_route);
+    return { kind: "render_carousel", recommended_route: route };
+  }
+  if (isVideoFlow(job.flow_type)) {
+    return { kind: "render_video", recommended_route: route };
+  }
+  await advanceToInReview(db, job, run, route);
+  return { kind: "terminal" };
+}
+
+async function processOneJob(
+  db: Pool,
+  config: AppConfig,
+  job: JobRow,
+  run: RunRow | null,
+  pipeConfig: PipelineConfig
+): Promise<void> {
+  const step = await processJobUpToRender(db, config, job, run, pipeConfig);
+  if (step.kind === "terminal") {
+    return;
+  }
+  const jobForMedia = (await reloadJobRow(db, job.id)) ?? job;
+  if (step.kind === "render_carousel") {
+    await processCarouselJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
   } else {
-    await advanceToInReview(db, job, run, qcResult.recommended_route);
+    await processVideoJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
   }
 }
 
@@ -179,52 +264,103 @@ export async function processRunJobs(
   const jobs = await q<JobRow>(
     db,
     `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload FROM caf_core.content_jobs
-     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING')
+     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING', 'GENERATED', 'RENDERING')
      ORDER BY created_at`,
     [run.project_id, run.run_id]
   );
 
+  /**
+   * Include GENERATED: after LLM+QC the job stays GENERATED until the render lane runs; if the worker dies
+   * between the pre-render loop and carouselLane (or the HTTP request is cut off), the next Process must
+   * still see those rows. Retry carousel jobs left in RENDERING (mid-slide); skip other RENDERING (video).
+   */
+  const jobsToRun = jobs.filter(
+    (j) =>
+      j.status !== "RENDERING" ||
+      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type))
+  );
+
   /** Carousel PNG loop can block a long time; run video/other flows first so one stuck carousel does not starve the run. */
   const isCar = (j: JobRow) => isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type);
-  jobs.sort((a, b) => Number(isCar(a)) - Number(isCar(b)));
+  jobsToRun.sort((a, b) => Number(isCar(a)) - Number(isCar(b)));
 
   const pipeConfig = getPipelineConfig(config);
   let processed = 0;
   const errors: string[] = [];
+  const renderTickets: RenderTicket[] = [];
 
-  const hasCarousel = jobs.some((j) => isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type));
-  if (hasCarousel) {
-    await warmupRenderer(pipeConfig.rendererBaseUrl).catch(() => {});
-  }
-
-  for (const job of jobs) {
+  for (const job of jobsToRun) {
     if (isOfflinePipelineFlow(job.flow_type)) {
       continue;
     }
     try {
-      await processOneJob(db, config, job, run, pipeConfig);
-      await incrementRunJobsCompleted(db, runUuid);
-      processed++;
+      const step = await processJobUpToRender(db, config, job, run, pipeConfig);
+      if (step.kind === "terminal") {
+        await incrementRunJobsCompleted(db, runUuid);
+        processed++;
+      } else {
+        renderTickets.push({
+          jobId: job.id,
+          task_id: job.task_id,
+          kind: step.kind === "render_carousel" ? "carousel" : "video",
+          recommended_route: step.recommended_route,
+        });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${job.task_id}: ${msg}`);
-      await updateJobStatus(db, job.id, "FAILED");
-      await insertJobStateTransition(db, {
-        task_id: job.task_id,
-        project_id: run.project_id,
-        from_state: job.status,
-        to_state: "FAILED",
-        triggered_by: "system",
-        actor: "job-pipeline",
-        metadata: { error: msg },
-      });
+      await markJobFailedPipeline(db, run, job.task_id, job.id, msg, errors);
     }
   }
+
+  const carouselTickets = renderTickets.filter((t) => t.kind === "carousel");
+  const videoTickets = renderTickets.filter((t) => t.kind === "video");
+
+  if (carouselTickets.length > 0) {
+    await warmupRenderer(pipeConfig.rendererBaseUrl).catch(() => {});
+  }
+
+  const runOneRender = async (t: RenderTicket) => {
+    const jobRow = await reloadJobRow(db, t.jobId);
+    if (!jobRow) throw new Error(`Job disappeared: ${t.task_id}`);
+    if (t.kind === "carousel") {
+      await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    } else {
+      await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    }
+  };
+
+  const carouselLane = async () => {
+    for (const t of carouselTickets) {
+      try {
+        await runOneRender(t);
+        await incrementRunJobsCompleted(db, runUuid);
+        processed++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
+      }
+    }
+  };
+
+  const videoLane = async () => {
+    await mapWithConcurrency(videoTickets, PIPELINE_VIDEO_RENDER_CONCURRENCY, async (t) => {
+      try {
+        await runOneRender(t);
+        await incrementRunJobsCompleted(db, runUuid);
+        processed++;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
+      }
+    });
+  };
+
+  await Promise.all([carouselLane(), videoLane()]);
 
   const pendingRows = await q<{ flow_type: string }>(
     db,
     `SELECT flow_type FROM caf_core.content_jobs
-     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED','GENERATING','RENDERING')`,
+     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED','GENERATING','GENERATED','RENDERING')`,
     [run.project_id, run.run_id]
   );
   const pendingCount = pendingRows.filter((r) => !isOfflinePipelineFlow(r.flow_type)).length;
@@ -378,6 +514,141 @@ async function readResponseBodyWithTimeout(
   });
 }
 
+/** Puppeteer/Chromium on small Fly machines often throws these on cold tabs or memory pressure. */
+const TRANSIENT_CAROUSEL_RENDERER_ERR =
+  /Target closed|createTarget|Failed to open a new tab|Protocol error|Browser disconnected|Session closed|ECONNRESET|socket hang up|Navigation failed/i;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function recordRunContentOutcomeSafe(
+  db: Pool,
+  row: Parameters<typeof insertRunContentOutcome>[1]
+): Promise<void> {
+  try {
+    await insertRunContentOutcome(db, row);
+  } catch (e) {
+    console.warn("[job-pipeline] run_content_outcomes insert failed", e);
+  }
+}
+
+/**
+ * After we have usable slide rows, drop other deck-shaped fields so `pickBestSlideDeck` / `slide_count`
+ * cannot pick empty stubs or inflate PNG count past real copy.
+ */
+function carouselRenderBaseForPipeline(
+  baseRender: Record<string, unknown>,
+  usableSlides: Record<string, unknown>[]
+): Record<string, unknown> {
+  const o: Record<string, unknown> = { ...baseRender, slides: usableSlides };
+  delete o.slide_deck;
+  delete o.variation;
+  delete o.variations;
+  delete o.carousel;
+  delete o.items;
+  const content = o.content;
+  if (content && typeof content === "object" && !Array.isArray(content) && "carousel" in content) {
+    const c = { ...(content as Record<string, unknown>) };
+    delete c.carousel;
+    if (Object.keys(c).length > 0) o.content = c;
+    else delete o.content;
+  }
+  return o;
+}
+
+function carouselOutcomeSummary(job: JobRow, template: string, usableSlides: Record<string, unknown>[], objectPaths: string[]) {
+  const slide_headlines = usableSlides.slice(0, 12).map((s) => {
+    const rec = s as Record<string, unknown>;
+    const h = rec.headline ?? rec.title ?? rec.slide_title ?? rec.heading;
+    return String(h ?? "").slice(0, 160);
+  });
+  return {
+    platform: job.platform,
+    template,
+    slide_headlines,
+    object_paths_sample: objectPaths.slice(0, 6),
+  };
+}
+
+function videoOutcomeSummary(job: JobRow, gen: Record<string, unknown>, provider: string) {
+  const script = gen.video_script ?? gen.script;
+  let script_preview = "";
+  if (typeof script === "string") script_preview = script.slice(0, 520);
+  else if (script && typeof script === "object") script_preview = JSON.stringify(script).slice(0, 520);
+  return {
+    platform: job.platform,
+    flow_type: job.flow_type,
+    provider,
+    production_route: gen.production_route,
+    script_preview,
+  };
+}
+
+async function countAssetsForTask(db: Pool, projectId: string, taskId: string): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n FROM caf_core.assets WHERE project_id = $1 AND task_id = $2`,
+    [projectId, taskId]
+  );
+  const n = parseInt(row?.n ?? "0", 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * POST /render-binary with retries on transient 5xx (typical remote renderer flakiness).
+ */
+async function postCarouselRenderBinary(
+  renderUrl: string,
+  body: object,
+  timeoutMs: number,
+  slideIndex: number,
+  maxRetries: number
+): Promise<Response> {
+  let lastErrMsg = `Renderer slide ${slideIndex} request failed`;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch(renderUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (response.ok) return response;
+
+    let errDetail = "";
+    try {
+      const ab = await readResponseBodyWithTimeout(
+        response,
+        Math.min(timeoutMs, 30_000),
+        `Renderer slide ${slideIndex} error body`
+      );
+      errDetail = new TextDecoder().decode(ab);
+    } catch {
+      errDetail = "(could not read error body)";
+    }
+
+    lastErrMsg = `Renderer slide ${slideIndex} returned ${response.status}: ${errDetail}`;
+    if (response.status === 404 && errDetail.includes("render-binary")) {
+      lastErrMsg +=
+        " Hint: RENDERER_BASE_URL must be the Puppeteer renderer or media-gateway (POST /render-binary), not CAF Core — Fastify returns this 404 when the route does not exist.";
+    }
+
+    const transient5xx =
+      response.status >= 500 &&
+      response.status < 600 &&
+      (TRANSIENT_CAROUSEL_RENDERER_ERR.test(errDetail) || [502, 503, 504].includes(response.status));
+
+    if (transient5xx && attempt < maxRetries) {
+      await sleep(500 * 2 ** attempt);
+      continue;
+    }
+
+    throw new Error(lastErrMsg);
+  }
+  throw new Error(lastErrMsg);
+}
+
 async function processCarouselJob(
   db: Pool,
   config: AppConfig,
@@ -386,14 +657,16 @@ async function processCarouselJob(
   run: RunRow | null,
   recommendedRoute: string | null
 ) {
+  const priorStatus = job.status;
+  await warnIfRendererBaseUrlIsCafCore(pipeConfig.rendererBaseUrl, console.warn);
   await updateJobStatus(db, job.id, "RENDERING");
   await updateJobRenderState(db, job.id, { provider: "carousel-renderer", status: "pending" });
 
-  if (run) {
+  if (run && priorStatus !== "RENDERING") {
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: run.project_id,
-      from_state: "GENERATING",
+      from_state: priorStatus,
       to_state: "RENDERING",
       triggered_by: "system",
       actor: "job-pipeline",
@@ -402,10 +675,53 @@ async function processCarouselJob(
 
   const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
   const candidate = (job.generation_payload.candidate_data as Record<string, unknown>) ?? {};
-  const baseRender = { ...candidate, ...gen, ...(typeof gen.render === "object" ? gen.render : {}) };
-  const slides = slidesFromGeneratedOutput(gen);
-  const n = carouselSlideCount(gen);
+  const renderCoerced =
+    typeof gen.render === "object" && gen.render && !Array.isArray(gen.render)
+      ? (gen.render as Record<string, unknown>)
+      : {};
+  let baseRender: Record<string, unknown> = {
+    ...candidate,
+    ...gen,
+    ...renderCoerced,
+  };
+  baseRender = stripNonRenderableDeckFields(baseRender);
+  baseRender = normalizeLlmParsedForSchemaValidation(job.flow_type, baseRender);
+  const slides = slidesFromGeneratedOutput(baseRender);
+  const usableSlides = slides.filter((s) => slideHasRenderableContent(s as Record<string, unknown>));
+
+  if (usableSlides.length === 0) {
+    const errMsg =
+      "Carousel render blocked: no slide headline/body after merging candidate_data and generated_output. Regenerate the job or fix the LLM JSON (carousel / slide_deck / slides with headline or body).";
+    await updateJobRenderState(db, job.id, {
+      provider: "carousel-renderer",
+      status: "failed",
+      phase: "validate_slides",
+      error: "no_renderable_slides",
+    });
+    await recordRunContentOutcomeSafe(db, {
+      project_id: job.project_id,
+      run_id: job.run_id,
+      task_id: job.task_id,
+      flow_type: job.flow_type,
+      flow_kind: "carousel",
+      outcome: "failed",
+      job_status: "FAILED",
+      slide_count: 0,
+      asset_count: 0,
+      summary: {
+        platform: job.platform,
+        raw_slide_row_count: slides.length,
+      },
+      error_message: errMsg,
+    });
+    throw new Error(errMsg);
+  }
+
+  const renderBase = carouselRenderBaseForPipeline(baseRender, usableSlides);
+  const n = carouselSlideCount(renderBase);
   const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload);
+  const strategyRow = await getStrategyDefaults(db, job.project_id);
+  const projectInstagramHandle = strategyRow?.instagram_handle ?? null;
 
   await updateJobRenderState(db, job.id, {
     provider: "carousel-renderer",
@@ -429,7 +745,9 @@ async function processCarouselJob(
         template,
       });
 
-      const ctx = buildSlideRenderContext(baseRender, slides.length ? slides : [{}], i);
+      const ctx = buildSlideRenderContext(renderBase, usableSlides, i, {
+        instagramHandle: projectInstagramHandle,
+      });
       const body = {
         task_id: job.task_id,
         run_id: job.run_id,
@@ -439,27 +757,13 @@ async function processCarouselJob(
       };
 
       const renderUrl = `${pipeConfig.rendererBaseUrl.replace(/\/$/, "")}/render-binary`;
-      const response = await fetch(renderUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(pipeConfig.carouselRendererSlideTimeoutMs),
-      });
-
-      if (!response.ok) {
-        let errDetail = "";
-        try {
-          const ab = await readResponseBodyWithTimeout(
-            response,
-            Math.min(pipeConfig.carouselRendererSlideTimeoutMs, 30_000),
-            `Renderer slide ${i} error body`
-          );
-          errDetail = new TextDecoder().decode(ab);
-        } catch {
-          errDetail = "(could not read error body)";
-        }
-        throw new Error(`Renderer slide ${i} returned ${response.status}: ${errDetail}`);
-      }
+      const response = await postCarouselRenderBinary(
+        renderUrl,
+        body,
+        pipeConfig.carouselRendererSlideTimeoutMs,
+        i,
+        pipeConfig.carouselRendererSlideRetryAttempts
+      );
 
       const buf = Buffer.from(
         await readResponseBodyWithTimeout(
@@ -481,12 +785,14 @@ async function processCarouselJob(
       });
       const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
       const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-      const objectPath = `assets/carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.png`;
+      const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.png`;
 
       let publicUrl: string | null = null;
+      let storedPath = objectPath;
       try {
         const up = await uploadBuffer(config, objectPath, buf, "image/png");
         publicUrl = up.public_url;
+        storedPath = up.object_path;
       } catch {
         // Supabase optional
       }
@@ -498,19 +804,39 @@ async function processCarouselJob(
         asset_type: "CAROUSEL_SLIDE",
         position: i - 1,
         bucket: config.SUPABASE_ASSETS_BUCKET,
-        object_path: objectPath,
+        object_path: storedPath,
         public_url: publicUrl,
         provider: "carousel-renderer",
         metadata_json: { slide_index: i },
       });
 
-      slideResults.push({ index: i, public_url: publicUrl, object_path: objectPath });
+      slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
     }
 
     await updateJobRenderState(db, job.id, {
       provider: "carousel-renderer",
       status: "completed",
       slides: slideResults,
+    });
+
+    const finalStatusOk = finalJobStatusAfterRender(recommendedRoute);
+    await recordRunContentOutcomeSafe(db, {
+      project_id: job.project_id,
+      run_id: job.run_id,
+      task_id: job.task_id,
+      flow_type: job.flow_type,
+      flow_kind: "carousel",
+      outcome: "completed",
+      job_status: finalStatusOk,
+      slide_count: n,
+      asset_count: slideResults.length,
+      summary: carouselOutcomeSummary(
+        job,
+        template,
+        usableSlides,
+        slideResults.map((r) => r.object_path)
+      ),
+      error_message: null,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -526,11 +852,38 @@ async function processCarouselJob(
         status: "skipped",
         reason: "renderer_unavailable",
       });
+      const finalStatusSkip = finalJobStatusAfterRender(recommendedRoute);
+      await recordRunContentOutcomeSafe(db, {
+        project_id: job.project_id,
+        run_id: job.run_id,
+        task_id: job.task_id,
+        flow_type: job.flow_type,
+        flow_kind: "carousel",
+        outcome: "skipped",
+        job_status: finalStatusSkip,
+        slide_count: n,
+        asset_count: 0,
+        summary: carouselOutcomeSummary(job, template, usableSlides, []),
+        error_message: "renderer_unavailable (fetch failed)",
+      });
     } else {
       await updateJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
+      });
+      await recordRunContentOutcomeSafe(db, {
+        project_id: job.project_id,
+        run_id: job.run_id,
+        task_id: job.task_id,
+        flow_type: job.flow_type,
+        flow_kind: "carousel",
+        outcome: "failed",
+        job_status: "FAILED",
+        slide_count: n,
+        asset_count: 0,
+        summary: carouselOutcomeSummary(job, template, usableSlides, []),
+        error_message: msg,
       });
       throw err;
     }
@@ -558,14 +911,15 @@ async function processVideoJob(
   run: RunRow | null,
   recommendedRoute: string | null
 ) {
+  const priorStatus = job.status;
   await updateJobStatus(db, job.id, "RENDERING");
   await updateJobRenderState(db, job.id, { provider: "video", status: "pending" });
 
-  if (run) {
+  if (run && priorStatus !== "RENDERING") {
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: run.project_id,
-      from_state: "GENERATING",
+      from_state: priorStatus,
       to_state: "RENDERING",
       triggered_by: "system",
       actor: "job-pipeline",
@@ -582,8 +936,10 @@ async function processVideoJob(
     String(job.generation_payload.video_pipeline ?? "").toLowerCase() === "scene" ||
     /video_scene_generator|FLOW_SCENE_ASSEMBLY|scene_assembly/i.test(job.flow_type);
 
+  let videoProvider: string = "pending";
   try {
     if (isScene) {
+      videoProvider = "scene-pipeline";
       await runScenePipeline(db, config, pipeConfig.videoAssemblyBaseUrl, job);
       await updateJobRenderState(db, job.id, { provider: "scene-pipeline", status: "completed" });
     } else if (config.HEYGEN_API_KEY?.trim()) {
@@ -595,6 +951,7 @@ async function processVideoJob(
         [job.id]
       );
       if (!fresh) throw new Error("job not found");
+      videoProvider = "heygen";
       await runHeygenForContentJob(db, config, {
         id: fresh.id,
         task_id: fresh.task_id,
@@ -606,6 +963,7 @@ async function processVideoJob(
       });
       await updateJobRenderState(db, job.id, { provider: "heygen", status: "completed" });
     } else {
+      videoProvider = "video-assembly";
       const vaUrl = `${pipeConfig.videoAssemblyBaseUrl.replace(/\/$/, "")}/full-pipeline`;
       const vaBody = {
         task_id: job.task_id,
@@ -638,14 +996,63 @@ async function processVideoJob(
       });
       await updateJobRenderState(db, job.id, { provider: "video-assembly", status: "completed", result });
     }
+
+    const freshJob = (await reloadJobRow(db, job.id)) ?? job;
+    const genOut =
+      (freshJob.generation_payload.generated_output as Record<string, unknown>) ?? {};
+    const assetCount = await countAssetsForTask(db, job.project_id, job.task_id);
+    const finalVidOk = finalJobStatusAfterRender(recommendedRoute);
+    await recordRunContentOutcomeSafe(db, {
+      project_id: job.project_id,
+      run_id: job.run_id,
+      task_id: job.task_id,
+      flow_type: job.flow_type,
+      flow_kind: "video",
+      outcome: "completed",
+      job_status: finalVidOk,
+      slide_count: null,
+      asset_count: assetCount,
+      summary: videoOutcomeSummary(freshJob, genOut, videoProvider),
+      error_message: null,
+    });
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const genSnap = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+    const finalVid = finalJobStatusAfterRender(recommendedRoute);
     if (err instanceof TypeError && String(err.message).includes("fetch")) {
+      if (videoProvider === "pending") videoProvider = "video-assembly";
       await updateJobRenderState(db, job.id, {
         provider: "video-assembly",
         status: "skipped",
         reason: "video_assembly_unavailable",
       });
+      await recordRunContentOutcomeSafe(db, {
+        project_id: job.project_id,
+        run_id: job.run_id,
+        task_id: job.task_id,
+        flow_type: job.flow_type,
+        flow_kind: "video",
+        outcome: "skipped",
+        job_status: finalVid,
+        slide_count: null,
+        asset_count: 0,
+        summary: videoOutcomeSummary(job, genSnap, videoProvider),
+        error_message: "video_pipeline_unavailable (fetch failed)",
+      });
     } else {
+      await recordRunContentOutcomeSafe(db, {
+        project_id: job.project_id,
+        run_id: job.run_id,
+        task_id: job.task_id,
+        flow_type: job.flow_type,
+        flow_kind: "video",
+        outcome: "failed",
+        job_status: "FAILED",
+        slide_count: null,
+        asset_count: 0,
+        summary: videoOutcomeSummary(job, genSnap, videoProvider),
+        error_message: msg,
+      });
       throw err;
     }
   }

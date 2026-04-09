@@ -126,6 +126,16 @@ app.use(
   })
 );
 
+/** Async jobs (stitch / concat-videos / mux) poll GET /status/:requestId on video-assembly — must be proxied like POST routes. */
+app.use(
+  "/status",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${VIDEO_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/status": "/status" },
+  })
+);
+
 app.use(
   "/full-pipeline",
   createProxyMiddleware({

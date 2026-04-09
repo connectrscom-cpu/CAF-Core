@@ -76,6 +76,7 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     time_horizon: z.string().nullish(),
     owner: z.string().nullish(),
     notes: z.string().nullish(),
+    instagram_handle: z.string().nullish(),
   });
 
   app.put("/v1/projects/:project_slug/strategy", async (request, reply) => {
@@ -105,6 +106,7 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       time_horizon: body.data.time_horizon ?? null,
       owner: body.data.owner ?? null,
       notes: body.data.notes ?? null,
+      instagram_handle: body.data.instagram_handle ?? null,
     });
     return { ok: true, strategy: row };
   });

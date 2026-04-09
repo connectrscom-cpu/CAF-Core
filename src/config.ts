@@ -1,6 +1,9 @@
 import path from "node:path";
+import { config as loadDotenv } from "dotenv";
 import { z } from "zod";
-import "dotenv/config";
+
+// `.env` wins over inherited OS/IDE env (e.g. wrong RENDERER_BASE_URL from the shell). Fly/production has no `.env` in the image.
+loadDotenv({ override: true });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -26,7 +29,7 @@ const envSchema = z.object({
   DEFAULT_MAX_VARIATIONS: z.coerce.number().int().default(1),
   DEFAULT_MAX_DAILY_JOBS: z.coerce.number().int().optional(),
   /** Aggregate cap on planned carousel jobs per run when project constraints leave these null. */
-  DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN: z.coerce.number().int().nonnegative().default(5),
+  DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN: z.coerce.number().int().nonnegative().default(10),
   /** Aggregate cap on planned video/reel jobs per run when project constraints leave these null. */
   DEFAULT_MAX_VIDEO_JOBS_PER_RUN: z.coerce.number().int().nonnegative().default(4),
   /**
@@ -50,10 +53,23 @@ const envSchema = z.object({
     }),
   /** Per-slide HTTP timeout for POST /render-binary in the job pipeline (ms). */
   CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  /**
+   * Extra attempts when the renderer returns a transient 5xx (Puppeteer "Target closed", new tab failures, etc.).
+   * Total tries = 1 + this value.
+   */
+  CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(8).default(2),
   VIDEO_ASSEMBLY_BASE_URL: z.string().default("http://localhost:3334"),
 
   OPENAI_API_KEY: z.string().optional(),
+  /** Base URL for REST calls (chat, videos). Videos API: POST/GET `/videos`. */
+  OPENAI_API_BASE: z.string().default("https://api.openai.com/v1"),
   OPENAI_MODEL: z.string().default("gpt-4o"),
+  /** Vision-capable model for post-approval content review (images + text). */
+  OPENAI_APPROVAL_REVIEW_MODEL: z.string().default("gpt-4o"),
+  /** Max carousel / image assets to attach per approved job (OpenAI vision). */
+  LLM_APPROVAL_REVIEW_MAX_IMAGES: z.coerce.number().int().min(0).max(16).default(6),
+  /** Serialized copy bundle (hook, caption, video plan, scenes) max size before truncation. */
+  LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
   /**
    * When true, LLM JSON is still parsed and normalized but not checked against Flow Engine output_schemas.
    * Unset defaults to true (skip) for easier iteration; set CAF_SKIP_OUTPUT_SCHEMA_VALIDATION=0 to enforce schemas.
@@ -72,19 +88,171 @@ const envSchema = z.object({
    */
   OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(16384),
 
+  /**
+   * Soft cap on serialized `signal_pack` JSON in LLM prompts (~4 chars/token heuristic leaves room for
+   * system text, `script_input`, and completion within 128k-token models).
+   */
+  LLM_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(88_000),
+  /** First N rows from `overall_candidates_json` included in LLM context before further shrinking. */
+  LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS: z.coerce.number().int().min(1).max(2000).default(55),
+  /** Truncate individual string fields in the signal pack context (e.g. embedded HTML blobs). */
+  LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS: z.coerce.number().int().min(500).max(200_000).default(14_000),
+
   /** HeyGen v2: default voice id for video_inputs[0].voice when config does not set it */
   HEYGEN_DEFAULT_VOICE_ID: z.string().optional(),
 
   /** Max extra signal-pack rows the scene-assembly candidate router LLM may add per run (0 disables). */
   SCENE_ASSEMBLY_ROUTER_MAX_SEEDS: z.coerce.number().int().min(0).max(20).default(5),
 
+  /** Scene assembly: target scene count (LLM + post-trim). Default 6–7 ≈ ~24–35s at 4s/clip for short-form stack. */
+  SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN: z.coerce.number().int().min(1).max(20).default(6),
+  SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: z.coerce.number().int().min(1).max(20).default(7),
+  /** Per-scene clip length hint (Sora / short clip generators). */
+  SCENE_ASSEMBLY_CLIP_DURATION_SEC: z.coerce.number().min(1).max(60).default(4),
+  /**
+   * Spoken-script length hints (merge-expand, auto “short script” detection): assumed TTS pace at 1× for timeline fit.
+   * ~145 ≈ clear short-form VO; raise slightly if your copy is denser.
+   */
+  SCENE_VO_WORDS_PER_MINUTE: z.coerce.number().min(80).max(220).default(145),
+  /**
+   * Multiplier on the word budget vs nominal (wpm × seconds). Below 1.0 leaves headroom: TTS is often slower than
+   * textbook wpm; the pipeline trims over-budget scripts before TTS.
+   */
+  SCENE_VO_WORD_BUDGET_SAFETY: z.coerce.number().min(0.45).max(1).default(0.72),
+  /**
+   * When true, mux may ffmpeg `atempo` so audio length matches video (alters playback speed).
+   * Default false: keep 1× narration; use script length + SCENE_VO_WORDS_PER_MINUTE to match scene timeline.
+   */
+  SCENE_MUX_STRETCH_AUDIO_TO_VIDEO: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  /**
+   * Scene assembly only: time-stretch TTS to match stitched video length before mux so burned subtitles
+   * (locked to video) stay aligned with heard narration. Independent of SCENE_MUX_STRETCH_AUDIO_TO_VIDEO.
+   */
+  SCENE_ASSEMBLY_STRETCH_TTS_TO_VIDEO: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  /**
+   * When true, trim spoken_script to a word budget before TTS (recovery / tight mux). Default false: script from the
+   * script flow is authoritative; scenes and prompts adapt — do not shorten VO in the main assembly path.
+   */
+  SCENE_ENFORCE_SPOKEN_SCRIPT_WORD_TRIM: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  /**
+   * Prepend full VO + bundle continuity to each Sora/HeyGen scene clip prompt so visuals match global context.
+   */
+  SCENE_PREPEND_GLOBAL_CONTEXT_TO_CLIP_PROMPTS: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  /** Scene assembly SRT: min seconds per cue; shorter windows merge adjacent sentences into one cue. */
+  SCENE_SUBTITLE_MIN_CUE_SEC: z.coerce.number().min(0.35).max(5).default(1),
+  /**
+   * When scenes lack clip URLs: `sora` = OpenAI Videos API (Sora 2) per scene; `heygen` = HeyGen Video Agent no-avatar.
+   * Sora uploads MP4s to Supabase (public URL) because `/videos/{id}/content` requires auth.
+   */
+  SCENE_ASSEMBLY_CLIP_PROVIDER: z.enum(["sora", "heygen"]).default("sora"),
+  /** Model for `POST /v1/videos` (e.g. sora-2, sora-2-pro). */
+  SORA_VIDEO_MODEL: z.string().default("sora-2"),
+  /**
+   * Video size for Sora (portrait short-form: 720x1280 on sora-2; sora-2-pro also supports 1080x1920).
+   * See OpenAI video generation guide.
+   */
+  SORA_VIDEO_SIZE: z.string().default("720x1280"),
+  /** Max time to poll each Sora job (`GET /videos/{id}`) before failing the scene. */
+  SORA_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(900_000),
+  /**
+   * When scene_bundle.scenes[] has video_prompt but no clip URL, render each missing scene with HeyGen
+   * (no-avatar visual + silence) before concat. Uses credits per scene. Set to 0/false if you only use upstream URLs (n8n/Sora).
+   * Used only when SCENE_ASSEMBLY_CLIP_PROVIDER=heygen.
+   */
+  SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+
+  /** Single-take HeyGen / prompt-led videos: target spoken length band for LLM fallbacks. */
+  VIDEO_TARGET_DURATION_MIN_SEC: z.coerce.number().min(5).max(300).default(30),
+  VIDEO_TARGET_DURATION_MAX_SEC: z.coerce.number().min(5).max(600).default(60),
+
   /** Supabase Storage (asset uploads from CAF Core) */
   SUPABASE_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
   SUPABASE_ASSETS_BUCKET: z.string().default("assets"),
+  /**
+   * Abort `fetch()` when pulling MP4s by URL (scene import, merged video download). 0 disables (not recommended in production).
+   * Supabase JS `download()` uses the same limit via Promise.race in `downloadBufferFromUrl`.
+   */
+  STORAGE_HTTP_FETCH_TIMEOUT_MS: z.coerce.number().int().min(0).max(3_600_000).default(180_000),
+  /**
+   * On startup, create a tiny marker object under each known top-level prefix when that prefix is still empty,
+   * so folders (scenes, videos, …) show in the Supabase Storage UI before the first real upload.
+   * Set to 0/false to skip.
+   */
+  SUPABASE_ENSURE_ASSET_PREFIXES: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
 
   HEYGEN_API_KEY: z.string().optional(),
   HEYGEN_API_BASE: z.string().default("https://api.heygen.com"),
+  /**
+   * When `heygen_config` has no avatar pool/id for avatar flows, merge this HeyGen avatar_id (same as prompt_avatar_id + script_avatar_id).
+   * Prefer DB config per project; use env for a single brand default across projects.
+   */
+  HEYGEN_DEFAULT_AVATAR_ID: z.string().optional(),
+  /**
+   * JSON array: `[{"avatar_id":"...","voice_id":"..."}]` — used when DB has no `*_avatar_pool_json` / `*_avatar_id`.
+   * voice_id optional if HEYGEN_DEFAULT_VOICE_ID or a voice row exists.
+   */
+  HEYGEN_DEFAULT_AVATAR_POOL_JSON: z.string().optional(),
+  /**
+   * HeyGen `voice.type: silence` duration (seconds) when we only have a visual `video_prompt` and no spoken script.
+   * Stops TTS from narrating the entire cinematic prompt (audio-only / blank-frame artifacts). Range 1–100 per HeyGen API.
+   */
+  HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC: z.coerce.number().min(1).max(100).default(15),
+  /**
+   * Video Agent (`/v1/video_agent/generate`) duration_sec floor for full jobs. Values below this (e.g. bad LLM `estimated_runtime_seconds`)
+   * are bumped up so HeyGen is not asked for ultra-short renders (API allows 5s; that is almost always a data bug).
+   */
+  HEYGEN_AGENT_MIN_DURATION_SEC: z.coerce.number().int().min(10).max(120).default(30),
+  /**
+   * Scene-level HeyGen Video Agent fallback: minimum duration_sec per clip. Keeps 4s assembly hints from clamping to 5s at HeyGen.
+   */
+  HEYGEN_SCENE_AGENT_CLIP_MIN_SEC: z.coerce.number().int().min(5).max(60).default(12),
 
   /** OpenAI TTS (e.g. tts-1, tts-1-hd) */
   OPENAI_TTS_MODEL: z.string().default("tts-1"),
@@ -99,5 +267,16 @@ export function loadConfig(): AppConfig {
     const msg = parsed.error.flatten().fieldErrors;
     throw new Error(`Invalid environment: ${JSON.stringify(msg)}`);
   }
-  return parsed.data;
+  const d = parsed.data;
+  const sceneLo = Math.min(d.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN, d.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX);
+  const sceneHi = Math.max(d.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN, d.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX);
+  const vidLo = Math.min(d.VIDEO_TARGET_DURATION_MIN_SEC, d.VIDEO_TARGET_DURATION_MAX_SEC);
+  const vidHi = Math.max(d.VIDEO_TARGET_DURATION_MIN_SEC, d.VIDEO_TARGET_DURATION_MAX_SEC);
+  return {
+    ...d,
+    SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN: sceneLo,
+    SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: sceneHi,
+    VIDEO_TARGET_DURATION_MIN_SEC: vidLo,
+    VIDEO_TARGET_DURATION_MAX_SEC: vidHi,
+  };
 }

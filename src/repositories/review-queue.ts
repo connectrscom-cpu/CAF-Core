@@ -26,6 +26,12 @@ export interface ReviewQueueJob {
 
 export type ReviewTab = "in_review" | "approved" | "rejected" | "needs_edit";
 
+/** Row from the cross-project review queue (includes tenant slug). */
+export interface ReviewQueueJobWithProject extends ReviewQueueJob {
+  project_slug: string;
+  project_display_name: string | null;
+}
+
 export interface ReviewQueueFilters {
   search?: string;
   platform?: string;
@@ -37,11 +43,24 @@ export interface ReviewQueueFilters {
   has_preview?: boolean;
   risk_score_min?: number;
   run_id?: string;
+  /** When listing across tenants (global queue), filter by `caf_core.projects.slug`. */
+  project_slug?: string;
   sort?: "task_id" | "newest" | "oldest" | "status";
   group_by?: "project" | "platform" | "flow_type" | "recommended_route";
 }
 
-const BASE_SELECT = `
+/** Latest editorial row per job (same join for list, count, and breakdown). */
+const JOBS_FROM_WITH_LATEST_REVIEW = `
+  FROM caf_core.content_jobs j
+  LEFT JOIN LATERAL (
+    SELECT decision, notes, rejection_tags, validator, submitted_at
+    FROM caf_core.editorial_reviews
+    WHERE task_id = j.task_id AND project_id = j.project_id
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) lr ON true`;
+
+const REVIEW_QUEUE_ROW_SELECT = `
   SELECT
     j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
     j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
@@ -52,18 +71,12 @@ const BASE_SELECT = `
     lr.rejection_tags AS latest_rejection_tags,
     lr.validator AS latest_validator,
     lr.submitted_at AS latest_submitted_at
-  FROM caf_core.content_jobs j
-  LEFT JOIN LATERAL (
-    SELECT decision, notes, rejection_tags, validator, submitted_at
-    FROM caf_core.editorial_reviews
-    WHERE task_id = j.task_id AND project_id = j.project_id
-    ORDER BY created_at DESC
-    LIMIT 1
-  ) lr ON true`;
+  ${JOBS_FROM_WITH_LATEST_REVIEW}`;
 
 function buildTabWhere(tab: ReviewTab): string {
   switch (tab) {
     case "in_review":
+      /* Human queue: no submitted editorial decision yet. Includes GENERATED when render has not yet promoted to IN_REVIEW. */
       return `j.status IN ('GENERATED', 'IN_REVIEW', 'READY_FOR_REVIEW') AND lr.decision IS NULL`;
     case "approved":
       return `lr.decision = 'APPROVED'`;
@@ -74,10 +87,20 @@ function buildTabWhere(tab: ReviewTab): string {
   }
 }
 
-function buildFilterClauses(filters: ReviewQueueFilters, paramStart: number): { clauses: string[]; params: unknown[] } {
+function buildFilterClauses(
+  filters: ReviewQueueFilters,
+  paramStart: number,
+  opts?: { projectSlugColumn?: "p.slug" }
+): { clauses: string[]; params: unknown[] } {
   const clauses: string[] = [];
   const params: unknown[] = [];
   let idx = paramStart;
+
+  if (opts?.projectSlugColumn && filters.project_slug) {
+    clauses.push(`${opts.projectSlugColumn} = $${idx}`);
+    params.push(filters.project_slug);
+    idx++;
+  }
 
   if (filters.search) {
     clauses.push(`(j.task_id ILIKE $${idx} OR j.generation_payload::text ILIKE $${idx})`);
@@ -154,8 +177,44 @@ export async function listReviewQueue(
   const { clauses, params: filterParams } = buildFilterClauses(filters, 4);
   const allClauses = [`j.project_id = $1`, tabWhere, ...clauses].join(" AND ");
   const orderBy = buildOrderBy(filters.sort, tab);
-  const sql = `${BASE_SELECT} WHERE ${allClauses} ${orderBy} LIMIT $2 OFFSET $3`;
+  const sql = `${REVIEW_QUEUE_ROW_SELECT.trim()} WHERE ${allClauses} ${orderBy} LIMIT $2 OFFSET $3`;
   return q<ReviewQueueJob>(db, sql, [projectId, limit, offset, ...filterParams]);
+}
+
+/** Same filters as listReviewQueue; for pagination totals. */
+export async function countReviewQueueFiltered(
+  db: Pool,
+  projectId: string,
+  tab: ReviewTab,
+  filters: ReviewQueueFilters = {}
+): Promise<number> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 2);
+  const allClauses = [`j.project_id = $1`, tabWhere, ...clauses].join(" AND ");
+  const sql = `SELECT COUNT(*)::text AS n ${JOBS_FROM_WITH_LATEST_REVIEW} WHERE ${allClauses}`;
+  const row = await qOne<{ n: string }>(db, sql, [projectId, ...filterParams]);
+  return row ? parseInt(row.n, 10) : 0;
+}
+
+/** Per job.status counts for the current tab + filters (review UI chips). */
+export async function reviewQueueStatusBreakdown(
+  db: Pool,
+  projectId: string,
+  tab: ReviewTab,
+  filters: ReviewQueueFilters = {}
+): Promise<Record<string, number>> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 2);
+  const allClauses = [`j.project_id = $1`, tabWhere, ...clauses].join(" AND ");
+  const sql = `SELECT COALESCE(NULLIF(TRIM(j.status), ''), '(empty)') AS st, COUNT(*)::text AS n
+     ${JOBS_FROM_WITH_LATEST_REVIEW}
+     WHERE ${allClauses}
+     GROUP BY 1
+     ORDER BY 1`;
+  const rows = await q<{ st: string; n: string }>(db, sql, [projectId, ...filterParams]);
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.st] = parseInt(r.n, 10);
+  return out;
 }
 
 export async function countReviewQueue(
@@ -221,6 +280,8 @@ export async function getDistinctValues(
 }
 
 export interface ReviewJobDetail extends ReviewQueueJob {
+  /** Set when resolving a task across projects (workbench “all tenants”). */
+  project_slug?: string;
   assets: Array<{
     id: string;
     asset_type: string | null;
@@ -324,3 +385,158 @@ export async function getReviewJobDetail(
 
   return { ...job, assets, reviews, auto_validation: autoVal };
 }
+
+// ── Cross-project review queue (active projects only) ─────────────────────
+
+const JOBS_GLOBAL_FROM = `
+  FROM caf_core.content_jobs j
+  INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true
+  LEFT JOIN LATERAL (
+    SELECT decision, notes, rejection_tags, validator, submitted_at
+    FROM caf_core.editorial_reviews
+    WHERE task_id = j.task_id AND project_id = j.project_id
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) lr ON true`;
+
+const REVIEW_QUEUE_GLOBAL_ROW_SELECT = `
+  SELECT
+    j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
+    j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
+    j.pre_gen_score::text, j.generation_payload, j.review_snapshot,
+    j.created_at, j.updated_at,
+    lr.decision AS latest_decision,
+    lr.notes AS latest_notes,
+    lr.rejection_tags AS latest_rejection_tags,
+    lr.validator AS latest_validator,
+    lr.submitted_at AS latest_submitted_at,
+    p.slug AS project_slug,
+    p.display_name AS project_display_name
+  ${JOBS_GLOBAL_FROM}`;
+
+export async function listReviewQueueAllProjects(
+  db: Pool,
+  tab: ReviewTab,
+  limit = 100,
+  offset = 0,
+  filters: ReviewQueueFilters = {}
+): Promise<ReviewQueueJobWithProject[]> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 3, { projectSlugColumn: "p.slug" });
+  const allClauses = [tabWhere, ...clauses].join(" AND ");
+  const orderBy = buildOrderBy(filters.sort, tab);
+  const sql = `${REVIEW_QUEUE_GLOBAL_ROW_SELECT.trim()} WHERE ${allClauses} ${orderBy} LIMIT $1 OFFSET $2`;
+  return q<ReviewQueueJobWithProject>(db, sql, [limit, offset, ...filterParams]);
+}
+
+export async function countReviewQueueAllProjectsFiltered(
+  db: Pool,
+  tab: ReviewTab,
+  filters: ReviewQueueFilters = {}
+): Promise<number> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 1, { projectSlugColumn: "p.slug" });
+  const allClauses = [tabWhere, ...clauses].join(" AND ");
+  const sql = `SELECT COUNT(*)::text AS n ${JOBS_GLOBAL_FROM} WHERE ${allClauses}`;
+  const row = await qOne<{ n: string }>(db, sql, [...filterParams]);
+  return row ? parseInt(row.n, 10) : 0;
+}
+
+export async function reviewQueueStatusBreakdownAllProjects(
+  db: Pool,
+  tab: ReviewTab,
+  filters: ReviewQueueFilters = {}
+): Promise<Record<string, number>> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 1, { projectSlugColumn: "p.slug" });
+  const allClauses = [tabWhere, ...clauses].join(" AND ");
+  const sql = `SELECT COALESCE(NULLIF(TRIM(j.status), ''), '(empty)') AS st, COUNT(*)::text AS n
+     ${JOBS_GLOBAL_FROM}
+     WHERE ${allClauses}
+     GROUP BY 1
+     ORDER BY 1`;
+  const rows = await q<{ st: string; n: string }>(db, sql, [...filterParams]);
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.st] = parseInt(r.n, 10);
+  return out;
+}
+
+export async function countReviewQueueAllProjects(db: Pool): Promise<Record<ReviewTab, number>> {
+  const row = await qOne<{
+    in_review: string;
+    approved: string;
+    rejected: string;
+    needs_edit: string;
+  }>(
+    db,
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE j.status IN ('GENERATED', 'IN_REVIEW', 'READY_FOR_REVIEW')
+           AND lr.decision IS NULL
+       )::text AS in_review,
+       COUNT(*) FILTER (WHERE lr.decision = 'APPROVED')::text AS approved,
+       COUNT(*) FILTER (WHERE lr.decision = 'REJECTED')::text AS rejected,
+       COUNT(*) FILTER (WHERE lr.decision = 'NEEDS_EDIT')::text AS needs_edit
+     ${JOBS_GLOBAL_FROM}`
+  );
+  return {
+    in_review: row ? parseInt(row.in_review, 10) : 0,
+    approved: row ? parseInt(row.approved, 10) : 0,
+    rejected: row ? parseInt(row.rejected, 10) : 0,
+    needs_edit: row ? parseInt(row.needs_edit, 10) : 0,
+  };
+}
+
+export async function getDistinctValuesAllProjects(db: Pool): Promise<{
+  projects: string[];
+  platforms: string[];
+  flow_types: string[];
+  routes: string[];
+  runs: string[];
+  statuses: string[];
+}> {
+  const base = `FROM caf_core.content_jobs j
+    INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true`;
+  const [projects, platforms, flow_types, routes, runs, statuses] = await Promise.all([
+    q<{ v: string }>(db, `SELECT DISTINCT p.slug AS v ${base} ORDER BY v`),
+    q<{ v: string }>(db, `SELECT DISTINCT j.platform AS v ${base} AND j.platform IS NOT NULL ORDER BY v`),
+    q<{ v: string }>(db, `SELECT DISTINCT j.flow_type AS v ${base} AND j.flow_type IS NOT NULL ORDER BY v`),
+    q<{ v: string }>(
+      db,
+      `SELECT DISTINCT j.recommended_route AS v ${base} AND j.recommended_route IS NOT NULL ORDER BY v`
+    ),
+    q<{ v: string }>(db, `SELECT DISTINCT j.run_id AS v ${base} ORDER BY v`),
+    q<{ v: string }>(db, `SELECT DISTINCT j.status AS v ${base} AND j.status IS NOT NULL ORDER BY v`),
+  ]);
+  return {
+    projects: projects.map((r) => r.v),
+    platforms: platforms.map((r) => r.v),
+    flow_types: flow_types.map((r) => r.v),
+    routes: routes.map((r) => r.v),
+    runs: runs.map((r) => r.v),
+    statuses: statuses.map((r) => r.v),
+  };
+}
+
+export type ResolveTaskProjectResult =
+  | { ok: true; project_id: string; project_slug: string }
+  | { ok: false; reason: "not_found" | "ambiguous" };
+
+export async function resolveTaskToProject(
+  db: Pool,
+  taskId: string,
+  projectSlug?: string | null
+): Promise<ResolveTaskProjectResult> {
+  const rows = await q<{ project_id: string; slug: string }>(
+    db,
+    `SELECT j.project_id, p.slug
+     FROM caf_core.content_jobs j
+     INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true
+     WHERE j.task_id = $1 AND ($2::text IS NULL OR p.slug = $2)`,
+    [taskId, projectSlug?.trim() ? projectSlug.trim() : null]
+  );
+  if (rows.length === 0) return { ok: false, reason: "not_found" };
+  if (rows.length > 1) return { ok: false, reason: "ambiguous" };
+  return { ok: true, project_id: rows[0]!.project_id, project_slug: rows[0]!.slug };
+}
+

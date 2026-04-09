@@ -503,3 +503,9 @@ export async function getLearningObservations(projectSlug: string, limit?: numbe
     `/v1/learning/${encodeURIComponent(projectSlug)}/observations${qs}`
   );
 }
+
+export async function getLearningTransparency(projectSlug: string) {
+  return coreGet<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/transparency`
+  );
+}

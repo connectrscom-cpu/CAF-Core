@@ -46,6 +46,10 @@ export async function deleteAllJobsForRun(db: Pool, projectId: string, runIdText
       p
     );
     await client.query(
+      `DELETE FROM caf_core.llm_approval_reviews WHERE project_id = $1 AND task_id IN (${tid})`,
+      p
+    );
+    await client.query(
       `DELETE FROM caf_core.assets WHERE project_id = $1 AND task_id IN (${tid})`,
       p
     );

@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { deleteAllJobsForRun } from "./jobs.js";
 import { q, qOne } from "../db/queries.js";
+import type { RunPromptVersionsSnapshot } from "../services/run-prompt-versions-snapshot.js";
 
 export type RunStatus = "CREATED" | "PLANNING" | "PLANNED" | "GENERATING" | "RENDERING" | "REVIEWING" | "COMPLETED" | "FAILED" | "CANCELLED";
 
@@ -12,6 +13,8 @@ export interface RunRow {
   source_window: string | null;
   signal_pack_id: string | null;
   metadata_json: Record<string, unknown>;
+  /** Prompt version picks per flow_type at plan time (see run-prompt-versions-snapshot). Omitted before migration 008. */
+  prompt_versions_snapshot?: Record<string, unknown>;
   total_jobs: number;
   jobs_completed: number;
   started_at: string | null;
@@ -79,6 +82,17 @@ export async function updateRunStatus(
      extra?.total_jobs ?? null, extra?.jobs_completed ?? null]);
 }
 
+export async function setRunPromptVersionsSnapshot(
+  db: Pool,
+  runUuid: string,
+  snapshot: RunPromptVersionsSnapshot
+): Promise<void> {
+  await db.query(
+    `UPDATE caf_core.runs SET prompt_versions_snapshot = $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(snapshot), runUuid]
+  );
+}
+
 export async function patchRun(
   db: Pool,
   runUuid: string,
@@ -134,6 +148,7 @@ export async function resetRunForReplan(db: Pool, runUuid: string): Promise<RunR
        completed_at = NULL,
        total_jobs = 0,
        jobs_completed = 0,
+       prompt_versions_snapshot = '{}'::jsonb,
        updated_at = now()
      WHERE id = $1
      RETURNING *`,

@@ -27,10 +27,10 @@ describe("defaultMaxJobsPerFlowType", () => {
     expect(d.Video_Prompt_HeyGen_NoAvatar).toBe(1);
   });
 
-  it("defaults carousel flow keys to 5", () => {
+  it("defaults carousel flow keys to 10", () => {
     const d = defaultMaxJobsPerFlowType();
-    expect(d.FLOW_CAROUSEL).toBe(5);
-    expect(d.Flow_Carousel_Copy).toBe(5);
+    expect(d.FLOW_CAROUSEL).toBe(10);
+    expect(d.Flow_Carousel_Copy).toBe(10);
   });
 
   it("exports video default cap constant", () => {

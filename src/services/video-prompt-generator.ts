@@ -11,6 +11,12 @@ import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.
 import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-types.js";
 import { extractVideoPromptText } from "./video-gen-fields.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { withVideoPromptDurationPolicy } from "./video-content-policy.js";
+import {
+  PUBLICATION_SYSTEM_ADDENDUM,
+  enrichGeneratedOutputForReview,
+  maxHashtagsFromPlatformConstraints,
+} from "./publish-metadata-enrich.js";
 
 async function pickVideoPromptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
@@ -49,16 +55,28 @@ export async function ensureVideoPromptInPayload(
   const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
   const resolved = extractVideoPromptText(gen, 10);
   if (resolved.length > 0) {
+    let outGen = gen;
     if (!String(gen.video_prompt ?? "").trim()) {
       const canonical = extractVideoPromptText(gen, 1);
       if (canonical.trim()) {
-        const merged = { ...gen, video_prompt: canonical.trim() };
-        await db.query(
-          `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
-          [JSON.stringify({ generated_output: merged }), job.id]
-        );
+        outGen = { ...gen, video_prompt: canonical.trim() };
       }
     }
+    const packEarly = await buildCreationPack(
+      db,
+      job.project_id,
+      (job.generation_payload.signal_pack_id as string) ?? null,
+      (job.generation_payload.candidate_data as Record<string, unknown>) ?? {},
+      job.platform,
+      job.flow_type
+    );
+    const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, outGen, {
+      maxHashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
+    });
+    await db.query(
+      `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
+      [JSON.stringify({ generated_output: enrichedEarly }), job.id]
+    );
     return { ok: true };
   }
 
@@ -78,18 +96,20 @@ export async function ensureVideoPromptInPayload(
     job.project_id,
     (job.generation_payload.signal_pack_id as string) ?? null,
     (job.generation_payload.candidate_data as Record<string, unknown>) ?? {},
-    job.platform
+    job.platform,
+    job.flow_type
   );
 
   const userPrompt = interpolateTemplate(tpl.user_prompt_template, pack);
 
+  const baseSys =
+    tpl.system_prompt ??
+    "Include video_prompt (string) suitable for AI video generation; put fields in one JSON object (markdown fence ok).";
   const llm = await openaiChat(
     apiKey,
     {
       model: config.OPENAI_MODEL,
-      system_prompt:
-        tpl.system_prompt ??
-        "Include video_prompt (string) suitable for AI video generation; put fields in one JSON object (markdown fence ok).",
+      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`.trim(),
       user_prompt: userPrompt,
       max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2000),
     },
@@ -117,9 +137,13 @@ export async function ensureVideoPromptInPayload(
     return { ok: false, error: "video prompt LLM returned no usable video_prompt field" };
   }
 
+  const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
+    maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),
+  });
+
   await db.query(
     `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
-    [JSON.stringify({ generated_output: merged }), job.id]
+    [JSON.stringify({ generated_output: enriched }), job.id]
   );
   return { ok: true };
 }

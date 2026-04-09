@@ -57,7 +57,8 @@ export async function ingestPerformanceMetrics(
   db: Pool,
   projectId: string,
   metrics: PerformanceIngestionInput[],
-  metricWindow: "early" | "stabilized" = "stabilized"
+  metricWindow: "early" | "stabilized" = "stabilized",
+  ingestionBatchId?: string | null
 ): Promise<{ ingested: number; errors: string[] }> {
   let ingested = 0;
   const errors: string[] = [];
@@ -80,6 +81,7 @@ export async function ingestPerformanceMetrics(
         watch_time_sec: m.watch_time ?? null,
         engagement_rate: m.engagement_rate ?? null,
         raw_json: m as unknown as Record<string, unknown>,
+        ingestion_batch_id: ingestionBatchId ?? null,
       });
       ingested++;
     } catch (err) {
@@ -183,6 +185,9 @@ export async function analyzeMarketPerformance(
           },
           confidence: insight.confidence,
           source_entity_ids: [],
+          evidence_refs: [`market_flow:${row.flow_type}`],
+          rule_family: "ranking",
+          provenance: "market_analysis",
         });
         insight.rule_created = true;
         insight.rule_id = ruleId;
@@ -219,6 +224,9 @@ export async function analyzeMarketPerformance(
           },
           confidence: insight.confidence,
           source_entity_ids: [],
+          evidence_refs: [`market_flow:${row.flow_type}`],
+          rule_family: "ranking",
+          provenance: "market_analysis",
         });
         insight.rule_created = true;
         insight.rule_id = ruleId;

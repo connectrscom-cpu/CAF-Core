@@ -125,7 +125,14 @@ export async function listJobs(
                     ELSE 'PLANNED · waiting for pipeline pickup (not processed yet)'
                   END
                 WHEN 'GENERATING' THEN 'GENERATING · LLM (OpenAI)'
-                WHEN 'GENERATED' THEN 'GENERATED · QC, diagnostic, routing (before render)'
+                WHEN 'GENERATED' THEN
+                  CASE
+                    WHEN c.qc_status IS NOT NULL AND btrim(c.qc_status) <> '' THEN
+                      'GENERATED · LLM done · QC ' || trim(c.qc_status) ||
+                      ' · media/render not started (status stays here until RENDERING)'
+                    ELSE
+                      'GENERATED · LLM done · QC/diagnostics next — run Process to continue'
+                  END
                 WHEN 'RENDERING' THEN
                   CASE COALESCE(NULLIF(trim(c.render_state->>'status'), ''), '')
                     WHEN 'pending' THEN
@@ -140,11 +147,29 @@ export async function listJobs(
                             ELSE ''
                           END ||
                           'PNG from renderer'
-                        WHEN 'video' THEN 'RENDERING · video — scene bundle / HeyGen / assembly (see expand → render_state)'
+                        WHEN 'video' THEN 'RENDERING · video — HeyGen single clip, or scene URLs → assembly (see render_state)'
                         WHEN 'heygen' THEN 'RENDERING · HeyGen — API submit → poll → download'
                         WHEN 'video-assembly' THEN 'RENDERING · video-assembly service'
                         WHEN 'scene-pipeline' THEN 'RENDERING · scene pipeline — merge / mux / assets'
                         ELSE 'RENDERING · pending (' || COALESCE(trim(c.render_state->>'provider'), '?') || ')'
+                      END
+                    WHEN 'in_progress' THEN
+                      CASE trim(COALESCE(c.render_state->>'phase', ''))
+                        WHEN 'sora_scene_clips' THEN
+                          'RENDERING · OpenAI Sora scene clips ' ||
+                          COALESCE(NULLIF(trim(c.render_state->>'scene_clip_done'), ''), '0') || '/' ||
+                          COALESCE(NULLIF(trim(c.render_state->>'scene_clip_total'), ''), '?') ||
+                          ' (then import + concat)'
+                        WHEN 'heygen_scene_clips' THEN
+                          'RENDERING · HeyGen scene clips ' ||
+                          COALESCE(NULLIF(trim(c.render_state->>'scene_clip_done'), ''), '0') || '/' ||
+                          COALESCE(NULLIF(trim(c.render_state->>'scene_clip_total'), ''), '?') ||
+                          ' (then import + concat)'
+                        WHEN 'scene_import_concat' THEN
+                          'RENDERING · importing scene clips + concat (' ||
+                          COALESCE(NULLIF(trim(c.render_state->>'scene_total'), ''), '?') || ' scenes)'
+                        ELSE
+                          'RENDERING · in progress — ' || COALESCE(trim(c.render_state->>'phase'), 'see render_state')
                       END
                     WHEN 'failed' THEN 'RENDERING · failed — ' || left(COALESCE(trim(c.render_state->>'error'), 'unknown'), 120)
                     WHEN 'skipped' THEN 'RENDERING · skipped — ' || COALESCE(trim(c.render_state->>'reason'), '?')
@@ -154,7 +179,11 @@ export async function listJobs(
                 WHEN 'IN_REVIEW' THEN 'IN_REVIEW · human review queue'
                 WHEN 'NEEDS_EDIT' THEN 'NEEDS_EDIT · awaiting edits / rework'
                 WHEN 'APPROVED' THEN 'APPROVED · done'
-                WHEN 'BLOCKED' THEN 'BLOCKED · QC or policy'
+                WHEN 'BLOCKED' THEN
+                  'BLOCKED · ' || COALESCE(
+                    NULLIF(left(btrim(COALESCE(c.generation_payload->'qc_result'->>'reason_short', '')), 200), ''),
+                    'QC or policy'
+                  )
                 WHEN 'REJECTED' THEN 'REJECTED'
                 WHEN 'FAILED' THEN 'FAILED · see error column or state transitions'
                 ELSE COALESCE(c.status, '—')

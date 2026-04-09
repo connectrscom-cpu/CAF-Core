@@ -46,7 +46,7 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
     requires_signal_pack: true,
     priority_weight: 9,
     allowed_platforms: null,
-    notes: "Multi-scene video — scene_bundle → HeyGen per scene → concat",
+    notes: "Multi-scene video — scene_bundle; per-scene clips rendered upstream (URLs on scenes) → Core concat/mux",
   },
   {
     flow_type: "Video_Script_Generator",

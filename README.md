@@ -114,6 +114,7 @@ See route registrations in [`src/routes/v1.ts`](src/routes/v1.ts).
 
 - **Master checklist (all inputs from you):** [`docs/USER_INPUT_AND_SECRETS.md`](docs/USER_INPUT_AND_SECRETS.md)
 - **HTTP API reference:** [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
+- **Stack + architecture + signal pack → output + publishing metadata (`suggested_*`):** [`docs/CAF_CORE_OVERVIEW_AND_SIGNAL_TO_OUTPUT.md`](docs/CAF_CORE_OVERVIEW_AND_SIGNAL_TO_OUTPUT.md)
 - **Secrets and env template:** [`.env.example`](.env.example) — CAF Core + legacy stack variables to fill in your vault.
 - **Secrets inventory (reference):** [`ENV_AND_SECRETS_INVENTORY.md`](ENV_AND_SECRETS_INVENTORY.md) — narrative checklist for Vercel/Fly/n8n.
 - **Numbered series:** [`01_project_overview.md`](01_project_overview.md) … [`10_migration_strategy.md`](10_migration_strategy.md) — doctrine and pipeline.

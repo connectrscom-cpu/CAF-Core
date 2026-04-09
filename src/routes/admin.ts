@@ -9,7 +9,7 @@ import {
   mergeConstraintUpdate,
   type ConstraintsPatch,
 } from "../repositories/core.js";
-import { listRuns, getRunByRunId } from "../repositories/runs.js";
+import { listRuns, getRunByRunId, updateRunStatus } from "../repositories/runs.js";
 import { listLearningRules } from "../repositories/learning.js";
 import {
   getFullProjectProfile, upsertStrategyDefaults, upsertBrandConstraints,
@@ -40,9 +40,33 @@ import {
   listDecisionTracesForRun,
 } from "../repositories/admin.js";
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
-import { getSignalPackById } from "../repositories/signal-packs.js";
+import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
+import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
+import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
+import { runSceneAssemblyLabNew, runSceneAssemblyLabRegenerate } from "../services/scene-assembly-lab.js";
+import {
+  runSceneAssemblyMergeClipsFromStorage,
+  runSceneAssemblyResumePipelineFromJobPayload,
+} from "../services/scene-merge-from-storage.js";
+import { processJobByTaskId } from "../services/job-pipeline.js";
+import {
+  appendVideoUserPromptDurationHardFooter,
+  withSceneAssemblyPolicy,
+  withVideoPromptDurationPolicy,
+  withVideoScriptDurationPolicy,
+} from "../services/video-content-policy.js";
+import { PUBLICATION_SYSTEM_ADDENDUM } from "../services/publish-metadata-enrich.js";
+import { HEYGEN_VIDEO_AGENT_RUBRIC_LINES } from "../services/heygen-renderer.js";
+import {
+  PROMPT_LABS_CORE_LAYER_META,
+  PROMPT_LABS_ENV_HINTS,
+  PROMPT_LABS_HEYGEN_INTRO,
+  promptTemplateRoleHint,
+} from "../services/prompt-labs-meta.js";
+import { VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP } from "../decision_engine/default-plan-caps.js";
+import { z } from "zod";
 
 interface Deps { db: Pool; config: AppConfig; }
 
@@ -169,6 +193,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   const projectLinks = [
     { href: `/admin${pq}`, label: "Overview", key: "overview" },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
+    { href: `/admin/scene-lab${pq}`, label: "Scene lab", key: "scene-lab" },
     { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
   ];
@@ -176,13 +201,14 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   const globalLinks = [
     { href: "/admin/engine", label: "Decision Engine", key: "engine" },
     { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
+    { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
   ];
 
   return `<aside class="sb">
   <div class="sb-brand"><h1>CAF Core</h1><span>Admin Dashboard</span></div>
   <div class="sb-project-sel">
     <label>Active project</label>
-    <select id="project-sel" onchange="switchProject(this.value)">${projectOptions}</select>
+    <select id="project-sel" name="project" aria-label="Active project">${projectOptions}</select>
   </div>
   <a href="/admin/new-project" class="sb-new-project">+ New Project</a>
   <nav class="sb-nav">
@@ -193,16 +219,9 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     <div class="sb-title" style="margin-top:auto;padding-top:24px">External</div>
     <a href="/" class="sb-link" target="_blank">API Root</a>
     <a href="/health" class="sb-link" target="_blank">Health</a>
+    <a href="/health/rendering" class="sb-link" target="_blank">Rendering deps</a>
   </nav>
-</aside>
-<script>
-function switchProject(slug){
-  const s=String(slug||'').replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g,'').trim();
-  const url=new URL(window.location.href);
-  if(s)url.searchParams.set('project',s);else url.searchParams.delete('project');
-  window.location.href=url.toString();
-}
-</script>`;
+</aside>`;
 }
 
 function page(title: string, activeSidebar: string, body: string, projects: ProjectRow[], currentSlug: string, headExtra = ""): string {
@@ -219,6 +238,19 @@ function adminHeadTokenScript(config: AppConfig): string {
       : "window.__CAF_CORE_FETCH_TOKEN='';";
   return `<script>${tokenJs}
 window.cafFetch=function(u,o){o=o||{};o.headers=Object.assign({},o.headers||{});if(window.__CAF_CORE_FETCH_TOKEN)o.headers["x-caf-core-token"]=window.__CAF_CORE_FETCH_TOKEN;return fetch(u,o);};
+window.cafSwitchProject=function(slug){
+  var s=String(slug||"").replace(/[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+/g,"").trim();
+  var url=new URL(window.location.href);
+  if(s)url.searchParams.set("project",s);else url.searchParams.delete("project");
+  window.location.assign(url.toString());
+};
+document.addEventListener("DOMContentLoaded",function(){
+  var sel=document.getElementById("project-sel");
+  if(!sel)return;
+  sel.addEventListener("change",function(){
+    window.cafSwitchProject(sel.value);
+  });
+});
 </script>`;
 }
 
@@ -294,8 +326,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       detail.job.flow_type != null ? String(detail.job.flow_type) : null,
       gp
     );
+    const qc_detail = qcDetailFromGenerationPayload(gp as Record<string, unknown>);
     const api_audit = await listApiCallAuditsForTask(db, project.id, taskId, 120);
-    return { ok: true, job: detail.job, transitions: detail.transitions, content_preview, api_audit };
+    return { ok: true, job: detail.job, transitions: detail.transitions, content_preview, qc_detail, api_audit };
   });
 
   app.get("/v1/admin/signal-pack", async (request, reply) => {
@@ -309,6 +342,218 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
     }
     return { ok: true, signal_pack: pack };
+  });
+
+  app.get("/v1/admin/signal-packs", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const project = await resolveProject(db, query.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const limit = Math.min(200, Math.max(1, parseInt(query.limit ?? "80", 10)));
+    const offset = Math.max(0, parseInt(query.offset ?? "0", 10));
+    const rows = await listSignalPacks(db, project.id, limit, offset);
+    return {
+      ok: true,
+      rows: rows.map((p) => ({
+        id: p.id,
+        run_id: p.run_id,
+        source_window: p.source_window,
+        upload_filename: p.upload_filename,
+        notes: p.notes,
+        created_at: p.created_at,
+        candidate_count: Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0,
+      })),
+    };
+  });
+
+  const sceneAssemblyLabBodySchema = z
+    .object({
+      mode: z.enum(["new", "regenerate"]).default("new"),
+      project_slug: z.string().min(1),
+      signal_pack_id: z.string().uuid().optional(),
+      task_id: z.string().min(1).optional(),
+      platform: z.string().optional(),
+      candidate_data: z.record(z.unknown()).optional(),
+      variation_name: z.string().optional(),
+      /** When true (default), after successful LLM generation run QC + scene-pipeline (clips, voice, subtitles, mux). */
+      start_pipeline: z.boolean().optional().default(true),
+    })
+    .superRefine((b, ctx) => {
+      if (b.mode === "regenerate") {
+        if (!b.task_id?.trim()) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: "task_id required when mode=regenerate" });
+        }
+      } else if (!b.signal_pack_id?.trim()) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "signal_pack_id required when mode=new" });
+      }
+    });
+
+  /** Scene assembly lab: LLM script prep + scene bundle; by default then QC + full scene-pipeline (see start_pipeline). */
+  app.post("/v1/admin/scene-assembly-lab", async (request, reply) => {
+    const parsed = sceneAssemblyLabBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    const project = await getProjectBySlug(db, b.project_slug.trim().toUpperCase());
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+
+    const startPipeline = b.start_pipeline !== false;
+
+    if (b.mode === "regenerate") {
+      const out = await runSceneAssemblyLabRegenerate(db, config, {
+        projectId: project.id,
+        taskId: b.task_id!.trim(),
+        startPipeline,
+        candidateData: b.candidate_data,
+      });
+      if (!out.ok) return reply.code(400).send(out);
+      let pipeline: { ran: boolean; ok?: boolean; job_status?: string; skipped?: boolean; error?: string } = {
+        ran: false,
+      };
+      if (startPipeline) {
+        pipeline = { ran: true };
+        try {
+          const pr = await processJobByTaskId(db, config, project.id, out.task_id);
+          pipeline.ok = true;
+          pipeline.job_status = pr.status;
+          if (pr.skipped) pipeline.skipped = true;
+          if (out.run_uuid) {
+            const runState = pr.status === "FAILED" ? "FAILED" : "REVIEWING";
+            await updateRunStatus(db, out.run_uuid, runState, {
+              completed_at: new Date().toISOString(),
+              jobs_completed: pr.status === "FAILED" ? 0 : 1,
+              total_jobs: 1,
+            });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          pipeline.ok = false;
+          pipeline.error = msg;
+          if (out.run_uuid) {
+            await updateRunStatus(db, out.run_uuid, "FAILED", {
+              completed_at: new Date().toISOString(),
+              jobs_completed: 0,
+              total_jobs: 1,
+            });
+          }
+        }
+      }
+      return {
+        ok: true,
+        mode: out.mode,
+        run_id: out.run_id,
+        run_uuid: out.run_uuid,
+        task_id: out.task_id,
+        job_id: out.job_id,
+        generation: out.generation,
+        start_pipeline: startPipeline,
+        pipeline,
+      };
+    }
+
+    const out = await runSceneAssemblyLabNew(db, config, {
+      projectId: project.id,
+      signalPackId: b.signal_pack_id!.trim(),
+      platform: b.platform,
+      candidateData: b.candidate_data,
+      variationName: b.variation_name,
+      startPipeline,
+    });
+    if (!out.ok) return reply.code(400).send(out);
+    let pipeline: { ran: boolean; ok?: boolean; job_status?: string; skipped?: boolean; error?: string } = {
+      ran: false,
+    };
+    if (startPipeline) {
+      pipeline = { ran: true };
+      try {
+        const pr = await processJobByTaskId(db, config, project.id, out.task_id);
+        pipeline.ok = true;
+        pipeline.job_status = pr.status;
+        if (pr.skipped) pipeline.skipped = true;
+        if (out.run_uuid) {
+          const runState = pr.status === "FAILED" ? "FAILED" : "REVIEWING";
+          await updateRunStatus(db, out.run_uuid, runState, {
+            completed_at: new Date().toISOString(),
+            jobs_completed: pr.status === "FAILED" ? 0 : 1,
+            total_jobs: 1,
+          });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        pipeline.ok = false;
+        pipeline.error = msg;
+        if (out.run_uuid) {
+          await updateRunStatus(db, out.run_uuid, "FAILED", {
+            completed_at: new Date().toISOString(),
+            jobs_completed: 0,
+            total_jobs: 1,
+          });
+        }
+      }
+    }
+    return {
+      ok: true,
+      mode: out.mode,
+      run_id: out.run_id,
+      run_uuid: out.run_uuid,
+      task_id: out.task_id,
+      job_id: out.job_id,
+      generation: out.generation,
+      start_pipeline: startPipeline,
+      pipeline,
+    };
+  });
+
+  const sceneAssemblyMergeStorageBodySchema = z.object({
+    project_slug: z.string().min(1),
+    task_id: z.string().min(1),
+    /** auto: LLM expand when word count looks short for scene count; always / never override */
+    expand_voiceover: z.enum(["auto", "always", "never"]).optional(),
+  });
+
+  /**
+   * Use MP4s already in Supabase under scenes/{run}/{task}/ (e.g. sora_scene_0.mp4): concat → voiceover → mux.
+   * Does not call Sora; updates job scene URLs from storage then runs the same scene-pipeline tail as Process.
+   */
+  app.post("/v1/admin/scene-assembly-merge-from-storage", async (request, reply) => {
+    const parsed = sceneAssemblyMergeStorageBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    const project = await getProjectBySlug(db, b.project_slug.trim().toUpperCase());
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const result = await runSceneAssemblyMergeClipsFromStorage(db, config, project.id, b.task_id.trim(), {
+      expand_voiceover: b.expand_voiceover,
+    });
+    if (!result.ok) {
+      return reply.code(400).send(result);
+    }
+    return result;
+  });
+
+  const sceneAssemblyResumePipelineBodySchema = z.object({
+    project_slug: z.string().min(1),
+    task_id: z.string().min(1),
+  });
+
+  /**
+   * Re-run scene concat → TTS → mux from URLs already on `generation_payload.generated_output.scene_bundle.scenes[]`.
+   * Does **not** call Sora/HeyGen when every scene has `rendered_scene_url` / `video_url` (same tail as Process after clips exist).
+   */
+  app.post("/v1/admin/scene-assembly-resume-pipeline", async (request, reply) => {
+    const parsed = sceneAssemblyResumePipelineBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    const project = await getProjectBySlug(db, b.project_slug.trim().toUpperCase());
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const result = await runSceneAssemblyResumePipelineFromJobPayload(db, config, project.id, b.task_id.trim());
+    if (!result.ok) {
+      return reply.code(400).send(result);
+    }
+    return result;
   });
 
   /** Signal-pack rows in DB + decision traces (planner candidates × flows) + run-level API audit. */
@@ -348,6 +593,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         signal_pack_id: run.signal_pack_id,
         total_jobs: run.total_jobs,
         jobs_completed: run.jobs_completed,
+        prompt_versions_snapshot: run.prompt_versions_snapshot ?? {},
       },
       notes: {
         stored_signal_pack:
@@ -356,6 +602,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           "Each planning trace 'candidates' list is signal-pack rows × enabled flow types (after router), with outcome planned/dropped/unknown.",
         jobs:
           "Per-job LLM prompts and renders: open Jobs, expand a task row → Content preview + API & LLM audit.",
+        prompt_versions_snapshot:
+          "run.prompt_versions_snapshot records which caf_core.prompt_versions row was selected per flow_type when jobs were planned (decision engine or scene lab). Join prompt_version_id for experiments / learning.",
       },
       signal_pack_overall_candidates: signalPack?.overall_candidates_json ?? [],
       signal_pack_meta: signalPack
@@ -388,6 +636,18 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const runs = await listRuns(db, project.id, limit, offset);
     const totalCount = await getRunCount(db, project.id);
     return { ok: true, runs, total: totalCount, page: pg, limit };
+  });
+
+  /** Per-job carousel/video pipeline outcomes (slide counts, copy/script preview, errors) for a run. */
+  app.get("/v1/admin/runs/content-outcomes", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const runIdText = query.run_id?.trim();
+    if (!runIdText) return reply.code(400).send({ ok: false, error: "run_id required" });
+    const project = await resolveProject(db, query.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const limit = Math.min(500, Math.max(1, parseInt(query.limit ?? "300", 10)));
+    const outcomes = await listRunContentOutcomes(db, project.id, runIdText, limit);
+    return { ok: true, outcomes };
   });
 
   app.get("/v1/admin/engine", async (request) => {
@@ -474,6 +734,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       authority_angle: str("authority_angle"), differentiation_angle: str("differentiation_angle"),
       growth_strategy: str("growth_strategy"), publishing_intensity: str("publishing_intensity"),
       time_horizon: str("time_horizon"), owner: str("owner"), notes: str("notes"),
+      instagram_handle: str("instagram_handle"),
     });
     return { ok: true };
   });
@@ -645,6 +906,69 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       listCarouselTemplates(db), listQcChecks(db), listRiskPolicies(db),
     ]);
     return { ok: true, flow_definitions: flowDefs, prompt_templates: promptTpls, output_schemas: schemas, carousel_templates: carouselTpls, qc_checklists: qcChecks, risk_policies: riskPolicies };
+  });
+
+  /** Prompt / script / HeyGen assembly reference for operators (templates + runtime addenda). */
+  app.get("/v1/admin/prompt-labs", async () => {
+    const [promptTemplates, flowDefs, carouselTpls] = await Promise.all([
+      listPromptTemplates(db),
+      listFlowDefinitions(db),
+      listCarouselTemplates(db),
+    ]);
+    const cfg = config;
+    const flow_description_by_type: Record<string, string> = {};
+    for (const f of flowDefs) {
+      if (f.flow_type) flow_description_by_type[f.flow_type] = (f.description ?? "").trim();
+    }
+    const prompt_templates_enriched = promptTemplates.map((p) => {
+      const flowDesc = flow_description_by_type[p.flow_type] ?? "";
+      const roleHint = promptTemplateRoleHint(p.prompt_role, p.prompt_name);
+      const notes = (p.notes ?? "").trim();
+      return {
+        ...p,
+        labs_flow_description: flowDesc,
+        labs_role_hint: roleHint,
+        labs_short_description: notes || roleHint || flowDesc || "Add a description in the Notes field (editable below).",
+      };
+    });
+    return {
+      ok: true,
+      env_tuning: {
+        VIDEO_TARGET_DURATION_MIN_SEC: cfg.VIDEO_TARGET_DURATION_MIN_SEC,
+        VIDEO_TARGET_DURATION_MAX_SEC: cfg.VIDEO_TARGET_DURATION_MAX_SEC,
+        SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN: cfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
+        SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: cfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
+        SCENE_ASSEMBLY_CLIP_DURATION_SEC: cfg.SCENE_ASSEMBLY_CLIP_DURATION_SEC,
+      },
+      env_hints: PROMPT_LABS_ENV_HINTS,
+      core_layer_meta: PROMPT_LABS_CORE_LAYER_META,
+      core_addenda: {
+        publication_system_addendum: PUBLICATION_SYSTEM_ADDENDUM,
+        video_script_system_suffix: withVideoScriptDurationPolicy("", cfg).trim(),
+        video_prompt_system_suffix: withVideoPromptDurationPolicy("", cfg).trim(),
+        scene_assembly_system_suffix: withSceneAssemblyPolicy("", cfg).trim(),
+        user_footer_script_json: appendVideoUserPromptDurationHardFooter(
+          "(Flow Engine user_prompt_template appears above this line in the real request.)",
+          cfg,
+          "script_json"
+        ),
+        user_footer_video_plan: appendVideoUserPromptDurationHardFooter(
+          "(Flow Engine user_prompt_template appears above this line in the real request.)",
+          cfg,
+          "video_plan"
+        ),
+      },
+      heygen_video_agent: {
+        intro: PROMPT_LABS_HEYGEN_INTRO,
+        rubric_lines: [...HEYGEN_VIDEO_AGENT_RUBRIC_LINES],
+        note:
+          "POST /v1/video_agent/generate: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Avatar script jobs use POST /v2/video/generate with video_inputs (see heygen-renderer).",
+      },
+      prompt_templates: prompt_templates_enriched,
+      flow_definitions: flowDefs,
+      flow_description_by_type,
+      carousel_templates: carouselTpls,
+    };
   });
 
   app.post("/v1/admin/flow-engine/flow-def", async (request) => {
@@ -899,6 +1223,13 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
+    const videoPlanCapRowsHtml = VIDEO_PLAN_CAP_GROUPS.map(
+      (g) => `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px">
+      <label for="plan-cap-video-${esc(g.id)}" style="font-size:12px;min-width:200px;max-width:340px;color:var(--text)">${esc(g.label)}</label>
+      <input type="number" id="plan-cap-video-${esc(g.id)}" min="0" step="1" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Planner cap for this video family (all listed flow_type synonyms). Empty = default ${DEFAULT_VIDEO_FLOW_PLAN_CAP}."/>
+    </div>`
+    ).join("");
 
     const body = `
 <style>
@@ -931,6 +1262,25 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
       <p class="runs-ops-hint">Upload ingests <strong>Overall</strong> rows into the DB and creates a run in <strong>CREATED</strong>. Use <strong>Start</strong> to plan jobs: aggregate <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run (when System limits leave those empty), and <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> job per other flow type. Use <strong>Re-plan</strong> to wipe jobs and plan again. <strong>Transparency:</strong> <strong>Pack</strong> = stored signal pack JSON; <strong>Candidates</strong> = Overall rows + planner rows (× flows) + run-level API audit; expand a row on <strong>Jobs</strong> for per-task LLM prompts and content preview.</p>
     </div>
+    <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:flex-start">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max carousel jobs / run</label>
+        <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Saved in System limits for this project. Empty uses server default."/>
+        <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save cap</button>
+      </div>
+      <p id="plan-cap-carousel-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+    </div>
+    <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-direction:column;align-items:stretch;gap:10px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Video planning caps</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+        <label for="plan-cap-video-agg" style="font-size:13px;white-space:nowrap">Max video jobs / run (all types)</label>
+        <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
+        <button type="button" class="btn-ghost" id="plan-cap-video-save" onclick="saveVideoPlanningCaps()" style="border:1px solid var(--border)">Save video caps</button>
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">Per type: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per family. Saving updates System limits and affects the next Start or Re-plan.</p>
+      ${videoPlanCapRowsHtml}
+      <p id="plan-cap-video-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+    </div>
   </div>
   <div id="toast-area"></div>
   <div id="sp-transparency-modal" class="sp-modal-overlay" onclick="if(event.target===this)closeSpTransparency()">
@@ -940,6 +1290,16 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
         <button type="button" class="btn-ghost" onclick="closeSpTransparency()">Close</button>
       </div>
       <div id="sp-transparency-body" style="padding:16px 20px 20px"></div>
+    </div>
+  </div>
+
+  <div id="run-content-log-modal" class="sp-modal-overlay" onclick="if(event.target===this)closeRunContentLog()">
+    <div class="card sp-modal-card" onclick="event.stopPropagation()" style="max-width:1100px">
+      <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span>Run content log — carousel &amp; video outcomes</span>
+        <button type="button" class="btn-ghost" onclick="closeRunContentLog()">Close</button>
+      </div>
+      <div id="run-content-log-body" style="padding:16px 20px 20px"></div>
     </div>
   </div>
 
@@ -968,6 +1328,10 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
 </div>
 <script>
 const SLUG=${JSON.stringify(currentSlug)};
+const DEFAULT_MAX_CAROUSEL=${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN};
+const DEFAULT_MAX_VIDEO_AGG=${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN};
+const DEFAULT_MAX_VIDEO_PER_FLOW=${DEFAULT_VIDEO_FLOW_PLAN_CAP};
+const VIDEO_PLAN_CAP_GROUPS=${JSON.stringify(VIDEO_PLAN_CAP_GROUPS)};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+action;}
@@ -999,6 +1363,111 @@ function prettyObj(v){try{return JSON.stringify(v,null,2);}catch(e){return Strin
 function closeSpTransparency(){
   const m=document.getElementById('sp-transparency-modal');
   if(m)m.style.display='none';
+}
+function closeRunContentLog(){
+  const m=document.getElementById('run-content-log-modal');
+  if(m)m.style.display='none';
+  try{delete window._runContentLogRows;}catch(_e){window._runContentLogRows=undefined;}
+  try{delete window._runContentLogExport;}catch(_e){window._runContentLogExport=undefined;}
+}
+function copyRunContentLogAll(){
+  const ex=window._runContentLogExport;
+  if(!ex||!Array.isArray(ex.outcomes)||ex.outcomes.length===0){showToast('Nothing to copy',false);return;}
+  const payload={
+    project:ex.project,
+    run_id:ex.run_id,
+    exported_at:ex.exported_at,
+    outcome_count:ex.outcomes.length,
+    outcomes:ex.outcomes
+  };
+  copyTextToClipboard(prettyObj(payload),'full content log');
+}
+async function copyTextToClipboard(text,label){
+  const t=String(text||'');
+  if(!t){showToast('Nothing to copy',false);return;}
+  try{
+    await navigator.clipboard.writeText(t);
+    showToast(label?('Copied '+label):'Copied',true);
+  }catch(_e){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=t;
+      ta.setAttribute('readonly','');
+      ta.style.position='fixed';
+      ta.style.left='-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showToast(label?('Copied '+label):'Copied',true);
+    }catch(__e){
+      showToast('Copy failed',false);
+    }
+  }
+}
+function copyRunContentLogTask(idx){
+  const arr=window._runContentLogRows;
+  if(!arr||arr[idx]==null){showToast('Nothing to copy',false);return;}
+  copyTextToClipboard(arr[idx].task_id,'task_id');
+}
+function copyRunContentLogSummary(idx){
+  const arr=window._runContentLogRows;
+  if(!arr||arr[idx]==null){showToast('Nothing to copy',false);return;}
+  copyTextToClipboard(arr[idx].summary,'summary JSON');
+}
+async function openRunContentLog(runId){
+  const modal=document.getElementById('run-content-log-modal');
+  const body=document.getElementById('run-content-log-body');
+  if(!modal||!body)return;
+  try{delete window._runContentLogExport;}catch(_e){window._runContentLogExport=undefined;}
+  body.innerHTML='<p class="empty">Loading…</p>';
+  modal.style.display='flex';
+  if(!SLUG){
+    body.innerHTML='<p class="empty" style="color:var(--yellow)">Open this page with a project in the URL, e.g. <span class="mono">/admin/runs?project=SNS</span>.</p>';
+    return;
+  }
+  try{
+    const r=await cafFetch('/v1/admin/runs/content-outcomes?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(runId));
+    const raw=await r.text();
+    let d;
+    try{d=JSON.parse(raw);}catch(_e){throw new Error(r.ok?'Invalid JSON from server':'HTTP '+r.status+' — '+raw.slice(0,120));}
+    if(!r.ok||!d.ok){
+      body.innerHTML='<p class="empty">'+esc(apiErr(d,'Request failed'))+'</p>';
+      return;
+    }
+    const rows=Array.isArray(d.outcomes)?d.outcomes:[];
+    if(!rows.length){
+      body.innerHTML='<p class="empty">No rows yet. Apply migration <span class="mono">007_run_content_outcomes.sql</span>, then run <strong>Process</strong> on jobs — outcomes append after each carousel/video render attempt.</p>';
+      return;
+    }
+    window._runContentLogRows=rows.map(function(o){return{task_id:String(o.task_id||''),summary:prettyObj(o.summary)};});
+    window._runContentLogExport={project:SLUG,run_id:runId,exported_at:new Date().toISOString(),outcomes:rows};
+    let h='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px">';
+    h+='<button type="button" class="btn" onclick="copyRunContentLogAll()" title="Copy entire log as JSON (paste into chat or a doc)">Copy full log</button>';
+    h+='<span style="font-size:12px;color:var(--muted)">Copies project, run_id, and all '+rows.length+' outcome row(s) as one JSON block.</span></div>';
+    h+='<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">Pipeline outcomes (newest first). Per row: <strong>Copy ID</strong> / <strong>Copy summary</strong> for a single cell.</p>';
+    h+='<table class="sp-modal-table"><thead><tr><th>When</th><th>task_id</th><th>Kind</th><th>Flow</th><th>Outcome</th><th>Slides</th><th>Assets</th><th>Job status</th><th>Error</th><th>Summary</th></tr></thead><tbody>';
+    for(var i=0;i<rows.length;i++){
+      var o=rows[i];
+      h+='<tr><td>'+esc(fmtDate(o.created_at))+'</td>';
+      h+='<td class="mono" style="font-size:10px;max-width:160px;word-break:break-all;vertical-align:top">';
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:2px 8px;margin:0 0 6px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);display:block" onclick="copyRunContentLogTask('+i+')" title="Copy task_id to clipboard">Copy ID</button>';
+      h+='<a href="/admin/jobs?project='+encodeURIComponent(SLUG)+'&search='+encodeURIComponent(o.task_id)+'">'+esc(o.task_id)+'</a></td>';
+      h+='<td>'+esc(o.flow_kind)+'</td><td class="mono" style="font-size:10px">'+esc(o.flow_type)+'</td>';
+      h+='<td>'+badge(o.outcome)+'</td>';
+      h+='<td>'+(o.slide_count==null||o.slide_count===''?'—':esc(String(o.slide_count)))+'</td>';
+      h+='<td>'+(o.asset_count==null||o.asset_count===''?'—':esc(String(o.asset_count)))+'</td>';
+      h+='<td>'+esc(o.job_status||'—')+'</td>';
+      h+='<td style="max-width:160px;word-break:break-word;font-size:10px">'+esc(o.error_message||'')+'</td>';
+      h+='<td style="vertical-align:top">';
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:2px 8px;margin:0 0 6px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);display:block" onclick="copyRunContentLogSummary('+i+')" title="Copy summary JSON to clipboard">Copy summary</button>';
+      h+='<pre style="font-size:9px;max-width:300px;max-height:140px;overflow:auto;margin:0;white-space:pre-wrap">'+esc(prettyObj(o.summary))+'</pre></td></tr>';
+    }
+    h+='</tbody></table>';
+    body.innerHTML=h;
+  }catch(e){
+    body.innerHTML='<p class="empty" style="color:var(--red)">'+esc(e.message||String(e))+'</p>';
+  }
 }
 /** After XLSX upload: show Overall rows + full transparency payload (also stored in api_call_audit). */
 function showSignalPackTransparency(d){
@@ -1061,7 +1530,7 @@ async function loadRuns(p){
   let h='<table><thead><tr><th>Run ID</th><th>Status</th><th>Jobs</th><th>Created</th><th>Started</th><th>Completed</th><th>Actions</th></tr></thead><tbody>';
   for(const run of runs){
     const canStart=run.status==='CREATED';
-    const canProcess=['GENERATING','RENDERING','PLANNED'].includes(run.status);
+    const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status);
     const canCancel=!['COMPLETED','FAILED','CANCELLED'].includes(run.status);
     const canReplan=!!run.signal_pack_id&&run.status!=='PLANNING'&&!(run.status==='CREATED'&&(!run.total_jobs||run.total_jobs===0));
     h+='<tr><td class="mono" style="color:var(--accent)"><a href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">'+esc(run.run_id)+'</a>';
@@ -1072,6 +1541,7 @@ async function loadRuns(p){
     h+='<td>'+fmtDate(run.created_at)+'</td><td>'+fmtDate(run.started_at)+'</td><td>'+fmtDate(run.completed_at)+'</td>';
     h+='<td><div class="run-actions">';
     h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/run-candidates?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(run.run_id)+'">Candidates</a> ';
+    h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunContentLog("+JSON.stringify(run.run_id)+")' title='Carousel slide counts + copy preview; video script preview + assets'>Content log</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
     if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")'>Process</button>";
@@ -1117,8 +1587,165 @@ async function runAction(runId,action){
   finally{if(btn){btn.disabled=false;btn.textContent=action==='start'?'Start':action==='process'?'Process':action==='replan'?'Re-plan':action==='delete'?'Delete':'Cancel';}}
 }
 
+function normalizePerFlowCapsClient(raw){
+  if(raw==null)return {};
+  if(typeof raw==='string'){
+    var st=raw.trim();
+    if(!st)return {};
+    try{return normalizePerFlowCapsClient(JSON.parse(st));}catch(e){return {};}
+  }
+  if(typeof raw!=='object'||Array.isArray(raw))return {};
+  var out={};
+  for(var i=0,ks=Object.keys(raw);i<ks.length;i++){
+    var k=ks[i];
+    var val=raw[k];
+    var n=typeof val==='number'?val:Number(val);
+    if(Number.isFinite(n)&&n>=0)out[k]=Math.min(Math.floor(n),1000000);
+  }
+  return out;
+}
+
+async function loadPlanningCaps(){
+  const cinp=document.getElementById('plan-cap-carousel');
+  const chint=document.getElementById('plan-cap-carousel-hint');
+  const cbtn=document.getElementById('plan-cap-carousel-save');
+  const aggInp=document.getElementById('plan-cap-video-agg');
+  const vHint=document.getElementById('plan-cap-video-hint');
+  const vBtn=document.getElementById('plan-cap-video-save');
+  if(!cinp&&!aggInp)return;
+  if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
+  if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
+  VIDEO_PLAN_CAP_GROUPS.forEach(function(g){
+    var el=document.getElementById('plan-cap-video-'+g.id);
+    if(el)el.placeholder=String(DEFAULT_MAX_VIDEO_PER_FLOW);
+  });
+  if(!SLUG){
+    if(cinp){cinp.disabled=true;if(cbtn)cbtn.disabled=true;if(chint)chint.textContent='Pick a project in the sidebar (or ?project=slug) to edit planning caps.';}
+    if(aggInp){aggInp.disabled=true;if(vBtn)vBtn.disabled=true;}
+    VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
+    if(vHint)vHint.textContent='Pick a project to edit video caps.';
+    return;
+  }
+  if(cinp){cinp.disabled=false;if(cbtn)cbtn.disabled=false;}
+  if(aggInp){aggInp.disabled=false;if(vBtn)vBtn.disabled=false;}
+  VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
+  if(chint)chint.textContent='Loading…';
+  if(vHint)vHint.textContent='Loading…';
+  try{
+    const r=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    const d=await r.json();
+    if(!d.ok){
+      var errMsg=esc(apiErr(d,'Could not load constraints'));
+      if(chint)chint.textContent=errMsg;
+      if(vHint)vHint.textContent=errMsg;
+      return;
+    }
+    if(cinp){
+      const cv=d.constraints&&d.constraints.max_carousel_jobs_per_run;
+      const cHas=cv!=null&&cv!=='';
+      cinp.value=cHas?String(cv):'';
+      const cEff=cHas?Number(cv):DEFAULT_MAX_CAROUSEL;
+      if(chint)chint.textContent='Effective when you Start or Re-plan: '+cEff+' carousel job(s) per run ('+(cHas?'from System limits':'server default '+DEFAULT_MAX_CAROUSEL)+'). Clear the field and Save cap to use the default.';
+    }
+    if(aggInp){
+      const vv=d.constraints&&d.constraints.max_video_jobs_per_run;
+      const vHas=vv!=null&&vv!=='';
+      aggInp.value=vHas?String(vv):'';
+      var vEffAgg=vHas?Number(vv):DEFAULT_MAX_VIDEO_AGG;
+      var ov=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
+      var parts=[];
+      VIDEO_PLAN_CAP_GROUPS.forEach(function(g){
+        var el=document.getElementById('plan-cap-video-'+g.id);
+        var set=false,val=0;
+        for(var i=0;i<g.keys.length;i++){
+          if(Object.prototype.hasOwnProperty.call(ov,g.keys[i])){val=ov[g.keys[i]];set=true;break;}
+        }
+        if(el)el.value=set?String(val):'';
+        var eff=set?val:DEFAULT_MAX_VIDEO_PER_FLOW;
+        parts.push(g.label.split('(')[0].trim()+': '+eff);
+      });
+      if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved in System limits':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and Save video caps to use defaults for that family.';
+    }
+  }catch(err){
+    var msg='Could not load constraints: '+esc(err.message||String(err));
+    if(chint)chint.textContent=msg;
+    if(vHint)vHint.textContent=msg;
+  }
+}
+
+async function saveVideoPlanningCaps(){
+  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
+  const aggInp=document.getElementById('plan-cap-video-agg');
+  const vBtn=document.getElementById('plan-cap-video-save');
+  const aggRaw=(aggInp&&aggInp.value||'').trim();
+  if(aggRaw!==''){
+    var an=parseInt(aggRaw,10);
+    if(!Number.isFinite(an)||an<0){showToast('Video aggregate: enter a non-negative integer or leave empty for the server default.',false);return;}
+  }
+  for(var gi=0;gi<VIDEO_PLAN_CAP_GROUPS.length;gi++){
+    var g=VIDEO_PLAN_CAP_GROUPS[gi];
+    var inp=document.getElementById('plan-cap-video-'+g.id);
+    var tr=(inp&&inp.value||'').trim();
+    if(tr!==''){
+      var tn=parseInt(tr,10);
+      if(!Number.isFinite(tn)||tn<0){showToast('Each video type: non-negative integer or empty.',false);return;}
+    }
+  }
+  if(vBtn)vBtn.disabled=true;
+  try{
+    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    var d0=await r0.json();
+    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
+    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
+    for(var gj=0;gj<VIDEO_PLAN_CAP_GROUPS.length;gj++){
+      var grp=VIDEO_PLAN_CAP_GROUPS[gj];
+      var inpg=document.getElementById('plan-cap-video-'+grp.id);
+      var rawg=(inpg&&inpg.value||'').trim();
+      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+      if(rawg!==''){
+        var ng=parseInt(rawg,10);
+        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+      }
+    }
+    var body={_project:SLUG,max_jobs_per_flow_type:merged};
+    if(aggRaw==='')body.max_video_jobs_per_run='';
+    else body.max_video_jobs_per_run=parseInt(aggRaw,10);
+    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var rawText=await r.text();
+    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
+    showToast('Video planning caps saved.',true);
+    await loadPlanningCaps();
+  }catch(err){showToast(err.message,false);}
+  finally{if(vBtn)vBtn.disabled=false;}
+}
+async function saveCarouselCap(){
+  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
+  const inp=document.getElementById('plan-cap-carousel');
+  const btn=document.getElementById('plan-cap-carousel-save');
+  const raw=(inp&&inp.value||'').trim();
+  const body={_project:SLUG};
+  if(raw==='')body.max_carousel_jobs_per_run='';
+  else{
+    const n=parseInt(raw,10);
+    if(!Number.isFinite(n)||n<0){showToast('Enter a non-negative integer, or leave empty for the server default.',false);return;}
+    body.max_carousel_jobs_per_run=n;
+  }
+  if(btn)btn.disabled=true;
+  try{
+    const r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const rawText=await r.text();
+    let d;try{d=JSON.parse(rawText);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
+    showToast('Carousel job cap saved.',true);
+    await loadPlanningCaps();
+  }catch(err){showToast(err.message,false);}
+  finally{if(btn)btn.disabled=false;}
+}
+
 loadRuns(1);
-window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadRuns(runsPage);},0);});
+loadPlanningCaps();
+window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadRuns(runsPage);loadPlanningCaps();},0);});
 
 document.getElementById('upload-form')?.addEventListener('submit',async(e)=>{
   e.preventDefault();
@@ -1229,6 +1856,318 @@ loadPackView();
       .send(page("Signal pack", "runs", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
+  app.get("/admin/scene-lab", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? "";
+    const packs = project ? await listSignalPacks(db, project.id, 80, 0) : [];
+    const packOptions = packs
+      .map((p) => {
+        const n = Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0;
+        const label = `${p.run_id} · ${n} overall rows · ${String(p.created_at).slice(0, 10)}`;
+        return `<option value="${esc(p.id)}">${esc(label)}</option>`;
+      })
+      .join("");
+
+    const bodyNoProject = `
+<div class="ph"><div><h2>Scene assembly lab</h2><span class="ph-sub">Script + scenes; optional full media pipeline</span></div></div>
+<div class="content"><p class="empty">Pick a project in the sidebar (or open <span class="mono">/admin/scene-lab?project=YOUR_SLUG</span>).</p></div>`;
+
+    const body = project
+      ? `
+<div class="ph"><div><h2>Scene assembly lab</h2><span class="ph-sub">LLM script + scene bundle, then (by default) QC and full scene-pipeline</span></div></div>
+<div class="content">
+  <p class="runs-ops-hint">Creates a <span class="mono">LAB_SA_*</span> run and one <span class="mono">FLOW_SCENE_ASSEMBLY</span> job. By default, after a successful generation Core runs the same pipeline as <strong>Process</strong>: QC, scene clips, voice, subtitles, and mux (requires working <span class="mono">VIDEO_ASSEMBLY_BASE_URL</span> / Sora config as in production). Check <strong>LLM only</strong> below to skip that step (dry run). Results: <a href="/admin/jobs?project=${esc(currentSlug)}">Jobs</a>.</p>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Options</div>
+    <div class="config-form" style="padding:12px 16px 16px">
+      <label class="form-group" style="margin:0;display:flex;align-items:flex-start;gap:10px;cursor:pointer">
+        <input type="checkbox" id="slab-llm-only" style="margin-top:4px">
+        <span><strong>LLM only</strong> — skip QC and media pipeline (no scene videos, voice, or assembly). Same as API <span class="mono">start_pipeline: false</span>.</span>
+      </label>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">New lab run</div>
+    <form id="slab-new" class="config-form" style="padding:12px 16px 16px">
+      <div class="form-group">
+        <label for="slab-pack">Signal pack (stored folder / row)</label>
+        <select id="slab-pack" name="signal_pack_id" required>${packOptions || '<option value="">No signal packs for this project</option>'}</select>
+      </div>
+      <div class="form-group">
+        <label for="slab-platform">Platform</label>
+        <select id="slab-platform" name="platform"><option>TikTok</option><option>Instagram</option></select>
+      </div>
+      <div class="form-group">
+        <label for="slab-cand">Optional candidate JSON (merged over lab defaults — e.g. content_idea, summary, candidate_id)</label>
+        <textarea id="slab-cand" name="candidate_json" rows="6" placeholder='{ "content_idea": "…", "summary": "…" }'></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn" id="slab-new-btn">Run lab</button>
+        <span id="slab-new-msg" class="form-msg"></span>
+      </div>
+    </form>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Regenerate an existing scene job</div>
+    <form id="slab-regen" class="config-form" style="padding:12px 16px 16px">
+      <p class="runs-ops-hint" style="margin-top:0">Optional JSON is <strong>merged</strong> into the job’s existing <span class="mono">candidate_data</span> before the LLM runs (same keys are overwritten). Use this to push a longer <span class="mono">content_idea</span> / <span class="mono">summary</span>, scene-count hints, or brand notes without creating a new lab job.</p>
+      <div class="form-group">
+        <label for="slab-task">task_id</label>
+        <input type="text" id="slab-task" name="task_id" placeholder="Paste task_id from Jobs" required>
+      </div>
+      <div class="form-group">
+        <label for="slab-regen-cand">Optional candidate JSON (merged over stored candidate_data)</label>
+        <textarea id="slab-regen-cand" name="regen_candidate_json" rows="6" placeholder='{ "content_idea": "…", "summary": "…" }'></textarea>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-ghost" id="slab-regen-btn">Regenerate + pipeline</button>
+        <span id="slab-regen-msg" class="form-msg"></span>
+      </div>
+    </form>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Merge clips only (Supabase folder)</div>
+    <form id="slab-merge" class="config-form" style="padding:12px 16px 16px">
+      <p class="runs-ops-hint" style="margin-top:0">Lists <span class="mono">*.mp4</span> under in-bucket path <span class="mono">assets/scenes/{run_id}/{task_id}/</span> (matches the Storage tree <em>assets → assets → scenes → …</em>). Uses <strong>signed URLs</strong> so private buckets work (anonymous <span class="mono">/object/public/assets/assets/scenes/…</span> often returns 400). Then <strong>concat → TTS → mux</strong> with <strong>captions burned in</strong> (<span class="mono">captions.srt</span> via video-assembly ffmpeg). <span class="mono">pipeline.subtitles_burned_into_video</span> in JSON confirms burn. <strong>Last response</strong>: <span class="mono">http_status</span> + <span class="mono">body</span>. No new Sora clips. <span class="mono">OPENAI_API_KEY</span> for voice.</p>
+      <div class="form-group">
+        <label for="slab-merge-task">task_id</label>
+        <input type="text" id="slab-merge-task" name="task_id" placeholder="Job’s task_id (must exist in Jobs)" required>
+      </div>
+      <div class="form-group">
+        <label for="slab-merge-expand">Voiceover length</label>
+        <select id="slab-merge-expand" name="expand_voiceover" style="max-width:100%">
+          <option value="never" selected>Never (default) — keep script from script flow; only re-link clips + mux</option>
+          <option value="auto">Auto — LLM expand only if script looks short vs timeline</option>
+          <option value="always">Always — rewrite spoken_script (recovery / lab only)</option>
+        </select>
+      </div>
+      <div class="form-actions" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <button type="submit" class="btn" id="slab-merge-btn">Merge from storage</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="slab-merge-copy-btn" title="Copy merge log (same box as below)">Copy merge log</button>
+        <span id="slab-merge-msg" class="form-msg"></span>
+      </div>
+    </form>
+  </div>
+  <div class="card" style="margin-bottom:16px">
+    <div class="card-h">Resume pipeline (URLs already on job)</div>
+    <form id="slab-resume" class="config-form" style="padding:12px 16px 16px">
+      <p class="runs-ops-hint" style="margin-top:0">Runs <strong>concat → TTS → mux</strong> using <span class="mono">rendered_scene_url</span> / <span class="mono">video_url</span> already stored on each scene in the job — <strong>no Sora, no HeyGen, no folder scan</strong>. Use after clips exist (e.g. stuck in <span class="mono">scene_import_concat</span>) to retry assembly only.</p>
+      <div class="form-group">
+        <label for="slab-resume-task">task_id</label>
+        <input type="text" id="slab-resume-task" name="task_id" placeholder="Job’s task_id" required>
+      </div>
+      <div class="form-actions" style="flex-wrap:wrap;gap:8px;align-items:center">
+        <button type="submit" class="btn" id="slab-resume-btn">Resume scene pipeline</button>
+        <span id="slab-resume-msg" class="form-msg"></span>
+      </div>
+    </form>
+  </div>
+  <div class="card">
+    <div class="card-h" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <span>Last response <span class="runs-ops-hint" style="font-weight:normal">(merge: HTTP envelope + body — use Copy)</span></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="slab-copy-btn" title="Copy JSON to clipboard">Copy</button>
+    </div>
+    <pre id="slab-out" class="json" style="max-height:420px;margin:0;border-radius:0;border:none;border-top:1px solid var(--border)">—</pre>
+  </div>
+</div>
+<script>
+const SLUG=${JSON.stringify(currentSlug)};
+function pretty(v){try{return JSON.stringify(v,null,2);}catch(e){return String(v)}}
+function slabStartPipeline(){
+  const c=document.getElementById('slab-llm-only');
+  return !(c&&c.checked);
+}
+async function postLab(payload,msgEl,btn){
+  const out=document.getElementById('slab-out');
+  if(btn)btn.disabled=true;
+  if(msgEl){
+    msgEl.textContent=slabStartPipeline()?'Running (LLM + pipeline — may take a long time)…':'Running (LLM only)…';
+    msgEl.style.color='var(--accent)';
+  }
+  try{
+    const r=await cafFetch('/v1/admin/scene-assembly-lab',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const d=await r.json();
+    if(out)out.textContent=pretty(d);
+    if(msgEl){
+      if(d.ok){
+        if(d.pipeline&&d.pipeline.ran&&d.pipeline.ok===false){
+          msgEl.textContent='Generation ok; pipeline failed — see JSON';
+          msgEl.style.color='var(--amber, #d97706)';
+        }else if(d.pipeline&&d.pipeline.skipped){
+          msgEl.textContent='Done (job skipped offline pipeline)';
+          msgEl.style.color='var(--amber, #d97706)';
+        }else{
+          msgEl.textContent='Done';
+          msgEl.style.color='var(--green, #22c55e)';
+        }
+      }else{msgEl.textContent=d.error||'Failed';msgEl.style.color='var(--red)';}
+    }
+  }catch(e){
+    if(out)out.textContent=String(e&&e.message||e);
+    if(msgEl){msgEl.textContent='Request error';msgEl.style.color='var(--red)';}
+  }finally{if(btn)btn.disabled=false;}
+}
+document.getElementById('slab-new').addEventListener('submit',function(e){
+  e.preventDefault();
+  const pack=document.getElementById('slab-pack').value.trim();
+  if(!pack)return;
+  let candidate_data=undefined;
+  const raw=document.getElementById('slab-cand').value.trim();
+  if(raw){
+    try{candidate_data=JSON.parse(raw);}catch(err){
+      document.getElementById('slab-new-msg').textContent='Invalid JSON in candidate field';document.getElementById('slab-new-msg').style.color='var(--red)';return;
+    }
+  }
+  postLab({
+    mode:'new',
+    project_slug:SLUG,
+    signal_pack_id:pack,
+    platform:document.getElementById('slab-platform').value,
+    candidate_data,
+    start_pipeline:slabStartPipeline()
+  },document.getElementById('slab-new-msg'),document.getElementById('slab-new-btn'));
+});
+document.getElementById('slab-regen').addEventListener('submit',function(e){
+  e.preventDefault();
+  const tid=document.getElementById('slab-task').value.trim();
+  if(!tid)return;
+  let candidate_data=undefined;
+  const raw=document.getElementById('slab-regen-cand').value.trim();
+  if(raw){
+    try{candidate_data=JSON.parse(raw);}catch(err){
+      document.getElementById('slab-regen-msg').textContent='Invalid JSON in optional candidate field';document.getElementById('slab-regen-msg').style.color='var(--red)';return;
+    }
+  }
+  const payload={mode:'regenerate',project_slug:SLUG,task_id:tid,start_pipeline:slabStartPipeline()};
+  if(candidate_data!==undefined)payload.candidate_data=candidate_data;
+  postLab(payload,document.getElementById('slab-regen-msg'),document.getElementById('slab-regen-btn'));
+});
+function copyTextToClipboard(text,btn,okLabel){
+  const idle=btn.textContent;
+  function flash(l){btn.textContent=l;setTimeout(function(){btn.textContent=idle;},1600);}
+  if(!String(text||'').trim()){flash('Nothing to copy');return Promise.resolve();}
+  return navigator.clipboard.writeText(text).then(function(){flash(okLabel||'Copied');}).catch(function(){flash('Copy failed');});
+}
+document.getElementById('slab-merge').addEventListener('submit',function(e){
+  e.preventDefault();
+  const tid=document.getElementById('slab-merge-task').value.trim();
+  if(!tid)return;
+  const out=document.getElementById('slab-out');
+  const btn=document.getElementById('slab-merge-btn');
+  const msgEl=document.getElementById('slab-merge-msg');
+  if(btn)btn.disabled=true;
+  if(msgEl){msgEl.textContent='Merging (concat / TTS / mux)…';msgEl.style.color='var(--accent)';}
+  const ep='/v1/admin/scene-assembly-merge-from-storage';
+  var expandVo=document.getElementById('slab-merge-expand');
+  var expand_voiceover=expandVo&&expandVo.value?String(expandVo.value):'never';
+  cafFetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_slug:SLUG,task_id:tid,expand_voiceover:expand_voiceover})})
+    .then(async function(r){
+      const raw=await r.text();
+      let body;
+      try{body=JSON.parse(raw);}catch(_e){body={ok:false,error:'invalid_json',raw_response_excerpt:raw.slice(0,4000)};}
+      return{http_status:r.status,http_ok:r.ok,endpoint:'POST '+ep,body};
+    })
+    .then(function(env){
+      if(out)out.textContent=pretty(env);
+      if(msgEl){
+        var p=env.body&&env.body.pipeline;
+        if(env.body&&env.body.ok){
+          if(p&&p.mux_completed===false&&(p.mux_error||((p.warnings||[]).length>0))){
+            msgEl.textContent='Done — concat ok; check pipeline.mux_error / warnings in JSON';
+            msgEl.style.color='var(--amber, #d97706)';
+          }else if(p&&p.mux_completed===true){
+            msgEl.textContent='Done (mux + final video)';
+            msgEl.style.color='var(--green, #22c55e)';
+          }else{
+            msgEl.textContent='Done';
+            msgEl.style.color='var(--green, #22c55e)';
+          }
+        }else{
+          msgEl.textContent=(env.body&&env.body.error)||('HTTP '+env.http_status);
+          msgEl.style.color='var(--red)';
+        }
+      }
+    })
+    .catch(function(err){
+      if(out)out.textContent=pretty({endpoint:'POST '+ep,http_status:0,http_ok:false,body:{ok:false,error:String(err&&err.message||err)}});
+      if(msgEl){msgEl.textContent='Request error';msgEl.style.color='var(--red)';}
+    })
+    .finally(function(){if(btn)btn.disabled=false;});
+});
+document.getElementById('slab-resume').addEventListener('submit',function(e){
+  e.preventDefault();
+  const tid=document.getElementById('slab-resume-task').value.trim();
+  if(!tid)return;
+  const out=document.getElementById('slab-out');
+  const btn=document.getElementById('slab-resume-btn');
+  const msgEl=document.getElementById('slab-resume-msg');
+  if(btn)btn.disabled=true;
+  if(msgEl){msgEl.textContent='Resuming (concat / TTS / mux)…';msgEl.style.color='var(--accent)';}
+  const ep='/v1/admin/scene-assembly-resume-pipeline';
+  cafFetch(ep,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_slug:SLUG,task_id:tid})})
+    .then(async function(r){
+      const raw=await r.text();
+      let body;
+      try{body=JSON.parse(raw);}catch(_e){body={ok:false,error:'invalid_json',raw_response_excerpt:raw.slice(0,4000)};}
+      return{http_status:r.status,http_ok:r.ok,endpoint:'POST '+ep,body};
+    })
+    .then(function(env){
+      if(out)out.textContent=pretty(env);
+      if(msgEl){
+        var p=env.body&&env.body.pipeline;
+        if(env.body&&env.body.ok){
+          if(p&&p.mux_completed===false&&(p.mux_error||((p.warnings||[]).length>0))){
+            msgEl.textContent='Done — concat ok; check pipeline.mux_error / warnings';
+            msgEl.style.color='var(--amber, #d97706)';
+          }else if(p&&p.mux_completed===true){
+            msgEl.textContent='Done (mux + final video)';
+            msgEl.style.color='var(--green, #22c55e)';
+          }else{
+            msgEl.textContent='Done';
+            msgEl.style.color='var(--green, #22c55e)';
+          }
+        }else{
+          msgEl.textContent=(env.body&&env.body.error)||('HTTP '+env.http_status);
+          msgEl.style.color='var(--red)';
+        }
+      }
+    })
+    .catch(function(err){
+      if(out)out.textContent=pretty({endpoint:'POST '+ep,http_status:0,http_ok:false,body:{ok:false,error:String(err&&err.message||err)}});
+      if(msgEl){msgEl.textContent='Request error';msgEl.style.color='var(--red)';}
+    })
+    .finally(function(){if(btn)btn.disabled=false;});
+});
+var slabMergeCopy=document.getElementById('slab-merge-copy-btn');
+if(slabMergeCopy)slabMergeCopy.addEventListener('click',function(){
+  var out=document.getElementById('slab-out');
+  copyTextToClipboard((out&&out.textContent)?String(out.textContent):'',this,'Copied');
+});
+document.getElementById('slab-copy-btn').addEventListener('click',async function(){
+  const out=document.getElementById('slab-out');
+  const btn=this;
+  const text=(out&&out.textContent)?String(out.textContent):'';
+  const idle='Copy';
+  function flash(label){btn.textContent=label;setTimeout(function(){btn.textContent=idle;},1600);}
+  if(!text.trim()||text.trim()==='—'){flash('Nothing to copy');return;}
+  try{
+    await navigator.clipboard.writeText(text);
+    flash('Copied');
+  }catch(_e){
+    flash('Copy failed');
+  }
+});
+</script>`
+      : bodyNoProject;
+
+    reply
+      .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+      .type("text/html")
+      .send(page("Scene lab", "scene-lab", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
   app.get("/admin/run-candidates", async (request, reply) => {
     const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
@@ -1268,10 +2207,21 @@ async function loadRunTransparency(){
       return;
     }
     const notes=d.notes||{};
+    const snap=d.run.prompt_versions_snapshot;
+    const snapKeys=snap&&typeof snap==='object'&&!Array.isArray(snap)?Object.keys(snap):[];
+    const hasSnap=snapKeys.length>0;
     let h='<div class="card" style="margin-bottom:14px"><div class="card-h">Run</div><div style="padding:12px 16px 16px;font-size:13px">'+
       '<p style="margin:0 0 8px"><span class="mono">'+esc(d.run.run_id)+'</span> · '+esc(d.run.status)+' · jobs '+esc(String(d.run.jobs_completed))+'/'+esc(String(d.run.total_jobs))+'</p>'+
       '<ul style="margin:0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.5">'+
-      '<li>'+esc(notes.stored_signal_pack||'')+'</li><li>'+esc(notes.planner||'')+'</li><li>'+esc(notes.jobs||'')+'</li></ul></div></div>';
+      '<li>'+esc(notes.stored_signal_pack||'')+'</li><li>'+esc(notes.planner||'')+'</li><li>'+esc(notes.jobs||'')+'</li><li>'+esc(notes.prompt_versions_snapshot||'')+'</li></ul>';
+    if(hasSnap){
+      h+='<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Prompt versions snapshot</summary>'+
+        '<p style="margin:8px 0 4px;font-size:11px;color:var(--muted)">Stored on <span class="mono">runs.prompt_versions_snapshot</span> at plan time (learning / attribution).</p>'+
+        '<pre style="margin:0;font-size:10px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--card2);padding:10px;border-radius:8px;border:1px solid var(--border)">'+esc(pretty(snap))+'</pre></details>';
+    }else{
+      h+='<p style="margin:10px 0 0;font-size:11px;color:var(--muted)">No prompt snapshot yet (empty object, or apply migration <span class="mono">008_run_prompt_versions_snapshot</span> and re-plan).</p>';
+    }
+    h+='</div></div>';
 
     const oc=Array.isArray(d.signal_pack_overall_candidates)?d.signal_pack_overall_candidates:[];
     h+='<div class="card" style="margin-bottom:14px"><div class="card-h">Signal pack — overall_candidates_json ('+oc.length+' rows in DB)</div><div style="padding:12px 16px 16px">';
@@ -1498,7 +2448,12 @@ function renderJobDetailHtml(d){
   lines.push('<span style="font-size:11px;color:var(--muted)">Summary, content preview, API audit, render state, payloads, transitions</span>');
   lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
-  lines.push('<pre class="job-detail-pre">'+esc(prettyJson({task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,created_at:j.created_at,updated_at:j.updated_at}))+'</pre>');
+  var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
+  lines.push('<pre class="job-detail-pre">'+esc(prettyJson(sum))+'</pre>');
+  if(d.qc_detail&&(d.qc_detail.passed===false||(d.qc_detail.blocking_count|0)>0||j.status==='BLOCKED'||String(j.qc_status||'').toUpperCase()==='FAIL')){
+    lines.push('<div class="job-h">QC — why this job failed or was blocked</div>');
+    lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.qc_detail))+'</pre>');
+  }
   if(d.content_preview){
     lines.push('<div class="job-h">Content preview (carousel slides · video script/prompt · scene assembly)</div>');
     lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.content_preview))+'</pre>');
@@ -1831,6 +2786,174 @@ loadFE();
     reply.type("text/html").send(page("Flow Engine", "flow-engine", body, projects, "", adminHeadTokenScript(config)));
   });
 
+  app.get("/admin/prompt-labs", async (_, reply) => {
+    const projects = await listProjects(db);
+    const body = `
+<div class="ph"><div><h2>Prompt labs</h2><span class="ph-sub">Flow Engine DB templates + runtime prompt layers (video duration, publishing fields, HeyGen agent)</span></div></div>
+<div class="tabs" id="pl-tabs">
+  <button type="button" class="tab active" onclick="plTab('pl-env',this)">Env &amp; tuning</button>
+  <button type="button" class="tab" onclick="plTab('pl-core',this)">Script / plan LLM</button>
+  <button type="button" class="tab" onclick="plTab('pl-heygen',this)">HeyGen agent</button>
+  <button type="button" class="tab" onclick="plTab('pl-tpl',this)">All prompt templates</button>
+  <button type="button" class="tab" onclick="plTab('pl-flow',this)">Flow definitions</button>
+  <button type="button" class="tab" onclick="plTab('pl-carousel',this)">Carousel templates</button>
+</div>
+<div class="content" id="pl-root"><div class="empty">Loading…</div></div>
+<script>
+function plTab(id,btn){
+  document.querySelectorAll('#pl-root .tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('#pl-tabs .tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById(id)?.classList.add('active');
+  btn.classList.add('active');
+}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+function pre(txt){return '<pre class="mono-block" style="white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.45;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:14px;max-height:420px;overflow:auto">'+esc(txt)+'</pre>';}
+function trunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s;}
+function plFg(name,label,value,type,step){return '<div class="form-group"><label for="'+name+'">'+label+'</label><input type="'+(type||'text')+'" name="'+name+'" id="'+name+'" value="'+esc(value)+'"'+(step?' step="'+step+'"':'')+'></div>';}
+function plFgTa(name,label,value){return '<div class="form-group"><label for="'+name+'">'+label+'</label><textarea name="'+name+'" id="'+name+'" rows="4">'+esc(value)+'</textarea></div>';}
+function plVal(id){const el=document.getElementById(id);return el?String(el.value).trim():'';}
+function plNum(id){const s=plVal(id);if(s==='')return null;const n=Number(s);return Number.isFinite(n)?n:null;}
+function plOpenPromptEdit(ix){
+  const data=window.__PL_TEMPLATES[ix];
+  if(!data)return;
+  const dlg=document.createElement('dialog');
+  dlg.id='pl-prompt-dlg';
+  dlg.style.maxWidth='min(920px,96vw)';
+  dlg.style.width='100%';
+  let h='<h3 style="margin-bottom:12px">Edit prompt template</h3><p style="font-size:12px;color:var(--muted);margin-bottom:14px">Saves to <span class="mono">caf_core.prompt_templates</span>. Use <strong>Description (notes)</strong> for what this prompt does in your team.</p><form id="pl-prompt-form" class="config-form" style="max-width:100%">';
+  h+=plFg('pl_prompt_name','Prompt Name',data.prompt_name||'','text');
+  h+=plFg('pl_flow_type','Flow Type',data.flow_type||'','text');
+  h+=plFg('pl_prompt_role','Prompt Role',data.prompt_role||'','text');
+  h+=plFgTa('pl_system_prompt','System prompt',data.system_prompt||'');
+  h+=plFgTa('pl_user_prompt_template','User prompt template',data.user_prompt_template||'');
+  h+=plFgTa('pl_output_format_rule','Output format rule',data.output_format_rule||'');
+  h+=plFg('pl_schema_name','Output schema name',data.output_schema_name||'','text');
+  h+=plFg('pl_schema_version','Output schema version',data.output_schema_version||'','text');
+  h+=plFg('pl_temperature_default','Temperature',data.temperature_default!=null?String(data.temperature_default):'','number','0.01');
+  h+=plFg('pl_max_tokens_default','Max tokens',data.max_tokens_default!=null?String(data.max_tokens_default):'','number');
+  h+=plFg('pl_stop_sequences','Stop sequences',data.stop_sequences||'','text');
+  h+=plFgTa('pl_notes','Description (notes)',data.notes||'');
+  h+='<div class="form-actions"><button type="submit" class="btn">Save</button> <button type="button" class="btn-ghost" id="pl-prompt-cancel">Cancel</button><span id="pl-prompt-msg" class="form-msg"></span></div></form>';
+  dlg.innerHTML=h;
+  document.body.appendChild(dlg);
+  document.getElementById('pl-prompt-cancel').onclick=function(){dlg.remove();};
+  document.getElementById('pl-prompt-form').addEventListener('submit',async function(ev){
+    ev.preventDefault();
+    const body={
+      prompt_name:plVal('pl_prompt_name'),
+      flow_type:plVal('pl_flow_type'),
+      prompt_role:plVal('pl_prompt_role')||null,
+      system_prompt:plVal('pl_system_prompt')||null,
+      user_prompt_template:plVal('pl_user_prompt_template')||null,
+      output_format_rule:plVal('pl_output_format_rule')||null,
+      output_schema_name:plVal('pl_schema_name')||null,
+      output_schema_version:plVal('pl_schema_version')||null,
+      temperature_default:plNum('pl_temperature_default'),
+      max_tokens_default:plNum('pl_max_tokens_default'),
+      stop_sequences:plVal('pl_stop_sequences')||null,
+      notes:plVal('pl_notes')||null,
+      active:true
+    };
+    const msg=document.getElementById('pl-prompt-msg');
+    msg.textContent='Saving…';msg.style.color='var(--accent)';
+    try{
+      const res=await cafFetch('/v1/admin/flow-engine/prompt-tpl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const j=await res.json();
+      if(j.ok){msg.textContent='Saved';msg.style.color='var(--green)';setTimeout(function(){dlg.remove();loadPL();},600);}
+      else{msg.textContent=j.error||'Failed';msg.style.color='var(--red)';}
+    }catch(err){msg.textContent=String(err.message||err);msg.style.color='var(--red)';}
+  });
+  dlg.showModal();
+}
+async function loadPL(){
+  const root=document.getElementById('pl-root');
+  const r=await cafFetch('/v1/admin/prompt-labs'); const d=await r.json();
+  if(!d.ok){root.innerHTML='<div class="empty">Failed to load prompt labs</div>';return;}
+  const e=d.env_tuning||{};
+  const envHints=d.env_hints||{};
+  const c=d.core_addenda||{};
+  const meta=d.core_layer_meta||{};
+  const h=d.heygen_video_agent||{};
+  const coreOrder=['publication_system_addendum','video_script_system_suffix','video_prompt_system_suffix','scene_assembly_system_suffix','user_footer_script_json','user_footer_video_plan'];
+  let html='';
+  html+='<div id="pl-env" class="tab-panel active"><div class="card"><div class="card-h">Environment-backed knobs (config / .env)</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px">Change values in deployment env or <code>.env</code>, then restart the API. These drive runtime prompt policy — not editable from this page.</p>';
+  html+='<table><thead><tr><th>Variable</th><th>Value</th><th>What it does</th></tr></thead><tbody>';
+  for(const k of Object.keys(e)){
+    html+='<tr><td class="mono">'+esc(k)+'</td><td><strong>'+esc(String(e[k]))+'</strong></td><td style="font-size:12px;color:var(--fg2);max-width:360px">'+esc(envHints[k]||'—')+'</td></tr>';
+  }
+  html+='</tbody></table></div></div>';
+
+  html+='<div id="pl-core" class="tab-panel">';
+  for(const key of coreOrder){
+    if(!(key in c))continue;
+    const m=meta[key]||{title:key,description:''};
+    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">'+esc(m.title||key)+'</div><div style="padding:0 4px 8px">';
+    html+='<p style="font-size:13px;color:var(--fg2);line-height:1.5;margin-bottom:10px">'+esc(m.description||'')+'</p>';
+    html+=pre(c[key]||'');
+    html+='</div></div>';
+  }
+  html+='</div>';
+
+  html+='<div id="pl-heygen" class="tab-panel"><div class="card"><div class="card-h">HeyGen Video Agent</div>';
+  html+='<p style="font-size:13px;color:var(--fg2);line-height:1.55;margin-bottom:10px">'+esc(h.intro||'')+'</p>';
+  html+='<p style="color:var(--muted);margin-bottom:10px;font-size:12px">'+esc(h.note||'')+'</p>';
+  html+='<p style="font-size:12px;font-weight:600;margin-bottom:6px">Rubric lines (prepended to every agent prompt)</p>';
+  html+='<ul style="margin-left:18px;line-height:1.6;font-size:13px">';
+  (h.rubric_lines||[]).forEach(function(line){html+='<li>'+esc(line)+'</li>';});
+  html+='</ul></div></div>';
+
+  const pt=d.prompt_templates||[];
+  window.__PL_TEMPLATES=pt;
+  html+='<div id="pl-tpl" class="tab-panel"><div class="card"><div class="card-h">Prompt templates ('+pt.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Each row is a Flow Engine template. <strong>Description (notes)</strong> is yours to maintain; we show a role hint when notes are empty. Use <strong>Edit</strong> to change system/user prompts, tokens, and notes.</p>';
+  if(pt.length){
+    for(let i=0;i<pt.length;i++){
+      const p=pt[i];
+      const prev=(p.user_prompt_template||'').replace(/\\s+/g,' ').slice(0,220);
+      html+='<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:var(--card2)">';
+      html+='<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">';
+      html+='<div><span class="mono" style="font-weight:600;color:var(--accent)">'+esc(p.prompt_name)+'</span> <span style="color:var(--muted);font-size:12px">· '+esc(p.flow_type)+'</span>';
+      html+=' <span class="badge '+(p.active!==false?'badge-g':'badge-r')+'" style="font-size:10px">'+(p.active!==false?'active':'off')+'</span></div>';
+      html+='<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+i+')">Edit</button></div>';
+      html+='<p style="font-size:12px;color:var(--muted);margin:0 0 6px">Role: <strong>'+esc(p.prompt_role||'—')+'</strong></p>';
+      html+='<p style="font-size:13px;line-height:1.5;margin:0 0 8px;color:var(--fg)">'+esc(p.labs_short_description||'')+'</p>';
+      if(p.labs_flow_description)html+='<p style="font-size:11px;color:var(--muted);margin:0 0 8px">Flow definition: '+esc(trunc(p.labs_flow_description,280))+'</p>';
+      html+='<p style="font-size:11px;color:var(--fg2);margin:0"><span style="color:var(--muted)">User template preview:</span> '+esc(prev)+(p.user_prompt_template&&p.user_prompt_template.length>220?'…':'')+'</p>';
+      html+='</div>';
+    }
+  }else html+='<div class="empty">No rows</div>';
+  html+='<p style="margin-top:14px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine (all entity types)</a></p></div></div>';
+
+  const fd=d.flow_definitions||[];
+  html+='<div id="pl-flow" class="tab-panel"><div class="card"><div class="card-h">Flow definitions ('+fd.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Describes each <span class="mono">flow_type</span> for operators. Edit definitions on <a href="/admin/flow-engine">Flow Engine</a> → Flow Definitions.</p>';
+  if(fd.length){
+    html+='<div style="overflow-x:auto"><table><thead><tr><th>Flow type</th><th>Category</th><th>Description</th><th>Schema</th></tr></thead><tbody>';
+    for(const f of fd){
+      html+='<tr><td class="mono" style="font-size:12px">'+esc(f.flow_type)+'</td><td>'+esc(f.category||'—')+'</td><td style="font-size:12px;max-width:320px;color:var(--fg2)">'+esc(trunc(f.description||'—',200))+'</td><td class="mono" style="font-size:10px">'+esc((f.output_schema_name||'')+' '+(f.output_schema_version||''))+'</td></tr>';
+    }
+    html+='</tbody></table></div>';
+  }else html+='<div class="empty">No rows</div>';
+  html+='</div></div>';
+
+  const ct=d.carousel_templates||[];
+  html+='<div id="pl-carousel" class="tab-panel"><div class="card"><div class="card-h">Carousel templates ('+ct.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Maps logical template keys to renderer HTML names. Edit on <a href="/admin/flow-engine">Flow Engine</a> → Carousel Templates.</p>';
+  if(ct.length){
+    html+='<table><thead><tr><th>Key</th><th>Platform</th><th>Engine</th><th>HTML name</th></tr></thead><tbody>';
+    for(const x of ct){html+='<tr><td class="mono">'+esc(x.template_key)+'</td><td>'+esc(x.platform||'—')+'</td><td>'+esc(x.engine||'—')+'</td><td class="mono">'+esc(x.html_template_name||'—')+'</td></tr>';}
+    html+='</tbody></table>';
+  }else html+='<div class="empty">No rows</div>';
+  html+='</div></div>';
+
+  root.innerHTML=html;
+}
+loadPL();
+</script>`;
+    reply.type("text/html").send(page("Prompt labs", "prompt-labs", body, projects, "", adminHeadTokenScript(config)));
+  });
+
   // --- Project Config (tabbed: constraints, strategy, brand, platforms, flow types, risk rules, prompts, reference posts, heygen) ---
   app.get("/admin/config", async (request, reply) => {
     const query = request.query as Record<string, string>;
@@ -1885,6 +3008,7 @@ const STRATEGY_FIELDS=[
   {k:'publishing_intensity',l:'Publishing Intensity'},
   {k:'time_horizon',l:'Time Horizon'},
   {k:'owner',l:'Owner'},
+  {k:'instagram_handle',l:'Instagram handle (carousel CTA, no @ required)'},
   {k:'notes',l:'Notes',ta:true}
 ];
 
@@ -1972,7 +3096,7 @@ async function loadConfig(){
   h+=fg('auto_validation_pass_threshold','Auto-validation Pass Threshold',c.auto_validation_pass_threshold||'','number','0.01');
   h+=fg('max_carousel_jobs_per_run','Max carousel jobs (per run plan)',c.max_carousel_jobs_per_run??'','number');
   h+=fg('max_video_jobs_per_run','Max video/reel jobs (per run plan)',c.max_video_jobs_per_run??'','number');
-  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; overrides defaults — carousel flows default to 5 each, scene assembly + 3 HeyGen paths default to 1)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
+  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; overrides defaults — carousel flows default to 10 each, scene assembly + 3 HeyGen paths default to 1)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
   h+='<div class="form-actions"><button type="submit" class="btn">Save Constraints</button><span id="constraints-msg" class="form-msg"></span></div>';
   h+='</form></div></div>';
 

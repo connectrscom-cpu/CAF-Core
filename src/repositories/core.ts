@@ -39,6 +39,8 @@ export interface LearningRuleRow {
   scope_platform: string | null;
   action_type: string;
   action_payload: Record<string, unknown>;
+  scope_type?: string;
+  rule_family?: string;
 }
 
 export interface PromptVersionRow {
@@ -220,9 +222,19 @@ export async function listActiveSuppressionRules(db: Pool, projectId: string): P
 export async function listActiveAppliedLearningRules(db: Pool, projectId: string): Promise<LearningRuleRow[]> {
   return q<LearningRuleRow>(
     db,
-    `SELECT rule_id, trigger_type, scope_flow_type, scope_platform, action_type, action_payload
-     FROM caf_core.learning_rules
-     WHERE project_id = $1 AND status = 'active' AND applied_at IS NOT NULL`,
+    `SELECT r.rule_id, r.trigger_type, r.scope_flow_type, r.scope_platform, r.action_type, r.action_payload,
+            r.scope_type, r.rule_family
+     FROM caf_core.learning_rules r
+     WHERE r.status = 'active' AND r.applied_at IS NOT NULL
+       AND (r.expires_at IS NULL OR r.expires_at > now())
+       AND (r.valid_to IS NULL OR r.valid_to > now())
+       AND r.valid_from <= now()
+       AND (r.rule_family IS NULL OR r.rule_family IN ('ranking', 'suppression'))
+       AND r.action_type IN ('BOOST_RANK', 'SCORE_BOOST', 'SCORE_PENALTY')
+       AND (
+         r.project_id = $1
+         OR (r.scope_type = 'global' AND r.project_id = (SELECT id FROM caf_core.projects WHERE slug = 'caf-global' LIMIT 1))
+       )`,
     [projectId]
   );
 }

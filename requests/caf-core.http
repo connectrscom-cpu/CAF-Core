@@ -7,6 +7,9 @@
 ### Health (no auth)
 GET {{base}}/health
 
+### Rendering deps — RENDERER_BASE_URL / VIDEO_ASSEMBLY_BASE_URL this process uses + upstream /health (no auth)
+GET {{base}}/health/rendering
+
 ### Decision plan (dry run — no trace write if dry_run true; trace written if false)
 POST {{base}}/v1/decisions/plan
 Content-Type: application/json
@@ -94,3 +97,50 @@ x-caf-core-token: {{token}}
 
 ### Process a single job by task_id
 # POST {{base}}/v1/jobs/SNS/{{task_id}}/process
+
+### Scene assembly — resume concat / TTS / mux only (uses rendered_scene_url on job; no new Sora clips)
+POST {{base}}/v1/admin/scene-assembly-resume-pipeline
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "project_slug": "SNS",
+  "task_id": "PASTE_TASK_ID_WITH_SCENE_URLS_ON_PAYLOAD"
+}
+
+### Scene assembly — merge from Supabase folder scenes/{run_id}/{task_id}/*.mp4 (no Sora; re-links scene order from files)
+POST {{base}}/v1/admin/scene-assembly-merge-from-storage
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "project_slug": "SNS",
+  "task_id": "PASTE_TASK_ID",
+  "expand_voiceover": "never"
+}
+
+### Review queue (CAF Review app uses these; DB-backed, not Sheets)
+GET {{base}}/v1/review-queue/SNS/counts
+x-caf-core-token: {{token}}
+
+### All active projects (optional ?project_slug=SNS to narrow)
+GET {{base}}/v1/review-queue-all/counts
+x-caf-core-token: {{token}}
+
+GET {{base}}/v1/review-queue-all/in_review?limit=50&offset=0
+x-caf-core-token: {{token}}
+
+### Tab: in_review | approved | rejected | needs_edit — optional ?limit=50&offset=0&run_id=SNS_2026W09
+GET {{base}}/v1/review-queue/SNS/in_review?limit=50&offset=0
+x-caf-core-token: {{token}}
+
+### Submit human decision (updates content_jobs.status + editorial_reviews)
+POST {{base}}/v1/review-queue/SNS/task/PASTE_TASK_ID/decide
+Content-Type: application/json
+x-caf-core-token: {{token}}
+
+{
+  "decision": "APPROVED",
+  "notes": "",
+  "validator": "reviewer@example.com"
+}

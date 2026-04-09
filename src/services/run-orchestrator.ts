@@ -15,7 +15,13 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { decideGenerationPlan } from "../decision_engine/index.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
-import { getRunById, resetRunForReplan, updateRunStatus, type RunRow } from "../repositories/runs.js";
+import {
+  getRunById,
+  resetRunForReplan,
+  setRunPromptVersionsSnapshot,
+  updateRunStatus,
+  type RunRow,
+} from "../repositories/runs.js";
 import { ensureDefaultAllowedFlowsIfNone, listAllowedFlowTypes } from "../repositories/project-config.js";
 import { deleteAllJobsForRun, upsertContentJob } from "../repositories/jobs.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
@@ -23,6 +29,7 @@ import type { CandidateInput } from "../decision_engine/types.js";
 import { qOne } from "../db/queries.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { expandOverallCandidatesWithSceneAssemblyRouter } from "./scene-assembly-candidate-router.js";
+import { buildSnapshotFromPlannedJobs } from "./run-prompt-versions-snapshot.js";
 
 export interface StartRunResult {
   run_id: string;
@@ -120,6 +127,12 @@ export async function startRun(
     }
 
     await updateRunStatus(db, runUuid, "PLANNED", { total_jobs: plan.selected.length });
+
+    await setRunPromptVersionsSnapshot(
+      db,
+      runUuid,
+      buildSnapshotFromPlannedJobs(plan.selected, plan.trace_id, config.DECISION_ENGINE_VERSION)
+    );
 
     const createdJobIds: string[] = [];
     for (const job of plan.selected) {

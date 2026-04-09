@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildVideoScriptInputSlice,
   extractSpokenScriptText,
   extractVideoPromptText,
+  mergeSceneBundleParsedIntoGeneratedOutput,
   synthesizeVideoPromptFromPlan,
 } from "./video-gen-fields.js";
 
@@ -41,6 +43,18 @@ describe("video-gen-fields", () => {
     expect(extractSpokenScriptText(gen, 20)).toContain("Hello world");
   });
 
+  it("buildVideoScriptInputSlice carries beats and spoken_script", () => {
+    const gen = {
+      spoken_script: "Full voiceover text here.",
+      beats: ["Beat one", "Beat two"],
+      hook_line: "Hook",
+    };
+    const slice = buildVideoScriptInputSlice(gen as Record<string, unknown>);
+    expect(slice.spoken_script).toContain("Full voiceover");
+    expect(slice.beats).toEqual(["Beat one", "Beat two"]);
+    expect(slice.hook_line).toBe("Hook");
+  });
+
   it("extractSpokenScriptText joins dialogue lines when no spoken_script", () => {
     const gen = {
       dialogue: [
@@ -49,5 +63,19 @@ describe("video-gen-fields", () => {
       ],
     };
     expect(extractSpokenScriptText(gen as Record<string, unknown>, 20).length).toBeGreaterThanOrEqual(20);
+  });
+
+  it("mergeSceneBundleParsedIntoGeneratedOutput keeps spoken_script when bundle adds scene_bundle only", () => {
+    const prior = {
+      spoken_script: "Line one. Line two. Enough text for the voiceover track.",
+      hook: "Stay tuned",
+    };
+    const bundle = {
+      scene_bundle: { scenes: [{ scene_id: "1", order: 1, video_prompt: "A calm desk scene." }] },
+    };
+    const m = mergeSceneBundleParsedIntoGeneratedOutput(prior, bundle);
+    expect(m.spoken_script).toBe(prior.spoken_script);
+    expect(m.hook).toBe("Stay tuned");
+    expect((m.scene_bundle as { scenes: unknown[] }).scenes).toHaveLength(1);
   });
 });
