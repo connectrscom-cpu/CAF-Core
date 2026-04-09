@@ -51,6 +51,7 @@ import {
   runSceneAssemblyResumePipelineFromJobPayload,
 } from "../services/scene-merge-from-storage.js";
 import { processJobByTaskId } from "../services/job-pipeline.js";
+import { executeRework } from "../services/rework-orchestrator.js";
 import {
   appendVideoUserPromptDurationHardFooter,
   withSceneAssemblyPolicy,
@@ -432,6 +433,75 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       search: query.search || undefined,
     }, limit, offset);
     return { ok: true, ...result, page: pg, limit };
+  });
+
+  /**
+   * POST /v1/admin/rework/pending
+   * Rework every job whose latest editorial decision is NEEDS_EDIT.
+   *
+   * This is the admin “one-click rework queue” primitive. The UI can call this
+   * and it will re-use the existing stored NEEDS_EDIT review notes/tags/overrides.
+   */
+  app.post("/v1/admin/rework/pending", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const projectSlug = typeof body.project_slug === "string" ? body.project_slug : undefined;
+    const limitRaw = typeof body.limit === "number" ? body.limit : undefined;
+    const limit = Math.min(500, Math.max(1, Math.floor(limitRaw ?? 200)));
+
+    const project = await resolveProject(db, projectSlug);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+
+    const rows = await q<{ task_id: string }>(
+      db,
+      `
+        SELECT j.task_id
+        FROM caf_core.content_jobs j
+        LEFT JOIN LATERAL (
+          SELECT decision
+          FROM caf_core.editorial_reviews r
+          WHERE r.project_id = j.project_id AND r.task_id = j.task_id
+          ORDER BY r.created_at DESC
+          LIMIT 1
+        ) lr ON true
+        WHERE j.project_id = $1 AND lr.decision = 'NEEDS_EDIT'
+        ORDER BY j.updated_at DESC
+        LIMIT $2
+      `,
+      [project.id, limit]
+    );
+
+    const results: Array<{
+      task_id: string;
+      ok: boolean;
+      mode?: string;
+      new_task_id?: string;
+      error?: string;
+    }> = [];
+
+    let succeeded = 0;
+    for (const r of rows) {
+      const taskId = String(r.task_id || "").trim();
+      if (!taskId) continue;
+      const out = await executeRework(db, config, project.id, taskId);
+      results.push({
+        task_id: taskId,
+        ok: out.ok,
+        mode: out.mode,
+        new_task_id: out.new_task_id,
+        error: out.error,
+      });
+      if (out.ok) succeeded += 1;
+    }
+
+    return {
+      ok: true,
+      project_slug: project.slug,
+      total_pending: rows.length,
+      attempted: results.length,
+      succeeded,
+      failed: results.length - succeeded,
+      results,
+    };
   });
 
   app.get("/v1/admin/job", async (request, reply) => {
@@ -2746,6 +2816,13 @@ loadRunTransparency();
 .job-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:10px 0 6px}
 .jobs-live-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;font-size:13px;color:var(--fg2)}
 </style>
+  <div id="toast-area"></div>
+  <div class="jobs-live-row" style="margin:0 0 12px">
+    <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="reworkPendingNeedsEdit()" title="Runs rework for every job whose latest review decision is NEEDS_EDIT">
+      Rework pending NEEDS_EDIT
+    </button>
+    <span style="font-size:12px;color:var(--muted)">Uses the stored NEEDS_EDIT instructions (notes/tags/overrides). Creates child jobs for full/partial rework; override-only rework updates the same job.</span>
+  </div>
   <div class="filter-row" id="filters">
     <div><label>Search</label><input type="text" id="f-search" placeholder="task_id or run_id..." value=""></div>
     <div><label>Status</label><select id="f-status"><option value="">All</option></select></div>
@@ -2776,6 +2853,26 @@ let jobsListGen=0;
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
 function trunc(s,n){if(s==null||s==='')return '—';s=String(s);return s.length<=n?s:s.slice(0,Math.max(0,n-1))+'…';}
+function showToast(msg,ok){
+  const area=document.getElementById('toast-area');
+  if(!area){if(!ok)alert(String(msg||''));return;}
+  area.innerHTML='<div class="toast '+(ok?'toast-ok':'toast-err')+'">'+esc(msg)+'</div>';
+  setTimeout(function(){area.innerHTML='';},ok?6000:14000);
+}
+async function reworkPendingNeedsEdit(){
+  if(!JOB_SLUG){showToast('Select a project first (open /admin/jobs?project=YOUR_SLUG)',false);return;}
+  if(!confirm('Trigger rework for ALL pending NEEDS_EDIT jobs for '+JOB_SLUG+'?'))return;
+  showToast('Starting rework batch… (this can take a while)',true);
+  try{
+    const r=await cafFetch('/v1/admin/rework/pending',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_slug:JOB_SLUG,limit:200})});
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok){throw new Error((d&&d.error)||('HTTP '+r.status));}
+    showToast('Rework batch done: '+d.succeeded+' ok, '+d.failed+' failed (out of '+d.attempted+')',d.failed===0);
+    loadJobs(1);
+  }catch(err){
+    showToast(err.message||String(err),false);
+  }
+}
 function fallbackCopyPlainText(text){
   var ta=document.createElement('textarea');
   ta.value=text;
