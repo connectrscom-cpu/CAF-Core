@@ -27,7 +27,7 @@ import {
   listQcChecks, upsertQcCheck, deleteQcChecklist,
   listRiskPolicies, upsertRiskPolicy, deleteRiskPolicy,
 } from "../repositories/flow-engine.js";
-import { q } from "../db/queries.js";
+import { q, qOne } from "../db/queries.js";
 import {
   getJobStats,
   listJobs,
@@ -76,12 +76,14 @@ interface ProjectRow {
   display_name: string | null;
   active: boolean;
   color?: string | null;
+  is_system?: boolean;
   updated_at?: string;
   run_count?: number | string | null;
   job_count?: number | string | null;
 }
 
-async function listProjects(db: Pool): Promise<ProjectRow[]> {
+async function listProjects(db: Pool, opts?: { include_system?: boolean }): Promise<ProjectRow[]> {
+  const includeSystem = opts?.include_system === true;
   return q<ProjectRow>(
     db,
     `
@@ -91,12 +93,15 @@ async function listProjects(db: Pool): Promise<ProjectRow[]> {
         p.display_name,
         p.active,
         p.color,
+        p.is_system,
         p.updated_at,
         (SELECT count(*) FROM caf_core.runs r WHERE r.project_id = p.id) AS run_count,
         (SELECT count(*) FROM caf_core.content_jobs j WHERE j.project_id = p.id) AS job_count
       FROM caf_core.projects p
+      WHERE ($1::boolean = true) OR (COALESCE(p.is_system,false) = false)
       ORDER BY p.slug
-    `
+    `,
+    [includeSystem]
   );
 }
 
@@ -107,13 +112,26 @@ function normalizeProjectSlugParam(slug: string | undefined | null): string | un
   return cleaned === "" ? undefined : cleaned;
 }
 
+/** Like normalizeProjectSlugParam, but preserves empty string (for cleaning up corrupted rows). */
+function cleanSlugLoose(slug: string | undefined | null): string | undefined {
+  if (slug == null) return undefined;
+  return String(slug).replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, "").trim();
+}
+
 async function resolveProject(db: Pool, slugParam: string | undefined): Promise<ProjectRow | null> {
   const slug = normalizeProjectSlugParam(slugParam);
   if (!slug) {
     const projects = await listProjects(db);
     return projects[0] ?? null;
   }
-  return getProjectBySlug(db, slug);
+  return qOne<ProjectRow>(
+    db,
+    `SELECT id, slug, display_name, active, color, is_system
+     FROM caf_core.projects
+     WHERE lower(regexp_replace(slug, '[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+', '', 'g')) = lower($1)
+     LIMIT 1`,
+    [slug]
+  );
 }
 
 // ── Shared HTML helpers ────────────────────────────────────────────────────
@@ -208,9 +226,11 @@ dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
 }
 
 function sidebar(active: string, projects: ProjectRow[], currentSlug: string): string {
-  const projectOptions = projects.map(p =>
-    `<option value="${esc(p.slug)}"${p.slug === currentSlug ? " selected" : ""}>${esc(p.display_name || p.slug)}${p.active ? "" : " (inactive)"}</option>`
-  ).join("");
+  const projectOptions = projects.map(p => {
+    const slug = normalizeProjectSlugParam(p.slug) ?? String(p.slug ?? "");
+    const label = p.display_name || slug;
+    return `<option value="${esc(slug)}"${slug === currentSlug ? " selected" : ""}>${esc(label)}${p.active ? "" : " (inactive)"}</option>`;
+  }).join("");
 
   const pq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
 
@@ -224,6 +244,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
 
   const globalLinks = [
     { href: "/admin/projects", label: "Projects", key: "projects" },
+    { href: "/admin/global-learning", label: "Global Learning", key: "global-learning" },
     { href: "/admin/engine", label: "Decision Engine", key: "engine" },
     { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
     { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
@@ -298,8 +319,10 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
   // ── JSON API endpoints ──────────────────────────────────────────────
 
-  app.get("/v1/admin/projects", async () => {
-    const projects = await listProjects(db);
+  app.get("/v1/admin/projects", async (request) => {
+    const query = request.query as Record<string, string>;
+    const includeSystem = query.include_system === "1" || query.include_system === "true";
+    const projects = await listProjects(db, { include_system: includeSystem });
     return { ok: true, projects };
   });
 
@@ -315,8 +338,22 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
   app.put("/v1/admin/projects", async (request, reply) => {
     const body = request.body as Record<string, unknown>;
-    const slug = String(body.slug || "").trim().toUpperCase();
-    if (!slug) return reply.code(400).send({ ok: false, error: "Slug is required" });
+    const slug = cleanSlugLoose(body.slug != null ? String(body.slug) : undefined);
+    if (slug === undefined) return reply.code(400).send({ ok: false, error: "Slug is required" });
+    if (slug === "") return reply.code(400).send({ ok: false, error: "Slug is required" });
+
+    const existing = await qOne<{ id: string; is_system: boolean }>(
+      db,
+      `SELECT id, COALESCE(is_system,false) AS is_system
+       FROM caf_core.projects
+       WHERE lower(regexp_replace(slug, '[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+', '', 'g')) = lower($1)
+       LIMIT 1`,
+      [slug]
+    );
+    if (!existing) return reply.code(404).send({ ok: false, error: "project_not_found" });
+    if ((existing as any).is_system === true) {
+      return reply.code(400).send({ ok: false, error: "cannot_update_system_project" });
+    }
 
     const displayNameRaw = body.display_name != null ? String(body.display_name).trim() : "";
     const display_name = displayNameRaw === "" ? null : displayNameRaw;
@@ -332,7 +369,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       db,
       `UPDATE caf_core.projects
        SET display_name = $2, active = $3, color = $4, updated_at = now()
-       WHERE slug = $1
+       WHERE lower(regexp_replace(slug, '[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+', '', 'g')) = lower($1)
        RETURNING id`,
       [slug, display_name, active, color]
     );
@@ -342,12 +379,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
   app.delete("/v1/admin/projects", async (request, reply) => {
     const query = request.query as Record<string, string>;
-    const slug = String(query.slug || "").trim().toUpperCase();
+    const hasSlugParam = Object.prototype.hasOwnProperty.call(query, "slug");
+    const slug = hasSlugParam ? cleanSlugLoose(query.slug) : undefined;
     const force = query.force === "true" || query.force === "1";
-    if (!slug) return reply.code(400).send({ ok: false, error: "slug required" });
+    if (slug === undefined) return reply.code(400).send({ ok: false, error: "slug required" });
 
-    const proj = await getProjectBySlug(db, slug);
+    const proj = await qOne<ProjectRow>(
+      db,
+      `SELECT id, slug, display_name, active, color, is_system
+       FROM caf_core.projects
+       WHERE lower(regexp_replace(slug, '[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+', '', 'g')) = lower($1)
+       LIMIT 1`,
+      [slug]
+    );
     if (!proj) return reply.code(404).send({ ok: false, error: "project_not_found" });
+    if (proj.is_system) return reply.code(400).send({ ok: false, error: "cannot_delete_system_project" });
 
     if (!force) {
       const runs = await q<{ c: number | string }>(db, `SELECT count(*)::int AS c FROM caf_core.runs WHERE project_id = $1`, [proj.id]);
@@ -1237,11 +1283,13 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
   // --- Projects list / management ---
   app.get("/admin/projects", async (request, reply) => {
     const query = request.query as Record<string, string>;
-    const projects = await listProjects(db);
+    const showSystem = query.show_system === "1" || query.show_system === "true";
+    const projects = await listProjects(db, { include_system: showSystem });
     const project = await resolveProject(db, query.project);
-    const currentSlug = project?.slug ?? "";
+    const currentSlug = normalizeProjectSlugParam(project?.slug) ?? "";
 
     const rows = projects.map((p) => {
+      const slug = cleanSlugLoose(p.slug) ?? String(p.slug ?? "");
       const runCount = p.run_count ?? "—";
       const jobCount = p.job_count ?? "—";
       const updated = p.updated_at ? new Date(p.updated_at).toLocaleString() : "—";
@@ -1252,7 +1300,7 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
       <span title="${esc(color)}" style="width:10px;height:10px;border-radius:999px;background:${esc(color)};box-shadow:0 0 0 1px rgba(255,255,255,0.12) inset"></span>
       <div style="display:flex;flex-direction:column">
         <span style="font-weight:600">${esc(p.display_name ?? p.slug)}</span>
-        <span style="color:var(--muted);font-size:12px">${esc(p.slug)}</span>
+        <span style="color:var(--muted);font-size:12px">${esc(slug)}</span>
       </div>
     </div>
   </td>
@@ -1262,13 +1310,13 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
   <td style="color:var(--muted)">${esc(updated)}</td>
   <td>
     <button class="btn" style="padding:8px 12px" data-manage="1"
-      data-slug="${esc(p.slug)}"
+      data-slug="${esc(slug)}"
       data-display-name="${esc(p.display_name ?? "")}"
       data-active="${p.active ? "1" : "0"}"
       data-color="${esc(p.color ?? "#64748b")}"
     >Manage</button>
     <a class="btn" style="padding:8px 12px;margin-left:8px;background:transparent;border:1px solid var(--border);color:var(--fg2)"
-      href="/admin?project=${encodeURIComponent(p.slug)}">Open</a>
+      href="/admin?project=${encodeURIComponent(slug)}">Open</a>
   </td>
 </tr>`;
     }).join("\n");
@@ -1442,6 +1490,80 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
 `;
 
     reply.type("text/html").send(page("Projects", "projects", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  // --- Global Learning (system-level learning store) ---
+  app.get("/admin/global-learning", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? "";
+
+    const globalProject = await qOne<ProjectRow>(
+      db,
+      `SELECT id, slug, display_name, active, color, is_system
+       FROM caf_core.projects
+       WHERE slug = 'caf-global'
+       LIMIT 1`
+    );
+
+    if (!globalProject) {
+      const body = `
+<div class="ph"><div><h2>Global Learning</h2><span class="ph-sub">System-wide learning store</span></div></div>
+<div class="content">
+  <div class="card">
+    <div class="card-h">Missing system project</div>
+    <div class="empty">The <span class="mono">caf-global</span> project was not found. Run migration <span class="mono">010</span> (and <span class="mono">013</span>).</div>
+  </div>
+</div>`;
+      return reply.type("text/html").send(page("Global Learning", "global-learning", body, projects, currentSlug, adminHeadTokenScript(config)));
+    }
+
+    const [rulesCount, obsCount, insightsCount, hypothesesCount] = await Promise.all([
+      qOne<{ c: number }>(db, `SELECT count(*)::int AS c FROM caf_core.learning_rules WHERE project_id = $1`, [globalProject.id]),
+      qOne<{ c: number }>(db, `SELECT count(*)::int AS c FROM caf_core.learning_observations WHERE project_id = $1`, [globalProject.id]),
+      qOne<{ c: number }>(db, `SELECT count(*)::int AS c FROM caf_core.learning_insights WHERE project_id = $1`, [globalProject.id]),
+      qOne<{ c: number }>(db, `SELECT count(*)::int AS c FROM caf_core.learning_hypotheses WHERE project_id = $1`, [globalProject.id]),
+    ]);
+
+    const body = `
+<div class="ph">
+  <div>
+    <h2>Global Learning</h2>
+    <span class="ph-sub">System-wide learning store (rules/evidence that apply across projects)</span>
+  </div>
+</div>
+
+<div class="content">
+  <div class="card">
+    <div class="card-h">Storage</div>
+    <div class="info-row"><span class="info-l">Project slug</span><span class="info-v mono">${esc(globalProject.slug)}</span></div>
+    <div class="info-row"><span class="info-l">Display name</span><span class="info-v">${esc(globalProject.display_name ?? "—")}</span></div>
+    <div class="info-row"><span class="info-l">System project</span><span class="info-v">${globalProject.is_system ? statusBadge("SYSTEM") : statusBadge("NO")}</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">Global evidence counts</div>
+    <div class="grid3">
+      <div class="stat-card"><div class="num">${Number((rulesCount as any)?.c ?? 0)}</div><div class="lbl">Rules</div></div>
+      <div class="stat-card"><div class="num">${Number((obsCount as any)?.c ?? 0)}</div><div class="lbl">Observations</div></div>
+      <div class="stat-card"><div class="num">${Number((insightsCount as any)?.c ?? 0)}</div><div class="lbl">Insights</div></div>
+    </div>
+    <div class="grid3" style="margin-top:16px">
+      <div class="stat-card"><div class="num">${Number((hypothesesCount as any)?.c ?? 0)}</div><div class="lbl">Hypotheses</div></div>
+      <div class="stat-card"><div class="num">—</div><div class="lbl">Trials</div></div>
+      <div class="stat-card"><div class="num">—</div><div class="lbl">Attribution</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-h">API endpoints</div>
+    <div class="info-row"><span class="info-l">Merged rules for a content project</span><span class="info-v mono">GET /v1/learning/&lt;project_slug&gt;/rules</span></div>
+    <div class="info-row"><span class="info-l">Context preview</span><span class="info-v mono">GET /v1/learning/&lt;project_slug&gt;/context-preview</span></div>
+  </div>
+</div>`;
+
+    return reply.type("text/html").send(page("Global Learning", "global-learning", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Overview ---
