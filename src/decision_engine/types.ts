@@ -27,6 +27,20 @@ export const generationPlanRequestSchema = z.object({
   min_score: z.number().optional(),
   max_candidates: z.number().int().positive().optional(),
   max_variations_per_candidate: z.number().int().min(1).max(10).optional(),
+  /**
+   * Prompt selection override for this planning call.
+   *
+   * Default behavior (when omitted):
+   * - Prefer project prompt versions for the flow_type (status active/test)
+   * - Fallback to CAF global template prompt versions (project_slug: 'caf-global')
+   */
+  prompt_override: z
+    .object({
+      prompt_version_id: z.string().optional(),
+      prompt_id: z.string().optional(),
+      template_only: z.boolean().optional(),
+    })
+    .optional(),
   dry_run: z.boolean().optional(),
 });
 
@@ -46,6 +60,7 @@ export interface PlannedJob {
   prompt_version_id: string | null;
   prompt_id: string | null;
   prompt_version_label: string | null;
+  prompt_source: "project" | "template" | "override" | "none";
   recommended_route: string;
   pre_gen_score: number;
 }
@@ -74,6 +89,7 @@ export interface GenerationPlanResult {
     max_daily_jobs: number | null;
     min_score_used: number;
     variation_cap: number;
+    prompt_override_used?: GenerationPlanRequest["prompt_override"] | null;
     max_carousel_jobs_per_run?: number | null;
     max_video_jobs_per_run?: number | null;
     default_other_flow_plan_cap?: number;

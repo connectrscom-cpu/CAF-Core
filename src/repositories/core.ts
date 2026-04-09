@@ -52,6 +52,10 @@ export interface PromptVersionRow {
   flow_type: string;
 }
 
+export interface PromptVersionDetailRow extends PromptVersionRow {
+  project_id: string;
+}
+
 export async function getProjectBySlug(db: Pool, slug: string): Promise<ProjectRow | null> {
   return qOne<ProjectRow>(
     db,
@@ -272,6 +276,20 @@ export async function listPromptVersionsForFlow(
      WHERE project_id = $1 AND flow_type = $2 AND status = ANY($3::text[])
      ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'test' THEN 1 ELSE 2 END, version DESC`,
     [projectId, flowType, statuses]
+  );
+}
+
+export async function getPromptVersionById(
+  db: Pool,
+  promptVersionId: string
+): Promise<PromptVersionDetailRow | null> {
+  return qOne<PromptVersionDetailRow>(
+    db,
+    `SELECT id, project_id, prompt_id, version, status, flow_type
+     FROM caf_core.prompt_versions
+     WHERE id = $1
+     LIMIT 1`,
+    [promptVersionId]
   );
 }
 

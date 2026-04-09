@@ -11,7 +11,7 @@ import {
   listActiveSuppressionRules,
 } from "../repositories/core.js";
 import { evaluateKillSwitches } from "./kill_switches.js";
-import { selectPromptVersion } from "./prompt_selector.js";
+import { resolvePromptVersion } from "./prompt_selector.js";
 import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
 import { defaultWeights, scoreCandidate } from "./scoring.js";
 import { selectRoute } from "./route_selector.js";
@@ -35,6 +35,7 @@ export async function decideGenerationPlan(
 ): Promise<GenerationPlanResult> {
   const traceId = randomUUID();
   const project = await ensureProject(db, req.project_slug);
+  const cafGlobal = await ensureProject(db, "caf-global", "CAF Global");
 
   const constraints = await getConstraints(db, project.id);
   const minScore =
@@ -174,7 +175,13 @@ export async function decideGenerationPlan(
 
   for (const c of sorted) {
     if (remainingSlots <= 0) break;
-    const prompt = await selectPromptVersion(db, project.id, c.flow_type, maxPrompts);
+    const resolvedPrompt = await resolvePromptVersion(db, {
+      projectId: project.id,
+      cafGlobalProjectId: cafGlobal.id,
+      flowType: c.flow_type,
+      maxActive: maxPrompts,
+      override: req.prompt_override,
+    });
     const route = selectRoute(c, { autoValidationThreshold: autoValThreshold });
     const ft = c.flow_type;
     let varsThisCandidate = Math.min(variationCap, remainingSlots);
@@ -205,9 +212,10 @@ export async function decideGenerationPlan(
         platform: c.target_platform ?? c.platform,
         variation_index: v,
         variation_name: v === 0 ? "v1" : `v${v + 1}`,
-        prompt_version_id: prompt?.prompt_version_id ?? null,
-        prompt_id: prompt?.prompt_id ?? null,
-        prompt_version_label: prompt?.version ?? null,
+        prompt_version_id: resolvedPrompt.selected?.prompt_version_id ?? null,
+        prompt_id: resolvedPrompt.selected?.prompt_id ?? null,
+        prompt_version_label: resolvedPrompt.selected?.version ?? null,
+        prompt_source: resolvedPrompt.source,
         recommended_route: route,
         pre_gen_score: c.pre_gen_score,
       });
@@ -232,6 +240,7 @@ export async function decideGenerationPlan(
       max_daily_jobs: maxDaily,
       min_score_used: minScore,
       variation_cap: variationCap,
+      prompt_override_used: req.prompt_override ?? null,
       max_carousel_jobs_per_run: maxCarouselPlan,
       max_video_jobs_per_run: maxVideoPlan,
       default_other_flow_plan_cap: config.DEFAULT_OTHER_FLOW_PLAN_CAP,

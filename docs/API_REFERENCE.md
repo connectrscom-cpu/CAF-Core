@@ -27,6 +27,11 @@ Computes suppression, scores, ranking, prompt/route selection; persists `decisio
   "min_score": 0.4,
   "max_candidates": 20,
   "max_variations_per_candidate": 2,
+  "prompt_override": {
+    "template_only": false,
+    "prompt_id": "carousel_v2",
+    "prompt_version_id": "optional-uuid"
+  },
   "candidates": [
     {
       "candidate_id": "SNS_2026W09_Instagram_0001",
