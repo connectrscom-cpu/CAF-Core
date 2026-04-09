@@ -38,6 +38,7 @@ import {
   getRunCount,
   getJobFacets,
   listDecisionTracesForRun,
+  listTaskIdsMatchingJobFilters,
 } from "../repositories/admin.js";
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
 import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
@@ -50,8 +51,15 @@ import {
   runSceneAssemblyMergeClipsFromStorage,
   runSceneAssemblyResumePipelineFromJobPayload,
 } from "../services/scene-merge-from-storage.js";
-import { processJobByTaskId } from "../services/job-pipeline.js";
+import { processJobByTaskId, reprocessJobFromScratch } from "../services/job-pipeline.js";
 import { executeRework } from "../services/rework-orchestrator.js";
+import {
+  deleteAllJobsForRun,
+  deleteAllContentJobsForProject,
+  deleteContentJobByTaskId,
+  deleteContentJobsByTaskIds,
+  getContentJobByTaskId,
+} from "../repositories/jobs.js";
 import {
   appendVideoUserPromptDurationHardFooter,
   withSceneAssemblyPolicy,
@@ -433,6 +441,160 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       search: query.search || undefined,
     }, limit, offset);
     return { ok: true, ...result, page: pg, limit };
+  });
+
+  /** Remove all jobs (and related rows) for a run id — works even if the `runs` row is already gone (orphan cleanup). */
+  app.post("/v1/admin/jobs/delete-by-run", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      run_id: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    try {
+      const content_jobs_deleted = await deleteAllJobsForRun(db, project.id, parsed.data.run_id);
+      return { ok: true, run_id: parsed.data.run_id, content_jobs_deleted };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "delete_failed", message });
+    }
+  });
+
+  /**
+   * Delete every job that matches the same filters as GET /v1/admin/jobs (search, run, status, …).
+   * Requires at least one filter so we never wipe the whole project by accident from an empty form.
+   */
+  app.post("/v1/admin/jobs/delete-matching-filters", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      status: z.string().optional(),
+      platform: z.string().optional(),
+      flow_type: z.string().optional(),
+      run_id: z.string().optional(),
+      search: z.string().optional(),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const b = parsed.data;
+    const hasFilter = !!(
+      b.status?.trim() ||
+      b.platform?.trim() ||
+      b.flow_type?.trim() ||
+      b.run_id?.trim() ||
+      b.search?.trim()
+    );
+    if (!hasFilter) {
+      return reply.code(400).send({
+        ok: false,
+        error: "filters_required",
+        message: "Set at least one filter (search, run id, status, platform, or flow) before erasing matching jobs.",
+      });
+    }
+    const project = await resolveProject(db, b.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const filters = {
+      status: b.status?.trim() || undefined,
+      platform: b.platform?.trim() || undefined,
+      flow_type: b.flow_type?.trim() || undefined,
+      run_id: b.run_id?.trim() || undefined,
+      search: b.search?.trim() || undefined,
+    };
+    try {
+      const { task_ids, cap_hit } = await listTaskIdsMatchingJobFilters(db, project.id, filters);
+      if (task_ids.length === 0) {
+        return { ok: true, content_jobs_deleted: 0, cap_hit, matched: 0 };
+      }
+      let deleted = 0;
+      const chunk = 400;
+      for (let i = 0; i < task_ids.length; i += chunk) {
+        const slice = task_ids.slice(i, i + chunk);
+        deleted += await deleteContentJobsByTaskIds(db, project.id, slice);
+      }
+      return { ok: true, content_jobs_deleted: deleted, cap_hit, matched: task_ids.length };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "delete_failed", message });
+    }
+  });
+
+  /** Delete one job and its drafts, audits, assets, etc. */
+  app.post("/v1/admin/jobs/delete-one", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      task_id: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const taskId = parsed.data.task_id.trim();
+    const existing = await getContentJobByTaskId(db, project.id, taskId);
+    if (!existing) return reply.code(404).send({ ok: false, error: "job_not_found" });
+    try {
+      const content_jobs_deleted = await deleteContentJobByTaskId(db, project.id, taskId);
+      return { ok: true, task_id: taskId, content_jobs_deleted };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "delete_failed", message });
+    }
+  });
+
+  /**
+   * POST /v1/admin/jobs/reprocess-full
+   * Clear generated output, QC, renders, assets, and machine audits for one task_id, set status PLANNED,
+   * then run the full pipeline (same as Process for a single job).
+   */
+  app.post("/v1/admin/jobs/reprocess-full", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      task_id: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const taskId = parsed.data.task_id.trim();
+    try {
+      const out = await reprocessJobFromScratch(db, config, project.id, taskId);
+      return { ok: true, task_id: taskId, status: out.status, skipped: out.skipped };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "reprocess_failed", message });
+    }
+  });
+
+  /** Delete every job in the project. `confirm_slug` must equal the project slug (safety). */
+  app.post("/v1/admin/jobs/delete-all", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      confirm_slug: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    if (parsed.data.confirm_slug.trim() !== project.slug) {
+      return reply.code(400).send({ ok: false, error: "confirm_slug_mismatch", message: "Type the project slug exactly to confirm." });
+    }
+    try {
+      const content_jobs_deleted = await deleteAllContentJobsForProject(db, project.id);
+      return { ok: true, content_jobs_deleted };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "delete_failed", message });
+    }
   });
 
   /**
@@ -1755,7 +1917,7 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
       <button type="button" class="btn" onclick="togglePanel('upload-panel')">Upload signal pack (.xlsx)</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="togglePanel('create-panel')">Create run (manual)</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
-      <p class="runs-ops-hint">Upload ingests <strong>Overall</strong> rows into the DB and creates a run in <strong>CREATED</strong>. Use <strong>Start</strong> to plan jobs: aggregate <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run (when System limits leave those empty), and <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> job per other flow type. Use <strong>Re-plan</strong> to wipe jobs and plan again. <strong>Transparency:</strong> <strong>Pack</strong> = stored signal pack JSON; <strong>Candidates</strong> = Overall rows + planner rows (× flows) + run-level API audit; expand a row on <strong>Jobs</strong> for per-task LLM prompts and content preview.</p>
+      <p class="runs-ops-hint">Upload ingests <strong>Overall</strong> rows into the DB and creates a run in <strong>CREATED</strong> (no jobs yet — only <strong>Start</strong> writes <code>content_jobs</code>). Use <strong>Start</strong> to plan jobs: aggregate <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run (when System limits leave those empty), and <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> job per other flow type. Use <strong>Re-plan</strong> to wipe jobs and plan again. On the <strong>Jobs</strong> tab, filter by <strong>Run</strong> so you are not looking at a different run’s rows. <strong>Transparency:</strong> <strong>Pack</strong> = stored signal pack JSON; <strong>Candidates</strong> = Overall rows + planner rows (× flows) + run-level API audit; expand a row on <strong>Jobs</strong> for per-task LLM prompts and content preview.</p>
     </div>
     <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:flex-start">
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -2025,7 +2187,9 @@ async function loadRuns(p){
   let h='<table><thead><tr><th>Run ID</th><th>Status</th><th>Jobs</th><th>Created</th><th>Started</th><th>Completed</th><th>Actions</th></tr></thead><tbody>';
   for(const run of runs){
     const canStart=run.status==='CREATED';
-    const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status);
+    /** Start leaves the run in GENERATING with jobs still PLANNED until the user clicks Process. Also allow retry after a failed start if jobs were planned. */
+    const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
+      || (run.status==='FAILED' && (run.total_jobs||0) > 0);
     const canCancel=!['COMPLETED','FAILED','CANCELLED'].includes(run.status);
     const canReplan=!!run.signal_pack_id&&run.status!=='PLANNING'&&!(run.status==='CREATED'&&(!run.total_jobs||run.total_jobs===0));
     h+='<tr><td class="mono" style="color:var(--accent)"><a href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">'+esc(run.run_id)+'</a>';
@@ -2039,7 +2203,7 @@ async function loadRuns(p){
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunContentLog("+JSON.stringify(run.run_id)+")' title='Carousel slide counts + copy preview; video script preview + assets'>Content log</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
-    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")'>Process</button>";
+    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title='After Start: runs LLM → QC → render for each PLANNED job (can take several minutes)'>Process</button>";
     if(canReplan)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'replan')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("replan")+")' title="+JSON.stringify("Delete all jobs and run the decision engine again")+">Re-plan</button>";
     if(canCancel)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'cancel')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("cancel")+")' style='color:var(--red)'>Cancel</button>";
     h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'delete')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("delete")+")' style='color:var(--red)' title='Remove run row and all jobs'>Delete</button>";
@@ -2830,12 +2994,15 @@ loadRunTransparency();
     <div><label>Flow type</label><select id="f-flow"><option value="">All</option></select></div>
     <div><label>Run ID</label><select id="f-run"><option value="">All</option></select></div>
     <div><button class="btn" onclick="loadJobs(1)">Filter</button></div>
+    <div><button type="button" class="btn-ghost" style="color:var(--red);border:1px solid var(--border)" onclick="deleteJobsForFilteredRun()" title="Uses Run ID dropdown, else ?run_id= URL, else Search text as run id. Typo in run id removes 0 rows — use Erase matching filters if you filtered the table with Search.">Erase jobs for this run</button></div>
+    <div><button type="button" class="btn-ghost" style="color:var(--red);border:1px solid var(--border)" onclick="deleteJobsMatchingFilters()" title="Deletes jobs that match your Search / Run / Status / Platform / Flow filters (same as the table). Max 5000. Click Filter first so the table preview matches.">Erase matching filters</button></div>
+    <div><button type="button" class="btn-ghost" style="color:var(--red);border:1px solid var(--border)" onclick="eraseAllJobsInProject()" title="Deletes every job in this project (all pages). Runs and signal packs stay. You must type the project slug to confirm.">Erase all jobs in project</button></div>
   </div>
   <div class="jobs-live-row">
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="jobs-live" checked> Auto-refresh every 4s (only when this tab is visible)</label>
     <span id="jobs-live-status" style="font-size:12px;color:var(--muted)"></span>
   </div>
-  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows where the job is in the pipeline (LLM → QC → render → review). Expand a row for <code>render_state</code>, transitions, and API audit.</p>
+  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows where the job is in the pipeline (LLM → QC → render → review). Use <strong>Re-run</strong> on a row to clear that job’s generated output, QC, renders, and assets, then run the full pipeline again (may take several minutes). Expand a row for <code>render_state</code>, transitions, and API audit.</p>
   <div id="jobs-table"><div class="empty">Loading...</div></div>
   <div class="page-btns" id="jobs-pager"></div>
 </div>
@@ -2858,6 +3025,122 @@ function showToast(msg,ok){
   if(!area){if(!ok)alert(String(msg||''));return;}
   area.innerHTML='<div class="toast '+(ok?'toast-ok':'toast-err')+'">'+esc(msg)+'</div>';
   setTimeout(function(){area.innerHTML='';},ok?6000:14000);
+}
+function currentJobFilterBody(){
+  return {
+    project:JOB_SLUG,
+    status:String((document.getElementById('f-status')||{}).value||'').trim(),
+    platform:String((document.getElementById('f-platform')||{}).value||'').trim(),
+    flow_type:String((document.getElementById('f-flow')||{}).value||'').trim(),
+    run_id:String((document.getElementById('f-run')||{}).value||'').trim(),
+    search:String((document.getElementById('f-search')||{}).value||'').trim()
+  };
+}
+async function deleteJobsMatchingFilters(){
+  if(!JOB_SLUG){showToast('Select a project first',false);return;}
+  var b=currentJobFilterBody();
+  if(!b.search&&!b.run_id&&!b.status&&!b.platform&&!b.flow_type){
+    showToast('Set Search, Run ID, Status, Platform, or Flow first. Click Filter to confirm the table shows the rows you want to remove.',false);
+    return;
+  }
+  if(!confirm('Erase every job that matches the current filters (up to 5000), same rules as the table below? This cannot be undone.'))return;
+  try{
+    var r=await cafFetch('/v1/admin/jobs/delete-matching-filters',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    var extra=d.cap_hit?' (hit 5000 cap — run again if more remain)':'';
+    if((d.content_jobs_deleted|0)===0){
+      showToast('No jobs matched these filters (0 removed). Broaden Search or fix a typo in the run id.',false);
+    }else{
+      showToast('Removed '+d.content_jobs_deleted+' job row(s)'+extra,true);
+    }
+    jobDetailOpenTaskId=null;
+    loadFacets().then(function(){return loadJobs(1);});
+  }catch(err){showToast(err.message||String(err),false);}
+}
+async function deleteJobsForFilteredRun(){
+  if(!JOB_SLUG){showToast('Select a project first (open /admin/jobs?project=YOUR_SLUG)',false);return;}
+  var runEl=document.getElementById('f-run');
+  var runId=runEl&&runEl.value?String(runEl.value).trim():'';
+  if(!runId&&initRunId)runId=String(initRunId).trim();
+  if(!runId){
+    var s=String((document.getElementById('f-search')||{}).value||'').trim();
+    if(s)runId=s;
+  }
+  if(!runId){
+    showToast('Pick Run ID in the dropdown, or type the full run id in Search, or use “Erase matching filters” after Filter.',false);
+    return;
+  }
+  if(!confirm('Permanently delete ALL jobs, drafts, audits, and assets linked to run id:\\n'+runId+'\\n\\n(Run and signal pack rows are not removed.)'))return;
+  try{
+    var r=await cafFetch('/v1/admin/jobs/delete-by-run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,run_id:runId})});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    var n=d.content_jobs_deleted|0;
+    if(n===0){
+      showToast('No jobs matched run id '+runId+' (0 removed). Check spelling (e.g. …UKAD vs …UKAI) or use “Erase matching filters” with Search + Filter.',false);
+    }else{
+      showToast('Removed '+n+' job row(s) for '+runId,true);
+    }
+    jobDetailOpenTaskId=null;
+    loadFacets().then(function(){return loadJobs(1);});
+  }catch(err){showToast(err.message||String(err),false);}
+}
+async function eraseJobByTaskId(tid){
+  if(!JOB_SLUG){showToast('Select a project first',false);return;}
+  tid=String(tid||'').trim();
+  if(!tid)return;
+  if(!confirm('Permanently erase this job and its drafts, audits, transitions, and assets?\\n\\n'+tid))return;
+  try{
+    var r=await cafFetch('/v1/admin/jobs/delete-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    showToast('Erased job ('+d.content_jobs_deleted+' row)',true);
+    jobDetailOpenTaskId=null;
+    loadFacets().then(function(){return loadJobs(jobsPage);});
+  }catch(err){showToast(err.message||String(err),false);}
+}
+async function reprocessJobEntirely(ev,tid){
+  if(ev)ev.stopPropagation();
+  if(!JOB_SLUG){showToast('Select a project first',false);return;}
+  tid=String(tid||'').trim();
+  if(!tid)return;
+  if(!confirm('Re-run this job from scratch?\\n\\nClears generated output, QC, renders, and assets for this task, sets status to PLANNED, then runs LLM → QC → diagnostics → render again. Editorial review history is kept.\\n\\n'+tid))return;
+  showToast('Re-running job… (may take several minutes)',true);
+  try{
+    var r=await cafFetch('/v1/admin/jobs/reprocess-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    if(d.skipped){showToast('Skipped (offline / non-pipeline flow): '+String(d.status||'—'),false);}
+    else{showToast('Done — status: '+(d.status||'—'),true);}
+    loadFacets().then(function(){return loadJobs(jobsPage,true);});
+  }catch(err){showToast(err.message||String(err),false);}
+}
+function reprocessOneJobEntirely(ev,ix){
+  if(ev)ev.stopPropagation();
+  reprocessJobEntirely(ev,jobRowTaskIds[ix]);
+}
+function eraseOneJob(ev,ix){
+  if(ev)ev.stopPropagation();
+  eraseJobByTaskId(jobRowTaskIds[ix]);
+}
+async function eraseAllJobsInProject(){
+  if(!JOB_SLUG){showToast('Select a project first',false);return;}
+  if(!confirm('Delete EVERY job in project '+JOB_SLUG+'? This ignores list filters and removes all pages of jobs. Runs and signal packs are not deleted.'))return;
+  var typed=window.prompt('Type the project slug exactly to confirm ('+JOB_SLUG+'):');
+  if(typed==null)return;
+  if(String(typed).trim()!==JOB_SLUG){
+    showToast('Slug did not match — cancelled',false);
+    return;
+  }
+  try{
+    var r=await cafFetch('/v1/admin/jobs/delete-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,confirm_slug:String(typed).trim()})});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
+    showToast('Erased '+d.content_jobs_deleted+' job row(s) for project '+JOB_SLUG,true);
+    jobDetailOpenTaskId=null;
+    loadFacets().then(function(){return loadJobs(1);});
+  }catch(err){showToast(err.message||String(err),false);}
 }
 async function reworkPendingNeedsEdit(){
   if(!JOB_SLUG){showToast('Select a project first (open /admin/jobs?project=YOUR_SLUG)',false);return;}
@@ -2967,6 +3250,8 @@ function renderJobDetailHtml(d){
   var lines=[];
   lines.push('<div class="job-detail-toolbar" style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap">');
   lines.push('<button type="button" class="btn btn-sm" onclick="copyJobDetailFull(event)">Copy all for debug</button>');
+  lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="Clears output, QC, assets; runs LLM → QC → render again">Re-run entire pipeline</button>');
+  lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
   lines.push('<span style="font-size:11px;color:var(--muted)">Summary, content preview, API audit, render state, payloads, transitions</span>');
   lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
@@ -3061,7 +3346,7 @@ async function loadJobs(p,silent){
   jobLastErrors=d.rows.map(function(j){return j.last_error!=null?String(j.last_error):'';});
   var preserveTask=jobDetailOpenTaskId;
   var scrollY=window.scrollY||document.documentElement.scrollTop||0;
-  var h='<table class="jobs-main-table"><thead><tr><th>Task</th><th>Run</th><th>Platform</th><th>Flow</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th></tr></thead><tbody>';
+  var h='<table class="jobs-main-table"><thead><tr><th>Task</th><th>Run</th><th>Platform</th><th>Flow</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
   for(var i=0;i<d.rows.length;i++){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');
@@ -3079,8 +3364,9 @@ async function loadJobs(p,silent){
     h+='<td style="font-size:12px">'+esc(j.recommended_route||'—')+'</td>';
     h+='<td>'+esc(j.pre_gen_score||'—')+'</td>';
     h+='<td>'+esc(j.qc_status||'—')+'</td>';
-    h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td></tr>';
-    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="12"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
+    h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td>';
+    h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center"><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="Clear output/QC/renders/assets and run full pipeline again">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
+    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="13"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
   }
   h+='</tbody></table>';
   document.getElementById('jobs-table').innerHTML=h;

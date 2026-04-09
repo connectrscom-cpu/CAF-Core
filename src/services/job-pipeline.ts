@@ -1,7 +1,7 @@
 /**
  * Job Pipeline — processes content_jobs through lifecycle stages.
  *
- * PLANNED → GENERATING → (GENERATED) → QC → diagnostic → RENDERING → IN_REVIEW / APPROVED / BLOCKED / …
+ * PLANNED → GENERATING → (GENERATED) → QC → diagnostic → RENDERING → IN_REVIEW (or BLOCKED / …); APPROVED only via human review
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -178,11 +178,20 @@ async function processJobUpToRender(
     }
   }
 
-  const qcResult = await runQcForJob(db, job.id);
+  const qcResult = await runQcForJob(db, job.id, config.CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC);
 
   if (!qcResult.qc_passed && qcResult.recommended_route === "BLOCKED") {
     await updateJobStatus(db, job.id, "BLOCKED");
     return { kind: "terminal" };
+  }
+
+  // If QC fails but the router wants HUMAN_REVIEW, skip media for non-carousel flows (often incomplete JSON).
+  // Carousel jobs still run the renderer when possible so review queue rows get slide thumbnails in `assets`.
+  if (!qcResult.qc_passed && qcResult.recommended_route === "HUMAN_REVIEW") {
+    if (!isCarouselFlow(job.flow_type)) {
+      await advanceToInReview(db, job, run, qcResult.recommended_route);
+      return { kind: "terminal" };
+    }
   }
 
   const earlyStop = await routeJobAfterQc(db, job.id, qcResult.recommended_route);
@@ -416,6 +425,104 @@ export async function processJobByTaskId(
 
   const updated = await qOne<{ status: string }>(db, `SELECT status FROM caf_core.content_jobs WHERE id = $1`, [job.id]);
   return { status: updated?.status ?? "UNKNOWN" };
+}
+
+/** Keys removed from `generation_payload` so the next pipeline pass treats the job as never generated. */
+const FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS = [
+  "generated_output",
+  "qc_result",
+  "draft_id",
+  "publish_media_urls_json",
+  "publish_media_urls",
+] as const;
+
+/**
+ * Reset one job to a clean PLANNED state: drop generated output / QC from payload, clear render & scene state,
+ * remove assets and machine audits. Does not delete editorial reviews or job_drafts (history).
+ */
+export async function prepareContentJobForFullRerun(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const tid = taskId.trim();
+  if (!tid) return { ok: false, error: "task_id required" };
+
+  const job = await qOne<{
+    id: string;
+    task_id: string;
+    status: string | null;
+    flow_type: string | null;
+  }>(
+    db,
+    `SELECT id, task_id, status, flow_type FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
+    [projectId, tid]
+  );
+  if (!job) return { ok: false, error: "job_not_found" };
+  if (isOfflinePipelineFlow(job.flow_type ?? "")) {
+    return { ok: false, error: "offline_flow_not_supported" };
+  }
+
+  await deleteAssetsForTask(db, projectId, tid);
+  await db.query(`DELETE FROM caf_core.diagnostic_audits WHERE project_id = $1 AND task_id = $2`, [
+    projectId,
+    tid,
+  ]);
+  await db.query(`DELETE FROM caf_core.auto_validation_results WHERE project_id = $1 AND task_id = $2`, [
+    projectId,
+    tid,
+  ]);
+
+  const snap = await qOne<{ generation_payload: Record<string, unknown> }>(
+    db,
+    `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+    [job.id]
+  );
+  const gp: Record<string, unknown> = { ...(snap?.generation_payload ?? {}) };
+  for (const k of FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS) {
+    delete gp[k];
+  }
+
+  await db.query(
+    `UPDATE caf_core.content_jobs SET
+      status = 'PLANNED',
+      recommended_route = NULL,
+      qc_status = NULL,
+      render_provider = NULL,
+      render_status = NULL,
+      render_job_id = NULL,
+      asset_id = NULL,
+      render_state = '{}'::jsonb,
+      scene_bundle_state = '{}'::jsonb,
+      generation_payload = $1::jsonb,
+      updated_at = now()
+    WHERE id = $2`,
+    [JSON.stringify(gp), job.id]
+  );
+
+  await insertJobStateTransition(db, {
+    task_id: job.task_id,
+    project_id: projectId,
+    from_state: job.status,
+    to_state: "PLANNED",
+    triggered_by: "system",
+    actor: "full-job-rerun-reset",
+    metadata: { cleared_for_full_pipeline: true },
+  });
+
+  return { ok: true };
+}
+
+/** Reset job (see `prepareContentJobForFullRerun`) then run the standard pipeline (LLM → QC → render / review). */
+export async function reprocessJobFromScratch(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  taskId: string
+): Promise<{ status: string; skipped?: boolean }> {
+  const prep = await prepareContentJobForFullRerun(db, projectId, taskId.trim());
+  if (!prep.ok) throw new Error(prep.error);
+  return processJobByTaskId(db, config, projectId, taskId.trim());
 }
 
 /** Prompt-led vs script-led HeyGen prep: one LLM path per flow name; legacy video flows still run both. */
@@ -936,6 +1043,8 @@ async function processVideoJob(
     String(job.generation_payload.video_pipeline ?? "").toLowerCase() === "scene" ||
     /video_scene_generator|FLOW_SCENE_ASSEMBLY|scene_assembly/i.test(job.flow_type);
 
+  const wantsHeygen = /heygen/i.test(job.flow_type) || productionRoute.includes("HEYGEN");
+
   let videoProvider: string = "pending";
   try {
     if (isScene) {
@@ -963,6 +1072,12 @@ async function processVideoJob(
       });
       await updateJobRenderState(db, job.id, { provider: "heygen", status: "completed" });
     } else {
+      if (wantsHeygen) {
+        throw new Error(
+          `HEYGEN_API_KEY not set (required for HeyGen flows like ${job.flow_type}). ` +
+            "Set HEYGEN_API_KEY, or change this flow to a non-HeyGen production route."
+        );
+      }
       videoProvider = "video-assembly";
       const vaUrl = `${pipeConfig.videoAssemblyBaseUrl.replace(/\/$/, "")}/full-pipeline`;
       const vaBody = {

@@ -124,6 +124,31 @@ function slidesFromVariationField(variationVal: unknown): Record<string, unknown
   return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
 }
 
+/** LLM drift: `structure: { slides: [...] }` alongside `structure_variables` metadata. */
+function slidesFromStructureField(structVal: unknown): Record<string, unknown>[] {
+  if (!structVal || typeof structVal !== "object" || Array.isArray(structVal)) return [];
+  const slides = (structVal as Record<string, unknown>).slides;
+  if (!Array.isArray(slides)) return [];
+  const out = slides
+    .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+  return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
+}
+
+/** LLM drift: `variation_content: { carousel: ... }` or `variation_content.slides[]`. */
+function slidesFromVariationContentField(vcVal: unknown): Record<string, unknown>[] {
+  if (!vcVal || typeof vcVal !== "object" || Array.isArray(vcVal)) return [];
+  const rec = vcVal as Record<string, unknown>;
+  const fromCarousel = slidesFromCarouselField(rec.carousel);
+  if (fromCarousel.length > 0 && fromCarousel.some(slideHasRenderableContent)) return fromCarousel;
+  const slides = rec.slides;
+  if (!Array.isArray(slides)) return [];
+  const out = slides
+    .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+  return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
+}
+
 /** Many prompts return `{ slide_deck: { slides: [...], structure_variables } }` instead of `variations` / top-level `slides`. */
 function slidesFromSlideDeckField(deckVal: unknown): Record<string, unknown>[] {
   if (!deckVal || typeof deckVal !== "object" || Array.isArray(deckVal)) return [];
@@ -205,6 +230,8 @@ type CarouselDeckId =
   | "slide_deck"
   | "variation"
   | "variations"
+  | "structure_slides"
+  | "variation_content"
   | "carousel"
   | "items"
   | "content_carousel";
@@ -214,6 +241,8 @@ const DECK_PRIORITY: Record<CarouselDeckId, number> = {
   slides: 0,
   slide_deck: 0,
   variation: 0,
+  structure_slides: 0,
+  variation_content: 0,
   variations: 1,
   carousel: 2,
   content_carousel: 2,
@@ -232,6 +261,10 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   if (fromSlideDeck.length > 0) out.push({ id: "slide_deck", slides: fromSlideDeck });
   const fromVariation = slidesFromVariationField(gen.variation);
   if (fromVariation.length > 0) out.push({ id: "variation", slides: fromVariation });
+  const fromStructureSlides = slidesFromStructureField(gen.structure);
+  if (fromStructureSlides.length > 0) out.push({ id: "structure_slides", slides: fromStructureSlides });
+  const fromVariationContent = slidesFromVariationContentField(gen.variation_content);
+  if (fromVariationContent.length > 0) out.push({ id: "variation_content", slides: fromVariationContent });
   const fromVariations = usableSlideArray(gen.variations);
   if (fromVariations) out.push({ id: "variations", slides: fromVariations });
   const fromCarousel = slidesFromCarouselField(gen.carousel);
@@ -343,6 +376,23 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
           delete out.content;
         }
       }
+    }
+  }
+  if (out.structure && typeof out.structure === "object" && !Array.isArray(out.structure)) {
+    const slides = (out.structure as Record<string, unknown>).slides;
+    if (Array.isArray(slides) && !slides.some(rowHasRenderableCopy)) {
+      const { slides: _s, ...rest } = out.structure as Record<string, unknown>;
+      if (Object.keys(rest).length > 0) {
+        out.structure = rest;
+      } else {
+        delete out.structure;
+      }
+    }
+  }
+  if (out.variation_content && typeof out.variation_content === "object" && !Array.isArray(out.variation_content)) {
+    const rows = slidesFromVariationContentField(out.variation_content);
+    if (rows.length === 0 || !rows.some((s) => slideHasRenderableContent(s))) {
+      delete out.variation_content;
     }
   }
 

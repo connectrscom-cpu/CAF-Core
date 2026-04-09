@@ -138,8 +138,16 @@ export async function incrementRunJobsCompleted(db: Pool, runId: string): Promis
     [runId]);
 }
 
-/** Clear lifecycle fields so `startRun` can run again after deleting jobs. */
+/**
+ * Clear lifecycle fields so `startRun` can run again.
+ * Also deletes all `content_jobs` for this run — otherwise a reset run still shows PLANNED rows in the Jobs UI
+ * and a second Start can create duplicates (different `task_id` shapes) or confuse operators.
+ */
 export async function resetRunForReplan(db: Pool, runUuid: string): Promise<RunRow | null> {
+  const before = await getRunById(db, runUuid);
+  if (before) {
+    await deleteAllJobsForRun(db, before.project_id, before.run_id);
+  }
   return qOne<RunRow>(
     db,
     `UPDATE caf_core.runs SET

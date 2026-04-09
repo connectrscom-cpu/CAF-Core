@@ -9,6 +9,8 @@ export function userPromptLooksLikePerSceneVideoTemplate(userPrompt: string): bo
   );
 }
 
+import { slimContextForCreationPackJson } from "./llm-generator-helpers.js";
+
 export function sceneBundleFallbackUserPrompt(
   context: Record<string, unknown>,
   sceneTargets: { min: number; max: number }
@@ -19,6 +21,6 @@ export function sceneBundleFallbackUserPrompt(
     `Target scene count: between ${sceneTargets.min} and ${sceneTargets.max} inclusive.`,
     "Use creation_pack_json context below.",
     "",
-    JSON.stringify({ creation_pack: context }, null, 0),
+    JSON.stringify({ creation_pack: slimContextForCreationPackJson(context) }, null, 0),
   ].join("\n");
 }

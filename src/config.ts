@@ -84,6 +84,20 @@ const envSchema = z.object({
       return s === "1" || s === "true" || s === "yes";
     }),
   /**
+   * When true (default), QC never assigns `recommended_route = AUTO_PUBLISH` for passing jobs — they get `HUMAN_REVIEW`
+   * so every job is intended for the human queue (Core still ends pipeline in IN_REVIEW; this aligns DB route + QC payload).
+   * Set to 0/false/no to allow legacy AUTO_PUBLISH when QC passes and risk is low.
+   */
+  CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  /**
    * Upper bound for chat.completions `max_tokens` (completion tokens). gpt-4o allows at most 16384; DB templates often use 25k+.
    */
   OPENAI_MAX_COMPLETION_TOKENS: z.coerce.number().int().positive().default(16384),
@@ -92,11 +106,19 @@ const envSchema = z.object({
    * Soft cap on serialized `signal_pack` JSON in LLM prompts (~4 chars/token heuristic leaves room for
    * system text, `script_input`, and completion within 128k-token models).
    */
-  LLM_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(88_000),
+  LLM_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(56_000),
   /** First N rows from `overall_candidates_json` included in LLM context before further shrinking. */
   LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS: z.coerce.number().int().min(1).max(2000).default(55),
   /** Truncate individual string fields in the signal pack context (e.g. embedded HTML blobs). */
   LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS: z.coerce.number().int().min(500).max(200_000).default(14_000),
+
+  /**
+   * Learning contexts are injected both as individual placeholders and inside `{{creation_pack_json}}`.
+   * Keep them bounded so we don't exceed 128k-token models when signal packs are large.
+   */
+  LLM_LEARNING_GLOBAL_CONTEXT_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(12_000),
+  LLM_LEARNING_PROJECT_CONTEXT_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(12_000),
+  LLM_LEARNING_GUIDANCE_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(18_000),
 
   /** HeyGen v2: default voice id for video_inputs[0].voice when config does not set it */
   HEYGEN_DEFAULT_VOICE_ID: z.string().optional(),
@@ -185,18 +207,17 @@ const envSchema = z.object({
   /** Max time to poll each Sora job (`GET /videos/{id}`) before failing the scene. */
   SORA_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(900_000),
   /**
-   * When scene_bundle.scenes[] has video_prompt but no clip URL, render each missing scene with HeyGen
-   * (no-avatar visual + silence) before concat. Uses credits per scene. Set to 0/false if you only use upstream URLs (n8n/Sora).
-   * Used only when SCENE_ASSEMBLY_CLIP_PROVIDER=heygen.
+   * Opt-in: when `SCENE_ASSEMBLY_CLIP_PROVIDER=heygen`, render missing per-scene clips with HeyGen Video Agent
+   * (no-avatar) before concat. Default off — use Sora (`provider=sora`) or upstream URLs on `scene_bundle.scenes[]`.
    */
   SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK: z
     .string()
     .optional()
     .transform((v) => {
-      if (v === undefined || v === "") return true;
+      if (v === undefined || v === "") return false;
       const s = v.trim().toLowerCase();
-      if (s === "0" || s === "false" || s === "no") return false;
-      return true;
+      if (s === "1" || s === "true" || s === "yes") return true;
+      return false;
     }),
 
   /** Single-take HeyGen / prompt-led videos: target spoken length band for LLM fallbacks. */

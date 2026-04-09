@@ -66,13 +66,11 @@ export interface JobListFilters {
   search?: string;
 }
 
-export async function listJobs(
-  db: Pool,
+/** Same predicates as the Jobs admin list (search, run_id prefix match, etc.). */
+export function buildJobListWhereClause(
   projectId: string,
-  filters: JobListFilters = {},
-  limit = 50,
-  offset = 0
-): Promise<{ rows: JobListRow[]; total: number }> {
+  filters: JobListFilters
+): { where: string; params: unknown[]; nextIndex: number } {
   const clauses: string[] = ["c.project_id = $1"];
   const params: unknown[] = [projectId];
   let idx = 2;
@@ -90,8 +88,16 @@ export async function listJobs(
     params.push(filters.flow_type);
   }
   if (filters.run_id) {
-    clauses.push(`c.run_id = $${idx++}`);
+    const r = `$${idx}`;
+    clauses.push(
+      `(c.run_id = ${r} OR (
+        char_length(c.task_id) > char_length(${r}::text)
+        AND left(c.task_id, char_length(${r}::text)) = ${r}::text
+        AND substr(c.task_id, char_length(${r}::text) + 1, 1) = '_'
+      ))`
+    );
     params.push(filters.run_id);
+    idx++;
   }
   if (filters.search) {
     clauses.push(`(c.task_id ILIKE $${idx} OR c.run_id ILIKE $${idx})`);
@@ -99,7 +105,36 @@ export async function listJobs(
     idx++;
   }
 
-  const where = clauses.join(" AND ");
+  return { where: clauses.join(" AND "), params, nextIndex: idx };
+}
+
+const MATCHING_TASK_IDS_CAP = 5000;
+
+/** Task ids matching the same filters as the Jobs table (for bulk erase). */
+export async function listTaskIdsMatchingJobFilters(
+  db: Pool,
+  projectId: string,
+  filters: JobListFilters
+): Promise<{ task_ids: string[]; cap_hit: boolean }> {
+  const { where, params, nextIndex } = buildJobListWhereClause(projectId, filters);
+  const rows = await q<{ task_id: string }>(
+    db,
+    `SELECT c.task_id FROM caf_core.content_jobs c WHERE ${where} ORDER BY c.created_at DESC LIMIT $${nextIndex}`,
+    [...params, MATCHING_TASK_IDS_CAP + 1]
+  );
+  const cap_hit = rows.length > MATCHING_TASK_IDS_CAP;
+  const task_ids = rows.slice(0, MATCHING_TASK_IDS_CAP).map((r) => r.task_id);
+  return { task_ids, cap_hit };
+}
+
+export async function listJobs(
+  db: Pool,
+  projectId: string,
+  filters: JobListFilters = {},
+  limit = 50,
+  offset = 0
+): Promise<{ rows: JobListRow[]; total: number }> {
+  const { where, params, nextIndex: idx } = buildJobListWhereClause(projectId, filters);
   const countRow = await qOne<{ c: string }>(
     db,
     `SELECT COUNT(*)::text AS c FROM caf_core.content_jobs c WHERE ${where}`,
@@ -107,7 +142,7 @@ export async function listJobs(
   );
   const total = countRow ? parseInt(countRow.c, 10) : 0;
 
-  params.push(limit, offset);
+  const listParams = [...params, limit, offset];
   const rows = await q<JobListRow>(
     db,
     `SELECT c.id, c.task_id, c.run_id, c.platform, c.flow_type, c.status, c.recommended_route,
@@ -205,7 +240,7 @@ export async function listJobs(
             ) AS last_error
      FROM caf_core.content_jobs c WHERE ${where}
      ORDER BY c.created_at DESC LIMIT $${idx} OFFSET $${idx + 1}`,
-    params
+    listParams
   );
   return { rows, total };
 }

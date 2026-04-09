@@ -40,6 +40,13 @@ import {
 import { compileLearningContexts } from "./learning-context-compiler.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
 
+function truncateForContext(s: string, maxChars: number, label: string): string {
+  if (!maxChars || maxChars <= 0) return "";
+  const t = (s ?? "").trim();
+  if (t.length <= maxChars) return t;
+  return `${t.slice(0, maxChars)}\n\n…(truncated ${t.length - maxChars} chars from ${label} for model context)`;
+}
+
 /**
  * Jobs keyed as `Video_Scene_Generator` (incl. legacy FLOW_SCENE_ASSEMBLY) must run the **bundle**
  * `scene_assembly` prompt first. The `generator` role is for per-scene n8n steps with
@@ -175,7 +182,26 @@ export async function generateForJob(
     job.flow_type
   );
 
-  const compiledLearning = await compileLearningContexts(db, job.project_id, job.flow_type, job.platform);
+  const appCfg = loadConfig();
+  const compiledLearningRaw = await compileLearningContexts(db, job.project_id, job.flow_type, job.platform);
+  const compiledLearning = {
+    ...compiledLearningRaw,
+    global_context: truncateForContext(
+      compiledLearningRaw.global_context,
+      appCfg.LLM_LEARNING_GLOBAL_CONTEXT_MAX_CHARS,
+      "global_learning_context"
+    ),
+    project_context: truncateForContext(
+      compiledLearningRaw.project_context,
+      appCfg.LLM_LEARNING_PROJECT_CONTEXT_MAX_CHARS,
+      "project_learning_context"
+    ),
+    merged_guidance: truncateForContext(
+      compiledLearningRaw.merged_guidance,
+      appCfg.LLM_LEARNING_GUIDANCE_MAX_CHARS,
+      "learning_guidance"
+    ),
+  };
   const templateContext: Record<string, unknown> = {
     ...creationPack,
     global_learning_context: compiledLearning.global_context,
@@ -196,7 +222,6 @@ export async function generateForJob(
   const sceneAssemblyTemplate =
     (promptTemplate.prompt_role ?? "").toLowerCase() === "scene_assembly";
   if (isVideoFlow(job.flow_type)) {
-    const appCfg = loadConfig();
     const ft = job.flow_type;
     if (sceneAssemblyTemplate) {
       systemPrompt = withSceneAssemblyPolicy(systemPrompt, appCfg);
@@ -222,7 +247,6 @@ export async function generateForJob(
     const unreplaced = creationContextHasUnreplacedPlaceholders(userPrompt);
     const perSceneShape = userPromptLooksLikePerSceneVideoTemplate(userPrompt);
     if (!roleOk || unreplaced || perSceneShape) {
-      const appCfg = loadConfig();
       userPrompt = sceneBundleFallbackUserPrompt(templateContext, {
         min: appCfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
         max: appCfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
@@ -236,7 +260,6 @@ export async function generateForJob(
 
   /** Sheet templates often say 15–25s; user-message "Hard rules" beat system duration — enforce CAF floor here. */
   if (isVideoFlow(job.flow_type) && !wantSceneBundle) {
-    const appCfg = loadConfig();
     const ft = job.flow_type;
     const isVideoPlan =
       /Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&

@@ -1,3 +1,18 @@
+/** DB/jsonb sometimes surfaces `overall_candidates_json` as a string — row caps must still apply. */
+function normalizeOverallCandidatesJson(pack: Record<string, unknown>): Record<string, unknown> {
+  const o = { ...pack };
+  const oc = o.overall_candidates_json;
+  if (typeof oc === "string") {
+    try {
+      const parsed = JSON.parse(oc) as unknown;
+      if (Array.isArray(parsed)) o.overall_candidates_json = parsed;
+    } catch {
+      /* keep string; trimDeepStrings will cap length */
+    }
+  }
+  return o;
+}
+
 function trimDeepStrings(v: unknown, maxLen: number, depth = 0): unknown {
   if (depth > 12) return v;
   if (typeof v === "string") {
@@ -23,7 +38,7 @@ export function budgetSignalPackContextForLlm(
     maxStringFieldChars: number;
   }
 ): Record<string, unknown> {
-  let o: Record<string, unknown> = { ...pack };
+  let o: Record<string, unknown> = normalizeOverallCandidatesJson({ ...pack });
   const oc = o.overall_candidates_json;
   if (Array.isArray(oc)) {
     o = { ...o, overall_candidates_json: oc.slice(0, limits.maxCandidateRows) };
@@ -35,6 +50,31 @@ export function budgetSignalPackContextForLlm(
     if (rows.length <= 1) break;
     o = { ...o, overall_candidates_json: rows.slice(0, Math.max(1, rows.length - 2)) };
     json = JSON.stringify(o);
+  }
+  /** Last resort: drop bulky research blobs (templates still have candidate + strategy + brand). */
+  const dropHeavyKeys = [
+    "html_findings_raw",
+    "html_summary",
+    "ig_archetypes",
+    "ig_7day_plan",
+    "ig_top_examples",
+    "tiktok_archetypes",
+    "tiktok_7day_plan",
+    "tiktok_top_examples",
+    "reddit_archetypes",
+    "reddit_top_examples",
+    "reddit_subreddit_insights",
+    "ig_summary",
+    "tiktok_summary",
+    "reddit_summary",
+    "fb_summary",
+  ] as const;
+  for (const k of dropHeavyKeys) {
+    if (json.length <= limits.maxTotalJsonChars) break;
+    if (k in o && o[k] != null) {
+      o = { ...o, [k]: null };
+      json = JSON.stringify(o);
+    }
   }
   return o;
 }

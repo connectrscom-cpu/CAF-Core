@@ -96,6 +96,25 @@ function resolvePlatformConstraintsForPack(
   return out;
 }
 
+/**
+ * Learning fields are also injected as separate `{{...}}` placeholders and appended to the system prompt.
+ * Excluding them from `{{creation_pack_json}}` avoids sending the same text twice (or thrice), which can
+ * exceed 128k-token model limits when the signal pack is large.
+ */
+export const LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
+  "global_learning_context",
+  "project_learning_context",
+  "learning_guidance",
+] as const;
+
+export function slimContextForCreationPackJson(context: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...context };
+  for (const k of LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON) {
+    delete out[k];
+  }
+  return out;
+}
+
 export async function buildCreationPack(
   db: Pool,
   projectId: string,
@@ -138,8 +157,9 @@ export async function buildCreationPack(
 
 export function interpolateTemplate(template: string, context: Record<string, unknown>): string {
   let result = template;
-  result = result.replace(/\{\{creation_pack_json\}\}/g, JSON.stringify(context));
-  result = result.replace(/\{\{creation_pack\}\}/g, JSON.stringify(context));
+  const packJson = JSON.stringify(slimContextForCreationPackJson(context));
+  result = result.replace(/\{\{creation_pack_json\}\}/g, packJson);
+  result = result.replace(/\{\{creation_pack\}\}/g, packJson);
 
   for (const [key, value] of Object.entries(context)) {
     const placeholder = `{{${key}}}`;

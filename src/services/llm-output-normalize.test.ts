@@ -107,4 +107,42 @@ describe("normalizeLlmParsedForSchemaValidation (carousel)", () => {
     expect(sv?.narrative_arc).toBe("hook,insight,cta");
     expect(sv?.hook_type).toBe("tension-based");
   });
+
+  it("lifts slides from structure.slides when the canonical top-level deck is empty", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      slides: [{ slide_role: "cover", headline: "", body: "" }],
+      structure: {
+        slides: [
+          { headline: "A", body: "1".repeat(40) },
+          { headline: "B", body: "2".repeat(40) },
+        ],
+      },
+    });
+    const v = out.variations![0] as Record<string, unknown>;
+    expect((v.slides as unknown[]).length).toBe(2);
+    const sv = out.structure_variables as Record<string, unknown>;
+    expect(sv?.slide_count).toBe(2);
+  });
+
+  it("lifts slides from variation_content.carousel", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      variation_content: {
+        carousel: [{ headline: "A", body: "1".repeat(40) }],
+      },
+    });
+    const v = out.variations![0] as Record<string, unknown>;
+    expect((v.slides as unknown[]).length).toBe(1);
+    expect((out.structure_variables as Record<string, unknown>)?.slide_count).toBe(1);
+  });
+
+  it("uses variation.caption.text when top-level caption is missing", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      variation: {
+        slides: [{ headline: "A", body: "1".repeat(40) }],
+        caption: { text: "Hook line", hashtags: ["#x"] },
+      },
+    });
+    const v = out.variations![0] as Record<string, unknown>;
+    expect(v.caption).toBe("Hook line");
+  });
 });

@@ -1,25 +1,27 @@
 import type { Pool } from "pg";
 import { qOne } from "../db/queries.js";
 
+export interface DeleteContentJobsByTaskIdsOpts {
+  /** Also remove drafts whose `run_id` matches (run-level cleanup; omit for single-task delete). */
+  purgeJobDraftsByRunId?: string;
+}
+
 /**
- * Remove all jobs for a run and related rows (for replan). Does not delete signal_packs or the run row.
+ * Delete `content_jobs` rows and dependent tables for the given `task_id` list (same project).
  */
-export async function deleteAllJobsForRun(db: Pool, projectId: string, runIdText: string): Promise<number> {
-  const { rows } = await db.query<{ task_id: string }>(
-    `SELECT task_id FROM caf_core.content_jobs WHERE project_id = $1 AND run_id = $2`,
-    [projectId, runIdText]
-  );
-  const taskIds = rows.map((r) => r.task_id);
-  await db.query(`DELETE FROM caf_core.decision_traces WHERE project_id = $1 AND run_id = $2`, [
-    projectId,
-    runIdText,
-  ]);
-  if (taskIds.length === 0) return 0;
+export async function deleteContentJobsByTaskIds(
+  db: Pool,
+  projectId: string,
+  taskIds: string[],
+  options?: DeleteContentJobsByTaskIdsOpts
+): Promise<number> {
+  const ids = [...new Set(taskIds.map((t) => t.trim()).filter(Boolean))];
+  if (ids.length === 0) return 0;
 
   const client = await db.connect();
   try {
     await client.query("BEGIN");
-    const p: unknown[] = [projectId, taskIds];
+    const p: unknown[] = [projectId, ids];
     const tid = `SELECT UNNEST($2::text[])`;
     await client.query(
       `DELETE FROM caf_core.auto_validation_results WHERE project_id = $1 AND task_id IN (${tid})`,
@@ -49,26 +51,84 @@ export async function deleteAllJobsForRun(db: Pool, projectId: string, runIdText
       `DELETE FROM caf_core.llm_approval_reviews WHERE project_id = $1 AND task_id IN (${tid})`,
       p
     );
+    await client.query(`DELETE FROM caf_core.assets WHERE project_id = $1 AND task_id IN (${tid})`, p);
+    await client.query(`DELETE FROM caf_core.api_call_audit WHERE project_id = $1 AND task_id IN (${tid})`, p);
+    await client.query(`DELETE FROM caf_core.run_content_outcomes WHERE project_id = $1 AND task_id IN (${tid})`, p);
     await client.query(
-      `DELETE FROM caf_core.assets WHERE project_id = $1 AND task_id IN (${tid})`,
+      `DELETE FROM caf_core.learning_generation_attribution WHERE project_id = $1 AND task_id IN (${tid})`,
       p
     );
-    await client.query(`DELETE FROM caf_core.job_drafts WHERE project_id = $1 AND run_id = $2`, [
-      projectId,
-      runIdText,
-    ]);
+    if (options?.purgeJobDraftsByRunId) {
+      await client.query(
+        `DELETE FROM caf_core.job_drafts WHERE project_id = $1 AND (task_id IN (${tid}) OR run_id = $3)`,
+        [projectId, ids, options.purgeJobDraftsByRunId]
+      );
+    } else {
+      await client.query(`DELETE FROM caf_core.job_drafts WHERE project_id = $1 AND task_id IN (${tid})`, p);
+    }
     const del = await client.query(
-      `DELETE FROM caf_core.content_jobs WHERE project_id = $1 AND run_id = $2`,
-      [projectId, runIdText]
+      `DELETE FROM caf_core.content_jobs WHERE project_id = $1 AND task_id IN (${tid})`,
+      p
     );
     await client.query("COMMIT");
-    return del.rowCount ?? taskIds.length;
+    return del.rowCount ?? ids.length;
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;
   } finally {
     client.release();
   }
+}
+
+export async function deleteContentJobByTaskId(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<number> {
+  return deleteContentJobsByTaskIds(db, projectId, [taskId]);
+}
+
+const DELETE_ALL_CHUNK = 400;
+
+/** Every `content_jobs` row for the project (runs / signal packs untouched). Chunked for large projects. */
+export async function deleteAllContentJobsForProject(db: Pool, projectId: string): Promise<number> {
+  const { rows } = await db.query<{ task_id: string }>(
+    `SELECT task_id FROM caf_core.content_jobs WHERE project_id = $1`,
+    [projectId]
+  );
+  const all = rows.map((r) => r.task_id);
+  let n = 0;
+  for (let i = 0; i < all.length; i += DELETE_ALL_CHUNK) {
+    const slice = all.slice(i, i + DELETE_ALL_CHUNK);
+    n += await deleteContentJobsByTaskIds(db, projectId, slice);
+  }
+  return n;
+}
+
+/**
+ * Remove all jobs for a run and related rows (for replan). Does not delete signal_packs or the run row.
+ * Matches `run_id` **or** `task_id` prefix `${runIdText}_` (orchestrator shape), without LIKE escaping quirks.
+ */
+export async function deleteAllJobsForRun(db: Pool, projectId: string, runIdText: string): Promise<number> {
+  const { rows } = await db.query<{ task_id: string }>(
+    `SELECT DISTINCT task_id FROM caf_core.content_jobs
+     WHERE project_id = $1 AND (
+       run_id = $2
+       OR (
+         char_length(task_id) > char_length($2::text)
+         AND left(task_id, char_length($2::text)) = $2::text
+         AND substr(task_id, char_length($2::text) + 1, 1) = '_'
+       )
+     )`,
+    [projectId, runIdText]
+  );
+  const taskIds = rows.map((r) => r.task_id);
+  await db.query(`DELETE FROM caf_core.decision_traces WHERE project_id = $1 AND run_id = $2`, [
+    projectId,
+    runIdText,
+  ]);
+  if (taskIds.length === 0) return 0;
+  return deleteContentJobsByTaskIds(db, projectId, taskIds, { purgeJobDraftsByRunId: runIdText });
 }
 
 export async function upsertContentJob(

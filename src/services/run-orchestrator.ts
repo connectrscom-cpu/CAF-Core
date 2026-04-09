@@ -52,6 +52,9 @@ export async function startRun(
     throw new Error(`Run ${run.run_id} is in status ${run.status}, expected CREATED`);
   }
 
+  /** CREATED runs must not carry jobs; wipe orphans (e.g. legacy reset without delete, or external sync). */
+  await deleteAllJobsForRun(db, run.project_id, run.run_id);
+
   await updateRunStatus(db, runUuid, "PLANNING", { started_at: new Date().toISOString() });
 
   try {

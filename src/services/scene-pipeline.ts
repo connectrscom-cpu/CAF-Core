@@ -2,9 +2,10 @@
  * Multi-scene video (script-first): final **spoken_script** comes from the script flow; scene_bundle adds
  * **~4s segments** with `scene_narration_line` (splits of that script) and `video_prompt` (visuals + global context).
  * Clips (Sora/HeyGen) → concat → TTS on full script → SRT → mux. Optional word-trim is off by default.
- * Missing per-scene URLs + `video_prompt`: render in Core via **OpenAI Videos API (Sora 2)** by default
- * (`SCENE_ASSEMBLY_CLIP_PROVIDER=sora`, `OPENAI_API_KEY`, Supabase for public MP4 URLs), or **HeyGen** no-avatar
- * (`SCENE_ASSEMBLY_CLIP_PROVIDER=heygen`, `SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK`, `HEYGEN_API_KEY`).
+ * Missing per-scene URLs + `video_prompt`: render in Core via **OpenAI Videos API (Sora)** (`sora-scene-clips.ts`:
+ * `POST /videos` → poll → `GET /videos/{id}/content` → Supabase) when `SCENE_ASSEMBLY_CLIP_PROVIDER=sora`,
+ * `OPENAI_API_KEY`, `SUPABASE_*`. **HeyGen** per-scene clips are opt-in: `SCENE_ASSEMBLY_CLIP_PROVIDER=heygen` and
+ * `SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK=1` plus `HEYGEN_API_KEY`. Otherwise set clip URLs on `scene_bundle.scenes[]`.
  *
  * Legacy n8n reference (user workflows): Scene_Assembly_Generator → per-scene Sora → stitch/mux. This repo’s
  * video-assembly `/stitch` is image-only (`image_urls`); **we use `/concat-videos` + `video_urls` for MP4 scenes**
@@ -436,7 +437,7 @@ export async function runScenePipeline(
   if (needsClipRender) {
     if (config.SCENE_ASSEMBLY_CLIP_PROVIDER === "sora") {
       await maybeRenderMissingSceneClipsWithSora(db, config, job, scenes, bundle, gen);
-    } else {
+    } else if (config.SCENE_ASSEMBLY_CLIP_PROVIDER === "heygen" && config.SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK) {
       await maybeRenderMissingSceneClipsWithHeyGen(db, config, job, scenes, bundle, gen);
     }
   }
@@ -468,8 +469,8 @@ export async function runScenePipeline(
       const hintPreview = fullPrompt.slice(0, 120);
       throw new Error(
         `Scene assembly: scene ${sid} has no public clip URL (rendered_scene_url, video_url, …). ` +
-          `Add URLs from upstream, or use SCENE_ASSEMBLY_CLIP_PROVIDER=sora with OPENAI_API_KEY + Supabase, ` +
-          `or SCENE_ASSEMBLY_CLIP_PROVIDER=heygen with HEYGEN_API_KEY and SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK on. ` +
+          `Add URLs on each scene, or SCENE_ASSEMBLY_CLIP_PROVIDER=sora with OPENAI_API_KEY + Supabase, ` +
+          `or explicitly SCENE_ASSEMBLY_CLIP_PROVIDER=heygen with SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK=1 and HEYGEN_API_KEY. ` +
           (hintPreview ? `Prompt preview: ${hintPreview}` : "")
       );
     }

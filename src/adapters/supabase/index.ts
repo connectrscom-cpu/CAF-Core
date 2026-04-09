@@ -67,7 +67,8 @@ export async function syncTasksFromSupabase(pool: Pool, opts: SyncTasksOpts) {
       `INSERT INTO caf_core.content_jobs
         (project_id, run_id, candidate_id, task_id, platform, flow_type, status, generation_payload)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (task_id) DO UPDATE SET
+       ON CONFLICT (project_id, task_id) DO UPDATE SET
+         run_id = COALESCE(EXCLUDED.run_id, caf_core.content_jobs.run_id),
          status = EXCLUDED.status,
          generation_payload = COALESCE(EXCLUDED.generation_payload, caf_core.content_jobs.generation_payload),
          updated_at = now()`,

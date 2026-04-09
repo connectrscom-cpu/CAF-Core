@@ -23,8 +23,11 @@ export async function routeJobAfterQc(
   return "none";
 }
 
-export function finalJobStatusAfterRender(recommendedRoute: string | null): string {
-  if (recommendedRoute === "AUTO_PUBLISH") return "APPROVED";
+/**
+ * Post-render terminal status: always human review. QC `recommended_route` is usually `HUMAN_REVIEW` when
+ * `CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC` is on (default); Core does not auto-approve from QC alone.
+ */
+export function finalJobStatusAfterRender(_recommendedRoute: string | null): string {
   return "IN_REVIEW";
 }
 

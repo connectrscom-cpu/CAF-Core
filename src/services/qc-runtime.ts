@@ -281,6 +281,14 @@ function tryCarouselSlideCountEquals(
     const p = parseInt(threshold.trim(), 10);
     if (Number.isFinite(p)) expected = p;
   }
+  // Checklists often ship the Sheets literal `{{structure_variables.slide_count}}`; when nothing substituted
+  // it and `structure_variables.slide_count` are missing, treat the rendered deck length as the expected count.
+  if (
+    expected == null &&
+    /\{\{\s*structure_variables\.slide_count\s*\}\}/.test(threshold.trim())
+  ) {
+    expected = slidesArr.length;
+  }
 
   if (expected == null) {
     return {
@@ -438,7 +446,11 @@ function runRiskPolicy(policy: RiskPolicyRow, content: Record<string, unknown>, 
 /**
  * Run QC checks and risk policies against a content_job's generated output.
  */
-export async function runQcForJob(db: Pool, jobId: string): Promise<QcResult> {
+export async function runQcForJob(
+  db: Pool,
+  jobId: string,
+  requireHumanReviewAfterQc = true
+): Promise<QcResult> {
   const job = await qOne<{
     id: string; task_id: string; project_id: string; flow_type: string;
     generation_payload: Record<string, unknown>;
@@ -506,6 +518,11 @@ export async function runQcForJob(db: Pool, jobId: string): Promise<QcResult> {
     .toUpperCase()
     .replace(/\s+/g, "_");
   if (candRoute === "HUMAN_REVIEW" && recommendedRoute === "AUTO_PUBLISH") {
+    recommendedRoute = "HUMAN_REVIEW";
+  }
+
+  // Product default: no "auto-publish" routing — all clean jobs go to human review (see CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC).
+  if (requireHumanReviewAfterQc && recommendedRoute === "AUTO_PUBLISH") {
     recommendedRoute = "HUMAN_REVIEW";
   }
 

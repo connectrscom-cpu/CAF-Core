@@ -7,6 +7,37 @@
  */
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 
+function normalizeCaptionField(c: unknown): string {
+  if (typeof c === "string") return c;
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    const t = (c as Record<string, unknown>).text;
+    if (typeof t === "string") return t;
+  }
+  return String(c ?? "");
+}
+
+/** Top-level caption, or `variation.caption` when models nest copy there (string or `{ text }`). */
+function captionFromOutAndVariation(out: Record<string, unknown>): string {
+  const top = normalizeCaptionField(out.caption);
+  if (top.trim()) return top;
+  const v = out.variation;
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    return normalizeCaptionField((v as Record<string, unknown>).caption);
+  }
+  return top;
+}
+
+/** When planners leave `{{structure_variables.slide_count}}` unsubtituted, QC still needs a numeric expected count. */
+function ensureStructureVariablesSlideCount(out: Record<string, unknown>, count: number): void {
+  if (!Number.isFinite(count) || count < 0) return;
+  const existing =
+    out.structure_variables && typeof out.structure_variables === "object" && !Array.isArray(out.structure_variables)
+      ? { ...(out.structure_variables as Record<string, unknown>) }
+      : {};
+  if (existing.slide_count == null) existing.slide_count = Math.floor(count);
+  out.structure_variables = existing;
+}
+
 function slidesArrayHasRenderableContent(arr: unknown): boolean {
   if (!Array.isArray(arr)) return false;
   return arr.some(
@@ -65,7 +96,7 @@ function ensureNestedVariationDefaults(out: Record<string, unknown>): Record<str
       ...v,
       variation_name: name,
       slides: numbered,
-      caption: typeof v.caption === "string" ? v.caption : String(v.caption ?? ""),
+      caption: normalizeCaptionField(v.caption),
       cta_type:
         typeof v.cta_type === "string" && v.cta_type.trim() ? v.cta_type.trim() : "Save",
       hashtags: Array.isArray(v.hashtags) ? v.hashtags : [],
@@ -76,6 +107,7 @@ function ensureNestedVariationDefaults(out: Record<string, unknown>): Record<str
   const first = patched[0];
   if (first && Array.isArray(first.slides)) {
     out.slides = first.slides as Record<string, unknown>[];
+    ensureStructureVariablesSlideCount(out, first.slides.length);
   }
   return out;
 }
@@ -91,7 +123,7 @@ function wrapSlidesAsCarouselInsightOutput(
   }));
   const variationName =
     (typeof out.variation_name === "string" && out.variation_name.trim() && out.variation_name) || "V1";
-  const caption = typeof out.caption === "string" ? out.caption : String(out.caption ?? "");
+  const caption = captionFromOutAndVariation(out);
   const cta_type =
     typeof out.cta_type === "string" && out.cta_type.trim() ? out.cta_type.trim() : "Save";
   const hashtags = Array.isArray(out.hashtags) ? out.hashtags : [];
@@ -118,6 +150,7 @@ function wrapSlidesAsCarouselInsightOutput(
     },
   ];
   out.slides = numbered;
+  ensureStructureVariablesSlideCount(out, numbered.length);
   return out;
 }
 

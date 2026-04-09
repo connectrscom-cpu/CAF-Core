@@ -10,7 +10,7 @@ import type { AppConfig } from "../config.js";
 import { generateForJob } from "../services/llm-generator.js";
 import { runQcForJob } from "../services/qc-runtime.js";
 import { runDiagnosticAudit } from "../services/diagnostic-runner.js";
-import { processContentJobById } from "../services/job-pipeline.js";
+import { processContentJobById, reprocessJobFromScratch } from "../services/job-pipeline.js";
 import { executeRework } from "../services/rework-orchestrator.js";
 import { q, qOne } from "../db/queries.js";
 import { getProjectBySlug } from "../repositories/core.js";
@@ -74,7 +74,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
         [project.id, req.params.task_id]);
       if (!job) return reply.code(404).send({ ok: false, error: "job not found" });
 
-      const result = await runQcForJob(db, job.id);
+      const result = await runQcForJob(db, job.id, config.CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC);
       return { ok: true, ...result };
     }
   );
@@ -138,7 +138,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
       }
 
       // Step 2: QC
-      const qcResult = await runQcForJob(db, job.id);
+      const qcResult = await runQcForJob(db, job.id, config.CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC);
 
       // Step 3: Diagnostic
       const diagResult = await runDiagnosticAudit(db, job.id);
@@ -214,7 +214,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
             await db.query(`UPDATE caf_core.content_jobs SET status = 'GENERATED', updated_at = now() WHERE id = $1`, [job.id]);
           }
 
-          await runQcForJob(db, job.id);
+          await runQcForJob(db, job.id, config.CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC);
           await runDiagnosticAudit(db, job.id);
 
           await db.query(`UPDATE caf_core.content_jobs SET status = 'IN_REVIEW', updated_at = now() WHERE id = $1`, [job.id]);
@@ -237,8 +237,12 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
   /**
    * POST /v1/pipeline/:project_slug/task/:task_id/reprocess
    * Run full job pipeline (LLM → QC → render) for one task.
+   * Body: `{ "from_scratch": true }` clears generated output, QC, assets, and diagnostics first so LLM runs again.
    */
-  app.post<{ Params: { project_slug: string; task_id: string } }>(
+  app.post<{
+    Params: { project_slug: string; task_id: string };
+    Body: { from_scratch?: boolean };
+  }>(
     "/v1/pipeline/:project_slug/task/:task_id/reprocess",
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
@@ -251,8 +255,14 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
       );
       if (!job) return reply.code(404).send({ ok: false, error: "job not found" });
 
+      const fromScratch = Boolean((req.body as Record<string, unknown> | undefined)?.from_scratch);
+
       try {
-        await processContentJobById(db, config, job.id);
+        if (fromScratch) {
+          await reprocessJobFromScratch(db, config, project.id, req.params.task_id);
+        } else {
+          await processContentJobById(db, config, job.id);
+        }
       } catch (err) {
         return reply.code(500).send({
           ok: false,
@@ -265,7 +275,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
         `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
         [job.id]
       );
-      return { ok: true, task_id: req.params.task_id, status: st?.status };
+      return { ok: true, task_id: req.params.task_id, status: st?.status, from_scratch: fromScratch };
     }
   );
 
