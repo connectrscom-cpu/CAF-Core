@@ -17,3 +17,4 @@ services/video-assembly/workdir/
 .vscode/
 .idea/
 .cursor/
+.vercel
