@@ -75,6 +75,7 @@ import {
   promptTemplateRoleHint,
 } from "../services/prompt-labs-meta.js";
 import { VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP } from "../decision_engine/default-plan-caps.js";
+import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import { z } from "zod";
 
 interface Deps { db: Pool; config: AppConfig; }
@@ -551,6 +552,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
    * POST /v1/admin/jobs/reprocess-full
    * Clear generated output, QC, renders, assets, and machine audits for one task_id, set status PLANNED,
    * then run the full pipeline (same as Process for a single job).
+   *
+   * Returns **202 Accepted** immediately and runs the pipeline in the background so Fly/browser proxies
+   * do not drop the connection while LLM + render run (often several minutes).
    */
   app.post("/v1/admin/jobs/reprocess-full", async (request, reply) => {
     const bodySchema = z.object({
@@ -564,13 +568,27 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const project = await resolveProject(db, parsed.data.project);
     if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
     const taskId = parsed.data.task_id.trim();
-    try {
-      const out = await reprocessJobFromScratch(db, config, project.id, taskId);
-      return { ok: true, task_id: taskId, status: out.status, skipped: out.skipped };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return reply.code(500).send({ ok: false, error: "reprocess_failed", message });
+    const existing = await getContentJobByTaskId(db, project.id, taskId);
+    if (!existing) return reply.code(404).send({ ok: false, error: "job_not_found" });
+    if (isOfflinePipelineFlow(String(existing.flow_type ?? ""))) {
+      return reply.code(400).send({
+        ok: false,
+        error: "offline_flow_not_supported",
+        message: "This flow is not run by the online pipeline; re-run is not applicable.",
+      });
     }
+
+    void reprocessJobFromScratch(db, config, project.id, taskId).catch((err) => {
+      request.log.error({ err, taskId, projectId: project.id }, "reprocess-full background failed");
+    });
+
+    return reply.code(202).send({
+      ok: true,
+      accepted: true,
+      task_id: taskId,
+      message:
+        "Re-run started in the background (LLM + QC + render can take several minutes). Keep this tab open or refresh the Jobs table to watch status.",
+    });
   });
 
   /** Delete every job in the project. `confirm_slug` must equal the project slug (safety). */
@@ -2979,6 +2997,11 @@ loadRunTransparency();
 .job-err-copy{padding:2px 8px;font-size:10px;line-height:1.2;flex-shrink:0;margin-top:1px}
 .job-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:10px 0 6px}
 .jobs-live-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;font-size:13px;color:var(--fg2)}
+#toast-area{position:relative;z-index:200}
+.toast{margin:0 0 16px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;animation:jobsToastIn .25s ease-out}
+.toast-ok{background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,.2)}
+.toast-err{background:var(--red-bg);color:var(--red);border:1px solid rgba(239,68,68,.2)}
+@keyframes jobsToastIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
 </style>
   <div id="toast-area"></div>
   <div class="jobs-live-row" style="margin:0 0 12px">
@@ -3017,14 +3040,17 @@ let jobLastErrors=[];
 let jobDetailOpenTaskId=null;
 let jobsPollTimer=null;
 let jobsListGen=0;
+let jobsToastTimer=null;
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function escAttr(s){return esc(s).replace(/"/g,'&quot;');}
 function trunc(s,n){if(s==null||s==='')return '—';s=String(s);return s.length<=n?s:s.slice(0,Math.max(0,n-1))+'…';}
-function showToast(msg,ok){
+function showToast(msg,ok,durationMs){
   const area=document.getElementById('toast-area');
   if(!area){if(!ok)alert(String(msg||''));return;}
+  if(jobsToastTimer)clearTimeout(jobsToastTimer);
   area.innerHTML='<div class="toast '+(ok?'toast-ok':'toast-err')+'">'+esc(msg)+'</div>';
-  setTimeout(function(){area.innerHTML='';},ok?6000:14000);
+  const ms=durationMs!=null&&durationMs>=0?durationMs:(ok?8000:16000);
+  jobsToastTimer=setTimeout(function(){area.innerHTML='';jobsToastTimer=null;},ms);
 }
 function currentJobFilterBody(){
   return {
@@ -3089,7 +3115,7 @@ async function deleteJobsForFilteredRun(){
 async function eraseJobByTaskId(tid){
   if(!JOB_SLUG){showToast('Select a project first',false);return;}
   tid=String(tid||'').trim();
-  if(!tid)return;
+  if(!tid){showToast('Missing task id. Reload the table with Filter.',false);return;}
   if(!confirm('Permanently erase this job and its drafts, audits, transitions, and assets?\\n\\n'+tid))return;
   try{
     var r=await cafFetch('/v1/admin/jobs/delete-one',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
@@ -3102,19 +3128,27 @@ async function eraseJobByTaskId(tid){
 }
 async function reprocessJobEntirely(ev,tid){
   if(ev)ev.stopPropagation();
-  if(!JOB_SLUG){showToast('Select a project first',false);return;}
+  if(typeof window.cafFetch!=='function'){alert('cafFetch is missing. Hard-refresh this page (Ctrl+Shift+R).');return;}
+  if(!JOB_SLUG){showToast('Pick a project in the sidebar, then open Jobs again.',false);return;}
   tid=String(tid||'').trim();
-  if(!tid)return;
+  if(!tid){showToast('Missing task id for this row. Click Filter to reload the table.',false);return;}
   if(!confirm('Re-run this job from scratch?\\n\\nClears generated output, QC, renders, and assets for this task, sets status to PLANNED, then runs LLM → QC → diagnostics → render again. Editorial review history is kept.\\n\\n'+tid))return;
-  showToast('Re-running job… (may take several minutes)',true);
+  showToast('Sending re-run request…',true,4000);
   try{
     var r=await cafFetch('/v1/admin/jobs/reprocess-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
     var d=await r.json().catch(function(){return{};});
-    if(!r.ok||!d.ok)throw new Error(d.message||d.error||('HTTP '+r.status));
-    if(d.skipped){showToast('Skipped (offline / non-pipeline flow): '+String(d.status||'—'),false);}
-    else{showToast('Done — status: '+(d.status||'—'),true);}
+    if(r.status===202&&d.ok){
+      showToast(d.message||('Re-run started for '+tid+'. The table will update as the pipeline runs; refresh if needed.'),true,28000);
+      loadFacets().then(function(){return loadJobs(jobsPage,true);});
+      return;
+    }
+    if(!r.ok||!d.ok){
+      var detail=(d&&d.details)?JSON.stringify(d.details):'';
+      throw new Error((d&&d.message)||(d&&d.error)||detail||('HTTP '+r.status));
+    }
+    showToast('Done — status: '+(d.status||'—'),true);
     loadFacets().then(function(){return loadJobs(jobsPage,true);});
-  }catch(err){showToast(err.message||String(err),false);}
+  }catch(err){showToast(err.message||String(err),false,22000);}
 }
 function reprocessOneJobEntirely(ev,ix){
   if(ev)ev.stopPropagation();
@@ -3397,6 +3431,8 @@ async function loadJobs(p,silent){
   restartJobsPoll();
 }
 document.getElementById('jobs-live')?.addEventListener('change',restartJobsPoll);
+window.reprocessJobEntirely=reprocessJobEntirely;
+window.reprocessOneJobEntirely=reprocessOneJobEntirely;
 loadFacets().then(function(){return loadJobs(1);});
 window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadFacets().then(function(){return loadJobs(jobsPage);});},0);});
 </script>`;

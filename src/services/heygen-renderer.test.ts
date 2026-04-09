@@ -88,6 +88,25 @@ describe("pickHeyGenDownloadUrlFromStatus", () => {
     expect(out.usedVideoUrlCaption).toBe(false);
   });
 
+  it("falls back to data.download_url when video_url absent", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({
+      data: { download_url: "https://cdn.example/dl.mp4", status: "completed" },
+    });
+    expect(out.url).toBe("https://cdn.example/dl.mp4");
+    expect(out.usedVideoUrlCaption).toBe(false);
+  });
+
+  it("reads video_url nested under data.result", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({
+      data: {
+        status: "completed",
+        result: { video_url: "https://cdn.example/nested.mp4" },
+      },
+    });
+    expect(out.url).toBe("https://cdn.example/nested.mp4");
+    expect(out.usedVideoUrlCaption).toBe(false);
+  });
+
   it("reads top-level video_url_caption", () => {
     const out = pickHeyGenDownloadUrlFromStatus({
       video_url_caption: "https://cdn.example/top-cap.mp4",

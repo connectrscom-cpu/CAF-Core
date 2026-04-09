@@ -679,14 +679,41 @@ function extractVideoId(json: Record<string, unknown>): string | null {
   return id ? String(id) : null;
 }
 
+function getHeyGenNumericCode(json: Record<string, unknown>): number | undefined {
+  const c = json.code;
+  if (c == null) return undefined;
+  if (typeof c === "number" && Number.isFinite(c)) return c;
+  const n = Number(c);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/** HeyGen wraps payloads in `{ code: 100, data, message }`. Non-100 was previously misread as status "unknown" → poll timeout. */
+function throwIfHeyGenBusinessError(json: Record<string, unknown>, where: string): void {
+  const code = getHeyGenNumericCode(json);
+  if (code !== undefined && code !== 100) {
+    const m = String(json.message ?? json.msg ?? "").trim() || `API code ${code}`;
+    throw new Error(`HeyGen ${where}: ${m}`);
+  }
+}
+
 function extractVideoUrl(json: Record<string, unknown>): string | null {
   const data = json.data as Record<string, unknown> | undefined;
+  const fromResult = (): string | undefined => {
+    const r = data?.result;
+    if (!r || typeof r !== "object" || Array.isArray(r)) return undefined;
+    const o = r as Record<string, unknown>;
+    const u = o.video_url ?? o.url ?? o.download_url;
+    return typeof u === "string" && u.trim() ? u.trim() : undefined;
+  };
   const url =
     (data?.video_url as string) ??
+    (data?.download_url as string) ??
+    (data?.output_url as string) ??
     (json.video_url as string) ??
     (data?.url as string) ??
-    ((data?.video as Record<string, unknown>)?.url as string);
-  return url ? String(url) : null;
+    ((data?.video as Record<string, unknown>)?.url as string) ??
+    fromResult();
+  return url ? String(url).trim() : null;
 }
 
 function trimUrlString(v: unknown): string | undefined {
@@ -734,6 +761,7 @@ export async function submitHeyGenVideo(
   } catch {
     throw new Error("HeyGen generate: invalid JSON");
   }
+  throwIfHeyGenBusinessError(json, `generate ${path}`);
   const vid = extractVideoId(json);
   if (!vid) throw new Error(`HeyGen generate: no video_id in response: ${text.slice(0, 400)}`);
   return vid;
@@ -764,10 +792,78 @@ export async function getHeyGenVideoStatus(
       `HeyGen status: response is not JSON (${res.status}). Preview: ${text.slice(0, 240)}`
     );
   }
+  throwIfHeyGenBusinessError(json, "video_status.get");
   const data = json.data as Record<string, unknown> | undefined;
-  const status = String(data?.status ?? json.status ?? "unknown");
+  const status = String(data?.status ?? json.status ?? "unknown")
+    .trim()
+    .toLowerCase();
   const { url: videoUrl, usedVideoUrlCaption } = pickHeyGenDownloadUrlFromStatus(json);
-  return { status: status.toLowerCase(), videoUrl, usedVideoUrlCaption, raw: json };
+  return { status, videoUrl, usedVideoUrlCaption, raw: json };
+}
+
+function isHeyGenSuccessStatus(status: string): boolean {
+  const s = status.trim().toLowerCase();
+  return (
+    s === "completed" ||
+    s === "complete" ||
+    s === "success" ||
+    s === "succeeded" ||
+    s === "done"
+  );
+}
+
+function isHeyGenFailureStatus(status: string): boolean {
+  const s = status.trim().toLowerCase();
+  return (
+    s === "failed" ||
+    s === "error" ||
+    s === "cancelled" ||
+    s === "canceled"
+  );
+}
+
+/**
+ * Video Agent sometimes returns `status: completed` before `video_url` is populated; retry briefly instead of failing.
+ */
+async function waitForHeyGenDownloadUrl(
+  apiKey: string,
+  apiBase: string,
+  videoId: string,
+  usedVideoUrlCaption: boolean,
+  initialUrl: string | null
+): Promise<{ videoUrl: string; usedVideoUrlCaption: boolean }> {
+  if (initialUrl) return { videoUrl: initialUrl, usedVideoUrlCaption };
+  let delayMs = 500;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, delayMs));
+    delayMs = Math.min(Math.round(delayMs * 1.2), 4000);
+    const st = await getHeyGenVideoStatus(apiKey, apiBase, videoId);
+    if (st.videoUrl) {
+      return { videoUrl: st.videoUrl, usedVideoUrlCaption: st.usedVideoUrlCaption };
+    }
+    if (isHeyGenFailureStatus(st.status)) {
+      const raw = st.raw;
+      const data = raw.data as Record<string, unknown> | undefined;
+      const blob =
+        data?.error ?? data?.error_msg ?? data?.message ?? raw.message ?? raw.error;
+      const detail =
+        typeof blob === "string"
+          ? blob.trim()
+          : blob != null && typeof blob === "object"
+            ? JSON.stringify(blob).slice(0, 500)
+            : blob != null
+              ? String(blob).slice(0, 500)
+              : "";
+      throw new Error(
+        detail
+          ? `HeyGen video ${videoId} failed while waiting for URL: ${detail}`
+          : `HeyGen video ${videoId} failed while waiting for URL`
+      );
+    }
+  }
+  throw new Error(
+    "HeyGen completed but no video_url (or video_url_caption) in status payload after retries — check HeyGen dashboard for this video_id"
+  );
 }
 
 export async function pollHeyGenUntilComplete(
@@ -785,13 +881,10 @@ export async function pollHeyGenUntilComplete(
       apiBase,
       videoId
     );
-    if (status === "completed" || status === "complete") {
-      if (videoUrl) return { videoUrl, usedVideoUrlCaption };
-      const st = await getHeyGenVideoStatus(apiKey, apiBase, videoId);
-      if (st.videoUrl) return { videoUrl: st.videoUrl, usedVideoUrlCaption: st.usedVideoUrlCaption };
-      throw new Error("HeyGen completed but no video_url (or video_url_caption) in status payload");
+    if (isHeyGenSuccessStatus(status)) {
+      return waitForHeyGenDownloadUrl(apiKey, apiBase, videoId, usedVideoUrlCaption, videoUrl);
     }
-    if (status === "failed" || status === "error") {
+    if (isHeyGenFailureStatus(status)) {
       const data = raw.data as Record<string, unknown> | undefined;
       const blob =
         data?.error ?? data?.error_msg ?? data?.message ?? raw.message ?? raw.error;
