@@ -15,6 +15,8 @@ export interface TaskTableProps {
   missingPreviewCount?: number;
   statusCounts?: Record<string, number>;
   contentSlug?: "t" | "content";
+  /** Cross-project workbench: show tenant column and disambiguate task links. */
+  showProjectColumn?: boolean;
 }
 
 function getVal(row: ReviewQueueRow, key: string): string {
@@ -33,20 +35,33 @@ function statusBadge(status: string) {
   return <span className={cls}>{status || "—"}</span>;
 }
 
-function TaskRow({ row, contentSlug = "t" }: { row: ReviewQueueRow; contentSlug?: "t" | "content" }) {
+function TaskRow({
+  row,
+  contentSlug = "t",
+  showProjectColumn = false,
+}: {
+  row: ReviewQueueRow;
+  contentSlug?: "t" | "content";
+  showProjectColumn?: boolean;
+}) {
   const taskId = getVal(row, "task_id");
+  const project = getVal(row, "project");
   const platform = getVal(row, "platform");
   const flowType = getVal(row, "flow_type");
   const reviewStatus = getVal(row, "review_status");
   const decision = getVal(row, "decision");
   const title = getVal(row, "generated_title") || taskId;
-  const taskHref = `/${contentSlug}/${encodeURIComponent(taskId)}`;
+  const taskHref =
+    showProjectColumn && project
+      ? `/${contentSlug}/${encodeURIComponent(taskId)}?project=${encodeURIComponent(project)}`
+      : `/${contentSlug}/${encodeURIComponent(taskId)}`;
 
   return (
     <tr>
       <td className="task-id-cell">
         <Link href={taskHref}>{taskId}</Link>
       </td>
+      {showProjectColumn && <td>{project || "—"}</td>}
       <td className="hook-cell" title={title}>{title}</td>
       <td>{platform || "—"}</td>
       <td>{flowType || "—"}</td>
@@ -60,9 +75,29 @@ function TaskRow({ row, contentSlug = "t" }: { row: ReviewQueueRow; contentSlug?
   );
 }
 
-function TableBody({ items, groupBy, contentSlug = "t" }: { items: ReviewQueueRow[]; groupBy: GroupBy; contentSlug?: "t" | "content" }) {
+function TableBody({
+  items,
+  groupBy,
+  contentSlug = "t",
+  showProjectColumn = false,
+}: {
+  items: ReviewQueueRow[];
+  groupBy: GroupBy;
+  contentSlug?: "t" | "content";
+  showProjectColumn?: boolean;
+}) {
+  const colSpan = showProjectColumn ? 9 : 8;
+  const rowKey = (row: ReviewQueueRow) =>
+    `${getVal(row, "project")}::${getVal(row, "task_id")}`;
+
   if (!groupBy) {
-    return (<tbody>{items.map((row) => (<TaskRow key={getVal(row, "task_id")} row={row} contentSlug={contentSlug} />))}</tbody>);
+    return (
+      <tbody>
+        {items.map((row) => (
+          <TaskRow key={rowKey(row)} row={row} contentSlug={contentSlug} showProjectColumn={showProjectColumn} />
+        ))}
+      </tbody>
+    );
   }
   const groups = new Map<string, ReviewQueueRow[]>();
   for (const row of items) {
@@ -75,22 +110,36 @@ function TableBody({ items, groupBy, contentSlug = "t" }: { items: ReviewQueueRo
     <tbody>
       {sortedGroups.map(([groupKey, rows]) => (
         <React.Fragment key={groupKey}>
-          <tr><td colSpan={8} className="group-header">{groupBy}: {groupKey}</td></tr>
-          {rows.map((row) => (<TaskRow key={getVal(row, "task_id")} row={row} contentSlug={contentSlug} />))}
+          <tr><td colSpan={colSpan} className="group-header">{groupBy}: {groupKey}</td></tr>
+          {rows.map((row) => (
+            <TaskRow key={rowKey(row)} row={row} contentSlug={contentSlug} showProjectColumn={showProjectColumn} />
+          ))}
         </React.Fragment>
       ))}
     </tbody>
   );
 }
 
-export function TaskTable({ items, groupBy, page, limit, total, missingPreviewCount = 0, statusCounts = {}, contentSlug = "t" }: TaskTableProps) {
-  const start = (page - 1) * limit + 1;
-  const end = Math.min(page * limit, total);
+export function TaskTable({
+  items,
+  groupBy,
+  page,
+  limit,
+  total,
+  missingPreviewCount = 0,
+  statusCounts = {},
+  contentSlug = "t",
+  showProjectColumn = false,
+}: TaskTableProps) {
+  const start = total === 0 ? 0 : (page - 1) * limit + 1;
+  const end = total === 0 ? 0 : Math.min(page * limit, total);
+  const rangeLabel =
+    total === 0 ? "No results" : `Showing ${start}–${end} of ${total}`;
 
   return (
     <div>
       <div className="flex items-center justify-between mb-3" style={{ fontSize: 13, color: "var(--muted)" }}>
-        <span>Showing {start}–{end} of {total}</span>
+        <span>{rangeLabel}</span>
         <div className="flex gap-2">
           {Object.entries(statusCounts).map(([k, v]) => (<span key={k}>{k}: {v}</span>))}
           {missingPreviewCount > 0 && <span style={{ color: "var(--yellow)" }}>Missing preview: {missingPreviewCount}</span>}
@@ -100,6 +149,7 @@ export function TaskTable({ items, groupBy, page, limit, total, missingPreviewCo
         <thead>
           <tr>
             <th>Task ID</th>
+            {showProjectColumn && <th>Project</th>}
             <th>Title / Hook</th>
             <th>Platform</th>
             <th>Flow type</th>
@@ -109,7 +159,12 @@ export function TaskTable({ items, groupBy, page, limit, total, missingPreviewCo
             <th></th>
           </tr>
         </thead>
-        <TableBody items={items} groupBy={groupBy} contentSlug={contentSlug} />
+        <TableBody
+          items={items}
+          groupBy={groupBy}
+          contentSlug={contentSlug}
+          showProjectColumn={showProjectColumn}
+        />
       </table>
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}
     </div>

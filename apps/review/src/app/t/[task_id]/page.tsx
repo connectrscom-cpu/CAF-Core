@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
@@ -37,6 +37,8 @@ interface AssetsResponse {
 export default function TaskPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const projectFromUrl = searchParams.get("project")?.trim() ?? "";
   const task_id = typeof params.task_id === "string" ? params.task_id : "";
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
@@ -82,9 +84,10 @@ export default function TaskPage() {
     setLoading(true);
     setError(null);
     try {
+      const pq = projectFromUrl ? `?project=${encodeURIComponent(projectFromUrl)}` : "";
       const [taskRes, assetsRes] = await Promise.all([
-        fetch(`/api/task/${encodeURIComponent(task_id)}`),
-        fetch(`/api/task/${encodeURIComponent(task_id)}/assets`),
+        fetch(`/api/task/${encodeURIComponent(task_id)}${pq}`),
+        fetch(`/api/task/${encodeURIComponent(task_id)}/assets${pq}`),
       ]);
       if (taskRes.status === 404) {
         setError("Task not found");
@@ -113,7 +116,7 @@ export default function TaskPage() {
     } finally {
       setLoading(false);
     }
-  }, [task_id]);
+  }, [task_id, projectFromUrl]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
@@ -212,6 +215,9 @@ export default function TaskPage() {
             <div className="card mt-4">
               <div className="card-header">Task Info</div>
               <div className="info-row"><span className="info-label">Task ID</span><span className="info-value font-mono">{task_id}</span></div>
+              {(data.project ?? "").trim() && (
+                <div className="info-row"><span className="info-label">Project</span><span className="info-value">{(data.project ?? "").trim()}</span></div>
+              )}
               <div className="info-row"><span className="info-label">Platform</span><span className="info-value">{data.platform || "—"}</span></div>
               <div className="info-row"><span className="info-label">Flow type</span><span className="info-value">{data.flow_type || "—"}</span></div>
               <div className="info-row"><span className="info-label">Route</span><span className="info-value">{data.recommended_route || "—"}</span></div>
@@ -243,6 +249,7 @@ export default function TaskPage() {
             />
             <DecisionPanel
               taskId={task_id}
+              projectSlug={(data.project ?? projectFromUrl).trim() || undefined}
               onSuccess={() => router.push("/")}
               existingDecision={decision}
               existingNotes={notes}
