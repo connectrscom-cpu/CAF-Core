@@ -5,8 +5,10 @@ import {
   getLearningObservations,
   getLearningRules,
   getLearningTransparency,
+  getLlmApprovalReviews,
   retireLearningRule,
   triggerEditorialAnalysis,
+  triggerLlmApprovalReview,
   triggerMarketAnalysis,
   uploadPerformanceCsv,
 } from "@/lib/caf-core-client";
@@ -33,6 +35,13 @@ export async function GET(req: NextRequest) {
   if (section === "transparency") {
     const data = await getLearningTransparency(projectSlug);
     if (!data) return NextResponse.json({ error: "Failed to fetch transparency" }, { status: 502 });
+    return NextResponse.json(data);
+  }
+
+  if (section === "llm_approval_reviews") {
+    const lim = req.nextUrl.searchParams.get("limit");
+    const data = await getLlmApprovalReviews(projectSlug, lim ? parseInt(lim, 10) : undefined);
+    if (!data) return NextResponse.json({ error: "Failed to fetch LLM reviews" }, { status: 502 });
     return NextResponse.json(data);
   }
 
@@ -70,6 +79,22 @@ export async function POST(req: NextRequest) {
   }
   if (action === "retire_rule" && body.rule_id && body.storage_project) {
     const result = await retireLearningRule(body.storage_project, body.rule_id);
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+
+  if (action === "llm_review_approved") {
+    const result = await triggerLlmApprovalReview(projectSlug, {
+      limit: body.limit,
+      task_ids: body.task_ids,
+      skip_if_reviewed_within_days: body.skip_if_reviewed_within_days,
+      force_rereview: body.force_rereview,
+      mint_pending_hints_below_score:
+        body.mint_pending_hints_below_score === null
+          ? null
+          : typeof body.mint_pending_hints_below_score === "number"
+            ? body.mint_pending_hints_below_score
+            : undefined,
+    });
     return NextResponse.json(result ?? { error: "Failed" });
   }
 

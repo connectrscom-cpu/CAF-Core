@@ -15,6 +15,9 @@ import {
 } from "../repositories/llm-approval-reviews.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
+import { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
+
+export { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 
 const SYSTEM_PROMPT = `You are an expert content QA model reviewing material that a human reviewer already APPROVED for publication.
 Your job is to score and critique it so the automation system can learn what strong approved output looks like and where patterns drift.
@@ -38,60 +41,6 @@ Rules:
   "summary": string
 }
 If a dimension does not apply (e.g. no images), set that score to null and explain in summary.`;
-
-function pickSection(label: string, value: unknown, parts: string[]): void {
-  if (value == null || value === "") return;
-  if (typeof value === "string") {
-    if (value.trim()) parts.push(`## ${label}\n${value.trim()}`);
-    return;
-  }
-  try {
-    parts.push(`## ${label}\n${JSON.stringify(value, null, 2)}`);
-  } catch {
-    parts.push(`## ${label}\n[Stringify error]`);
-  }
-}
-
-function mergeGeneratedLayers(payload: Record<string, unknown>): Record<string, unknown> {
-  const gen = (payload.generated_output as Record<string, unknown>) ?? {};
-  const out: Record<string, unknown> = { ...gen };
-  for (const k of Object.keys(payload)) {
-    if (k === "generated_output" || k === "candidate_data") continue;
-    if (out[k] == null && payload[k] != null) out[k] = payload[k];
-  }
-  const cand = (payload.candidate_data as Record<string, unknown>) ?? {};
-  for (const k of ["content_idea", "topic", "angle", "title"]) {
-    if (out[k] == null && cand[k] != null) out[k] = cand[k];
-  }
-  return out;
-}
-
-export function buildApprovedContentTextBundle(
-  generationPayload: Record<string, unknown>,
-  maxChars: number
-): string {
-  const merged = mergeGeneratedLayers(generationPayload);
-  const parts: string[] = [];
-
-  pickSection("hook", merged.hook, parts);
-  pickSection("caption / post", merged.caption ?? merged.post_caption, parts);
-  pickSection("title", merged.title, parts);
-  pickSection("hashtags", merged.hashtags, parts);
-  pickSection("slides", merged.slides, parts);
-  pickSection("slide_deck", merged.slide_deck, parts);
-  pickSection("carousel / deck", merged.carousel, parts);
-  pickSection("video_prompt", merged.video_prompt, parts);
-  pickSection("video_script", merged.video_script, parts);
-  pickSection("spoken_script", merged.spoken_script, parts);
-  pickSection("scene_bundle", merged.scene_bundle, parts);
-  pickSection("heygen / video plan", merged.video_plan ?? merged.heygen_payload, parts);
-
-  let body = parts.join("\n\n").trim();
-  if (body.length > maxChars) {
-    body = `${body.slice(0, maxChars)}\n\n…(truncated for model context)`;
-  }
-  return body || "(no extractable copy — empty generated_output)";
-}
 
 function isLikelyImageAsset(url: string, assetType: string | null): boolean {
   const u = url.toLowerCase();
@@ -326,7 +275,7 @@ export async function runLlmApprovalReviewsForProject(
         overall < mintBelow &&
         improvementBullets.length > 0
       ) {
-        const ruleId = `llm_appr_hint_${job.task_id.replace(/[^a-zA-Z0-9_]/g, "_").slice(-48)}_${Date.now()}`;
+        const ruleId = `llm_hint_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
         await insertLearningRule(db, {
           rule_id: ruleId,
           project_id: projectId,

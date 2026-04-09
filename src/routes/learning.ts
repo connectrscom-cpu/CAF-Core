@@ -349,6 +349,50 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 
+  const llmApprovalReviewBody = z.object({
+    limit: z.number().int().min(1).max(50).optional(),
+    task_ids: z.array(z.string()).optional(),
+    skip_if_reviewed_within_days: z.number().int().min(0).max(365).optional(),
+    force_rereview: z.boolean().optional(),
+    mint_pending_hints_below_score: z.number().min(0).max(1).nullable().optional(),
+  });
+
+  // ── LLM review: approved content only (vision + text) ─────────────────
+  app.post<{ Params: { project_slug: string } }>(
+    "/v1/learning/:project_slug/llm-review-approved",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      if (!config.OPENAI_API_KEY?.trim()) {
+        return reply.code(400).send({ ok: false, error: "OPENAI_API_KEY not configured" });
+      }
+      const parsed = llmApprovalReviewBody.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+      }
+      const b = parsed.data;
+      const { results, model } = await runLlmApprovalReviewsForProject(db, config, project.id, project.slug, {
+        limit: b.limit,
+        task_ids: b.task_ids,
+        skip_if_reviewed_within_days: b.skip_if_reviewed_within_days,
+        force_rereview: b.force_rereview,
+        mint_pending_hints_below_score: b.mint_pending_hints_below_score ?? null,
+      });
+      return { ok: true, model, results };
+    }
+  );
+
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { limit?: string };
+  }>("/v1/learning/:project_slug/llm-approval-reviews", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+    const lim = req.query.limit ? parseInt(req.query.limit, 10) : 40;
+    const reviews = await listLlmApprovalReviews(db, project.id, Number.isFinite(lim) ? lim : 40);
+    return { ok: true, reviews };
+  });
+
   // ── Performance JSON ingest (Loop C input) ─────────────────────────────
   app.post<{ Params: { project_slug: string }; Body: { metrics: PerformanceIngestionInput[]; window?: string } }>(
     "/v1/learning/:project_slug/performance/ingest",
