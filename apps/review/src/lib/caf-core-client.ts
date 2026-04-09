@@ -288,19 +288,24 @@ export async function getFacetsAll(): Promise<Facets> {
 }
 
 export async function getJobDetail(projectSlug: string, taskId: string): Promise<ReviewJobDetail | null> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return null;
   const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(
-    `/v1/review-queue/${encodeURIComponent(projectSlug)}/task/${encodeURIComponent(taskId)}`
+    `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}`
   );
   return data?.job ?? null;
 }
 
-/** Resolve a task across active projects; pass `projectSlug` when the id is ambiguous. */
+/** Resolve a task across projects; optional `projectSlug` when the same id could exist in multiple tenants. */
 export async function getJobDetailAll(
   taskId: string,
   projectSlug?: string
 ): Promise<ReviewJobDetail | null> {
-  const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug)}` : "";
-  const path = `/v1/review-queue-all/task/${encodeURIComponent(taskId)}${qs}`;
+  const tid = taskId.trim();
+  if (!tid) return null;
+  const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug.trim())}` : "";
+  const path = `/v1/review-queue-all/task/${encodeURIComponent(tid)}${qs}`;
   const base = CAF_CORE_URL.replace(/\/$/, "");
   // Must not use Next's default fetch cache — stale 404s made tasks look "missing" after sync.
   const res = await fetch(`${base}${path}`, { headers: headers(), cache: "no-store" });
@@ -308,9 +313,24 @@ export async function getJobDetailAll(
     const data = (await res.json()) as { ok?: boolean; job?: ReviewJobDetail };
     return data?.job ?? null;
   }
+  if (res.status === 401 || res.status === 403) {
+    const body = await res.text();
+    throw new Error(
+      `CAF Core returned ${res.status} for task lookup. Check CAF_CORE_TOKEN matches Core's CAF_CORE_API_TOKEN (or disable CAF_CORE_REQUIRE_AUTH on Core). ${body.slice(0, 180)}`
+    );
+  }
   if (res.status === 404) {
-    const slug = projectSlug || reviewQueueFallbackSlug();
-    return getJobDetail(slug, taskId);
+    const slug = projectSlug?.trim() || reviewQueueFallbackSlug();
+    const direct = await getJobDetail(slug, tid);
+    if (direct) return direct;
+    const catalog = await listProjects();
+    const projects = catalog?.projects?.filter((p) => p.active) ?? [];
+    for (const p of projects) {
+      if (p.slug === slug) continue;
+      const j = await getJobDetail(p.slug, tid);
+      if (j) return j;
+    }
+    return null;
   }
   console.error("CAF Core GET error", res.status, await res.text());
   return null;

@@ -588,15 +588,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const qs = z.object({ project_slug: z.string().optional() }).safeParse(request.query);
     const resolved = await resolveTaskToProject(db, params.data.task_id, qs.data?.project_slug);
-    if (!resolved.ok && resolved.reason === "ambiguous") {
-      return reply.code(409).send({
-        ok: false,
-        error: "ambiguous_task_id",
-        message: "Same task_id exists in more than one project; pass project_slug query param.",
-      });
-    }
     if (!resolved.ok) return reply.code(404).send({ ok: false, error: "not_found" });
-    const detail = await getReviewJobDetail(db, resolved.project_id, params.data.task_id);
+    const detail = await getReviewJobDetail(db, resolved.project_id, params.data.task_id.trim());
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
     return { ok: true, job: { ...detail, assets, project_slug: resolved.project_slug } };

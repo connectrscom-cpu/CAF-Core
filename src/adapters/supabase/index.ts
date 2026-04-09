@@ -43,7 +43,7 @@ export async function syncTasksFromSupabase(pool: Pool, opts: SyncTasksOpts) {
   let skipped = 0;
 
   for (const task of tasks ?? []) {
-    const taskId = task.task_id;
+    const taskId = typeof task.task_id === "string" ? task.task_id.trim() : String(task.task_id ?? "").trim();
     if (!taskId) { skipped++; continue; }
 
     const status = (task.pipeline_status ?? task.status ?? "UNKNOWN").toUpperCase();

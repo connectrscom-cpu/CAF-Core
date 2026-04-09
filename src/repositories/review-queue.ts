@@ -356,10 +356,12 @@ export async function getReviewJobDetail(
        WHERE task_id = j.task_id AND project_id = j.project_id
        ORDER BY created_at DESC LIMIT 1
      ) lr ON true
-     WHERE j.project_id = $1 AND j.task_id = $2`,
+     WHERE j.project_id = $1 AND trim(j.task_id) = trim($2)`,
     [projectId, taskId]
   );
   if (!job) return null;
+
+  const canonicalTid = job.task_id;
 
   const assets = await q<{
     id: string;
@@ -372,7 +374,7 @@ export async function getReviewJobDetail(
      FROM caf_core.assets
      WHERE project_id = $1 AND task_id = $2
      ORDER BY position ASC`,
-    [projectId, taskId]
+    [projectId, canonicalTid]
   );
 
   const reviews = await q<{
@@ -389,7 +391,7 @@ export async function getReviewJobDetail(
      FROM caf_core.editorial_reviews
      WHERE project_id = $1 AND task_id = $2
      ORDER BY created_at DESC`,
-    [projectId, taskId]
+    [projectId, canonicalTid]
   );
 
   const autoVal = await qOne<{
@@ -405,7 +407,7 @@ export async function getReviewJobDetail(
      FROM caf_core.auto_validation_results
      WHERE project_id = $1 AND task_id = $2
      ORDER BY created_at DESC LIMIT 1`,
-    [projectId, taskId]
+    [projectId, canonicalTid]
   );
 
   const review_slides_json = slidesJsonForReviewUi(job.flow_type, job.generation_payload as Record<string, unknown>);
@@ -547,23 +549,29 @@ export async function getDistinctValuesAllProjects(db: Pool): Promise<{
 
 export type ResolveTaskProjectResult =
   | { ok: true; project_id: string; project_slug: string }
-  | { ok: false; reason: "not_found" | "ambiguous" };
+  | { ok: false; reason: "not_found" };
 
+/**
+ * Map a task_id string to a project. Trims whitespace; if the same id exists in multiple tenants
+ * (should be rare), prefers an active project then the most recently updated row — never 409.
+ */
 export async function resolveTaskToProject(
   db: Pool,
   taskId: string,
   projectSlug?: string | null
 ): Promise<ResolveTaskProjectResult> {
+  const tid = taskId.trim();
+  if (!tid) return { ok: false, reason: "not_found" };
   const rows = await q<{ project_id: string; slug: string }>(
     db,
     `SELECT j.project_id, p.slug
      FROM caf_core.content_jobs j
-     INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true
-     WHERE j.task_id = $1 AND ($2::text IS NULL OR p.slug = $2)`,
-    [taskId, projectSlug?.trim() ? projectSlug.trim() : null]
+     INNER JOIN caf_core.projects p ON p.id = j.project_id
+     WHERE trim(j.task_id) = $1 AND ($2::text IS NULL OR p.slug = $2)
+     ORDER BY p.active DESC NULLS LAST, j.updated_at DESC NULLS LAST`,
+    [tid, projectSlug?.trim() ? projectSlug.trim() : null]
   );
   if (rows.length === 0) return { ok: false, reason: "not_found" };
-  if (rows.length > 1) return { ok: false, reason: "ambiguous" };
   return { ok: true, project_id: rows[0]!.project_id, project_slug: rows[0]!.slug };
 }
 
