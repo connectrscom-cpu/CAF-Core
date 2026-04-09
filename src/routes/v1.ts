@@ -32,10 +32,45 @@ import {
 import { buildCarouselPublishUrls, mergePublishUrlsIntoJob } from "../services/validation-router.js";
 import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
+import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
+
+  async function maybeSignPublicAssetUrl(url: string | null | undefined): Promise<string | null> {
+    const u = (url ?? "").trim();
+    if (!u) return null;
+    const parsed = tryParseSupabasePublicObjectUrl(u);
+    if (!parsed) return u;
+    const signed = await createSignedUrlForObjectKey(config, parsed.bucket, parsed.objectPath, 7200);
+    if ("signedUrl" in signed) return signed.signedUrl;
+    return u;
+  }
+
+  async function signJobAssets<T extends { public_url: string | null; bucket?: string | null; object_path?: string | null }>(
+    assets: T[]
+  ): Promise<T[]> {
+    const out: T[] = [];
+    for (const a of assets) {
+      const viaPublic = await maybeSignPublicAssetUrl(a.public_url);
+      if (viaPublic && viaPublic !== a.public_url) {
+        out.push({ ...a, public_url: viaPublic });
+        continue;
+      }
+      const b = (a.bucket ?? "").trim();
+      const key = (a.object_path ?? "").trim();
+      if (b && key) {
+        const signed = await createSignedUrlForObjectKey(config, b, key, 7200);
+        if ("signedUrl" in signed) {
+          out.push({ ...a, public_url: signed.signedUrl });
+          continue;
+        }
+      }
+      out.push(a);
+    }
+    return out;
+  }
 
   app.get("/", async () => ({
     ok: true,
@@ -531,13 +566,19 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       countReviewQueueAllProjectsFiltered(db, params.data.tab, filters),
       reviewQueueStatusBreakdownAllProjects(db, params.data.tab, filters),
     ]);
+    const signedJobs = await Promise.all(
+      (jobs ?? []).map(async (j) => ({
+        ...j,
+        preview_thumb_url: await maybeSignPublicAssetUrl((j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null),
+      }))
+    );
     return {
       ok: true,
       tab: params.data.tab,
       total,
       count: jobs.length,
       status_breakdown,
-      jobs,
+      jobs: signedJobs,
     };
   });
 
@@ -556,7 +597,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (!resolved.ok) return reply.code(404).send({ ok: false, error: "not_found" });
     const detail = await getReviewJobDetail(db, resolved.project_id, params.data.task_id);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
-    return { ok: true, job: { ...detail, project_slug: resolved.project_slug } };
+    const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    return { ok: true, job: { ...detail, assets, project_slug: resolved.project_slug } };
   });
 
   app.get("/v1/review-queue/:project_slug/counts", async (request, reply) => {
@@ -588,13 +630,19 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       countReviewQueueFiltered(db, project.id, params.data.tab, filters),
       reviewQueueStatusBreakdown(db, project.id, params.data.tab, filters),
     ]);
+    const signedJobs = await Promise.all(
+      (jobs ?? []).map(async (j) => ({
+        ...j,
+        preview_thumb_url: await maybeSignPublicAssetUrl((j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null),
+      }))
+    );
     return {
       ok: true,
       tab: params.data.tab,
       total,
       count: jobs.length,
       status_breakdown,
-      jobs,
+      jobs: signedJobs,
     };
   });
 
@@ -604,7 +652,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const detail = await getReviewJobDetail(db, project.id, params.data.task_id);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
-    return { ok: true, job: detail };
+    const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    return { ok: true, job: { ...detail, assets } };
   });
 
   app.post("/v1/review-queue/:project_slug/task/:task_id/decide", async (request, reply) => {
