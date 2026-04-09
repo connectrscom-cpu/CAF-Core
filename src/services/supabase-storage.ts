@@ -143,7 +143,7 @@ export function storageDownloadKeyCandidates(bucket: string, objectPath: string)
   return ordered;
 }
 
-function tryParseSupabasePublicObjectUrl(url: string): { bucket: string; objectPath: string } | null {
+export function tryParseSupabasePublicObjectUrl(url: string): { bucket: string; objectPath: string } | null {
   let parsed: URL;
   try {
     parsed = new URL(url.trim());
