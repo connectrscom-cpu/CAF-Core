@@ -35,6 +35,7 @@ const STRATEGY_FIELDS = [
   { key: "publishing_intensity", label: "Publishing Intensity", type: "text" },
   { key: "time_horizon", label: "Time Horizon", type: "text" },
   { key: "owner", label: "Owner", type: "text" },
+  { key: "instagram_handle", label: "Instagram handle (for carousel CTA; optional @)", type: "text" },
   { key: "notes", label: "Notes", type: "textarea" },
 ] as const;
 

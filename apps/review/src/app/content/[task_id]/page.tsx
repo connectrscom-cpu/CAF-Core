@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { TaskViewer } from "@/components/TaskViewer";
 import { createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
@@ -18,7 +18,9 @@ interface AssetsResponse {
 
 export default function ContentPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const task_id = typeof params.task_id === "string" ? params.task_id : "";
+  const projectQs = searchParams.get("project")?.trim() ?? "";
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
   const [assetUrls, setAssetUrls] = useState<string[]>([]);
@@ -54,9 +56,10 @@ export default function ContentPage() {
     setLoading(true);
     setError(null);
     try {
+      const pq = projectQs ? `?project=${encodeURIComponent(projectQs)}` : "";
       const [contentRes, assetsRes] = await Promise.all([
-        fetch(`/api/content/${encodeURIComponent(task_id)}`),
-        fetch(`/api/task/${encodeURIComponent(task_id)}/assets`),
+        fetch(`/api/content/${encodeURIComponent(task_id)}${pq}`),
+        fetch(`/api/task/${encodeURIComponent(task_id)}/assets${pq}`),
       ]);
       if (contentRes.status === 404) {
         setError("Content not found");
@@ -85,7 +88,7 @@ export default function ContentPage() {
     } finally {
       setLoading(false);
     }
-  }, [task_id]);
+  }, [task_id, projectQs]);
 
   useEffect(() => { fetchContent(); }, [fetchContent]);
 

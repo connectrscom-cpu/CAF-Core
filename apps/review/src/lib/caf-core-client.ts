@@ -18,6 +18,34 @@ async function coreGet<T = unknown>(path: string): Promise<T | null> {
   return res.json() as Promise<T>;
 }
 
+/** Same as coreGet but throws so API routes can surface misconfiguration (e.g. localhost CAF_CORE_URL on Vercel). */
+async function coreGetRequired<T>(path: string): Promise<T> {
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { headers: headers(), next: { revalidate: 5 } });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const localhostHint =
+      /localhost|127\.0\.0\.1/i.test(base) && process.env.VERCEL === "1"
+        ? " Set CAF_CORE_URL in Vercel → Settings → Environment Variables to your public Core URL (e.g. https://caf-core.fly.dev), not localhost."
+        : /localhost|127\.0\.0\.1/i.test(base)
+          ? " This server cannot reach Core on localhost; set CAF_CORE_URL to a URL reachable from here."
+          : "";
+    throw new Error(`Cannot reach CAF Core (${url}): ${msg}.${localhostHint}`);
+  }
+  if (!res.ok) {
+    const body = await res.text();
+    const authHint =
+      res.status === 401
+        ? " Set CAF_CORE_TOKEN to match Core's CAF_CORE_API_TOKEN, or disable CAF_CORE_REQUIRE_AUTH on Core."
+        : "";
+    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${body.slice(0, 400)}${authHint}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 async function corePost<T = unknown>(path: string, body: unknown): Promise<T | null> {
   const res = await fetch(`${CAF_CORE_URL}${path}`, {
     method: "POST",
@@ -81,6 +109,9 @@ export interface ReviewQueueJob {
   latest_rejection_tags: unknown[];
   latest_validator: string | null;
   latest_submitted_at: string | null;
+  /** Present on `/v1/review-queue-all/...` responses. */
+  project_slug?: string;
+  project_display_name?: string | null;
 }
 
 export interface ReviewQueueCounts {
@@ -117,6 +148,7 @@ export interface ReviewJobDetail extends ReviewQueueJob {
 }
 
 export interface Facets {
+  projects?: string[];
   platforms: string[];
   flow_types: string[];
   routes: string[];
@@ -135,44 +167,115 @@ export interface QueueFilters {
   has_preview?: string;
   risk_score_min?: string;
   run_id?: string;
+  /** Tenant filter when using the cross-project queue API. */
+  project_slug?: string;
   sort?: string;
   group_by?: string;
+  /** Server-side pagination (CAF Core `/v1/review-queue/...` supports up to 500). */
+  limit?: string;
+  offset?: string;
 }
 
 // ── API Calls ────────────────────────────────────────────────────────────
 
 export async function getQueueCounts(projectSlug: string): Promise<ReviewQueueCounts> {
-  const data = await coreGet<{ ok: boolean; counts: ReviewQueueCounts }>(
+  const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/counts`
   );
-  return data?.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
+  return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
+}
+
+/** Tab counts aggregated over all active projects. */
+export async function getQueueCountsAll(): Promise<ReviewQueueCounts> {
+  const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(`/v1/review-queue-all/counts`);
+  return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
 }
 
 export async function getQueueTab(
   projectSlug: string,
   tab: ReviewTab,
   filters: QueueFilters = {}
-): Promise<ReviewQueueJob[]> {
+): Promise<{ jobs: ReviewQueueJob[]; total: number; status_breakdown: Record<string, number> }> {
   const params = new URLSearchParams();
   for (const [key, val] of Object.entries(filters)) {
     if (val) params.set(key, val);
   }
   const qs = params.toString();
   const path = `/v1/review-queue/${encodeURIComponent(projectSlug)}/${tab}${qs ? `?${qs}` : ""}`;
-  const data = await coreGet<{ ok: boolean; jobs: ReviewQueueJob[] }>(path);
-  return data?.jobs ?? [];
+  const data = await coreGetRequired<{
+    ok: boolean;
+    jobs: ReviewQueueJob[];
+    total?: number;
+    status_breakdown?: Record<string, number>;
+  }>(path);
+  const jobs = data.jobs ?? [];
+  return {
+    jobs,
+    total: typeof data.total === "number" ? data.total : jobs.length,
+    status_breakdown: data.status_breakdown ?? {},
+  };
+}
+
+/** Cross-project queue (active projects only); same filter/pagination shape as `getQueueTab`. */
+export async function getQueueTabAll(
+  tab: ReviewTab,
+  filters: QueueFilters = {}
+): Promise<{ jobs: ReviewQueueJob[]; total: number; status_breakdown: Record<string, number> }> {
+  const params = new URLSearchParams();
+  for (const [key, val] of Object.entries(filters)) {
+    if (val) params.set(key, val);
+  }
+  const qs = params.toString();
+  const path = `/v1/review-queue-all/${tab}${qs ? `?${qs}` : ""}`;
+  const data = await coreGetRequired<{
+    ok: boolean;
+    jobs: ReviewQueueJob[];
+    total?: number;
+    status_breakdown?: Record<string, number>;
+  }>(path);
+  const jobs = data.jobs ?? [];
+  return {
+    jobs,
+    total: typeof data.total === "number" ? data.total : jobs.length,
+    status_breakdown: data.status_breakdown ?? {},
+  };
 }
 
 export async function getFacets(projectSlug: string): Promise<Facets> {
-  const data = await coreGet<{ ok: boolean; facets: Facets }>(
+  const data = await coreGetRequired<{ ok: boolean; facets: Facets }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/facets`
   );
-  return data?.facets ?? { platforms: [], flow_types: [], routes: [], runs: [], statuses: [] };
+  return data.facets ?? { platforms: [], flow_types: [], routes: [], runs: [], statuses: [] };
+}
+
+export async function getFacetsAll(): Promise<Facets> {
+  const data = await coreGetRequired<{ ok: boolean; facets: Facets }>(`/v1/review-queue-all/facets`);
+  const f = data.facets;
+  return {
+    projects: f?.projects ?? [],
+    platforms: f?.platforms ?? [],
+    flow_types: f?.flow_types ?? [],
+    routes: f?.routes ?? [],
+    runs: f?.runs ?? [],
+    statuses: f?.statuses ?? [],
+  };
 }
 
 export async function getJobDetail(projectSlug: string, taskId: string): Promise<ReviewJobDetail | null> {
   const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/task/${encodeURIComponent(taskId)}`
+  );
+  return data?.job ?? null;
+}
+
+/** Resolve a task across active projects; pass `projectSlug` when the id is ambiguous. */
+export async function getJobDetailAll(
+  taskId: string,
+  projectSlug?: string
+): Promise<ReviewJobDetail | null> {
+  const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug)}` : "";
+  const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(
+    `/v1/review-queue-all/task/${encodeURIComponent(taskId)}${qs}`
   );
   return data?.job ?? null;
 }
@@ -352,5 +455,51 @@ export async function triggerMarketAnalysis(projectSlug: string, windowDays?: nu
   return corePost<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/market-analysis`,
     { window_days: windowDays ?? 60 }
+  );
+}
+
+/** Multipart CSV upload — pass FormData with fields: `file` (required), `mapping` (optional JSON string), `window` (optional: early|stabilized). */
+export async function uploadPerformanceCsv(projectSlug: string, formData: FormData) {
+  const headers: Record<string, string> = {};
+  if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
+  const res = await fetch(
+    `${CAF_CORE_URL}/v1/learning/${encodeURIComponent(projectSlug)}/performance/csv`,
+    { method: "POST", headers, body: formData }
+  );
+  if (!res.ok) {
+    console.error("CAF Core CSV upload error", res.status, await res.text());
+    return null;
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
+export async function applyLearningRule(projectSlug: string, ruleId: string) {
+  return corePost<{ ok: boolean }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}/apply`,
+    {}
+  );
+}
+
+export async function retireLearningRule(projectSlug: string, ruleId: string) {
+  return corePost<{ ok: boolean }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}/retire`,
+    {}
+  );
+}
+
+export async function getLearningContextPreview(projectSlug: string, flowType?: string, platform?: string) {
+  const qs = new URLSearchParams();
+  if (flowType) qs.set("flow_type", flowType);
+  if (platform) qs.set("platform", platform);
+  const q = qs.toString();
+  return coreGet<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/context-preview${q ? `?${q}` : ""}`
+  );
+}
+
+export async function getLearningObservations(projectSlug: string, limit?: number) {
+  const qs = limit ? `?limit=${limit}` : "";
+  return coreGet<{ ok: boolean; observations: Record<string, unknown>[] }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/observations${qs}`
   );
 }

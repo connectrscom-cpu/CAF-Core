@@ -13,18 +13,26 @@ interface LearningRule {
   status: string;
   applied_at: string | null;
   created_at: string;
+  scope_type?: string;
+  rule_family?: string;
+  storage_project_slug?: string;
 }
 
 export default function LearningPage() {
+  const [project, setProject] = useState("SNS");
   const [rules, setRules] = useState<LearningRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [analysisResult, setAnalysisResult] = useState<Record<string, unknown> | null>(null);
   const [running, setRunning] = useState(false);
+  const [csvStatus, setCsvStatus] = useState<string | null>(null);
+  const [mappingJson, setMappingJson] = useState("");
+  const [contextPreview, setContextPreview] = useState<Record<string, unknown> | null>(null);
+  const [observations, setObservations] = useState<Record<string, unknown>[]>([]);
 
   const fetchRules = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/learning?project=SNS");
+      const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}`);
       if (res.ok) {
         const json = await res.json();
         setRules(json.rules ?? []);
@@ -32,9 +40,20 @@ export default function LearningPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [project]);
 
-  useEffect(() => { fetchRules(); }, [fetchRules]);
+  const fetchObservations = useCallback(async () => {
+    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=observations&limit=50`);
+    if (res.ok) {
+      const json = await res.json();
+      setObservations(json.observations ?? []);
+    }
+  }, [project]);
+
+  useEffect(() => {
+    fetchRules();
+    fetchObservations();
+  }, [fetchRules, fetchObservations]);
 
   const runAnalysis = async (action: "editorial" | "market") => {
     setRunning(true);
@@ -43,16 +62,74 @@ export default function LearningPage() {
       const res = await fetch("/api/learning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, project: "SNS" }),
+        body: JSON.stringify({ action, project }),
       });
       if (res.ok) {
         const json = await res.json();
         setAnalysisResult(json);
         fetchRules();
+        fetchObservations();
       }
     } finally {
       setRunning(false);
     }
+  };
+
+  const loadContextPreview = async () => {
+    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=context`);
+    if (res.ok) setContextPreview(await res.json());
+  };
+
+  const applyRule = async (rule: LearningRule) => {
+    const slug = rule.storage_project_slug ?? project;
+    const res = await fetch("/api/learning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "apply_rule", storage_project: slug, rule_id: rule.rule_id }),
+    });
+    if (res.ok) fetchRules();
+  };
+
+  const retireRule = async (rule: LearningRule) => {
+    const slug = rule.storage_project_slug ?? project;
+    const res = await fetch("/api/learning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "retire_rule", storage_project: slug, rule_id: rule.rule_id }),
+    });
+    if (res.ok) fetchRules();
+  };
+
+  const uploadCsv = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setCsvStatus(null);
+    const form = e.currentTarget;
+    const input = form.querySelector<HTMLInputElement>('input[type="file"]');
+    const file = input?.files?.[0];
+    if (!file) {
+      setCsvStatus("Choose a CSV file.");
+      return;
+    }
+    const fd = new FormData();
+    fd.append("project", project);
+    fd.append("file", file);
+    if (mappingJson.trim()) fd.append("mapping", mappingJson.trim());
+    try {
+      const res = await fetch("/api/learning", { method: "POST", body: fd });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setCsvStatus(
+          `Ingested ${json.ingested ?? 0} rows (${json.skipped ?? 0} skipped). Batch ${json.batch_id ?? "—"}`
+        );
+        fetchObservations();
+        fetchRules();
+      } else {
+        setCsvStatus(json.error ?? `Upload failed (${res.status})`);
+      }
+    } catch (err) {
+      setCsvStatus(err instanceof Error ? err.message : "Upload failed");
+    }
+    form.reset();
   };
 
   const active = rules.filter((r) => r.status === "active");
@@ -62,17 +139,62 @@ export default function LearningPage() {
     <div>
       <div className="page-header">
         <h2>Learning Layer</h2>
-        <p>Editorial analysis (Loop B), market performance analysis (Loop C), and learning rules.</p>
+        <p>
+          Evidence-backed rules, editorial and market analyzers, social CSV ingest, and compiled generation context.
+        </p>
       </div>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <label style={{ display: "block", marginBottom: 8, fontSize: 13 }}>
+          Project slug
+          <input
+            style={{ marginLeft: 8, width: 120, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)" }}
+            value={project}
+            onChange={(e) => setProject(e.target.value.trim())}
+          />
+        </label>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <button className="btn-primary" onClick={() => runAnalysis("editorial")} disabled={running}>
           {running ? "Running..." : "Run Editorial Analysis"}
         </button>
         <button className="btn-primary" onClick={() => runAnalysis("market")} disabled={running}>
           {running ? "Running..." : "Run Market Analysis"}
         </button>
+        <button type="button" className="btn-primary" onClick={loadContextPreview}>
+          Preview compiled context
+        </button>
       </div>
+
+      <form className="card" style={{ marginBottom: 20 }} onSubmit={uploadCsv}>
+        <h3 style={{ marginBottom: 8 }}>Upload social performance CSV</h3>
+        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
+          Map platform export columns if needed (JSON). Defaults recognize{" "}
+          <code>platform</code>, <code>posted_at</code>, <code>task_id</code>, metrics.
+        </p>
+        <input type="file" name="file" accept=".csv,text/csv" style={{ marginBottom: 8 }} />
+        <textarea
+          placeholder='Optional mapping JSON, e.g. {"platform":"Channel","posted_at":"Date","likes":"Likes"}'
+          value={mappingJson}
+          onChange={(e) => setMappingJson(e.target.value)}
+          rows={2}
+          style={{ width: "100%", marginBottom: 8, fontFamily: "monospace", fontSize: 12 }}
+        />
+        <button type="submit" className="btn-primary">
+          Upload &amp; ingest
+        </button>
+        {csvStatus && <p style={{ marginTop: 8, fontSize: 13 }}>{csvStatus}</p>}
+      </form>
+
+      {contextPreview && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3>Compiled context preview</h3>
+          <pre style={{ fontSize: 12, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap" }}>
+            {JSON.stringify(contextPreview, null, 2)}
+          </pre>
+        </div>
+      )}
 
       {analysisResult && (
         <div className="card" style={{ marginBottom: 20 }}>
@@ -80,6 +202,21 @@ export default function LearningPage() {
           <pre style={{ fontSize: 12, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>
             {JSON.stringify(analysisResult, null, 2)}
           </pre>
+        </div>
+      )}
+
+      {observations.length > 0 && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h3>Recent observations ({observations.length})</h3>
+          <ul style={{ fontSize: 12, maxHeight: 200, overflow: "auto", paddingLeft: 18 }}>
+            {observations.slice(0, 15).map((o) => (
+              <li key={String(o.observation_id ?? o.id)}>
+                <span style={{ fontFamily: "monospace", fontSize: 11 }}>{String(o.observation_type)}</span> —{" "}
+                {String(o.source_type)} (
+                {String(o.observed_at ?? "").slice(0, 10)})
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -92,21 +229,42 @@ export default function LearningPage() {
             <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Rule ID</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Trigger</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Action</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Scope</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Confidence</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Rule ID
+                  </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Action
+                  </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Family
+                  </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                 </tr>
               </thead>
               <tbody>
                 {active.map((rule) => (
                   <tr key={rule.rule_id}>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)", fontSize: 11, fontFamily: "monospace" }}>{rule.rule_id.slice(0, 30)}...</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.trigger_type}</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.action_type}</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.scope_flow_type ?? rule.scope_platform ?? "global"}</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.confidence != null ? (rule.confidence * 100).toFixed(0) + "%" : "—"}</td>
+                    <td
+                      style={{
+                        padding: "4px 8px",
+                        borderBottom: "1px solid var(--border)",
+                        fontSize: 11,
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {rule.rule_id.length > 36 ? `${rule.rule_id.slice(0, 36)}…` : rule.rule_id}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      {rule.action_type}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      {rule.rule_family ?? "—"}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" onClick={() => retireRule(rule)}>
+                        Retire
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -122,19 +280,36 @@ export default function LearningPage() {
             <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Rule ID</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Trigger</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Action</th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>Confidence</th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Rule ID
+                  </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Action
+                  </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                 </tr>
               </thead>
               <tbody>
                 {pending.map((rule) => (
                   <tr key={rule.rule_id}>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)", fontSize: 11, fontFamily: "monospace" }}>{rule.rule_id.slice(0, 30)}...</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.trigger_type}</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.action_type}</td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>{rule.confidence != null ? (rule.confidence * 100).toFixed(0) + "%" : "—"}</td>
+                    <td
+                      style={{
+                        padding: "4px 8px",
+                        borderBottom: "1px solid var(--border)",
+                        fontSize: 11,
+                        fontFamily: "monospace",
+                      }}
+                    >
+                      {rule.rule_id.length > 36 ? `${rule.rule_id.slice(0, 36)}…` : rule.rule_id}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      {rule.action_type}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-primary" onClick={() => applyRule(rule)}>
+                        Apply
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

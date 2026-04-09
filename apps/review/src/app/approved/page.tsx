@@ -8,6 +8,7 @@ import type { ReviewQueueRow } from "@/lib/types";
 interface ApprovedResponse {
   items: ReviewQueueRow[];
   total: number;
+  scope?: "all" | "single";
 }
 
 export default function ApprovedPage() {
@@ -50,7 +51,15 @@ export default function ApprovedPage() {
           data.items.length === 0 ? (
             <p style={{ color: "var(--muted)" }}>No approved content yet.</p>
           ) : (
-            <TaskTable items={data.items} groupBy="" page={1} limit={data.total} total={data.total} contentSlug="content" />
+            <TaskTable
+              items={data.items}
+              groupBy=""
+              page={1}
+              limit={data.total}
+              total={data.total}
+              contentSlug="content"
+              showProjectColumn={data.scope === "all"}
+            />
           )
         )}
       </div>

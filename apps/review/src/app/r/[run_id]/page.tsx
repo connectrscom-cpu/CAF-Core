@@ -12,6 +12,7 @@ interface TasksResponse {
   total: number;
   page: number;
   limit: number;
+  scope?: "all" | "single";
   statusCounts?: Record<string, number>;
   missingPreviewCount?: number;
 }
@@ -57,9 +58,10 @@ function RunContent() {
 
   const firstReadyTaskId = useMemo(() => {
     if (!data?.items) return null;
-    const pending = data.items.find((row) =>
-      ["READY", "IN_REVIEW", "in review", "in_review"].includes((row.review_status ?? "").trim())
-    );
+    const pending = data.items.find((row) => {
+      const s = (row.review_status ?? "").trim();
+      return ["READY", "IN_REVIEW", "GENERATED", "READY_FOR_REVIEW", "in review", "in_review"].includes(s);
+    });
     return pending ? (pending.task_id ?? "").trim() : (data.items[0]?.task_id ?? "").trim();
   }, [data?.items]);
 
@@ -104,6 +106,7 @@ function RunContent() {
               total={data.total}
               missingPreviewCount={data.missingPreviewCount}
               statusCounts={data.statusCounts}
+              showProjectColumn={data.scope === "all"}
             />
           )}
         </div>
