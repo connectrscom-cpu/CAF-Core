@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { submitDecision } from "@/lib/caf-core-client";
+import { decodeTaskIdParam } from "@/lib/task-id";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ task_id: string }> }) {
   try {
     const { task_id } = await params;
-    const decodedId = decodeURIComponent(task_id);
+    const decodedId = decodeTaskIdParam(task_id);
     const body = await request.json() as { project_slug?: string; decision?: string; notes?: string; rejection_tags?: string[]; validator?: string };
     const decision = (body.decision ?? "").trim().toUpperCase();
     if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {

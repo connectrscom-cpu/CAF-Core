@@ -654,7 +654,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, project.id, params.data.task_id);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    return { ok: true, job: { ...detail, assets } };
+    return {
+      ok: true,
+      job: { ...detail, assets, project_slug: params.data.project_slug },
+    };
   });
 
   app.post("/v1/review-queue/:project_slug/task/:task_id/decide", async (request, reply) => {

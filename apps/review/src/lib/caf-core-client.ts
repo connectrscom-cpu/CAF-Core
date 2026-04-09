@@ -302,7 +302,8 @@ export async function getJobDetailAll(
   const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug)}` : "";
   const path = `/v1/review-queue-all/task/${encodeURIComponent(taskId)}${qs}`;
   const base = CAF_CORE_URL.replace(/\/$/, "");
-  const res = await fetch(`${base}${path}`, { headers: headers(), next: { revalidate: 5 } });
+  // Must not use Next's default fetch cache — stale 404s made tasks look "missing" after sync.
+  const res = await fetch(`${base}${path}`, { headers: headers(), cache: "no-store" });
   if (res.ok) {
     const data = (await res.json()) as { ok?: boolean; job?: ReviewJobDetail };
     return data?.job ?? null;

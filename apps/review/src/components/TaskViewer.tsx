@@ -43,14 +43,16 @@ export function TaskViewer({
 
   const mediaRows = useMemo(() => {
     if (taskAssets && taskAssets.length > 0) return taskAssets;
+    const flowHint = getVal(data, "flow_type");
     return taskAssetsToPreviewRows(
       (assetUrls ?? []).map((public_url, i) => ({
         position: i,
         public_url,
         asset_type: null as string | null,
-      }))
+      })),
+      { flowTypeHint: flowHint }
     );
-  }, [taskAssets, assetUrls]);
+  }, [taskAssets, assetUrls, data]);
 
   const mediaItems: CarouselMediaItem[] = useMemo(
     () => mediaRows.map((r) => ({ url: r.public_url, kind: r.kind === "video" ? "video" : "image" })),

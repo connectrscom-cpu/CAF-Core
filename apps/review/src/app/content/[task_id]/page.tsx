@@ -69,7 +69,8 @@ export default function ContentPage() {
       if (assetsRes.ok) {
         const assetsJson: AssetsResponse = await assetsRes.json();
         const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
-        setTaskAssets(taskAssetsToPreviewRows(rows));
+        const flowHint = (contentJson.data?.flow_type ?? "").trim();
+        setTaskAssets(taskAssetsToPreviewRows(rows, { flowTypeHint: flowHint }));
       } else {
         setTaskAssets([]);
       }

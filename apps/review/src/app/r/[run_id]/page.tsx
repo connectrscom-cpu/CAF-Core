@@ -56,17 +56,23 @@ function RunContent() {
       .catch(() => {});
   }, []);
 
-  const firstReadyTaskId = useMemo(() => {
-    if (!data?.items) return null;
+  const firstReadyLink = useMemo(() => {
+    if (!data?.items?.length) return null;
     const pending = data.items.find((row) => {
       const s = (row.review_status ?? "").trim();
       return ["READY", "IN_REVIEW", "GENERATED", "READY_FOR_REVIEW", "in review", "in_review"].includes(s);
     });
-    return pending ? (pending.task_id ?? "").trim() : (data.items[0]?.task_id ?? "").trim();
+    const row = pending ?? data.items[0];
+    if (!row) return null;
+    const tid = (row.task_id ?? "").trim();
+    if (!tid) return null;
+    const proj = (row.project ?? "").trim();
+    const qs = proj ? `?project=${encodeURIComponent(proj)}` : "";
+    return { href: `/t/${encodeURIComponent(tid)}${qs}` };
   }, [data?.items]);
 
   const reviewNext = () => {
-    if (firstReadyTaskId) router.push(`/t/${encodeURIComponent(firstReadyTaskId)}`);
+    if (firstReadyLink) router.push(firstReadyLink.href);
   };
 
   return (
@@ -76,7 +82,7 @@ function RunContent() {
           <h2>Run: {run_id}</h2>
           <span className="page-header-sub">Tasks belonging to this run</span>
         </div>
-        {firstReadyTaskId && (
+        {firstReadyLink && (
           <button type="button" className="btn-primary" onClick={reviewNext}>
             Review next pending
           </button>
