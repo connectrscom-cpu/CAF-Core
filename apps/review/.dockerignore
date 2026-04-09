@@ -1,0 +1,11 @@
+.next
+node_modules
+.git
+tsconfig.tsbuildinfo
+**/*.tsbuildinfo
+npm-debug.log
+yarn.lock
+pnpm-lock.yaml
+*.log
+Dockerfile
+fly.toml
