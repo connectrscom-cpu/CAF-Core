@@ -21,6 +21,32 @@ type OpenAiVideoJob = {
   size?: string;
 };
 
+export class SoraPollTimeoutError extends Error {
+  videoId: string;
+  sceneIndex: number;
+  maxMs: number;
+  lastStatus: string | null;
+  lastProgress: number | null;
+
+  constructor(args: {
+    videoId: string;
+    sceneIndex: number;
+    maxMs: number;
+    lastStatus?: string | null;
+    lastProgress?: number | null;
+  }) {
+    super(
+      `Sora video poll timeout after ${args.maxMs}ms (video_id=${args.videoId}, last_status=${args.lastStatus ?? "unknown"})`
+    );
+    this.name = "SoraPollTimeoutError";
+    this.videoId = args.videoId;
+    this.sceneIndex = args.sceneIndex;
+    this.maxMs = args.maxMs;
+    this.lastStatus = args.lastStatus ?? null;
+    this.lastProgress = typeof args.lastProgress === "number" ? args.lastProgress : null;
+  }
+}
+
 function openAiBase(config: AppConfig): string {
   return config.OPENAI_API_BASE.replace(/\/$/, "");
 }
@@ -143,9 +169,13 @@ async function pollSoraVideoUntilComplete(
     requestJson: { endpoint: statusUrl, video_id: videoId },
     responseJson: last,
   });
-  throw new Error(
-    `Sora video poll timeout after ${config.SORA_POLL_MAX_MS}ms (video_id=${videoId}, last_status=${last.status ?? "unknown"})`
-  );
+  throw new SoraPollTimeoutError({
+    videoId,
+    sceneIndex: audit.scene_index,
+    maxMs: config.SORA_POLL_MAX_MS,
+    lastStatus: last.status ?? null,
+    lastProgress: typeof last.progress === "number" ? last.progress : null,
+  });
 }
 
 export async function createUploadSoraSceneClip(

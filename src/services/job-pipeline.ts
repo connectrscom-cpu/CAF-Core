@@ -37,6 +37,8 @@ import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
+import { HeygenPollTimeoutError } from "./heygen-renderer.js";
+import { SoraPollTimeoutError } from "./sora-scene-clips.js";
 
 export interface PipelineConfig {
   rendererBaseUrl: string;
@@ -67,6 +69,13 @@ type JobRow = {
 
 /** Phase-2 video render concurrency for `processRunJobs` (carousel lane stays one-at-a-time). */
 const PIPELINE_VIDEO_RENDER_CONCURRENCY = 3;
+
+class RenderNotReadyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RenderNotReadyError";
+  }
+}
 
 type PreRenderStep =
   | { kind: "terminal" }
@@ -316,6 +325,9 @@ export async function processRunJobs(
         });
       }
     } catch (err) {
+      if (err instanceof RenderNotReadyError) {
+        continue;
+      }
       const msg = err instanceof Error ? err.message : String(err);
       await markJobFailedPipeline(db, run, job.task_id, job.id, msg, errors);
     }
@@ -342,9 +354,19 @@ export async function processRunJobs(
     for (const t of carouselTickets) {
       try {
         await runOneRender(t);
-        await incrementRunJobsCompleted(db, runUuid);
-        processed++;
+        const refreshed = await qOne<{ status: string }>(
+          db,
+          `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+          [t.jobId]
+        );
+        if (refreshed?.status !== "RENDERING") {
+          await incrementRunJobsCompleted(db, runUuid);
+          processed++;
+        }
       } catch (err) {
+        if (err instanceof RenderNotReadyError) {
+          continue;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
       }
@@ -355,9 +377,19 @@ export async function processRunJobs(
     await mapWithConcurrency(videoTickets, PIPELINE_VIDEO_RENDER_CONCURRENCY, async (t) => {
       try {
         await runOneRender(t);
-        await incrementRunJobsCompleted(db, runUuid);
-        processed++;
+        const refreshed = await qOne<{ status: string }>(
+          db,
+          `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+          [t.jobId]
+        );
+        if (refreshed?.status !== "RENDERING") {
+          await incrementRunJobsCompleted(db, runUuid);
+          processed++;
+        }
       } catch (err) {
+        if (err instanceof RenderNotReadyError) {
+          return;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
       }
@@ -409,6 +441,14 @@ export async function processJobByTaskId(
   try {
     await processOneJob(db, config, job, run, pipeConfig);
   } catch (err) {
+    if (err instanceof RenderNotReadyError) {
+      const updated = await qOne<{ status: string }>(
+        db,
+        `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+        [job.id]
+      );
+      return { status: updated?.status ?? "RENDERING" };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     await updateJobStatus(db, job.id, "FAILED");
     await insertJobStateTransition(db, {
@@ -1131,6 +1171,31 @@ async function processVideoJob(
       error_message: null,
     });
   } catch (err) {
+    if (err instanceof HeygenPollTimeoutError) {
+      await updateJobRenderState(db, job.id, {
+        provider: "heygen",
+        status: "pending",
+        phase: "polling",
+        video_id: err.videoId,
+        note: "poll_timeout_not_failed",
+        max_poll_ms: err.maxMs,
+      });
+      throw new RenderNotReadyError(err.message);
+    }
+    if (err instanceof SoraPollTimeoutError) {
+      await updateJobRenderState(db, job.id, {
+        provider: "video",
+        status: "pending",
+        phase: "sora_polling",
+        scene_index: err.sceneIndex,
+        video_id: err.videoId,
+        last_status: err.lastStatus,
+        last_progress: err.lastProgress,
+        note: "poll_timeout_not_failed",
+        max_poll_ms: err.maxMs,
+      });
+      throw new RenderNotReadyError(err.message);
+    }
     const msg = err instanceof Error ? err.message : String(err);
     const genSnap = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
     const finalVid = finalJobStatusAfterRender(recommendedRoute);

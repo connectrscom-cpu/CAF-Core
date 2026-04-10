@@ -591,6 +591,51 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     });
   });
 
+  /**
+   * POST /v1/admin/jobs/resume
+   * Resume a job without clearing payload/QC/assets.
+   *
+   * Practical use: jobs stuck in RENDERING due to upstream timeouts (e.g. Sora poll timeout).
+   * This re-runs the normal per-task pipeline, which will continue from current state and
+   * only render the missing parts.
+   *
+   * Returns **202 Accepted** immediately and runs in the background (can take minutes).
+   */
+  app.post("/v1/admin/jobs/resume", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      task_id: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const taskId = parsed.data.task_id.trim();
+    const existing = await getContentJobByTaskId(db, project.id, taskId);
+    if (!existing) return reply.code(404).send({ ok: false, error: "job_not_found" });
+    if (isOfflinePipelineFlow(String(existing.flow_type ?? ""))) {
+      return reply.code(400).send({
+        ok: false,
+        error: "offline_flow_not_supported",
+        message: "This flow is not run by the online pipeline; resume is not applicable.",
+      });
+    }
+
+    void processJobByTaskId(db, config, project.id, taskId).catch((err) => {
+      request.log.error({ err, taskId, projectId: project.id }, "resume job background failed");
+    });
+
+    return reply.code(202).send({
+      ok: true,
+      accepted: true,
+      task_id: taskId,
+      message:
+        "Resume started in the background. Refresh the Jobs table to watch status (job should remain RENDERING until clips/mux complete).",
+    });
+  });
+
   /** Delete every job in the project. `confirm_slug` must equal the project slug (safety). */
   app.post("/v1/admin/jobs/delete-all", async (request, reply) => {
     const bodySchema = z.object({
@@ -3150,9 +3195,36 @@ async function reprocessJobEntirely(ev,tid){
     loadFacets().then(function(){return loadJobs(jobsPage,true);});
   }catch(err){showToast(err.message||String(err),false,22000);}
 }
+async function resumeJob(ev,tid){
+  if(ev)ev.stopPropagation();
+  if(typeof window.cafFetch!=='function'){alert('cafFetch is missing. Hard-refresh this page (Ctrl+Shift+R).');return;}
+  if(!JOB_SLUG){showToast('Pick a project in the sidebar, then open Jobs again.',false);return;}
+  tid=String(tid||'').trim();
+  if(!tid){showToast('Missing task id for this row. Click Filter to reload the table.',false);return;}
+  showToast('Sending resume request…',true,4000);
+  try{
+    var r=await cafFetch('/v1/admin/jobs/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
+    var d=await r.json().catch(function(){return{};});
+    if(r.status===202&&d.ok){
+      showToast(d.message||('Resume started for '+tid+'. Refresh will show progress.'),true,24000);
+      loadFacets().then(function(){return loadJobs(jobsPage,true);});
+      return;
+    }
+    if(!r.ok||!d.ok){
+      var detail=(d&&d.details)?JSON.stringify(d.details):'';
+      throw new Error((d&&d.message)||(d&&d.error)||detail||('HTTP '+r.status));
+    }
+    showToast('Resume requested — status: '+(d.status||'—'),true);
+    loadFacets().then(function(){return loadJobs(jobsPage,true);});
+  }catch(err){showToast(err.message||String(err),false,22000);}
+}
 function reprocessOneJobEntirely(ev,ix){
   if(ev)ev.stopPropagation();
   reprocessJobEntirely(ev,jobRowTaskIds[ix]);
+}
+function resumeOneJob(ev,ix){
+  if(ev)ev.stopPropagation();
+  resumeJob(ev,jobRowTaskIds[ix]);
 }
 function eraseOneJob(ev,ix){
   if(ev)ev.stopPropagation();
@@ -3284,6 +3356,11 @@ function renderJobDetailHtml(d){
   var lines=[];
   lines.push('<div class="job-detail-toolbar" style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap">');
   lines.push('<button type="button" class="btn btn-sm" onclick="copyJobDetailFull(event)">Copy all for debug</button>');
+  var rs=j.render_state||{};
+  var canResume=(String(j.status||'').toUpperCase()==='RENDERING') && (String(rs.status||'').toLowerCase()==='pending' || String(rs.status||'').toLowerCase()==='in_progress');
+  if(canResume){
+    lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();resumeJob(event,'+JSON.stringify(j.task_id||'')+')" title="Resume pipeline without clearing payload (picks up missing renders)">Resume</button>');
+  }
   lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="Clears output, QC, assets; runs LLM → QC → render again">Re-run entire pipeline</button>');
   lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
   lines.push('<span style="font-size:11px;color:var(--muted)">Summary, content preview, API audit, render state, payloads, transitions</span>');
@@ -3384,6 +3461,10 @@ async function loadJobs(p,silent){
   for(var i=0;i<d.rows.length;i++){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');
+    var isRendering=String(j.status||'').toUpperCase()==='RENDERING';
+    var renderStatus=String(j.render_status||'').toLowerCase();
+    var renderPhase=String(j.render_phase||'').toLowerCase();
+    var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress') && (renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
     h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent);max-width:160px" title="'+escAttr(j.task_id)+'">'+esc(trunc(j.task_id,40))+' <span style="opacity:.5">▸</span></td>';
     h+='<td class="mono" style="font-size:11px">'+esc(j.run_id||'—')+'</td>';
     h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td>';
@@ -3399,7 +3480,11 @@ async function loadJobs(p,silent){
     h+='<td>'+esc(j.pre_gen_score||'—')+'</td>';
     h+='<td>'+esc(j.qc_status||'—')+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td>';
-    h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center"><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="Clear output/QC/renders/assets and run full pipeline again">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
+    h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">';
+    if(showResume){
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — continues missing clips / mux">Resume</button>';
+    }
+    h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="Clear output/QC/renders/assets and run full pipeline again">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
     h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="13"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
   }
   h+='</tbody></table>';
@@ -3433,6 +3518,8 @@ async function loadJobs(p,silent){
 document.getElementById('jobs-live')?.addEventListener('change',restartJobsPoll);
 window.reprocessJobEntirely=reprocessJobEntirely;
 window.reprocessOneJobEntirely=reprocessOneJobEntirely;
+window.resumeJob=resumeJob;
+window.resumeOneJob=resumeOneJob;
 loadFacets().then(function(){return loadJobs(1);});
 window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadFacets().then(function(){return loadJobs(jobsPage);});},0);});
 </script>`;
