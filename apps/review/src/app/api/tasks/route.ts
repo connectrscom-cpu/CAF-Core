@@ -8,6 +8,7 @@ import {
   type ReviewTab,
   type QueueFilters,
 } from "@/lib/caf-core-client";
+import { pickCaptionFromGenerationPayload } from "@/lib/task-api-handlers";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest) {
       risk_score: j.pre_gen_score ?? "",
       generated_title: (j.generation_payload?.title ?? j.generation_payload?.generated_title ?? "") as string,
       generated_hook: (j.generation_payload?.hook ?? j.generation_payload?.generated_hook ?? "") as string,
-      generated_caption: (j.generation_payload?.caption ?? j.generation_payload?.generated_caption ?? "") as string,
+      generated_caption: pickCaptionFromGenerationPayload((j.generation_payload ?? {}) as Record<string, unknown>),
       generated_slides_json: j.generation_payload?.slides ? JSON.stringify(j.generation_payload.slides) : "",
       preview_url: (j.preview_thumb_url ?? "").trim(),
       video_url: "",

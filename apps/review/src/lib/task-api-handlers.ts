@@ -11,6 +11,65 @@ import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 import { previewFieldsFromJob } from "@/lib/job-preview-fields";
 import { isVideoUrl } from "@/lib/media-url";
 
+function stringVal(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function recordVal(v: unknown): Record<string, unknown> | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  return v as Record<string, unknown>;
+}
+
+function arrayVal(v: unknown): unknown[] | null {
+  return Array.isArray(v) ? v : null;
+}
+
+function pickFromNestedCaptionObjects(root: Record<string, unknown> | null): string {
+  if (!root) return "";
+  const direct = stringVal(root.caption) || stringVal(root.post_caption) || stringVal(root.description);
+  if (direct.trim()) return direct.trim();
+
+  // Common nesting patterns across flows
+  for (const k of ["content", "publish", "publication", "post", "video", "result", "output", "data"]) {
+    const nest = recordVal(root[k]);
+    if (!nest) continue;
+    const v = stringVal(nest.caption) || stringVal(nest.post_caption) || stringVal(nest.description);
+    if (v.trim()) return v.trim();
+  }
+  return "";
+}
+
+/**
+ * Carousel caption can live in multiple legacy/new shapes.
+ * Prefer explicit "caption" / "generated_caption", then fall back to
+ * CAF Core generator outputs (e.g. `generated_output.carousel.caption`).
+ */
+export function pickCaptionFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
+  const p = payload ?? undefined;
+  const direct =
+    stringVal(p?.caption) ||
+    stringVal(p?.generated_caption) ||
+    stringVal(p?.post_caption) ||
+    stringVal(p?.final_caption) ||
+    stringVal(p?.final_caption_override);
+  if (direct.trim()) return direct.trim();
+
+  const generatedOutput = recordVal(p?.generated_output);
+  const goDirect = pickFromNestedCaptionObjects(generatedOutput) || stringVal(generatedOutput?.generated_caption);
+  if (goDirect.trim()) return goDirect.trim();
+
+  const carousel = recordVal(generatedOutput?.carousel);
+  const carouselCaption = pickFromNestedCaptionObjects(carousel);
+  if (carouselCaption.trim()) return carouselCaption.trim();
+
+  const variations = arrayVal(generatedOutput?.variations);
+  const firstVar = variations?.[0] ? recordVal(variations[0]) : null;
+  const varCaption = pickFromNestedCaptionObjects(firstVar);
+  if (varCaption.trim()) return varCaption.trim();
+
+  return "";
+}
+
 /** Long n8n-style task ids break some hosts when used as a single path segment; prefer ?task_id= for API too. */
 export async function jsonTaskDetailResponse(
   decodedId: string,
@@ -26,6 +85,7 @@ export async function jsonTaskDetailResponse(
       return NextResponse.json({ rowIndex: 0, data: row });
     }
     const { preview_url, video_url } = previewFieldsFromJob(job);
+    const generationPayload = (job.generation_payload ?? {}) as Record<string, unknown>;
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -42,7 +102,7 @@ export async function jsonTaskDetailResponse(
       risk_score: job.pre_gen_score ?? "",
       generated_title: (job.generation_payload?.title ?? job.generation_payload?.generated_title ?? "") as string,
       generated_hook: (job.generation_payload?.hook ?? job.generation_payload?.generated_hook ?? "") as string,
-      generated_caption: (job.generation_payload?.caption ?? job.generation_payload?.generated_caption ?? "") as string,
+      generated_caption: pickCaptionFromGenerationPayload(generationPayload),
       generated_slides_json: jobGeneratedSlidesJson(job),
       validator: job.latest_validator ?? "",
     };
@@ -78,6 +138,7 @@ export async function jsonContentDetailResponse(
       : await getJobDetail(PROJECT_SLUG, decodedId);
     if (!job) return NextResponse.json({ error: "Task not found" }, { status: 404 });
     const { preview_url, video_url } = previewFieldsFromJob(job);
+    const generationPayload = (job.generation_payload ?? {}) as Record<string, unknown>;
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -90,7 +151,7 @@ export async function jsonContentDetailResponse(
       decision: job.latest_decision ?? "",
       generated_title: (job.generation_payload?.title ?? job.generation_payload?.generated_title ?? "") as string,
       generated_hook: (job.generation_payload?.hook ?? job.generation_payload?.generated_hook ?? "") as string,
-      generated_caption: (job.generation_payload?.caption ?? job.generation_payload?.generated_caption ?? "") as string,
+      generated_caption: pickCaptionFromGenerationPayload(generationPayload),
       generated_slides_json: jobGeneratedSlidesJson(job),
     };
     return NextResponse.json({ data });
@@ -145,7 +206,7 @@ async function lookupQueueRowByTaskId(
       risk_score: match.pre_gen_score ?? "",
       generated_title: generationVal(gen, "title") || generationVal(gen, "generated_title"),
       generated_hook: generationVal(gen, "hook") || generationVal(gen, "generated_hook"),
-      generated_caption: generationVal(gen, "caption") || generationVal(gen, "generated_caption"),
+      generated_caption: pickCaptionFromGenerationPayload(gen),
       generated_slides_json: gen.slides ? JSON.stringify(gen.slides) : "",
       validator: match.latest_validator ?? "",
     };
