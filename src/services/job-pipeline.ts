@@ -754,12 +754,30 @@ async function postCarouselRenderBinary(
 ): Promise<Response> {
   let lastErrMsg = `Renderer slide ${slideIndex} request failed`;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const response = await fetch(renderUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    let response: Response | null = null;
+    try {
+      response = await fetch(renderUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const name = e instanceof Error ? e.name : "";
+      lastErrMsg = `Renderer slide ${slideIndex} request failed: ${name ? `${name}: ` : ""}${msg}`;
+
+      const transient =
+        name === "AbortError" ||
+        /aborted|timed out|timeout/i.test(msg) ||
+        TRANSIENT_CAROUSEL_RENDERER_ERR.test(msg);
+
+      if (transient && attempt < maxRetries) {
+        await sleep(500 * 2 ** attempt);
+        continue;
+      }
+      throw new Error(lastErrMsg);
+    }
 
     if (response.ok) return response;
 

@@ -22,11 +22,20 @@ const asyncJobs = new Map();
 const renderQueue = [];
 let rendering = false;
 
+const TRANSIENT_PUPPETEER_ERR =
+  /Target closed|createTarget|Failed to open a new tab|Protocol error|Browser disconnected|Session closed|ECONNRESET|socket hang up|Navigation failed/i;
+
 async function launchBrowser() {
   const puppeteer = require("puppeteer");
   browser = await puppeteer.launch({
     headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-zygote",
+    ],
   });
   console.log("Browser launched");
 }
@@ -71,48 +80,98 @@ function getTemplateNameFromBody(b) {
   return b.template || b.data?.render?.html_template_name || b.data?.render?.template_key || "default";
 }
 
+function pTimeout(promise, ms, label) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise
+      .then((v) => { clearTimeout(t); resolve(v); })
+      .catch((e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+async function hardenPageForFastRendering(page) {
+  // Many templates are fully self-contained; when they are not, external resources can cause long hangs.
+  // Block http(s) requests to keep render time bounded and reduce Chromium flakiness.
+  try {
+    await page.setRequestInterception(true);
+    page.on("request", (req) => {
+      const url = req.url();
+      if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("file:")) return req.continue();
+      if (url.startsWith("http://") || url.startsWith("https://")) return req.abort("blockedbyclient");
+      return req.continue();
+    });
+  } catch {
+    // ignore (some puppeteer builds disallow interception in rare cases)
+  }
+  page.setDefaultTimeout(RENDER_TIMEOUT_MS);
+  page.setDefaultNavigationTimeout(RENDER_TIMEOUT_MS);
+}
+
 async function renderSlide(b, slideIndex) {
-  await ensureBrowser();
-  const templateName = getTemplateNameFromBody(b);
-  let source = resolveTemplate(templateName);
-  if (!source) source = await resolveTemplateRemote(templateName);
-  if (!source) throw new Error(`Template not found: ${templateName}`);
+  let lastErr = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let page = null;
+    try {
+      await ensureBrowser();
+      const templateName = getTemplateNameFromBody(b);
+      let source = resolveTemplate(templateName);
+      if (!source) source = await resolveTemplateRemote(templateName);
+      if (!source) throw new Error(`Template not found: ${templateName}`);
 
-  const compiled = Handlebars.compile(source);
-  const context = b.data?.render ?? b.data ?? b;
-  const html = compiled(context);
+      const compiled = Handlebars.compile(source);
+      const context = b.data?.render ?? b.data ?? b;
+      const html = compiled(context);
 
-  const page = await browser.newPage();
-  await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 2 });
-  await page.setContent(html, { waitUntil: "networkidle0", timeout: RENDER_TIMEOUT_MS });
+      page = await browser.newPage();
+      await hardenPageForFastRendering(page);
+      await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 2 });
 
-  const slides = await page.$$(".slide");
-  const idx = (slideIndex ?? 1) - 1;
-  if (idx < 0 || idx >= slides.length) {
-    await page.close();
-    throw new Error(`Slide index ${slideIndex} out of range (${slides.length} slides)`);
+      // `networkidle0` is fragile (fonts/images/analytics). `domcontentloaded` keeps this bounded.
+      await pTimeout(
+        page.setContent(html, { waitUntil: "domcontentloaded", timeout: RENDER_TIMEOUT_MS }),
+        RENDER_TIMEOUT_MS + 5_000,
+        "page.setContent"
+      );
+
+      const slides = await page.$$(".slide");
+      const idx = (slideIndex ?? 1) - 1;
+      if (idx < 0 || idx >= slides.length) {
+        throw new Error(`Slide index ${slideIndex} out of range (${slides.length} slides)`);
+      }
+
+      const el = slides[idx];
+      const buf = await pTimeout(el.screenshot({ type: "png" }), RENDER_TIMEOUT_MS, "element.screenshot");
+
+      renderCount++;
+      if (RENDERERS_BEFORE_RESET > 0 && renderCount >= RENDERERS_BEFORE_RESET) {
+        resetBrowser().catch(() => {});
+      }
+
+      const runId = b.run_id || b.data?.run_id || "default";
+      const taskId = b.task_id || b.data?.task_id || randomUUID();
+      const safe = (s) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
+      const outDir = path.join(OUTPUT_DIR, safe(runId), safe(taskId));
+      if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+      const filename = `${String(slideIndex || 1).padStart(3, "0")}_slide.png`;
+      const outPath = path.join(outDir, filename);
+      fs.writeFileSync(outPath, buf);
+
+      const relativePath = path.relative(OUTPUT_DIR, outPath).replace(/\\/g, "/");
+      return { relativePath, resultUrl: `/output/${relativePath}` };
+    } catch (e) {
+      lastErr = e;
+      const msg = e?.message ? String(e.message) : String(e);
+      if (TRANSIENT_PUPPETEER_ERR.test(msg) && attempt === 0) {
+        // Chromium occasionally dies under memory pressure; reset and retry once.
+        try { await resetBrowser(); } catch {}
+        continue;
+      }
+      throw e;
+    } finally {
+      if (page) { try { await page.close(); } catch {} }
+    }
   }
-
-  const el = slides[idx];
-  const buf = await el.screenshot({ type: "png" });
-  await page.close();
-
-  renderCount++;
-  if (RENDERERS_BEFORE_RESET > 0 && renderCount >= RENDERERS_BEFORE_RESET) {
-    resetBrowser().catch(() => {});
-  }
-
-  const runId = b.run_id || b.data?.run_id || "default";
-  const taskId = b.task_id || b.data?.task_id || randomUUID();
-  const safe = (s) => s.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const outDir = path.join(OUTPUT_DIR, safe(runId), safe(taskId));
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const filename = `${String(slideIndex || 1).padStart(3, "0")}_slide.png`;
-  const outPath = path.join(outDir, filename);
-  fs.writeFileSync(outPath, buf);
-
-  const relativePath = path.relative(OUTPUT_DIR, outPath).replace(/\\/g, "/");
-  return { relativePath, resultUrl: `/output/${relativePath}` };
+  throw lastErr || new Error("render failed");
 }
 
 async function processQueue() {

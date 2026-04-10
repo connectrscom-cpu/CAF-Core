@@ -16,13 +16,19 @@ function normalizeCaptionField(c: unknown): string {
   return String(c ?? "");
 }
 
-/** Top-level caption, or `variation.caption` when models nest copy there (string or `{ text }`). */
+/** Top-level caption, or `variation.caption` / `content.caption` when models nest copy there. */
 function captionFromOutAndVariation(out: Record<string, unknown>): string {
   const top = normalizeCaptionField(out.caption);
   if (top.trim()) return top;
   const v = out.variation;
   if (v && typeof v === "object" && !Array.isArray(v)) {
-    return normalizeCaptionField((v as Record<string, unknown>).caption);
+    const vc = normalizeCaptionField((v as Record<string, unknown>).caption);
+    if (vc.trim()) return vc;
+  }
+  const c = out.content;
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    const cc = normalizeCaptionField((c as Record<string, unknown>).caption);
+    if (cc.trim()) return cc;
   }
   return top;
 }

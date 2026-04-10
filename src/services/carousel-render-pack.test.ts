@@ -46,6 +46,26 @@ describe("stripNonRenderableDeckFields", () => {
 });
 
 describe("slidesFromGeneratedOutput", () => {
+  it("reads slides from content.slides when model nests deck under content (LLM drift)", () => {
+    const gen = {
+      platform: "Instagram",
+      variation_name: "Zodiac New Year Resolutions Carousel",
+      structure_variables: { slide_count: 7 },
+      content: {
+        slides: [
+          { headline: "Get Ready for 2026!", body: "As we step into the new year…" },
+          { headline: "Aries: Bold Moves", body: "For Aries, 2026 is all about embracing boldness." },
+        ],
+        caption: "Navigate 2026 with zodiac wisdom",
+        cta_text: "Comment your sign",
+      },
+    };
+    const slides = slidesFromGeneratedOutput(gen);
+    expect(slides).toHaveLength(2);
+    expect(slides[0]?.headline).toBe("Get Ready for 2026!");
+    expect(String(slides[1]?.body)).toContain("Aries");
+  });
+
   it("prefers carousel[] over empty slides/variations stubs (LLM split output)", () => {
     const gen = {
       slides: [{ body: "", headline: "", slide_role: "cover" }],

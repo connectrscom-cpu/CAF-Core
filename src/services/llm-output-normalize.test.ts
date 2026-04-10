@@ -73,6 +73,28 @@ describe("normalizeLlmParsedForSchemaValidation (carousel)", () => {
     expect((out.structure_variables as Record<string, unknown>)?.slide_count).toBe(2);
   });
 
+  it("wraps content.slides when there is no top-level slides[] or variations[] (LLM drift)", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      platform: "Instagram",
+      variation_name: "Zodiac New Year Resolutions Carousel",
+      structure_variables: { slide_count: 7 },
+      content: {
+        slides: [
+          { headline: "Get Ready for 2026!", body: "As we step into the new year with zodiac-specific resolutions." },
+          { headline: "Aries: Bold Moves", body: "For Aries, 2026 is all about embracing boldness and channeling energy." },
+        ],
+        caption: "Navigate 2026 with zodiac wisdom",
+        cta_text: "Comment your sign",
+      },
+    });
+    expect(Array.isArray(out.variations)).toBe(true);
+    const v = out.variations![0] as Record<string, unknown>;
+    expect((v.slides as unknown[])).toHaveLength(2);
+    expect(v.caption).toBe("Navigate 2026 with zodiac wisdom");
+    expect(Array.isArray(out.slides)).toBe(true);
+    expect((out.slides as unknown[]).length).toBe(2);
+  });
+
   it("hoists top-level slide_count into structure_variables for QC paths", () => {
     const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
       slide_count: 6,

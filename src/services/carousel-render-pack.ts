@@ -160,6 +160,17 @@ function slidesFromSlideDeckField(deckVal: unknown): Record<string, unknown>[] {
   return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
 }
 
+/** LLM drift: `{ content: { slides: [...], caption, ... } }` (no top-level `slides` / `variations`). */
+function slidesFromContentSlidesField(contentVal: unknown): Record<string, unknown>[] {
+  if (!contentVal || typeof contentVal !== "object" || Array.isArray(contentVal)) return [];
+  const slides = (contentVal as Record<string, unknown>).slides;
+  if (!Array.isArray(slides)) return [];
+  const out = slides
+    .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+    .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+  return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
+}
+
 function slidesFromContentField(contentVal: unknown): Record<string, unknown>[] {
   if (!contentVal || typeof contentVal !== "object" || Array.isArray(contentVal)) return [];
   const c = contentVal as Record<string, unknown>;
@@ -234,6 +245,7 @@ type CarouselDeckId =
   | "variation_content"
   | "carousel"
   | "items"
+  | "content_slides"
   | "content_carousel";
 
 /** Lower = preferred when total text is within `TIE_BAND_CHARS` (canonical LLM path vs parallel fields). */
@@ -243,6 +255,7 @@ const DECK_PRIORITY: Record<CarouselDeckId, number> = {
   variation: 0,
   structure_slides: 0,
   variation_content: 0,
+  content_slides: 0,
   variations: 1,
   carousel: 2,
   content_carousel: 2,
@@ -270,6 +283,10 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   const fromCarousel = slidesFromCarouselField(gen.carousel);
   if (fromCarousel.length > 0 && fromCarousel.some(slideHasRenderableContent)) {
     out.push({ id: "carousel", slides: fromCarousel });
+  }
+  const fromContentSlides = slidesFromContentSlidesField(gen.content);
+  if (fromContentSlides.length > 0) {
+    out.push({ id: "content_slides", slides: fromContentSlides });
   }
   const fromContentCarousel = slidesFromContentField(gen.content);
   if (fromContentCarousel.length > 0 && fromContentCarousel.some(slideHasRenderableContent)) {
@@ -365,17 +382,23 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
     }
   }
   if (out.content && typeof out.content === "object" && !Array.isArray(out.content)) {
-    const c = out.content as Record<string, unknown>;
+    const c0 = out.content as Record<string, unknown>;
+    const c: Record<string, unknown> = { ...c0 };
+    let changed = false;
+    if (Array.isArray(c.slides) && !c.slides.some(rowHasRenderableCopy)) {
+      delete c.slides;
+      changed = true;
+    }
     if (c.carousel != null) {
       const rows = slidesFromCarouselField(c.carousel);
       if (rows.length === 0 || !rows.some((s) => slideHasRenderableContent(s))) {
-        const { carousel: _drop, ...rest } = c;
-        if (Object.keys(rest).length > 0) {
-          out.content = rest;
-        } else {
-          delete out.content;
-        }
+        delete c.carousel;
+        changed = true;
       }
+    }
+    if (changed) {
+      if (Object.keys(c).length > 0) out.content = c;
+      else delete out.content;
     }
   }
   if (out.structure && typeof out.structure === "object" && !Array.isArray(out.structure)) {

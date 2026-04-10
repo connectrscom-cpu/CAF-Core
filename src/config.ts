@@ -52,13 +52,23 @@ const envSchema = z.object({
       return path.resolve(process.cwd(), "services", "renderer", "templates");
     }),
   /** Per-slide HTTP timeout for POST /render-binary in the job pipeline (ms). */
-  CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS: z.coerce.number().int().positive().default(120_000),
+  CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS: z.coerce.number().int().positive().default(180_000),
   /**
    * Extra attempts when the renderer returns a transient 5xx (Puppeteer "Target closed", new tab failures, etc.).
    * Total tries = 1 + this value.
    */
-  CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(8).default(2),
+  CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(8).default(3),
   VIDEO_ASSEMBLY_BASE_URL: z.string().default("http://localhost:3334"),
+  /**
+   * How long CAF Core polls GET /status/:id after async POST /concat-videos (download scenes + ffmpeg + Supabase upload).
+   * Raise if concat often hits "video-assembly async timeout" on long runs or slow storage.
+   */
+  VIDEO_ASSEMBLY_CONCAT_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(7_200_000).default(600_000),
+  /**
+   * How long Core polls after async POST /mux. Subtitle burn re-encodes the full video (libx264) and often exceeds concat time.
+   * Default 30m avoids giving up while ffmpeg is still healthy on the assembly worker.
+   */
+  VIDEO_ASSEMBLY_MUX_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(7_200_000).default(1_800_000),
 
   OPENAI_API_KEY: z.string().optional(),
   /** Base URL for REST calls (chat, videos). Videos API: POST/GET `/videos`. */
@@ -265,6 +275,11 @@ const envSchema = z.object({
    * Stops TTS from narrating the entire cinematic prompt (audio-only / blank-frame artifacts). Range 1–100 per HeyGen API.
    */
   HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC: z.coerce.number().min(1).max(100).default(15),
+  /**
+   * Max time to poll HeyGen generation before treating as "not ready yet".
+   * IMPORTANT: A poll timeout does NOT necessarily mean HeyGen failed — long renders can exceed 10 minutes.
+   */
+  HEYGEN_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(2_700_000),
   /**
    * Video Agent (`/v1/video_agent/generate`) duration_sec floor for full jobs. Values below this (e.g. bad LLM `estimated_runtime_seconds`)
    * are bumped up so HeyGen is not asked for ultra-short renders (API allows 5s; that is almost always a data bug).
