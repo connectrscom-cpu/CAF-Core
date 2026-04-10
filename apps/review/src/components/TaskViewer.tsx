@@ -38,6 +38,8 @@ export function TaskViewer({
     getVal(data, "video_url") ||
     getVal(data, "final_video_url") ||
     getVal(data, "merged_video_url") ||
+    // For video flows, `preview_url` is often the only available signed MP4 URL (especially when Core detail lookup fails).
+    (previewUrl && isVideoUrl(previewUrl) ? previewUrl : "") ||
     "";
   const slidesJson = getVal(data, "generated_slides_json");
 

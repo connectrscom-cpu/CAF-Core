@@ -9,6 +9,7 @@ import {
 } from "@/lib/caf-core-client";
 import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 import { previewFieldsFromJob } from "@/lib/job-preview-fields";
+import { isVideoUrl } from "@/lib/media-url";
 
 /** Long n8n-style task ids break some hosts when used as a single path segment; prefer ?task_id= for API too. */
 export async function jsonTaskDetailResponse(
@@ -135,7 +136,7 @@ async function lookupQueueRowByTaskId(
       platform: match.platform ?? "",
       flow_type: match.flow_type ?? "",
       preview_url,
-      video_url: "",
+      video_url: isVideoUrl(preview_url) ? preview_url : "",
       review_status: match.status ?? "",
       decision: match.latest_decision ?? "",
       notes: match.latest_notes ?? "",
