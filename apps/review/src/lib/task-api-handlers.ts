@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
-import { getJobDetail, getJobDetailAll } from "@/lib/caf-core-client";
+import {
+  getJobDetail,
+  getJobDetailAll,
+  getQueueTab,
+  getQueueTabAll,
+  type ReviewTab,
+} from "@/lib/caf-core-client";
 import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 import { previewFieldsFromJob } from "@/lib/job-preview-fields";
 
@@ -13,7 +19,11 @@ export async function jsonTaskDetailResponse(
     const job = reviewUsesAllProjects()
       ? await getJobDetailAll(decodedId, projectQs)
       : await getJobDetail(PROJECT_SLUG, decodedId);
-    if (!job) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+    if (!job) {
+      const row = await lookupQueueRowByTaskId(decodedId, projectQs);
+      if (!row) return NextResponse.json({ error: "Task not found" }, { status: 404 });
+      return NextResponse.json({ rowIndex: 0, data: row });
+    }
     const { preview_url, video_url } = previewFieldsFromJob(job);
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
@@ -86,4 +96,58 @@ export async function jsonContentDetailResponse(
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
   }
+}
+
+function generationVal(payload: Record<string, unknown> | null | undefined, key: string): string {
+  const v = payload?.[key];
+  return typeof v === "string" ? v : "";
+}
+
+async function lookupQueueRowByTaskId(
+  taskId: string,
+  projectSlug?: string
+): Promise<Record<string, string | undefined> | null> {
+  const tid = taskId.trim();
+  if (!tid) return null;
+
+  const tabs: ReviewTab[] = ["in_review", "approved", "rejected", "needs_edit"];
+  for (const tab of tabs) {
+    const { jobs } = reviewUsesAllProjects()
+      ? await getQueueTabAll(tab, {
+          search: tid,
+          project_slug: projectSlug?.trim() || undefined,
+          limit: "50",
+          offset: "0",
+        })
+      : await getQueueTab(PROJECT_SLUG, tab, { search: tid, limit: "50", offset: "0" });
+
+    const match = (jobs ?? []).find((j) => (j.task_id ?? "").trim() === tid) ?? (jobs ?? [])[0];
+    if (!match) continue;
+
+    const gen = (match.generation_payload ?? {}) as Record<string, unknown>;
+    const project = (match.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim();
+    const preview_url = (match.preview_thumb_url ?? "").trim();
+
+    return {
+      task_id: (match.task_id ?? "").trim(),
+      project,
+      run_id: match.run_id,
+      platform: match.platform ?? "",
+      flow_type: match.flow_type ?? "",
+      preview_url,
+      video_url: "",
+      review_status: match.status ?? "",
+      decision: match.latest_decision ?? "",
+      notes: match.latest_notes ?? "",
+      recommended_route: match.recommended_route ?? "",
+      qc_status: match.qc_status ?? "",
+      risk_score: match.pre_gen_score ?? "",
+      generated_title: generationVal(gen, "title") || generationVal(gen, "generated_title"),
+      generated_hook: generationVal(gen, "hook") || generationVal(gen, "generated_hook"),
+      generated_caption: generationVal(gen, "caption") || generationVal(gen, "generated_caption"),
+      generated_slides_json: gen.slides ? JSON.stringify(gen.slides) : "",
+      validator: match.latest_validator ?? "",
+    };
+  }
+  return null;
 }
