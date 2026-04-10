@@ -18,13 +18,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       (typeof body.project_slug === "string" && body.project_slug.trim()) ||
       (!reviewUsesAllProjects() ? PROJECT_SLUG : "") ||
       reviewQueueFallbackSlug();
-    const ok = await submitDecision(slug, decodedId, {
+    const result = await submitDecision(slug, decodedId, {
       decision,
       notes: body.notes,
       rejection_tags: body.rejection_tags,
       validator: body.validator,
     });
-    if (!ok) return NextResponse.json({ error: "Core API call failed" }, { status: 502 });
+    if (!result.ok) {
+      const st =
+        result.status === 400 || result.status === 404
+          ? result.status
+          : result.status === 401 || result.status === 403
+            ? 401
+            : 502;
+      return NextResponse.json({ error: result.error || "Core API call failed" }, { status: st });
+    }
     return NextResponse.json({ ok: true });
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });

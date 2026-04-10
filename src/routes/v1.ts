@@ -34,9 +34,69 @@ import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
+import { isCarouselFlow } from "../decision_engine/flow-kind.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
+
+  const reviewDecideBodySchema = z.object({
+    decision: z.enum(["APPROVED", "NEEDS_EDIT", "REJECTED"]),
+    notes: z.string().optional(),
+    rejection_tags: z.array(z.string()).optional(),
+    validator: z.string().optional(),
+    overrides_json: z.record(z.unknown()).optional(),
+  });
+
+  async function executeEditorialReviewDecision(
+    projectSlug: string,
+    taskIdRaw: string,
+    body: z.infer<typeof reviewDecideBodySchema>
+  ) {
+    const project = await ensureProject(db, projectSlug);
+    const task_id = taskIdRaw.trim();
+
+    await insertEditorialReview(db, {
+      task_id,
+      project_id: project.id,
+      decision: body.decision,
+      rejection_tags: body.rejection_tags ?? [],
+      notes: body.notes ?? null,
+      overrides_json: body.overrides_json ?? {},
+      validator: body.validator ?? null,
+      submit: true,
+    });
+
+    const newStatus =
+      body.decision === "APPROVED" ? "APPROVED" : body.decision === "REJECTED" ? "REJECTED" : "NEEDS_EDIT";
+
+    await db.query(
+      `UPDATE caf_core.content_jobs SET status = $1, updated_at = now()
+       WHERE project_id = $2 AND task_id = $3`,
+      [newStatus, project.id, task_id]
+    );
+
+    await insertJobStateTransition(db, {
+      task_id,
+      project_id: project.id,
+      from_state: "IN_REVIEW",
+      to_state: newStatus,
+      triggered_by: "human",
+      rule_id: null,
+      actor: body.validator ?? null,
+      metadata: {},
+    });
+
+    if (body.decision === "APPROVED") {
+      const jobRow = await getContentJobByTaskId(db, project.id, task_id);
+      const flow = String(jobRow?.flow_type ?? "");
+      if (isCarouselFlow(flow)) {
+        const urls = await buildCarouselPublishUrls(db, project.id, task_id);
+        await mergePublishUrlsIntoJob(db, project.id, task_id, urls);
+      }
+    }
+
+    return { ok: true as const, task_id, decision: body.decision };
+  }
 
   async function maybeSignPublicAssetUrl(url: string | null | undefined): Promise<string | null> {
     const u = (url ?? "").trim();
@@ -653,63 +713,23 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     };
   });
 
+  /** Prefer this over path-segment `task_id` so very long ids (video / legacy) do not hit proxy URL limits. */
+  app.post("/v1/review-queue/:project_slug/decide", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const merged = z.object({ task_id: z.string().min(1) }).and(reviewDecideBodySchema).safeParse(request.body);
+    if (!merged.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: merged.error.flatten() });
+    }
+    const { task_id, ...decideRest } = merged.data;
+    return executeEditorialReviewDecision(params.data.project_slug, task_id, decideRest);
+  });
+
   app.post("/v1/review-queue/:project_slug/task/:task_id/decide", async (request, reply) => {
     const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
-
-    const bodySchema = z.object({
-      decision: z.enum(["APPROVED", "NEEDS_EDIT", "REJECTED"]),
-      notes: z.string().optional(),
-      rejection_tags: z.array(z.string()).optional(),
-      validator: z.string().optional(),
-      overrides_json: z.record(z.unknown()).optional(),
-    });
-    const body = bodySchema.safeParse(request.body);
+    const body = reviewDecideBodySchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
-
-    const project = await ensureProject(db, params.data.project_slug);
-
-    await insertEditorialReview(db, {
-      task_id: params.data.task_id,
-      project_id: project.id,
-      decision: body.data.decision,
-      rejection_tags: body.data.rejection_tags ?? [],
-      notes: body.data.notes ?? null,
-      overrides_json: body.data.overrides_json ?? {},
-      validator: body.data.validator ?? null,
-      submit: true,
-    });
-
-    const newStatus = body.data.decision === "APPROVED" ? "APPROVED"
-      : body.data.decision === "REJECTED" ? "REJECTED"
-      : "NEEDS_EDIT";
-
-    await db.query(
-      `UPDATE caf_core.content_jobs SET status = $1, updated_at = now()
-       WHERE project_id = $2 AND task_id = $3`,
-      [newStatus, project.id, params.data.task_id]
-    );
-
-    await insertJobStateTransition(db, {
-      task_id: params.data.task_id,
-      project_id: project.id,
-      from_state: "IN_REVIEW",
-      to_state: newStatus,
-      triggered_by: "human",
-      rule_id: null,
-      actor: body.data.validator ?? null,
-      metadata: {},
-    });
-
-    if (body.data.decision === "APPROVED") {
-      const jobRow = await getContentJobByTaskId(db, project.id, params.data.task_id);
-      const flow = String(jobRow?.flow_type ?? "");
-      if (/carousel/i.test(flow) || flow === "Flow_Carousel_Copy") {
-        const urls = await buildCarouselPublishUrls(db, project.id, params.data.task_id);
-        await mergePublishUrlsIntoJob(db, project.id, params.data.task_id, urls);
-      }
-    }
-
-    return { ok: true, task_id: params.data.task_id, decision: body.data.decision };
+    return executeEditorialReviewDecision(params.data.project_slug, params.data.task_id, body.data);
   });
 }

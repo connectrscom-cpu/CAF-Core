@@ -30,6 +30,7 @@ import { qOne } from "../db/queries.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { expandOverallCandidatesWithSceneAssemblyRouter } from "./scene-assembly-candidate-router.js";
 import { buildSnapshotFromPlannedJobs } from "./run-prompt-versions-snapshot.js";
+import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 
 export interface StartRunResult {
   run_id: string;
@@ -139,7 +140,14 @@ export async function startRun(
 
     const createdJobIds: string[] = [];
     for (const job of plan.selected) {
-      const taskId = `${run.run_id}_${job.candidate_id}_${job.flow_type}_${job.variation_name}`;
+      const taskId = buildContentTaskId({
+        runId: run.run_id,
+        platform: job.platform ?? "Instagram",
+        flowType: job.flow_type,
+        sourceRowIndex1Based: job.source_row_index_1_based ?? 1,
+        variationName: job.variation_name,
+        variationIndex: job.variation_index,
+      });
 
       const candidateData = resolveCandidateDataForPlannedJob(overallCandidates, job.candidate_id);
 
@@ -256,12 +264,18 @@ function buildCandidatesFromSignalPack(
 ): CandidateInput[] {
   const candidates: CandidateInput[] = [];
 
-  for (const row of overallCandidates) {
+  for (let rowIdx = 0; rowIdx < overallCandidates.length; rowIdx++) {
+    const row = overallCandidates[rowIdx]!;
     const candidateId = String(row.candidate_id ?? row.sign ?? row.topic ?? randomUUID());
     const confidence = parseFloat(String(row.confidence ?? row.confidence_score ?? 0.8));
     const platform = String(row.platform ?? row.target_platform ?? "Instagram");
+    const sourceRowIndex1Based = rowIdx + 1;
 
     for (const flow of enabledFlows) {
+      if (shouldSkipCandidateForFlow(platform, flow.flow_type)) {
+        continue;
+      }
+
       const flowPlatforms = flow.allowed_platforms
         ? flow.allowed_platforms.split(",").map((p) => p.trim())
         : null;
@@ -284,6 +298,7 @@ function buildCandidatesFromSignalPack(
         recommended_route: String(row.recommended_route ?? "HUMAN_REVIEW"),
         dedupe_key: `${candidateId}_${flow.flow_type}_${platform}`,
         payload: row,
+        source_row_index_1_based: sourceRowIndex1Based,
       });
     }
   }

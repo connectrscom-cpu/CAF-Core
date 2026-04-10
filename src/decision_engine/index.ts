@@ -210,6 +210,7 @@ export async function decideGenerationPlan(
         candidate_id: c.candidate_id,
         flow_type: c.flow_type,
         platform: c.target_platform ?? c.platform,
+        source_row_index_1_based: c.source_row_index_1_based,
         variation_index: v,
         variation_name: v === 0 ? "v1" : `v${v + 1}`,
         prompt_version_id: resolvedPrompt.selected?.prompt_version_id ?? null,

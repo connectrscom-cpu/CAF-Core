@@ -336,6 +336,14 @@ export async function getJobDetailAll(
   return null;
 }
 
+export type SubmitDecisionResult =
+  | { ok: true }
+  | { ok: false; error: string; status?: number };
+
+/**
+ * Submits editorial decision. Uses `POST .../decide` with `task_id` in the JSON body so very long
+ * task ids (common for video / legacy pipelines) are not limited by reverse-proxy URL length.
+ */
 export async function submitDecision(
   projectSlug: string,
   taskId: string,
@@ -345,12 +353,45 @@ export async function submitDecision(
     rejection_tags?: string[];
     validator?: string;
   }
-): Promise<boolean> {
-  const data = await corePost<{ ok: boolean }>(
-    `/v1/review-queue/${encodeURIComponent(projectSlug)}/task/${encodeURIComponent(taskId)}/decide`,
-    body
-  );
-  return data?.ok ?? false;
+): Promise<SubmitDecisionResult> {
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}/v1/review-queue/${encodeURIComponent(projectSlug)}/decide`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify({
+        task_id: taskId.trim(),
+        decision: body.decision,
+        notes: body.notes,
+        rejection_tags: body.rejection_tags,
+        validator: body.validator,
+      }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `Cannot reach CAF Core (${url}): ${msg}` };
+  }
+  const text = await res.text();
+  let parsed: { ok?: boolean; error?: string; message?: string } = {};
+  try {
+    parsed = JSON.parse(text) as { ok?: boolean; error?: string; message?: string };
+  } catch {
+    /* non-JSON body */
+  }
+  if (!res.ok) {
+    const err =
+      (typeof parsed.error === "string" && parsed.error) ||
+      (typeof parsed.message === "string" && parsed.message) ||
+      text.slice(0, 400) ||
+      `HTTP ${res.status}`;
+    return { ok: false, error: err, status: res.status };
+  }
+  if (parsed.ok === false) {
+    return { ok: false, error: typeof parsed.error === "string" ? parsed.error : "Core returned ok: false", status: res.status };
+  }
+  return { ok: true };
 }
 
 // ── Project Config ──────────────────────────────────────────────────────

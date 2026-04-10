@@ -15,6 +15,8 @@ export const candidateInputSchema = z.object({
   recommended_route: z.string().optional(),
   dedupe_key: z.string().optional(),
   payload: z.record(z.unknown()).optional(),
+  /** 1-based index of the parent row in overall_candidates_json (orchestrator task_id segment `rNNNN`). */
+  source_row_index_1_based: z.number().int().positive().optional(),
 });
 
 export type CandidateInput = z.infer<typeof candidateInputSchema>;
@@ -55,6 +57,8 @@ export interface PlannedJob {
   candidate_id: string;
   flow_type: string;
   platform: string | undefined;
+  /** Present when candidates came from run orchestrator (clean task_id `rNNNN` segment). */
+  source_row_index_1_based?: number;
   variation_index: number;
   variation_name: string;
   prompt_version_id: string | null;
