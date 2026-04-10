@@ -1,4 +1,5 @@
 import { CAF_CORE_URL, CAF_CORE_TOKEN, reviewQueueFallbackSlug } from "./env";
+import { LONG_TASK_ID_PATH_THRESHOLD } from "./task-links";
 
 function isMissingReviewQueueAllRoute(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
@@ -291,9 +292,11 @@ export async function getJobDetail(projectSlug: string, taskId: string): Promise
   const slug = projectSlug.trim();
   const tid = taskId.trim();
   if (!slug || !tid) return null;
-  const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(
-    `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}`
-  );
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/task?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}`;
+  const data = await coreGet<{ ok: boolean; job: ReviewJobDetail }>(path);
   return data?.job ?? null;
 }
 
@@ -304,8 +307,12 @@ export async function getJobDetailAll(
 ): Promise<ReviewJobDetail | null> {
   const tid = taskId.trim();
   if (!tid) return null;
-  const qs = projectSlug ? `?project_slug=${encodeURIComponent(projectSlug.trim())}` : "";
-  const path = `/v1/review-queue-all/task/${encodeURIComponent(tid)}${qs}`;
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const qsParams = new URLSearchParams({ task_id: tid });
+  if (projectSlug?.trim()) qsParams.set("project_slug", projectSlug.trim());
+  const path = useQuery
+    ? `/v1/review-queue-all/task?${qsParams.toString()}`
+    : `/v1/review-queue-all/task/${encodeURIComponent(tid)}${projectSlug ? `?project_slug=${encodeURIComponent(projectSlug.trim())}` : ""}`;
   const base = CAF_CORE_URL.replace(/\/$/, "");
   // Must not use Next's default fetch cache — stale 404s made tasks look "missing" after sync.
   const res = await fetch(`${base}${path}`, { headers: headers(), cache: "no-store" });
@@ -579,10 +586,17 @@ export async function getLearningRules(projectSlug: string) {
   );
 }
 
-export async function triggerEditorialAnalysis(projectSlug: string, windowDays?: number) {
+export async function triggerEditorialAnalysis(
+  projectSlug: string,
+  windowDays?: number,
+  opts?: { persist_engineering_insight?: boolean; llm_notes_synthesis?: boolean }
+) {
+  const body: Record<string, unknown> = { window_days: windowDays ?? 30 };
+  if (opts?.persist_engineering_insight === false) body.persist_engineering_insight = false;
+  if (typeof opts?.llm_notes_synthesis === "boolean") body.llm_notes_synthesis = opts.llm_notes_synthesis;
   return corePost<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/editorial-analysis`,
-    { window_days: windowDays ?? 30 }
+    body
   );
 }
 

@@ -705,6 +705,13 @@ function extractVideoUrl(json: Record<string, unknown>): string | null {
     const u = o.video_url ?? o.url ?? o.download_url;
     return typeof u === "string" && u.trim() ? u.trim() : undefined;
   };
+  const fromOutput = (): string | undefined => {
+    const out = data?.output;
+    if (!out || typeof out !== "object" || Array.isArray(out)) return undefined;
+    const o = out as Record<string, unknown>;
+    const u = o.video_url ?? o.url ?? o.download_url ?? o.file_url;
+    return typeof u === "string" && u.trim() ? u.trim() : undefined;
+  };
   const url =
     (data?.video_url as string) ??
     (data?.download_url as string) ??
@@ -712,7 +719,8 @@ function extractVideoUrl(json: Record<string, unknown>): string | null {
     (json.video_url as string) ??
     (data?.url as string) ??
     ((data?.video as Record<string, unknown>)?.url as string) ??
-    fromResult();
+    fromResult() ??
+    fromOutput();
   return url ? String(url).trim() : null;
 }
 
@@ -793,32 +801,75 @@ export async function getHeyGenVideoStatus(
     );
   }
   throwIfHeyGenBusinessError(json, "video_status.get");
-  const data = json.data as Record<string, unknown> | undefined;
-  const status = String(data?.status ?? json.status ?? "unknown")
-    .trim()
-    .toLowerCase();
+  const status = pickHeyGenLifecycleStatusLabel(json);
   const { url: videoUrl, usedVideoUrlCaption } = pickHeyGenDownloadUrlFromStatus(json);
   return { status, videoUrl, usedVideoUrlCaption, raw: json };
 }
 
-function isHeyGenSuccessStatus(status: string): boolean {
+/** Coerce nested API shapes (string | object) into a single status string for polling. */
+function coerceHeyGenStatusValue(raw: unknown): string {
+  if (raw == null) return "";
+  if (typeof raw === "string") return raw.trim();
+  if (typeof raw === "number" && Number.isFinite(raw)) return String(raw);
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    const nested = o.status ?? o.state ?? o.phase ?? o.video_status;
+    if (nested !== undefined && nested !== raw) return coerceHeyGenStatusValue(nested);
+  }
+  return "";
+}
+
+/**
+ * HeyGen OpenAPI lists enum labels like `completed: Video rendered successfully`. If the API returns the
+ * full label, strict equality against `completed` never matches → poll runs until timeout while the
+ * dashboard already shows the asset. We compare the token before the first ":" (when present).
+ */
+export function normalizeHeyGenLifecycleToken(status: string): string {
   const s = status.trim().toLowerCase();
+  if (!s) return "";
+  const head = s.split(":")[0]?.trim() ?? s;
+  return head;
+}
+
+function pickHeyGenLifecycleStatusLabel(json: Record<string, unknown>): string {
+  const data = json.data as Record<string, unknown> | undefined;
+  const fromResult = (): string => {
+    const r = data?.result;
+    if (!r || typeof r !== "object" || Array.isArray(r)) return "";
+    return coerceHeyGenStatusValue((r as Record<string, unknown>).status);
+  };
+  const candidates = [
+    coerceHeyGenStatusValue(data?.status),
+    coerceHeyGenStatusValue(data?.state),
+    coerceHeyGenStatusValue(json.status),
+    fromResult(),
+  ];
+  for (const c of candidates) {
+    if (c !== "") return c.trim().toLowerCase();
+  }
+  return "unknown";
+}
+
+function isHeyGenSuccessStatus(status: string): boolean {
+  const token = normalizeHeyGenLifecycleToken(status);
   return (
-    s === "completed" ||
-    s === "complete" ||
-    s === "success" ||
-    s === "succeeded" ||
-    s === "done"
+    token === "completed" ||
+    token === "complete" ||
+    token === "success" ||
+    token === "succeeded" ||
+    token === "done" ||
+    token === "ready" ||
+    token === "finished"
   );
 }
 
 function isHeyGenFailureStatus(status: string): boolean {
-  const s = status.trim().toLowerCase();
+  const token = normalizeHeyGenLifecycleToken(status);
   return (
-    s === "failed" ||
-    s === "error" ||
-    s === "cancelled" ||
-    s === "canceled"
+    token === "failed" ||
+    token === "error" ||
+    token === "cancelled" ||
+    token === "canceled"
   );
 }
 
@@ -881,9 +932,6 @@ export async function pollHeyGenUntilComplete(
       apiBase,
       videoId
     );
-    if (isHeyGenSuccessStatus(status)) {
-      return waitForHeyGenDownloadUrl(apiKey, apiBase, videoId, usedVideoUrlCaption, videoUrl);
-    }
     if (isHeyGenFailureStatus(status)) {
       const data = raw.data as Record<string, unknown> | undefined;
       const blob =
@@ -901,6 +949,9 @@ export async function pollHeyGenUntilComplete(
           ? `HeyGen video ${videoId} failed: ${detail}`
           : `HeyGen video ${videoId} failed (no error detail in status payload)`
       );
+    }
+    if (isHeyGenSuccessStatus(status) || videoUrl) {
+      return waitForHeyGenDownloadUrl(apiKey, apiBase, videoId, usedVideoUrlCaption, videoUrl);
     }
     await new Promise((r) => setTimeout(r, delay));
     delay = Math.min(delay * 2, 30_000);
@@ -1231,7 +1282,8 @@ export async function runHeygenVideoWithBody(
     const { videoUrl, usedVideoUrlCaption } = await pollHeyGenUntilComplete(
       apiKey,
       appConfig.HEYGEN_API_BASE,
-      videoId
+      videoId,
+      { maxMs: appConfig.HEYGEN_POLL_MAX_MS }
     );
     if (audit) {
       await tryInsertApiCallAudit(audit.db, {

@@ -664,8 +664,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
    * POST /v1/admin/rework/pending
    * Rework every job whose latest editorial decision is NEEDS_EDIT.
    *
-   * This is the admin “one-click rework queue” primitive. The UI can call this
-   * and it will re-use the existing stored NEEDS_EDIT review notes/tags/overrides.
+   * Full/partial modes reset the same `task_id`, append a new `job_drafts` row, and run LLM → QC → render.
+   * Override-only merges `overrides_json` into `generated_output` on the same job (no regen).
    */
   app.post("/v1/admin/rework/pending", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -699,7 +699,6 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       task_id: string;
       ok: boolean;
       mode?: string;
-      new_task_id?: string;
       error?: string;
     }> = [];
 
@@ -712,7 +711,6 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         task_id: taskId,
         ok: out.ok,
         mode: out.mode,
-        new_task_id: out.new_task_id,
         error: out.error,
       });
       if (out.ok) succeeded += 1;
@@ -3053,7 +3051,7 @@ loadRunTransparency();
     <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="reworkPendingNeedsEdit()" title="Runs rework for every job whose latest review decision is NEEDS_EDIT">
       Rework pending NEEDS_EDIT
     </button>
-    <span style="font-size:12px;color:var(--muted)">Uses the stored NEEDS_EDIT instructions (notes/tags/overrides). Creates child jobs for full/partial rework; override-only rework updates the same job.</span>
+    <span style="font-size:12px;color:var(--muted)">Uses stored NEEDS_EDIT instructions. Full/partial: same task_id, new job_drafts row, full pipeline + render. Override-only: patch generated_output on the same job.</span>
   </div>
   <div class="filter-row" id="filters">
     <div><label>Search</label><input type="text" id="f-search" placeholder="task_id or run_id..." value=""></div>

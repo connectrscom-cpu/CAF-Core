@@ -47,18 +47,33 @@
     h1,h2,h3{letter-spacing:-0.04em;}
     .headline{
       font-weight:800;
-      font-size:96px;
-      line-height:0.92;
-      max-width: 860px;
+      font-size:clamp(44px, 8.5vw, 96px);
+      line-height:1.02;
+      max-width: 920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .accent{color:var(--accent);}
     .accent2{color:var(--accent2);}
     .body{
-      font-size:44px;line-height:1.25;color:var(--muted);
-      max-width: 880px;
+      font-size:44px;line-height:1.32;color:var(--muted);
+      max-width: 920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .cta{
-      font-weight:800;font-size:86px;line-height:0.95;max-width:900px;
+      font-weight:800;
+      font-size:clamp(40px, 7.5vw, 86px);
+      line-height:1.05;
+      max-width:920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .handle{
       margin-top:18px;

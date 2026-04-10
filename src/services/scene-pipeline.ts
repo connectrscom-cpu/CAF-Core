@@ -536,7 +536,11 @@ export async function runScenePipeline(
   if (!concatRes.ok || !concatJson.request_id) {
     throw new Error(`concat-videos failed (${concatRes.status}): ${concatRaw.slice(0, 600)}`);
   }
-  const merged = await pollVideoAssemblyJob(videoAssemblyBaseUrl, concatJson.request_id);
+  const merged = await pollVideoAssemblyJob(
+    videoAssemblyBaseUrl,
+    concatJson.request_id,
+    config.VIDEO_ASSEMBLY_CONCAT_POLL_MAX_MS
+  );
   report.concat_ok = true;
   await tryInsertApiCallAudit(db, {
     projectId: job.project_id,
@@ -765,7 +769,11 @@ export async function runScenePipeline(
           if (!muxRes.ok || !muxJson.request_id) {
             report.mux_error = `mux start failed (${muxRes.status}): ${muxRaw.slice(0, 1200)}`;
           } else {
-            const muxed = await pollVideoAssemblyJob(videoAssemblyBaseUrl, muxJson.request_id);
+            const muxed = await pollVideoAssemblyJob(
+              videoAssemblyBaseUrl,
+              muxJson.request_id,
+              config.VIDEO_ASSEMBLY_MUX_POLL_MAX_MS
+            );
             await tryInsertApiCallAudit(db, {
               projectId: job.project_id,
               runId: job.run_id,

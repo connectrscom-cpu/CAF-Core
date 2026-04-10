@@ -1,13 +1,13 @@
 /**
  * NEEDS_EDIT → override-only, partial, or full rework (n8n CAF_REWORK_ORCHESTRATOR subset).
+ * Full/partial rework keeps the same `task_id`, clears render/output state via `prepareContentJobForFullRerun`,
+ * then runs the standard pipeline so `job_drafts` and assets accumulate per task.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import { randomUUID } from "node:crypto";
 import { qOne } from "../db/queries.js";
-import { upsertContentJob } from "../repositories/jobs.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
-import { processContentJobById } from "./job-pipeline.js";
+import { prepareContentJobForFullRerun, processContentJobById } from "./job-pipeline.js";
 
 export type ReworkMode = "OVERRIDE_ONLY" | "FULL_REWORK" | "PARTIAL_REWRITE";
 
@@ -28,19 +28,17 @@ export function inferReworkMode(review: {
   return "PARTIAL_REWRITE";
 }
 
-export function nextReworkTaskId(taskId: string): string {
-  return `${taskId}__rework_${Date.now()}`;
-}
-
 export interface ReworkResult {
   ok: boolean;
   mode: ReworkMode;
-  new_task_id?: string;
+  /** Canonical job key; same as input for FULL/PARTIAL in-place rework. */
+  task_id?: string;
   error?: string;
 }
 
 /**
- * Uses latest NEEDS_EDIT review on the job. For FULL/PARTIAL creates a new task_id and runs pipeline.
+ * Uses latest NEEDS_EDIT review on the job. For FULL/PARTIAL resets the same task_id, appends a new
+ * `job_drafts` row via the normal LLM path, and runs the full pipeline through render.
  */
 export async function executeRework(
   db: Pool,
@@ -107,51 +105,29 @@ export async function executeRework(
       triggered_by: "human",
       actor: "rework-orchestrator",
     });
-    return { ok: true, mode };
+    return { ok: true, mode, task_id: job.task_id };
   }
 
-  const newTaskId = nextReworkTaskId(taskId);
-  const draftId = `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
-  const payload = {
-    ...job.generation_payload,
-    rework_parent_task_id: taskId,
-    rework_mode: mode,
-    human_feedback: { notes: rev.notes, rejection_tags: rev.rejection_tags },
-    draft_id: draftId,
-    generation_reason: mode === "PARTIAL_REWRITE" ? "REWORK_PARTIAL" : "REWORK_FULL",
-  };
+  const prep = await prepareContentJobForFullRerun(db, projectId, taskId);
+  if (!prep.ok) return { ok: false, mode, error: prep.error };
 
-  await upsertContentJob(db, {
-    task_id: newTaskId,
-    project_id: projectId,
-    run_id: job.run_id,
-    candidate_id: job.candidate_id,
-    variation_name: job.variation_name,
-    flow_type: job.flow_type,
-    platform: job.platform,
-    status: "PLANNED",
-    generation_payload: payload,
-    rework_parent_task_id: taskId,
-  });
-
-  const newRow = await qOne<{ id: string }>(
-    db,
-    `SELECT id FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
-    [projectId, newTaskId]
+  await db.query(
+    `UPDATE caf_core.content_jobs SET
+      rework_parent_task_id = NULL,
+      generation_payload = generation_payload || $1::jsonb,
+      updated_at = now()
+     WHERE id = $2`,
+    [
+      JSON.stringify({
+        rework_mode: mode,
+        human_feedback: { notes: rev.notes, rejection_tags: rev.rejection_tags },
+        generation_reason: mode === "PARTIAL_REWRITE" ? "REWORK_PARTIAL" : "REWORK_FULL",
+      }),
+      job.id,
+    ]
   );
-  if (!newRow) return { ok: false, mode, error: "failed to create rework job" };
 
-  await insertJobStateTransition(db, {
-    task_id: newTaskId,
-    project_id: projectId,
-    from_state: null,
-    to_state: "PLANNED",
-    triggered_by: "human",
-    actor: "rework-orchestrator",
-    metadata: { source_task_id: taskId, mode },
-  });
+  await processContentJobById(db, config, job.id);
 
-  await processContentJobById(db, config, newRow.id);
-
-  return { ok: true, mode, new_task_id: newTaskId };
+  return { ok: true, mode, task_id: job.task_id };
 }

@@ -17,6 +17,7 @@ import {
   warnIfVideoAssemblyIsStandaloneRenderer,
 } from "./services/renderer-url-guard.js";
 import { ensureSupabaseAssetFolderPrefixes } from "./services/supabase-storage.js";
+import { startEditorialAnalysisCron } from "./services/editorial-analysis-cron.js";
 
 async function main() {
   const config = loadConfig();
@@ -61,7 +62,10 @@ async function main() {
   registerPipelineRoutes(app, { db, config });
   registerLearningRoutes(app, { db, config });
 
+  const stopEditorialCron = startEditorialAnalysisCron(app.log, { db, config });
+
   app.addHook("onClose", async () => {
+    stopEditorialCron?.();
     await db.end();
   });
 

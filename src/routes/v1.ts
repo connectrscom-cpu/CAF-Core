@@ -643,6 +643,21 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     };
   });
 
+  /** Same as `/task/:task_id` but `task_id` in query — avoids proxy/path limits on very long ids (rework suffixes, video flows). */
+  app.get("/v1/review-queue-all/task", async (request, reply) => {
+    const query = z
+      .object({ task_id: z.string().min(1), project_slug: z.string().optional() })
+      .safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ ok: false, error: "task_id query required" });
+    const tid = query.data.task_id.trim();
+    const resolved = await resolveTaskToProject(db, tid, query.data.project_slug);
+    if (!resolved.ok) return reply.code(404).send({ ok: false, error: "not_found" });
+    const detail = await getReviewJobDetail(db, resolved.project_id, tid);
+    if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
+    const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    return { ok: true, job: { ...detail, assets, project_slug: resolved.project_slug } };
+  });
+
   app.get("/v1/review-queue-all/task/:task_id", async (request, reply) => {
     const params = z.object({ task_id: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
@@ -669,6 +684,23 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const facets = await getDistinctValues(db, project.id);
     return { ok: true, facets };
+  });
+
+  /** Same as `/task/:task_id` under a project, but `task_id` in query — register before `/:tab` so `task` is not parsed as a tab. */
+  app.get("/v1/review-queue/:project_slug/task", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ ok: false, error: "task_id query required" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const tid = query.data.task_id.trim();
+    const detail = await getReviewJobDetail(db, project.id, tid);
+    if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
+    const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    return {
+      ok: true,
+      job: { ...detail, assets, project_slug: params.data.project_slug },
+    };
   });
 
   app.get("/v1/review-queue/:project_slug/:tab", async (request, reply) => {

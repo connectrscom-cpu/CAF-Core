@@ -16,14 +16,23 @@ export const LEARNING_TRANSPARENCY_STATIC = {
     {
       id: "B",
       name: "Editorial learning",
-      evidence_source: "Human review rows in editorial_reviews",
-      analyzer: "editorial-learning.ts (deterministic SQL + heuristics)",
-      llm_involved: false,
-      llm_role: null,
-      automation: "manual_trigger",
-      triggers: ["POST /v1/learning/:slug/editorial-analysis", "Review app → Run Editorial Analysis"],
-      outputs: "Pending learning_rules (e.g. SCORE_PENALTY by rejection tag, REDUCE_VOLUME on low approval flows)",
-      requires_human: "Apply pending rules before they affect ranking; optional auto_create_rules still creates pending first",
+      evidence_source: "Human review rows in editorial_reviews (decisions, tags, overrides, notes)",
+      analyzer: "editorial-learning.ts (SQL + heuristics); optional OpenAI synthesis on reviewer notes",
+      llm_involved: true,
+      llm_role:
+        "When OPENAI_API_KEY is set and llm_notes_synthesis is enabled (default), a JSON-mode chat call summarizes themes in free-text notes and proposes actions (learning vs prompts vs code). " +
+        "The same run still uses deterministic rules for tags/flows; the LLM does not auto-apply learning_rules.",
+      automation: "manual_trigger or optional in-process cron (EDITORIAL_ANALYSIS_CRON_ENABLED on caf-core)",
+      triggers: [
+        "POST /v1/learning/:slug/editorial-analysis",
+        "Review app → Run Editorial Analysis",
+        "CLI: npm run editorial-analysis (dist/cli/run-editorial-analysis.js)",
+      ],
+      outputs:
+        "Pending learning_rules (e.g. SCORE_PENALTY by rejection tag, REDUCE_VOLUME on low approval flows); " +
+        "engineering brief (config-matched triggers + optional OpenAI block from notes) as markdown; upserted learning_insights (scope engineering) when persisting; llm_notes_synthesis object in API JSON",
+      requires_human:
+        "Apply pending rules before they affect ranking; optional auto_create_rules still creates pending first; review LLM suggestions before acting — no auto-merge to repo",
     },
     {
       id: "C",

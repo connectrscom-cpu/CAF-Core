@@ -64,6 +64,17 @@ export async function getProjectBySlug(db: Pool, slug: string): Promise<ProjectR
   );
 }
 
+/** Active tenant projects for scheduled editorial analysis (excludes caf-global). */
+export async function listActiveProjectsForEditorialCron(db: Pool): Promise<ProjectRow[]> {
+  return q<ProjectRow>(
+    db,
+    `SELECT id, slug, display_name, active, color
+     FROM caf_core.projects
+     WHERE active = true AND slug <> 'caf-global'
+     ORDER BY slug`
+  );
+}
+
 export async function ensureProject(db: Pool, slug: string, displayName?: string): Promise<ProjectRow> {
   const existing = await getProjectBySlug(db, slug);
   if (existing) return existing;

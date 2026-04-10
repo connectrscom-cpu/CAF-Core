@@ -5,14 +5,24 @@
  * - Frequent rejection reasons
  * - Recurring edits to hooks/captions
  * - Flow types with low approval
+ * - Reviewer-written notes (deterministic signal + optional OpenAI synthesis)
  * - Platform-specific failure patterns
  * - Prompt versions associated with more overrides
  *
  * Produces LearningRules that influence future generation.
  */
 import type { Pool } from "pg";
-import { q, qOne } from "../db/queries.js";
+import type { AppConfig } from "../config.js";
+import { triggersForInsight } from "../config/editorial-engineering-triggers.js";
+import { q } from "../db/queries.js";
+import { insertInsight } from "../repositories/learning-evidence.js";
 import { insertLearningRule } from "../repositories/learning.js";
+import { buildEngineeringRemediationPrompt } from "./editorial-engineering-prompt.js";
+import {
+  synthesizeEditorialNotesWithLlm,
+  type EditorialNotesLlmResult,
+  type EditorialNotesLlmSynthesis,
+} from "./editorial-notes-llm-synthesis.js";
 
 export interface EditorialInsight {
   insight_type: string;
@@ -34,33 +44,113 @@ export interface EditorialAnalysisResult {
   top_rejection_tags: Array<{ tag: string; count: number }>;
   insights: EditorialInsight[];
   rules_created: number;
+  /** Markdown prompt for Claude/Cursor when editorial patterns map to code/templates (empty if no triggers matched). */
+  engineering_prompt_markdown: string;
+  engineering_triggers_fired: Array<{
+    trigger_id: string;
+    insight_type: string;
+    scope: string;
+    subsystem: string;
+  }>;
+  engineering_sample_task_ids: string[];
+  /** Set when the brief was upserted into `learning_insights`. */
+  engineering_insight_id: string | null;
+  /** OpenAI synthesis from reviewer `notes` (skipped if no key, no notes, or error). */
+  llm_notes_synthesis: EditorialNotesLlmResult | null;
+}
+
+function formatLlmNotesForPrompt(s: EditorialNotesLlmSynthesis): string {
+  const themeLines =
+    s.recurring_themes?.length > 0
+      ? s.recurring_themes
+          .map((t) => {
+            const q = (t.example_quotes ?? []).slice(0, 2).map((x) => `"${x}"`).join("; ");
+            const c = t.approx_count != null ? ` (~${t.approx_count})` : "";
+            return `- **${t.theme}**${c}${q ? ` — e.g. ${q}` : ""}`;
+          })
+          .join("\n")
+      : "_No themes extracted._";
+
+  const actionLines =
+    s.recommended_actions?.length > 0
+      ? s.recommended_actions
+          .map(
+            (a) =>
+              `#### ${a.title} (${a.priority} · ${a.category})\n${a.rationale}\n\n_Next:_ ${a.suggested_next_steps}\n` +
+              (a.example_task_ids?.length ? `\n\`task_id\` examples: ${a.example_task_ids.map((id) => `\`${id}\``).join(", ")}\n` : "")
+          )
+          .join("\n")
+      : "_No structured actions._";
+
+  const code = (s.coding_agent_markdown ?? "").trim();
+  return [
+    "## Reviewer notes — OpenAI synthesis",
+    "",
+    s.summary.trim(),
+    "",
+    "### Recurring themes",
+    themeLines,
+    "",
+    "### Recommended actions",
+    actionLines,
+    "",
+    "### Coding agent brief",
+    code || "_No separate coding brief; use themes and actions above._",
+    "",
+  ].join("\n");
+}
+
+function mergeEngineeringMarkdown(heuristicMd: string, llmBlock: string): string {
+  const h = heuristicMd.trim();
+  const l = llmBlock.trim();
+  if (h && l) return `${h}\n\n---\n\n${l}`;
+  return h || l;
 }
 
 /**
  * Analyze editorial review history for a project and generate learning rules.
+ *
+ * @param llmNotesSynthesis When true (default if `OPENAI_API_KEY` is set), runs an OpenAI pass on non-empty reviewer notes.
  */
 export async function analyzeEditorialPatterns(
   db: Pool,
+  config: AppConfig,
   projectId: string,
   projectSlug: string,
   windowDays: number = 30,
-  autoCreateRules: boolean = true
+  autoCreateRules: boolean = true,
+  persistEngineeringInsight: boolean = true,
+  llmNotesSynthesis?: boolean
 ): Promise<EditorialAnalysisResult> {
+  const runLlmOnNotes =
+    llmNotesSynthesis !== undefined ? llmNotesSynthesis : Boolean(config.OPENAI_API_KEY?.trim());
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
+  const analysisRunDay = new Date().toISOString().slice(0, 10);
 
   const reviews = await q<{
-    task_id: string; decision: string | null;
-    rejection_tags: unknown[]; notes: string | null;
+    task_id: string;
+    decision: string | null;
+    rejection_tags: unknown[];
+    notes: string | null;
     overrides_json: Record<string, unknown>;
     created_at: string;
-  }>(db, `
-    SELECT task_id, decision, rejection_tags, notes, overrides_json, created_at
-    FROM caf_core.editorial_reviews
-    WHERE project_id = $1 AND created_at >= $2
-    ORDER BY created_at DESC
-  `, [projectId, cutoff.toISOString()]);
+    flow_type: string | null;
+    platform: string | null;
+  }>(
+    db,
+    `
+    SELECT er.task_id, er.decision, er.rejection_tags, er.notes, er.overrides_json, er.created_at,
+           j.flow_type, j.platform
+    FROM caf_core.editorial_reviews er
+    LEFT JOIN caf_core.content_jobs j
+      ON j.task_id = er.task_id AND j.project_id = er.project_id
+    WHERE er.project_id = $1 AND er.created_at >= $2
+    ORDER BY er.created_at DESC
+  `,
+    [projectId, cutoff.toISOString()]
+  );
 
   if (reviews.length === 0) {
     return {
@@ -73,6 +163,11 @@ export async function analyzeEditorialPatterns(
       top_rejection_tags: [],
       insights: [],
       rules_created: 0,
+      engineering_prompt_markdown: "",
+      engineering_triggers_fired: [],
+      engineering_sample_task_ids: [],
+      engineering_insight_id: null,
+      llm_notes_synthesis: null,
     };
   }
 
@@ -235,6 +330,122 @@ export async function analyzeEditorialPatterns(
     }
   }
 
+  const reviewsWithNotes = reviews.filter((r) => (r.notes ?? "").trim().length > 0);
+  const notesCount = reviewsWithNotes.length;
+  if (notesCount >= 3 && notesCount / total >= 0.08) {
+    insights.push({
+      insight_type: "frequent_reviewer_notes",
+      scope: "notes",
+      detail: `${notesCount}/${total} reviews include non-empty reviewer notes (${((notesCount / total) * 100).toFixed(0)}%)`,
+      confidence: Math.min(0.88, notesCount / total + 0.15),
+      sample_size: notesCount,
+      rule_created: false,
+    });
+  }
+
+  // Sample task_ids for low-approval flows (for engineering brief)
+  const lowApprovalFlowTaskIds: Record<string, string[]> = {};
+  const lowFlowScopes = new Set<string>();
+  for (const ins of insights) {
+    if (ins.insight_type !== "low_approval_flow") continue;
+    if (triggersForInsight(ins.insight_type, ins.scope).length === 0) continue;
+    lowFlowScopes.add(ins.scope);
+  }
+  for (const flowType of lowFlowScopes) {
+    const rows = await q<{ task_id: string }>(
+      db,
+      `SELECT er.task_id
+       FROM caf_core.editorial_reviews er
+       JOIN caf_core.content_jobs j ON j.task_id = er.task_id AND j.project_id = er.project_id
+       WHERE er.project_id = $1 AND er.created_at >= $2 AND j.flow_type = $3
+         AND er.decision IN ('REJECTED', 'NEEDS_EDIT')
+       ORDER BY er.created_at DESC
+       LIMIT 8`,
+      [projectId, cutoff.toISOString(), flowType]
+    );
+    lowApprovalFlowTaskIds[flowType] = rows.map((r) => r.task_id);
+  }
+
+  const engBrief = buildEngineeringRemediationPrompt({
+    projectSlug,
+    windowDays,
+    totalReviews: total,
+    approvalRate: approved / total,
+    insights,
+    reviews: reviews.map((r) => ({
+      task_id: r.task_id,
+      rejection_tags: r.rejection_tags,
+      overrides_json: r.overrides_json ?? {},
+    })),
+    lowApprovalFlowTaskIds,
+  });
+
+  let llmNotesResult: EditorialNotesLlmResult | null = null;
+  if (runLlmOnNotes) {
+    const aggregate = {
+      total_reviews: total,
+      approval_rate: approved / total,
+      rejection_rate: rejected / total,
+      needs_edit_rate: needsEdit / total,
+      top_rejection_tags: topTags,
+      top_override_fields: Array.from(overrideFields.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 12)
+        .map(([field, count]) => ({ field, count })),
+      deterministic_insights: insights.map((i) => ({
+        type: i.insight_type,
+        scope: i.scope,
+        detail: i.detail,
+      })),
+      reviews_with_notes_count: notesCount,
+    };
+
+    llmNotesResult = await synthesizeEditorialNotesWithLlm(db, config, projectId, {
+      projectSlug,
+      windowDays,
+      aggregate,
+      noteRows: reviews.map((r) => ({
+        task_id: r.task_id,
+        decision: r.decision,
+        flow_type: r.flow_type,
+        platform: r.platform,
+        rejection_tags: r.rejection_tags,
+        note: (r.notes ?? "").trim(),
+        created_at: r.created_at,
+      })),
+    });
+  }
+
+  const llmMdBlock =
+    llmNotesResult && !("skipped" in llmNotesResult) ? formatLlmNotesForPrompt(llmNotesResult) : "";
+  const combinedEngineeringMd = mergeEngineeringMarkdown(engBrief.markdown, llmMdBlock);
+
+  let engineeringInsightId: string | null = null;
+  if (combinedEngineeringMd && persistEngineeringInsight) {
+    engineeringInsightId = `eng_editorial_${projectSlug}_${windowDays}d_${analysisRunDay}`;
+    const triggerCount = engBrief.triggers_fired.length;
+    const llmOk = llmNotesResult && !("skipped" in llmNotesResult);
+    await insertInsight(db, {
+      insight_id: engineeringInsightId,
+      scope_type: "engineering",
+      project_id: projectId,
+      title: `Engineering brief: editorial (${windowDays}d, ${triggerCount} trigger(s)${llmOk ? ", LLM notes" : ""})`,
+      body: combinedEngineeringMd,
+      derived_from_observation_ids: [],
+      confidence:
+        triggerCount > 0 || llmOk
+          ? Math.min(0.9, 0.55 + triggerCount * 0.05 + (llmOk ? 0.1 : 0))
+          : null,
+      status: "draft",
+    });
+  }
+
+  const extraSampleIds =
+    llmNotesResult && !("skipped" in llmNotesResult)
+      ? (llmNotesResult.recommended_actions ?? []).flatMap((a) => a.example_task_ids ?? [])
+      : [];
+  const mergedSampleIds = [...new Set([...engBrief.sample_task_ids, ...extraSampleIds])].slice(0, 20);
+
   return {
     project_slug: projectSlug,
     window_days: windowDays,
@@ -245,5 +456,10 @@ export async function analyzeEditorialPatterns(
     top_rejection_tags: topTags,
     insights,
     rules_created: rulesCreated,
+    engineering_prompt_markdown: combinedEngineeringMd,
+    engineering_triggers_fired: engBrief.triggers_fired,
+    engineering_sample_task_ids: mergedSampleIds,
+    engineering_insight_id: engineeringInsightId,
+    llm_notes_synthesis: llmNotesResult,
   };
 }

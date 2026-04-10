@@ -57,16 +57,23 @@
       background:linear-gradient(145deg,var(--accent-light),var(--accent));
       box-shadow: inset 0 1px 0 rgba(255,255,255,0.35);
     }
-    .name{font-weight:800;font-size:30px;letter-spacing:-0.02em;}
+    .name{
+      font-weight:800;font-size:30px;letter-spacing:-0.02em;
+      overflow-wrap:anywhere;word-break:break-word;max-width:100%;
+    }
     .status{font-size:22px;color:var(--muted);margin-top:4px;}
     .bubble{
-      max-width: 84%;
+      max-width: 92%;
       padding: 18px 20px;
       border-radius: 26px;
       font-size: 34px;
-      line-height: 1.25;
+      line-height: 1.3;
       border: 1px solid rgba(92,72,38,0.12);
       box-shadow: 0 10px 26px rgba(58,42,22,0.08);
+      text-align: left;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      hyphens: auto;
     }
     .recv{ background: #fffcf7; align-self:flex-start; border-top-left-radius: 10px; }
     .sent{ background: var(--sent); border-color: var(--sent-border); align-self:flex-end; border-top-right-radius: 10px; color: var(--text); }
@@ -86,17 +93,22 @@
       gap:18px;
     }
     .final h1{
-      font-size:70px;
-      line-height:1.03;
+      font-size:clamp(36px, 6.2vw, 70px);
+      line-height:1.08;
       letter-spacing:-0.04em;
       font-weight:800;
-      max-width: 840px;
+      max-width: 920px;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .final p{
       font-size:40px;
       line-height:1.35;
       color:var(--muted);
-      max-width: 860px;
+      max-width: 920px;
+      overflow-wrap:anywhere;
+      word-break:break-word;
     }
   </style>
 </head>

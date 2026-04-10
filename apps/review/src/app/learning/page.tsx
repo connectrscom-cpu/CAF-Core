@@ -35,6 +35,8 @@ export default function LearningPage() {
   const [llmLimit, setLlmLimit] = useState(3);
   const [llmMintBelow, setLlmMintBelow] = useState("");
   const [llmForceRereview, setLlmForceRereview] = useState(false);
+  const [persistEngineeringInsight, setPersistEngineeringInsight] = useState(true);
+  const [llmNotesSynthesis, setLlmNotesSynthesis] = useState(true);
 
   const fetchTransparency = useCallback(async () => {
     const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=transparency`);
@@ -84,10 +86,15 @@ export default function LearningPage() {
     setRunning(true);
     setAnalysisResult(null);
     try {
+      const body: Record<string, unknown> = { action, project };
+      if (action === "editorial") {
+        body.persist_engineering_insight = persistEngineeringInsight;
+        body.llm_notes_synthesis = llmNotesSynthesis;
+      }
       const res = await fetch("/api/learning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, project }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const json = await res.json();
@@ -291,6 +298,27 @@ export default function LearningPage() {
         </label>
       </div>
 
+      <div className="card" style={{ marginBottom: 12, fontSize: 13, display: "flex", flexDirection: "column", gap: 10 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={persistEngineeringInsight}
+            onChange={(e) => setPersistEngineeringInsight(e.target.checked)}
+          />
+          After editorial analysis, save engineering brief to Core (<code>learning_insights</code>, scope{" "}
+          <code>engineering</code>) when there is content to persist
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={llmNotesSynthesis}
+            onChange={(e) => setLlmNotesSynthesis(e.target.checked)}
+          />
+          Run <strong>OpenAI</strong> on reviewer <code>notes</code> (requires Core <code>OPENAI_API_KEY</code>; themes +
+          actions JSON; merged into engineering markdown)
+        </label>
+      </div>
+
       <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <button
           className="btn-primary"
@@ -459,8 +487,75 @@ export default function LearningPage() {
       {analysisResult && (
         <div className="card" style={{ marginBottom: 20 }}>
           <h3>Analysis Result</h3>
+          {typeof analysisResult.engineering_prompt_markdown === "string" &&
+            analysisResult.engineering_prompt_markdown.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                  <h4 style={{ margin: 0, fontSize: 15 }}>Engineering prompt (for Claude / Cursor)</h4>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() =>
+                      navigator.clipboard.writeText(String(analysisResult.engineering_prompt_markdown))
+                    }
+                  >
+                    Copy markdown
+                  </button>
+                  {analysisResult.engineering_insight_id ? (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                      Saved as insight <code>{String(analysisResult.engineering_insight_id)}</code>
+                    </span>
+                  ) : null}
+                </div>
+                <textarea
+                  readOnly
+                  value={String(analysisResult.engineering_prompt_markdown)}
+                  rows={14}
+                  style={{
+                    width: "100%",
+                    fontFamily: "monospace",
+                    fontSize: 12,
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--card)",
+                    resize: "vertical",
+                  }}
+                />
+                <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, marginBottom: 0 }}>
+                  Triggers: extend <code>src/config/editorial-engineering-triggers.ts</code> in CAF Core to map your
+                  rejection tags and override fields to repo paths.
+                </p>
+              </div>
+            )}
           <pre style={{ fontSize: 12, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>
-            {JSON.stringify(analysisResult, null, 2)}
+            {JSON.stringify(
+              (() => {
+                const r = { ...analysisResult };
+                const md = r.engineering_prompt_markdown;
+                if (typeof md === "string" && md.length > 0) {
+                  r.engineering_prompt_markdown = `[${md.length} characters — copied via button above]`;
+                }
+                const llm = r.llm_notes_synthesis;
+                if (
+                  llm &&
+                  typeof llm === "object" &&
+                  !("skipped" in llm) &&
+                  typeof (llm as { coding_agent_markdown?: string }).coding_agent_markdown === "string"
+                ) {
+                  const cam = (llm as { coding_agent_markdown: string }).coding_agent_markdown;
+                  if (cam.length > 0) {
+                    (r as { llm_notes_synthesis: Record<string, unknown> }).llm_notes_synthesis = {
+                      ...(llm as Record<string, unknown>),
+                      coding_agent_markdown: `[${cam.length} chars — merged into engineering prompt above]`,
+                    };
+                  }
+                }
+                return r;
+              })(),
+              null,
+              2
+            )}
           </pre>
         </div>
       )}

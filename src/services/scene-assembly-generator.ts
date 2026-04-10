@@ -108,6 +108,34 @@ export function normalizeSceneBundleScenes(
   ];
 }
 
+function splitScriptIntoSceneNarrationLines(script: string, sceneCount: number): string[] {
+  const s = String(script ?? "").trim();
+  const n = Math.max(1, Math.floor(Number(sceneCount) || 1));
+  if (!s) return Array.from({ length: n }, () => "");
+
+  const sentences = s
+    .split(/(?<=[.!?])\s+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+  const tokens = (sentences.length ? sentences.join(" ") : s)
+    .split(/\s+/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return Array.from({ length: n }, () => "");
+
+  const targetPerChunk = Math.max(1, Math.ceil(tokens.length / n));
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length && out.length < n) {
+    const chunk = tokens.slice(i, i + targetPerChunk).join(" ").trim();
+    out.push(chunk);
+    i += targetPerChunk;
+  }
+  while (out.length < n) out.push("");
+  return out;
+}
+
 export async function ensureSceneBundleInPayload(
   db: Pool,
   config: AppConfig,
@@ -326,6 +354,25 @@ export async function ensureSceneBundleInPayload(
       error:
         "scene assembly: model returned no usable scenes (need scenes[] with video_prompt, or scene_prompt / video_prompt on the bundle)",
     };
+  }
+
+  /**
+   * Hard requirement: scene_narration_line must be consecutive slices of spoken_script (same words, same order).
+   * If the model drifts (common), rewrite narration lines deterministically so downstream VO/subtitles are coherent.
+   */
+  const spoken = extractSpokenScriptText(gen, 1);
+  if (spoken.trim()) {
+    const lines = splitScriptIntoSceneNarrationLines(spoken, normalizedScenes.length);
+    for (let i = 0; i < normalizedScenes.length; i++) {
+      const sc = normalizedScenes[i]!;
+      const cur = String(sc.scene_narration_line ?? "").trim();
+      const next = String(lines[i] ?? "").trim();
+      if (!cur || cur !== next) {
+        sc.scene_narration_line = next;
+      }
+      if (sc.order == null) sc.order = i + 1;
+      if (sc.scene_id == null) sc.scene_id = `${job.task_id}__scene_${String(i + 1).padStart(2, "0")}`;
+    }
   }
 
   const merged: Record<string, unknown> = {

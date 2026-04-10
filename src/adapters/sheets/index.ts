@@ -137,6 +137,10 @@ export async function syncReviewQueueSheet(pool: Pool, opts: SyncReviewQueueOpts
     if (!projectRow) { skipped++; continue; }
 
     const decision = (row.decision ?? row.review_decision ?? "").toUpperCase();
+    if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
+      skipped++;
+      continue;
+    }
     const notes = row.notes ?? row.review_notes ?? null;
     const rejectionTagsRaw = row.rejection_tags ?? null;
     let rejectionTags: string[] = [];
@@ -148,26 +152,32 @@ export async function syncReviewQueueSheet(pool: Pool, opts: SyncReviewQueueOpts
 
     const existingReview = await qOne(
       pool,
-      `SELECT 1 FROM caf_core.editorial_reviews WHERE task_id=$1 AND review_status=$2`,
-      [taskId, decision]
+      `SELECT 1 FROM caf_core.editorial_reviews WHERE project_id=$1 AND task_id=$2 AND decision=$3`,
+      [projectRow.id, taskId, decision]
     );
     if (existingReview) { skipped++; continue; }
+
+    const submittedAt = row.submitted_at ?? new Date().toISOString();
+    const validator = row.validator ?? row.reviewer ?? "sheets_sync";
 
     await q(
       pool,
       `INSERT INTO caf_core.editorial_reviews
-        (project_id, task_id, candidate_id, run_id, reviewer, review_status, notes, rejection_tags, submitted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        (project_id, task_id, candidate_id, run_id, review_status, decision, rejection_tags, notes, overrides_json, validator, submit, submitted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12)`,
       [
         projectRow.id,
         taskId,
         row.candidate_id ?? null,
         row.run_id ?? null,
-        row.validator ?? row.reviewer ?? "sheets_sync",
+        "SUBMITTED",
         decision,
+        JSON.stringify(rejectionTags),
         notes,
-        rejectionTags.length > 0 ? JSON.stringify(rejectionTags) : null,
-        row.submitted_at ?? new Date().toISOString(),
+        JSON.stringify({}),
+        validator,
+        true,
+        submittedAt,
       ]
     );
     synced++;

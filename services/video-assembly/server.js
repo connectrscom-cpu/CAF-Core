@@ -170,10 +170,34 @@ async function concatVideoFiles(videoUrls, jobDir) {
   const lines = files.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n");
   fs.writeFileSync(listFile, lines);
   const outPath = path.join(jobDir, "merged.mp4");
-  await runFfmpeg([
-    "-f", "concat", "-safe", "0", "-i", listFile,
-    "-c", "copy", "-movflags", "+faststart", "-y", outPath,
-  ], "concat");
+  /**
+   * IMPORTANT: `-c copy` concat is fragile — it may silently output only the first clip when streams differ
+   * (codec/profile/timebase/metadata). Re-encode to a consistent H.264 stream so multi-scene jobs don't truncate.
+   */
+  await runFfmpeg(
+    [
+      "-f",
+      "concat",
+      "-safe",
+      "0",
+      "-i",
+      listFile,
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-preset",
+      "fast",
+      "-crf",
+      "23",
+      "-an",
+      "-movflags",
+      "+faststart",
+      "-y",
+      outPath,
+    ],
+    "concat"
+  );
   return outPath;
 }
 

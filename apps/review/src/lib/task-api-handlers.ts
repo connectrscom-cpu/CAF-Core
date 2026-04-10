@@ -5,6 +5,7 @@ import {
   getJobDetailAll,
   getQueueTab,
   getQueueTabAll,
+  type ReviewJobDetail,
   type ReviewTab,
 } from "@/lib/caf-core-client";
 import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
@@ -189,6 +190,13 @@ async function lookupQueueRowByTaskId(
     const gen = (match.generation_payload ?? {}) as Record<string, unknown>;
     const project = (match.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim();
     const preview_url = (match.preview_thumb_url ?? "").trim();
+    const detailLike = {
+      ...match,
+      review_slides_json: null,
+      assets: [],
+      reviews: [],
+      auto_validation: null,
+    } as ReviewJobDetail;
 
     return {
       task_id: (match.task_id ?? "").trim(),
@@ -207,7 +215,7 @@ async function lookupQueueRowByTaskId(
       generated_title: generationVal(gen, "title") || generationVal(gen, "generated_title"),
       generated_hook: generationVal(gen, "hook") || generationVal(gen, "generated_hook"),
       generated_caption: pickCaptionFromGenerationPayload(gen),
-      generated_slides_json: gen.slides ? JSON.stringify(gen.slides) : "",
+      generated_slides_json: jobGeneratedSlidesJson(detailLike),
       validator: match.latest_validator ?? "",
     };
   }

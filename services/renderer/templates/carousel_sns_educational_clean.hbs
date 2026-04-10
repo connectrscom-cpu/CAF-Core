@@ -41,10 +41,14 @@
     .title{
       font-family:"Playfair Display",serif;
       font-weight:700;
-      font-size:90px;
-      line-height:1.02;
+      font-size:clamp(42px, 8vw, 90px);
+      line-height:1.06;
       letter-spacing:-0.03em;
-      max-width: 900px;
+      max-width: 920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .accent{color:var(--accent);}
     .divider{
@@ -68,19 +72,31 @@
       font-size:40px;
       line-height:1.38;
       color:var(--muted);
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .body{
       font-size:42px;
       line-height:1.4;
       color:var(--muted);
       max-width: 920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .cta{
       font-family:"Playfair Display",serif;
-      font-size:72px;
-      line-height:1.06;
+      font-size:clamp(38px, 6.8vw, 72px);
+      line-height:1.08;
       letter-spacing:-0.03em;
-      max-width: 900px;
+      max-width: 920px;
+      text-align:left;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      hyphens:auto;
     }
     .handle{
       margin-top:18px;

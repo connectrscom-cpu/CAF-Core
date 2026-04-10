@@ -293,6 +293,27 @@ const envSchema = z.object({
   /** OpenAI TTS (e.g. tts-1, tts-1-hd) */
   OPENAI_TTS_MODEL: z.string().default("tts-1"),
   OPENAI_TTS_VOICE: z.string().default("nova"),
+
+  /**
+   * When true, the API process runs editorial analysis on an interval (learning rules + engineering insight + optional OpenAI on notes).
+   * Enable on production Core with Fly secrets; use EDITORIAL_ANALYSIS_CRON_PROJECT_SLUGS to limit tenants.
+   */
+  EDITORIAL_ANALYSIS_CRON_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  /** Milliseconds between editorial analysis runs (default 24h). */
+  EDITORIAL_ANALYSIS_CRON_INTERVAL_MS: z.coerce.number().int().min(60_000).max(604_800_000).default(86_400_000),
+  /** Comma-separated slugs; empty = every active project except caf-global. */
+  EDITORIAL_ANALYSIS_CRON_PROJECT_SLUGS: z.string().optional(),
+  /** Lookback window passed to analyzeEditorialPatterns. */
+  EDITORIAL_ANALYSIS_CRON_WINDOW_DAYS: z.coerce.number().int().min(1).max(365).default(30),
+  /** Wait after process start before the first tick (ms). */
+  EDITORIAL_ANALYSIS_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(120_000),
 });
 
 export type AppConfig = z.infer<typeof envSchema>;

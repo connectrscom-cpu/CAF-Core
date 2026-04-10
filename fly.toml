@@ -3,6 +3,8 @@
 # Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
 # On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
 # OPENAI_API_KEY; optional SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
+# Editorial learning "live" on the API: EDITORIAL_ANALYSIS_CRON_ENABLED=1 (optional EDITORIAL_ANALYSIS_CRON_PROJECT_SLUGS=SNS, EDITORIAL_ANALYSIS_CRON_INTERVAL_MS, WINDOW_DAYS).
+# Or run on a schedule: fly ssh console -C "node /app/dist/cli/run-editorial-analysis.js SNS" / GitHub Actions calling the same image command.
 # Do not set MUX_* / VIDEO_ASSEMBLY_* timeouts on Core unless you wire them in code (those belong on caf-renderer).
 
 app = "caf-core"

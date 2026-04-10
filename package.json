@@ -15,6 +15,7 @@
     "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",
     "sync:sheets": "node --import tsx src/cli/sync-sheets.ts",
     "sync:supabase": "node --import tsx src/cli/sync-supabase.ts",
+    "editorial-analysis": "node dist/cli/run-editorial-analysis.js",
     "start-run:xlsx": "node --import tsx src/cli/start-run-from-xlsx.ts",
     "process-run": "node --import tsx src/cli/process-run.ts",
     "replan-run": "node --import tsx src/cli/replan-run.ts",

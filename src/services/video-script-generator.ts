@@ -11,6 +11,7 @@ import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.
 import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-types.js";
 import { extractSpokenScriptText } from "./video-gen-fields.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import {
   appendVideoUserPromptDurationHardFooter,
   withVideoScriptDurationPolicy,
@@ -87,7 +88,17 @@ export async function ensureVideoScriptInPayload(
     job.flow_type
   );
 
-  let userPrompt = interpolateTemplate(tpl.user_prompt_template, pack);
+  /**
+   * Many Flow Engine templates expect `{{script_input}}` (candidate + optional existing_output).
+   * Without it, models drift or ignore candidate context when the template is written around INPUT_JSON.
+   */
+  const candidateData = (job.generation_payload.candidate_data as Record<string, unknown>) ?? {};
+  const templateCtx: Record<string, unknown> = {
+    ...pack,
+    script_input: buildVideoScriptInputJsonString(candidateData, gen, { includeVideoScript: true }),
+  };
+
+  let userPrompt = interpolateTemplate(tpl.user_prompt_template, templateCtx);
   userPrompt = appendVideoUserPromptDurationHardFooter(userPrompt, config, "script_json");
 
   const baseSys =

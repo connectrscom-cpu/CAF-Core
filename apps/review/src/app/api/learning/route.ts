@@ -66,7 +66,10 @@ export async function POST(req: NextRequest) {
   const action = body.action as string;
 
   if (action === "editorial") {
-    const result = await triggerEditorialAnalysis(projectSlug, body.window_days);
+    const result = await triggerEditorialAnalysis(projectSlug, body.window_days, {
+      persist_engineering_insight: body.persist_engineering_insight,
+      llm_notes_synthesis: body.llm_notes_synthesis,
+    });
     return NextResponse.json(result ?? { error: "Failed" });
   }
   if (action === "market") {

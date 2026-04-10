@@ -343,8 +343,22 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const body = (req.body ?? {}) as Record<string, unknown>;
       const windowDays = (body.window_days as number) ?? 30;
       const autoCreate = body.auto_create_rules !== false;
+      const persistEngineering = body.persist_engineering_insight !== false;
+      const llmNotes =
+        typeof body.llm_notes_synthesis === "boolean"
+          ? body.llm_notes_synthesis
+          : undefined;
 
-      const result = await analyzeEditorialPatterns(db, project.id, project.slug, windowDays, autoCreate);
+      const result = await analyzeEditorialPatterns(
+        db,
+        config,
+        project.id,
+        project.slug,
+        windowDays,
+        autoCreate,
+        persistEngineering,
+        llmNotes
+      );
       return { ok: true, ...result };
     }
   );

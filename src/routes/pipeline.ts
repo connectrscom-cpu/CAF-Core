@@ -281,7 +281,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
 
   /**
    * POST /v1/pipeline/:project_slug/task/:task_id/rework
-   * NEEDS_EDIT → override-only or new rework job + pipeline.
+   * NEEDS_EDIT → override-only (same job) or full/partial reset same task_id + job_draft + full pipeline.
    */
   app.post<{ Params: { project_slug: string; task_id: string } }>(
     "/v1/pipeline/:project_slug/task/:task_id/rework",

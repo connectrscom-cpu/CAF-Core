@@ -37,6 +37,94 @@ function signalPackContextForLlm(sp: SignalPackRow): Record<string, unknown> {
   };
 }
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
+
+function asArray(v: unknown): unknown[] | null {
+  return Array.isArray(v) ? v : null;
+}
+
+function uniqStrings(xs: string[], max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of xs) {
+    const s = String(raw ?? "").trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Build small, model-friendly hints for captions/hashtags/descriptions from the SignalPack payload.
+ * We keep this intentionally compact and heuristic, since `signal_pack` JSON can be large and heterogeneous.
+ */
+function signalPackPublicationHints(signalPack: Record<string, unknown>): Record<string, unknown> {
+  const derived = asRecord(signalPack.derived_globals_json) ?? {};
+
+  const scalarStrings: string[] = [];
+  for (const k of [
+    "platform_alignment_summary",
+    "cross_platform_themes",
+    "global_rising_keywords",
+    "global_winning_formats",
+    "global_engagement_triggers",
+  ] as const) {
+    const v = derived[k];
+    if (typeof v === "string" && v.trim()) scalarStrings.push(v.trim());
+  }
+
+  const candidates = asArray(signalPack.overall_candidates_json) ?? [];
+  const hashtagCandidates: string[] = [];
+  const keywordCandidates: string[] = [];
+  for (let i = 0; i < Math.min(40, candidates.length); i++) {
+    const row = asRecord(candidates[i]);
+    if (!row) continue;
+
+    const tagFields = [
+      row.hashtags,
+      row.hashtag,
+      row.tags,
+      row.keywords,
+      row.rising_keywords,
+      row.primary_keyword,
+      row.secondary_keywords,
+    ];
+    for (const blob of tagFields) {
+      if (typeof blob === "string") {
+        const s = blob.trim();
+        if (!s) continue;
+        const tags = s.match(/#[\w\u00c0-\u024f]+/gu) ?? [];
+        for (const t of tags) hashtagCandidates.push(t);
+        // Also capture non-# keywords (comma/pipe separated)
+        for (const part of s.split(/[|,;]/g)) {
+          const p = part.trim();
+          if (p && !p.startsWith("#") && p.length <= 40) keywordCandidates.push(p);
+        }
+      } else if (Array.isArray(blob)) {
+        for (const x of blob) {
+          const s = String(x ?? "").trim();
+          if (!s) continue;
+          if (s.startsWith("#")) hashtagCandidates.push(s);
+          else keywordCandidates.push(s);
+        }
+      }
+    }
+  }
+
+  return {
+    derived_globals: uniqStrings(scalarStrings, 12),
+    rising_keywords: uniqStrings(keywordCandidates, 20),
+    hashtag_seeds: uniqStrings(hashtagCandidates, 20),
+  };
+}
+
 /**
  * TikTok/Reddit/etc. often have no `platform_constraints` row; carousel prompts still ask for slide_min_chars.
  * Reuse Instagram (or first row with slide limits) so LENGTH RULES are not vacuous.
@@ -144,6 +232,11 @@ export async function buildCreationPack(
       )
     : {};
 
+  const signal_pack_publication_hints =
+    signal_pack && typeof signal_pack === "object" && !Array.isArray(signal_pack)
+      ? signalPackPublicationHints(signal_pack as Record<string, unknown>)
+      : {};
+
   return {
     strategy: strategy ?? {},
     brand_constraints: brand ?? {},
@@ -151,6 +244,8 @@ export async function buildCreationPack(
     /** Same text appended to system prompts in llm-generator; included here for templates using {{publication_output_contract}}. */
     publication_output_contract: PUBLICATION_SYSTEM_ADDENDUM,
     signal_pack,
+    /** Compact hints derived from SignalPack for captions/descriptions/hashtags across all flows. */
+    signal_pack_publication_hints,
     candidate: candidateData,
   };
 }

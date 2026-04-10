@@ -8,6 +8,7 @@ import {
   inferHeygenRenderModeFromFlowType,
   mergeHeygenConfig,
   mergeHeygenConfigForJob,
+  normalizeHeyGenLifecycleToken,
   pickHeyGenDownloadUrlFromStatus,
   resolveHeygenAgentDurationSec,
   resolveHeygenGeneratePath,
@@ -65,6 +66,19 @@ describe("resolveHeygenGeneratePath", () => {
     expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_NoAvatar", "HEYGEN_NO_AVATAR")).toBe(
       "/v1/video_agent/generate"
     );
+  });
+});
+
+describe("normalizeHeyGenLifecycleToken", () => {
+  it("maps HeyGen OpenAPI-style labels to the first token before colon", () => {
+    expect(normalizeHeyGenLifecycleToken("completed: Video rendered successfully")).toBe("completed");
+    expect(normalizeHeyGenLifecycleToken("pending: Waiting in queue")).toBe("pending");
+    expect(normalizeHeyGenLifecycleToken("failed: Rendering failed")).toBe("failed");
+  });
+
+  it("leaves plain statuses unchanged", () => {
+    expect(normalizeHeyGenLifecycleToken("processing")).toBe("processing");
+    expect(normalizeHeyGenLifecycleToken("COMPLETED")).toBe("completed");
   });
 });
 

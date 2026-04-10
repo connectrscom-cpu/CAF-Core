@@ -32,6 +32,7 @@ import {
 import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { extractSpokenScriptText, mergeSceneBundleParsedIntoGeneratedOutput } from "./video-gen-fields.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
+import { CAROUSEL_COPY_SYSTEM_ADDENDUM } from "./carousel-copy-prompt-policy.js";
 import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
@@ -39,6 +40,22 @@ import {
 } from "./publish-metadata-enrich.js";
 import { compileLearningContexts } from "./learning-context-compiler.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
+
+async function nextJobDraftSequence(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<{ attempt_no: number; revision_round: number }> {
+  const row = await qOne<{ max_a: number | null; max_r: number | null }>(
+    db,
+    `SELECT MAX(attempt_no) AS max_a, MAX(revision_round) AS max_r
+     FROM caf_core.job_drafts WHERE project_id = $1 AND task_id = $2`,
+    [projectId, taskId]
+  );
+  const nextA = (row?.max_a ?? 0) + 1;
+  const nextR = (row?.max_r ?? 0) + 1;
+  return { attempt_no: nextA, revision_round: nextR };
+}
 
 function truncateForContext(s: string, maxChars: number, label: string): string {
   if (!maxChars || maxChars <= 0) return "";
@@ -271,6 +288,10 @@ export async function generateForJob(
     );
   }
 
+  if (isCarouselFlow(job.flow_type)) {
+    systemPrompt = `${systemPrompt.trim()}\n\n${CAROUSEL_COPY_SYSTEM_ADDENDUM}`.trim();
+  }
+
   if (compiledLearning.merged_guidance.trim()) {
     systemPrompt = `${systemPrompt.trim()}\n\nValidated learning context (shape tone, hooks, and structure; do not quote this section verbatim):\n${compiledLearning.merged_guidance}`.trim();
   }
@@ -282,6 +303,29 @@ export async function generateForJob(
   let maxTokens = openAiMaxTokens(promptTemplate.max_tokens_default, 4000);
   if (isCarouselFlow(job.flow_type)) {
     maxTokens = Math.max(maxTokens, carouselFloor);
+  }
+
+  const hf = payload.human_feedback as { notes?: string | null; rejection_tags?: unknown } | undefined;
+  const gr = String(payload.generation_reason ?? "");
+  const reworkMode = payload.rework_mode;
+  const isEditorialRework =
+    gr === "REWORK_PARTIAL" ||
+    gr === "REWORK_FULL" ||
+    reworkMode === "FULL_REWORK" ||
+    reworkMode === "PARTIAL_REWRITE" ||
+    (typeof payload.rework_parent_task_id === "string" && payload.rework_parent_task_id.trim() !== "");
+  if (isEditorialRework && hf) {
+    const notes = (hf.notes ?? "").trim();
+    const tags = Array.isArray(hf.rejection_tags)
+      ? hf.rejection_tags.map((t) => String(t).trim()).filter(Boolean)
+      : [];
+    const bits = [
+      notes ? `Reviewer notes: ${notes}` : "",
+      tags.length ? `Rework tags: ${tags.join(", ")}` : "",
+    ].filter(Boolean);
+    if (bits.length) {
+      userPrompt = `${userPrompt.trim()}\n\n---\nEditorial rework for task ${job.task_id}. Address this feedback in the output:\n${bits.join("\n")}`.trim();
+    }
   }
 
   const draftId = `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -378,19 +422,22 @@ export async function generateForJob(
     const maxHt = maxHashtagsFromPlatformConstraints(creationPack.platform_constraints);
     parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt });
 
+    const draftSeq = await nextJobDraftSequence(db, job.project_id, job.task_id);
     await db.query(`
       INSERT INTO caf_core.job_drafts (
         draft_id, task_id, candidate_id, run_id, project_id,
-        attempt_no, prompt_name, prompt_version, generated_payload
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
+        attempt_no, revision_round, prompt_name, prompt_version, generated_payload
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)
     `, [
       draftId, job.task_id, job.candidate_id, job.run_id, job.project_id,
-      1, promptTemplate.prompt_name, promptVersionLabel || "1.0",
+      draftSeq.attempt_no, draftSeq.revision_round, promptTemplate.prompt_name, promptVersionLabel || "1.0",
       JSON.stringify({
         raw_output: llmResult.content,
         parsed: parsed,
         model: llmResult.model,
         tokens: llmResult.total_tokens,
+        generation_reason: payload.generation_reason ?? null,
+        rework_mode: payload.rework_mode ?? null,
       }),
     ]);
 
