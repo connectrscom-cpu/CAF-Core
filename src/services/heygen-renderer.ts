@@ -905,7 +905,19 @@ export async function pollHeyGenUntilComplete(
     await new Promise((r) => setTimeout(r, delay));
     delay = Math.min(delay * 2, 30_000);
   }
-  throw new Error(`HeyGen poll timeout for video_id=${videoId}`);
+  throw new HeygenPollTimeoutError(videoId, maxMs);
+}
+
+export class HeygenPollTimeoutError extends Error {
+  videoId: string;
+  maxMs: number;
+
+  constructor(videoId: string, maxMs: number) {
+    super(`HeyGen poll timeout for video_id=${videoId} (maxMs=${maxMs})`);
+    this.name = "HeygenPollTimeoutError";
+    this.videoId = videoId;
+    this.maxMs = maxMs;
+  }
 }
 
 export interface HeygenJobContext {
