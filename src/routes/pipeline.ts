@@ -289,11 +289,31 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
 
-      const result = await executeRework(db, config, project.id, req.params.task_id);
-      if (!result.ok) {
-        return reply.code(400).send({ ok: false, error: result.error ?? "rework failed", mode: result.mode });
-      }
-      return result;
+      const taskId = req.params.task_id.trim();
+      const exists = await qOne<{ one: number }>(
+        db,
+        `SELECT 1 AS one FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2 LIMIT 1`,
+        [project.id, taskId]
+      );
+      if (!exists) return reply.code(404).send({ ok: false, error: "job not found" });
+
+      void executeRework(db, config, project.id, taskId)
+        .then((result) => {
+          if (!result.ok) {
+            req.log.warn({ taskId, error: result.error, mode: result.mode }, "pipeline rework background failed");
+          }
+        })
+        .catch((err) => {
+          req.log.error({ err, taskId }, "pipeline rework background threw");
+        });
+
+      return reply.code(202).send({
+        ok: true,
+        accepted: true,
+        task_id: taskId,
+        message:
+          "Rework started in the background (LLM + QC + render can take several minutes). Poll job status or refresh the admin Jobs table.",
+      });
     }
   );
 }

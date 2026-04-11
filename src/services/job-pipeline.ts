@@ -67,10 +67,8 @@ type JobRow = {
   generation_payload: Record<string, unknown>;
 };
 
-/** Phase-2 video render concurrency for `processRunJobs` (carousel lane stays one-at-a-time). */
-const PIPELINE_VIDEO_RENDER_CONCURRENCY = 3;
-
-class RenderNotReadyError extends Error {
+/** Video poll timeouts — job stays RENDERING; caller may retry. Do not mark FAILED. */
+export class RenderNotReadyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "RenderNotReadyError";
@@ -88,24 +86,6 @@ type RenderTicket = {
   kind: "carousel" | "video";
   recommended_route: string | null;
 };
-
-async function mapWithConcurrency<T>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<void>
-): Promise<void> {
-  if (items.length === 0) return;
-  const n = Math.min(Math.max(1, limit), items.length);
-  let next = 0;
-  const workers = Array.from({ length: n }, async () => {
-    while (true) {
-      const idx = next++;
-      if (idx >= items.length) return;
-      await fn(items[idx], idx);
-    }
-  });
-  await Promise.all(workers);
-}
 
 async function markJobFailedPipeline(
   db: Pool,
@@ -268,7 +248,25 @@ export async function processContentJobById(
 
   const run = await getRunByRunId(db, job.project_id, job.run_id);
   const pipeConfig = getPipelineConfig(config);
-  await processOneJob(db, config, job, run, pipeConfig);
+  try {
+    await processOneJob(db, config, job, run, pipeConfig);
+  } catch (err) {
+    // Same as `processJobByTaskId`: render/LLM failures must not leave the job stuck in RENDERING.
+    if (err instanceof RenderNotReadyError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    const prior = await qOne<{ status: string }>(db, `SELECT status FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
+    await updateJobStatus(db, jobId, "FAILED");
+    await insertJobStateTransition(db, {
+      task_id: job.task_id,
+      project_id: job.project_id,
+      from_state: prior?.status ?? job.status,
+      to_state: "FAILED",
+      triggered_by: "system",
+      actor: "job-pipeline",
+      metadata: { error: msg },
+    });
+    throw err;
+  }
 }
 
 export async function processRunJobs(
@@ -298,9 +296,9 @@ export async function processRunJobs(
       (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type))
   );
 
-  /** Carousel PNG loop can block a long time; run video/other flows first so one stuck carousel does not starve the run. */
+  /** Carousels first in the pre-render pass so tickets queue as [carousel…, video…]; render phase runs all carousels, then all videos, one job at a time. */
   const isCar = (j: JobRow) => isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type);
-  jobsToRun.sort((a, b) => Number(isCar(a)) - Number(isCar(b)));
+  jobsToRun.sort((a, b) => Number(isCar(b)) - Number(isCar(a)));
 
   const pipeConfig = getPipelineConfig(config);
   let processed = 0;
@@ -374,7 +372,7 @@ export async function processRunJobs(
   };
 
   const videoLane = async () => {
-    await mapWithConcurrency(videoTickets, PIPELINE_VIDEO_RENDER_CONCURRENCY, async (t) => {
+    for (const t of videoTickets) {
       try {
         await runOneRender(t);
         const refreshed = await qOne<{ status: string }>(
@@ -388,15 +386,16 @@ export async function processRunJobs(
         }
       } catch (err) {
         if (err instanceof RenderNotReadyError) {
-          return;
+          continue;
         }
         const msg = err instanceof Error ? err.message : String(err);
         await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
       }
-    });
+    }
   };
 
-  await Promise.all([carouselLane(), videoLane()]);
+  await carouselLane();
+  await videoLane();
 
   const pendingRows = await q<{ flow_type: string }>(
     db,
@@ -450,11 +449,12 @@ export async function processJobByTaskId(
       return { status: updated?.status ?? "RENDERING" };
     }
     const msg = err instanceof Error ? err.message : String(err);
+    const prior = await qOne<{ status: string }>(db, `SELECT status FROM caf_core.content_jobs WHERE id = $1`, [job.id]);
     await updateJobStatus(db, job.id, "FAILED");
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: projectId,
-      from_state: job.status,
+      from_state: prior?.status ?? job.status,
       to_state: "FAILED",
       triggered_by: "system",
       actor: "job-pipeline",
@@ -476,9 +476,38 @@ const FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS = [
   "publish_media_urls",
 ] as const;
 
+const REWORK_HISTORY_MAX_ENTRIES = 25;
+
+export interface ReworkHistoryEntry {
+  archived_at: string;
+  kind: "full_rerun_reset" | "before_override_rework";
+  draft_id?: unknown;
+  generated_output?: unknown;
+  qc_result?: unknown;
+}
+
+export function appendReworkHistory(
+  gp: Record<string, unknown>,
+  entry: Omit<ReworkHistoryEntry, "archived_at"> & { archived_at?: string }
+): void {
+  const raw = gp.rework_history;
+  const list: ReworkHistoryEntry[] = Array.isArray(raw) ? [...raw] : [];
+  const next: ReworkHistoryEntry = {
+    archived_at: entry.archived_at ?? new Date().toISOString(),
+    kind: entry.kind,
+    draft_id: entry.draft_id,
+    generated_output: entry.generated_output,
+    qc_result: entry.qc_result,
+  };
+  list.push(next);
+  while (list.length > REWORK_HISTORY_MAX_ENTRIES) list.shift();
+  gp.rework_history = list;
+}
+
 /**
  * Reset one job to a clean PLANNED state: drop generated output / QC from payload, clear render & scene state,
  * remove assets and machine audits. Does not delete editorial reviews or job_drafts (history).
+ * Archives the previous `generated_output` (and related keys) into `generation_payload.rework_history`.
  */
 export async function prepareContentJobForFullRerun(
   db: Pool,
@@ -519,6 +548,16 @@ export async function prepareContentJobForFullRerun(
     [job.id]
   );
   const gp: Record<string, unknown> = { ...(snap?.generation_payload ?? {}) };
+  const hadVersion =
+    gp.generated_output != null || gp.draft_id != null || gp.qc_result != null;
+  if (hadVersion) {
+    appendReworkHistory(gp, {
+      kind: "full_rerun_reset",
+      draft_id: gp.draft_id ?? null,
+      generated_output: gp.generated_output,
+      qc_result: gp.qc_result ?? null,
+    });
+  }
   for (const k of FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS) {
     delete gp[k];
   }
@@ -884,6 +923,9 @@ async function processCarouselJob(
 
   const renderBase = carouselRenderBaseForPipeline(baseRender, usableSlides);
   const n = carouselSlideCount(renderBase);
+  if (!Number.isFinite(n) || n < 1) {
+    throw new Error(`Invalid carousel slide count (${String(n)}); check generated_output / structure_variables.slide_count.`);
+  }
   const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload);
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectInstagramHandle = strategyRow?.instagram_handle ?? null;
@@ -1012,7 +1054,7 @@ async function processCarouselJob(
       /aborted|timed out/i.test(msg);
     // Do not treat timeouts/aborts as "renderer unavailable" (skip) — fail the job so it is visible.
     if (!aborted && err instanceof TypeError && msg.includes("fetch")) {
-      await updateJobRenderState(db, job.id, {
+      await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "skipped",
         reason: "renderer_unavailable",
@@ -1032,7 +1074,7 @@ async function processCarouselJob(
         error_message: "renderer_unavailable (fetch failed)",
       });
     } else {
-      await updateJobRenderState(db, job.id, {
+      await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "failed",
         error: err instanceof Error ? err.message : String(err),
@@ -1284,4 +1326,18 @@ async function updateJobRenderState(db: Pool, jobId: string, state: Record<strin
     `UPDATE caf_core.content_jobs SET render_state = $1::jsonb, updated_at = now() WHERE id = $2`,
     [JSON.stringify(state), jobId]
   );
+}
+
+/** Shallow-merge into existing `render_state` (keeps slide_index / slide_total when recording failure). */
+async function mergeJobRenderState(db: Pool, jobId: string, patch: Record<string, unknown>) {
+  const row = await qOne<{ render_state: unknown }>(
+    db,
+    `SELECT render_state FROM caf_core.content_jobs WHERE id = $1`,
+    [jobId]
+  );
+  const prev =
+    row?.render_state && typeof row.render_state === "object" && !Array.isArray(row.render_state)
+      ? { ...(row.render_state as Record<string, unknown>) }
+      : {};
+  await updateJobRenderState(db, jobId, { ...prev, ...patch });
 }

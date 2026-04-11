@@ -100,6 +100,66 @@ export const EDITORIAL_ENGINEERING_TRIGGERS: EditorialEngineeringTrigger[] = [
     remediation_hint:
       "Low approval may be generation, layout, or review UX; triage using rejection tags and override fields before changing code.",
   },
+  {
+    id: "tag_bad_structure",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "bad_structure",
+    subsystem: "Carousel / copy structure (LLM instructions)",
+    search_paths: ["src/services/llm-generator.ts", "src/services/carousel-copy-prompt-policy.ts"],
+    remediation_hint:
+      "Tighten slide arc, cover vs body roles, and CTA clarity in carousel system addendum + Flow Engine user prompts for Flow_Carousel_Copy.",
+  },
+  {
+    id: "tag_quality_low",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "quality_low",
+    subsystem: "Generation depth and specificity",
+    search_paths: ["src/services/llm-generator.ts", "src/services/publish-metadata-enrich.ts"],
+    remediation_hint:
+      "Increase substantive body copy, evidence grounding, and anti-generic guidance; review prompt_templates for the flow in DB.",
+  },
+  {
+    id: "tag_too_generic",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "too_generic",
+    subsystem: "Generation prompts + signal grounding",
+    search_paths: ["src/services/llm-generator.ts", "src/services/carousel-copy-prompt-policy.ts"],
+    remediation_hint:
+      "Require concrete hooks to signal_pack rows; adjust user_prompt_template to forbid filler phrases.",
+  },
+  {
+    id: "tag_cta_weak",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "cta_weak",
+    subsystem: "CTA / caption closing",
+    search_paths: ["src/services/publish-metadata-enrich.ts", "src/services/carousel-copy-prompt-policy.ts"],
+    remediation_hint:
+      "Enforce imperative CTAs + handle in publication contract and final-slide fields in schema/prompts.",
+  },
+  {
+    id: "tag_subtitles",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "subtitle",
+    subsystem: "Video assembly / captions pipeline",
+    search_paths: ["services/video-assembly/", "src/services/scene-pipeline.ts"],
+    remediation_hint:
+      "Check SRT generation, burn-in vf chain, and timing vs speech; reproduce on sample task assets.",
+  },
+  {
+    id: "tag_audio_voiceover",
+    kind: "rejection_tag",
+    match: "substring",
+    pattern: "voiceover",
+    subsystem: "Video script + TTS / HeyGen voice selection",
+    search_paths: ["src/services/video-script-generator.ts", "src/services/llm-generator.ts"],
+    remediation_hint:
+      "Align script tone with voice_id; shorten sentences for natural TTS; not fixable in static carousel templates.",
+  },
 ];
 
 function norm(s: string): string {

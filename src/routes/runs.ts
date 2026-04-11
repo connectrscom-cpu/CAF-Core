@@ -164,12 +164,27 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
 
     try {
       const startResult = await startRun(db, config, run.id);
-      const processResult = await processRunJobs(db, config, run.id);
-      return {
+      const log = request.server.log;
+      const runUuid = run.id;
+      const runIdText = run.run_id;
+      void processRunJobs(db, config, runUuid)
+        .then((processResult) => {
+          log.info(
+            { run_id: runIdText, processed: processResult.processed, errors: processResult.errors },
+            "start-and-process: pipeline finished"
+          );
+        })
+        .catch((err) => {
+          log.error({ err, run_id: runIdText }, "start-and-process: pipeline failed");
+        });
+
+      return reply.code(202).send({
         ok: true,
+        accepted: true,
         start: startResult,
-        process: processResult,
-      };
+        message:
+          "Run started; processing continues in the background (LLM + render can take many minutes for large runs). Check Jobs or Fly logs — do not rely on a single long HTTP response.",
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       return reply.code(500).send({ ok: false, error: "start_and_process_failed", message });
@@ -226,13 +241,27 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     if (!run) run = await getRunById(db, params.data.run_id);
     if (!run) return reply.code(404).send({ ok: false, error: "run_not_found" });
 
-    try {
-      const result = await processRunJobs(db, config, run.id);
-      return { ok: true, ...result };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unknown error";
-      return reply.code(500).send({ ok: false, error: "process_failed", message });
-    }
+    const log = request.server.log;
+    const runUuid = run.id;
+    const runIdText = run.run_id;
+    void processRunJobs(db, config, runUuid)
+      .then((result) => {
+        log.info(
+          { run_id: runIdText, processed: result.processed, errors: result.errors },
+          "process run: pipeline finished"
+        );
+      })
+      .catch((err) => {
+        log.error({ err, run_id: runIdText }, "process run: pipeline failed");
+      });
+
+    return reply.code(202).send({
+      ok: true,
+      accepted: true,
+      run_id: runIdText,
+      message:
+        "Processing started in the background. Large runs (many carousels/videos) often exceeded HTTP timeouts when this ran synchronously — refresh the Jobs table to watch progress. See Fly logs for processed count and errors when complete.",
+    });
   });
 
   // ── Process single job ───────────────────────────────────────────────

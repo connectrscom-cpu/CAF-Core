@@ -19,6 +19,10 @@ export interface TaskTableProps {
   contentSlug?: "t" | "content";
   /** Cross-project workbench: show tenant column and disambiguate task links. */
   showProjectColumn?: boolean;
+  /** When set, row click loads the row (links stop propagation). */
+  onRowSelect?: (row: ReviewQueueRow) => void;
+  /** `project::task_id` when `showProjectColumn`, else `task_id` — for selection highlight. */
+  selectedRowKey?: string;
 }
 
 function getVal(row: ReviewQueueRow, key: string): string {
@@ -41,10 +45,14 @@ function TaskRow({
   row,
   contentSlug = "t",
   showProjectColumn = false,
+  onRowSelect,
+  selected = false,
 }: {
   row: ReviewQueueRow;
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
+  onRowSelect?: (row: ReviewQueueRow) => void;
+  selected?: boolean;
 }) {
   const taskId = getVal(row, "task_id");
   const project = getVal(row, "project");
@@ -57,7 +65,13 @@ function TaskRow({
   const taskHref = taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined);
 
   return (
-    <tr>
+    <tr
+      onClick={onRowSelect ? () => onRowSelect(row) : undefined}
+      style={{
+        cursor: onRowSelect ? "pointer" : undefined,
+        background: selected ? "rgba(99, 102, 241, 0.08)" : undefined,
+      }}
+    >
       <td className="task-thumb-cell" style={{ width: 72, verticalAlign: "middle" }}>
         {thumb ? (
           isVideoUrl(thumb) ? (
@@ -83,7 +97,9 @@ function TaskRow({
         )}
       </td>
       <td className="task-id-cell">
-        <Link href={taskHref}>{taskId}</Link>
+        <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
+          {taskId}
+        </Link>
       </td>
       {showProjectColumn && <td>{project || "—"}</td>}
       <td className="hook-cell" title={title}>{title}</td>
@@ -93,7 +109,9 @@ function TaskRow({
       <td>{decision ? statusBadge(decision) : "—"}</td>
       <td>{getVal(row, "recommended_route") || "—"}</td>
       <td>
-        <Link href={taskHref} className="btn-open-row">Open</Link>
+        <Link href={taskHref} className="btn-open-row" onClick={(e) => onRowSelect && e.stopPropagation()}>
+          Open
+        </Link>
       </td>
     </tr>
   );
@@ -104,21 +122,35 @@ function TableBody({
   groupBy,
   contentSlug = "t",
   showProjectColumn = false,
+  onRowSelect,
+  selectedRowKey,
 }: {
   items: ReviewQueueRow[];
   groupBy: GroupBy;
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
+  onRowSelect?: (row: ReviewQueueRow) => void;
+  selectedRowKey?: string;
 }) {
   const colSpan = showProjectColumn ? 10 : 9;
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
+  const isSel = (row: ReviewQueueRow) =>
+    selectedRowKey != null && selectedRowKey !== "" && rowKey(row) === selectedRowKey;
+
   if (!groupBy) {
     return (
       <tbody>
         {items.map((row) => (
-          <TaskRow key={rowKey(row)} row={row} contentSlug={contentSlug} showProjectColumn={showProjectColumn} />
+          <TaskRow
+            key={rowKey(row)}
+            row={row}
+            contentSlug={contentSlug}
+            showProjectColumn={showProjectColumn}
+            onRowSelect={onRowSelect}
+            selected={isSel(row)}
+          />
         ))}
       </tbody>
     );
@@ -136,7 +168,14 @@ function TableBody({
         <React.Fragment key={groupKey}>
           <tr><td colSpan={colSpan} className="group-header">{groupBy}: {groupKey}</td></tr>
           {rows.map((row) => (
-            <TaskRow key={rowKey(row)} row={row} contentSlug={contentSlug} showProjectColumn={showProjectColumn} />
+            <TaskRow
+              key={rowKey(row)}
+              row={row}
+              contentSlug={contentSlug}
+              showProjectColumn={showProjectColumn}
+              onRowSelect={onRowSelect}
+              selected={isSel(row)}
+            />
           ))}
         </React.Fragment>
       ))}
@@ -154,6 +193,8 @@ export function TaskTable({
   statusCounts = {},
   contentSlug = "t",
   showProjectColumn = false,
+  onRowSelect,
+  selectedRowKey,
 }: TaskTableProps) {
   const start = total === 0 ? 0 : (page - 1) * limit + 1;
   const end = total === 0 ? 0 : Math.min(page * limit, total);
@@ -189,6 +230,8 @@ export function TaskTable({
           groupBy={groupBy}
           contentSlug={contentSlug}
           showProjectColumn={showProjectColumn}
+          onRowSelect={onRowSelect}
+          selectedRowKey={selectedRowKey}
         />
       </table>
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}

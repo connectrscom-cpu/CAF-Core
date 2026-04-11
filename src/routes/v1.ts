@@ -29,12 +29,17 @@ import {
   resolveTaskToProject,
   type ReviewQueueFilters,
 } from "../repositories/review-queue.js";
-import { buildCarouselPublishUrls, mergePublishUrlsIntoJob } from "../services/validation-router.js";
+import {
+  buildCarouselPublishUrls,
+  buildVideoPublishUrl,
+  mergePublishUrlsIntoJob,
+  mergeVideoPublishUrlIntoJob,
+} from "../services/validation-router.js";
 import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
-import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -89,9 +94,13 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (body.decision === "APPROVED") {
       const jobRow = await getContentJobByTaskId(db, project.id, task_id);
       const flow = String(jobRow?.flow_type ?? "");
+      const gp = (jobRow?.generation_payload ?? null) as Record<string, unknown> | null;
       if (isCarouselFlow(flow)) {
         const urls = await buildCarouselPublishUrls(db, project.id, task_id);
         await mergePublishUrlsIntoJob(db, project.id, task_id, urls);
+      } else if (isVideoFlow(flow)) {
+        const vUrl = await buildVideoPublishUrl(db, project.id, task_id, gp);
+        if (vUrl) await mergeVideoPublishUrlIntoJob(db, project.id, task_id, vUrl);
       }
     }
 

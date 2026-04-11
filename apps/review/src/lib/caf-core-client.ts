@@ -52,6 +52,50 @@ async function coreGetRequired<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function corePostRequired<T>(path: string, body: unknown): Promise<T> {
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Cannot reach CAF Core (${url}): ${msg}`);
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${t.slice(0, 400)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function corePatchRequired<T>(path: string, body: unknown): Promise<T> {
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "PATCH",
+      headers: headers(),
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Cannot reach CAF Core (${url}): ${msg}`);
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${t.slice(0, 400)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 async function corePost<T = unknown>(path: string, body: unknown): Promise<T | null> {
   const res = await fetch(`${CAF_CORE_URL}${path}`, {
     method: "POST",
@@ -682,4 +726,134 @@ export async function getLlmApprovalReviews(projectSlug: string, limit?: number)
   return coreGet<{ ok: boolean; reviews: Record<string, unknown>[] }>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/llm-approval-reviews${qs}`
   );
+}
+
+// ── Publication placements (Review → n8n) ─────────────────────────────────
+
+export type PublicationPlacementStatus =
+  | "draft"
+  | "scheduled"
+  | "publishing"
+  | "published"
+  | "failed"
+  | "cancelled";
+
+export interface PublicationPlacement {
+  id: string;
+  task_id: string;
+  content_format: string;
+  platform: string;
+  status: PublicationPlacementStatus;
+  scheduled_at: string | null;
+  published_at: string | null;
+  caption_snapshot: string | null;
+  title_snapshot: string | null;
+  media_urls_json: unknown;
+  video_url_snapshot: string | null;
+  platform_post_id: string | null;
+  posted_url: string | null;
+  publish_error: string | null;
+  external_ref: string | null;
+  result_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listPublicationPlacements(
+  projectSlug: string,
+  opts?: {
+    task_id?: string;
+    status?: string;
+    due_only?: boolean;
+    platform?: string;
+    limit?: number;
+    offset?: number;
+  }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.task_id) qs.set("task_id", opts.task_id);
+  if (opts?.status) qs.set("status", opts.status);
+  if (opts?.due_only) qs.set("due_only", "1");
+  if (opts?.platform) qs.set("platform", opts.platform);
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  const q = qs.toString();
+  return coreGetRequired<{ ok: boolean; placements: PublicationPlacement[]; due_only?: boolean }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}${q ? `?${q}` : ""}`
+  );
+}
+
+export async function createPublicationPlacement(
+  projectSlug: string,
+  body: {
+    task_id: string;
+    platform: string;
+    content_format?: "carousel" | "video" | "unknown";
+    status?: PublicationPlacementStatus;
+    scheduled_at?: string | null;
+    caption_snapshot?: string | null;
+    title_snapshot?: string | null;
+    media_urls_json?: string[];
+    video_url_snapshot?: string | null;
+  }
+) {
+  return corePostRequired<{ ok: boolean; placement: PublicationPlacement | null }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}`,
+    body
+  );
+}
+
+export async function patchPublicationPlacement(
+  projectSlug: string,
+  id: string,
+  body: Partial<{
+    status: PublicationPlacementStatus;
+    scheduled_at: string | null;
+    caption_snapshot: string | null;
+    title_snapshot: string | null;
+    media_urls_json: string[];
+    video_url_snapshot: string | null;
+    platform: string;
+  }>
+) {
+  return corePatchRequired<{ ok: boolean; placement: PublicationPlacement | null }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}`,
+    body
+  );
+}
+
+export async function completePublicationPlacement(
+  projectSlug: string,
+  id: string,
+  body: {
+    post_success: boolean;
+    platform_post_id?: string | null;
+    posted_url?: string | null;
+    publish_error?: string | null;
+    external_ref?: string | null;
+    result_json?: Record<string, unknown>;
+  }
+) {
+  return corePostRequired<{ ok: boolean; placement: PublicationPlacement | null }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}/complete`,
+    body
+  );
+}
+
+export async function getPublicationN8nPayload(projectSlug: string, id: string) {
+  return coreGetRequired<{ ok: boolean; payload: Record<string, unknown> }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}/n8n-payload`
+  );
+}
+
+export async function startPublicationPlacement(
+  projectSlug: string,
+  id: string,
+  body?: { allow_not_yet_due?: boolean; allow_from_draft?: boolean }
+) {
+  return corePostRequired<{
+    ok: boolean;
+    placement: PublicationPlacement | null;
+    payload: Record<string, unknown>;
+  }>(`/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}/start`, body ?? {});
 }

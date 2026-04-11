@@ -71,10 +71,16 @@ export function pickCaptionFromGenerationPayload(payload: Record<string, unknown
   return "";
 }
 
+export interface TaskDetailResponseOptions {
+  /** Include full `job` (generation_payload, assets) for Publish / tooling. */
+  includeJob?: boolean;
+}
+
 /** Long n8n-style task ids break some hosts when used as a single path segment; prefer ?task_id= for API too. */
 export async function jsonTaskDetailResponse(
   decodedId: string,
-  projectQs: string | undefined
+  projectQs: string | undefined,
+  opts?: TaskDetailResponseOptions
 ): Promise<NextResponse> {
   try {
     const job = reviewUsesAllProjects()
@@ -107,7 +113,9 @@ export async function jsonTaskDetailResponse(
       generated_slides_json: jobGeneratedSlidesJson(job),
       validator: job.latest_validator ?? "",
     };
-    return NextResponse.json({ rowIndex: 0, data });
+    const body: Record<string, unknown> = { rowIndex: 0, data };
+    if (opts?.includeJob) body.job = job;
+    return NextResponse.json(body);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
   }

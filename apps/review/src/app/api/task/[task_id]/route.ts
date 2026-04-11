@@ -8,5 +8,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const { task_id } = await params;
   const decodedId = decodeTaskIdParam(task_id);
   const projectQs = request.nextUrl.searchParams.get("project")?.trim() || undefined;
-  return jsonTaskDetailResponse(decodedId, projectQs);
+  const includeJob = request.nextUrl.searchParams.get("include_job") === "1";
+  return jsonTaskDetailResponse(decodedId, projectQs, { includeJob });
 }

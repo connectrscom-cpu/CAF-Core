@@ -662,7 +662,10 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
   /**
    * POST /v1/admin/rework/pending
-   * Rework every job whose latest editorial decision is NEEDS_EDIT.
+   * Rework every job with `content_jobs.status = 'NEEDS_EDIT'` (no filter on latest editorial row — avoids stale job rows skipped by the queue).
+   *
+   * Returns **202** and runs each rework **in the background** (sequential queue) so Fly/browser proxies do not
+   * time out while LLM + carousel renders run (often several minutes per job).
    *
    * Full/partial modes reset the same `task_id`, append a new `job_drafts` row, and run LLM → QC → render.
    * Override-only merges `overrides_json` into `generated_output` on the same job (no regen).
@@ -676,55 +679,54 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const project = await resolveProject(db, projectSlug);
     if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
 
+    /** Any row with `status = NEEDS_EDIT` qualifies. Do not filter by latest editorial row — that row can be APPROVED/NULL while the job row is stale, which made batch rework queue 0 jobs. */
     const rows = await q<{ task_id: string }>(
       db,
       `
         SELECT j.task_id
         FROM caf_core.content_jobs j
-        LEFT JOIN LATERAL (
-          SELECT decision
-          FROM caf_core.editorial_reviews r
-          WHERE r.project_id = j.project_id AND r.task_id = j.task_id
-          ORDER BY r.created_at DESC
-          LIMIT 1
-        ) lr ON true
-        WHERE j.project_id = $1 AND lr.decision = 'NEEDS_EDIT'
+        WHERE j.project_id = $1 AND j.status = 'NEEDS_EDIT'
         ORDER BY j.updated_at DESC
         LIMIT $2
       `,
       [project.id, limit]
     );
 
-    const results: Array<{
-      task_id: string;
-      ok: boolean;
-      mode?: string;
-      error?: string;
-    }> = [];
+    const taskIds = rows.map((r) => String(r.task_id || "").trim()).filter(Boolean);
+    const log = request.server.log;
 
-    let succeeded = 0;
-    for (const r of rows) {
-      const taskId = String(r.task_id || "").trim();
-      if (!taskId) continue;
-      const out = await executeRework(db, config, project.id, taskId);
-      results.push({
-        task_id: taskId,
-        ok: out.ok,
-        mode: out.mode,
-        error: out.error,
-      });
-      if (out.ok) succeeded += 1;
-    }
+    void (async () => {
+      const delayMs = 2000;
+      for (let i = 0; i < taskIds.length; i++) {
+        const taskId = taskIds[i]!;
+        if (i > 0 && delayMs > 0) {
+          await new Promise<void>((r) => setTimeout(r, delayMs));
+        }
+        try {
+          log.info({ taskId, index: i + 1, total: taskIds.length }, "rework/pending: starting job");
+          const out = await executeRework(db, config, project.id, taskId);
+          if (!out.ok) {
+            log.warn({ taskId, error: out.error, mode: out.mode }, "rework/pending: job failed");
+          } else {
+            log.info({ taskId, mode: out.mode }, "rework/pending: job finished");
+          }
+        } catch (err) {
+          log.error({ err, taskId }, "rework/pending: job threw");
+        }
+      }
+      log.info({ total: taskIds.length }, "rework/pending: batch complete");
+    })();
 
-    return {
+    return reply.code(202).send({
       ok: true,
+      accepted: true,
       project_slug: project.slug,
-      total_pending: rows.length,
-      attempted: results.length,
-      succeeded,
-      failed: results.length - succeeded,
-      results,
-    };
+      queued: taskIds.length,
+      message:
+        taskIds.length === 0
+          ? "No qualifying NEEDS_EDIT jobs to rework (check latest editorial decision vs job status)."
+          : `Queued ${taskIds.length} rework job(s) in the background (sequential). Refresh the Jobs table to watch status — LLM + render often take several minutes per task.`,
+    });
   });
 
   app.get("/v1/admin/job", async (request, reply) => {
@@ -742,7 +744,16 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     );
     const qc_detail = qcDetailFromGenerationPayload(gp as Record<string, unknown>);
     const api_audit = await listApiCallAuditsForTask(db, project.id, taskId, 120);
-    return { ok: true, job: detail.job, transitions: detail.transitions, content_preview, qc_detail, api_audit };
+    return {
+      ok: true,
+      job: detail.job,
+      transitions: detail.transitions,
+      drafts: detail.drafts,
+      editorial_timeline: detail.editorial_timeline,
+      content_preview,
+      qc_detail,
+      api_audit,
+    };
   });
 
   app.get("/v1/admin/signal-pack", async (request, reply) => {
@@ -2299,6 +2310,11 @@ async function runAction(runId,action){
     const r=await cafFetch(isDelete?base:base+'/'+action,isDelete?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const raw=await r.text();
     let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid JSON':'HTTP '+r.status+' '+raw.slice(0,80));}
+    if(action==='process'&&r.status===202&&d.ok){
+      showToast(d.message||'Processing started in the background — open Jobs and refresh to watch all jobs advance (can take many minutes).',true,32000);
+      loadRuns(runsPage);
+      return;
+    }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,action+' failed'));
     const msgs={start:'Run started — '+(d.planned_jobs||0)+' jobs planned',cancel:'Run cancelled',process:'Pipeline processing triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
     showToast(msgs[action]||'Done',true);
@@ -3048,10 +3064,10 @@ loadRunTransparency();
 </style>
   <div id="toast-area"></div>
   <div class="jobs-live-row" style="margin:0 0 12px">
-    <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="reworkPendingNeedsEdit()" title="Runs rework for every job whose latest review decision is NEEDS_EDIT">
+    <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="reworkPendingNeedsEdit()" title="Queues rework for every job whose status is NEEDS_EDIT (runs in background)">
       Rework pending NEEDS_EDIT
     </button>
-    <span style="font-size:12px;color:var(--muted)">Uses stored NEEDS_EDIT instructions. Full/partial: same task_id, new job_drafts row, full pipeline + render. Override-only: patch generated_output on the same job.</span>
+    <span style="font-size:12px;color:var(--muted)">Uses stored NEEDS_EDIT instructions when present; system NEEDS_EDIT (no review row) runs partial rework from QC context. Full/partial: same task_id, new job_drafts row, full pipeline + render. Override-only: patch generated_output on the same job.</span>
   </div>
   <div class="filter-row" id="filters">
     <div><label>Search</label><input type="text" id="f-search" placeholder="task_id or run_id..." value=""></div>
@@ -3068,7 +3084,7 @@ loadRunTransparency();
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="jobs-live" checked> Auto-refresh every 4s (only when this tab is visible)</label>
     <span id="jobs-live-status" style="font-size:12px;color:var(--muted)"></span>
   </div>
-  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows where the job is in the pipeline (LLM → QC → render → review). Use <strong>Re-run</strong> on a row to clear that job’s generated output, QC, renders, and assets, then run the full pipeline again (may take several minutes). Expand a row for <code>render_state</code>, transitions, and API audit.</p>
+  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows pipeline position (LLM → QC → render → review). <strong>NEEDS_EDIT</strong> keeps the same <code>task_id</code>; rework regenerates in place and archives prior output in <code>generation_payload.rework_history</code> and <code>job_drafts</code>. The <strong>Render</strong> column for NEEDS_EDIT shows whether the last render was a prior pass (reference) vs still waiting. Use <strong>Re-run</strong> to reset and run the full pipeline, or <strong>Rework pending NEEDS_EDIT</strong> for batch rework. Expand a row for human review timeline, drafts, and API audit.</p>
   <div id="jobs-table"><div class="empty">Loading...</div></div>
   <div class="page-btns" id="jobs-pager"></div>
 </div>
@@ -3248,16 +3264,19 @@ async function eraseAllJobsInProject(){
 }
 async function reworkPendingNeedsEdit(){
   if(!JOB_SLUG){showToast('Select a project first (open /admin/jobs?project=YOUR_SLUG)',false);return;}
-  if(!confirm('Trigger rework for ALL pending NEEDS_EDIT jobs for '+JOB_SLUG+'?'))return;
-  showToast('Starting rework batch… (this can take a while)',true);
+  if(!confirm('Trigger rework for ALL pending NEEDS_EDIT jobs for '+JOB_SLUG+'?\\n\\nWork runs in the background (sequential). Refresh the table to watch progress.'))return;
+  showToast('Sending rework queue…',true,5000);
   try{
     const r=await cafFetch('/v1/admin/rework/pending',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_slug:JOB_SLUG,limit:200})});
     const d=await r.json().catch(()=>({}));
-    if(!r.ok||!d.ok){throw new Error((d&&d.error)||('HTTP '+r.status));}
-    showToast('Rework batch done: '+d.succeeded+' ok, '+d.failed+' failed (out of '+d.attempted+')',d.failed===0);
-    loadJobs(1);
+    if((r.status===202||r.ok)&&d.ok){
+      showToast(d.message||('Queued '+(d.queued||0)+' rework job(s). Refresh the table; each job may take several minutes.'),true,32000);
+      loadFacets().then(function(){return loadJobs(jobsPage,true);});
+      return;
+    }
+    if(!r.ok||!d.ok){throw new Error((d&&d.message)||(d&&d.error)||('HTTP '+r.status));}
   }catch(err){
-    showToast(err.message||String(err),false);
+    showToast(err.message||String(err),false,22000);
   }
 }
 function fallbackCopyPlainText(text){
@@ -3347,6 +3366,15 @@ async function loadFacets(){
   if(initRunId)document.getElementById('f-run').value=initRunId;
 }
 function fillSelect(id,vals){const el=document.getElementById(id);if(!el)return;el.innerHTML='<option value="">All</option>';for(const v of vals){const o=document.createElement('option');o.value=v;o.textContent=v;el.appendChild(o);}}
+function compactReworkHistory(gp){
+  try{
+    var rh=gp&&gp.rework_history;
+    if(!Array.isArray(rh)||!rh.length)return null;
+    return rh.map(function(e){
+      return { kind:e.kind, archived_at:e.archived_at, had_draft:!!e.draft_id };
+    });
+  }catch(e){return null;}
+}
 function renderJobDetailHtml(d){
   const j=d.job||{};
   var gen=prettyJson(j.generation_payload);
@@ -3361,7 +3389,7 @@ function renderJobDetailHtml(d){
   }
   lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="Clears output, QC, assets; runs LLM → QC → render again">Re-run entire pipeline</button>');
   lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
-  lines.push('<span style="font-size:11px;color:var(--muted)">Summary, content preview, API audit, render state, payloads, transitions</span>');
+  lines.push('<span style="font-size:11px;color:var(--muted)">Same task_id for the job’s life; rework adds drafts + archived snapshots below</span>');
   lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
   var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
@@ -3373,6 +3401,22 @@ function renderJobDetailHtml(d){
   if(d.content_preview){
     lines.push('<div class="job-h">Content preview (carousel slides · video script/prompt · scene assembly)</div>');
     lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.content_preview))+'</pre>');
+  }
+  var crh=compactReworkHistory(j.generation_payload);
+  if(crh&&crh.length){
+    lines.push('<div class="job-h">Archived generations (rework_history)</div>');
+    lines.push('<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Snapshots taken before each full rework / override; full blobs stay inside generation_payload below.</p>');
+    lines.push('<pre class="job-detail-pre">'+esc(prettyJson(crh))+'</pre>');
+  }
+  if(d.editorial_timeline&&d.editorial_timeline.length){
+    lines.push('<div class="job-h">Human review timeline (newest first)</div>');
+    lines.push('<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Decisions and notes on this task_id. NEEDS_EDIT rows drive rework instructions.</p>');
+    lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.editorial_timeline))+'</pre>');
+  }
+  if(d.drafts&&d.drafts.length){
+    lines.push('<div class="job-h">LLM attempts (job_drafts)</div>');
+    lines.push('<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Each regeneration appends a row; same task_id.</p>');
+    lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.drafts))+'</pre>');
   }
   if(d.api_audit&&d.api_audit.length){
     lines.push('<div class="job-h">API &amp; LLM audit ('+d.api_audit.length+') — stored prompts &amp; request bodies</div>');
@@ -3459,14 +3503,27 @@ async function loadJobs(p,silent){
   for(var i=0;i<d.rows.length;i++){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');
-    var isRendering=String(j.status||'').toUpperCase()==='RENDERING';
+    var stJob=String(j.status||'').toUpperCase();
+    if(stJob==='NEEDS_EDIT'){
+      var rsl=String(j.render_status||'').toLowerCase();
+      var rphLow=String(j.render_phase||'').toLowerCase();
+      if(rsl==='completed'||rphLow.indexOf('completed')>=0)
+        rph='prior render (reference) — not final · rework replaces';
+      else
+        rph='needs new render after rework · '+rph;
+    }
+    var isRendering=stJob==='RENDERING';
     var renderStatus=String(j.render_status||'').toLowerCase();
     var renderPhase=String(j.render_phase||'').toLowerCase();
+    /** DB status can stay RENDERING if the worker died after writing render_state.failed; treat as failed in the list. */
+    var badgeStatus=stJob;
+    if (isRendering && renderPhase==='failed') badgeStatus='FAILED';
+    var isFailedBadge=String(badgeStatus||'').toUpperCase()==='FAILED';
     var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress') && (renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
     h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent);max-width:160px" title="'+escAttr(j.task_id)+'">'+esc(trunc(j.task_id,40))+' <span style="opacity:.5">▸</span></td>';
     h+='<td class="mono" style="font-size:11px">'+esc(j.run_id||'—')+'</td>';
     h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td>';
-    h+='<td>'+badge(j.status)+'</td>';
+    h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+esc(rph||'—')+'</td>';
     h+='<td class="job-err-cell"><div class="job-err-inner"><span class="job-err-text" title="'+escAttr(j.last_error||'')+'">'+esc(trunc(j.last_error,200))+'</span>';
@@ -3474,9 +3531,9 @@ async function loadJobs(p,silent){
       h+='<button type="button" class="btn-ghost job-err-copy" title="Copy full error text" onclick="copyJobLastErr(event,'+i+')">Copy</button>';
     }
     h+='</div></td>';
-    h+='<td style="font-size:12px">'+esc(j.recommended_route||'—')+'</td>';
+    h+='<td style="font-size:12px">'+esc(j.recommended_route||'—')+(isFailedBadge&&String(j.recommended_route||'').toUpperCase()==='HUMAN_REVIEW'?' <span style="font-size:10px;color:var(--muted)" title="Planned route after QC if render had succeeded">(not reached)</span>':'')+'</td>';
     h+='<td>'+esc(j.pre_gen_score||'—')+'</td>';
-    h+='<td>'+esc(j.qc_status||'—')+'</td>';
+    h+='<td>'+esc(j.qc_status||'—')+(isFailedBadge&&String(j.qc_status||'').toUpperCase()==='PASS'?' <span style="font-size:10px;color:var(--muted)" title="QC on LLM output passed; failure happened in a later step">(pre-render)</span>':'')+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td>';
     h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">';
     if(showResume){

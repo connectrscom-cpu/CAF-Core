@@ -212,7 +212,12 @@ export async function listJobs(
                     ELSE 'RENDERING · ' || COALESCE(NULLIF(trim(c.render_state->>'status'), ''), NULLIF(trim(c.render_state->>'provider'), ''), 'in progress')
                   END
                 WHEN 'IN_REVIEW' THEN 'IN_REVIEW · human review queue'
-                WHEN 'NEEDS_EDIT' THEN 'NEEDS_EDIT · awaiting edits / rework'
+                WHEN 'NEEDS_EDIT' THEN
+                  CASE
+                    WHEN lower(trim(COALESCE(c.render_state->>'status', ''))) = 'completed' THEN
+                      'NEEDS_EDIT · changes requested · prior render is reference only (not final until rework)'
+                    ELSE 'NEEDS_EDIT · awaiting edits / rework'
+                  END
                 WHEN 'APPROVED' THEN 'APPROVED · done'
                 WHEN 'BLOCKED' THEN
                   'BLOCKED · ' || COALESCE(
@@ -223,7 +228,27 @@ export async function listJobs(
                 WHEN 'FAILED' THEN 'FAILED · see error column or state transitions'
                 ELSE COALESCE(c.status, '—')
               END
-            ) ||
+            )
+            || CASE
+                 WHEN c.status IN ('APPROVED', 'REJECTED', 'NEEDS_EDIT', 'BLOCKED') THEN ''
+                 WHEN NULLIF(btrim(c.generation_payload->>'generation_reason'), '') IN ('REWORK_PARTIAL', 'REWORK_FULL')
+                      OR NULLIF(btrim(c.generation_payload->>'rework_mode'), '') IN ('PARTIAL_REWRITE', 'FULL_REWORK')
+                 THEN
+                   CASE c.status
+                     WHEN 'PLANNED' THEN ' · Rework: queued for LLM'
+                     WHEN 'GENERATING' THEN ' · Rework: LLM regenerating'
+                     WHEN 'GENERATED' THEN ' · Rework: QC / diagnostics → render next'
+                     WHEN 'RENDERING' THEN ' · Rework: rendering new assets'
+                     WHEN 'IN_REVIEW' THEN ' · Rework: awaiting human check'
+                     WHEN 'FAILED' THEN ' · Rework: attempt failed'
+                     ELSE ''
+                   END
+                 WHEN NULLIF(btrim(c.generation_payload->>'generation_reason'), '') = 'REWORK_OVERRIDE_ONLY'
+                      AND c.status = 'IN_REVIEW'
+                 THEN ' · Rework: override-only (copy patched, no LLM)'
+                 ELSE ''
+               END
+            ||
             CASE
               WHEN c.status = 'RENDERING'
                    AND c.qc_status IS NOT NULL
@@ -349,12 +374,34 @@ export interface JobAdminTransitionRow {
   created_at: string;
 }
 
+export interface JobDraftSummaryRow {
+  draft_id: string;
+  attempt_no: number | null;
+  revision_round: number | null;
+  prompt_name: string | null;
+  created_at: string;
+}
+
+/** Newest-first editorial rows for one task (same task_id across rework). */
+export interface EditorialTimelineRow {
+  decision: string | null;
+  review_status: string | null;
+  notes: string | null;
+  validator: string | null;
+  created_at: string;
+}
+
 /** Full job row + recent state transitions for admin drill-down. */
 export async function getJobAdminDetail(
   db: Pool,
   projectId: string,
   taskId: string
-): Promise<{ job: Record<string, unknown>; transitions: JobAdminTransitionRow[] } | null> {
+): Promise<{
+  job: Record<string, unknown>;
+  transitions: JobAdminTransitionRow[];
+  drafts: JobDraftSummaryRow[];
+  editorial_timeline: EditorialTimelineRow[];
+} | null> {
   const job = await qOne<Record<string, unknown>>(
     db,
     `SELECT id::text, task_id, run_id, candidate_id, variation_name, flow_type, platform, origin_platform, target_platform,
@@ -365,11 +412,29 @@ export async function getJobAdminDetail(
     [projectId, taskId]
   );
   if (!job) return null;
-  const transitions = await q<JobAdminTransitionRow>(
-    db,
-    `SELECT id::text, from_state, to_state, triggered_by, actor, metadata_json, created_at::text
-     FROM caf_core.job_state_transitions WHERE project_id = $1 AND task_id = $2 ORDER BY created_at DESC LIMIT 40`,
-    [projectId, taskId]
-  );
-  return { job, transitions };
+  const [transitions, drafts, editorial_timeline] = await Promise.all([
+    q<JobAdminTransitionRow>(
+      db,
+      `SELECT id::text, from_state, to_state, triggered_by, actor, metadata_json, created_at::text
+       FROM caf_core.job_state_transitions WHERE project_id = $1 AND task_id = $2 ORDER BY created_at DESC LIMIT 40`,
+      [projectId, taskId]
+    ),
+    q<JobDraftSummaryRow>(
+      db,
+      `SELECT draft_id, attempt_no, revision_round, prompt_name, created_at::text
+       FROM caf_core.job_drafts WHERE project_id = $1 AND task_id = $2
+       ORDER BY created_at DESC LIMIT 40`,
+      [projectId, taskId]
+    ),
+    q<EditorialTimelineRow>(
+      db,
+      `SELECT decision, review_status,
+              left(coalesce(notes, ''), 400) AS notes,
+              validator, created_at::text
+       FROM caf_core.editorial_reviews WHERE project_id = $1 AND task_id = $2
+       ORDER BY created_at DESC LIMIT 25`,
+      [projectId, taskId]
+    ),
+  ]);
+  return { job, transitions, drafts, editorial_timeline };
 }

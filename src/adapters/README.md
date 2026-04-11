@@ -1,6 +1,6 @@
 # Adapters
 
-Sync legacy state (Google Sheets, Supabase `public.tasks`) into the CAF Core Postgres schema.
+Optional import tools: pull rows from Google Sheets or Supabase `public.tasks` / `public.assets` into the CAF Core Postgres schema. Core’s normal path is API + `.xlsx` ingest; use these CLIs only when you still source data from those systems.
 
 ## Sheets Adapter (`sheets/`)
 
@@ -34,4 +34,4 @@ Optional: `PROJECT_SLUG` (default `SNS`), `SYNC_SINCE_HOURS` (default `72`).
 
 ## ID contracts
 
-Both adapters preserve `task_id`, `run_id`, `candidate_id` as stable keys — see [08_current_ids_and_state_conventions.md](../../08_current_ids_and_state_conventions.md).
+Both adapters preserve `task_id`, `run_id`, `candidate_id` as stable keys — see `.cursor/rules/caf-domain-model.mdc` in the repo root.

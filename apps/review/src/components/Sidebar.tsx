@@ -8,6 +8,7 @@ const NAV_ITEMS = [
     section: "Workbench",
     items: [
       { href: "/", label: "Review Console", icon: ReviewIcon },
+      { href: "/publish", label: "Publish", icon: PublishIcon },
       { href: "/playground", label: "Template Playground", icon: TemplateIcon },
     ],
   },
@@ -47,7 +48,11 @@ export function Sidebar() {
             {section.items.map((item) => {
               const isActive =
                 item.href === "/"
-                  ? pathname === "/" || pathname.startsWith("/t/") || pathname.startsWith("/r/") || pathname.startsWith("/approved") || pathname.startsWith("/content/")
+                  ? pathname === "/" ||
+                    pathname.startsWith("/t/") ||
+                    pathname.startsWith("/r/") ||
+                    pathname.startsWith("/approved") ||
+                    pathname.startsWith("/content/")
                   : pathname.startsWith(item.href);
               return (
                 <Link
@@ -82,6 +87,15 @@ function TemplateIcon() {
       <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
       <line x1="3" y1="9" x2="21" y2="9" />
       <line x1="9" y1="21" x2="9" y2="9" />
+    </svg>
+  );
+}
+
+function PublishIcon() {
+  return (
+    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 19V5M5 12l7-7 7 7" />
+      <path d="M19 21H5" />
     </svg>
   );
 }

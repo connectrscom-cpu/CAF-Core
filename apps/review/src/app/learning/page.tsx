@@ -16,6 +16,197 @@ interface LearningRule {
   scope_type?: string;
   rule_family?: string;
   storage_project_slug?: string;
+  provenance?: string | null;
+  source_entity_ids?: unknown;
+  evidence_refs?: unknown;
+}
+
+function learningRulePlainSummary(rule: LearningRule): string {
+  const p = rule.action_payload ?? {};
+  const obs = typeof p.observation === "string" ? p.observation : "";
+  switch (rule.action_type) {
+    case "SCORE_PENALTY":
+      return (
+        `Lowers ranking scores for ideas that match this pattern (typically tied to rejection tag "${String(p.rejection_tag ?? "—")}"). ` +
+        `Penalty: ${String(p.penalty ?? "see payload")}. ` +
+        (obs ? obs : "").trim()
+      );
+    case "REDUCE_VOLUME":
+      return (
+        `Tells the planner to generate fewer jobs for flow "${String(p.flow_type ?? rule.scope_flow_type ?? "—")}" ` +
+        `because human approval was weak in the analysis window. ` +
+        `${String(p.recommendation ?? "")} ${obs}`.trim()
+      );
+    case "SCORE_BOOST":
+      return `Increases ranking scores when the trigger matches (boost in payload). ${obs}`.trim();
+    case "GENERATION_GUIDANCE":
+    case "GENERATION_HINT":
+      return typeof p.text === "string"
+        ? p.text
+        : `Injects generation guidance for the content LLM. ${obs}`.trim();
+    default:
+      return `${rule.action_type}: when trigger "${rule.trigger_type}" fires, Core applies the parameters in the payload below.`;
+  }
+}
+
+/** Split merged engineering markdown into heuristic vs OpenAI blocks (same join as Core). */
+function splitEngineeringMarkdown(full: string): { heuristic: string; llmSection: string } {
+  const marker = "\n---\n\n## Reviewer notes";
+  const idx = full.indexOf(marker);
+  if (idx === -1) return { heuristic: full.trim(), llmSection: "" };
+  const afterSep = idx + "\n---\n\n".length;
+  return {
+    heuristic: full.slice(0, idx).trim(),
+    llmSection: full.slice(afterSep).trim(),
+  };
+}
+
+function llmCodingAgentMarkdownOnly(result: Record<string, unknown>): string {
+  const llm = result.llm_notes_synthesis;
+  if (!llm || typeof llm !== "object" || "skipped" in llm) return "";
+  const cam = (llm as { coding_agent_markdown?: string }).coding_agent_markdown;
+  return typeof cam === "string" ? cam.trim() : "";
+}
+
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (!text) return false;
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function RuleDetailModal({ rule, onClose }: { rule: LearningRule; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const scope = [rule.scope_flow_type, rule.scope_platform].filter(Boolean).join(" · ") || "—";
+  return (
+    <div
+      role="presentation"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.55)",
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+      }}
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-labelledby="rule-detail-title"
+        style={{
+          background: "var(--card)",
+          color: "var(--fg)",
+          borderRadius: 12,
+          border: "1px solid var(--border)",
+          maxWidth: 560,
+          width: "100%",
+          maxHeight: "min(85vh, 720px)",
+          display: "flex",
+          flexDirection: "column",
+          boxShadow: "0 24px 48px rgba(0,0,0,0.35)",
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div style={{ padding: "16px 18px", borderBottom: "1px solid var(--border)" }}>
+          <h3 id="rule-detail-title" style={{ margin: 0, fontSize: 17 }}>
+            Rule details
+          </h3>
+          <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--muted)" }}>
+            Read this before applying — pending rules change ranking or volume once active.
+          </p>
+        </div>
+        <div style={{ padding: 16, overflow: "auto", fontSize: 13, lineHeight: 1.5 }}>
+          <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 14px" }}>
+            <dt style={{ color: "var(--muted)" }}>Rule ID</dt>
+            <dd style={{ margin: 0, fontFamily: "monospace", fontSize: 11, wordBreak: "break-all" }}>
+              {rule.rule_id}
+            </dd>
+            <dt style={{ color: "var(--muted)" }}>Trigger</dt>
+            <dd style={{ margin: 0 }}>{rule.trigger_type}</dd>
+            <dt style={{ color: "var(--muted)" }}>Scope</dt>
+            <dd style={{ margin: 0 }}>{scope}</dd>
+            <dt style={{ color: "var(--muted)" }}>Action</dt>
+            <dd style={{ margin: 0 }}>
+              <strong>{rule.action_type}</strong>
+              {rule.rule_family ? (
+                <span style={{ color: "var(--muted)" }}> · {rule.rule_family}</span>
+              ) : null}
+            </dd>
+            <dt style={{ color: "var(--muted)" }}>Confidence</dt>
+            <dd style={{ margin: 0 }}>{rule.confidence != null ? Number(rule.confidence).toFixed(2) : "—"}</dd>
+            {rule.provenance ? (
+              <>
+                <dt style={{ color: "var(--muted)" }}>Provenance</dt>
+                <dd style={{ margin: 0 }}>{rule.provenance}</dd>
+              </>
+            ) : null}
+            {rule.storage_project_slug ? (
+              <>
+                <dt style={{ color: "var(--muted)" }}>Stored under</dt>
+                <dd style={{ margin: 0, fontFamily: "monospace", fontSize: 12 }}>
+                  project <code>{rule.storage_project_slug}</code> (use Apply with this slug if shown)
+                </dd>
+              </>
+            ) : null}
+          </dl>
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>What it does</div>
+            <p style={{ margin: 0, color: "var(--fg-secondary)" }}>{learningRulePlainSummary(rule)}</p>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Payload (JSON)</div>
+            <pre
+              style={{
+                margin: 0,
+                padding: 10,
+                fontSize: 11,
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                overflow: "auto",
+                maxHeight: 220,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+              }}
+            >
+              {JSON.stringify(rule.action_payload ?? {}, null, 2)}
+            </pre>
+          </div>
+        </div>
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function LearningPage() {
@@ -37,6 +228,18 @@ export default function LearningPage() {
   const [llmForceRereview, setLlmForceRereview] = useState(false);
   const [persistEngineeringInsight, setPersistEngineeringInsight] = useState(true);
   const [llmNotesSynthesis, setLlmNotesSynthesis] = useState(true);
+  const [ruleDetail, setRuleDetail] = useState<LearningRule | null>(null);
+  const [copyHint, setCopyHint] = useState<string | null>(null);
+
+  const flashCopy = (message: string) => {
+    setCopyHint(message);
+    window.setTimeout(() => setCopyHint(null), 2600);
+  };
+
+  const copyEditorialExport = async (label: string, text: string) => {
+    const ok = await copyToClipboard(text);
+    flashCopy(ok ? `Copied: ${label}` : "Copy failed — select text in the box below");
+  };
 
   const fetchTransparency = useCallback(async () => {
     const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=transparency`);
@@ -489,30 +692,88 @@ export default function LearningPage() {
           <h3>Analysis Result</h3>
           {typeof analysisResult.engineering_prompt_markdown === "string" &&
             analysisResult.engineering_prompt_markdown.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                  <h4 style={{ margin: 0, fontSize: 15 }}>Engineering prompt (for Claude / Cursor)</h4>
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={() =>
-                      navigator.clipboard.writeText(String(analysisResult.engineering_prompt_markdown))
-                    }
-                  >
-                    Copy markdown
-                  </button>
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "rgba(120, 140, 200, 0.06)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: 16 }}>Prompt engineering export</h4>
+                    <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--muted)", maxWidth: 520 }}>
+                      One-click copy for Claude / Cursor. Full brief includes template triggers + OpenAI notes when enabled.
+                    </p>
+                  </div>
                   {analysisResult.engineering_insight_id ? (
                     <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                      Saved as insight <code>{String(analysisResult.engineering_insight_id)}</code>
+                      Core insight <code>{String(analysisResult.engineering_insight_id)}</code>
                     </span>
                   ) : null}
                 </div>
+                {(() => {
+                  const full = String(analysisResult.engineering_prompt_markdown);
+                  const { heuristic, llmSection } = splitEngineeringMarkdown(full);
+                  const codingOnly = llmCodingAgentMarkdownOnly(analysisResult);
+                  return (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        title="Everything below: triggers + workflow + OpenAI synthesis"
+                        onClick={() => copyEditorialExport("full prompt brief", full)}
+                      >
+                        Copy full brief
+                      </button>
+                      {heuristic.length > 0 && llmSection.length > 0 ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          title="Heuristic repo paths only (before reviewer-notes section)"
+                          onClick={() => copyEditorialExport("template-trigger section", heuristic)}
+                        >
+                          Copy trigger section
+                        </button>
+                      ) : null}
+                      {llmSection.length > 0 ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          title="OpenAI synthesis block only (themes, actions, coding brief)"
+                          onClick={() => copyEditorialExport("OpenAI notes section", llmSection)}
+                        >
+                          Copy OpenAI section
+                        </button>
+                      ) : null}
+                      {codingOnly.length > 0 ? (
+                        <button
+                          type="button"
+                          className="btn-ghost"
+                          title="Raw coding_agent_markdown from the model (subset of OpenAI section)"
+                          onClick={() => copyEditorialExport("coding agent markdown", codingOnly)}
+                        >
+                          Copy coding brief only
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })()}
+                {copyHint ? (
+                  <p style={{ margin: "10px 0 0", fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>
+                    {copyHint}
+                  </p>
+                ) : null}
                 <textarea
                   readOnly
+                  aria-label="Full prompt engineering markdown for export"
                   value={String(analysisResult.engineering_prompt_markdown)}
-                  rows={14}
+                  rows={16}
                   style={{
                     width: "100%",
+                    marginTop: 12,
                     fontFamily: "monospace",
                     fontSize: 12,
                     padding: 10,
@@ -523,8 +784,8 @@ export default function LearningPage() {
                   }}
                 />
                 <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8, marginBottom: 0 }}>
-                  Triggers: extend <code>src/config/editorial-engineering-triggers.ts</code> in CAF Core to map your
-                  rejection tags and override fields to repo paths.
+                  Triggers live in Core: <code>src/config/editorial-engineering-triggers.ts</code>. Carousel copy bar:{" "}
+                  <code>src/services/carousel-copy-prompt-policy.ts</code>.
                 </p>
               </div>
             )}
@@ -593,6 +854,9 @@ export default function LearningPage() {
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
                     Family
                   </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Info
+                  </th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                 </tr>
               </thead>
@@ -614,6 +878,11 @@ export default function LearningPage() {
                     </td>
                     <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
                       {rule.rule_family ?? "—"}
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="Full rule id, trigger, and payload">
+                        Info
+                      </button>
                     </td>
                     <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
                       <button type="button" className="btn-ghost" onClick={() => retireRule(rule)}>
@@ -641,6 +910,9 @@ export default function LearningPage() {
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
                     Action
                   </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
+                    Info
+                  </th>
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                 </tr>
               </thead>
@@ -661,6 +933,11 @@ export default function LearningPage() {
                       {rule.action_type}
                     </td>
                     <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="What this rule does before you apply">
+                        Info
+                      </button>
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
                       <button type="button" className="btn-primary" onClick={() => applyRule(rule)}>
                         Apply
                       </button>
@@ -674,6 +951,8 @@ export default function LearningPage() {
       </div>
 
       {loading && <div style={{ marginTop: 16, textAlign: "center", color: "#888" }}>Loading rules...</div>}
+
+      {ruleDetail ? <RuleDetailModal rule={ruleDetail} onClose={() => setRuleDetail(null)} /> : null}
     </div>
   );
 }

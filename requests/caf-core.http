@@ -84,14 +84,14 @@ x-caf-core-token: {{token}}
   "signal_pack_id": "00000000-0000-0000-0000-000000000000"
 }
 
-### Start run + process all jobs (LLM, QC, carousel/video render, assets)
+### Start run + process all jobs — returns 202; pipeline runs in background (poll Jobs / logs)
 POST {{base}}/v1/runs/SNS/SNS_2026W09/start-and-process
 Content-Type: application/json
 x-caf-core-token: {{token}}
 
 {}
 
-### Or: start only (creates PLANNED jobs), then process in a second call
+### Or: start only (creates PLANNED jobs), then process (also 202 + background)
 # POST {{base}}/v1/runs/SNS/SNS_2026W09/start
 # POST {{base}}/v1/runs/SNS/SNS_2026W09/process
 

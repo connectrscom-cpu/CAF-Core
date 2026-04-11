@@ -11,6 +11,7 @@ import { registerRunRoutes } from "./routes/runs.js";
 import { registerFlowEngineRoutes } from "./routes/flow-engine.js";
 import { registerPipelineRoutes } from "./routes/pipeline.js";
 import { registerLearningRoutes } from "./routes/learning.js";
+import { registerPublicationRoutes } from "./routes/publications.js";
 import { registerRendererTemplateRoutes, isRendererTemplatesPublicPath } from "./routes/renderer-templates.js";
 import {
   warnIfRendererBaseUrlIsCafCore,
@@ -61,6 +62,7 @@ async function main() {
   registerFlowEngineRoutes(app, { db });
   registerPipelineRoutes(app, { db, config });
   registerLearningRoutes(app, { db, config });
+  registerPublicationRoutes(app, { db });
 
   const stopEditorialCron = startEditorialAnalysisCron(app.log, { db, config });
 
