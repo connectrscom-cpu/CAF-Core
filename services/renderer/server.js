@@ -21,14 +21,18 @@ let renderCount = 0;
 const asyncJobs = new Map();
 const renderQueue = [];
 let rendering = false;
+let browserLaunchPromise = null;
+let browserResetPromise = null;
 
 const TRANSIENT_PUPPETEER_ERR =
   /Target closed|createTarget|Failed to open a new tab|Protocol error|Browser disconnected|Session closed|ECONNRESET|socket hang up|Navigation failed/i;
 
 async function launchBrowser() {
   const puppeteer = require("puppeteer");
+  const launchTimeoutMs = parseInt(process.env.PUPPETEER_LAUNCH_TIMEOUT_MS || "120000", 10);
   browser = await puppeteer.launch({
     headless: "new",
+    timeout: launchTimeoutMs,
     args: [
       "--no-sandbox",
       "--disable-setuid-sandbox",
@@ -41,14 +45,41 @@ async function launchBrowser() {
 }
 
 async function resetBrowser() {
-  if (browser) { try { await browser.close(); } catch {} }
-  browser = null;
-  renderCount = 0;
-  await launchBrowser();
+  if (browserResetPromise) return browserResetPromise;
+  browserResetPromise = (async () => {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {}
+    }
+    browser = null;
+    renderCount = 0;
+    // Ensure only one launch happens during reset storms.
+    await ensureBrowser();
+  })()
+    .finally(() => {
+      browserResetPromise = null;
+    });
+  return browserResetPromise;
 }
 
 async function ensureBrowser() {
-  if (!browser) await launchBrowser();
+  if (browser) return;
+  if (browserLaunchPromise) return browserLaunchPromise;
+  browserLaunchPromise = (async () => {
+    try {
+      await launchBrowser();
+    } catch (e) {
+      // Never crash the whole server on Chromium launch flakiness.
+      browser = null;
+      const msg = e?.message ? String(e.message) : String(e);
+      console.error("Browser launch failed:", msg);
+      throw e;
+    }
+  })().finally(() => {
+    browserLaunchPromise = null;
+  });
+  return browserLaunchPromise;
 }
 
 function resolveTemplate(name) {
@@ -203,7 +234,15 @@ app.use("/output", express.static(OUTPUT_DIR));
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "caf-renderer", version: VERSION, uptime_seconds: process.uptime() }));
 app.get("/version", (_req, res) => res.json({ version: VERSION }));
-app.get("/ready", async (_req, res) => { await ensureBrowser(); res.json({ ok: true }); });
+app.get("/ready", async (_req, res) => {
+  try {
+    await ensureBrowser();
+    res.json({ ok: true });
+  } catch (e) {
+    const msg = e?.message ? String(e.message) : String(e);
+    res.status(503).json({ ok: false, error: msg });
+  }
+});
 app.get("/warmup", (_req, res) => { ensureBrowser().catch(() => {}); res.json({ ok: true }); });
 
 app.post("/reset", async (_req, res) => { await resetBrowser(); res.json({ ok: true }); });
@@ -339,3 +378,11 @@ app.listen(PORT, () => console.log(`Renderer listening on :${PORT}`));
 
 process.on("SIGTERM", async () => { if (browser) await browser.close(); process.exit(0); });
 process.on("SIGINT", async () => { if (browser) await browser.close(); process.exit(0); });
+process.on("unhandledRejection", (e) => {
+  const msg = e?.message ? String(e.message) : String(e);
+  console.error("unhandledRejection:", msg);
+});
+process.on("uncaughtException", (e) => {
+  const msg = e?.message ? String(e.message) : String(e);
+  console.error("uncaughtException:", msg);
+});

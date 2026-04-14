@@ -708,6 +708,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function isRendererUnavailableHttpError(msg: string): boolean {
+  const m = String(msg ?? "");
+  // job-pipeline wraps non-OK responses as: `Renderer slide ${i} returned ${status}: ...`
+  return /Renderer slide \d+ returned (502|503|504):/i.test(m);
+}
+
 async function recordRunContentOutcomeSafe(
   db: Pool,
   row: Parameters<typeof insertRunContentOutcome>[1]
@@ -1052,27 +1058,36 @@ async function processCarouselJob(
       name === "AbortError" ||
       name === "TimeoutError" ||
       /aborted|timed out/i.test(msg);
-    // Do not treat timeouts/aborts as "renderer unavailable" (skip) — fail the job so it is visible.
-    if (!aborted && err instanceof TypeError && msg.includes("fetch")) {
+    // Renderer flakiness should NOT advance to IN_REVIEW without assets.
+    // Treat fetch failures and transient 5xx as "not ready": keep job in RENDERING so the next /process retries.
+    // Timeouts/aborts are treated as real failures (visible) because they may indicate a hung tab/template bug.
+    const rendererUnavailable =
+      !aborted &&
+      ((err instanceof TypeError && msg.includes("fetch")) || isRendererUnavailableHttpError(msg));
+    if (rendererUnavailable) {
       await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
-        status: "skipped",
-        reason: "renderer_unavailable",
+        status: "pending",
+        phase: "renderer_unavailable",
+        error: msg,
+        note: "will_retry_on_next_process",
       });
-      const finalStatusSkip = finalJobStatusAfterRender(recommendedRoute);
       await recordRunContentOutcomeSafe(db, {
         project_id: job.project_id,
         run_id: job.run_id,
         task_id: job.task_id,
         flow_type: job.flow_type,
         flow_kind: "carousel",
-        outcome: "skipped",
-        job_status: finalStatusSkip,
+        outcome: "pending",
+        job_status: "RENDERING",
         slide_count: n,
         asset_count: 0,
         summary: carouselOutcomeSummary(job, template, usableSlides, []),
-        error_message: "renderer_unavailable (fetch failed)",
+        error_message: isRendererUnavailableHttpError(msg)
+          ? "renderer_unavailable (HTTP 5xx: 502/503/504)"
+          : "renderer_unavailable (fetch failed)",
       });
+      throw new RenderNotReadyError(msg);
     } else {
       await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",

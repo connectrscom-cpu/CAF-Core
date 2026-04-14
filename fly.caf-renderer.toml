@@ -21,6 +21,10 @@ primary_region = "ams"
   VIDEO_PORT = "3334"
   SPAWN_CHILDREN = "true"
   NODE_ENV = "production"
+  # Reduce Chromium relaunch churn; relaunches correlate with Fly healthcheck flaps.
+  RENDERERS_BEFORE_RESET = "200"
+  # Puppeteer default 30s is too tight under shared CPUs / cold starts.
+  PUPPETEER_LAUNCH_TIMEOUT_MS = "120000"
 
 [http_service]
   internal_port = 8080
