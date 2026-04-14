@@ -106,7 +106,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ error: msg || "Failed to erase rule" }, { status: 502 });
+      const hint =
+        /HTTP 404/i.test(msg) && /\/v1\/learning\/.+\/rules\//i.test(msg)
+          ? " CAF Core does not have the erase-rule endpoint yet. Redeploy CAF Core to latest `master` (or verify CAF_CORE_URL points to the right Core deployment)."
+          : "";
+      return NextResponse.json({ error: (msg || "Failed to erase rule") + hint }, { status: 502 });
     }
   }
   if (action === "erase_rules_all" && body.storage_project) {
@@ -115,7 +119,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(result);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return NextResponse.json({ error: msg || "Failed to erase rules" }, { status: 502 });
+      const hint =
+        /HTTP 404/i.test(msg) && /\/v1\/learning\/.+\/rules\/erase-all/i.test(msg)
+          ? " CAF Core does not have the bulk erase endpoint yet. Redeploy CAF Core to latest `master` (or verify CAF_CORE_URL points to the right Core deployment)."
+          : "";
+      return NextResponse.json({ error: (msg || "Failed to erase rules") + hint }, { status: 502 });
     }
   }
 
