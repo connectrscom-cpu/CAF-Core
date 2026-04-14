@@ -9,6 +9,11 @@ export interface CompiledLearning {
   applied_rule_ids: string[];
 }
 
+function isGenerationGuidanceAction(row: Record<string, unknown>): boolean {
+  const action = String(row.action_type ?? "");
+  return /GENERATION_GUIDANCE|GUIDANCE|HINT/i.test(action);
+}
+
 function isGenerationRule(row: Record<string, unknown>): boolean {
   const fam = String(row.rule_family ?? "");
   const action = String(row.action_type ?? "");
@@ -42,12 +47,18 @@ export async function compileLearningContexts(
   db: Pool,
   projectId: string,
   flowType: string | null,
-  platform: string | null
+  platform: string | null,
+  opts?: { include_pending_generation_guidance?: boolean }
 ): Promise<CompiledLearning> {
   const globalId = await getGlobalLearningProjectId(db);
   const rules = await listLearningRulesMerged(db, projectId, globalId);
   const active = rules.filter((r) => String(r.status) === "active" && isGenerationRule(r));
-  const scoped = active.filter((r) => matchesScope(r, flowType, platform));
+  const pendingForRework =
+    opts?.include_pending_generation_guidance
+      ? rules.filter((r) => String(r.status) === "pending" && isGenerationGuidanceAction(r))
+      : [];
+  const candidates = [...active, ...pendingForRework];
+  const scoped = candidates.filter((r) => matchesScope(r, flowType, platform));
 
   const parts: string[] = [];
   const ids: string[] = [];

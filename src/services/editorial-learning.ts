@@ -13,6 +13,7 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
+import { randomUUID } from "node:crypto";
 import { triggersForInsight } from "../config/editorial-engineering-triggers.js";
 import { q } from "../db/queries.js";
 import { insertInsight } from "../repositories/learning-evidence.js";
@@ -499,6 +500,70 @@ export async function analyzeEditorialPatterns(
             ...(hasWhere ? {} : whereToChange ? { where_to_change: whereToChange } : {}),
           };
         });
+      }
+    }
+
+    // Mint pending GENERATION_GUIDANCE rules from LLM "learning_rule" actions.
+    // These rules remain pending (operator-approved) but are injected automatically into the next editorial rework.
+    if (llmNotesResult && !("skipped" in llmNotesResult)) {
+      const noteMeta = new Map(
+        reviews.map((r) => [r.task_id, { flow_type: r.flow_type ?? null, platform: r.platform ?? null }]) as Array<
+          [string, { flow_type: string | null; platform: string | null }]
+        >
+      );
+      const actions = (llmNotesResult.recommended_actions ?? []).filter(
+        (a) => String(a.category ?? "").toLowerCase() === "learning_rule"
+      );
+
+      for (const a of actions.slice(0, 8)) {
+        const ex = Array.isArray(a.example_task_ids)
+          ? a.example_task_ids.map((x) => String(x).trim()).filter(Boolean)
+          : [];
+
+        const flowCounts = new Map<string, number>();
+        const platformCounts = new Map<string, number>();
+        for (const tid of ex) {
+          const meta = noteMeta.get(tid);
+          if (meta?.flow_type) flowCounts.set(meta.flow_type, (flowCounts.get(meta.flow_type) ?? 0) + 1);
+          if (meta?.platform) platformCounts.set(meta.platform, (platformCounts.get(meta.platform) ?? 0) + 1);
+        }
+        const scopeFlowType = [...flowCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? "Flow_Carousel_Copy";
+        const scopePlatform = [...platformCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? "Instagram";
+
+        const title = String(a.title ?? "").trim() || "Editorial guideline";
+        const next = String(a.suggested_next_steps ?? "").trim();
+        const rationale = String(a.rationale ?? "").trim();
+        const guidance = [title, next, rationale].filter(Boolean).join("\n");
+        if (!guidance.trim()) continue;
+
+        const ruleId = `editorial_guidance_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
+        await insertLearningRule(db, {
+          rule_id: ruleId,
+          project_id: projectId,
+          trigger_type: "editorial_notes_llm",
+          scope_flow_type: scopeFlowType,
+          scope_platform: scopePlatform,
+          action_type: "GENERATION_GUIDANCE",
+          action_payload: {
+            guidance,
+            title,
+            bullets: next ? next.split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 10) : [],
+            example_task_ids: ex.slice(0, 10),
+            carousel_template_name: (a.carousel_template_name as unknown) ?? null,
+            where_to_change: (a.where_to_change as unknown) ?? null,
+          },
+          confidence:
+            String(a.priority ?? "").toLowerCase() === "high"
+              ? 0.75
+              : String(a.priority ?? "").toLowerCase() === "medium"
+                ? 0.6
+                : 0.5,
+          source_entity_ids: ex.slice(0, 10),
+          rule_family: "generation",
+          provenance: "editorial_notes_llm",
+          created_by: "editorial_learning",
+        });
+        rulesCreated++;
       }
     }
   }

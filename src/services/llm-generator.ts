@@ -201,7 +201,19 @@ export async function generateForJob(
   );
 
   const appCfg = loadConfig();
-  const compiledLearningRaw = await compileLearningContexts(db, job.project_id, job.flow_type, job.platform);
+  const hf = payload.human_feedback as { notes?: string | null; rejection_tags?: unknown } | undefined;
+  const gr = String(payload.generation_reason ?? "");
+  const reworkMode = payload.rework_mode;
+  const isEditorialRework =
+    gr === "REWORK_PARTIAL" ||
+    gr === "REWORK_FULL" ||
+    reworkMode === "FULL_REWORK" ||
+    reworkMode === "PARTIAL_REWRITE" ||
+    (typeof payload.rework_parent_task_id === "string" && payload.rework_parent_task_id.trim() !== "");
+
+  const compiledLearningRaw = await compileLearningContexts(db, job.project_id, job.flow_type, job.platform, {
+    include_pending_generation_guidance: isEditorialRework,
+  });
   const compiledLearning = {
     ...compiledLearningRaw,
     global_context: truncateForContext(
@@ -305,16 +317,6 @@ export async function generateForJob(
   if (isCarouselFlow(job.flow_type)) {
     maxTokens = Math.max(maxTokens, carouselFloor);
   }
-
-  const hf = payload.human_feedback as { notes?: string | null; rejection_tags?: unknown } | undefined;
-  const gr = String(payload.generation_reason ?? "");
-  const reworkMode = payload.rework_mode;
-  const isEditorialRework =
-    gr === "REWORK_PARTIAL" ||
-    gr === "REWORK_FULL" ||
-    reworkMode === "FULL_REWORK" ||
-    reworkMode === "PARTIAL_REWRITE" ||
-    (typeof payload.rework_parent_task_id === "string" && payload.rework_parent_task_id.trim() !== "");
   if (isEditorialRework && hf) {
     const notes = (hf.notes ?? "").trim();
     const tags = Array.isArray(hf.rejection_tags)
