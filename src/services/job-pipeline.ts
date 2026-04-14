@@ -30,7 +30,7 @@ import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js
 import { runHeygenForContentJob } from "./heygen-renderer.js";
 import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
-import { runScenePipeline } from "./scene-pipeline.js";
+import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
@@ -1183,14 +1183,15 @@ async function processVideoJob(
         );
       }
       videoProvider = "video-assembly";
-      const vaUrl = `${pipeConfig.videoAssemblyBaseUrl.replace(/\/$/, "")}/full-pipeline`;
+      const base = pipeConfig.videoAssemblyBaseUrl.replace(/\/$/, "");
+      const vaUrl = `${base}/full-pipeline?async=1`;
       const vaBody = {
         task_id: job.task_id,
         run_id: job.run_id,
         ...extractRenderPayload(job.generation_payload),
       };
-      // Bound the sync full-pipeline call; async concat/mux polling uses separate endpoints/timeouts.
-      const vaTimeoutMs = Math.max(60_000, Math.min(3_600_000, config.VIDEO_ASSEMBLY_MUX_POLL_MAX_MS));
+      // Start async job quickly; poll bounded (same order-of-magnitude as mux, since full-pipeline may mux).
+      const vaTimeoutMs = Math.max(30_000, Math.min(120_000, config.VIDEO_ASSEMBLY_MUX_POLL_MAX_MS));
       const response = await fetch(vaUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1204,7 +1205,19 @@ async function processVideoJob(
         throw new Error(`Video assembly returned ${response.status}: ${text}`);
       }
 
-      const result = (await response.json()) as Record<string, unknown>;
+      const startedJson = (await response.json()) as { request_id?: string } & Record<string, unknown>;
+      const requestId = String(startedJson.request_id ?? "").trim();
+      if (!requestId) {
+        await updateJobRenderState(db, job.id, { provider: "video-assembly", status: "failed", error: "missing request_id" });
+        throw new Error("Video assembly async start failed: missing request_id");
+      }
+      const merged = await pollVideoAssemblyJob(base, requestId, config.VIDEO_ASSEMBLY_MUX_POLL_MAX_MS);
+
+      const result: Record<string, unknown> = {
+        request_id: requestId,
+        public_url: merged.public_url ?? null,
+        local_path: merged.local_path ?? null,
+      };
       await tryInsertApiCallAudit(db, {
         projectId: job.project_id,
         runId: job.run_id,

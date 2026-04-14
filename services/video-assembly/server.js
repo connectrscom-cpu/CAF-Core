@@ -544,6 +544,50 @@ app.post("/full-pipeline", async (req, res) => {
     const { image_urls, audio_url, task_id, run_id, stitch_options, mux_options } = req.body;
     if (!image_urls?.length) return res.status(400).json({ ok: false, error: "image_urls required" });
 
+    const isAsync = req.query.async === "1";
+    if (isAsync) {
+      const requestId = randomUUID();
+      asyncJobs.set(requestId, { status: "pending" });
+      (async () => {
+        const jobStartedAt = Date.now();
+        let jobDir = null;
+        try {
+          const stitched = await Promise.race([
+            stitchImages(image_urls, stitch_options),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          jobDir = stitched.jobDir;
+          let finalPath = stitched.localPath;
+          if (audio_url) {
+            finalPath = await Promise.race([
+              muxAudio(stitched.localPath, audio_url, mux_options),
+              new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+            ]);
+          }
+
+          let publicUrl = null;
+          if (SUPABASE_URL) {
+            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
+            publicUrl = await uploadToSupabase(finalPath, remotePath);
+          }
+          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: finalPath });
+          setTimeout(() => {
+            asyncJobs.delete(requestId);
+            if (jobDir) cleanupJob(jobDir);
+          }, 3600000);
+          console.info(
+            `[video-assembly] async full-pipeline done request_id=${requestId} images=${image_urls.length} has_audio=${Boolean(audio_url)} duration_ms=${Date.now() - jobStartedAt}`
+          );
+        } catch (e) {
+          asyncJobs.set(requestId, { status: "error", error: e.message });
+          if (jobDir) {
+            try { cleanupJob(jobDir); } catch {}
+          }
+        }
+      })();
+      return res.status(202).json({ ok: true, request_id: requestId, status: "pending" });
+    }
+
     const jobStartedAt = Date.now();
     const { localPath: slideshowPath, jobDir } = await Promise.race([
       stitchImages(image_urls, stitch_options),
