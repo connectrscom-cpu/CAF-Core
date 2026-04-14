@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   applyLearningRule,
+  eraseLearningRule,
+  eraseLearningRulesAll,
+  getEditorialNotes,
   getLearningContextPreview,
   getLearningObservations,
   getLearningRules,
@@ -45,6 +48,19 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data);
   }
 
+  if (section === "editorial_notes") {
+    const windowDays = req.nextUrl.searchParams.get("window_days");
+    const limit = req.nextUrl.searchParams.get("limit");
+    const includeEmpty = (req.nextUrl.searchParams.get("include_empty") ?? "0") === "1";
+    const data = await getEditorialNotes(projectSlug, {
+      window_days: windowDays ? parseInt(windowDays, 10) : undefined,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      include_empty: includeEmpty,
+    });
+    if (!data) return NextResponse.json({ error: "Failed to fetch editorial notes" }, { status: 502 });
+    return NextResponse.json(data);
+  }
+
   const data = await getLearningRules(projectSlug);
   if (!data) return NextResponse.json({ error: "Failed to fetch learning rules" }, { status: 502 });
   return NextResponse.json(data);
@@ -82,6 +98,14 @@ export async function POST(req: NextRequest) {
   }
   if (action === "retire_rule" && body.rule_id && body.storage_project) {
     const result = await retireLearningRule(body.storage_project, body.rule_id);
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+  if (action === "erase_rule" && body.rule_id && body.storage_project) {
+    const result = await eraseLearningRule(body.storage_project, body.rule_id);
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+  if (action === "erase_rules_all" && body.storage_project) {
+    const result = await eraseLearningRulesAll(body.storage_project, body.status);
     return NextResponse.json(result ?? { error: "Failed" });
   }
 

@@ -125,3 +125,27 @@ export async function retireLearningRule(db: Pool, projectId: string, ruleId: st
   );
   return (res.rowCount ?? 0) > 0;
 }
+
+export async function eraseLearningRule(db: Pool, projectId: string, ruleId: string): Promise<number> {
+  const res = await db.query(
+    `DELETE FROM caf_core.learning_rules
+     WHERE project_id = $1 AND rule_id = $2`,
+    [projectId, ruleId]
+  );
+  return res.rowCount ?? 0;
+}
+
+export async function eraseLearningRulesForProject(
+  db: Pool,
+  projectId: string,
+  opts?: { status?: "pending" | "active" | "expired" | "superseded" | "rejected" | "any" }
+): Promise<number> {
+  const status = opts?.status ?? "any";
+  const res = await db.query(
+    `DELETE FROM caf_core.learning_rules
+     WHERE project_id = $1
+       AND ($2::text = 'any' OR status = $2::text)`,
+    [projectId, status]
+  );
+  return res.rowCount ?? 0;
+}

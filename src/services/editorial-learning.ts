@@ -18,6 +18,7 @@ import { q } from "../db/queries.js";
 import { insertInsight } from "../repositories/learning-evidence.js";
 import { insertLearningRule } from "../repositories/learning.js";
 import { buildEngineeringRemediationPrompt } from "./editorial-engineering-prompt.js";
+import { templateNameFromPayload } from "./carousel-render-pack.js";
 import {
   synthesizeEditorialNotesWithLlm,
   type EditorialNotesLlmResult,
@@ -138,11 +139,13 @@ export async function analyzeEditorialPatterns(
     created_at: string;
     flow_type: string | null;
     platform: string | null;
+    generation_payload: Record<string, unknown>;
   }>(
     db,
     `
     SELECT er.task_id, er.decision, er.rejection_tags, er.notes, er.overrides_json, er.created_at,
-           j.flow_type, j.platform
+           j.flow_type, j.platform,
+           COALESCE(j.generation_payload, '{}'::jsonb) AS generation_payload
     FROM caf_core.editorial_reviews er
     LEFT JOIN caf_core.content_jobs j
       ON j.task_id = er.task_id AND j.project_id = er.project_id
@@ -410,6 +413,7 @@ export async function analyzeEditorialPatterns(
         flow_type: r.flow_type,
         platform: r.platform,
         rejection_tags: r.rejection_tags,
+        carousel_template_name: templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim() || null,
         note: (r.notes ?? "").trim(),
         created_at: r.created_at,
       })),

@@ -15,6 +15,8 @@ export interface EditorialNoteRow {
   decision: string | null;
   flow_type: string | null;
   platform: string | null;
+  /** Base template name (e.g. `carousel_sns_chat_story`) when available. */
+  carousel_template_name?: string | null;
   rejection_tags: unknown[];
   note: string;
   created_at: string;
@@ -76,11 +78,12 @@ const SYSTEM_PROMPT = `You are an analyst for CAF (Content Automation Framework)
 
 You receive:
 - Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights).
-- Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included).
+- Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included), plus the carousel template name when available.
 
 Your job:
-1. Identify recurring themes and pain points expressed in the notes (not just tags).
-2. Recommend concrete actions. Categories must be one of: learning_rule, generation_prompt, renderer_template, review_ui, pipeline, process, other.
+1. Convert the notes into **guidelines** that improve next generations: what was good/bad about the body/script, what failed structurally, and what should be consistently enforced.
+2. When notes reference visuals (fonts, spacing, caption overlays, slide layout, cropping), treat it as a template-level issue and anchor recommendations to the specific `carousel_template_name` when possible.
+3. Recommend concrete actions. Categories must be one of: learning_rule, generation_prompt, renderer_template, review_ui, pipeline, process, other.
 3. For each action, set priority to high, medium, or low.
 4. Prefer **small, verifiable changes**. Preserve CAF text IDs: do not suggest renaming task_id / run_id schemes.
 5. When the issue is visual layout, typography, cropping, or template binding, point engineers at services/renderer (Handlebars) and related paths.
@@ -126,6 +129,7 @@ export async function synthesizeEditorialNotesWithLlm(
       decision: r.decision,
       flow_type: r.flow_type,
       platform: r.platform,
+      carousel_template_name: r.carousel_template_name ?? null,
       rejection_tags: Array.isArray(r.rejection_tags) ? r.rejection_tags : [],
       note: trimNote(r.note),
       created_at: r.created_at,

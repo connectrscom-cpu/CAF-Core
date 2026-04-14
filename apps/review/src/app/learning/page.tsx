@@ -209,12 +209,81 @@ function RuleDetailModal({ rule, onClose }: { rule: LearningRule; onClose: () =>
   );
 }
 
+function buildNotesOnlyGuidelinesPrompt(input: {
+  projectSlug: string;
+  windowDays: number;
+  notes: Array<{
+    task_id: string;
+    decision: string | null;
+    flow_type: string | null;
+    platform: string | null;
+    carousel_template_name: string | null;
+    rejection_tags: unknown[];
+    notes: string | null;
+    created_at: string;
+  }>;
+}): string {
+  const rows = (input.notes ?? [])
+    .filter((r) => (r.notes ?? "").trim().length > 0)
+    .slice(0, 80)
+    .map((r) => {
+      const note = String(r.notes ?? "").trim().replace(/\s+/g, " ");
+      const tags = Array.isArray(r.rejection_tags) ? r.rejection_tags.map((t) => String(t)).slice(0, 8) : [];
+      const meta = [
+        r.decision ? `decision=${r.decision}` : null,
+        r.flow_type ? `flow=${r.flow_type}` : null,
+        r.platform ? `platform=${r.platform}` : null,
+        r.carousel_template_name ? `template=${r.carousel_template_name}` : null,
+        tags.length ? `tags=${tags.join(",")}` : null,
+        r.created_at ? `at=${String(r.created_at).slice(0, 10)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      return `- ${r.task_id}${meta ? ` (${meta})` : ""}\n  ${note}`;
+    })
+    .join("\n");
+
+  return [
+    "# CAF — guidelines + code changes (from reviewer notes)",
+    "",
+    `**Project:** \`${input.projectSlug}\``,
+    `**Window:** last ${input.windowDays} days`,
+    "",
+    "## What to do",
+    "Turn these notes into **(A) guidelines to feed back into generation** and **(B) concrete codebase changes** when needed.",
+    "",
+    "## Output (strict)",
+    "1) **Guidelines** (bullet list). Each guideline must include:",
+    "- scope: flow/platform and (if relevant) `carousel_template_name`",
+    "- rule text: what to enforce/avoid",
+    "- evidence: 2-5 `task_id` examples",
+    "",
+    "2) **Proposed changes** as a list of small PRs. For each PR include:",
+    "- title",
+    "- files/paths likely to change (e.g. `services/renderer/templates/<template>.hbs`, generator prompt files, review UI)",
+    "- concrete changes",
+    "- acceptance criteria",
+    "- evidence: 3-6 `task_id` examples",
+    "",
+    "## Constraints",
+    "- Do not rename `task_id` / text-ID schemes; preserve CAF join patterns.",
+    "- If visuals are mentioned (fonts, caption overlays, spacing, cropping), anchor changes to the specific template named in the notes.",
+    "- Prefer the smallest verifiable change; avoid unrelated refactors.",
+    "",
+    "## Notes (evidence)",
+    rows || "_No non-empty notes found in this window._",
+    "",
+  ].join("\n");
+}
+
 export default function LearningPage() {
   const [project, setProject] = useState("SNS");
   const [rules, setRules] = useState<LearningRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [analysisResult, setAnalysisResult] = useState<Record<string, unknown> | null>(null);
   const [running, setRunning] = useState(false);
+  const [editorialNotes, setEditorialNotes] = useState<Record<string, unknown> | null>(null);
+  const [notesBusy, setNotesBusy] = useState(false);
   const [csvStatus, setCsvStatus] = useState<string | null>(null);
   const [mappingJson, setMappingJson] = useState("");
   const [contextPreview, setContextPreview] = useState<Record<string, unknown> | null>(null);
@@ -239,6 +308,19 @@ export default function LearningPage() {
   const copyEditorialExport = async (label: string, text: string) => {
     const ok = await copyToClipboard(text);
     flashCopy(ok ? `Copied: ${label}` : "Copy failed — select text in the box below");
+  };
+
+  const loadEditorialNotes = async (windowDays: number) => {
+    setNotesBusy(true);
+    setEditorialNotes(null);
+    try {
+      const res = await fetch(
+        `/api/learning?project=${encodeURIComponent(project)}&section=editorial_notes&window_days=${encodeURIComponent(String(windowDays))}&limit=250`
+      );
+      if (res.ok) setEditorialNotes(await res.json());
+    } finally {
+      setNotesBusy(false);
+    }
   };
 
   const fetchTransparency = useCallback(async () => {
@@ -288,6 +370,7 @@ export default function LearningPage() {
   const runAnalysis = async (action: "editorial" | "market") => {
     setRunning(true);
     setAnalysisResult(null);
+    setEditorialNotes(null);
     try {
       const body: Record<string, unknown> = { action, project };
       if (action === "editorial") {
@@ -304,6 +387,11 @@ export default function LearningPage() {
         setAnalysisResult(json);
         fetchRules();
         fetchObservations();
+        if (action === "editorial") {
+          const wd =
+            typeof json?.window_days === "number" && Number.isFinite(json.window_days) ? json.window_days : 30;
+          loadEditorialNotes(wd).catch(() => {});
+        }
       }
     } finally {
       setRunning(false);
@@ -360,6 +448,35 @@ export default function LearningPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "retire_rule", storage_project: slug, rule_id: rule.rule_id }),
+    });
+    if (res.ok) fetchRules();
+  };
+
+  const eraseRule = async (rule: LearningRule) => {
+    const slug = rule.storage_project_slug ?? project;
+    const ok = window.confirm(
+      `Erase rule "${rule.rule_id}"?\n\nThis permanently deletes it from project "${slug}".\n(Use Retire if you only want to deactivate.)`
+    );
+    if (!ok) return;
+    const res = await fetch("/api/learning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "erase_rule", storage_project: slug, rule_id: rule.rule_id }),
+    });
+    if (res.ok) fetchRules();
+  };
+
+  const eraseRulesAll = async (status?: string) => {
+    const slug = project;
+    const label = status ? `ALL ${status.toUpperCase()} rules` : "ALL rules";
+    const ok = window.confirm(
+      `Erase ${label} for project "${slug}"?\n\nThis permanently deletes rows from Core.\n(Use Retire to keep history.)`
+    );
+    if (!ok) return;
+    const res = await fetch("/api/learning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "erase_rules_all", storage_project: slug, status: status ?? "any" }),
     });
     if (res.ok) fetchRules();
   };
@@ -546,6 +663,22 @@ export default function LearningPage() {
           title="Shows the compiled learning context that will be injected into generation prompts (global → project). This is a preview only; it does not change rules."
         >
           Preview compiled context
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => eraseRulesAll("pending")}
+          title="Hard-deletes all pending rules for this project (does not touch caf-global rules)."
+        >
+          Erase pending rules
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={() => eraseRulesAll("any")}
+          title="Hard-deletes all rules for this project (does not touch caf-global rules)."
+        >
+          Erase ALL rules
         </button>
       </div>
 
@@ -789,6 +922,88 @@ export default function LearningPage() {
                 </p>
               </div>
             )}
+
+          {editorialNotes &&
+            typeof editorialNotes === "object" &&
+            Array.isArray((editorialNotes as { notes?: unknown }).notes) && (
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: 14,
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "rgba(120, 200, 160, 0.06)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: 16 }}>Reviewer notes (raw, with template)</h4>
+                    <p style={{ margin: "6px 0 0", fontSize: 12, color: "var(--muted)", maxWidth: 560 }}>
+                      These are human <code>editorial_reviews.notes</code> rows enriched with <code>carousel_template_name</code> when available.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => loadEditorialNotes(Number((analysisResult as { window_days?: number }).window_days ?? 30))}
+                    disabled={notesBusy}
+                    title="Refresh notes for this window"
+                  >
+                    {notesBusy ? "Loading…" : "Refresh notes"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" }}>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    title="Copy a prompt to extract guidelines + concrete repo changes from notes"
+                    onClick={() => {
+                      const wd = Number((editorialNotes as { window_days?: number }).window_days ?? 30);
+                      const notes = (editorialNotes as { notes: unknown[] }).notes as Array<Record<string, unknown>>;
+                      const text = buildNotesOnlyGuidelinesPrompt({
+                        projectSlug: project,
+                        windowDays: Number.isFinite(wd) ? wd : 30,
+                        notes: notes.map((n) => ({
+                          task_id: String(n.task_id ?? ""),
+                          decision: (n.decision ?? null) as string | null,
+                          flow_type: (n.flow_type ?? null) as string | null,
+                          platform: (n.platform ?? null) as string | null,
+                          carousel_template_name: (n.carousel_template_name ?? null) as string | null,
+                          rejection_tags: n.rejection_tags ?? [],
+                          notes: (n.notes ?? null) as string | null,
+                          created_at: String(n.created_at ?? ""),
+                        })),
+                      });
+                      copyEditorialExport("guidelines + code-change prompt (notes)", text);
+                    }}
+                  >
+                    Copy notes → guidelines prompt
+                  </button>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                    Showing {((editorialNotes as { notes: unknown[] }).notes ?? []).length} rows
+                  </span>
+                </div>
+
+                <textarea
+                  readOnly
+                  aria-label="Reviewer notes rows (JSON)"
+                  value={JSON.stringify((editorialNotes as { notes: unknown[] }).notes ?? [], null, 2)}
+                  rows={10}
+                  style={{
+                    width: "100%",
+                    marginTop: 12,
+                    fontFamily: "monospace",
+                    fontSize: 11,
+                    padding: 10,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--card)",
+                    resize: "vertical",
+                  }}
+                />
+              </div>
+            )}
           <pre style={{ fontSize: 12, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>
             {JSON.stringify(
               (() => {
@@ -889,6 +1104,11 @@ export default function LearningPage() {
                         Retire
                       </button>
                     </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
+                        Erase
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -913,6 +1133,7 @@ export default function LearningPage() {
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
                     Info
                   </th>
+                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                   <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
                 </tr>
               </thead>
@@ -940,6 +1161,11 @@ export default function LearningPage() {
                     <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
                       <button type="button" className="btn-primary" onClick={() => applyRule(rule)}>
                         Apply
+                      </button>
+                    </td>
+                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
+                        Erase
                       </button>
                     </td>
                   </tr>

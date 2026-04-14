@@ -680,6 +680,19 @@ export async function retireLearningRule(projectSlug: string, ruleId: string) {
   );
 }
 
+export async function eraseLearningRule(projectSlug: string, ruleId: string) {
+  return coreDelete<{ ok: boolean; erased?: number; rule_id?: string }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}`
+  );
+}
+
+export async function eraseLearningRulesAll(projectSlug: string, status?: string) {
+  return corePost<{ ok: boolean; erased?: number; status?: string }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/erase-all`,
+    status ? { status } : {}
+  );
+}
+
 export async function getLearningContextPreview(projectSlug: string, flowType?: string, platform?: string) {
   const qs = new URLSearchParams();
   if (flowType) qs.set("flow_type", flowType);

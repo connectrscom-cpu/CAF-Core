@@ -9,9 +9,12 @@ import type { AppConfig } from "../config.js";
 import { getProjectBySlug } from "../repositories/core.js";
 import {
   applyLearningRule,
+  eraseLearningRule,
+  eraseLearningRulesForProject,
   listLearningRulesMerged,
   retireLearningRule,
 } from "../repositories/learning.js";
+import { templateNameFromPayload } from "../services/carousel-render-pack.js";
 import { getGlobalLearningProjectId } from "../repositories/learning-global.js";
 import {
   insertHypothesis,
@@ -104,6 +107,37 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const ok = await retireLearningRule(db, project.id, req.params.rule_id);
       if (!ok) return reply.code(404).send({ ok: false, error: "rule not found or not active" });
       return { ok: true, rule_id: req.params.rule_id, status: "expired" };
+    }
+  );
+
+  // ── Learning rules erase (hard delete) ────────────────────────────────
+  app.delete<{ Params: { project_slug: string; rule_id: string } }>(
+    "/v1/learning/:project_slug/rules/:rule_id",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const erased = await eraseLearningRule(db, project.id, req.params.rule_id);
+      if (erased === 0) return reply.code(404).send({ ok: false, error: "rule not found" });
+      return { ok: true, erased, rule_id: req.params.rule_id };
+    }
+  );
+
+  app.post<{ Params: { project_slug: string }; Body: { status?: string } }>(
+    "/v1/learning/:project_slug/rules/erase-all",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const statusRaw = (req.body?.status ?? "any").trim();
+      const status =
+        statusRaw === "pending" ||
+        statusRaw === "active" ||
+        statusRaw === "expired" ||
+        statusRaw === "superseded" ||
+        statusRaw === "rejected"
+          ? statusRaw
+          : "any";
+      const erased = await eraseLearningRulesForProject(db, project.id, { status });
+      return { ok: true, erased, status };
     }
   );
 
@@ -362,6 +396,73 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       return { ok: true, ...result };
     }
   );
+
+  // ── Editorial reviewer notes (raw, enriched with carousel template) ────────
+  app.get<{
+    Params: { project_slug: string };
+    Querystring: { window_days?: string; limit?: string; include_empty?: string };
+  }>("/v1/learning/:project_slug/editorial-notes", async (req, reply) => {
+    const project = await getProjectBySlug(db, req.params.project_slug);
+    if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+
+    const windowDaysRaw = req.query.window_days ? parseInt(req.query.window_days, 10) : 30;
+    const limitRaw = req.query.limit ? parseInt(req.query.limit, 10) : 200;
+    const windowDays = Number.isFinite(windowDaysRaw) ? Math.max(1, Math.min(365, windowDaysRaw)) : 30;
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 200;
+    const includeEmpty = String(req.query.include_empty ?? "").trim() === "1";
+
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - windowDays);
+
+    const rows = await q<{
+      task_id: string;
+      decision: string | null;
+      rejection_tags: unknown[];
+      notes: string | null;
+      created_at: string;
+      flow_type: string | null;
+      platform: string | null;
+      validator: string | null;
+      submitted_at: string | null;
+      generation_payload: Record<string, unknown>;
+    }>(
+      db,
+      `
+      SELECT er.task_id, er.decision, er.rejection_tags, er.notes, er.created_at,
+             j.flow_type, j.platform,
+             er.validator, er.submitted_at,
+             COALESCE(j.generation_payload, '{}'::jsonb) AS generation_payload
+      FROM caf_core.editorial_reviews er
+      LEFT JOIN caf_core.content_jobs j
+        ON j.task_id = er.task_id AND j.project_id = er.project_id
+      WHERE er.project_id = $1
+        AND er.created_at >= $2
+        AND ($3::boolean = true OR COALESCE(NULLIF(TRIM(er.notes), ''), '') <> '')
+      ORDER BY er.created_at DESC
+      LIMIT $4
+    `,
+      [project.id, cutoff.toISOString(), includeEmpty, limit]
+    );
+
+    const notes = rows.map((r) => {
+      const template = templateNameFromPayload(r.generation_payload ?? {}).trim();
+      const base = template.replace(/\\.hbs$/i, "").trim();
+      return {
+        task_id: r.task_id,
+        decision: r.decision,
+        rejection_tags: r.rejection_tags,
+        notes: r.notes,
+        created_at: r.created_at,
+        flow_type: r.flow_type,
+        platform: r.platform,
+        validator: r.validator,
+        submitted_at: r.submitted_at,
+        carousel_template_name: base || null,
+      };
+    });
+
+    return { ok: true, project_slug: project.slug, window_days: windowDays, limit, notes };
+  });
 
   const llmApprovalReviewBody = z.object({
     limit: z.number().int().min(1).max(50).optional(),
