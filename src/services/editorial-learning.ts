@@ -433,6 +433,74 @@ export async function analyzeEditorialPatterns(
         created_at: r.created_at,
       })),
     });
+
+    // Ensure actions are template-aware even if the model omits fields:
+    // resolve templates from example task_ids and attach template + repo path hints.
+    if (llmNotesResult && !("skipped" in llmNotesResult) && Array.isArray(llmNotesResult.recommended_actions)) {
+      const taskIds = [
+        ...new Set(
+          llmNotesResult.recommended_actions
+            .flatMap((a) => (Array.isArray(a.example_task_ids) ? a.example_task_ids : []))
+            .map((x) => String(x).trim())
+            .filter(Boolean)
+        ),
+      ].slice(0, 120);
+
+      if (taskIds.length > 0) {
+        const rows = await q<{ task_id: string; generation_payload: Record<string, unknown> }>(
+          db,
+          `SELECT task_id, COALESCE(generation_payload, '{}'::jsonb) AS generation_payload
+           FROM caf_core.content_jobs
+           WHERE project_id = $1 AND task_id = ANY($2::text[])`,
+          [projectId, taskIds]
+        );
+        const byTask = new Map<string, string>();
+        for (const r of rows) {
+          const base = templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim();
+          if (base) byTask.set(r.task_id, base);
+        }
+
+        llmNotesResult.recommended_actions = llmNotesResult.recommended_actions.map((a) => {
+          const ex = Array.isArray(a.example_task_ids) ? a.example_task_ids : [];
+          const templates = [
+            ...new Set(
+              ex
+                .map((tid) => byTask.get(String(tid).trim()) ?? "")
+                .map((t) => t.trim())
+                .filter(Boolean)
+            ),
+          ];
+
+          const existingT = a.carousel_template_name;
+          const shouldAttachTemplate =
+            (existingT == null || (Array.isArray(existingT) ? existingT.length === 0 : String(existingT).trim() === "")) &&
+            templates.length > 0;
+
+          const existingWhere = a.where_to_change;
+          const hasWhere =
+            existingWhere != null &&
+            (Array.isArray(existingWhere) ? existingWhere.length > 0 : String(existingWhere).trim().length > 0);
+
+          const templatePaths = templates.map((t) => `services/renderer/templates/${t}.hbs`);
+          const whereToChange =
+            hasWhere
+              ? existingWhere
+              : templates.length > 0
+                ? templatePaths
+                : a.category === "pipeline"
+                  ? ["src/services/carousel-render-pack.ts"]
+                  : a.category === "generation_prompt"
+                    ? ["src/services/llm-generator.ts", "src/services/carousel-copy-prompt-policy.ts"]
+                    : null;
+
+          return {
+            ...a,
+            ...(shouldAttachTemplate ? { carousel_template_name: templates.length === 1 ? templates[0] : templates } : {}),
+            ...(hasWhere ? {} : whereToChange ? { where_to_change: whereToChange } : {}),
+          };
+        });
+      }
+    }
   }
 
   const llmMdBlock =
