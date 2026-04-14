@@ -77,7 +77,18 @@ function formatLlmNotesForPrompt(s: EditorialNotesLlmSynthesis): string {
       ? s.recommended_actions
           .map(
             (a) =>
-              `#### ${a.title} (${a.priority} · ${a.category})\n${a.rationale}\n\n_Next:_ ${a.suggested_next_steps}\n` +
+              `#### ${a.title} (${a.priority} · ${a.category})\n` +
+              (a.carousel_template_name
+                ? `**Template:** \`${Array.isArray(a.carousel_template_name) ? a.carousel_template_name.join(", ") : String(a.carousel_template_name)}\`\n`
+                : "") +
+              (a.where_to_change
+                ? `**Where to change:** ${
+                    Array.isArray(a.where_to_change)
+                      ? a.where_to_change.map((p) => `\`${p}\``).join(", ")
+                      : `\`${String(a.where_to_change)}\``
+                  }\n`
+                : "") +
+              `\n${a.rationale}\n\n_Next:_ ${a.suggested_next_steps}\n` +
               (a.example_task_ids?.length ? `\n\`task_id\` examples: ${a.example_task_ids.map((id) => `\`${id}\``).join(", ")}\n` : "")
           )
           .join("\n")

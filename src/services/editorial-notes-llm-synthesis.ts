@@ -34,6 +34,10 @@ export interface LlmNotesAction {
   category: string;
   priority: string;
   title: string;
+  /** When action is template-specific, which template(s) it applies to. */
+  carousel_template_name?: string | string[] | null;
+  /** Repo path(s) to change, e.g. `services/renderer/templates/default.hbs`. */
+  where_to_change?: string | string[] | null;
   rationale: string;
   suggested_next_steps: string;
   example_task_ids: string[];
@@ -97,10 +101,14 @@ Your job:
 6. When the issue is copy, tone, or structure from the LLM, point at generation prompts / llm-generator paths.
 7. learning_rule means something expressible as ranking/suppression/generation guidance rules, not necessarily code.
 
+For 'recommended_actions', add these fields:
+- carousel_template_name: string | string[] | null — required for renderer_template issues when the evidence contains a template name
+- where_to_change: string | string[] | null — required for every action; must be concrete repo paths
+
 Respond with a single JSON object only (no markdown fences), keys:
 - summary: string (2-4 sentences)
 - recurring_themes: array of { theme: string, approx_count?: number, example_quotes?: string[] } (max 8 themes)
-- recommended_actions: array of { category: string, priority: string, title: string, rationale: string, suggested_next_steps: string, example_task_ids: string[] } (max 10)
+- recommended_actions: array of { category: string, priority: string, title: string, carousel_template_name?: string|string[]|null, where_to_change?: string|string[]|null, rationale: string, suggested_next_steps: string, example_task_ids: string[] } (max 10)
 - coding_agent_markdown: string — a single markdown document for a coding agent (Cursor/Claude) listing what to change in the repo, with evidence task_ids and acceptance criteria. Use an empty string if no code change is appropriate.`;
 
 /**
