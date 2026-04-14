@@ -12,6 +12,7 @@ import { insertObservation } from "../repositories/learning-evidence.js";
 import {
   hasLlmApprovalReviewSince,
   insertLlmApprovalReview,
+  markLlmApprovalReviewMinted,
 } from "../repositories/llm-approval-reviews.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
@@ -142,9 +143,15 @@ export interface RunLlmApprovalReviewParams {
   skip_if_reviewed_within_days?: number;
   force_rereview?: boolean;
   /**
-   * When set (e.g. 0.55), scores below this mint one pending GENERATION_GUIDANCE rule per task from improvement_bullets.
+   * When set (e.g. 0.55), scores below this are eligible for minting one pending
+   * GENERATION_GUIDANCE rule per task from improvement_bullets.
    */
   mint_pending_hints_below_score?: number | null;
+  /**
+   * If true, mint pending generation guidance automatically during the run.
+   * If false/omitted, the run returns eligibility + proposed bullets but does not create learning rules.
+   */
+  auto_mint_pending_hints?: boolean;
 }
 
 export interface LlmApprovalReviewJobResult {
@@ -155,6 +162,13 @@ export interface LlmApprovalReviewJobResult {
   overall_score?: number | null;
   model?: string;
   minted_pending_rule?: boolean;
+  hint_eligible?: boolean;
+  improvement_bullets?: string[];
+  strengths?: string[];
+  weaknesses?: string[];
+  risk_flags?: string[];
+  summary?: string | null;
+  images_used?: number;
   skipped?: boolean;
   reason?: string;
 }
@@ -180,6 +194,7 @@ export async function runLlmApprovalReviewsForProject(
   const maxImages = config.LLM_APPROVAL_REVIEW_MAX_IMAGES;
   const maxText = config.LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS;
   const mintBelow = params.mint_pending_hints_below_score;
+  const autoMint = params.auto_mint_pending_hints === true;
 
   const jobs = await listApprovedJobs(db, projectId, { limit, taskIds: params.task_ids });
   const results: LlmApprovalReviewJobResult[] = [];
@@ -269,12 +284,9 @@ export async function runLlmApprovalReviewsForProject(
         video_plan_score: clamp01(parsed.video_plan_score),
       };
 
+      const eligible = mintBelow != null && overall < mintBelow && improvementBullets.length > 0;
       let minted = false;
-      if (
-        mintBelow != null &&
-        overall < mintBelow &&
-        improvementBullets.length > 0
-      ) {
+      if (eligible && autoMint) {
         const ruleId = `llm_hint_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
         await insertLearningRule(db, {
           rule_id: ruleId,
@@ -354,6 +366,13 @@ export async function runLlmApprovalReviewsForProject(
         overall_score: overall,
         model: llm.model,
         minted_pending_rule: minted,
+        hint_eligible: eligible,
+        improvement_bullets: improvementBullets,
+        strengths,
+        weaknesses,
+        risk_flags: riskFlags,
+        summary,
+        images_used: imageUrls.length,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -362,4 +381,87 @@ export async function runLlmApprovalReviewsForProject(
   }
 
   return { results, model };
+}
+
+export async function mintPendingHintsFromApprovalReviews(
+  db: Pool,
+  projectId: string,
+  reviewIds: string[],
+  mintBelow: number
+): Promise<{ minted: number; skipped: number; errors: Array<{ review_id: string; error: string }> }> {
+  const ids = (reviewIds ?? []).map((x) => String(x)).filter(Boolean).slice(0, 200);
+  const threshold = Math.min(1, Math.max(0, mintBelow));
+  if (ids.length === 0) return { minted: 0, skipped: 0, errors: [] };
+
+  const rows = await q<{
+    review_id: string;
+    task_id: string;
+    flow_type: string | null;
+    platform: string | null;
+    overall_score: number | null;
+    improvement_bullets: unknown;
+    minted_pending_rule: boolean | null;
+  }>(
+    db,
+    `SELECT review_id, task_id, flow_type, platform, overall_score, improvement_bullets, minted_pending_rule
+     FROM caf_core.llm_approval_reviews
+     WHERE project_id = $1 AND review_id = ANY($2::text[])`,
+    [projectId, ids]
+  );
+
+  let minted = 0;
+  let skipped = 0;
+  const errors: Array<{ review_id: string; error: string }> = [];
+
+  for (const r of rows) {
+    try {
+      if (r.minted_pending_rule) {
+        skipped++;
+        continue;
+      }
+      const score = typeof r.overall_score === "number" ? r.overall_score : null;
+      if (score == null || !Number.isFinite(score) || score >= threshold) {
+        skipped++;
+        continue;
+      }
+      const bullets = Array.isArray(r.improvement_bullets)
+        ? r.improvement_bullets.map((x) => String(x).trim()).filter(Boolean)
+        : [];
+      if (bullets.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const ruleId = `llm_hint_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
+      await insertLearningRule(db, {
+        rule_id: ruleId,
+        project_id: projectId,
+        trigger_type: "llm_post_approval_review",
+        scope_flow_type: r.flow_type ?? null,
+        scope_platform: r.platform ?? null,
+        action_type: "GENERATION_GUIDANCE",
+        action_payload: {
+          bullets: bullets.slice(0, 8),
+          instruction: bullets.slice(0, 5).join(" "),
+          source_task_id: r.task_id,
+          source_review_id: r.review_id,
+          llm_overall_score: score,
+        },
+        confidence: Math.max(0.15, 1 - score),
+        source_entity_ids: [r.task_id],
+        evidence_refs: [r.review_id, r.task_id],
+        rule_family: "generation",
+        provenance: "llm_post_approval_review",
+        created_by: "llm_approval_reviewer",
+      });
+
+      await markLlmApprovalReviewMinted(db, projectId, r.review_id, true);
+      minted++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push({ review_id: r.review_id, error: msg || "mint_failed" });
+    }
+  }
+
+  return { minted, skipped, errors };
 }

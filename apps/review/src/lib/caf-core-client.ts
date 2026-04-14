@@ -775,10 +775,22 @@ export async function triggerLlmApprovalReview(
     force_rereview?: boolean;
     /** e.g. 0.55 — scores below this mint a pending GENERATION_GUIDANCE rule from improvement bullets */
     mint_pending_hints_below_score?: number | null;
+    /** if true, mint pending hints during the run (otherwise just returns eligibility + bullets) */
+    auto_mint_pending_hints?: boolean;
   }
 ) {
   return corePost<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/llm-review-approved`,
+    body
+  );
+}
+
+export async function mintLlmApprovalReviewHints(
+  projectSlug: string,
+  body: { review_ids: string[]; mint_below_score: number }
+) {
+  return corePost<Record<string, unknown>>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/llm-review-approved/mint-hints`,
     body
   );
 }

@@ -302,6 +302,8 @@ export default function LearningPage() {
   const [llmLimit, setLlmLimit] = useState(3);
   const [llmMintBelow, setLlmMintBelow] = useState("");
   const [llmForceRereview, setLlmForceRereview] = useState(false);
+  const [llmMintBusy, setLlmMintBusy] = useState(false);
+  const [llmMintStatus, setLlmMintStatus] = useState<string | null>(null);
   const [persistEngineeringInsight, setPersistEngineeringInsight] = useState(true);
   const [llmNotesSynthesis, setLlmNotesSynthesis] = useState(true);
   const [ruleDetail, setRuleDetail] = useState<LearningRule | null>(null);
@@ -413,6 +415,7 @@ export default function LearningPage() {
   const runLlmApprovalReview = async () => {
     setLlmBusy(true);
     setLlmResult(null);
+    setLlmMintStatus(null);
     try {
       const body: Record<string, unknown> = {
         action: "llm_review_approved",
@@ -425,6 +428,7 @@ export default function LearningPage() {
         const n = parseFloat(trimmed);
         if (!Number.isNaN(n)) body.mint_pending_hints_below_score = n;
       }
+      body.auto_mint_pending_hints = false;
       const res = await fetch("/api/learning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -436,6 +440,47 @@ export default function LearningPage() {
       fetchRules();
     } finally {
       setLlmBusy(false);
+    }
+  };
+
+  const mintHintsFromLastRun = async () => {
+    const trimmed = llmMintBelow.trim();
+    const threshold = trimmed === "" ? NaN : parseFloat(trimmed);
+    if (Number.isNaN(threshold)) {
+      window.alert("Set 'Mint hints if score <' to a number (e.g. 0.55) first.");
+      return;
+    }
+    const results = Array.isArray((llmResult as { results?: unknown }).results)
+      ? (((llmResult as { results?: unknown }).results ?? []) as Array<Record<string, unknown>>)
+      : [];
+    const reviewIds = results.map((r) => String(r.review_id ?? "")).filter(Boolean);
+    if (reviewIds.length === 0) {
+      window.alert("No review_ids found in the last run.");
+      return;
+    }
+    setLlmMintBusy(true);
+    setLlmMintStatus(null);
+    try {
+      const res = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "llm_mint_hints",
+          project,
+          review_ids: reviewIds,
+          mint_below_score: threshold,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setLlmMintStatus(`Minted ${String(json.minted ?? 0)} pending rule(s) (skipped ${String(json.skipped ?? 0)}).`);
+        fetchRules();
+        fetchLlmReviews();
+      } else {
+        setLlmMintStatus(String(json.error ?? `Mint failed (${res.status})`));
+      }
+    } finally {
+      setLlmMintBusy(false);
     }
   };
 
@@ -701,8 +746,8 @@ export default function LearningPage() {
         <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>
           Uses OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
           rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
-          scores to Core, creates a <code>learning_observations</code> row, and optionally mints{" "}
-          <strong>pending</strong> generation hints if you set a score threshold.
+          scores to Core, creates a <code>learning_observations</code> row, and can mint <strong>pending</strong>{" "}
+          generation hints <em>only after you review the results below</em>.
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12 }}>
           <label style={{ fontSize: 13 }}>
@@ -744,6 +789,19 @@ export default function LearningPage() {
         >
           {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
         </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          onClick={mintHintsFromLastRun}
+          disabled={llmMintBusy || !llmResult}
+          title="Creates pending GENERATION_GUIDANCE learning rules from the last run's low-scoring reviews. Pending rules do not affect generation until you Apply them."
+          style={{ marginLeft: 10 }}
+        >
+          {llmMintBusy ? "Minting…" : "Mint pending hints from results"}
+        </button>
+        {llmMintStatus ? (
+          <p style={{ marginTop: 10, fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>{llmMintStatus}</p>
+        ) : null}
         {llmResult && (
           <pre
             style={{

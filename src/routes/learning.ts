@@ -41,7 +41,10 @@ import {
   mapCsvRowToPerformanceInput,
   type CsvPerformanceColumnMap,
 } from "../services/csv-performance-ingest.js";
-import { runLlmApprovalReviewsForProject } from "../services/approved-content-llm-review.js";
+import {
+  mintPendingHintsFromApprovalReviews,
+  runLlmApprovalReviewsForProject,
+} from "../services/approved-content-llm-review.js";
 import { listLlmApprovalReviews } from "../repositories/llm-approval-reviews.js";
 
 interface Deps {
@@ -472,6 +475,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     skip_if_reviewed_within_days: z.number().int().min(0).max(365).optional(),
     force_rereview: z.boolean().optional(),
     mint_pending_hints_below_score: z.number().min(0).max(1).nullable().optional(),
+    auto_mint_pending_hints: z.boolean().optional(),
   });
 
   // ── LLM review: approved content only (vision + text) ─────────────────
@@ -494,8 +498,29 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         skip_if_reviewed_within_days: b.skip_if_reviewed_within_days,
         force_rereview: b.force_rereview,
         mint_pending_hints_below_score: b.mint_pending_hints_below_score ?? null,
+        auto_mint_pending_hints: b.auto_mint_pending_hints === true,
       });
       return { ok: true, model, results };
+    }
+  );
+
+  const mintHintsBody = z.object({
+    review_ids: z.array(z.string()).min(1).max(200),
+    mint_below_score: z.number().min(0).max(1),
+  });
+
+  app.post<{ Params: { project_slug: string } }>(
+    "/v1/learning/:project_slug/llm-review-approved/mint-hints",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const parsed = mintHintsBody.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+      }
+      const b = parsed.data;
+      const result = await mintPendingHintsFromApprovalReviews(db, project.id, b.review_ids, b.mint_below_score);
+      return { ok: true, ...result };
     }
   );
 

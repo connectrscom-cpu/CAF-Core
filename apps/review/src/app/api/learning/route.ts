@@ -9,6 +9,7 @@ import {
   getLearningRules,
   getLearningTransparency,
   getLlmApprovalReviews,
+  mintLlmApprovalReviewHints,
   retireLearningRule,
   triggerEditorialAnalysis,
   triggerLlmApprovalReview,
@@ -139,7 +140,18 @@ export async function POST(req: NextRequest) {
           : typeof body.mint_pending_hints_below_score === "number"
             ? body.mint_pending_hints_below_score
             : undefined,
+      auto_mint_pending_hints: body.auto_mint_pending_hints === true,
     });
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+
+  if (action === "llm_mint_hints") {
+    const reviewIds = Array.isArray(body.review_ids) ? body.review_ids.map((x: unknown) => String(x)) : [];
+    const below = typeof body.mint_below_score === "number" ? body.mint_below_score : NaN;
+    if (!reviewIds.length || Number.isNaN(below)) {
+      return NextResponse.json({ error: "review_ids[] and mint_below_score required" }, { status: 400 });
+    }
+    const result = await mintLlmApprovalReviewHints(projectSlug, { review_ids: reviewIds, mint_below_score: below });
     return NextResponse.json(result ?? { error: "Failed" });
   }
 

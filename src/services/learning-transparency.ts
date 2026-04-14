@@ -10,7 +10,7 @@ export const LEARNING_TRANSPARENCY_STATIC = {
   schema_version: "1",
   summary:
     "Learning is not fully automatic. Editorial/market analyzers use SQL + heuristics (no LLM). " +
-    "Optional LLM post-approval review scores content that humans already approved (vision + text), stores results, and can mint pending generation hints. " +
+    "Optional LLM post-approval review scores content that humans already approved (vision + text) and stores results; operators can then mint pending generation hints from those reviews. " +
     "Pending rules must be applied by an operator. Generation injects active learning context into the main content LLM.",
   loops: [
     {
@@ -81,7 +81,7 @@ export const LEARNING_TRANSPARENCY_STATIC = {
         "Review app → Run LLM review (approved)",
       ],
       outputs:
-        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); optional pending GENERATION_GUIDANCE if score below threshold",
+        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); optional pending GENERATION_GUIDANCE minted from low-scoring reviews after operator confirmation",
       requires_human:
         "Operator runs the job; OPENAI_API_KEY required; apply any minted pending rules; default skips tasks reviewed in the last 7 days unless forced",
     },

@@ -98,3 +98,17 @@ export async function listLlmApprovalReviews(
     [projectId, Math.min(limit, 200)]
   );
 }
+
+export async function markLlmApprovalReviewMinted(
+  db: Pool,
+  projectId: string,
+  reviewId: string,
+  minted: boolean
+): Promise<void> {
+  await db.query(
+    `UPDATE caf_core.llm_approval_reviews
+     SET minted_pending_rule = $3
+     WHERE project_id = $1 AND review_id = $2`,
+    [projectId, reviewId, minted]
+  );
+}
