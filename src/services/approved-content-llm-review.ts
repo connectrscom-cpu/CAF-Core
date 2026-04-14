@@ -51,6 +51,57 @@ function isLikelyImageAsset(url: string, assetType: string | null): boolean {
   return false;
 }
 
+async function isReachableImageUrl(url: string): Promise<boolean> {
+  try {
+    // OpenAI must be able to fetch the URL from the public internet. We do a quick HEAD check here
+    // to avoid hard failures on signed/blocked/hotlink-protected URLs.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const head = await fetch(url, { method: "HEAD", redirect: "follow", signal: controller.signal });
+      if (!head.ok) return false;
+      const ct = head.headers.get("content-type") ?? "";
+      return ct.toLowerCase().startsWith("image/");
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // Some hosts don't support HEAD; fall through to Range GET.
+  }
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        redirect: "follow",
+        headers: { Range: "bytes=0-2047" },
+        signal: controller.signal,
+      });
+      if (!res.ok) return false;
+      const ct = res.headers.get("content-type") ?? "";
+      return ct.toLowerCase().startsWith("image/");
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function filterReachableImageUrls(urls: string[], maxImages: number): Promise<string[]> {
+  const out: string[] = [];
+  for (const u of urls) {
+    if (!u) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await isReachableImageUrl(u);
+    if (!ok) continue;
+    out.push(u);
+    if (out.length >= maxImages) break;
+  }
+  return out;
+}
+
 async function listImageUrlsForTask(
   db: Pool,
   projectId: string,
@@ -215,7 +266,8 @@ export async function runLlmApprovalReviewsForProject(
 
     const reviewId = `llm_appr_${randomUUID().replace(/-/g, "").slice(0, 22)}`;
     const textBundle = buildApprovedContentTextBundle(job.generation_payload, maxText);
-    const imageUrls = await listImageUrlsForTask(db, projectId, job.task_id, maxImages);
+    const rawImageUrls = await listImageUrlsForTask(db, projectId, job.task_id, maxImages);
+    const imageUrls = await filterReachableImageUrls(rawImageUrls, maxImages);
 
     const userParts: ChatContentPart[] = [
       {
@@ -240,24 +292,39 @@ export async function runLlmApprovalReviewsForProject(
     }
 
     try {
-      const llm = await openaiChatMultimodal(
-        apiKey,
-        {
-          model,
-          system_prompt: SYSTEM_PROMPT,
-          user_content: userParts,
-          max_tokens: 2500,
-          response_format: "json_object",
-        },
-        {
-          db,
-          projectId,
-          runId: job.run_id,
-          taskId: job.task_id,
-          signalPackId: null,
-          step: "llm_post_approval_review",
+      const call = async (content: ChatContentPart[]) =>
+        openaiChatMultimodal(
+          apiKey,
+          {
+            model,
+            system_prompt: SYSTEM_PROMPT,
+            user_content: content,
+            max_tokens: 2500,
+            response_format: "json_object",
+          },
+          {
+            db,
+            projectId,
+            runId: job.run_id,
+            taskId: job.task_id,
+            signalPackId: null,
+            step: "llm_post_approval_review",
+          }
+        );
+
+      let llm;
+      try {
+        llm = await call(userParts);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // If OpenAI rejects any image URL, fall back to text-only so the review still completes.
+        if (imageUrls.length > 0 && /invalid_image_url/i.test(msg)) {
+          const textOnly = userParts.filter((p) => p.type !== "image_url");
+          llm = await call(textOnly);
+        } else {
+          throw e;
         }
-      );
+      }
 
       const parsed = parseJsonObjectFromLlmText(llm.content);
       if (!parsed) {
