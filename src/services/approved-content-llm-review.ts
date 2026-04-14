@@ -17,6 +17,7 @@ import {
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
 import { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
+import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "./supabase-storage.js";
 
 export { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 
@@ -104,13 +105,19 @@ async function filterReachableImageUrls(urls: string[], maxImages: number): Prom
 
 async function listImageUrlsForTask(
   db: Pool,
+  config: AppConfig,
   projectId: string,
   taskId: string,
   maxImages: number
 ): Promise<string[]> {
-  const rows = await q<{ public_url: string; asset_type: string | null }>(
+  const rows = await q<{
+    public_url: string;
+    asset_type: string | null;
+    bucket: string | null;
+    object_path: string | null;
+  }>(
     db,
-    `SELECT public_url, asset_type FROM caf_core.assets
+    `SELECT public_url, asset_type, bucket, object_path FROM caf_core.assets
      WHERE project_id = $1 AND task_id = $2
        AND public_url IS NOT NULL
        AND public_url ~ '^https?://'
@@ -121,7 +128,20 @@ async function listImageUrlsForTask(
   const urls: string[] = [];
   for (const r of rows) {
     if (!isLikelyImageAsset(r.public_url, r.asset_type)) continue;
-    urls.push(r.public_url);
+    let url = r.public_url;
+    const parsed = tryParseSupabasePublicObjectUrl(url);
+    if (parsed) {
+      const signed = await createSignedUrlForObjectKey(config, parsed.bucket, parsed.objectPath, 7200);
+      if ("signedUrl" in signed) url = signed.signedUrl;
+    } else {
+      const b = (r.bucket ?? "").trim();
+      const key = (r.object_path ?? "").trim();
+      if (b && key) {
+        const signed = await createSignedUrlForObjectKey(config, b, key, 7200);
+        if ("signedUrl" in signed) url = signed.signedUrl;
+      }
+    }
+    urls.push(url);
     if (urls.length >= maxImages) break;
   }
   return urls;
@@ -266,7 +286,7 @@ export async function runLlmApprovalReviewsForProject(
 
     const reviewId = `llm_appr_${randomUUID().replace(/-/g, "").slice(0, 22)}`;
     const textBundle = buildApprovedContentTextBundle(job.generation_payload, maxText);
-    const rawImageUrls = await listImageUrlsForTask(db, projectId, job.task_id, maxImages);
+    const rawImageUrls = await listImageUrlsForTask(db, config, projectId, job.task_id, maxImages);
     const imageUrls = await filterReachableImageUrls(rawImageUrls, maxImages);
 
     const userParts: ChatContentPart[] = [
