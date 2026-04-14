@@ -77,7 +77,7 @@ const envSchema = z.object({
   /** Vision-capable model for post-approval content review (images + text). */
   OPENAI_APPROVAL_REVIEW_MODEL: z.string().default("gpt-4o"),
   /** Max carousel / image assets to attach per approved job (OpenAI vision). */
-  LLM_APPROVAL_REVIEW_MAX_IMAGES: z.coerce.number().int().min(0).max(16).default(6),
+  LLM_APPROVAL_REVIEW_MAX_IMAGES: z.coerce.number().int().min(0).max(16).default(14),
   /** Serialized copy bundle (hook, caption, video plan, scenes) max size before truncation. */
   LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
   /**
