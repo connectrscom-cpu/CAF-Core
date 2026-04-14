@@ -6,6 +6,7 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
+import { q } from "../db/queries.js";
 import { getProjectBySlug } from "../repositories/core.js";
 import {
   applyLearningRule,
