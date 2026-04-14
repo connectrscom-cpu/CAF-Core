@@ -37,6 +37,7 @@ import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
+  maxSlidesFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
 import { compileLearningContexts } from "./learning-context-compiler.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
@@ -420,7 +421,8 @@ export async function generateForJob(
     }
 
     const maxHt = maxHashtagsFromPlatformConstraints(creationPack.platform_constraints);
-    parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt });
+    const maxSlides = maxSlidesFromPlatformConstraints(creationPack.platform_constraints);
+    parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
 
     const draftSeq = await nextJobDraftSequence(db, job.project_id, job.task_id);
     await db.query(`
@@ -453,7 +455,7 @@ export async function generateForJob(
         );
         const prior = (fresh?.generation_payload?.generated_output as Record<string, unknown>) ?? {};
         storedOutput = mergeSceneBundleParsedIntoGeneratedOutput(prior, parsed);
-        storedOutput = enrichGeneratedOutputForReview(job.flow_type, storedOutput, { maxHashtags: maxHt });
+        storedOutput = enrichGeneratedOutputForReview(job.flow_type, storedOutput, { maxHashtags: maxHt, maxSlides });
         parsedOutputForResponse = storedOutput;
       }
       await db.query(

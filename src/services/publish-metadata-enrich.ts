@@ -17,6 +17,13 @@ export function maxHashtagsFromPlatformConstraints(platformConstraints: unknown)
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
+export function maxSlidesFromPlatformConstraints(platformConstraints: unknown): number | null {
+  if (!platformConstraints || typeof platformConstraints !== "object") return null;
+  const pc = platformConstraints as Record<string, unknown>;
+  const n = Number(pc.slide_max);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+}
+
 function truncateHashtagsInText(s: string, maxTags: number): string {
   const re = /#[\w\u00c0-\u024f]+/gu;
   const matches = [...s.matchAll(re)];
@@ -40,46 +47,116 @@ function truncateHashtagsList(tags: string[], maxTags: number): string[] {
   return out;
 }
 
+function truncateCarouselSlides<T>(slides: T[], maxSlides: number): T[] {
+  if (!Array.isArray(slides)) return [];
+  if (!Number.isFinite(maxSlides) || maxSlides < 1) return slides;
+  if (slides.length <= maxSlides) return slides;
+  if (maxSlides === 1) return [slides[0]!];
+  if (maxSlides === 2) return [slides[0]!, slides[slides.length - 1]!];
+  const keepFirst = slides[0]!;
+  const keepLast = slides[slides.length - 1]!;
+  const middleKeep = slides.slice(1, 1 + (maxSlides - 2));
+  return [keepFirst, ...middleKeep, keepLast];
+}
+
+function clampStructureVariableSlideCount(o: Record<string, unknown>, n: number): void {
+  if (!Number.isFinite(n) || n < 0) return;
+  const sv =
+    o.structure_variables && typeof o.structure_variables === "object" && !Array.isArray(o.structure_variables)
+      ? { ...(o.structure_variables as Record<string, unknown>) }
+      : null;
+  if (!sv) return;
+  sv.slide_count = Math.floor(n);
+  o.structure_variables = sv;
+}
+
 export function enrichGeneratedOutputForReview(
   _flowType: string,
   output: Record<string, unknown>,
-  opts?: { maxHashtags?: number | null }
+  opts?: { maxHashtags?: number | null; maxSlides?: number | null }
 ): Record<string, unknown> {
-  const max = opts?.maxHashtags;
-  if (max == null || max < 0) return { ...output };
   const o = { ...output };
+  const maxTags = opts?.maxHashtags;
+  const maxSlides = opts?.maxSlides;
 
   // Standalone hashtags field (common in video flows / some schemas)
-  if (Array.isArray(o.hashtags)) {
-    const flat = o.hashtags
-      .filter((t): t is string => typeof t === "string" && t.trim() !== "")
-      .map((t) => t.trim());
-    if (flat.length > max) o.hashtags = truncateHashtagsList(flat, max);
-  } else if (typeof o.hashtags === "string") {
-    o.hashtags = truncateHashtagsInText(o.hashtags, max);
+  if (maxTags != null && maxTags >= 0) {
+    if (Array.isArray(o.hashtags)) {
+      const flat = o.hashtags
+        .filter((t): t is string => typeof t === "string" && t.trim() !== "")
+        .map((t) => t.trim());
+      if (flat.length > maxTags) o.hashtags = truncateHashtagsList(flat, maxTags);
+    } else if (typeof o.hashtags === "string") {
+      o.hashtags = truncateHashtagsInText(o.hashtags, maxTags);
+    }
+
+    for (const k of ["caption", "cta", "description", "post_caption"]) {
+      const v = o[k];
+      if (typeof v === "string") o[k] = truncateHashtagsInText(v, maxTags);
+    }
   }
 
-  for (const k of ["caption", "cta", "description", "post_caption"]) {
-    const v = o[k];
-    if (typeof v === "string") o[k] = truncateHashtagsInText(v, max);
+  if (maxSlides != null && maxSlides >= 1) {
+    if (Array.isArray(o.slides)) {
+      o.slides = truncateCarouselSlides(o.slides, maxSlides);
+      clampStructureVariableSlideCount(o, (o.slides as unknown[]).length);
+    }
+    if (Array.isArray(o.variations) && o.variations.length > 0) {
+      const v0 = o.variations[0];
+      if (v0 && typeof v0 === "object" && !Array.isArray(v0)) {
+        const vRec = { ...(v0 as Record<string, unknown>) };
+        if (Array.isArray(vRec.slides)) {
+          vRec.slides = truncateCarouselSlides(vRec.slides, maxSlides);
+          const vars = [...(o.variations as unknown[])];
+          vars[0] = vRec;
+          o.variations = vars;
+          clampStructureVariableSlideCount(o, (vRec.slides as unknown[]).length);
+        }
+      }
+    }
   }
+
   const nested = o.content;
   if (nested && typeof nested === "object" && !Array.isArray(nested)) {
     const c = { ...(nested as Record<string, unknown>) };
-    for (const k of ["caption", "cta"]) {
-      const v = c[k];
-      if (typeof v === "string") c[k] = truncateHashtagsInText(v, max);
+    let changed = false;
+
+    if (maxTags != null && maxTags >= 0) {
+      for (const k of ["caption", "cta"]) {
+        const v = c[k];
+        if (typeof v === "string") {
+          c[k] = truncateHashtagsInText(v, maxTags);
+          changed = true;
+        }
+      }
+      const tags = c.hashtags;
+      if (Array.isArray(tags)) {
+        const flat = tags
+          .filter((t): t is string => typeof t === "string" && t.trim() !== "")
+          .map((t) => t.trim());
+        if (flat.length > maxTags) {
+          c.hashtags = truncateHashtagsList(flat, maxTags);
+          changed = true;
+        }
+      } else if (typeof tags === "string") {
+        c.hashtags = truncateHashtagsInText(tags, maxTags);
+        changed = true;
+      }
     }
-    const tags = c.hashtags;
-    if (Array.isArray(tags)) {
-      const flat = tags
-        .filter((t): t is string => typeof t === "string" && t.trim() !== "")
-        .map((t) => t.trim());
-      if (flat.length > max) c.hashtags = truncateHashtagsList(flat, max);
-    } else if (typeof tags === "string") {
-      c.hashtags = truncateHashtagsInText(tags, max);
+
+    if (maxSlides != null && maxSlides >= 1) {
+      if (Array.isArray(c.slides)) {
+        c.slides = truncateCarouselSlides(c.slides, maxSlides);
+        changed = true;
+      }
+      if (Array.isArray(c.carousel)) {
+        c.carousel = truncateCarouselSlides(c.carousel, maxSlides);
+        changed = true;
+      }
     }
-    o.content = c;
+
+    if (changed) o.content = c;
   }
+
   return o;
 }

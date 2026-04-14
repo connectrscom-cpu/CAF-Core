@@ -2,15 +2,16 @@
 <html><head>
 <style>
   body { margin: 0; padding: 0; background: #111; font-family: system-ui, sans-serif; }
-  .slide { width: 1080px; height: 1350px; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px; box-sizing: border-box; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; }
-  .slide h1 { font-size: 56px; font-weight: 800; text-align: center; line-height: 1.2; margin-bottom: 24px; }
-  .slide p { font-size: 28px; text-align: center; opacity: 0.85; line-height: 1.5; }
+  .slide { width: 1080px; height: 1350px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; padding: 88px; box-sizing: border-box; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: #fff; }
+  .slide h1 { font-size: 64px; font-weight: 850; text-align: left; line-height: 1.16; margin: 0 0 28px 0; letter-spacing: -0.01em; max-width: 860px; }
+  .slide p { font-size: 36px; text-align: left; opacity: 0.9; line-height: 1.38; margin: 0; max-width: 860px; white-space: pre-wrap; }
+  .cta-handle { margin-top: 18px; font-size: 34px; font-weight: 700; opacity: 0.95; }
 </style>
 </head><body>
 {{#if cover_slide}}
 <div class="slide">
-  <h1>{{cover_slide.title}}</h1>
-  {{#if cover_slide.subtitle}}<p>{{cover_slide.subtitle}}</p>{{/if}}
+  <h1>{{cover_slide.headline}}</h1>
+  {{#if cover_slide.body}}<p>{{cover_slide.body}}</p>{{/if}}
 </div>
 {{/if}}
 {{#each body_slides}}
@@ -21,7 +22,8 @@
 {{/each}}
 {{#if cta_slide}}
 <div class="slide">
-  <h1>{{cta_slide.text}}</h1>
+  <h1>{{cta_slide.body}}</h1>
+  {{#if cta_slide.handle}}<div class="cta-handle">{{cta_slide.handle}}</div>{{/if}}
 </div>
 {{/if}}
 </body></html>
