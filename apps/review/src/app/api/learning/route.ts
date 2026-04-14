@@ -102,11 +102,17 @@ export async function POST(req: NextRequest) {
   }
   if (action === "erase_rule" && body.rule_id && body.storage_project) {
     const result = await eraseLearningRule(body.storage_project, body.rule_id);
-    return NextResponse.json(result ?? { error: "Failed" });
+    if (!result || (typeof result === "object" && "ok" in result && (result as { ok?: boolean }).ok === false)) {
+      return NextResponse.json({ error: "Failed to erase rule" }, { status: 502 });
+    }
+    return NextResponse.json(result);
   }
   if (action === "erase_rules_all" && body.storage_project) {
     const result = await eraseLearningRulesAll(body.storage_project, body.status);
-    return NextResponse.json(result ?? { error: "Failed" });
+    if (!result || (typeof result === "object" && "ok" in result && (result as { ok?: boolean }).ok === false)) {
+      return NextResponse.json({ error: "Failed to erase rules" }, { status: 502 });
+    }
+    return NextResponse.json(result);
   }
 
   if (action === "llm_review_approved") {

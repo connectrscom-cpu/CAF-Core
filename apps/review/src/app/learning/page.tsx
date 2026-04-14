@@ -485,7 +485,14 @@ export default function LearningPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "erase_rules_all", storage_project: slug, status: status ?? "any" }),
     });
-    if (res.ok) fetchRules();
+    if (res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { erased?: number; status?: string };
+      flashCopy(`Erased ${j.erased ?? "?"} rule(s) (${String(j.status ?? status ?? "any")})`);
+      fetchRules();
+      return;
+    }
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    window.alert(err.error ?? `Erase failed (${res.status})`);
   };
 
   const uploadCsv = async (e: React.FormEvent<HTMLFormElement>) => {
