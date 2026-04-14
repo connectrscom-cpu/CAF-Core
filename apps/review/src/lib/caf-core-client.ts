@@ -74,6 +74,23 @@ async function corePostRequired<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function coreDeleteRequired<T>(path: string): Promise<T> {
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "DELETE", headers: headers(), cache: "no-store" });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Cannot reach CAF Core (${url}): ${msg}`);
+  }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${t.slice(0, 400)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 async function corePatchRequired<T>(path: string, body: unknown): Promise<T> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
   const url = `${base}${path}`;
@@ -681,13 +698,13 @@ export async function retireLearningRule(projectSlug: string, ruleId: string) {
 }
 
 export async function eraseLearningRule(projectSlug: string, ruleId: string) {
-  return coreDelete<{ ok: boolean; erased?: number; rule_id?: string }>(
+  return coreDeleteRequired<{ ok: boolean; erased?: number; rule_id?: string }>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}`
   );
 }
 
 export async function eraseLearningRulesAll(projectSlug: string, status?: string) {
-  return corePost<{ ok: boolean; erased?: number; status?: string }>(
+  return corePostRequired<{ ok: boolean; erased?: number; status?: string }>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/rules/erase-all`,
     status ? { status } : {}
   );
