@@ -110,6 +110,10 @@
       overflow-wrap:anywhere;
       word-break:break-word;
     }
+
+    /* Keep title/body visually grouped on cover + CTA (avoid "body at bottom"). */
+    .frame{ justify-content: flex-start; }
+    .final{ justify-content: flex-start; }
   </style>
 </head>
 <body>
@@ -120,7 +124,7 @@
         <div class="top">
           <div class="avatar"></div>
           <div>
-            <div class="name">{{#if cover_slide.name}}{{cover_slide.name}}{{else}}Template{{/if}}</div>
+            <div class="name">{{#if cover_slide.name}}{{cover_slide.name}}{{else}}{{#if handle}}{{handle}}{{else}}SNS{{/if}}{{/if}}</div>
             <div class="status">{{#if cover_slide.status}}{{cover_slide.status}}{{else}}online{{/if}}</div>
           </div>
         </div>
@@ -128,7 +132,7 @@
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
         {{#if cover_subtitle}}<div class="bubble sent">{{cover_subtitle}}</div>{{else}}{{#if cover_slide.body}}<div class="bubble sent">{{cover_slide.body}}</div>{{/if}}{{/if}}
-        <div class="bubble recv">Swipe for the rest.</div>
+        <!-- Removed fixed "Swipe" bubble; it often pushes copy down and reads as template filler. -->
       </div>
     </div>
   </div>
@@ -141,7 +145,7 @@
         <div class="top">
           <div class="avatar"></div>
           <div>
-            <div class="name">{{#if name}}{{name}}{{else}}Thread{{/if}}</div>
+            <div class="name">{{#if name}}{{name}}{{else}}{{#if handle}}{{handle}}{{else}}SNS{{/if}}{{/if}}</div>
             <div class="status">{{#if status}}{{status}}{{else}}typing...{{/if}}</div>
           </div>
         </div>
