@@ -537,7 +537,7 @@ export function carouselSlideCount(renderBase: Record<string, unknown>): number 
 }
 
 /** Shown on the last carousel slide when the model leaves CTA copy empty. */
-export const DEFAULT_CAROUSEL_CTA_COPY = "Follow · Save · Share — for more content like this.";
+export const DEFAULT_CAROUSEL_CTA_COPY = "Follow for more · Save this · Share with someone who needs it";
 
 export type CarouselRenderCtaOptions = {
   /** Strategy `instagram_handle`: username, @name, or instagram.com/… URL. */
