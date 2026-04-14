@@ -16,6 +16,17 @@ const VERSION = "0.1.2";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
+function envInt(name, fallback) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const FETCH_TIMEOUT_MS = envInt("VIDEO_ASSEMBLY_FETCH_TIMEOUT_MS", 180_000);
+const FFMPEG_TIMEOUT_MS = envInt("VIDEO_ASSEMBLY_FFMPEG_TIMEOUT_MS", 1_200_000);
+const JOB_TIMEOUT_MS = envInt("VIDEO_ASSEMBLY_JOB_TIMEOUT_MS", 1_800_000);
+
 function supabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
   return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
@@ -31,12 +42,22 @@ function runFfmpeg(args, label, spawnOpts = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args, { stdio: "pipe", ...spawnOpts });
     let stderr = "";
+    const startedAt = Date.now();
+    const to = setTimeout(() => {
+      try { proc.kill("SIGKILL"); } catch {}
+      reject(new Error(`${label} timed out after ${FFMPEG_TIMEOUT_MS}ms`));
+    }, FFMPEG_TIMEOUT_MS);
     proc.stderr.on("data", (d) => (stderr += d.toString()));
     proc.on("close", (code) => {
+      clearTimeout(to);
+      const dur = Date.now() - startedAt;
       if (code === 0) resolve(stderr);
-      else reject(new Error(`${label} exited ${code}: ${stderr.slice(-500)}`));
+      else reject(new Error(`${label} exited ${code} after ${dur}ms: ${stderr.slice(-500)}`));
     });
-    proc.on("error", reject);
+    proc.on("error", (e) => {
+      clearTimeout(to);
+      reject(e);
+    });
   });
 }
 
@@ -97,7 +118,7 @@ async function downloadFile(url, dest) {
           for (const objectPath of candidates) {
             const { data, error } = await sb.storage.from(bucket).createSignedUrl(objectPath, 7200);
             if (error || !data?.signedUrl) continue;
-            const sr = await fetch(data.signedUrl);
+            const sr = await fetch(data.signedUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
             if (!sr.ok) continue;
             const buf = Buffer.from(await sr.arrayBuffer());
             fs.writeFileSync(dest, buf);
@@ -109,7 +130,7 @@ async function downloadFile(url, dest) {
       /* fall through to HTTP */
     }
   }
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`Download failed: ${url} (${res.status})`);
   const buf = Buffer.from(await res.arrayBuffer());
   fs.writeFileSync(dest, buf);
@@ -134,6 +155,7 @@ async function stitchImages(imageUrls, outputOptions = {}) {
   const jobDir = path.join(WORK_DIR, randomUUID());
   fs.mkdirSync(jobDir, { recursive: true });
 
+  const startedAt = Date.now();
   const files = [];
   for (let i = 0; i < imageUrls.length; i++) {
     const ext = imageUrls[i].match(/\.(png|jpg|jpeg|webp)/i)?.[1] || "png";
@@ -156,10 +178,12 @@ async function stitchImages(imageUrls, outputOptions = {}) {
     "-movflags", "+faststart", "-y", outPath,
   ], "stitch");
 
+  console.info(`[video-assembly] stitch ok images=${imageUrls.length} duration_ms=${Date.now() - startedAt}`);
   return { localPath: outPath, jobDir };
 }
 
 async function concatVideoFiles(videoUrls, jobDir) {
+  const startedAt = Date.now();
   const files = [];
   for (let i = 0; i < videoUrls.length; i++) {
     const dest = path.join(jobDir, `part_${String(i).padStart(3, "0")}.mp4`);
@@ -198,6 +222,7 @@ async function concatVideoFiles(videoUrls, jobDir) {
     ],
     "concat"
   );
+  console.info(`[video-assembly] concat ok clips=${videoUrls.length} duration_ms=${Date.now() - startedAt}`);
   return outPath;
 }
 
@@ -231,6 +256,7 @@ function buildAtempoFilterChain(product) {
 }
 
 async function muxAudio(videoPath, audioUrl, outputOptions = {}) {
+  const startedAt = Date.now();
   const jobDir = path.dirname(videoPath);
   const audioExt = audioExtFromUrl(audioUrl);
   const audioPath = path.join(jobDir, `audio.${audioExt}`);
@@ -257,6 +283,7 @@ async function muxAudio(videoPath, audioUrl, outputOptions = {}) {
     );
   }
   await runFfmpeg(args, "mux");
+  console.info(`[video-assembly] mux ok burn_subs=false duration_ms=${Date.now() - startedAt}`);
   return outPath;
 }
 
@@ -265,6 +292,7 @@ async function muxAudio(videoPath, audioUrl, outputOptions = {}) {
  * Runs ffmpeg with cwd = jobDir so subtitles=captions.srt resolves safely.
  */
 async function muxAudioBurnSubtitles(videoPath, audioUrl, subtitlesUrl, outputOptions = {}) {
+  const startedAt = Date.now();
   const jobDir = path.dirname(videoPath);
   const audioExt = audioExtFromUrl(audioUrl);
   const audioBasename = `audio.${audioExt}`;
@@ -324,6 +352,7 @@ async function muxAudioBurnSubtitles(videoPath, audioUrl, subtitlesUrl, outputOp
     );
   }
   await runFfmpeg(args, "mux+burn-subs", { cwd: jobDir });
+  console.info(`[video-assembly] mux ok burn_subs=true duration_ms=${Date.now() - startedAt}`);
   return outPath;
 }
 
@@ -337,6 +366,14 @@ app.use(express.json({ limit: "10mb" }));
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "caf-video-assembly", version: VERSION, ffmpeg: ffmpegAvailable() }));
 app.get("/version", (_req, res) => res.json({ version: VERSION }));
+app.get("/ready", (_req, res) =>
+  res.status(ffmpegAvailable() ? 200 : 503).json({
+    ok: ffmpegAvailable(),
+    service: "caf-video-assembly",
+    version: VERSION,
+    ffmpeg: ffmpegAvailable(),
+  })
+);
 
 app.post("/stitch", async (req, res) => {
   try {
@@ -348,8 +385,13 @@ app.post("/stitch", async (req, res) => {
       const requestId = randomUUID();
       asyncJobs.set(requestId, { status: "pending" });
       (async () => {
+        const jobStartedAt = Date.now();
         try {
-          const { localPath, jobDir } = await stitchImages(image_urls, options);
+          const p = stitchImages(image_urls, options);
+          const { localPath, jobDir } = await Promise.race([
+            p,
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
           let publicUrl = null;
           if (SUPABASE_URL) {
             const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
@@ -357,6 +399,7 @@ app.post("/stitch", async (req, res) => {
           }
           asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: localPath });
           setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          console.info(`[video-assembly] async stitch done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
         }
@@ -364,7 +407,10 @@ app.post("/stitch", async (req, res) => {
       return res.status(202).json({ ok: true, request_id: requestId, status: "pending" });
     }
 
-    const { localPath, jobDir } = await stitchImages(image_urls, options);
+    const { localPath, jobDir } = await Promise.race([
+      stitchImages(image_urls, options),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
     let publicUrl = null;
     if (SUPABASE_URL) {
       const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
@@ -387,10 +433,14 @@ app.post("/concat-videos", async (req, res) => {
       const requestId = randomUUID();
       asyncJobs.set(requestId, { status: "pending" });
       (async () => {
+        const jobStartedAt = Date.now();
         try {
           const jobDir = path.join(WORK_DIR, randomUUID());
           fs.mkdirSync(jobDir, { recursive: true });
-          const merged = await concatVideoFiles(video_urls, jobDir);
+          const merged = await Promise.race([
+            concatVideoFiles(video_urls, jobDir),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
           let publicUrl = null;
           if (SUPABASE_URL) {
             const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
@@ -398,6 +448,7 @@ app.post("/concat-videos", async (req, res) => {
           }
           asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: merged });
           setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          console.info(`[video-assembly] async concat done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
         }
@@ -407,7 +458,10 @@ app.post("/concat-videos", async (req, res) => {
 
     const jobDir = path.join(WORK_DIR, randomUUID());
     fs.mkdirSync(jobDir, { recursive: true });
-    const merged = await concatVideoFiles(video_urls, jobDir);
+    const merged = await Promise.race([
+      concatVideoFiles(video_urls, jobDir),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
     let publicUrl = null;
     if (SUPABASE_URL) {
       const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
@@ -430,14 +484,21 @@ app.post("/mux", async (req, res) => {
       const requestId = randomUUID();
       asyncJobs.set(requestId, { status: "pending" });
       (async () => {
+        const jobStartedAt = Date.now();
         try {
           const jobDir = path.join(WORK_DIR, randomUUID());
           fs.mkdirSync(jobDir, { recursive: true });
           const vidPath = path.join(jobDir, "video.mp4");
-          await downloadFile(video_url, vidPath);
-          const muxed = subtitles_url?.trim()
-            ? await muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
-            : await muxAudio(vidPath, audio_url, options);
+          await Promise.race([
+            downloadFile(video_url, vidPath),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          const muxed = await Promise.race([
+            subtitles_url?.trim()
+              ? muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
+              : muxAudio(vidPath, audio_url, options),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
           let publicUrl = null;
           if (SUPABASE_URL) {
             const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
@@ -445,6 +506,7 @@ app.post("/mux", async (req, res) => {
           }
           asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: muxed });
           setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          console.info(`[video-assembly] async mux done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
         }
@@ -455,10 +517,16 @@ app.post("/mux", async (req, res) => {
     const jobDir = path.join(WORK_DIR, randomUUID());
     fs.mkdirSync(jobDir, { recursive: true });
     const vidPath = path.join(jobDir, "video.mp4");
-    await downloadFile(video_url, vidPath);
-    const muxed = subtitles_url?.trim()
-      ? await muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
-      : await muxAudio(vidPath, audio_url, options);
+    await Promise.race([
+      downloadFile(video_url, vidPath),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
+    const muxed = await Promise.race([
+      subtitles_url?.trim()
+        ? muxAudioBurnSubtitles(vidPath, audio_url, subtitles_url.trim(), options)
+        : muxAudio(vidPath, audio_url, options),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
     let publicUrl = null;
     if (SUPABASE_URL) {
       const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
@@ -476,11 +544,18 @@ app.post("/full-pipeline", async (req, res) => {
     const { image_urls, audio_url, task_id, run_id, stitch_options, mux_options } = req.body;
     if (!image_urls?.length) return res.status(400).json({ ok: false, error: "image_urls required" });
 
-    const { localPath: slideshowPath, jobDir } = await stitchImages(image_urls, stitch_options);
+    const jobStartedAt = Date.now();
+    const { localPath: slideshowPath, jobDir } = await Promise.race([
+      stitchImages(image_urls, stitch_options),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
 
     let finalPath = slideshowPath;
     if (audio_url) {
-      finalPath = await muxAudio(slideshowPath, audio_url, mux_options);
+      finalPath = await Promise.race([
+        muxAudio(slideshowPath, audio_url, mux_options),
+        new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+      ]);
     }
 
     let publicUrl = null;
@@ -489,6 +564,7 @@ app.post("/full-pipeline", async (req, res) => {
       publicUrl = await uploadToSupabase(finalPath, remotePath);
       cleanupJob(jobDir);
     }
+    console.info(`[video-assembly] full-pipeline ok images=${image_urls.length} has_audio=${Boolean(audio_url)} duration_ms=${Date.now() - jobStartedAt}`);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : finalPath });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
