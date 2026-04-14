@@ -224,7 +224,10 @@ function buildNotesOnlyGuidelinesPrompt(input: {
     created_at: string;
   }>;
 }): string {
+  const allowedDecisions = new Set(["APPROVED", "NEEDS_EDIT", "REJECTED"]);
   const rows = (input.notes ?? [])
+    // Only include the rows that were analyzed (human decisions). Excludes history/audit rows.
+    .filter((r) => (r.decision ? allowedDecisions.has(String(r.decision).trim().toUpperCase()) : false))
     .filter((r) => (r.notes ?? "").trim().length > 0)
     .slice(0, 80)
     .map((r) => {

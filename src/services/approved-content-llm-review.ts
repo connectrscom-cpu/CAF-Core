@@ -271,6 +271,7 @@ export interface LlmApprovalReviewJobResult {
   risk_flags?: string[];
   summary?: string | null;
   images_used?: number;
+  images_available?: number;
   skipped?: boolean;
   reason?: string;
 }
