@@ -42,11 +42,11 @@ primary_region = "ams"
     timeout = "20s"
 
   [http_service.concurrency]
-    hard_limit = 30
-    soft_limit = 10
+    hard_limit = 12
+    soft_limit = 6
     type = "requests"
 
 [[vm]]
-  memory = "2gb"
+  memory = "4gb"
   cpu_kind = "shared"
-  cpus = 2
+  cpus = 4
