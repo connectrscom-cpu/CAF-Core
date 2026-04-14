@@ -129,7 +129,18 @@ async function listImageUrlsForTask(
   projectId: string,
   taskId: string,
   maxImages: number
-): Promise<string[]> {
+): Promise<{ urls: string[]; total_available: number }> {
+  const totalRow = await q<{ c: string }>(
+    db,
+    `SELECT COUNT(*)::text AS c
+     FROM caf_core.assets
+     WHERE project_id = $1 AND task_id = $2
+       AND public_url IS NOT NULL
+       AND public_url ~ '^https?://'`,
+    [projectId, taskId]
+  );
+  const totalAvailable = totalRow?.[0]?.c ? parseInt(totalRow[0].c, 10) : 0;
+
   const rows = await q<{
     public_url: string;
     asset_type: string | null;
@@ -164,7 +175,7 @@ async function listImageUrlsForTask(
     urls.push(url);
     if (urls.length >= maxImages) break;
   }
-  return urls;
+  return { urls, total_available: totalAvailable };
 }
 
 interface ApprovedJobRow {
@@ -306,8 +317,9 @@ export async function runLlmApprovalReviewsForProject(
 
     const reviewId = `llm_appr_${randomUUID().replace(/-/g, "").slice(0, 22)}`;
     const textBundle = buildApprovedContentTextBundle(job.generation_payload, maxText);
-    const rawImageUrls = await listImageUrlsForTask(db, config, projectId, job.task_id, maxImages);
-    const imageUrls = await filterReachableImageUrls(rawImageUrls, maxImages);
+    const img = await listImageUrlsForTask(db, config, projectId, job.task_id, maxImages);
+    const imageUrls = await filterReachableImageUrls(img.urls, maxImages);
+    const imagesAvailable = img.total_available;
 
     const userParts: ChatContentPart[] = [
       {
@@ -317,7 +329,8 @@ export async function runLlmApprovalReviewsForProject(
           `project: ${projectSlug}`,
           `flow_type: ${job.flow_type ?? "unknown"}`,
           `platform: ${job.platform ?? "unknown"}`,
-          `attached_images: ${imageUrls.length}`,
+          `images_available: ${imagesAvailable}`,
+          `images_sent: ${imageUrls.length} (cap=${maxImages})`,
           "",
           "--- Approved content bundle ---",
           textBundle,
@@ -459,6 +472,7 @@ export async function runLlmApprovalReviewsForProject(
           risk_flags: riskFlags,
           summary,
           model: llm.model,
+          images_available: imagesAvailable,
           images_used: imageUrls.length,
           minted_pending_rule: minted,
         },
@@ -480,6 +494,7 @@ export async function runLlmApprovalReviewsForProject(
         risk_flags: riskFlags,
         summary,
         images_used: imageUrls.length,
+        images_available: imagesAvailable,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
