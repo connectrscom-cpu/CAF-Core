@@ -30,6 +30,13 @@ primary_region = "ams"
   [http_service.http_options]
     idle_timeout = 1800
 
+  [[http_service.checks]]
+    grace_period = "30s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "5s"
+
 [[vm]]
   memory = "512mb"
   cpu_kind = "shared"

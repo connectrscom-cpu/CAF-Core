@@ -34,7 +34,7 @@ primary_region = "ams"
     grace_period = "1m30s"
     interval = "15s"
     method = "GET"
-    path = "/health"
+    path = "/ready"
     timeout = "20s"
 
   [http_service.concurrency]

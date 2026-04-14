@@ -45,6 +45,33 @@ app.get("/health", (_req, res) =>
   })
 );
 
+async function tryGet(url, timeoutMs) {
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Readiness: confirms the renderer can launch Chromium and video-assembly sees ffmpeg.
+ * This is a better Fly check than /health (liveness only).
+ */
+app.get("/ready", async (_req, res) => {
+  const timeoutMs = parseInt(process.env.MEDIA_GATEWAY_READY_TIMEOUT_MS || "8000", 10);
+  const rendererOk = await tryGet(`http://127.0.0.1:${RENDERER_PORT}/ready`, timeoutMs);
+  const videoOk = await tryGet(`http://127.0.0.1:${VIDEO_PORT}/ready`, timeoutMs);
+  const ok = Boolean(rendererOk && videoOk);
+  res.status(ok ? 200 : 503).json({
+    ok,
+    service: "caf-media-gateway",
+    version: VERSION,
+    renderer_ready: rendererOk,
+    video_assembly_ready: videoOk,
+  });
+});
+
 app.use(
   "/render",
   createProxyMiddleware({

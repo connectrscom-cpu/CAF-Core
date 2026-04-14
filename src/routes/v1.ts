@@ -155,6 +155,26 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     engine_version: config.DECISION_ENGINE_VERSION,
   }));
 
+  /**
+   * Readiness: verifies DB connectivity (Fly should use this, not /health).
+   * Keep this fast and side-effect free; do not deep-probe external deps here.
+   */
+  app.get("/readyz", async (_req, reply) => {
+    try {
+      await db.query("SELECT 1");
+      return { ok: true, service: "caf-core", engine_version: config.DECISION_ENGINE_VERSION, db: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(503).send({
+        ok: false,
+        service: "caf-core",
+        engine_version: config.DECISION_ENGINE_VERSION,
+        db: false,
+        error: msg.slice(0, 4000),
+      });
+    }
+  });
+
   /** Shows RENDERER_BASE_URL / VIDEO_ASSEMBLY_BASE_URL for this process and probes each upstream GET /health. */
   app.get("/health/rendering", async () => {
     const rendering = await probeRenderingDeps(config);
