@@ -458,6 +458,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         validator: r.validator,
         submitted_at: r.submitted_at,
         carousel_template_name: base || null,
+        carousel_template_path_hint: base ? `services/renderer/templates/${base}.hbs` : null,
       };
     });
 

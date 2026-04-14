@@ -414,6 +414,10 @@ export async function analyzeEditorialPatterns(
         platform: r.platform,
         rejection_tags: r.rejection_tags,
         carousel_template_name: templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim() || null,
+        carousel_template_path_hint: (() => {
+          const base = templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim();
+          return base ? `services/renderer/templates/${base}.hbs` : null;
+        })(),
         note: (r.notes ?? "").trim(),
         created_at: r.created_at,
       })),

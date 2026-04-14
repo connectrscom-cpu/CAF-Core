@@ -218,6 +218,7 @@ function buildNotesOnlyGuidelinesPrompt(input: {
     flow_type: string | null;
     platform: string | null;
     carousel_template_name: string | null;
+    carousel_template_path_hint?: string | null;
     rejection_tags: unknown[];
     notes: string | null;
     created_at: string;
@@ -264,6 +265,12 @@ function buildNotesOnlyGuidelinesPrompt(input: {
     "- concrete changes",
     "- acceptance criteria",
     "- evidence: 3-6 `task_id` examples",
+    "",
+    "## Where issues usually live (mapping)",
+    "- If `carousel_template_name=carousel_xxx`: check `services/renderer/templates/carousel_xxx.hbs`",
+    "- Template selection / fallback logic: `src/services/carousel-render-pack.ts`",
+    "- Editorial learning loop: `src/services/editorial-learning.ts` and `src/services/editorial-notes-llm-synthesis.ts`",
+    "- Review UI: `apps/review/src/app/learning/page.tsx` and related components",
     "",
     "## Constraints",
     "- Do not rename `task_id` / text-ID schemes; preserve CAF join patterns.",
@@ -970,6 +977,7 @@ export default function LearningPage() {
                           flow_type: (n.flow_type ?? null) as string | null,
                           platform: (n.platform ?? null) as string | null,
                           carousel_template_name: (n.carousel_template_name ?? null) as string | null,
+                          carousel_template_path_hint: (n.carousel_template_path_hint ?? null) as string | null,
                           rejection_tags: n.rejection_tags ?? [],
                           notes: (n.notes ?? null) as string | null,
                           created_at: String(n.created_at ?? ""),
