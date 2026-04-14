@@ -237,6 +237,22 @@ describe("carousel template shape (body_slides)", () => {
     expect((ctx.cta_slide as { handle?: string }).handle).toBe("B3");
   });
 
+  it("appends a CTA slide when deck is 2 slides and last slide doesn't look like CTA", () => {
+    const gen = {
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "Body", body: "More detail" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 1, { instagramHandle: "@sns" });
+    const slides = ctx.slides as Array<{ body?: string; handle?: string }>;
+    expect(slides).toHaveLength(3);
+    const last = slides[slides.length - 1]!;
+    expect(String(last.body)).toContain("Follow");
+    expect(String(last.handle)).toContain("@");
+  });
+
   it("derives cover headline from body when first slide has no title (templates use cover_slide.headline)", () => {
     const gen = {
       slides: [

@@ -477,6 +477,36 @@ export function slidesFromGeneratedOutput(gen: Record<string, unknown>): Record<
   return pickBestSlideDeck(candidates);
 }
 
+function looksLikeCarouselCtaSlideText(s: string): boolean {
+  const t = String(s ?? "").trim().toLowerCase();
+  if (!t) return false;
+  if (/@[a-z0-9_.]{2,}/i.test(t)) return true;
+  if (/(follow|save|share|comment|dm|subscribe|link in bio|tap|swipe)\b/i.test(t)) return true;
+  return false;
+}
+
+function ensureCarouselHasCtaSlide(
+  slides: Record<string, unknown>[],
+  ctaOptions?: CarouselRenderCtaOptions
+): Record<string, unknown>[] {
+  if (slides.length < 2) return slides;
+  if (slides.length > 2) return slides; // conservative: don't mutate multi-slide decks
+
+  const last = slides[slides.length - 1] ?? {};
+  const tl = textFromSlide(last as Record<string, unknown>);
+  const lastText = `${tl.headline}\n${tl.body}`.trim();
+  if (looksLikeCarouselCtaSlideText(lastText)) return slides;
+
+  const handle = formatInstagramHandleForCta(ctaOptions?.instagramHandle ?? null);
+  const ctaSlide = normalizeItemSlide({
+    slide_role: "cta",
+    headline: "",
+    body: DEFAULT_CAROUSEL_CTA_COPY,
+    ...(handle ? { handle } : {}),
+  });
+  return [...slides, ctaSlide];
+}
+
 /**
  * Carousel .hbs templates render a fixed DOM: one cover `.slide`, `{{#each body_slides}}`, one CTA `.slide`.
  * LLM output is usually a flat `slides[]` with no `body_slides` — without mapping, only cover+CTA exist (2 slides)
@@ -664,16 +694,17 @@ export function buildSlideRenderContext(
   slideIndex1Based: number,
   ctaOptions?: CarouselRenderCtaOptions
 ): Record<string, unknown> {
-  const totalDomSlides = carouselSlideCount({ ...base, slides: allSlides });
+  const slides = ensureCarouselHasCtaSlide(allSlides, ctaOptions);
+  const totalDomSlides = carouselSlideCount({ ...base, slides });
   const idx =
-    allSlides.length === 1 && slideIndex1Based === totalDomSlides && totalDomSlides > 1
+    slides.length === 1 && slideIndex1Based === totalDomSlides && totalDomSlides > 1
       ? -1
-      : Math.max(0, Math.min(allSlides.length - 1, slideIndex1Based - 1));
-  const current = idx >= 0 ? (allSlides[idx] ?? {}) : {};
+      : Math.max(0, Math.min(slides.length - 1, slideIndex1Based - 1));
+  const current = idx >= 0 ? (slides[idx] ?? {}) : {};
   const { headline, body } = textFromSlide(current);
   const templateShape =
-    shouldMaterializeCarouselTemplateShape(base) && allSlides.length > 0 ? splitFlatSlidesToTemplateShape(allSlides) : {};
-  const cta = resolveCarouselCtaFields(base, templateShape, allSlides, ctaOptions);
+    shouldMaterializeCarouselTemplateShape(base) && slides.length > 0 ? splitFlatSlidesToTemplateShape(slides) : {};
+  const cta = resolveCarouselCtaFields(base, templateShape, slides, ctaOptions);
 
   const out: Record<string, unknown> = {
     ...base,
@@ -681,7 +712,7 @@ export function buildSlideRenderContext(
     cta_text: cta.cta_text,
     ...(cta.cta_handle ? { cta_handle: cta.cta_handle } : {}),
     cta_slide: cta.cta_slide,
-    slides: allSlides,
+    slides,
     slide_index: slideIndex1Based,
     current_slide: current,
     headline,
