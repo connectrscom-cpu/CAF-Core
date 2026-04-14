@@ -42,6 +42,45 @@ function bulletsToBody(o: Record<string, unknown>): string {
   return lines.map((s) => `• ${s}`).join("\n");
 }
 
+function stripStandaloneEmojiLines(s: string): string {
+  const raw = String(s ?? "");
+  if (!raw.trim()) return "";
+  const lines = raw.split(/\r?\n/);
+  // Emoji-only lines create "emoji paragraphs" which frequently fail editorial review.
+  // Merge them into the nearest preceding text line when possible, otherwise drop.
+  // Avoid Unicode property escapes here; some runtimes/tooling have incomplete support.
+  const EMOJI_ANY_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
+  const EMOJI_ONLY_RE = /^[\s\u200D\uFE0F\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]+$/u;
+
+  const out: string[] = [];
+  for (const line of lines) {
+    const t = line.trim();
+    if (!t) {
+      // preserve blank lines only when we already have content and the previous line wasn't blank
+      if (out.length > 0 && out[out.length - 1]?.trim() !== "") out.push("");
+      continue;
+    }
+    if (EMOJI_ANY_RE.test(t) && EMOJI_ONLY_RE.test(t)) {
+      // Merge into the nearest preceding non-empty line (skip blank paragraphs).
+      let j = out.length - 1;
+      while (j >= 0 && (out[j] ?? "").trim() === "") j--;
+      if (j < 0) continue;
+      const prev = (out[j] ?? "").trimEnd();
+      out[j] = `${prev} ${t}`.trim();
+      // Drop trailing blank lines after the merge point (they were just spacing before the emoji).
+      out.splice(j + 1);
+      continue;
+    }
+    out.push(line.trimEnd());
+  }
+
+  // Trim leading/trailing blank lines introduced by preservation.
+  while (out.length > 0 && (out[0] ?? "").trim() === "") out.shift();
+  while (out.length > 0 && (out[out.length - 1] ?? "").trim() === "") out.pop();
+
+  return out.join("\n").trim();
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
   const headline = HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
   let body = BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
@@ -49,7 +88,10 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     const fromBullets = bulletsToBody(o);
     if (fromBullets) body = fromBullets;
   }
-  return { headline: String(headline ?? "").trim(), body: String(body ?? "").trim() };
+  return {
+    headline: stripStandaloneEmojiLines(String(headline ?? "").trim()),
+    body: stripStandaloneEmojiLines(String(body ?? "").trim()),
+  };
 }
 
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
@@ -195,7 +237,7 @@ function usableSlideArray(arr: unknown): Record<string, unknown>[] | null {
       !Array.isArray(s) &&
       slideHasRenderableContent(s as Record<string, unknown>)
   ) as Record<string, unknown>[];
-  return out.length > 0 ? out : null;
+  return out.length > 0 ? out.map((s) => normalizeItemSlide(s)) : null;
 }
 
 function legacyCoverBodyCtaSlides(gen: Record<string, unknown>): Record<string, unknown>[] {

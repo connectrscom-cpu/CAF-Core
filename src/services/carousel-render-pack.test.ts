@@ -124,6 +124,18 @@ describe("slidesFromGeneratedOutput", () => {
     expect(slideHasRenderableContent({ headline: "x", body: "" })).toBe(true);
   });
 
+  it("merges emoji-only paragraph lines into adjacent text", () => {
+    const gen = {
+      slides: [
+        { headline: "Title\n🔥", body: "Line one\n\n🔥\nLine two" },
+        { headline: "Next", body: "All good" },
+      ],
+    };
+    const slides = slidesFromGeneratedOutput(gen) as Array<{ headline?: string; body?: string }>;
+    expect(slides[0]?.headline).toBe("Title 🔥");
+    expect(slides[0]?.body).toBe("Line one 🔥\nLine two");
+  });
+
   it("reads Flow_Carousel_Copy shape variation.slides when top-level slides are empty placeholders", () => {
     const gen = {
       slides: [{ body: "", headline: "", slide_role: "cover" }],
