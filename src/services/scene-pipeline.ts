@@ -308,7 +308,8 @@ export async function pollVideoAssemblyJob(
   let delay = 2000;
   const statusUrl = `${baseUrl.replace(/\/$/, "")}/status/${requestId}`;
   while (Date.now() - start < maxMs) {
-    const r = await fetch(statusUrl);
+    const pollTimeoutMs = Math.min(30_000, Math.max(5000, Math.floor(delay * 1.2)));
+    const r = await fetch(statusUrl, { signal: AbortSignal.timeout(pollTimeoutMs) });
     const raw = await r.text();
     const j = parseVideoAssemblyJson(raw, r.status, "video-assembly status", statusUrl) as {
       status?: string;

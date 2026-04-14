@@ -1120,7 +1120,8 @@ async function processVideoJob(
 ) {
   const priorStatus = job.status;
   await updateJobStatus(db, job.id, "RENDERING");
-  await updateJobRenderState(db, job.id, { provider: "video", status: "pending" });
+  // Shallow-merge so retries/reprocess keep provider-specific resume keys (e.g. HeyGen video_id).
+  await mergeJobRenderState(db, job.id, { provider: "video", status: "pending" });
 
   if (run && priorStatus !== "RENDERING") {
     await insertJobStateTransition(db, {
@@ -1147,11 +1148,14 @@ async function processVideoJob(
 
   let videoProvider: string = "pending";
   try {
+    const startedAt = Date.now();
     if (isScene) {
       videoProvider = "scene-pipeline";
       await runScenePipeline(db, config, pipeConfig.videoAssemblyBaseUrl, job);
       await updateJobRenderState(db, job.id, { provider: "scene-pipeline", status: "completed" });
     } else if (config.HEYGEN_API_KEY?.trim()) {
+      // Preserve any previously persisted HeyGen video_id so reprocess can resume by polling.
+      await mergeJobRenderState(db, job.id, { provider: "heygen", status: "pending", phase: "starting" });
       await ensureHeygenPayloadForFlowType(db, config, job.flow_type, job.id);
 
       const fresh = await qOne<JobRow>(
@@ -1170,7 +1174,7 @@ async function processVideoJob(
         platform: fresh.platform,
         generation_payload: fresh.generation_payload,
       });
-      await updateJobRenderState(db, job.id, { provider: "heygen", status: "completed" });
+      await mergeJobRenderState(db, job.id, { provider: "heygen", status: "completed" });
     } else {
       if (wantsHeygen) {
         throw new Error(
@@ -1185,10 +1189,13 @@ async function processVideoJob(
         run_id: job.run_id,
         ...extractRenderPayload(job.generation_payload),
       };
+      // Bound the sync full-pipeline call; async concat/mux polling uses separate endpoints/timeouts.
+      const vaTimeoutMs = Math.max(60_000, Math.min(3_600_000, config.VIDEO_ASSEMBLY_MUX_POLL_MAX_MS));
       const response = await fetch(vaUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(vaBody),
+        signal: AbortSignal.timeout(vaTimeoutMs),
       });
 
       if (!response.ok) {
@@ -1206,10 +1213,17 @@ async function processVideoJob(
         provider: "video_assembly",
         model: null,
         ok: true,
-        requestJson: { endpoint: vaUrl, body: vaBody },
+        requestJson: { endpoint: vaUrl, body: vaBody, timeout_ms: vaTimeoutMs },
         responseJson: result,
       });
       await updateJobRenderState(db, job.id, { provider: "video-assembly", status: "completed", result });
+    }
+
+    const durMs = Date.now() - startedAt;
+    if (durMs >= 20_000) {
+      console.info(
+        `[job-pipeline] video render completed task_id=${job.task_id} provider=${videoProvider} duration_ms=${durMs}`
+      );
     }
 
     const freshJob = (await reloadJobRow(db, job.id)) ?? job;
