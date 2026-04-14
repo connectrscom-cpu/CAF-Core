@@ -936,6 +936,23 @@ async function processCarouselJob(
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectInstagramHandle = strategyRow?.instagram_handle ?? null;
 
+  // Persist chosen carousel template onto the job payload so downstream systems (review UI, editorial learning,
+  // engineering prompts) can reliably resolve `carousel_template_name` by task_id. Without this, the resolver
+  // falls back to "default" even when render used a different template.
+  await db.query(
+    `UPDATE caf_core.content_jobs SET
+      generation_payload = jsonb_set(
+        jsonb_set(
+          jsonb_set(COALESCE(generation_payload, '{}'::jsonb), '{template}', to_jsonb($1::text), true),
+          '{render,html_template_name}', to_jsonb(($1::text || '.hbs')::text), true
+        ),
+        '{render,template_key}', to_jsonb($1::text), true
+      ),
+      updated_at = now()
+     WHERE id = $2`,
+    [template, job.id]
+  );
+
   await updateJobRenderState(db, job.id, {
     provider: "carousel-renderer",
     status: "pending",
