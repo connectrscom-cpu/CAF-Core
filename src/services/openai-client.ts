@@ -6,6 +6,13 @@ import { openAiMaxTokens } from "./openai-coerce.js";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
+function envInt(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export async function openaiChatCompletion(params: {
   apiKey: string;
   model: string;
@@ -24,6 +31,7 @@ export async function openaiChatCompletion(params: {
   };
   if (params.jsonObject) body.response_format = { type: "json_object" };
 
+  const timeoutMs = envInt("OPENAI_CHAT_TIMEOUT_MS", 180_000);
   const res = await fetch(OPENAI_CHAT_URL, {
     method: "POST",
     headers: {
@@ -31,6 +39,7 @@ export async function openaiChatCompletion(params: {
       Authorization: `Bearer ${params.apiKey}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok) {
