@@ -21,7 +21,7 @@ import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "./
 
 export { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 
-const SYSTEM_PROMPT = `You are a STRICT, judgmental content QA reviewer auditing material that a human reviewer already APPROVED for publication.
+export const APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT = `You are a STRICT, judgmental content QA reviewer auditing material that a human reviewer already APPROVED for publication.
 Your job is to find what is weak, generic, risky, or sloppy so the system can learn to avoid those patterns.
 
 Tone:
@@ -337,7 +337,7 @@ export async function runLlmApprovalReviewsForProject(
           apiKey,
           {
             model,
-            system_prompt: SYSTEM_PROMPT,
+            system_prompt: APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT,
             user_content: content,
             max_tokens: 2500,
             response_format: "json_object",

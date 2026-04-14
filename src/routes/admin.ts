@@ -68,6 +68,8 @@ import {
 } from "../services/video-content-policy.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "../services/publish-metadata-enrich.js";
 import { HEYGEN_VIDEO_AGENT_RUBRIC_LINES } from "../services/heygen-renderer.js";
+import { APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT } from "../services/approved-content-llm-review.js";
+import { EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT } from "../services/editorial-notes-llm-synthesis.js";
 import {
   PROMPT_LABS_CORE_LAYER_META,
   PROMPT_LABS_ENV_HINTS,
@@ -257,6 +259,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     { href: "/admin/global-learning", label: "Global Learning", key: "global-learning" },
     { href: "/admin/engine", label: "Decision Engine", key: "engine" },
     { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
+    { href: "/admin/learning-prompts", label: "Learning Prompts", key: "learning-prompts" },
     { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
   ];
 
@@ -1868,6 +1871,33 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
 </div>`;
 
     return reply.type("text/html").send(page("Global Learning", "global-learning", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  // --- Learning prompts (global) ---
+  app.get("/admin/learning-prompts", async (_request, reply) => {
+    const projects = await listProjects(db);
+    const body = `
+<div class="ph"><div><h2>Learning prompts</h2><span class="ph-sub">The exact prompt strings used by learning analyzers and LLM review</span></div></div>
+<div class="content">
+  <div class="card">
+    <div class="card-h">LLM review (approved content) — system prompt</div>
+    <p style="color:var(--fg2);margin-bottom:10px">Used by <span class="mono">/v1/learning/:slug/llm-review-approved</span> (OpenAI vision+text when images are available).</p>
+    <pre class="json" style="white-space:pre-wrap;word-break:break-word;max-height:none">${esc(APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT)}</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-h">Editorial notes synthesis (optional OpenAI) — system prompt</div>
+    <p style="color:var(--fg2);margin-bottom:10px">Used by Editorial analysis when <span class="mono">llm_notes_synthesis</span> is enabled and there are non-empty reviewer notes.</p>
+    <pre class="json" style="white-space:pre-wrap;word-break:break-word;max-height:none">${esc(EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT)}</pre>
+  </div>
+
+  <div class="card">
+    <div class="card-h">Editorial engineering brief (deterministic markdown builder)</div>
+    <p style="color:var(--fg2);margin-bottom:10px">This is not an LLM prompt; it’s a deterministic markdown export used for engineering remediation.</p>
+    <p class="mono" style="color:var(--muted);margin-bottom:0">Source: <span class="mono">src/services/editorial-engineering-prompt.ts</span></p>
+  </div>
+</div>`;
+    reply.type("text/html").send(page("Learning prompts", "learning-prompts", body, projects, "", adminHeadTokenScript(config)));
   });
 
   // --- Overview ---

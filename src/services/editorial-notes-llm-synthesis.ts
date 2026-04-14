@@ -80,7 +80,7 @@ function safeParseSynthesisJson(raw: string): Partial<EditorialNotesLlmSynthesis
   }
 }
 
-const SYSTEM_PROMPT = `You are an analyst for CAF (Content Automation Framework), a system that generates content jobs, renders carousels/videos, and records human editorial reviews.
+export const EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT = `You are an analyst for CAF (Content Automation Framework), a system that generates content jobs, renders carousels/videos, and records human editorial reviews.
 
 You receive:
 - Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights).
@@ -159,7 +159,7 @@ export async function synthesizeEditorialNotesWithLlm(
       apiKey,
       {
         model: config.OPENAI_MODEL,
-        system_prompt: SYSTEM_PROMPT,
+        system_prompt: EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT,
         user_prompt: userPrompt,
         max_tokens: openAiMaxTokens(4096),
         response_format: "json_object",
