@@ -978,7 +978,7 @@ export default function LearningPage() {
                           platform: (n.platform ?? null) as string | null,
                           carousel_template_name: (n.carousel_template_name ?? null) as string | null,
                           carousel_template_path_hint: (n.carousel_template_path_hint ?? null) as string | null,
-                          rejection_tags: n.rejection_tags ?? [],
+                          rejection_tags: Array.isArray(n.rejection_tags) ? n.rejection_tags : [],
                           notes: (n.notes ?? null) as string | null,
                           created_at: String(n.created_at ?? ""),
                         })),

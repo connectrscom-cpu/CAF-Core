@@ -693,6 +693,38 @@ export async function eraseLearningRulesAll(projectSlug: string, status?: string
   );
 }
 
+export type EditorialNoteRow = {
+  task_id: string;
+  decision: string | null;
+  rejection_tags: unknown[];
+  notes: string | null;
+  created_at: string;
+  flow_type: string | null;
+  platform: string | null;
+  validator: string | null;
+  submitted_at: string | null;
+  carousel_template_name: string | null;
+  carousel_template_path_hint: string | null;
+};
+
+export async function getEditorialNotes(
+  projectSlug: string,
+  opts?: { window_days?: number; limit?: number; include_empty?: boolean }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.window_days != null) qs.set("window_days", String(opts.window_days));
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.include_empty) qs.set("include_empty", "1");
+  const q = qs.toString();
+  return coreGet<{
+    ok: boolean;
+    project_slug: string;
+    window_days: number;
+    limit: number;
+    notes: EditorialNoteRow[];
+  }>(`/v1/learning/${encodeURIComponent(projectSlug)}/editorial-notes${q ? `?${q}` : ""}`);
+}
+
 export async function getLearningContextPreview(projectSlug: string, flowType?: string, platform?: string) {
   const qs = new URLSearchParams();
   if (flowType) qs.set("flow_type", flowType);
