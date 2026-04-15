@@ -8,7 +8,7 @@ import {
   getHeygenConfig, saveHeygenConfig,
   getSystemConstraints, saveSystemConstraints,
 } from "@/lib/caf-core-client";
-import { PROJECT_SLUG } from "@/lib/env";
+import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -34,11 +34,22 @@ const savers: Record<string, (slug: string, data: Record<string, unknown>) => Pr
   "heygen-config": saveHeygenConfig,
 };
 
-export async function GET(_req: NextRequest, ctx: Ctx) {
+function resolveProjectSlug(req: NextRequest, bodyProject?: string): string {
+  const fromBody = typeof bodyProject === "string" ? bodyProject.trim() : "";
+  if (fromBody) return fromBody;
+  const q = req.nextUrl.searchParams.get("project")?.trim() ?? "";
+  if (q) return q;
+  if (!reviewUsesAllProjects()) return PROJECT_SLUG;
+  return reviewQueueFallbackSlug();
+}
+
+export async function GET(req: NextRequest, ctx: Ctx) {
   const { section } = await ctx.params;
   const getter = getters[section];
   if (!getter) return NextResponse.json({ error: "Unknown section" }, { status: 400 });
-  const data = await getter(PROJECT_SLUG);
+  const slug = resolveProjectSlug(req);
+  if (!slug) return NextResponse.json({ error: "Set PROJECT_SLUG or pass ?project=" }, { status: 400 });
+  const data = await getter(slug);
   if (!data) return NextResponse.json({ error: "Failed to fetch" }, { status: 502 });
   return NextResponse.json(data);
 }
@@ -48,7 +59,9 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   const saver = savers[section];
   if (!saver) return NextResponse.json({ error: "Unknown section" }, { status: 400 });
   const body = await req.json();
-  const data = await saver(PROJECT_SLUG, body);
+  const slug = resolveProjectSlug(req, typeof body.project_slug === "string" ? body.project_slug : undefined);
+  if (!slug) return NextResponse.json({ error: "Set PROJECT_SLUG or pass ?project=" }, { status: 400 });
+  const data = await saver(slug, body);
   if (!data) return NextResponse.json({ error: "Failed to save" }, { status: 502 });
   return NextResponse.json(data);
 }
@@ -58,7 +71,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const saver = savers[section];
   if (!saver) return NextResponse.json({ error: "Unknown section" }, { status: 400 });
   const body = await req.json();
-  const data = await saver(PROJECT_SLUG, body);
+  const slug = resolveProjectSlug(req, typeof body.project_slug === "string" ? body.project_slug : undefined);
+  if (!slug) return NextResponse.json({ error: "Set PROJECT_SLUG or pass ?project=" }, { status: 400 });
+  const data = await saver(slug, body);
   if (!data) return NextResponse.json({ error: "Failed to save" }, { status: 502 });
   return NextResponse.json(data);
 }

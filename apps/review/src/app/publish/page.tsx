@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { zipSync } from "fflate";
 import { TaskTable } from "@/components/TaskTable";
+import { TaskViewer } from "@/components/TaskViewer";
 import type { ReviewQueueRow } from "@/lib/types";
 import type { ReviewJobDetail, PublicationPlacement } from "@/lib/caf-core-client";
 import { inferPublishContentFormat } from "@/lib/flow-kind";
@@ -30,12 +32,41 @@ function localDatetimeValue(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function safeFilename(s: string): string {
+  return (s || "file").replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 160);
+}
+
+function filenameFromUrl(url: string, index: number): string {
+  try {
+    const u = new URL(url);
+    const base = u.pathname.split("/").pop() || "";
+    const clean = safeFilename(base.split("?")[0].split("#")[0]);
+    if (clean && /\.[a-z0-9]{2,5}$/i.test(clean)) return clean;
+  } catch {
+    /* ignore */
+  }
+  return `image_${String(index + 1).padStart(2, "0")}.jpg`;
+}
+
+async function downloadBlobAsFile(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 export default function PublishPage() {
   const [approved, setApproved] = useState<ApprovedResponse | null>(null);
   const [loadingApproved, setLoadingApproved] = useState(true);
   const [selected, setSelected] = useState<ReviewQueueRow | null>(null);
   const [job, setJob] = useState<ReviewJobDetail | null>(null);
   const [loadingJob, setLoadingJob] = useState(false);
+  const [contentRow, setContentRow] = useState<ReviewQueueRow | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
   const [placements, setPlacements] = useState<PublicationPlacement[]>([]);
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
@@ -52,6 +83,9 @@ export default function PublishPage() {
   const [n8nPreview, setN8nPreview] = useState<string | null>(null);
   const [duePlacements, setDuePlacements] = useState<PublicationPlacement[]>([]);
   const [loadingDue, setLoadingDue] = useState(false);
+  const [projectStrategy, setProjectStrategy] = useState<Record<string, unknown> | null>(null);
+  const [loadingStrategy, setLoadingStrategy] = useState(false);
+  const [downloadingZip, setDownloadingZip] = useState(false);
 
   const projectSlug = (selected?.project ?? "").trim();
   const effectiveProjectForQueue = (
@@ -68,6 +102,17 @@ export default function PublishPage() {
   }, [selected]);
 
   const contentFormat = useMemo(() => inferPublishContentFormat(job?.flow_type ?? ""), [job?.flow_type]);
+
+  const mediaUrls = useMemo(
+    () =>
+      mediaUrlsText
+        .split(/\n+/)
+        .map((s) => s.trim())
+        .filter(Boolean),
+    [mediaUrlsText]
+  );
+
+  const captionCharCount = useMemo(() => (caption || "").length, [caption]);
 
   const fetchApproved = useCallback(async () => {
     setLoadingApproved(true);
@@ -86,6 +131,25 @@ export default function PublishPage() {
   useEffect(() => {
     fetchApproved();
   }, [fetchApproved]);
+
+  const loadProjectStrategy = useCallback(async (slug: string) => {
+    const s = (slug || "").trim();
+    if (!s) {
+      setProjectStrategy(null);
+      return;
+    }
+    setLoadingStrategy(true);
+    try {
+      const res = await fetch(`/api/project-config/strategy?project=${encodeURIComponent(s)}`);
+      if (!res.ok) throw new Error(await res.text());
+      const json = (await res.json()) as { strategy?: Record<string, unknown> | null };
+      setProjectStrategy((json.strategy ?? null) as Record<string, unknown> | null);
+    } catch {
+      setProjectStrategy(null);
+    } finally {
+      setLoadingStrategy(false);
+    }
+  }, []);
 
   const fetchDueQueue = useCallback(async () => {
     const p = effectiveProjectForQueue;
@@ -110,11 +174,16 @@ export default function PublishPage() {
     fetchDueQueue();
   }, [fetchDueQueue]);
 
+  useEffect(() => {
+    if (effectiveProjectForQueue) loadProjectStrategy(effectiveProjectForQueue);
+  }, [effectiveProjectForQueue, loadProjectStrategy]);
+
   const loadJob = useCallback(async (row: ReviewQueueRow) => {
     const tid = row.task_id?.trim();
     const proj = row.project?.trim();
     if (!tid) return;
     setLoadingJob(true);
+    setLoadingPreview(true);
     setMessage(null);
     setN8nPreview(null);
     try {
@@ -133,6 +202,25 @@ export default function PublishPage() {
         setMediaUrlsText(urls.join("\n"));
         setVideoUrl(videoUrlFromJob(j));
       }
+
+      // Preview should match the dedicated content view renderer (generated_slides_json + preview_url fields).
+      // This is also resilient when job detail is missing some derived fields client-side.
+      try {
+        const cqs = new URLSearchParams();
+        if (proj) cqs.set("project", proj);
+        const cres = await fetch(`/api/content/${encodeURIComponent(tid)}?${cqs.toString()}`);
+        if (cres.ok) {
+          const cj = (await cres.json()) as { data?: ReviewQueueRow };
+          setContentRow(cj.data ?? null);
+        } else {
+          setContentRow(null);
+        }
+      } catch {
+        setContentRow(null);
+      } finally {
+        setLoadingPreview(false);
+      }
+
       const pr = proj ? `&project=${encodeURIComponent(proj)}` : "";
       const pres = await fetch(`/api/publish?task_id=${encodeURIComponent(tid)}${pr}`);
       if (pres.ok) {
@@ -141,9 +229,11 @@ export default function PublishPage() {
       } else setPlacements([]);
     } catch {
       setJob(null);
+      setContentRow(null);
       setPlacements([]);
     } finally {
       setLoadingJob(false);
+      setLoadingPreview(false);
     }
   }, []);
 
@@ -254,6 +344,39 @@ export default function PublishPage() {
       setMessage(e instanceof Error ? e.message : "Copy failed");
     }
   };
+
+  const downloadImagesZip = useCallback(async () => {
+    if (contentFormat === "video") {
+      setMessage("This task is video format; image zip is only available for carousel.");
+      return;
+    }
+    if (mediaUrls.length === 0) {
+      setMessage("No carousel image URLs found to download.");
+      return;
+    }
+    setDownloadingZip(true);
+    setMessage(null);
+    try {
+      const files: Record<string, Uint8Array> = {};
+      for (let i = 0; i < mediaUrls.length; i++) {
+        const url = mediaUrls[i];
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to fetch image ${i + 1} (HTTP ${res.status})`);
+        const ab = await res.arrayBuffer();
+        files[filenameFromUrl(url, i)] = new Uint8Array(ab);
+      }
+      const zipBytes = zipSync(files, { level: 0 });
+      const base = safeFilename(selected?.task_id?.trim() || "carousel");
+      // `fflate` returns a Uint8Array; cast for BlobPart compatibility across TS lib versions.
+      const blob = new Blob([zipBytes as unknown as BlobPart], { type: "application/zip" });
+      await downloadBlobAsFile(blob, `${base}_images.zip`);
+      setMessage(`Downloaded ${mediaUrls.length} image(s) as a zip.`);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Download failed");
+    } finally {
+      setDownloadingZip(false);
+    }
+  }, [contentFormat, mediaUrls, selected?.task_id]);
 
   return (
     <>
@@ -366,13 +489,63 @@ export default function PublishPage() {
           {!selected && <p style={{ color: "var(--muted)" }}>Select a row to compose a publish.</p>}
           {selected && (
             <>
-              <div style={{ marginBottom: 16 }}>
-                <div className="mono" style={{ fontSize: 12, color: "var(--muted)", wordBreak: "break-all" }}>
+              <div
+                style={{
+                  marginBottom: 16,
+                  padding: 12,
+                  border: "1px solid var(--border)",
+                  background: "var(--panel)",
+                  borderRadius: 10,
+                }}
+              >
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "baseline" }}>
+                  <div style={{ fontWeight: 650 }}>Publish details</div>
+                  <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {projectSlug || effectiveProjectForQueue || "—"}
+                  </span>
+                  {loadingStrategy && (
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Loading account…</span>
+                  )}
+                  {!loadingStrategy && projectStrategy && (
+                    <>
+                      {typeof projectStrategy.instagram_handle === "string" &&
+                        projectStrategy.instagram_handle.trim() && (
+                          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                            Account:{" "}
+                            <span className="mono">
+                              {projectStrategy.instagram_handle.trim().startsWith("@")
+                                ? projectStrategy.instagram_handle.trim()
+                                : `@${projectStrategy.instagram_handle.trim()}`}
+                            </span>
+                          </span>
+                        )}
+                      {typeof projectStrategy.owner === "string" && projectStrategy.owner.trim() && (
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          Owner: <span className="mono">{projectStrategy.owner.trim()}</span>
+                        </span>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                <div className="mono" style={{ fontSize: 12, color: "var(--muted)", wordBreak: "break-all", marginTop: 8 }}>
                   {selected.task_id}
                 </div>
-                <div style={{ fontSize: 13, marginTop: 4 }}>
-                  {(selected.platform ?? "")} · {(selected.flow_type ?? "")} ·{" "}
-                  <span style={{ color: "var(--muted)" }}>format: {contentFormat}</span>
+                <div style={{ fontSize: 13, marginTop: 6, display: "flex", flexWrap: "wrap", gap: 10 }}>
+                  <span>
+                    <strong>{(selected.platform ?? "").trim() || "—"}</strong>
+                  </span>
+                  <span style={{ color: "var(--muted)" }}>·</span>
+                  <span>{(selected.flow_type ?? "").trim() || "—"}</span>
+                  <span style={{ color: "var(--muted)" }}>· format: {contentFormat}</span>
+                  {job?.run_id && (
+                    <>
+                      <span style={{ color: "var(--muted)" }}>·</span>
+                      <span style={{ color: "var(--muted)" }}>
+                        run: <span className="mono">{job.run_id}</span>
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -380,6 +553,60 @@ export default function PublishPage() {
 
               {!loadingJob && job && (
                 <>
+                  <div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+                      <div style={{ fontSize: 12, color: "var(--muted)" }}>Preview (as-posted format)</div>
+                      <Link
+                        href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`}
+                        className="btn-ghost"
+                        style={{ fontSize: 12 }}
+                      >
+                        Open full content preview
+                      </Link>
+                    </div>
+                    <div style={{ marginTop: 10 }}>
+                      {loadingPreview && (
+                        <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>Loading preview…</div>
+                      )}
+                      {!loadingPreview && contentRow && (
+                        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(240px, 0.9fr)", gap: 14 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <TaskViewer
+                              data={contentRow}
+                              assetUrls={contentFormat === "video" ? (videoUrl ? [videoUrl] : []) : mediaUrls}
+                              fallbackPreviewUrl={contentFormat === "video" ? videoUrl : mediaUrls[0]}
+                              readOnly
+                            />
+                          </div>
+                          <div
+                            style={{
+                              border: "1px solid var(--border)",
+                              background: "var(--panel)",
+                              borderRadius: 10,
+                              padding: 12,
+                              minWidth: 0,
+                            }}
+                          >
+                            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                              <div style={{ fontWeight: 650, fontSize: 13 }}>Caption preview</div>
+                              <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+                                {captionCharCount.toLocaleString()} chars
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 13, lineHeight: 1.45, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                              {caption?.trim() ? caption : <span style={{ color: "var(--muted)" }}>—</span>}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {!loadingPreview && !contentRow && (
+                        <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>
+                          Preview unavailable for this task right now (content endpoint didn’t return data). You can still use “Open full content preview”.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   <label style={{ display: "block", fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Title</label>
                   <input
                     className="input"
@@ -394,6 +621,26 @@ export default function PublishPage() {
                     rows={5}
                     style={{ width: "100%", marginBottom: 12, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--panel)", resize: "vertical" }}
                   />
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: -6, marginBottom: 12 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                      {captionCharCount.toLocaleString()} chars
+                    </span>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ fontSize: 12 }}
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(caption || "");
+                          setMessage("Caption copied to clipboard.");
+                        } catch {
+                          setMessage("Copy failed.");
+                        }
+                      }}
+                    >
+                      Copy caption
+                    </button>
+                  </div>
 
                   {contentFormat === "video" ? (
                     <>
@@ -416,6 +663,65 @@ export default function PublishPage() {
                         rows={6}
                         style={{ width: "100%", marginBottom: 12, padding: "8px 10px", borderRadius: 6, border: "1px solid var(--border)", background: "var(--panel)", fontFamily: "var(--mono, monospace)", fontSize: 11 }}
                       />
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: -6, marginBottom: 12 }}>
+                        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                          {mediaUrls.length} image(s)
+                        </span>
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={downloadingZip || mediaUrls.length === 0}
+                          onClick={() => downloadImagesZip()}
+                          style={{ fontSize: 12, padding: "6px 10px" }}
+                        >
+                          {downloadingZip ? "Preparing zip…" : "Download images (.zip)"}
+                        </button>
+                        {mediaUrls[0] && (
+                          <a
+                            className="btn-ghost"
+                            style={{ fontSize: 12 }}
+                            href={mediaUrls[0]}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open first image
+                          </a>
+                        )}
+                      </div>
+                      {mediaUrls.length > 0 && (
+                        <div
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "repeat(auto-fill, minmax(92px, 1fr))",
+                            gap: 10,
+                            marginBottom: 14,
+                          }}
+                        >
+                          {mediaUrls.slice(0, 12).map((u, ix) => (
+                            <a
+                              key={`${u}::${ix}`}
+                              href={u}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Open in new tab"
+                              style={{
+                                border: "1px solid var(--border)",
+                                borderRadius: 10,
+                                overflow: "hidden",
+                                background: "var(--panel)",
+                                display: "block",
+                              }}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={u}
+                                alt={`Carousel image ${ix + 1}`}
+                                style={{ width: "100%", height: 92, objectFit: "cover", display: "block" }}
+                              />
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </>
                   )}
 
