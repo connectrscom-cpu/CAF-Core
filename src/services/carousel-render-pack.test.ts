@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import {
   buildSlideRenderContext,
   carouselSlideCount,
@@ -346,5 +348,45 @@ describe("pickCarouselTemplateForRender", () => {
     );
     const p = await pickCarouselTemplateForRender("http://renderer:3333", {});
     expect(["default", "alt"]).toContain(p);
+  });
+});
+
+describe("renderer templates guardrails", () => {
+  function readTemplateSource(name: string): string {
+    const repoRoot = process.cwd();
+    const p = path.join(repoRoot, "services", "renderer", "templates", `${name}.hbs`);
+    return fs.readFileSync(p, "utf8");
+  }
+
+  it("carousel_sns_chat_story uses larger bubble font size", () => {
+    const src = readTemplateSource("carousel_sns_chat_story");
+    expect(src).toContain("font-size: 44px");
+  });
+
+  it("carousel_neon_grid increases body-text and improves cover subtitle contrast", () => {
+    const src = readTemplateSource("carousel_neon_grid");
+    expect(src).toContain(".body-text {");
+    expect(src).toContain("font-size: clamp(46px");
+    expect(src).toContain("background: rgba(10,10,15,0.62)");
+    expect(src).toContain("font-family: 'Outfit', sans-serif");
+    expect(src).toContain("color: var(--bone)");
+  });
+
+  it("carousel_sns_bold_text increases body font size and keeps CTA single", () => {
+    const src = readTemplateSource("carousel_sns_bold_text");
+    expect(src).toContain("font-size:56px");
+    expect(src).toContain("Follow us for more.");
+  });
+
+  it("carousel_sns_numbered_system increases body sizes and removes swipe footer", () => {
+    const src = readTemplateSource("carousel_sns_numbered_system");
+    expect(src).toContain("font-size:56px");
+    expect(src).not.toContain("Swipe for the next one.");
+  });
+
+  it("carousel_candy_pop forbids tilted text in cover and CTA", () => {
+    const src = readTemplateSource("carousel_candy_pop");
+    expect(src).toContain("cover-title");
+    expect(src).toContain("transform: none !important");
   });
 });

@@ -695,6 +695,24 @@ export function buildSlideRenderContext(
   ctaOptions?: CarouselRenderCtaOptions
 ): Record<string, unknown> {
   const slides = ensureCarouselHasCtaSlide(allSlides, ctaOptions);
+  // Some Flow_Carousel_Copy generations leak placeholder thread labels ("Template", "Thread") into slide.name.
+  // Treat them as empty so templates can fall back to `handle` (project IG).
+  const sanitizeThreadName = (name: unknown): string => {
+    const t = String(name ?? "").trim();
+    if (!t) return "";
+    const lower = t.toLowerCase();
+    if (lower === "template" || lower === "thread") return "";
+    return t;
+  };
+  for (const s of slides) {
+    if (!s || typeof s !== "object" || Array.isArray(s)) continue;
+    const rec = s as Record<string, unknown>;
+    if (rec.name != null) {
+      const sn = sanitizeThreadName(rec.name);
+      if (sn) rec.name = sn;
+      else delete rec.name;
+    }
+  }
   const totalDomSlides = carouselSlideCount({ ...base, slides });
   const idx =
     slides.length === 1 && slideIndex1Based === totalDomSlides && totalDomSlides > 1
