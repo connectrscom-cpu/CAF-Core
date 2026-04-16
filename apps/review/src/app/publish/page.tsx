@@ -60,6 +60,7 @@ async function downloadBlobAsFile(blob: Blob, filename: string) {
 }
 
 export default function PublishPage() {
+  const [activeTab, setActiveTab] = useState<"approved" | "due">("approved");
   const [approved, setApproved] = useState<ApprovedResponse | null>(null);
   const [loadingApproved, setLoadingApproved] = useState(true);
   const [selected, setSelected] = useState<ReviewQueueRow | null>(null);
@@ -177,6 +178,12 @@ export default function PublishPage() {
   useEffect(() => {
     if (effectiveProjectForQueue) loadProjectStrategy(effectiveProjectForQueue);
   }, [effectiveProjectForQueue, loadProjectStrategy]);
+
+  useEffect(() => {
+    // If user opens /publish and there are due items, default to Due tab for quick action.
+    if (activeTab === "approved" && duePlacements.length > 0) setActiveTab("due");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [duePlacements.length]);
 
   const loadJob = useCallback(async (row: ReviewQueueRow) => {
     const tid = row.task_id?.trim();
@@ -390,8 +397,27 @@ export default function PublishPage() {
         </div>
       </div>
 
+      <div className="tabs">
+        <button
+          className={`tab ${activeTab === "approved" ? "active" : ""}`}
+          onClick={() => setActiveTab("approved")}
+          type="button"
+        >
+          Approved
+          <span className="tab-count">{approved?.total ?? 0}</span>
+        </button>
+        <button
+          className={`tab ${activeTab === "due" ? "active" : ""}`}
+          onClick={() => setActiveTab("due")}
+          type="button"
+        >
+          Due
+          <span className="tab-count">{duePlacements.length}</span>
+        </button>
+      </div>
+
       <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
-        <div>
+        <div style={{ display: activeTab === "approved" ? "block" : "none" }}>
           <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
           </Link>
@@ -419,85 +445,88 @@ export default function PublishPage() {
         </div>
 
         <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}>
-          {effectiveProjectForQueue ? (
-            <div
-              style={{
-                marginBottom: 18,
-                paddingBottom: duePlacements.length > 0 || loadingDue ? 18 : 10,
-                borderBottom: "1px solid var(--border)",
-              }}
-            >
+          {activeTab === "due" && (
+            <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid var(--border)" }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Due for publish</h3>
                 <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
-                  {effectiveProjectForQueue}
+                  {effectiveProjectForQueue || "—"}
                 </span>
                 <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => fetchDueQueue()}>
                   Refresh
                 </button>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>
-                  {loadingDue ? "Loading…" : duePlacements.length > 0 ? `${duePlacements.length} due` : "None due"}
-                </span>
               </div>
-
-              {(loadingDue || duePlacements.length > 0) && (
-                <div style={{ marginTop: 10 }}>
-                  {loadingDue ? (
-                    <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading due queue…</p>
-                  ) : (
-                    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                      {duePlacements.map((pl) => (
-                        <li
-                          key={pl.id}
-                          style={{
-                            display: "flex",
-                            flexWrap: "wrap",
-                            alignItems: "center",
-                            gap: 8,
-                            fontSize: 13,
-                            marginBottom: 8,
-                            padding: "8px 10px",
-                            borderRadius: 8,
-                            border: "1px solid var(--border)",
-                            background: "var(--panel)",
-                          }}
-                        >
-                          <span className="mono" style={{ fontSize: 11, color: "var(--muted)", flex: "1 1 140px" }}>
-                            {pl.task_id.slice(0, 48)}
-                            {pl.task_id.length > 48 ? "…" : ""}
-                          </span>
-                          <span>
-                            <strong>{pl.platform}</strong> · {pl.content_format}
-                          </span>
-                          <button
-                            type="button"
-                            className="btn"
-                            style={{ fontSize: 12, padding: "4px 10px" }}
-                            onClick={() => startPlacement(pl.id, effectiveProjectForQueue)}
-                          >
-                            Start &amp; copy payload
-                          </button>
-                          <button
-                            type="button"
-                            className="btn-ghost"
-                            style={{ fontSize: 12 }}
-                            onClick={() => startPlacement(pl.id, effectiveProjectForQueue, { allow_not_yet_due: true })}
-                          >
-                            Start (ignore schedule)
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+              {loadingDue ? (
+                <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 10 }}>Loading due queue…</p>
+              ) : duePlacements.length === 0 ? (
+                <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 10 }}>No scheduled placements past their time.</p>
+              ) : (
+                <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
+                  {duePlacements.map((pl) => (
+                    <li
+                      key={pl.id}
+                      style={{
+                        display: "flex",
+                        flexWrap: "wrap",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 13,
+                        marginBottom: 8,
+                        padding: "8px 10px",
+                        borderRadius: 8,
+                        border: "1px solid var(--border)",
+                        background: "var(--panel)",
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ fontSize: 12, padding: "4px 10px" }}
+                        onClick={async () => {
+                          // Select corresponding job row (if present) so compose panel loads.
+                          const match =
+                            approved?.items.find((r) => (r.task_id ?? "").trim() === pl.task_id) ??
+                            ({ task_id: pl.task_id, project: effectiveProjectForQueue } as ReviewQueueRow);
+                          setSelected(match);
+                          await loadJob(match);
+                        }}
+                      >
+                        Select
+                      </button>
+                      <span className="mono" style={{ fontSize: 11, color: "var(--muted)", flex: "1 1 160px" }}>
+                        {pl.task_id.slice(0, 56)}
+                        {pl.task_id.length > 56 ? "…" : ""}
+                      </span>
+                      <span>
+                        <strong>{pl.platform}</strong> · {pl.content_format}
+                      </span>
+                      {pl.scheduled_at && (
+                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                          {new Date(pl.scheduled_at).toLocaleString()}
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="btn"
+                        style={{ fontSize: 12, padding: "4px 10px" }}
+                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue)}
+                      >
+                        Start &amp; copy payload
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ fontSize: 12 }}
+                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue, { allow_not_yet_due: true })}
+                      >
+                        Start (ignore schedule)
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               )}
             </div>
-          ) : !loadingApproved ? (
-            <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 20 }}>
-              Open the approved list (left) so we can resolve a project slug, or set <span className="mono">PROJECT_SLUG</span>{" "}
-              for single-tenant mode.
-            </p>
-          ) : null}
+          )}
 
           {!selected && <p style={{ color: "var(--muted)" }}>Select a row to compose a publish.</p>}
           {selected && (
