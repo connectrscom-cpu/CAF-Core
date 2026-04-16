@@ -19,6 +19,8 @@ export interface TaskTableProps {
   contentSlug?: "t" | "content";
   /** Cross-project workbench: show tenant column and disambiguate task links. */
   showProjectColumn?: boolean;
+  /** Compact mode for narrow screens/pages (e.g. Publish). */
+  hideTitleColumn?: boolean;
   /** When set, row click loads the row (links stop propagation). */
   onRowSelect?: (row: ReviewQueueRow) => void;
   /** `project::task_id` when `showProjectColumn`, else `task_id` — for selection highlight. */
@@ -45,12 +47,14 @@ function TaskRow({
   row,
   contentSlug = "t",
   showProjectColumn = false,
+  hideTitleColumn = false,
   onRowSelect,
   selected = false,
 }: {
   row: ReviewQueueRow;
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
+  hideTitleColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selected?: boolean;
 }) {
@@ -80,7 +84,14 @@ function TaskRow({
               muted
               playsInline
               preload="metadata"
-              style={{ width: 56, height: 56, borderRadius: 8, objectFit: "cover", background: "#111", display: "block" }}
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 8,
+                objectFit: "cover",
+                background: "#111",
+                display: "block",
+              }}
             />
           ) : (
             <img
@@ -102,7 +113,11 @@ function TaskRow({
         </Link>
       </td>
       {showProjectColumn && <td>{project || "—"}</td>}
-      <td className="hook-cell" title={title}>{title}</td>
+      {!hideTitleColumn && (
+        <td className="hook-cell" title={title}>
+          {title}
+        </td>
+      )}
       <td>{platform || "—"}</td>
       <td>{flowType || "—"}</td>
       <td>{statusBadge(reviewStatus)}</td>
@@ -122,6 +137,7 @@ function TableBody({
   groupBy,
   contentSlug = "t",
   showProjectColumn = false,
+  hideTitleColumn = false,
   onRowSelect,
   selectedRowKey,
 }: {
@@ -129,10 +145,11 @@ function TableBody({
   groupBy: GroupBy;
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
+  hideTitleColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selectedRowKey?: string;
 }) {
-  const colSpan = showProjectColumn ? 10 : 9;
+  const colSpan = (showProjectColumn ? 10 : 9) - (hideTitleColumn ? 1 : 0);
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
@@ -148,6 +165,7 @@ function TableBody({
             row={row}
             contentSlug={contentSlug}
             showProjectColumn={showProjectColumn}
+            hideTitleColumn={hideTitleColumn}
             onRowSelect={onRowSelect}
             selected={isSel(row)}
           />
@@ -173,6 +191,7 @@ function TableBody({
               row={row}
               contentSlug={contentSlug}
               showProjectColumn={showProjectColumn}
+              hideTitleColumn={hideTitleColumn}
               onRowSelect={onRowSelect}
               selected={isSel(row)}
             />
@@ -193,6 +212,7 @@ export function TaskTable({
   statusCounts = {},
   contentSlug = "t",
   showProjectColumn = false,
+  hideTitleColumn = false,
   onRowSelect,
   selectedRowKey,
 }: TaskTableProps) {
@@ -216,7 +236,7 @@ export function TaskTable({
             <th style={{ width: 72 }}>Preview</th>
             <th>Task ID</th>
             {showProjectColumn && <th>Project</th>}
-            <th>Title / Hook</th>
+            {!hideTitleColumn && <th>Title / Hook</th>}
             <th>Platform</th>
             <th>Flow type</th>
             <th>Status</th>
@@ -230,6 +250,7 @@ export function TaskTable({
           groupBy={groupBy}
           contentSlug={contentSlug}
           showProjectColumn={showProjectColumn}
+          hideTitleColumn={hideTitleColumn}
           onRowSelect={onRowSelect}
           selectedRowKey={selectedRowKey}
         />

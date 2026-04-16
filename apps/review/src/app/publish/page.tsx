@@ -408,6 +408,7 @@ export default function PublishPage() {
               total={approved.total}
               contentSlug="content"
               showProjectColumn={approved.scope === "all"}
+              hideTitleColumn
               selectedRowKey={selectedRowKey}
               onRowSelect={(row) => {
                 setSelected(row);
