@@ -17,6 +17,15 @@ const envSchema = z.object({
     .optional()
     .transform((v) => v === "1" || v === "true"),
 
+  /**
+   * Publishing executor mode for the publications "start" endpoint.
+   * - "none": keep current behavior (claim + external executor posts; Core waits for /complete)
+   * - "dry_run": Core immediately completes placements with a fake platform_post_id (dev/testing)
+   *
+   * Future: "core" (real platform connectors + token storage).
+   */
+  CAF_PUBLISH_EXECUTOR: z.enum(["none", "dry_run"]).default("none"),
+
   DECISION_ENGINE_VERSION: z.string().default("v1"),
 
   // Default scoring weights (override per request or DB later)

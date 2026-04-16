@@ -17,9 +17,12 @@ import {
   type PublicationStatus,
 } from "../repositories/publications.js";
 import { buildPublicationN8nPayload } from "../services/publication-n8n-payload.js";
+import { dryRunPublishPlacement } from "../services/publish-executors/dry-run.js";
+import type { AppConfig } from "../config.js";
 
 interface Deps {
   db: Pool;
+  config?: AppConfig;
 }
 
 const contentFormatSchema = z.enum(["carousel", "video", "unknown"]);
@@ -85,7 +88,7 @@ function rowToJson(row: Awaited<ReturnType<typeof getPublicationPlacement>>) {
   };
 }
 
-export function registerPublicationRoutes(app: FastifyInstance, { db }: Deps) {
+export function registerPublicationRoutes(app: FastifyInstance, { db, config }: Deps) {
   app.get<{ Params: { project_slug: string }; Querystring: Record<string, string | undefined> }>(
     "/v1/publications/:project_slug",
     async (req, reply) => {
@@ -153,10 +156,37 @@ export function registerPublicationRoutes(app: FastifyInstance, { db }: Deps) {
       });
     }
 
+    if (config?.CAF_PUBLISH_EXECUTOR === "dry_run") {
+      const result = dryRunPublishPlacement(row);
+      const completed = await completePublicationPlacement(db, project.id, row.id, {
+        post_success: true,
+        platform_post_id: result.platform_post_id,
+        posted_url: result.posted_url,
+        result_json: result.result_json,
+        external_ref: "caf_core_dry_run",
+      });
+      if (completed) {
+        await appendPublicationResultToJob(db, project.id, completed.task_id, {
+          placement_id: completed.id,
+          platform: completed.platform,
+          posted_url: completed.posted_url,
+          platform_post_id: completed.platform_post_id,
+          published_at: completed.published_at ?? new Date().toISOString(),
+        }).catch(() => {});
+      }
+      return {
+        ok: true,
+        placement: rowToJson(completed ?? row),
+        payload: buildPublicationN8nPayload(completed ?? row, project.slug),
+        executor: "dry_run",
+      };
+    }
+
     return {
       ok: true,
       placement: rowToJson(row),
       payload: buildPublicationN8nPayload(row, project.slug),
+      executor: "external",
     };
   });
 

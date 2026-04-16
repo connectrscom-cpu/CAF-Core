@@ -3086,6 +3086,10 @@ loadRunTransparency();
 .job-err-copy{padding:2px 8px;font-size:10px;line-height:1.2;flex-shrink:0;margin-top:1px}
 .job-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:10px 0 6px}
 .jobs-live-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;font-size:13px;color:var(--fg2)}
+.jobs-main-table{table-layout:fixed}
+.jobs-main-table th:nth-child(1),.jobs-main-table td:nth-child(1){width:240px}
+.jobs-main-table th:nth-child(2),.jobs-main-table td:nth-child(2){width:170px}
+.job-cell-inner{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #toast-area{position:relative;z-index:200}
 .toast{margin:0 0 16px;padding:10px 16px;border-radius:8px;font-size:13px;font-weight:500;animation:jobsToastIn .25s ease-out}
 .toast-ok{background:var(--green-bg);color:var(--green);border:1px solid rgba(34,197,94,.2)}
@@ -3550,8 +3554,8 @@ async function loadJobs(p,silent){
     if (isRendering && renderPhase==='failed') badgeStatus='FAILED';
     var isFailedBadge=String(badgeStatus||'').toUpperCase()==='FAILED';
     var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress') && (renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
-    h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent);max-width:160px" title="'+escAttr(j.task_id)+'">'+esc(trunc(j.task_id,40))+' <span style="opacity:.5">▸</span></td>';
-    h+='<td class="mono" style="font-size:11px">'+esc(j.run_id||'—')+'</td>';
+    h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent)" title="'+escAttr(j.task_id)+'"><div class="job-cell-inner">'+esc(trunc(j.task_id,52))+' <span style="opacity:.5">▸</span></div></td>';
+    h+='<td class="mono" style="font-size:11px" title="'+escAttr(j.run_id||"")+'"><div class="job-cell-inner">'+esc(j.run_id||'—')+'</div></td>';
     h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td>';
     h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
