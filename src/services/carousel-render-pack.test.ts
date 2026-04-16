@@ -307,6 +307,20 @@ describe("carousel template shape (body_slides)", () => {
     expect(formatInstagramHandleForCta("https://instagram.com/demo_user/")).toBe("@demo_user");
     expect(formatInstagramHandleForCta("@demo")).toBe("@demo");
   });
+
+  it("sanitizes whitespace cover_slide.name so templates can fall back to handle/SNS", () => {
+    const gen = {
+      cover_slide: { name: "   ", status: "  online.  " },
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "CTA", body: "@brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 1);
+    expect((ctx.cover_slide as { name?: unknown }).name).toBeUndefined();
+    expect((ctx.cover_slide as { status?: unknown }).status).toBe("online.");
+  });
 });
 
 describe("explicitCarouselTemplateBaseName", () => {

@@ -722,11 +722,46 @@ export function buildSlideRenderContext(
   const { headline, body } = textFromSlide(current);
   const templateShape =
     shouldMaterializeCarouselTemplateShape(base) && slides.length > 0 ? splitFlatSlidesToTemplateShape(slides) : {};
+  // Some generators provide `cover_slide.name` (or `cover_slide.status`) as whitespace or placeholders.
+  // Normalize here so templates can reliably fall back to `handle` or defaults.
+  const sanitizeCoverSlide = (cs: unknown): Record<string, unknown> => {
+    if (!cs || typeof cs !== "object" || Array.isArray(cs)) return {};
+    const rec: Record<string, unknown> = { ...(cs as Record<string, unknown>) };
+    if (rec.name != null) {
+      const sn = sanitizeThreadName(rec.name);
+      if (sn) rec.name = sn;
+      else delete rec.name;
+    }
+    if (rec.status != null) {
+      const st = String(rec.status ?? "").trim();
+      if (st) rec.status = st;
+      else delete rec.status;
+    }
+    return rec;
+  };
+  const sanitizedBaseCoverSlide =
+    base.cover_slide && typeof base.cover_slide === "object" && !Array.isArray(base.cover_slide)
+      ? sanitizeCoverSlide(base.cover_slide)
+      : null;
+  const sanitizedTemplateCoverSlide =
+    (templateShape as Record<string, unknown>).cover_slide &&
+    typeof (templateShape as Record<string, unknown>).cover_slide === "object" &&
+    !Array.isArray((templateShape as Record<string, unknown>).cover_slide)
+      ? sanitizeCoverSlide((templateShape as Record<string, unknown>).cover_slide)
+      : null;
+  const mergedCoverSlide =
+    sanitizedBaseCoverSlide || sanitizedTemplateCoverSlide
+      ? {
+          ...(sanitizedBaseCoverSlide ?? {}),
+          ...(sanitizedTemplateCoverSlide ?? {}),
+        }
+      : null;
   const cta = resolveCarouselCtaFields(base, templateShape, slides, ctaOptions);
 
   const out: Record<string, unknown> = {
     ...base,
     ...templateShape,
+    ...(mergedCoverSlide ? { cover_slide: mergedCoverSlide } : {}),
     cta_text: cta.cta_text,
     ...(cta.cta_handle ? { cta_handle: cta.cta_handle } : {}),
     cta_slide: cta.cta_slide,
