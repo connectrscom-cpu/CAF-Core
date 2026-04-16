@@ -390,7 +390,7 @@ export default function PublishPage() {
         </div>
       </div>
 
-      <div style={{ padding: "12px 28px 32px", display: "grid", gridTemplateColumns: "minmax(320px,1fr) minmax(400px,1.1fr)", gap: 24, alignItems: "start" }}>
+      <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
         <div>
           <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
@@ -569,7 +569,7 @@ export default function PublishPage() {
                         <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>Loading preview…</div>
                       )}
                       {!loadingPreview && contentRow && (
-                        <div style={{ display: "grid", gridTemplateColumns: "minmax(240px, 1fr) minmax(240px, 0.9fr)", gap: 14 }}>
+                        <div className="publish-preview-grid">
                           <div style={{ minWidth: 0 }}>
                             <TaskViewer
                               data={contentRow}
@@ -579,6 +579,7 @@ export default function PublishPage() {
                             />
                           </div>
                           <div
+                            className="publish-caption-preview"
                             style={{
                               border: "1px solid var(--border)",
                               background: "var(--panel)",
