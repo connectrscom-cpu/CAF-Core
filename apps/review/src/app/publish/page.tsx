@@ -420,8 +420,14 @@ export default function PublishPage() {
 
         <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}>
           {effectiveProjectForQueue ? (
-            <div style={{ marginBottom: 24, paddingBottom: 20, borderBottom: "1px solid var(--border)" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <div
+              style={{
+                marginBottom: 18,
+                paddingBottom: duePlacements.length > 0 || loadingDue ? 18 : 10,
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
                 <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Due for publish</h3>
                 <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
                   {effectiveProjectForQueue}
@@ -429,55 +435,61 @@ export default function PublishPage() {
                 <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => fetchDueQueue()}>
                   Refresh
                 </button>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                  {loadingDue ? "Loading…" : duePlacements.length > 0 ? `${duePlacements.length} due` : "None due"}
+                </span>
               </div>
-              {loadingDue ? (
-                <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading due queue…</p>
-              ) : duePlacements.length === 0 ? (
-                <p style={{ color: "var(--muted)", fontSize: 13 }}>No scheduled placements past their time.</p>
-              ) : (
-                <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                  {duePlacements.map((pl) => (
-                    <li
-                      key={pl.id}
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 13,
-                        marginBottom: 8,
-                        padding: "8px 10px",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        background: "var(--panel)",
-                      }}
-                    >
-                      <span className="mono" style={{ fontSize: 11, color: "var(--muted)", flex: "1 1 140px" }}>
-                        {pl.task_id.slice(0, 48)}
-                        {pl.task_id.length > 48 ? "…" : ""}
-                      </span>
-                      <span>
-                        <strong>{pl.platform}</strong> · {pl.content_format}
-                      </span>
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ fontSize: 12, padding: "4px 10px" }}
-                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue)}
-                      >
-                        Start &amp; copy payload
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ fontSize: 12 }}
-                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue, { allow_not_yet_due: true })}
-                      >
-                        Start (ignore schedule)
-                      </button>
-                    </li>
-                  ))}
-                </ul>
+
+              {(loadingDue || duePlacements.length > 0) && (
+                <div style={{ marginTop: 10 }}>
+                  {loadingDue ? (
+                    <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading due queue…</p>
+                  ) : (
+                    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                      {duePlacements.map((pl) => (
+                        <li
+                          key={pl.id}
+                          style={{
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 13,
+                            marginBottom: 8,
+                            padding: "8px 10px",
+                            borderRadius: 8,
+                            border: "1px solid var(--border)",
+                            background: "var(--panel)",
+                          }}
+                        >
+                          <span className="mono" style={{ fontSize: 11, color: "var(--muted)", flex: "1 1 140px" }}>
+                            {pl.task_id.slice(0, 48)}
+                            {pl.task_id.length > 48 ? "…" : ""}
+                          </span>
+                          <span>
+                            <strong>{pl.platform}</strong> · {pl.content_format}
+                          </span>
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{ fontSize: 12, padding: "4px 10px" }}
+                            onClick={() => startPlacement(pl.id, effectiveProjectForQueue)}
+                          >
+                            Start &amp; copy payload
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 12 }}
+                            onClick={() => startPlacement(pl.id, effectiveProjectForQueue, { allow_not_yet_due: true })}
+                          >
+                            Start (ignore schedule)
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
             </div>
           ) : !loadingApproved ? (
