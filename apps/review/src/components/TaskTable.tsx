@@ -21,6 +21,8 @@ export interface TaskTableProps {
   showProjectColumn?: boolean;
   /** Compact mode for narrow screens/pages (e.g. Publish). */
   hideTitleColumn?: boolean;
+  /** Hide the final "Open" action column (useful when rows are selectable). */
+  hideOpenColumn?: boolean;
   /** When set, row click loads the row (links stop propagation). */
   onRowSelect?: (row: ReviewQueueRow) => void;
   /** `project::task_id` when `showProjectColumn`, else `task_id` — for selection highlight. */
@@ -48,6 +50,7 @@ function TaskRow({
   contentSlug = "t",
   showProjectColumn = false,
   hideTitleColumn = false,
+  hideOpenColumn = false,
   onRowSelect,
   selected = false,
 }: {
@@ -55,6 +58,7 @@ function TaskRow({
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
   hideTitleColumn?: boolean;
+  hideOpenColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selected?: boolean;
 }) {
@@ -123,11 +127,13 @@ function TaskRow({
       <td>{statusBadge(reviewStatus)}</td>
       <td>{decision ? statusBadge(decision) : "—"}</td>
       <td>{getVal(row, "recommended_route") || "—"}</td>
-      <td>
-        <Link href={taskHref} className="btn-open-row" onClick={(e) => onRowSelect && e.stopPropagation()}>
-          Open
-        </Link>
-      </td>
+      {!hideOpenColumn && (
+        <td>
+          <Link href={taskHref} className="btn-open-row" onClick={(e) => onRowSelect && e.stopPropagation()}>
+            Open
+          </Link>
+        </td>
+      )}
     </tr>
   );
 }
@@ -138,6 +144,7 @@ function TableBody({
   contentSlug = "t",
   showProjectColumn = false,
   hideTitleColumn = false,
+  hideOpenColumn = false,
   onRowSelect,
   selectedRowKey,
 }: {
@@ -146,10 +153,12 @@ function TableBody({
   contentSlug?: "t" | "content";
   showProjectColumn?: boolean;
   hideTitleColumn?: boolean;
+  hideOpenColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selectedRowKey?: string;
 }) {
-  const colSpan = (showProjectColumn ? 10 : 9) - (hideTitleColumn ? 1 : 0);
+  const colSpan =
+    (showProjectColumn ? 10 : 9) - (hideTitleColumn ? 1 : 0) - (hideOpenColumn ? 1 : 0);
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
@@ -166,6 +175,7 @@ function TableBody({
             contentSlug={contentSlug}
             showProjectColumn={showProjectColumn}
             hideTitleColumn={hideTitleColumn}
+            hideOpenColumn={hideOpenColumn}
             onRowSelect={onRowSelect}
             selected={isSel(row)}
           />
@@ -192,6 +202,7 @@ function TableBody({
               contentSlug={contentSlug}
               showProjectColumn={showProjectColumn}
               hideTitleColumn={hideTitleColumn}
+              hideOpenColumn={hideOpenColumn}
               onRowSelect={onRowSelect}
               selected={isSel(row)}
             />
@@ -213,6 +224,7 @@ export function TaskTable({
   contentSlug = "t",
   showProjectColumn = false,
   hideTitleColumn = false,
+  hideOpenColumn = false,
   onRowSelect,
   selectedRowKey,
 }: TaskTableProps) {
@@ -242,7 +254,7 @@ export function TaskTable({
             <th>Status</th>
             <th>Decision</th>
             <th>Route</th>
-            <th></th>
+            {!hideOpenColumn && <th></th>}
           </tr>
         </thead>
         <TableBody
@@ -251,6 +263,7 @@ export function TaskTable({
           contentSlug={contentSlug}
           showProjectColumn={showProjectColumn}
           hideTitleColumn={hideTitleColumn}
+          hideOpenColumn={hideOpenColumn}
           onRowSelect={onRowSelect}
           selectedRowKey={selectedRowKey}
         />

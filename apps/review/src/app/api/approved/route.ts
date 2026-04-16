@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { getQueueTab, getQueueTabAll } from "@/lib/caf-core-client";
+import { pickCaptionFromGenerationPayload } from "@/lib/task-api-handlers";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,9 @@ export async function GET() {
       qc_status: j.qc_status ?? "",
       risk_score: j.pre_gen_score ?? "",
       generated_title: (j.generation_payload?.title ?? j.generation_payload?.generated_title ?? "") as string,
+      generated_hook: (j.generation_payload?.hook ?? j.generation_payload?.generated_hook ?? "") as string,
+      generated_caption: pickCaptionFromGenerationPayload((j.generation_payload ?? {}) as Record<string, unknown>),
+      preview_url: (j.preview_thumb_url ?? "").trim(),
     }));
     return NextResponse.json({
       items,
