@@ -1,3 +1,7 @@
+# Deploy from this folder so the image build sees the Next app (caf-review), not the monorepo root:
+#   cd apps/review && fly deploy
+# Using `fly deploy -c apps/review/fly.toml` from the repo root sends the wrong Docker context and breaks the build.
+
 app = "caf-review"
 primary_region = "ams"
 
