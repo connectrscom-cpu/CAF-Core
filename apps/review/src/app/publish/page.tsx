@@ -36,6 +36,17 @@ function safeFilename(s: string): string {
   return (s || "file").replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 160);
 }
 
+/** Clipboard API throws when the document is not focused (e.g. embedded devtools). */
+async function copyToClipboardSafe(text: string): Promise<boolean> {
+  try {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function filenameFromUrl(url: string, index: number): string {
   try {
     const u = new URL(url);
@@ -483,7 +494,11 @@ export default function PublishPage() {
   }, []);
 
   const startPlacement = useCallback(
-    async (placementId: string, project: string, opts?: { allow_not_yet_due?: boolean }) => {
+    async (
+      placementId: string,
+      project: string,
+      opts?: { allow_not_yet_due?: boolean; allow_from_draft?: boolean }
+    ) => {
       const proj = (project ?? "").trim();
       if (!proj) {
         setMessage("Missing project slug; cannot start publish.");
@@ -499,6 +514,7 @@ export default function PublishPage() {
           body: JSON.stringify({
             project_slug: proj,
             allow_not_yet_due: opts?.allow_not_yet_due,
+            allow_from_draft: opts?.allow_from_draft,
           }),
         });
         const text = await res.text();
@@ -515,8 +531,21 @@ export default function PublishPage() {
         const payload = json.payload as Record<string, unknown> | undefined;
         const pretty = JSON.stringify(payload ?? {}, null, 2);
         setN8nPreview(pretty);
-        await navigator.clipboard.writeText(pretty);
-        setMessage("Started → status publishing. n8n payload copied; finish with POST …/complete from n8n.");
+        const copied = await copyToClipboardSafe(pretty);
+        const postNow = opts?.allow_not_yet_due === true;
+        if (postNow) {
+          setMessage(
+            copied
+              ? "Post now started (publishing). n8n payload copied to clipboard."
+              : "Post now started (publishing). Clipboard unavailable—focus this tab or copy the payload from the preview below."
+          );
+        } else {
+          setMessage(
+            copied
+              ? "Started → status publishing. n8n payload copied; finish with POST …/complete from n8n."
+              : "Started → status publishing. Clipboard unavailable—copy the payload from the preview below."
+          );
+        }
         await fetchDueQueue();
         await fetchPublishedQueue();
         if (selected?.task_id) await loadJob(selected);
@@ -669,8 +698,12 @@ export default function PublishPage() {
       const j = (await res.json()) as { payload?: Record<string, unknown> };
       const text = JSON.stringify(j.payload ?? {}, null, 2);
       setN8nPreview(text);
-      await navigator.clipboard.writeText(text);
-      setMessage("n8n payload copied to clipboard (Meta tokens are added in n8n, not here).");
+      const copied = await copyToClipboardSafe(text);
+      setMessage(
+        copied
+          ? "n8n payload copied to clipboard (Meta tokens are added in n8n, not here)."
+          : "Payload loaded below. Clipboard unavailable—focus this tab and try again, or copy manually."
+      );
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Copy failed");
     }
@@ -1013,6 +1046,8 @@ export default function PublishPage() {
                     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                       {selectedDuePlacements.map((pl) => {
                         const dueBusy = startingPlacementId != null || removingPlacementId != null;
+                        const startBlocked =
+                          pl.status === "publishing" || pl.status === "published" || pl.status === "cancelled";
                         return (
                         <li
                           key={pl.id}
@@ -1044,15 +1079,30 @@ export default function PublishPage() {
                               <button
                                 type="button"
                                 className="btn"
-                                disabled={dueBusy}
+                                disabled={dueBusy || startBlocked}
+                                title={
+                                  startBlocked
+                                    ? pl.status === "published"
+                                      ? "Already published."
+                                      : pl.status === "publishing"
+                                        ? "Already publishing—wait or refresh."
+                                        : "Cannot start from this state."
+                                    : undefined
+                                }
                                 style={{
                                   fontSize: 12,
                                   padding: "6px 10px",
-                                  opacity: dueBusy && startingPlacementId !== pl.id ? 0.55 : 1,
+                                  opacity:
+                                    (dueBusy && startingPlacementId !== pl.id) || startBlocked ? 0.55 : 1,
                                 }}
-                                onClick={() => startPlacement(pl.id, projectSlug || effectiveProjectForQueue)}
+                                onClick={() =>
+                                  startPlacement(pl.id, projectSlug || effectiveProjectForQueue, {
+                                    allow_not_yet_due: true,
+                                    allow_from_draft: pl.status === "draft",
+                                  })
+                                }
                               >
-                                {startingPlacementId === pl.id ? "Starting…" : "Start & copy payload"}
+                                {startingPlacementId === pl.id ? "Posting…" : "Post now"}
                               </button>
                               <button
                                 type="button"
@@ -1062,11 +1112,9 @@ export default function PublishPage() {
                                   fontSize: 12,
                                   opacity: dueBusy && startingPlacementId !== pl.id ? 0.55 : 1,
                                 }}
-                                onClick={() =>
-                                  startPlacement(pl.id, projectSlug || effectiveProjectForQueue, { allow_not_yet_due: true })
-                                }
+                                onClick={() => void copyN8nPayload(pl.id)}
                               >
-                                {startingPlacementId === pl.id ? "Starting…" : "Start (ignore schedule)"}
+                                Copy n8n payload
                               </button>
                               <button
                                 type="button"
