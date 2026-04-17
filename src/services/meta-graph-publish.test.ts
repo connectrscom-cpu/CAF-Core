@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  facebookPostWebPermalink,
   graphErrorMeansPageTokenCannotListMeAccounts,
   pickPageTokenFromAccountsResponse,
   placementPlatformToMetaIntegrationKey,
@@ -25,6 +26,19 @@ describe("graphErrorMeansPageTokenCannotListMeAccounts", () => {
   });
   it("detects when only message body omits (#…) but code would be prefixed by graphGet", () => {
     expect(graphErrorMeansPageTokenCannotListMeAccounts("Tried accessing nonexisting field (accounts)")).toBe(true);
+  });
+});
+
+describe("facebookPostWebPermalink", () => {
+  it("splits Graph compound page post id for permalink.php", () => {
+    expect(facebookPostWebPermalink("673711675834588", "673711675834588_122157967562973897")).toBe(
+      "https://www.facebook.com/permalink.php?story_fbid=122157967562973897&id=673711675834588"
+    );
+  });
+  it("uses page id and full id when post id is not compound", () => {
+    expect(facebookPostWebPermalink("673711675834588", "122157967562973897")).toBe(
+      "https://www.facebook.com/permalink.php?story_fbid=122157967562973897&id=673711675834588"
+    );
   });
 });
 

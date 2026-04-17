@@ -254,8 +254,35 @@ async function waitIgContainerReady(
   throw new Error("Instagram media container processing timeout");
 }
 
-function fbPermalink(pageId: string, postId: string): string {
-  return `https://www.facebook.com/permalink.php?story_fbid=${encodeURIComponent(postId)}&id=${encodeURIComponent(pageId)}`;
+/**
+ * Graph returns Page post ids as `{pageId}_{storyFbid}`. `permalink.php` must use only the story segment
+ * as `story_fbid` (using the full compound id breaks Facebook with "Something went wrong").
+ */
+export function facebookPostWebPermalink(pageId: string, graphPostId: string): string {
+  const raw = graphPostId.trim();
+  const page = pageId.trim();
+  const m = /^(\d+)_(\d+)$/.exec(raw);
+  const idParam = m ? m[1]! : page;
+  const storyFbid = m ? m[2]! : raw;
+  return `https://www.facebook.com/permalink.php?story_fbid=${encodeURIComponent(storyFbid)}&id=${encodeURIComponent(idParam)}`;
+}
+
+/** Prefer Graph `permalink` (canonical viewer URL, e.g. photo carousel); else web permalink from post id. */
+async function resolveFacebookPostedUrl(
+  pageId: string,
+  graphPostId: string,
+  token: string,
+  version: string
+): Promise<string | null> {
+  if (!graphPostId.trim() || graphPostId === "unknown") return null;
+  try {
+    const r = await graphGet<{ permalink?: string }>(`${graphPostId}?fields=permalink`, token, version);
+    const p = str(r.permalink);
+    if (p) return p;
+  } catch {
+    /* optional */
+  }
+  return facebookPostWebPermalink(pageId, graphPostId);
 }
 
 async function publishFacebookPage(
@@ -275,7 +302,7 @@ async function publishFacebookPage(
     const postId = str(r.id) ?? "unknown";
     return {
       platform_post_id: postId,
-      posted_url: postId !== "unknown" ? fbPermalink(pageId, postId) : null,
+      posted_url: postId !== "unknown" ? await resolveFacebookPostedUrl(pageId, postId, token, version) : null,
       raw: { ...r, mode: "fb_feed_text" },
     };
   }
@@ -307,7 +334,7 @@ async function publishFacebookPage(
     const postId = str(r.id) ?? "unknown";
     return {
       platform_post_id: postId,
-      posted_url: postId !== "unknown" ? fbPermalink(pageId, postId) : null,
+      posted_url: postId !== "unknown" ? await resolveFacebookPostedUrl(pageId, postId, token, version) : null,
       raw: {
         ...r,
         mode: "fb_feed_attached_media",
@@ -325,7 +352,7 @@ async function publishFacebookPage(
   const postId = str(r.post_id) ?? str(r.id) ?? "unknown";
   return {
     platform_post_id: postId,
-    posted_url: postId !== "unknown" ? fbPermalink(pageId, postId) : null,
+    posted_url: postId !== "unknown" ? await resolveFacebookPostedUrl(pageId, postId, token, version) : null,
     raw: { ...r, mode: "fb_photo", media_urls_used: [first] },
   };
 }
