@@ -134,7 +134,10 @@ async function resolveTokenForPageGraphApi(
     // Do not treat a bare "Unsupported get request" as Page-token: some User-token / permission
     // failures can match that and would skip the exchange, leaving a User token for unpublished
     // /{page-id}/photos (Meta then returns #200 "must be posted as the page itself").
+    // Page tokens cannot call `me/accounts` (field exists on User, not on Page). Meta sometimes omits
+    // "on node type (Page)" from the message, so do not require /Page/ for the (#100)+accounts case.
     const looksLikePageTokenCannotListAccounts =
+      (/#\(100\)|\(100\)/i.test(msg) && /nonexisting field/i.test(msg) && /\baccounts\b/i.test(msg)) ||
       (/#\(100\)|\(100\)/i.test(msg) && /Page/i.test(msg)) ||
       (/nonexisting field/i.test(msg) && /accounts/i.test(msg) && /Page/i.test(msg)) ||
       (/Unsupported get request/i.test(msg) &&
@@ -507,7 +510,11 @@ export async function publishPlacementToMeta(
     } else if (/Unpublished posts must be posted to a page as the page itself/i.test(msg)) {
       tokenHint =
         " Facebook multi-image uses unpublished /{page-id}/photos uploads, which require a **Page** access token (not a plain User token). Use GET /me/accounts?fields=id,access_token with a User token that has pages_show_list, copy the Page access_token for your fb_page_id into CAF_META_FB_PAGE_ACCESS_TOKEN (or META_FB credentials_json), or fix fb_page_id so it matches a Page returned by /me/accounts.";
-    } else if (/expired|invalid.*session|invalid oauth|OAuthException|access token|Meta access token expired/i.test(msg)) {
+    } else if (
+      /expired|invalid.*session|invalid oauth|OAuthException|invalid.*access token|error validating access token|Session has expired|Meta access token expired/i.test(
+        msg
+      )
+    ) {
       tokenHint =
         " Regenerate long-lived tokens. Fly: CAF_META_FB_PAGE_ACCESS_TOKEN and CAF_META_IG_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN for both), or META_FB / META_IG credentials_json.access_token in the DB.";
     }
