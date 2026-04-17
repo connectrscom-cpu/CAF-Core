@@ -12,9 +12,19 @@ function headers(): Record<string, string> {
   return h;
 }
 
+/**
+ * GET/DELETE to Core must not send `Content-Type: application/json` with no body —
+ * Fastify returns 400 `FST_ERR_CTP_EMPTY_JSON_BODY`.
+ */
+function headersNoBody(): Record<string, string> {
+  const h: Record<string, string> = { Accept: "application/json" };
+  if (CAF_CORE_TOKEN) h["x-caf-core-token"] = CAF_CORE_TOKEN;
+  return h;
+}
+
 async function coreGet<T = unknown>(path: string): Promise<T | null> {
   const res = await fetch(`${CAF_CORE_URL}${path}`, {
-    headers: headers(),
+    headers: headersNoBody(),
     cache: "no-store",
   });
   if (!res.ok) {
@@ -30,7 +40,7 @@ async function coreGetRequired<T>(path: string): Promise<T> {
   const url = `${base}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, { headers: headers(), cache: "no-store" });
+    res = await fetch(url, { headers: headersNoBody(), cache: "no-store" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const localhostHint =
@@ -80,7 +90,7 @@ async function coreDeleteRequired<T>(path: string): Promise<T> {
   const url = `${base}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, { method: "DELETE", headers: headers(), cache: "no-store" });
+    res = await fetch(url, { method: "DELETE", headers: headersNoBody(), cache: "no-store" });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`Cannot reach CAF Core (${url}): ${msg}`);
@@ -143,7 +153,7 @@ async function corePut<T = unknown>(path: string, body: unknown): Promise<T | nu
 async function coreDelete<T = unknown>(path: string): Promise<T | null> {
   const res = await fetch(`${CAF_CORE_URL}${path}`, {
     method: "DELETE",
-    headers: headers(),
+    headers: headersNoBody(),
   });
   if (!res.ok) {
     console.error("CAF Core DELETE error", res.status, await res.text());
@@ -377,7 +387,7 @@ export async function getJobDetailAll(
     : `/v1/review-queue-all/task/${encodeURIComponent(tid)}${projectSlug ? `?project_slug=${encodeURIComponent(projectSlug.trim())}` : ""}`;
   const base = CAF_CORE_URL.replace(/\/$/, "");
   // Must not use Next's default fetch cache — stale 404s made tasks look "missing" after sync.
-  const res = await fetch(`${base}${path}`, { headers: headers(), cache: "no-store" });
+  const res = await fetch(`${base}${path}`, { headers: headersNoBody(), cache: "no-store" });
   if (res.ok) {
     const data = (await res.json()) as { ok?: boolean; job?: ReviewJobDetail };
     return data?.job ?? null;
