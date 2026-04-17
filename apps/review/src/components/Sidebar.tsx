@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 
 const NAV_ITEMS = [
   {
@@ -34,12 +35,41 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { ready, multiProject, lockedSlug, activeProjectSlug, projectOptions, setActiveProjectSlug, navHref } =
+    useReviewProject();
 
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
         <h1>CAF Review</h1>
         <span>Output &amp; approval</span>
+      </div>
+      <div className="sidebar-project-panel" aria-label="Active project">
+        <div className="sidebar-project-label">Project</div>
+        {!ready ? (
+          <div className="sidebar-project-muted">Loading…</div>
+        ) : multiProject ? (
+          <select
+            className="sidebar-project-select"
+            value={activeProjectSlug}
+            onChange={(e) => setActiveProjectSlug(e.target.value)}
+            title="Filter the workbench and links to this tenant"
+          >
+            <option value="">All projects</option>
+            {activeProjectSlug && !projectOptions.includes(activeProjectSlug) ? (
+              <option value={activeProjectSlug}>{activeProjectSlug}</option>
+            ) : null}
+            {projectOptions.map((slug) => (
+              <option key={slug} value={slug}>
+                {slug}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="sidebar-project-pill" title="Set PROJECT_SLUG / REVIEW_ALL_PROJECTS on the server to switch tenants">
+            <span className="sidebar-project-pill-value">{lockedSlug || "—"}</span>
+          </div>
+        )}
       </div>
       <nav className="sidebar-nav">
         {NAV_ITEMS.map((section) => (
@@ -57,7 +87,7 @@ export function Sidebar() {
               return (
                 <Link
                   key={item.href}
-                  href={item.href}
+                  href={navHref(item.href)}
                   className={`sidebar-link ${isActive ? "active" : ""}`}
                 >
                   <item.icon />

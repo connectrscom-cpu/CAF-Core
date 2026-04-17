@@ -71,6 +71,45 @@ a:hover { color: var(--accent-hover); }
 .sidebar-brand { padding: 20px 20px 16px; border-bottom: 1px solid var(--border); }
 .sidebar-brand h1 { font-size: 15px; font-weight: 700; color: var(--fg); letter-spacing: -0.02em; }
 .sidebar-brand span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-top: 2px; }
+
+.sidebar-project-panel {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.sidebar-project-label {
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); margin-bottom: 8px;
+}
+.sidebar-project-select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sidebar-project-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.sidebar-project-pill {
+  display: flex; align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--card);
+}
+.sidebar-project-pill-value {
+  font-size: 13px; font-weight: 700; color: var(--fg); letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-project-muted { font-size: 12px; color: var(--muted); padding: 6px 0; }
+
 .sidebar-nav { padding: 12px 8px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .sidebar-link {
   display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px;
@@ -94,6 +133,8 @@ a:hover { color: var(--accent-hover); }
 }
 .page-header h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
 .page-header-sub { font-size: 13px; color: var(--muted); }
+.page-header-tenant { color: var(--fg-secondary); }
+.page-header-tenant strong { color: var(--fg); font-weight: 600; }
 
 /* ── Tabs ───────────────────────────────────────────────── */
 .tabs { display: flex; gap: 0; padding: 16px 28px 0; border-bottom: 1px solid var(--border); }

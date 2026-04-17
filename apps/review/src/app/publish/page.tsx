@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { zipSync } from "fflate";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable, type GroupBy } from "@/components/TaskTable";
 import { TaskViewer } from "@/components/TaskViewer";
@@ -128,6 +129,7 @@ function looksLikeErrorMessage(msg: string): boolean {
 }
 
 function PublishPageContent() {
+  const { multiProject, activeProjectSlug, lockedSlug, navHref } = useReviewProject();
   const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"approved" | "scheduled" | "published">("approved");
   const [approved, setApproved] = useState<ApprovedTasksResponse | null>(null);
@@ -806,6 +808,19 @@ function PublishPageContent() {
         <div>
           <h2>Publish</h2>
           <span className="page-header-sub">
+            {multiProject ? (
+              <span className="page-header-tenant" style={{ display: "block", marginBottom: 8 }}>
+                {activeProjectSlug ? (
+                  <>Approved queue filtered to <strong>{activeProjectSlug}</strong></>
+                ) : (
+                  <>Approved queue: <strong>all projects</strong></>
+                )}
+              </span>
+            ) : lockedSlug ? (
+              <span className="page-header-tenant" style={{ display: "block", marginBottom: 8 }}>
+                Tenant <strong>{lockedSlug}</strong>
+              </span>
+            ) : null}
             Schedule in Review (future time) → <span className="mono">Scheduled</span> tab lists{" "}
             <span className="mono">?upcoming_only=1</span>. When <span className="mono">scheduled_at</span> passes, your
             executor uses GET <span className="mono">?due_only=1</span> → POST <span className="mono">…/start</span> →
@@ -881,10 +896,10 @@ function PublishPageContent() {
         style={{ padding: "12px 28px 32px", zoom: publishFontZoom }}
       >
         <div className="publish-left">
-          <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
+          <Link href={navHref("/")} className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
           </Link>
-          <Link href="/approved" className="detail-back" style={{ padding: 0, marginBottom: 16, marginLeft: 16, display: "inline-block" }}>
+          <Link href={navHref("/approved")} className="detail-back" style={{ padding: 0, marginBottom: 16, marginLeft: 16, display: "inline-block" }}>
             Approved list
           </Link>
 

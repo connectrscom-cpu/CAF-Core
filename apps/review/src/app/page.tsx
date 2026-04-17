@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import type { ReviewQueueRow } from "@/lib/types";
 import type { GroupBy } from "@/components/TaskTable";
 
@@ -31,6 +32,7 @@ interface FacetsResponse {
 }
 
 function WorkbenchContent() {
+  const { multiProject, activeProjectSlug, lockedSlug } = useReviewProject();
   const searchParams = useSearchParams();
   const [data, setData] = useState<TasksResponse | null>(null);
   const [facets, setFacets] = useState<FacetsResponse>({});
@@ -88,7 +90,24 @@ function WorkbenchContent() {
       <div className="page-header">
         <div>
           <h2>Review Console</h2>
-          <span className="page-header-sub">Workbench</span>
+          <span className="page-header-sub">
+            Workbench
+            {multiProject ? (
+              <>
+                {" · "}
+                <span className="page-header-tenant">
+                  {activeProjectSlug ? <>Viewing <strong>{activeProjectSlug}</strong></> : <>Viewing <strong>all projects</strong></>}
+                </span>
+              </>
+            ) : lockedSlug ? (
+              <>
+                {" · "}
+                <span className="page-header-tenant">
+                  Tenant <strong>{lockedSlug}</strong>
+                </span>
+              </>
+            ) : null}
+          </span>
         </div>
       </div>
 

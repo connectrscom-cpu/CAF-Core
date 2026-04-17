@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
+import { ReviewAppShell } from "@/components/ReviewAppShell";
 
 export const metadata: Metadata = {
   title: "CAF Review",
@@ -11,10 +11,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body>
-        <div className="app-shell">
-          <Sidebar />
-          <main className="main-content">{children}</main>
-        </div>
+        <ReviewAppShell>{children}</ReviewAppShell>
       </body>
     </html>
   );
