@@ -141,8 +141,22 @@ async function resolveTokenForPageGraphApi(
       return rawToken;
     }
 
+    const metaAuthDead =
+      /session has expired|has expired on|has expired\b/i.test(msg) ||
+      /invalid.*access token|access token.*invalid|OAuthException|error validating access token|session is invalid/i.test(
+        msg
+      );
+    if (metaAuthDead) {
+      throw new Error(
+        "Meta access token expired or invalid while calling GET /me/accounts (needed to obtain the Page access token for your configured fb_page_id). " +
+          "Both Facebook and Instagram placements use this step when META_FB or META_IG has a linked Page id. " +
+          "Renew the token: set CAF_META_PAGE_ACCESS_TOKEN on caf-core (e.g. fly secrets set), or update project_integrations META_FB / META_IG credentials_json.access_token with a fresh User token (pages_show_list + pages_manage_posts) or a long-lived Page token from Graph GET /me/accounts?fields=id,access_token. " +
+          `Graph said: ${msg}`
+      );
+    }
+
     throw new Error(
-      `Could not derive a Page access token via GET /me/accounts (required for Facebook, including multi-image / unpublished photo uploads): ${msg}`
+      `Could not derive a Page access token via GET /me/accounts (required for Facebook Page posts and for Instagram when a linked Facebook Page is configured): ${msg}`
     );
   }
 }
@@ -430,12 +444,13 @@ export async function publishPlacementToMeta(
   const v = graphApiVersion.trim().startsWith("v") ? graphApiVersion.trim() : `v${graphApiVersion.trim()}`;
 
   const facebookPageId = await resolveFbPageId(db, projectId);
-  const token =
-    facebookPageId && facebookPageId.length > 0
-      ? await resolveTokenForPageGraphApi(rawToken, facebookPageId, v)
-      : rawToken;
 
   try {
+    const token =
+      facebookPageId && facebookPageId.length > 0
+        ? await resolveTokenForPageGraphApi(rawToken, facebookPageId, v)
+        : rawToken;
+
     if (key === "META_FB") {
       const pageId = facebookPageId;
       if (!pageId) {
@@ -475,9 +490,9 @@ export async function publishPlacementToMeta(
     } else if (/Unpublished posts must be posted to a page as the page itself/i.test(msg)) {
       tokenHint =
         " Facebook multi-image uses unpublished /{page-id}/photos uploads, which require a **Page** access token (not a plain User token). Use GET /me/accounts?fields=id,access_token with a User token that has pages_show_list, copy the access_token for your fb_page_id into CAF_META_PAGE_ACCESS_TOKEN (or META_FB credentials_json), or fix fb_page_id so it matches a Page returned by /me/accounts.";
-    } else if (/expired|invalid.*session|invalid oauth|OAuthException|access token/i.test(msg)) {
+    } else if (/expired|invalid.*session|invalid oauth|OAuthException|access token|Meta access token expired/i.test(msg)) {
       tokenHint =
-        " Regenerate a long-lived Page token and set CAF_META_PAGE_ACCESS_TOKEN (Fly secret) or META_FB/META_IG credentials_json.access_token.";
+        " Regenerate tokens (short User sessions expire in ~1–2 hours). Use a long-lived Page access_token or a long-lived User token with pages_show_list; set CAF_META_PAGE_ACCESS_TOKEN (Fly) or META_FB/META_IG credentials_json.access_token.";
     }
     return { ok: false, error: msg + tokenHint };
   }
