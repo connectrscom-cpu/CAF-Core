@@ -2,7 +2,15 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-type Section = "strategy" | "brand" | "constraints" | "platforms" | "flow-types" | "risk-rules" | "heygen-config";
+type Section =
+  | "strategy"
+  | "brand"
+  | "constraints"
+  | "platforms"
+  | "flow-types"
+  | "risk-rules"
+  | "heygen-defaults"
+  | "heygen-config";
 
 const TABS: { id: Section; label: string }[] = [
   { id: "strategy", label: "Strategy" },
@@ -11,6 +19,7 @@ const TABS: { id: Section; label: string }[] = [
   { id: "platforms", label: "Platforms" },
   { id: "flow-types", label: "Flow Types" },
   { id: "risk-rules", label: "Risk Rules" },
+  { id: "heygen-defaults", label: "Video defaults" },
   { id: "heygen-config", label: "HeyGen" },
 ];
 
@@ -128,6 +137,23 @@ const HEYGEN_FIELDS = [
   { key: "notes", label: "Notes", type: "textarea" },
 ] as const;
 
+const HEYGEN_DEFAULTS_FIELDS = [
+  { key: "voice_id", label: "Default HeyGen voice_id (paste ID)", type: "text" },
+  { key: "avatar_id", label: "Default HeyGen avatar_id (paste ID; ignored if pool is set)", type: "text" },
+  {
+    key: "avatar_pool_json",
+    label:
+      "Avatar pool JSON (preferred). Example: [{\"avatar_id\":\"...\",\"voice_id\":\"...\"}]",
+    type: "textarea",
+  },
+  {
+    key: "avatar_pool_helper",
+    label:
+      "Pool helper (one avatar_id per line). If Avatar pool JSON is empty, we’ll convert this to a pool automatically.",
+    type: "textarea",
+  },
+] as const;
+
 type FieldDef = { key: string; label: string; type: string; required?: boolean };
 
 export default function ProjectConfigPage() {
@@ -138,12 +164,63 @@ export default function ProjectConfigPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
 
-  const isSingleton = activeTab === "strategy" || activeTab === "brand" || activeTab === "constraints";
+  const isSingleton =
+    activeTab === "strategy" ||
+    activeTab === "brand" ||
+    activeTab === "constraints" ||
+    activeTab === "heygen-defaults";
 
   const loadSection = useCallback(async (section: Section) => {
     setLoading(true);
     setMessage(null);
     try {
+      if (section === "heygen-defaults") {
+        const res = await fetch(`/api/project-config/heygen-config`);
+        const json = (await res.json()) as { heygen_config?: Record<string, unknown>[] };
+        const rows = Array.isArray(json.heygen_config) ? json.heygen_config : [];
+
+        const isBroad = (r: Record<string, unknown>) =>
+          !String(r.platform ?? "").trim() && !String(r.flow_type ?? "").trim() && !String(r.render_mode ?? "").trim();
+
+        const pickValue = (key: string): string => {
+          const row = rows.find((r) => isBroad(r) && String(r.config_key ?? "") === key);
+          return row && typeof row.value === "string" ? row.value : "";
+        };
+
+        const voice = pickValue("voice");
+        const avatarId = pickValue("avatar_id");
+        const poolJson = pickValue("avatar_pool_json");
+
+        let helper = "";
+        if (poolJson.trim().startsWith("[")) {
+          try {
+            const parsed = JSON.parse(poolJson) as unknown;
+            if (Array.isArray(parsed)) {
+              helper = parsed
+                .map((x) => {
+                  if (!x || typeof x !== "object" || Array.isArray(x)) return "";
+                  const o = x as Record<string, unknown>;
+                  return String(o.avatar_id ?? o.avatarId ?? "").trim();
+                })
+                .filter(Boolean)
+                .join("\n");
+            }
+          } catch {
+            helper = "";
+          }
+        }
+
+        setData({
+          voice_id: voice,
+          avatar_id: avatarId,
+          avatar_pool_json: poolJson,
+          avatar_pool_helper: helper,
+        });
+        setListData(null);
+        setLoading(false);
+        return;
+      }
+
       const res = await fetch(`/api/project-config/${section}`);
       const json = await res.json();
       if (section === "constraints") {
@@ -202,6 +279,43 @@ export default function ProjectConfigPage() {
         }
         payload = { ...formData, max_jobs_per_flow_type: perFlow };
       }
+
+      if (activeTab === "heygen-defaults") {
+        const voiceId = typeof formData.voice_id === "string" ? formData.voice_id.trim() : "";
+        const avatarId = typeof formData.avatar_id === "string" ? formData.avatar_id.trim() : "";
+        const poolJsonRaw = typeof formData.avatar_pool_json === "string" ? formData.avatar_pool_json.trim() : "";
+        const helperRaw = typeof formData.avatar_pool_helper === "string" ? formData.avatar_pool_helper.trim() : "";
+
+        let poolJsonFinal = poolJsonRaw;
+        if (!poolJsonFinal && helperRaw) {
+          const ids = helperRaw
+            .split(/\r?\n/)
+            .map((x) => x.trim())
+            .filter(Boolean);
+          poolJsonFinal = JSON.stringify(ids.map((id) => ({ avatar_id: id })));
+        }
+
+        if (poolJsonFinal) {
+          try {
+            const parsed = JSON.parse(poolJsonFinal) as unknown;
+            if (!Array.isArray(parsed)) throw new Error("avatar_pool_json must be a JSON array");
+            const count = parsed.filter((x) => x && typeof x === "object" && !Array.isArray(x) && String((x as Record<string, unknown>).avatar_id ?? (x as Record<string, unknown>).avatarId ?? "").trim()).length;
+            if (count === 0) throw new Error("avatar_pool_json must include at least one entry with avatar_id");
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            setMessage({ text: `Invalid Avatar pool JSON: ${msg}`, type: "error" });
+            setSaving(false);
+            return;
+          }
+        }
+
+        payload = {
+          voice_id: voiceId || null,
+          avatar_id: poolJsonFinal ? null : avatarId || null,
+          avatar_pool_json: poolJsonFinal || null,
+        };
+      }
+
       const method = activeTab === "risk-rules" ? "POST" : "PUT";
       const res = await fetch(`/api/project-config/${activeTab}`, {
         method,
@@ -483,6 +597,7 @@ function getFieldsForSection(section: Section): FieldDef[] {
     case "platforms": return [...PLATFORM_FIELDS];
     case "flow-types": return [...FLOW_TYPE_FIELDS];
     case "risk-rules": return [...RISK_RULE_FIELDS];
+    case "heygen-defaults": return [...HEYGEN_DEFAULTS_FIELDS];
     case "heygen-config": return [...HEYGEN_FIELDS];
   }
 }

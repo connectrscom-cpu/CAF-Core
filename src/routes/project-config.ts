@@ -467,4 +467,152 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     });
     return { ok: true, heygen_config: row };
   });
+
+  // ── HeyGen Defaults (convenience) ─────────────────────────────────────
+  const heygenDefaultsSchema = z
+    .object({
+      /** HeyGen voice id for TTS (same value as heygen_config `voice`). */
+      voice_id: z.string().nullish(),
+      /** Single avatar id (same value as heygen_config `avatar_id`). */
+      avatar_id: z.string().nullish(),
+      /** JSON array of { avatar_id, voice_id? } (same value as heygen_config `avatar_pool_json`). */
+      avatar_pool_json: z.string().nullish(),
+      /** Allow clients to target a project besides the path param; path still wins when provided. */
+      project_slug: z.string().optional(),
+    })
+    .strict();
+
+  function parseAvatarPoolJson(raw: string): { normalized: string; count: number } {
+    const t = raw.trim();
+    if (!t) return { normalized: "[]", count: 0 };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(t) as unknown;
+    } catch {
+      throw new Error("avatar_pool_json must be valid JSON");
+    }
+    if (!Array.isArray(parsed)) throw new Error("avatar_pool_json must be a JSON array");
+    const out: Array<{ avatar_id: string; voice_id?: string }> = [];
+    for (const x of parsed) {
+      if (!x || typeof x !== "object" || Array.isArray(x)) continue;
+      const o = x as Record<string, unknown>;
+      const aid = String(o.avatar_id ?? o.avatarId ?? "").trim();
+      const vid = String(o.voice_id ?? o.voiceId ?? "").trim();
+      if (!aid) continue;
+      out.push(vid ? { avatar_id: aid, voice_id: vid } : { avatar_id: aid });
+    }
+    return { normalized: JSON.stringify(out), count: out.length };
+  }
+
+  /**
+   * Convenience endpoint for the common case: set a project-level default voice and avatar (id or pool)
+   * without manually editing multiple `heygen_config` rows in the admin UI.
+   *
+   * Storage: still uses `caf_core.heygen_config` so runtime merge logic is unchanged.
+   */
+  app.put("/v1/projects/:project_slug/heygen-defaults", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = heygenDefaultsSchema.safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request", details: body.success ? undefined : body.error.flatten() });
+    }
+
+    const project = await ensureProject(db, params.data.project_slug);
+
+    const voiceId = typeof body.data.voice_id === "string" ? body.data.voice_id.trim() : "";
+    const avatarId = typeof body.data.avatar_id === "string" ? body.data.avatar_id.trim() : "";
+    const avatarPoolRaw = typeof body.data.avatar_pool_json === "string" ? body.data.avatar_pool_json.trim() : "";
+
+    let avatarPoolNormalized: string | null = null;
+    let poolCount = 0;
+    if (avatarPoolRaw) {
+      try {
+        const parsed = parseAvatarPoolJson(avatarPoolRaw);
+        avatarPoolNormalized = parsed.normalized;
+        poolCount = parsed.count;
+        if (poolCount === 0) {
+          return reply.code(400).send({ ok: false, error: "avatar_pool_empty", message: "avatar_pool_json parsed but contained no valid avatar_id entries" });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(400).send({ ok: false, error: "avatar_pool_invalid", message: msg.slice(0, 300) });
+      }
+    }
+
+    // Voice: write a single broad-scope row (platform/flow/render_mode null).
+    if (voiceId) {
+      await upsertHeygenConfig(db, project.id, {
+        config_id: "defaults_voice",
+        platform: null,
+        flow_type: null,
+        config_key: "voice",
+        value: voiceId,
+        render_mode: null,
+        value_type: "string",
+        is_active: true,
+        notes: "Project-level default voice (managed by heygen-defaults endpoint)",
+      });
+    }
+
+    // Avatar defaults: prefer pool when present.
+    if (avatarPoolNormalized) {
+      await upsertHeygenConfig(db, project.id, {
+        config_id: "defaults_avatar_pool",
+        platform: null,
+        flow_type: null,
+        config_key: "avatar_pool_json",
+        value: avatarPoolNormalized,
+        render_mode: null,
+        value_type: "string",
+        is_active: true,
+        notes: "Project-level default avatar pool (managed by heygen-defaults endpoint)",
+      });
+      // Disable single-avatar default so pools win deterministically.
+      await upsertHeygenConfig(db, project.id, {
+        config_id: "defaults_avatar_id",
+        platform: null,
+        flow_type: null,
+        config_key: "avatar_id",
+        value: null,
+        render_mode: null,
+        value_type: "string",
+        is_active: false,
+        notes: "Disabled because defaults_avatar_pool is active",
+      });
+    } else if (avatarId) {
+      await upsertHeygenConfig(db, project.id, {
+        config_id: "defaults_avatar_id",
+        platform: null,
+        flow_type: null,
+        config_key: "avatar_id",
+        value: avatarId,
+        render_mode: null,
+        value_type: "string",
+        is_active: true,
+        notes: "Project-level default avatar id (managed by heygen-defaults endpoint)",
+      });
+      // Disable pool to avoid stale overrides.
+      await upsertHeygenConfig(db, project.id, {
+        config_id: "defaults_avatar_pool",
+        platform: null,
+        flow_type: null,
+        config_key: "avatar_pool_json",
+        value: null,
+        render_mode: null,
+        value_type: "string",
+        is_active: false,
+        notes: "Disabled because defaults_avatar_id is active",
+      });
+    }
+
+    return {
+      ok: true,
+      project: { id: project.id, slug: project.slug },
+      applied: {
+        voice_id: voiceId || null,
+        avatar_id: avatarPoolNormalized ? null : avatarId || null,
+        avatar_pool_count: avatarPoolNormalized ? poolCount : 0,
+      },
+    };
+  });
 }

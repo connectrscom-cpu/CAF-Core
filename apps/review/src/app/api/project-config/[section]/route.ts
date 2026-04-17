@@ -6,6 +6,7 @@ import {
   getFlowTypes, saveFlowType,
   getRiskRules, saveRiskRule,
   getHeygenConfig, saveHeygenConfig,
+  saveHeygenDefaults,
   getSystemConstraints, saveSystemConstraints,
 } from "@/lib/caf-core-client";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
@@ -32,6 +33,15 @@ const savers: Record<string, (slug: string, data: Record<string, unknown>) => Pr
   "flow-types": saveFlowType,
   "risk-rules": saveRiskRule,
   "heygen-config": saveHeygenConfig,
+  "heygen-defaults": (slug, data) =>
+    saveHeygenDefaults(slug, {
+      voice_id: typeof data.voice_id === "string" ? data.voice_id : (data.voice_id as string | null | undefined),
+      avatar_id: typeof data.avatar_id === "string" ? data.avatar_id : (data.avatar_id as string | null | undefined),
+      avatar_pool_json:
+        typeof data.avatar_pool_json === "string"
+          ? data.avatar_pool_json
+          : (data.avatar_pool_json as string | null | undefined),
+    }),
 };
 
 function resolveProjectSlug(req: NextRequest, bodyProject?: string): string {

@@ -37,9 +37,19 @@ function redirectLongTaskSegment(request: NextRequest): NextResponse | null {
 }
 
 export function middleware(request: NextRequest) {
-  return redirectLongTaskSegment(request) ?? NextResponse.next();
+  const redirected = redirectLongTaskSegment(request);
+  if (redirected) return redirected;
+
+  const { pathname } = request.nextUrl;
+  if (pathname === "/publish" || pathname.startsWith("/publish/")) {
+    const res = NextResponse.next();
+    res.headers.set("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+    return res;
+  }
+
+  return NextResponse.next();
 }
 
 export const config = {
-  matcher: ["/t/:path*", "/content/:path*"],
+  matcher: ["/t/:path*", "/content/:path*", "/publish", "/publish/:path*"],
 };

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { zipSync } from "fflate";
 import { TaskTable } from "@/components/TaskTable";
@@ -87,6 +87,7 @@ export default function PublishPage() {
   const [projectStrategy, setProjectStrategy] = useState<Record<string, unknown> | null>(null);
   const [loadingStrategy, setLoadingStrategy] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const autoSwitchedToDueRef = useRef(false);
 
   const projectSlug = (selected?.project ?? "").trim();
   const effectiveProjectForQueue = (
@@ -171,6 +172,95 @@ export default function PublishPage() {
     }
   }, [effectiveProjectForQueue]);
 
+  const dueByTask = useMemo(() => {
+    const map = new Map<string, PublicationPlacement[]>();
+    for (const pl of duePlacements) {
+      const tid = (pl.task_id ?? "").trim();
+      if (!tid) continue;
+      if (!map.has(tid)) map.set(tid, []);
+      map.get(tid)!.push(pl);
+    }
+    const tasks = Array.from(map.entries()).map(([task_id, rows]) => {
+      const sorted = [...rows].sort((a, b) => (a.platform ?? "").localeCompare(b.platform ?? ""));
+      const earliest =
+        sorted
+          .map((r) => (typeof r.scheduled_at === "string" ? Date.parse(r.scheduled_at) : NaN))
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b)[0] ?? null;
+      return { task_id, placements: sorted, earliest };
+    });
+    tasks.sort((a, b) => {
+      if (a.earliest != null && b.earliest != null) return a.earliest - b.earliest;
+      if (a.earliest != null) return -1;
+      if (b.earliest != null) return 1;
+      return a.task_id.localeCompare(b.task_id);
+    });
+    return tasks;
+  }, [duePlacements]);
+
+  const duePreviewByTaskId = useMemo(() => {
+    const m = new Map<string, { preview_url?: string; title?: string }>();
+    for (const r of approved?.items ?? []) {
+      const tid = (r.task_id ?? "").trim();
+      if (!tid) continue;
+      if (!m.has(tid)) m.set(tid, { preview_url: (r.preview_url ?? "").trim() || undefined, title: (r.generated_title ?? "").trim() || undefined });
+    }
+    return m;
+  }, [approved?.items]);
+
+  const dueTaskRows: ReviewQueueRow[] = useMemo(() => {
+    const proj = effectiveProjectForQueue;
+    return dueByTask.map(({ task_id, placements: rows, earliest }) => {
+      const tid = task_id.trim();
+      const approvedRow = approved?.items.find((r) => (r.task_id ?? "").trim() === tid);
+
+      const platforms = Array.from(new Set(rows.map((r) => (r.platform ?? "").trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const platformLabel = platforms.length === 0 ? "—" : platforms.length === 1 ? platforms[0]! : platforms.join(" + ");
+
+      const formats = Array.from(new Set(rows.map((r) => (r.content_format ?? "").trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const formatLabel = formats.length === 0 ? "" : formats.length === 1 ? formats[0]! : formats.join(" + ");
+
+      const meta = duePreviewByTaskId.get(tid);
+      const previewUrl = (approvedRow?.preview_url ?? meta?.preview_url ?? "").trim() || undefined;
+      const generatedTitle = (approvedRow?.generated_title ?? meta?.title ?? "").trim() || undefined;
+
+      const earliestLabel =
+        earliest != null && Number.isFinite(earliest) ? new Date(earliest).toLocaleString() : "";
+
+      const base: ReviewQueueRow = approvedRow
+        ? { ...approvedRow }
+        : {
+            task_id: tid,
+            project: proj || undefined,
+          };
+
+      const baseFlow = (base.flow_type ?? "").trim();
+      const flowType = baseFlow || (formatLabel ? formatLabel : undefined);
+
+      return {
+        ...base,
+        project: ((base.project ?? "").trim() || (proj || "").trim() || undefined) as string | undefined,
+        preview_url: previewUrl,
+        generated_title: generatedTitle,
+        platform: platformLabel,
+        flow_type: flowType,
+        review_status: earliestLabel ? `DUE · ${earliestLabel}` : "DUE",
+        decision: `Due: ${rows.length}`,
+        recommended_route: (base.recommended_route ?? "").trim() || "—",
+      };
+    });
+  }, [approved?.items, dueByTask, duePreviewByTaskId, effectiveProjectForQueue]);
+
+  const selectedDuePlacements = useMemo(() => {
+    const tid = (selected?.task_id ?? "").trim();
+    if (!tid) return [];
+    return duePlacements.filter((p) => (p.task_id ?? "").trim() === tid);
+  }, [duePlacements, selected?.task_id]);
+
   useEffect(() => {
     fetchDueQueue();
   }, [fetchDueQueue]);
@@ -180,10 +270,14 @@ export default function PublishPage() {
   }, [effectiveProjectForQueue, loadProjectStrategy]);
 
   useEffect(() => {
-    // If user opens /publish and there are due items, default to Due tab for quick action.
-    if (activeTab === "approved" && duePlacements.length > 0) setActiveTab("due");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [duePlacements.length]);
+    // If user opens /publish and there are due items, default to Due once for quick action.
+    // Avoid fighting the user if they explicitly switch back to Approved.
+    if (autoSwitchedToDueRef.current) return;
+    if (activeTab !== "approved") return;
+    if (duePlacements.length <= 0) return;
+    autoSwitchedToDueRef.current = true;
+    setActiveTab("due");
+  }, [activeTab, duePlacements.length]);
 
   const loadJob = useCallback(async (row: ReviewQueueRow) => {
     const tid = row.task_id?.trim();
@@ -412,50 +506,47 @@ export default function PublishPage() {
           type="button"
         >
           Due
-          <span className="tab-count">{duePlacements.length}</span>
+          <span className="tab-count">{dueTaskRows.length}</span>
         </button>
       </div>
 
       <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
-        <div
-          className="publish-left"
-          style={{ display: activeTab === "approved" ? "block" : "none" }}
-        >
+        <div className="publish-left">
           <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
           </Link>
           <Link href="/approved" className="detail-back" style={{ padding: 0, marginBottom: 16, marginLeft: 16, display: "inline-block" }}>
             Approved list
           </Link>
-          {loadingApproved && <p style={{ color: "var(--muted)" }}>Loading approved…</p>}
-          {approved && !loadingApproved && (
-            <TaskTable
-              items={approved.items}
-              groupBy=""
-              page={1}
-              limit={approved.total}
-              total={approved.total}
-              contentSlug="content"
-              showProjectColumn={approved.scope === "all"}
-              hideTitleColumn
-              hideOpenColumn
-              selectedRowKey={selectedRowKey}
-              onRowSelect={(row) => {
-                setSelected(row);
-                loadJob(row);
-              }}
-            />
-          )}
-        </div>
 
-        <div
-          className="publish-right"
-          style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}
-        >
+          {activeTab === "approved" && (
+            <>
+              {loadingApproved && <p style={{ color: "var(--muted)" }}>Loading approved…</p>}
+              {approved && !loadingApproved && (
+                <TaskTable
+                  items={approved.items}
+                  groupBy=""
+                  page={1}
+                  limit={approved.total}
+                  total={approved.total}
+                  contentSlug="content"
+                  showProjectColumn={approved.scope === "all"}
+                  hideTitleColumn
+                  hideOpenColumn
+                  selectedRowKey={selectedRowKey}
+                  onRowSelect={(row) => {
+                    setSelected(row);
+                    loadJob(row);
+                  }}
+                />
+              )}
+            </>
+          )}
+
           {activeTab === "due" && (
-            <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid var(--border)" }}>
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Due for publish</h3>
+            <>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 650, margin: 0 }}>Due for publish</h3>
                 <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
                   {effectiveProjectForQueue || "—"}
                 </span>
@@ -463,79 +554,50 @@ export default function PublishPage() {
                   Refresh
                 </button>
               </div>
-              {loadingDue ? (
-                <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 10 }}>Loading due queue…</p>
-              ) : duePlacements.length === 0 ? (
-                <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 10 }}>No scheduled placements past their time.</p>
-              ) : (
-                <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
-                  {duePlacements.map((pl) => (
-                    <li
-                      key={pl.id}
-                      style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        alignItems: "center",
-                        gap: 8,
-                        fontSize: 13,
-                        marginBottom: 8,
-                        padding: "8px 10px",
-                        borderRadius: 8,
-                        border: "1px solid var(--border)",
-                        background: "var(--panel)",
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ fontSize: 12, padding: "4px 10px" }}
-                        onClick={async () => {
-                          // Select corresponding job row (if present) so compose panel loads.
-                          const match =
-                            approved?.items.find((r) => (r.task_id ?? "").trim() === pl.task_id) ??
-                            ({ task_id: pl.task_id, project: effectiveProjectForQueue } as ReviewQueueRow);
-                          setSelected(match);
-                          await loadJob(match);
-                        }}
-                      >
-                        Select
-                      </button>
-                      <span className="mono" style={{ fontSize: 11, color: "var(--muted)", flex: "1 1 160px" }}>
-                        {pl.task_id.slice(0, 56)}
-                        {pl.task_id.length > 56 ? "…" : ""}
-                      </span>
-                      <span>
-                        <strong>{pl.platform}</strong> · {pl.content_format}
-                      </span>
-                      {pl.scheduled_at && (
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                          {new Date(pl.scheduled_at).toLocaleString()}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="btn"
-                        style={{ fontSize: 12, padding: "4px 10px" }}
-                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue)}
-                      >
-                        Start &amp; copy payload
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ fontSize: 12 }}
-                        onClick={() => startPlacement(pl.id, effectiveProjectForQueue, { allow_not_yet_due: true })}
-                      >
-                        Start (ignore schedule)
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
 
-          {!selected && <p style={{ color: "var(--muted)" }}>Select a row to compose a publish.</p>}
+              {!effectiveProjectForQueue && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                  Pick a task from <span className="mono">Approved</span> first (so we know which project to query), or open the Approved list and return here.
+                </p>
+              )}
+
+              {effectiveProjectForQueue && loadingDue && <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading due queue…</p>}
+
+              {effectiveProjectForQueue && !loadingDue && dueTaskRows.length === 0 && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>No scheduled placements past their time.</p>
+              )}
+
+              {effectiveProjectForQueue && !loadingDue && dueTaskRows.length > 0 && (
+                <TaskTable
+                  items={dueTaskRows}
+                  groupBy=""
+                  page={1}
+                  limit={dueTaskRows.length}
+                  total={dueTaskRows.length}
+                  contentSlug="content"
+                  showProjectColumn={approved?.scope === "all"}
+                  hideTitleColumn
+                  hideOpenColumn
+                  selectedRowKey={selectedRowKey}
+                  onRowSelect={(row) => {
+                    setSelected(row);
+                    loadJob(row);
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        <div
+          className="publish-right"
+          style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}
+        >
+          {!selected && (
+            <p style={{ color: "var(--muted)" }}>
+              {activeTab === "due" ? "Select a due task to preview and start publishing." : "Select a row to compose a publish."}
+            </p>
+          )}
           {selected && (
             <>
               <div
@@ -598,6 +660,68 @@ export default function PublishPage() {
                 </div>
               </div>
 
+              {activeTab === "due" && selected?.task_id && (
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 650 }}>Due placements (this task)</h3>
+                  {selectedDuePlacements.length === 0 ? (
+                    <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>No due rows for this task_id right now.</p>
+                  ) : (
+                    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                      {selectedDuePlacements.map((pl) => (
+                        <li
+                          key={pl.id}
+                          style={{
+                            border: "1px solid var(--border)",
+                            borderRadius: 10,
+                            padding: 12,
+                            marginBottom: 10,
+                            background: "var(--panel)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              display: "flex",
+                              flexWrap: "wrap",
+                              gap: 10,
+                              alignItems: "baseline",
+                              justifyContent: "space-between",
+                            }}
+                          >
+                            <div style={{ fontSize: 13 }}>
+                              <strong>{pl.platform}</strong> · {pl.content_format} ·{" "}
+                              <span style={{ color: "var(--muted)" }}>{pl.status}</span>
+                              {pl.scheduled_at && (
+                                <span style={{ color: "var(--muted)" }}> · {new Date(pl.scheduled_at).toLocaleString()}</span>
+                              )}
+                            </div>
+                            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                              <button
+                                type="button"
+                                className="btn"
+                                style={{ fontSize: 12, padding: "6px 10px" }}
+                                onClick={() => startPlacement(pl.id, projectSlug || effectiveProjectForQueue)}
+                              >
+                                Start &amp; copy payload
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                style={{ fontSize: 12 }}
+                                onClick={() =>
+                                  startPlacement(pl.id, projectSlug || effectiveProjectForQueue, { allow_not_yet_due: true })
+                                }
+                              >
+                                Start (ignore schedule)
+                              </button>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+
               {loadingJob && <p style={{ color: "var(--muted)" }}>Loading task…</p>}
 
               {!loadingJob && job && (
@@ -606,7 +730,9 @@ export default function PublishPage() {
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
                       <div style={{ fontSize: 12, color: "var(--muted)" }}>Preview (as-posted format)</div>
                       <Link
-                        href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`}
+                        href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(
+                          projectSlug || effectiveProjectForQueue
+                        )}`}
                         className="btn-ghost"
                         style={{ fontSize: 12 }}
                       >
@@ -798,12 +924,12 @@ export default function PublishPage() {
 
                   <button
                     type="button"
-                    className="btn"
+                    className="btn-primary"
                     disabled={saving}
                     onClick={() => submitSchedules()}
                     style={{ marginRight: 12 }}
                   >
-                    {saving ? "Saving…" : "Save scheduled placements"}
+                    {saving ? "Scheduling…" : "Schedule selected platforms"}
                   </button>
                   <Link href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`} className="btn-ghost">
                     Open in content review
