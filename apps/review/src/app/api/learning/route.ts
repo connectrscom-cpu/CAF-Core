@@ -141,17 +141,38 @@ export async function POST(req: NextRequest) {
             ? body.mint_pending_hints_below_score
             : undefined,
       auto_mint_pending_hints: body.auto_mint_pending_hints === true,
+      mint_positive_hints_above_score:
+        body.mint_positive_hints_above_score === null
+          ? null
+          : typeof body.mint_positive_hints_above_score === "number"
+            ? body.mint_positive_hints_above_score
+            : undefined,
+      auto_mint_positive_hints: body.auto_mint_positive_hints === true,
     });
     return NextResponse.json(result ?? { error: "Failed" });
   }
 
   if (action === "llm_mint_hints") {
     const reviewIds = Array.isArray(body.review_ids) ? body.review_ids.map((x: unknown) => String(x)) : [];
-    const below = typeof body.mint_below_score === "number" ? body.mint_below_score : NaN;
-    if (!reviewIds.length || Number.isNaN(below)) {
-      return NextResponse.json({ error: "review_ids[] and mint_below_score required" }, { status: 400 });
+    const below =
+      typeof body.mint_below_score === "number" && Number.isFinite(body.mint_below_score)
+        ? body.mint_below_score
+        : undefined;
+    const above =
+      typeof body.mint_above_score === "number" && Number.isFinite(body.mint_above_score)
+        ? body.mint_above_score
+        : undefined;
+    if (!reviewIds.length || (below === undefined && above === undefined)) {
+      return NextResponse.json(
+        { error: "review_ids[] and at least one of mint_below_score or mint_above_score required" },
+        { status: 400 }
+      );
     }
-    const result = await mintLlmApprovalReviewHints(projectSlug, { review_ids: reviewIds, mint_below_score: below });
+    const result = await mintLlmApprovalReviewHints(projectSlug, {
+      review_ids: reviewIds,
+      ...(below !== undefined ? { mint_below_score: below } : {}),
+      ...(above !== undefined ? { mint_above_score: above } : {}),
+    });
     return NextResponse.json(result ?? { error: "Failed" });
   }
 

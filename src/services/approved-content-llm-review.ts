@@ -1,7 +1,7 @@
 /**
  * LLM review of human-APPROVED content only: multimodal (images + text) when assets exist,
  * scores output for learning signal, persists llm_approval_reviews + learning_observations,
- * optionally mints pending GENERATION_GUIDANCE from low scores.
+ * optionally mints pending GENERATION_GUIDANCE from low scores (improvements) or high scores (strengths to preserve).
  */
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
@@ -13,6 +13,7 @@ import {
   hasLlmApprovalReviewSince,
   insertLlmApprovalReview,
   markLlmApprovalReviewMinted,
+  markLlmApprovalReviewPositiveMinted,
 } from "../repositories/llm-approval-reviews.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
@@ -254,6 +255,13 @@ export interface RunLlmApprovalReviewParams {
    * If false/omitted, the run returns eligibility + proposed bullets but does not create learning rules.
    */
   auto_mint_pending_hints?: boolean;
+  /**
+   * When set (e.g. 0.85), scores at or above this with non-empty strengths mint one pending
+   * GENERATION_GUIDANCE rule capturing what worked (editorial-style pending rule; operator must apply).
+   */
+  mint_positive_hints_above_score?: number | null;
+  /** If true, mint positive-strength guidance during the run when thresholds match. */
+  auto_mint_positive_hints?: boolean;
 }
 
 export interface LlmApprovalReviewJobResult {
@@ -264,7 +272,9 @@ export interface LlmApprovalReviewJobResult {
   overall_score?: number | null;
   model?: string;
   minted_pending_rule?: boolean;
+  minted_pending_positive_rule?: boolean;
   hint_eligible?: boolean;
+  positive_hint_eligible?: boolean;
   improvement_bullets?: string[];
   strengths?: string[];
   weaknesses?: string[];
@@ -298,6 +308,8 @@ export async function runLlmApprovalReviewsForProject(
   const maxText = config.LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS;
   const mintBelow = params.mint_pending_hints_below_score;
   const autoMint = params.auto_mint_pending_hints === true;
+  const mintAbove = params.mint_positive_hints_above_score;
+  const autoMintPositive = params.auto_mint_positive_hints === true;
 
   const jobs = await listApprovedJobs(db, projectId, { limit, taskIds: params.task_ids });
   const results: LlmApprovalReviewJobResult[] = [];
@@ -406,6 +418,9 @@ export async function runLlmApprovalReviewsForProject(
       };
 
       const eligible = mintBelow != null && overall < mintBelow && improvementBullets.length > 0;
+      const positiveEligible =
+        mintAbove != null && overall >= mintAbove && strengths.length > 0;
+
       let minted = false;
       if (eligible && autoMint) {
         const ruleId = `llm_hint_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
@@ -417,6 +432,7 @@ export async function runLlmApprovalReviewsForProject(
           scope_platform: job.platform ?? null,
           action_type: "GENERATION_GUIDANCE",
           action_payload: {
+            guidance_kind: "improvement",
             bullets: improvementBullets.slice(0, 8),
             instruction: improvementBullets.slice(0, 5).join(" "),
             source_task_id: job.task_id,
@@ -431,6 +447,42 @@ export async function runLlmApprovalReviewsForProject(
           created_by: "llm_approval_reviewer",
         });
         minted = true;
+      }
+
+      let mintedPositive = false;
+      if (positiveEligible && autoMintPositive) {
+        const ruleId = `llm_strength_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
+        const strengthBullets = strengths.slice(0, 8);
+        const guidanceLines = [
+          "Validated patterns from a high-scoring post-approval LLM review of human-approved content — preserve and echo these qualities in new work.",
+          ...strengthBullets.map((s) => `• ${s}`),
+        ];
+        if (summary?.trim()) guidanceLines.push(`Summary: ${summary.trim()}`);
+        const guidance = guidanceLines.join("\n");
+        await insertLearningRule(db, {
+          rule_id: ruleId,
+          project_id: projectId,
+          trigger_type: "llm_post_approval_review",
+          scope_flow_type: job.flow_type ?? null,
+          scope_platform: job.platform ?? null,
+          action_type: "GENERATION_GUIDANCE",
+          action_payload: {
+            guidance_kind: "preserve_strengths",
+            guidance,
+            bullets: strengthBullets,
+            instruction: strengthBullets.slice(0, 4).join(" "),
+            source_task_id: job.task_id,
+            source_review_id: reviewId,
+            llm_overall_score: overall,
+          },
+          confidence: Math.min(0.95, Math.max(0.35, overall)),
+          source_entity_ids: [job.task_id],
+          evidence_refs: [reviewId, job.task_id],
+          rule_family: "generation",
+          provenance: "llm_post_approval_review",
+          created_by: "llm_approval_reviewer",
+        });
+        mintedPositive = true;
       }
 
       await insertLlmApprovalReview(db, {
@@ -452,6 +504,7 @@ export async function runLlmApprovalReviewsForProject(
         vision_image_urls: imageUrls,
         text_bundle_chars: textBundle.length,
         minted_pending_rule: minted,
+        minted_pending_positive_rule: mintedPositive,
       });
 
       await insertObservation(db, {
@@ -476,6 +529,8 @@ export async function runLlmApprovalReviewsForProject(
           images_available: imagesAvailable,
           images_used: imageUrls.length,
           minted_pending_rule: minted,
+          minted_pending_positive_rule: mintedPositive,
+          positive_hint_eligible: positiveEligible,
         },
         confidence: overall,
         observed_at: new Date().toISOString(),
@@ -488,7 +543,9 @@ export async function runLlmApprovalReviewsForProject(
         overall_score: overall,
         model: llm.model,
         minted_pending_rule: minted,
+        minted_pending_positive_rule: mintedPositive,
         hint_eligible: eligible,
+        positive_hint_eligible: positiveEligible,
         improvement_bullets: improvementBullets,
         strengths,
         weaknesses,
@@ -564,6 +621,7 @@ export async function mintPendingHintsFromApprovalReviews(
         scope_platform: r.platform ?? null,
         action_type: "GENERATION_GUIDANCE",
         action_payload: {
+          guidance_kind: "improvement",
           bullets: bullets.slice(0, 8),
           instruction: bullets.slice(0, 5).join(" "),
           source_task_id: r.task_id,
@@ -579,6 +637,100 @@ export async function mintPendingHintsFromApprovalReviews(
       });
 
       await markLlmApprovalReviewMinted(db, projectId, r.review_id, true);
+      minted++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push({ review_id: r.review_id, error: msg || "mint_failed" });
+    }
+  }
+
+  return { minted, skipped, errors };
+}
+
+/** Mint pending GENERATION_GUIDANCE from high-scoring reviews (strengths to preserve), like editorial pending rules. */
+export async function mintPositiveHintsFromApprovalReviews(
+  db: Pool,
+  projectId: string,
+  reviewIds: string[],
+  mintAbove: number
+): Promise<{ minted: number; skipped: number; errors: Array<{ review_id: string; error: string }> }> {
+  const ids = (reviewIds ?? []).map((x) => String(x)).filter(Boolean).slice(0, 200);
+  const threshold = Math.min(1, Math.max(0, mintAbove));
+  if (ids.length === 0) return { minted: 0, skipped: 0, errors: [] };
+
+  const rows = await q<{
+    review_id: string;
+    task_id: string;
+    flow_type: string | null;
+    platform: string | null;
+    overall_score: number | null;
+    strengths: unknown;
+    summary: string | null;
+    minted_pending_positive_rule: boolean | null;
+  }>(
+    db,
+    `SELECT review_id, task_id, flow_type, platform, overall_score, strengths, summary, minted_pending_positive_rule
+     FROM caf_core.llm_approval_reviews
+     WHERE project_id = $1 AND review_id = ANY($2::text[])`,
+    [projectId, ids]
+  );
+
+  let minted = 0;
+  let skipped = 0;
+  const errors: Array<{ review_id: string; error: string }> = [];
+
+  for (const r of rows) {
+    try {
+      if (r.minted_pending_positive_rule) {
+        skipped++;
+        continue;
+      }
+      const score = typeof r.overall_score === "number" ? r.overall_score : null;
+      if (score == null || !Number.isFinite(score) || score < threshold) {
+        skipped++;
+        continue;
+      }
+      const strengthList = Array.isArray(r.strengths)
+        ? r.strengths.map((x) => String(x).trim()).filter(Boolean)
+        : [];
+      if (strengthList.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const ruleId = `llm_strength_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
+      const strengthBullets = strengthList.slice(0, 8);
+      const sum = (r.summary ?? "").trim();
+      const guidanceLines = [
+        "Validated patterns from a high-scoring post-approval LLM review of human-approved content — preserve and echo these qualities in new work.",
+        ...strengthBullets.map((s) => `• ${s}`),
+      ];
+      if (sum) guidanceLines.push(`Summary: ${sum}`);
+      await insertLearningRule(db, {
+        rule_id: ruleId,
+        project_id: projectId,
+        trigger_type: "llm_post_approval_review",
+        scope_flow_type: r.flow_type ?? null,
+        scope_platform: r.platform ?? null,
+        action_type: "GENERATION_GUIDANCE",
+        action_payload: {
+          guidance_kind: "preserve_strengths",
+          guidance: guidanceLines.join("\n"),
+          bullets: strengthBullets,
+          instruction: strengthBullets.slice(0, 4).join(" "),
+          source_task_id: r.task_id,
+          source_review_id: r.review_id,
+          llm_overall_score: score,
+        },
+        confidence: Math.min(0.95, Math.max(0.35, score)),
+        source_entity_ids: [r.task_id],
+        evidence_refs: [r.review_id, r.task_id],
+        rule_family: "generation",
+        provenance: "llm_post_approval_review",
+        created_by: "llm_approval_reviewer",
+      });
+
+      await markLlmApprovalReviewPositiveMinted(db, projectId, r.review_id, true);
       minted++;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

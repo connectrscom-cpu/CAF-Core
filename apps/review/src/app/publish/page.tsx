@@ -59,8 +59,37 @@ async function downloadBlobAsFile(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
+function looksLikeErrorMessage(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("http 401") ||
+    m.includes("http 403") ||
+    m.includes("http 404") ||
+    m.includes("http 409") ||
+    m.includes("http 4") ||
+    m.includes("http 5") ||
+    m.includes("meta_publish") ||
+    m.includes("publish_failed") ||
+    m.includes("session has expired") ||
+    m.includes("access token") ||
+    m.includes("token has expired") ||
+    m.includes("error:") ||
+    m.includes("failed")
+  );
+}
+
+function summarizeStartFailure(res: Response, text: string, json: Record<string, unknown>): string {
+  const msg = typeof json.message === "string" ? json.message.trim() : "";
+  const err = typeof json.error === "string" ? json.error.trim() : "";
+  if (msg) return msg.length > 2000 ? `${msg.slice(0, 2000)}…` : msg;
+  if (err) return err.length > 2000 ? `${err.slice(0, 2000)}…` : err;
+  const t = text.trim();
+  if (t) return t.length > 1200 ? `${t.slice(0, 1200)}…` : t;
+  return `Request failed (HTTP ${res.status}).`;
+}
+
 export default function PublishPage() {
-  const [activeTab, setActiveTab] = useState<"approved" | "due">("approved");
+  const [activeTab, setActiveTab] = useState<"approved" | "due" | "published">("approved");
   const [approved, setApproved] = useState<ApprovedResponse | null>(null);
   const [loadingApproved, setLoadingApproved] = useState(true);
   const [selected, setSelected] = useState<ReviewQueueRow | null>(null);
@@ -84,9 +113,14 @@ export default function PublishPage() {
   const [n8nPreview, setN8nPreview] = useState<string | null>(null);
   const [duePlacements, setDuePlacements] = useState<PublicationPlacement[]>([]);
   const [loadingDue, setLoadingDue] = useState(false);
+  const [publishedPlacements, setPublishedPlacements] = useState<PublicationPlacement[]>([]);
+  const [loadingPublished, setLoadingPublished] = useState(false);
   const [projectStrategy, setProjectStrategy] = useState<Record<string, unknown> | null>(null);
   const [loadingStrategy, setLoadingStrategy] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
+  const [startingPlacementId, setStartingPlacementId] = useState<string | null>(null);
+  const [removingPlacementId, setRemovingPlacementId] = useState<string | null>(null);
+  const [feedbackAt, setFeedbackAt] = useState<Date | null>(null);
   const autoSwitchedToDueRef = useRef(false);
 
   const projectSlug = (selected?.project ?? "").trim();
@@ -95,6 +129,10 @@ export default function PublishPage() {
     (approved?.items[0]?.project ?? "").trim() ||
     ""
   ).trim();
+
+  useEffect(() => {
+    if (message != null && message !== "") setFeedbackAt(new Date());
+  }, [message]);
 
   const selectedRowKey = useMemo(() => {
     if (!selected?.task_id) return "";
@@ -169,6 +207,27 @@ export default function PublishPage() {
       setDuePlacements([]);
     } finally {
       setLoadingDue(false);
+    }
+  }, [effectiveProjectForQueue]);
+
+  const fetchPublishedQueue = useCallback(async () => {
+    const p = effectiveProjectForQueue;
+    if (!p) {
+      setPublishedPlacements([]);
+      return;
+    }
+    setLoadingPublished(true);
+    try {
+      const res = await fetch(
+        `/api/publish?status=published&project=${encodeURIComponent(p)}&limit=200`
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const json = (await res.json()) as { placements?: PublicationPlacement[] };
+      setPublishedPlacements(json.placements ?? []);
+    } catch {
+      setPublishedPlacements([]);
+    } finally {
+      setLoadingPublished(false);
     }
   }, [effectiveProjectForQueue]);
 
@@ -261,9 +320,94 @@ export default function PublishPage() {
     return duePlacements.filter((p) => (p.task_id ?? "").trim() === tid);
   }, [duePlacements, selected?.task_id]);
 
+  const publishedByTask = useMemo(() => {
+    const map = new Map<string, PublicationPlacement[]>();
+    for (const pl of publishedPlacements) {
+      if ((pl.status ?? "").toLowerCase() !== "published") continue;
+      const tid = (pl.task_id ?? "").trim();
+      if (!tid) continue;
+      if (!map.has(tid)) map.set(tid, []);
+      map.get(tid)!.push(pl);
+    }
+    const tasks = Array.from(map.entries()).map(([task_id, rows]) => {
+      const sorted = [...rows].sort((a, b) => (a.platform ?? "").localeCompare(b.platform ?? ""));
+      const times = sorted
+        .map((r) => (typeof r.published_at === "string" ? Date.parse(r.published_at) : NaN))
+        .filter((n) => Number.isFinite(n));
+      const latest = times.length ? Math.max(...times) : null;
+      return { task_id, placements: sorted, latest };
+    });
+    tasks.sort((a, b) => {
+      if (a.latest != null && b.latest != null) return b.latest - a.latest;
+      if (a.latest != null) return -1;
+      if (b.latest != null) return 1;
+      return a.task_id.localeCompare(b.task_id);
+    });
+    return tasks;
+  }, [publishedPlacements]);
+
+  const publishedTaskRows: ReviewQueueRow[] = useMemo(() => {
+    const proj = effectiveProjectForQueue;
+    return publishedByTask.map(({ task_id, placements: rows, latest }) => {
+      const tid = task_id.trim();
+      const approvedRow = approved?.items.find((r) => (r.task_id ?? "").trim() === tid);
+
+      const platforms = Array.from(new Set(rows.map((r) => (r.platform ?? "").trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const platformLabel = platforms.length === 0 ? "—" : platforms.length === 1 ? platforms[0]! : platforms.join(" + ");
+
+      const formats = Array.from(new Set(rows.map((r) => (r.content_format ?? "").trim()).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+      const formatLabel = formats.length === 0 ? "" : formats.length === 1 ? formats[0]! : formats.join(" + ");
+
+      const meta = duePreviewByTaskId.get(tid);
+      const previewUrl = (approvedRow?.preview_url ?? meta?.preview_url ?? "").trim() || undefined;
+      const generatedTitle = (approvedRow?.generated_title ?? meta?.title ?? "").trim() || undefined;
+
+      const latestLabel =
+        latest != null && Number.isFinite(latest) ? new Date(latest).toLocaleString() : "";
+
+      const base: ReviewQueueRow = approvedRow
+        ? { ...approvedRow }
+        : {
+            task_id: tid,
+            project: proj || undefined,
+          };
+
+      const baseFlow = (base.flow_type ?? "").trim();
+      const flowType = baseFlow || (formatLabel ? formatLabel : undefined);
+
+      return {
+        ...base,
+        project: ((base.project ?? "").trim() || (proj || "").trim() || undefined) as string | undefined,
+        preview_url: previewUrl,
+        generated_title: generatedTitle,
+        platform: platformLabel,
+        flow_type: flowType,
+        review_status: latestLabel ? `Published · ${latestLabel}` : "Published",
+        decision: `${rows.length} live`,
+        recommended_route: (base.recommended_route ?? "").trim() || "—",
+      };
+    });
+  }, [approved?.items, duePreviewByTaskId, effectiveProjectForQueue, publishedByTask]);
+
+  const selectedPublishedPlacements = useMemo(() => {
+    const tid = (selected?.task_id ?? "").trim();
+    if (!tid) return [];
+    return publishedPlacements.filter(
+      (p) => (p.task_id ?? "").trim() === tid && (p.status ?? "").toLowerCase() === "published"
+    );
+  }, [publishedPlacements, selected?.task_id]);
+
   useEffect(() => {
     fetchDueQueue();
   }, [fetchDueQueue]);
+
+  useEffect(() => {
+    if (activeTab === "published") void fetchPublishedQueue();
+  }, [activeTab, fetchPublishedQueue]);
 
   useEffect(() => {
     if (effectiveProjectForQueue) loadProjectStrategy(effectiveProjectForQueue);
@@ -340,39 +484,124 @@ export default function PublishPage() {
 
   const startPlacement = useCallback(
     async (placementId: string, project: string, opts?: { allow_not_yet_due?: boolean }) => {
+      const proj = (project ?? "").trim();
+      if (!proj) {
+        setMessage("Missing project slug; cannot start publish.");
+        return;
+      }
       setMessage(null);
+      setFeedbackAt(new Date());
+      setStartingPlacementId(placementId);
       try {
         const res = await fetch(`/api/publish/${encodeURIComponent(placementId)}/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            project_slug: project,
+            project_slug: proj,
             allow_not_yet_due: opts?.allow_not_yet_due,
           }),
         });
         const text = await res.text();
-        let json: { payload?: Record<string, unknown>; error?: string } = {};
+        let json: Record<string, unknown> = {};
         try {
-          json = JSON.parse(text) as typeof json;
+          json = JSON.parse(text) as Record<string, unknown>;
         } catch {
           /* ignore */
         }
         if (!res.ok) {
-          setMessage(json.error ?? text.slice(0, 200));
+          setMessage(summarizeStartFailure(res, text, json));
           return;
         }
-        const pretty = JSON.stringify(json.payload ?? {}, null, 2);
+        const payload = json.payload as Record<string, unknown> | undefined;
+        const pretty = JSON.stringify(payload ?? {}, null, 2);
         setN8nPreview(pretty);
         await navigator.clipboard.writeText(pretty);
         setMessage("Started → status publishing. n8n payload copied; finish with POST …/complete from n8n.");
         await fetchDueQueue();
+        await fetchPublishedQueue();
         if (selected?.task_id) await loadJob(selected);
       } catch (e) {
         setMessage(e instanceof Error ? e.message : "Start failed");
+      } finally {
+        setStartingPlacementId(null);
       }
     },
-    [fetchDueQueue, loadJob, selected]
+    [fetchDueQueue, fetchPublishedQueue, loadJob, selected]
   );
+
+  const removeDuePlacement = useCallback(
+    async (placementId: string) => {
+      const proj = (projectSlug || effectiveProjectForQueue).trim();
+      if (!proj) {
+        setMessage("Missing project slug; cannot remove placement.");
+        return;
+      }
+      if (!window.confirm("Remove this placement from the due queue? It will be deleted permanently.")) return;
+      setRemovingPlacementId(placementId);
+      setMessage(null);
+      try {
+        const res = await fetch(
+          `/api/publish/${encodeURIComponent(placementId)}?project=${encodeURIComponent(proj)}`,
+          { method: "DELETE" }
+        );
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
+        setMessage("Placement removed from queue.");
+        await fetchDueQueue();
+        if (selected?.task_id) await loadJob(selected);
+      } catch (e) {
+        setMessage(e instanceof Error ? e.message : "Delete failed");
+      } finally {
+        setRemovingPlacementId(null);
+      }
+    },
+    [effectiveProjectForQueue, fetchDueQueue, loadJob, projectSlug, selected?.task_id]
+  );
+
+  const removeAllDueForSelectedTask = useCallback(async () => {
+    const proj = (projectSlug || effectiveProjectForQueue).trim();
+    if (!proj || !selected?.task_id) {
+      setMessage("Select a due task first.");
+      return;
+    }
+    const rows = selectedDuePlacements;
+    if (rows.length === 0) return;
+    if (
+      !window.confirm(
+        `Delete all ${rows.length} due placement(s) for this task? They will be removed permanently.`
+      )
+    ) {
+      return;
+    }
+    setRemovingPlacementId("__all__");
+    setMessage(null);
+    try {
+      for (const pl of rows) {
+        const res = await fetch(
+          `/api/publish/${encodeURIComponent(pl.id)}?project=${encodeURIComponent(proj)}`,
+          { method: "DELETE" }
+        );
+        const text = await res.text();
+        if (!res.ok) throw new Error(text || `HTTP ${res.status} (${pl.platform})`);
+      }
+      setMessage(`Removed ${rows.length} placement(s).`);
+      await fetchDueQueue();
+      if (selected?.task_id) await loadJob(selected);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Delete failed");
+      await fetchDueQueue();
+      if (selected?.task_id) await loadJob(selected);
+    } finally {
+      setRemovingPlacementId(null);
+    }
+  }, [
+    effectiveProjectForQueue,
+    fetchDueQueue,
+    loadJob,
+    projectSlug,
+    selected?.task_id,
+    selectedDuePlacements,
+  ]);
 
   const togglePlatform = (id: string) => {
     setSelectedPlatforms((p) => ({ ...p, [id]: !p[id] }));
@@ -421,6 +650,7 @@ export default function PublishPage() {
       setMessage(`Saved ${picks.length} scheduled placement(s).`);
       await loadJob(selected);
       await fetchDueQueue();
+      await fetchPublishedQueue();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -508,6 +738,14 @@ export default function PublishPage() {
           Due
           <span className="tab-count">{dueTaskRows.length}</span>
         </button>
+        <button
+          className={`tab ${activeTab === "published" ? "active" : ""}`}
+          onClick={() => setActiveTab("published")}
+          type="button"
+        >
+          Published
+          <span className="tab-count">{publishedTaskRows.length}</span>
+        </button>
       </div>
 
       <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
@@ -587,6 +825,53 @@ export default function PublishPage() {
               )}
             </>
           )}
+
+          {activeTab === "published" && (
+            <>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 650, margin: 0 }}>Published (by task)</h3>
+                <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
+                  {effectiveProjectForQueue || "—"}
+                </span>
+                <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => fetchPublishedQueue()}>
+                  Refresh
+                </button>
+              </div>
+
+              {!effectiveProjectForQueue && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                  Pick a task from <span className="mono">Approved</span> first so we know which project to query, or open the Approved list and return here.
+                </p>
+              )}
+
+              {effectiveProjectForQueue && loadingPublished && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading published placements…</p>
+              )}
+
+              {effectiveProjectForQueue && !loadingPublished && publishedTaskRows.length === 0 && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>No published placements in the last 200 rows for this project.</p>
+              )}
+
+              {effectiveProjectForQueue && !loadingPublished && publishedTaskRows.length > 0 && (
+                <TaskTable
+                  items={publishedTaskRows}
+                  groupBy=""
+                  page={1}
+                  limit={publishedTaskRows.length}
+                  total={publishedTaskRows.length}
+                  contentSlug="content"
+                  showProjectColumn={approved?.scope === "all"}
+                  hideTitleColumn
+                  hideOpenColumn
+                  selectedRowKey={selectedRowKey}
+                  onRowSelect={(row) => {
+                    setSelected(row);
+                    loadJob(row);
+                  }}
+                />
+              )}
+            </>
+          )}
         </div>
 
         <div
@@ -595,7 +880,11 @@ export default function PublishPage() {
         >
           {!selected && (
             <p style={{ color: "var(--muted)" }}>
-              {activeTab === "due" ? "Select a due task to preview and start publishing." : "Select a row to compose a publish."}
+              {activeTab === "due"
+                ? "Select a due task to preview and start publishing."
+                : activeTab === "published"
+                  ? "Select a published task to see live links per platform and preview."
+                  : "Select a row to compose a publish."}
             </p>
           )}
           {selected && (
@@ -660,14 +949,71 @@ export default function PublishPage() {
                 </div>
               </div>
 
+              {(startingPlacementId != null || (message != null && message !== "")) && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  style={{
+                    marginBottom: 16,
+                    padding: "12px 14px",
+                    borderRadius: 10,
+                    border: `1px solid ${
+                      startingPlacementId
+                        ? "rgba(99, 102, 241, 0.45)"
+                        : looksLikeErrorMessage(message || "")
+                          ? "rgba(248, 113, 113, 0.5)"
+                          : "rgba(34, 197, 94, 0.35)"
+                    }`,
+                    background: startingPlacementId
+                      ? "rgba(99, 102, 241, 0.1)"
+                      : looksLikeErrorMessage(message || "")
+                        ? "rgba(248, 113, 113, 0.12)"
+                        : "rgba(34, 197, 94, 0.1)",
+                    fontSize: 13,
+                    lineHeight: 1.45,
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {feedbackAt && (
+                    <div className="mono" style={{ fontSize: 11, color: "var(--muted)", marginBottom: 8 }}>
+                      {feedbackAt.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" })}
+                    </div>
+                  )}
+                  {startingPlacementId && (
+                    <div style={{ fontWeight: 650, marginBottom: message ? 8 : 0, color: "var(--fg)" }}>
+                      Starting publication…
+                    </div>
+                  )}
+                  {message ? (
+                    <div style={{ color: looksLikeErrorMessage(message) ? "var(--red)" : "var(--fg)" }}>{message}</div>
+                  ) : null}
+                </div>
+              )}
+
               {activeTab === "due" && selected?.task_id && (
                 <div style={{ marginBottom: 16 }}>
-                  <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 650 }}>Due placements (this task)</h3>
+                  <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>Due placements (this task)</h3>
+                    {selectedDuePlacements.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={startingPlacementId != null || removingPlacementId != null}
+                        style={{ fontSize: 12, color: "var(--red)" }}
+                        onClick={() => void removeAllDueForSelectedTask()}
+                      >
+                        {removingPlacementId === "__all__" ? "Removing…" : "Delete all for this task"}
+                      </button>
+                    )}
+                  </div>
                   {selectedDuePlacements.length === 0 ? (
                     <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>No due rows for this task_id right now.</p>
                   ) : (
                     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                      {selectedDuePlacements.map((pl) => (
+                      {selectedDuePlacements.map((pl) => {
+                        const dueBusy = startingPlacementId != null || removingPlacementId != null;
+                        return (
                         <li
                           key={pl.id}
                           style={{
@@ -698,25 +1044,108 @@ export default function PublishPage() {
                               <button
                                 type="button"
                                 className="btn"
-                                style={{ fontSize: 12, padding: "6px 10px" }}
+                                disabled={dueBusy}
+                                style={{
+                                  fontSize: 12,
+                                  padding: "6px 10px",
+                                  opacity: dueBusy && startingPlacementId !== pl.id ? 0.55 : 1,
+                                }}
                                 onClick={() => startPlacement(pl.id, projectSlug || effectiveProjectForQueue)}
                               >
-                                Start &amp; copy payload
+                                {startingPlacementId === pl.id ? "Starting…" : "Start & copy payload"}
                               </button>
                               <button
                                 type="button"
                                 className="btn-ghost"
-                                style={{ fontSize: 12 }}
+                                disabled={dueBusy}
+                                style={{
+                                  fontSize: 12,
+                                  opacity: dueBusy && startingPlacementId !== pl.id ? 0.55 : 1,
+                                }}
                                 onClick={() =>
                                   startPlacement(pl.id, projectSlug || effectiveProjectForQueue, { allow_not_yet_due: true })
                                 }
                               >
-                                Start (ignore schedule)
+                                {startingPlacementId === pl.id ? "Starting…" : "Start (ignore schedule)"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn-ghost"
+                                disabled={dueBusy}
+                                style={{
+                                  fontSize: 12,
+                                  color: "var(--red)",
+                                  opacity: dueBusy && removingPlacementId !== pl.id ? 0.55 : 1,
+                                }}
+                                onClick={() => void removeDuePlacement(pl.id)}
+                              >
+                                {removingPlacementId === pl.id ? "Removing…" : "Delete"}
                               </button>
                             </div>
                           </div>
                         </li>
-                      ))}
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+              )}
+
+              {activeTab === "published" && selected?.task_id && (
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ margin: "0 0 10px", fontSize: 14, fontWeight: 650 }}>Live on platforms</h3>
+                  {selectedPublishedPlacements.length === 0 ? (
+                    <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>
+                      No published rows for this task in the current list (try Refresh, or older posts may be past the fetch limit).
+                    </p>
+                  ) : (
+                    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                      {[...selectedPublishedPlacements]
+                        .sort((a, b) => (a.platform ?? "").localeCompare(b.platform ?? ""))
+                        .map((pl) => (
+                          <li
+                            key={pl.id}
+                            style={{
+                              border: "1px solid var(--border)",
+                              borderRadius: 10,
+                              padding: 12,
+                              marginBottom: 10,
+                              background: "var(--panel)",
+                            }}
+                          >
+                            <div style={{ fontSize: 14, fontWeight: 650, marginBottom: 6 }}>{pl.platform}</div>
+                            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+                              {pl.content_format}
+                              {pl.published_at && (
+                                <>
+                                  {" "}
+                                  · Published{" "}
+                                  <span className="mono">{new Date(pl.published_at).toLocaleString()}</span>
+                                </>
+                              )}
+                            </div>
+                            {pl.posted_url ? (
+                              <a href={pl.posted_url} target="_blank" rel="noreferrer" style={{ fontSize: 13 }}>
+                                Open live post
+                              </a>
+                            ) : (
+                              <span style={{ fontSize: 12, color: "var(--muted)" }}>No permalink stored yet.</span>
+                            )}
+                            {pl.platform_post_id && (
+                              <div
+                                className="mono"
+                                style={{ fontSize: 11, color: "var(--muted)", marginTop: 8, wordBreak: "break-all" }}
+                              >
+                                Post id: {pl.platform_post_id}
+                              </div>
+                            )}
+                            {pl.external_ref && (
+                              <div className="mono" style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                                Ref: {pl.external_ref}
+                              </div>
+                            )}
+                          </li>
+                        ))}
                     </ul>
                   )}
                 </div>
@@ -934,10 +1363,6 @@ export default function PublishPage() {
                   <Link href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`} className="btn-ghost">
                     Open in content review
                   </Link>
-
-                  {message && (
-                    <p style={{ marginTop: 16, fontSize: 13, color: message.includes("fail") ? "var(--red)" : "var(--fg)" }}>{message}</p>
-                  )}
 
                   <h3 style={{ marginTop: 28, fontSize: 14, fontWeight: 600 }}>Placements for this task</h3>
                   {placements.length === 0 ? (

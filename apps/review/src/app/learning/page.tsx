@@ -304,6 +304,7 @@ export default function LearningPage() {
   const [llmReviews, setLlmReviews] = useState<Record<string, unknown>[]>([]);
   const [llmLimit, setLlmLimit] = useState(3);
   const [llmMintBelow, setLlmMintBelow] = useState("");
+  const [llmMintAbove, setLlmMintAbove] = useState("");
   const [llmForceRereview, setLlmForceRereview] = useState(false);
   const [llmMintBusy, setLlmMintBusy] = useState(false);
   const [llmMintStatus, setLlmMintStatus] = useState<string | null>(null);
@@ -447,10 +448,10 @@ export default function LearningPage() {
   };
 
   const mintHintsFromLastRun = async () => {
-    const trimmed = llmMintBelow.trim();
-    const threshold = trimmed === "" ? NaN : parseFloat(trimmed);
-    if (Number.isNaN(threshold)) {
-      window.alert("Set 'Mint hints if score <' to a number (e.g. 0.55) first.");
+    const belowN = llmMintBelow.trim() === "" ? NaN : parseFloat(llmMintBelow.trim());
+    const aboveN = llmMintAbove.trim() === "" ? NaN : parseFloat(llmMintAbove.trim());
+    if (Number.isNaN(belowN) && Number.isNaN(aboveN)) {
+      window.alert("Set at least one threshold: score < (fixes) and/or score ≥ (strengths), e.g. 0.55 and 0.85.");
       return;
     }
     const results = Array.isArray((llmResult as { results?: unknown }).results)
@@ -471,7 +472,8 @@ export default function LearningPage() {
           action: "llm_mint_hints",
           project,
           review_ids: reviewIds,
-          mint_below_score: threshold,
+          ...(Number.isFinite(belowN) ? { mint_below_score: belowN } : {}),
+          ...(Number.isFinite(aboveN) ? { mint_above_score: aboveN } : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -750,7 +752,8 @@ export default function LearningPage() {
           Uses OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
           rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
           scores to Core, creates a <code>learning_observations</code> row, and can mint <strong>pending</strong>{" "}
-          generation hints <em>only after you review the results below</em>.
+          generation hints from low scores (fixes) or high scores (strengths to preserve),{" "}
+          <em>after you choose thresholds and mint</em> (same pending → Apply flow as editorial rules).
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12 }}>
           <label style={{ fontSize: 13 }}>
@@ -765,14 +768,24 @@ export default function LearningPage() {
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Mint hints if score &lt;{" "}
+            Mint fixes if score &lt;{" "}
             <input
               placeholder="off"
               value={llmMintBelow}
               onChange={(e) => setLlmMintBelow(e.target.value)}
               style={{ width: 56, padding: 4 }}
             />{" "}
-            <span style={{ color: "var(--muted)" }}>(e.g. 0.55, leave empty to skip)</span>
+            <span style={{ color: "var(--muted)" }}>(e.g. 0.55)</span>
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Mint strengths if score ≥{" "}
+            <input
+              placeholder="off"
+              value={llmMintAbove}
+              onChange={(e) => setLlmMintAbove(e.target.value)}
+              style={{ width: 56, padding: 4 }}
+            />{" "}
+            <span style={{ color: "var(--muted)" }}>(e.g. 0.85)</span>
           </label>
           <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
             <input
@@ -797,7 +810,7 @@ export default function LearningPage() {
           className="btn-ghost"
           onClick={mintHintsFromLastRun}
           disabled={llmMintBusy || !llmResult}
-          title="Creates pending GENERATION_GUIDANCE learning rules from the last run's low-scoring reviews. Pending rules do not affect generation until you Apply them."
+          title="Creates pending GENERATION_GUIDANCE rules from the last run: improvement bullets when score is below the first threshold, and strength bullets when score is at or above the second. Apply in the rules list before they affect generation."
           style={{ marginLeft: 10 }}
         >
           {llmMintBusy ? "Minting…" : "Mint pending hints from results"}

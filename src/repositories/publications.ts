@@ -314,3 +314,22 @@ export async function deletePublicationPlacementsByTaskIds(
   );
   return r.rowCount ?? 0;
 }
+
+/** Removes one row. Allowed only for non-terminal / non-in-flight publish states (not publishing, not published). */
+export async function deletePublicationPlacement(
+  db: Pool,
+  projectId: string,
+  id: string
+): Promise<{ ok: true } | { ok: false; error: "not_found" | "not_deletable"; status?: PublicationStatus }> {
+  const row = await getPublicationPlacement(db, projectId, id);
+  if (!row) return { ok: false, error: "not_found" };
+  if (row.status === "publishing" || row.status === "published") {
+    return { ok: false, error: "not_deletable", status: row.status };
+  }
+  const r = await db.query(
+    `DELETE FROM caf_core.publication_placements WHERE project_id = $1::uuid AND id = $2::uuid`,
+    [projectId, id]
+  );
+  if ((r.rowCount ?? 0) < 1) return { ok: false, error: "not_found" };
+  return { ok: true };
+}

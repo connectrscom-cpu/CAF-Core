@@ -81,7 +81,7 @@ export const LEARNING_TRANSPARENCY_STATIC = {
         "Review app → Run LLM review (approved)",
       ],
       outputs:
-        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); optional pending GENERATION_GUIDANCE minted from low-scoring reviews after operator confirmation",
+        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); optional pending GENERATION_GUIDANCE minted from low scores (improvements) and/or high scores (strengths) after operator confirmation",
       requires_human:
         "Operator runs the job; OPENAI_API_KEY required; apply any minted pending rules; default skips tasks reviewed in the last 7 days unless forced",
     },

@@ -43,6 +43,7 @@ import {
 } from "../services/csv-performance-ingest.js";
 import {
   mintPendingHintsFromApprovalReviews,
+  mintPositiveHintsFromApprovalReviews,
   runLlmApprovalReviewsForProject,
 } from "../services/approved-content-llm-review.js";
 import { listLlmApprovalReviews } from "../repositories/llm-approval-reviews.js";
@@ -476,6 +477,8 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     force_rereview: z.boolean().optional(),
     mint_pending_hints_below_score: z.number().min(0).max(1).nullable().optional(),
     auto_mint_pending_hints: z.boolean().optional(),
+    mint_positive_hints_above_score: z.number().min(0).max(1).nullable().optional(),
+    auto_mint_positive_hints: z.boolean().optional(),
   });
 
   // ── LLM review: approved content only (vision + text) ─────────────────
@@ -499,15 +502,22 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         force_rereview: b.force_rereview,
         mint_pending_hints_below_score: b.mint_pending_hints_below_score ?? null,
         auto_mint_pending_hints: b.auto_mint_pending_hints === true,
+        mint_positive_hints_above_score: b.mint_positive_hints_above_score ?? null,
+        auto_mint_positive_hints: b.auto_mint_positive_hints === true,
       });
       return { ok: true, model, results };
     }
   );
 
-  const mintHintsBody = z.object({
-    review_ids: z.array(z.string()).min(1).max(200),
-    mint_below_score: z.number().min(0).max(1),
-  });
+  const mintHintsBody = z
+    .object({
+      review_ids: z.array(z.string()).min(1).max(200),
+      mint_below_score: z.number().min(0).max(1).optional(),
+      mint_above_score: z.number().min(0).max(1).optional(),
+    })
+    .refine((b) => b.mint_below_score !== undefined || b.mint_above_score !== undefined, {
+      message: "Provide mint_below_score and/or mint_above_score",
+    });
 
   app.post<{ Params: { project_slug: string } }>(
     "/v1/learning/:project_slug/llm-review-approved/mint-hints",
@@ -519,8 +529,22 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
       }
       const b = parsed.data;
-      const result = await mintPendingHintsFromApprovalReviews(db, project.id, b.review_ids, b.mint_below_score);
-      return { ok: true, ...result };
+      let minted = 0;
+      let skipped = 0;
+      const errors: Array<{ review_id: string; error: string }> = [];
+      if (b.mint_below_score !== undefined) {
+        const neg = await mintPendingHintsFromApprovalReviews(db, project.id, b.review_ids, b.mint_below_score);
+        minted += neg.minted;
+        skipped += neg.skipped;
+        errors.push(...neg.errors);
+      }
+      if (b.mint_above_score !== undefined) {
+        const pos = await mintPositiveHintsFromApprovalReviews(db, project.id, b.review_ids, b.mint_above_score);
+        minted += pos.minted;
+        skipped += pos.skipped;
+        errors.push(...pos.errors);
+      }
+      return { ok: true, minted, skipped, errors };
     }
   );
 

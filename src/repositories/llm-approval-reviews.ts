@@ -22,15 +22,17 @@ export async function insertLlmApprovalReview(
     vision_image_urls: string[];
     text_bundle_chars: number;
     minted_pending_rule: boolean;
+    minted_pending_positive_rule?: boolean;
   }
 ): Promise<void> {
+  const mintedPos = row.minted_pending_positive_rule ?? false;
   await db.query(
     `INSERT INTO caf_core.llm_approval_reviews (
        review_id, project_id, task_id, run_id, flow_type, platform, model,
        overall_score, scores_json, strengths, weaknesses, improvement_bullets,
        risk_flags, summary, raw_assistant_text, vision_image_urls, text_bundle_chars,
-       minted_pending_rule
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18)
+       minted_pending_rule, minted_pending_positive_rule
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19)
      ON CONFLICT (project_id, review_id) DO UPDATE SET
        model = EXCLUDED.model,
        overall_score = EXCLUDED.overall_score,
@@ -43,7 +45,8 @@ export async function insertLlmApprovalReview(
        raw_assistant_text = EXCLUDED.raw_assistant_text,
        vision_image_urls = EXCLUDED.vision_image_urls,
        text_bundle_chars = EXCLUDED.text_bundle_chars,
-       minted_pending_rule = EXCLUDED.minted_pending_rule`,
+       minted_pending_rule = EXCLUDED.minted_pending_rule,
+       minted_pending_positive_rule = EXCLUDED.minted_pending_positive_rule`,
     [
       row.review_id,
       row.project_id,
@@ -63,6 +66,7 @@ export async function insertLlmApprovalReview(
       JSON.stringify(row.vision_image_urls),
       row.text_bundle_chars,
       row.minted_pending_rule,
+      mintedPos,
     ]
   );
 }
@@ -108,6 +112,20 @@ export async function markLlmApprovalReviewMinted(
   await db.query(
     `UPDATE caf_core.llm_approval_reviews
      SET minted_pending_rule = $3
+     WHERE project_id = $1 AND review_id = $2`,
+    [projectId, reviewId, minted]
+  );
+}
+
+export async function markLlmApprovalReviewPositiveMinted(
+  db: Pool,
+  projectId: string,
+  reviewId: string,
+  minted: boolean
+): Promise<void> {
+  await db.query(
+    `UPDATE caf_core.llm_approval_reviews
+     SET minted_pending_positive_rule = $3
      WHERE project_id = $1 AND review_id = $2`,
     [projectId, reviewId, minted]
   );

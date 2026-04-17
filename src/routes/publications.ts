@@ -8,6 +8,7 @@ import { getProjectBySlug } from "../repositories/core.js";
 import {
   appendPublicationResultToJob,
   completePublicationPlacement,
+  deletePublicationPlacement,
   getPublicationPlacement,
   insertPublicationPlacement,
   listPublicationPlacements,
@@ -149,11 +150,40 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
       allow_from_draft: parsed.data.allow_from_draft,
     });
     if (!row) {
+      const current = await getPublicationPlacement(db, project.id, req.params.id);
+      const serverTimeUtc = new Date().toISOString();
+      const scheduledAt = current?.scheduled_at ?? null;
+      const scheduledLabel = scheduledAt ? new Date(scheduledAt).toISOString() : "none";
+      const status = current?.status ?? "unknown";
+
+      let hint = "";
+      if (current) {
+        if (status === "scheduled" && scheduledAt && new Date(scheduledAt) > new Date()) {
+          hint = ` Not due yet: scheduled_at (UTC) is ${scheduledLabel}; server now (UTC) is ${serverTimeUtc}. Use allow_not_yet_due=true to start early, or wait until that time.`;
+        } else if (status === "publishing") {
+          hint = ` Placement is already in status "publishing" (likely claimed). server_time_utc=${serverTimeUtc}.`;
+        } else if (status === "published") {
+          hint = ` Placement is already published. server_time_utc=${serverTimeUtc}.`;
+        } else if (status === "draft" && !parsed.data.allow_from_draft) {
+          hint = ` Placement is "draft"; pass allow_from_draft=true to start. server_time_utc=${serverTimeUtc}.`;
+        } else if (status === "failed" || status === "cancelled") {
+          hint = ` Placement status is "${status}" (not startable). server_time_utc=${serverTimeUtc}.`;
+        } else {
+          hint = ` Current status="${status}", scheduled_at (UTC)=${scheduledLabel}, server_time_utc=${serverTimeUtc}.`;
+        }
+      } else {
+        hint = ` No placement row found for this id (UTC now ${serverTimeUtc}).`;
+      }
+
       return reply.code(409).send({
         ok: false,
         error: "cannot_start",
         message:
-          "Placement not in a startable state, scheduled time not reached, or already claimed. Use allow_not_yet_due / allow_from_draft if appropriate.",
+          "Placement not in a startable state, scheduled time not reached, or already claimed. Use allow_not_yet_due / allow_from_draft if appropriate." +
+          hint,
+        status,
+        scheduled_at: scheduledAt,
+        server_time_utc: serverTimeUtc,
       });
     }
 
@@ -324,6 +354,28 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
 
       const row = await updatePublicationPlacement(db, project.id, req.params.id, parsed.data);
       return { ok: true, placement: rowToJson(row) };
+    }
+  );
+
+  app.delete<{ Params: { project_slug: string; id: string } }>(
+    "/v1/publications/:project_slug/:id",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+
+      const result = await deletePublicationPlacement(db, project.id, req.params.id);
+      if (!result.ok) {
+        if (result.error === "not_found") {
+          return reply.code(404).send({ ok: false, error: "not_found" });
+        }
+        return reply.code(409).send({
+          ok: false,
+          error: "not_deletable",
+          message: `Cannot delete placement in status "${result.status}" (only draft, scheduled, failed, or cancelled).`,
+          status: result.status,
+        });
+      }
+      return { ok: true, deleted: true };
     }
   );
 }

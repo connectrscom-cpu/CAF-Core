@@ -3,7 +3,7 @@
  * Reads tokens + ids from caf_core.project_integrations (META_FB / META_IG).
  *
  * Limitations (MVP):
- * - Facebook: one image via /photos if media URLs exist; else text-only /feed. Multi-image FB carousel not implemented (first image only + note in result_json).
+ * - Facebook: text /feed; single image /photos; multi-image via unpublished /photos then one /feed with attached_media (explicit published=true so the post is public).
  * - Instagram: single image, carousel (2–10 images), or Reels-style video URL. Polls container status before media_publish.
  */
 import type { Pool } from "pg";
@@ -82,6 +82,13 @@ export function pickPageTokenFromAccountsResponse(
   return undefined;
 }
 
+/**
+ * Resolves a **Page** access token for `{page-id}/…` Graph calls.
+ *
+ * Facebook **multi-image** posts use `/{page-id}/photos` with `published=false`; Meta requires a **Page**
+ * token for that. A **User** token must be exchanged via `GET /me/accounts` (needs `pages_show_list`).
+ * If `rawToken` is already a Page token, `GET /me/accounts` fails (#100 on Page) and we keep `rawToken`.
+ */
 async function resolveTokenForPageGraphApi(
   rawToken: string,
   facebookPageId: string,
@@ -93,12 +100,51 @@ async function resolveTokenForPageGraphApi(
       rawToken,
       version
     );
+    const rows = r.data ?? [];
     const picked = pickPageTokenFromAccountsResponse(r, facebookPageId);
     if (picked) return picked;
-  } catch {
-    /* User token missing pages_show_list, or `rawToken` is already a Page token ( /me/accounts not valid). */
+
+    if (rows.length > 0) {
+      const ids = rows.map((x) => str(x.id)).filter(Boolean).join(", ");
+      throw new Error(
+        `User token can list Facebook Pages [${ids}] but none match configured fb_page_id "${facebookPageId.trim()}". Update project_integrations META_FB account_ids_json.fb_page_id (or META_IG linked_fb_page_id) to a Page id this token manages.`
+      );
+    }
+
+    throw new Error(
+      "GET /me/accounts returned no Pages for this token. Use a User token with pages_show_list + pages_manage_posts (so Core can pick a Page token), or set CAF_META_PAGE_ACCESS_TOKEN / META_* credentials_json to the Page access_token for this Page (from Graph GET /me/accounts?fields=id,access_token)."
+    );
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+
+    // Configuration errors from the try block above
+    if (
+      /User token can list Facebook Pages|GET \/me\/accounts returned no Pages|none match configured fb_page_id/.test(
+        msg
+      )
+    ) {
+      throw e instanceof Error ? e : new Error(msg);
+    }
+
+    // Page access tokens cannot call `GET /me/accounts` — token is already scoped to the Page.
+    // Do not treat a bare "Unsupported get request" as Page-token: some User-token / permission
+    // failures can match that and would skip the exchange, leaving a User token for unpublished
+    // /{page-id}/photos (Meta then returns #200 "must be posted as the page itself").
+    const looksLikePageTokenCannotListAccounts =
+      (/#\(100\)|\(100\)/i.test(msg) && /Page/i.test(msg)) ||
+      (/nonexisting field/i.test(msg) && /accounts/i.test(msg) && /Page/i.test(msg)) ||
+      (/Unsupported get request/i.test(msg) &&
+        /Object with ID ['"]me['"]|cannot be loaded due to missing permissions|does not support this operation/i.test(
+          msg
+        ));
+    if (looksLikePageTokenCannotListAccounts) {
+      return rawToken;
+    }
+
+    throw new Error(
+      `Could not derive a Page access token via GET /me/accounts (required for Facebook, including multi-image / unpublished photo uploads): ${msg}`
+    );
   }
-  return rawToken;
 }
 
 /** Facebook Page id for Graph, or fallback from META_IG.account_ids_json.linked_fb_page_id (single-row setups). */
@@ -192,6 +238,7 @@ async function publishFacebookPage(
   if (urls.length === 0) {
     const r = await graphPostForm<{ id?: string }>(`${pageId}/feed`, token, version, {
       message: caption || "(no caption)",
+      published: "true",
     });
     const postId = str(r.id) ?? "unknown";
     return {
@@ -217,6 +264,8 @@ async function publishFacebookPage(
 
     const fields: Record<string, string> = {
       message: caption || "(no caption)",
+      // Unpublished photo uploads attach to a feed story; without this, Meta can keep the Page post as draft/unpublished.
+      published: "true",
     };
     mediaFbids.forEach((fid, i) => {
       fields[`attached_media[${i}]`] = JSON.stringify({ media_fbid: fid });
@@ -423,6 +472,9 @@ export async function publishPlacementToMeta(
     if (/publish_actions|deprecated.*sharing/i.test(msg)) {
       tokenHint =
         " Ensure CAF_META_PAGE_ACCESS_TOKEN is a user token with pages_show_list (so Core can call GET /me/accounts) or paste the Page access_token for your fb_page_id from /me/accounts. App needs pages_manage_posts, not publish_actions.";
+    } else if (/Unpublished posts must be posted to a page as the page itself/i.test(msg)) {
+      tokenHint =
+        " Facebook multi-image uses unpublished /{page-id}/photos uploads, which require a **Page** access token (not a plain User token). Use GET /me/accounts?fields=id,access_token with a User token that has pages_show_list, copy the access_token for your fb_page_id into CAF_META_PAGE_ACCESS_TOKEN (or META_FB credentials_json), or fix fb_page_id so it matches a Page returned by /me/accounts.";
     } else if (/expired|invalid.*session|invalid oauth|OAuthException|access token/i.test(msg)) {
       tokenHint =
         " Regenerate a long-lived Page token and set CAF_META_PAGE_ACCESS_TOKEN (Fly secret) or META_FB/META_IG credentials_json.access_token.";

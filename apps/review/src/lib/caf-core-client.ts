@@ -69,7 +69,8 @@ async function corePostRequired<T>(path: string, body: unknown): Promise<T> {
   }
   if (!res.ok) {
     const t = await res.text();
-    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${t.slice(0, 400)}`);
+    const cap = t.length > 12_000 ? `${t.slice(0, 12_000)}…` : t;
+    throw new Error(`CAF Core HTTP ${res.status} for ${path}: ${cap}`);
   }
   return res.json() as Promise<T>;
 }
@@ -788,6 +789,9 @@ export async function triggerLlmApprovalReview(
     mint_pending_hints_below_score?: number | null;
     /** if true, mint pending hints during the run (otherwise just returns eligibility + bullets) */
     auto_mint_pending_hints?: boolean;
+    /** e.g. 0.85 — scores at or above this mint pending guidance from model strengths (good approved signal) */
+    mint_positive_hints_above_score?: number | null;
+    auto_mint_positive_hints?: boolean;
   }
 ) {
   return corePost<Record<string, unknown>>(
@@ -798,7 +802,7 @@ export async function triggerLlmApprovalReview(
 
 export async function mintLlmApprovalReviewHints(
   projectSlug: string,
-  body: { review_ids: string[]; mint_below_score: number }
+  body: { review_ids: string[]; mint_below_score?: number; mint_above_score?: number }
 ) {
   return corePost<Record<string, unknown>>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/llm-review-approved/mint-hints`,
@@ -904,6 +908,12 @@ export async function patchPublicationPlacement(
   return corePatchRequired<{ ok: boolean; placement: PublicationPlacement | null }>(
     `/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}`,
     body
+  );
+}
+
+export async function deletePublicationPlacement(projectSlug: string, id: string) {
+  return coreDeleteRequired<{ ok: boolean; deleted?: boolean }>(
+    `/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}`
   );
 }
 

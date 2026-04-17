@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
-import { patchPublicationPlacement } from "@/lib/caf-core-client";
+import { deletePublicationPlacement, patchPublicationPlacement } from "@/lib/caf-core-client";
 
 export const dynamic = "force-dynamic";
 
@@ -41,5 +41,26 @@ export async function PATCH(
       { error: err instanceof Error ? err.message : "Failed to update publication" },
       { status: 500 }
     );
+  }
+}
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const slug = resolveProjectSlug(request);
+    if (!slug) {
+      return NextResponse.json({ error: "Set PROJECT_SLUG or pass ?project=" }, { status: 400 });
+    }
+    const data = await deletePublicationPlacement(slug, id);
+    return NextResponse.json({ ...data, project_slug: slug });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Failed to delete publication";
+    const m = msg.match(/HTTP (\d+)/);
+    const status = m ? parseInt(m[1]!, 10) : 500;
+    const clientStatus = status === 404 || status === 409 ? status : 500;
+    return NextResponse.json({ error: msg }, { status: clientStatus });
   }
 }
