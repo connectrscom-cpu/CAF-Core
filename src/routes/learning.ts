@@ -1,17 +1,18 @@
 /**
  * Learning routes — evidence, rules, analysis, compiled context, CSV performance ingest.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
-import { q } from "../db/queries.js";
+import { q, qOne } from "../db/queries.js";
 import { getProjectBySlug } from "../repositories/core.js";
 import {
   applyLearningRule,
   eraseLearningRule,
   eraseLearningRulesForProject,
+  insertLearningRule,
   listLearningRulesMerged,
   retireLearningRule,
 } from "../repositories/learning.js";
@@ -545,6 +546,59 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         errors.push(...pos.errors);
       }
       return { ok: true, minted, skipped, errors };
+    }
+  );
+
+  const operatorLlmReviewHintBody = z.object({
+    review_id: z.string().min(1),
+    guidance_text: z.string().min(3).max(8000),
+  });
+
+  app.post<{ Params: { project_slug: string } }>(
+    "/v1/learning/:project_slug/llm-approval-reviews/operator-hint",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const parsed = operatorLlmReviewHintBody.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+      }
+      const row = await qOne<{
+        review_id: string;
+        task_id: string;
+        flow_type: string | null;
+        platform: string | null;
+      }>(
+        db,
+        `SELECT review_id, task_id, flow_type, platform FROM caf_core.llm_approval_reviews
+         WHERE project_id = $1 AND review_id = $2 LIMIT 1`,
+        [project.id, parsed.data.review_id]
+      );
+      if (!row) return reply.code(404).send({ ok: false, error: "review_not_found" });
+      const text = parsed.data.guidance_text.trim();
+      const ruleId = `op_llm_hint_${randomUUID().replace(/-/g, "").slice(0, 14)}_${Date.now()}`;
+      await insertLearningRule(db, {
+        rule_id: ruleId,
+        project_id: project.id,
+        trigger_type: "operator_post_llm_review",
+        scope_flow_type: row.flow_type,
+        scope_platform: row.platform,
+        action_type: "GENERATION_GUIDANCE",
+        action_payload: {
+          guidance_kind: "operator_hint",
+          instruction: text,
+          guidance: text,
+          source_task_id: row.task_id,
+          source_review_id: row.review_id,
+        },
+        confidence: 0.55,
+        source_entity_ids: [row.task_id],
+        evidence_refs: [row.review_id, row.task_id],
+        rule_family: "generation",
+        provenance: "learning_ui_operator_hint",
+        created_by: "learning_ui",
+      });
+      return { ok: true, rule_id: ruleId };
     }
   );
 

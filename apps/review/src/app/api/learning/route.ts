@@ -10,6 +10,7 @@ import {
   getLearningTransparency,
   getLlmApprovalReviews,
   mintLlmApprovalReviewHints,
+  postOperatorLlmReviewHint,
   retireLearningRule,
   triggerEditorialAnalysis,
   triggerLlmApprovalReview,
@@ -150,6 +151,17 @@ export async function POST(req: NextRequest) {
       auto_mint_positive_hints: body.auto_mint_positive_hints === true,
     });
     return NextResponse.json(result ?? { error: "Failed" });
+  }
+
+  if (action === "llm_operator_hint" && body.review_id && typeof body.guidance_text === "string") {
+    const result = await postOperatorLlmReviewHint(projectSlug, {
+      review_id: String(body.review_id),
+      guidance_text: String(body.guidance_text),
+    });
+    if (!result?.ok) {
+      return NextResponse.json({ error: (result as { error?: string })?.error ?? "Core request failed" }, { status: 502 });
+    }
+    return NextResponse.json(result);
   }
 
   if (action === "llm_mint_hints") {

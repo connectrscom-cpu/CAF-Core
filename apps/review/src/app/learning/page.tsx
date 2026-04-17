@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 
 async function copyTaskIdToClipboard(taskId: string): Promise<void> {
@@ -9,6 +9,21 @@ async function copyTaskIdToClipboard(taskId: string): Promise<void> {
   } catch {
     window.prompt("Copy task_id (Ctrl+C, then Enter):", taskId);
   }
+}
+
+function asStringList(v: unknown, max = 24): string[] {
+  if (!Array.isArray(v)) return [];
+  return v.map((x) => String(x).trim()).filter(Boolean).slice(0, max);
+}
+
+/** Score must be below this to mint improvement rules (threshold just above actual score). */
+function mintBelowThresholdForScore(score: number): number {
+  return Math.min(0.9999, Math.max(0.01, score + 0.0005));
+}
+
+/** Score must be ≥ this to mint strength rules (just below actual score). */
+function mintAboveThresholdForScore(score: number): number {
+  return Math.max(0.0001, Math.min(0.9999, score - 0.0005));
 }
 
 interface LearningRule {
@@ -317,6 +332,10 @@ export default function LearningPage() {
   const [llmForceRereview, setLlmForceRereview] = useState(false);
   const [llmMintBusy, setLlmMintBusy] = useState(false);
   const [llmMintStatus, setLlmMintStatus] = useState<string | null>(null);
+  const [expandedLlmReviewId, setExpandedLlmReviewId] = useState<string | null>(null);
+  const [operatorHintDrafts, setOperatorHintDrafts] = useState<Record<string, string>>({});
+  const [llmRowActionBusy, setLlmRowActionBusy] = useState<string | null>(null);
+  const [llmRowActionMsg, setLlmRowActionMsg] = useState<string | null>(null);
   const [persistEngineeringInsight, setPersistEngineeringInsight] = useState(true);
   const [llmNotesSynthesis, setLlmNotesSynthesis] = useState(true);
   const [ruleDetail, setRuleDetail] = useState<LearningRule | null>(null);
@@ -495,6 +514,75 @@ export default function LearningPage() {
       }
     } finally {
       setLlmMintBusy(false);
+    }
+  };
+
+  const mintLlmRowHints = async (reviewId: string, kind: "below" | "above") => {
+    const row = llmReviews.find((x) => String(x.review_id) === reviewId);
+    const score = row && row.overall_score != null ? Number(row.overall_score) : NaN;
+    if (!Number.isFinite(score)) {
+      window.alert("This row has no numeric score; set thresholds above and use “Mint pending hints from results” after a batch run.");
+      return;
+    }
+    setLlmRowActionBusy(`${reviewId}:${kind}`);
+    setLlmRowActionMsg(null);
+    try {
+      const body: Record<string, unknown> = {
+        action: "llm_mint_hints",
+        project,
+        review_ids: [reviewId],
+      };
+      if (kind === "below") body.mint_below_score = mintBelowThresholdForScore(score);
+      if (kind === "above") body.mint_above_score = mintAboveThresholdForScore(score);
+      const res = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setLlmRowActionMsg(`Minted ${String(json.minted ?? 0)} pending rule(s), skipped ${String(json.skipped ?? 0)}.`);
+        fetchRules();
+        fetchLlmReviews();
+      } else {
+        setLlmRowActionMsg(String(json.error ?? `Mint failed (${res.status})`));
+      }
+    } finally {
+      setLlmRowActionBusy(null);
+    }
+  };
+
+  const submitOperatorLlmHint = async (reviewId: string) => {
+    const text = (operatorHintDrafts[reviewId] ?? "").trim();
+    if (text.length < 3) {
+      window.alert("Enter at least 3 characters of guidance.");
+      return;
+    }
+    setLlmRowActionBusy(`op:${reviewId}`);
+    setLlmRowActionMsg(null);
+    try {
+      const res = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "llm_operator_hint",
+          project,
+          review_id: reviewId,
+          guidance_text: text,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setLlmRowActionMsg(
+          `Created pending rule ${String(json.rule_id ?? "")}. Scroll to “Active / Pending rules” and Apply when ready.`
+        );
+        setOperatorHintDrafts((d) => ({ ...d, [reviewId]: "" }));
+        fetchRules();
+      } else {
+        setLlmRowActionMsg(String(json.error ?? `Failed (${res.status})`));
+      }
+    } finally {
+      setLlmRowActionBusy(null);
     }
   };
 
@@ -849,69 +937,271 @@ export default function LearningPage() {
       {llmReviews.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <h3 style={{ marginBottom: 8 }}>Recent LLM approval reviews ({llmReviews.length})</h3>
-          <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--muted)" }}>
-            Full <code>task_id</code> is shown so you can select text or use Copy / Open.
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
+            Read the model’s summary and bullets in place. Use <strong>Mint fix</strong> / <strong>Mint strengths</strong> to turn
+            this row into <strong>pending GENERATION_GUIDANCE</strong> rules (then Apply in the rules tables below).{" "}
+            <strong>Your guidance</strong> adds a free-text pending rule tied to the same review. Full <code>task_id</code> for
+            copy / workbench.
+          </p>
+          {llmRowActionMsg ? (
+            <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>{llmRowActionMsg}</p>
+          ) : null}
+          <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--muted)" }}>
+            <Link href="#learning-rules" style={{ color: "var(--accent)" }}>
+              Jump to Active / Pending rules
+            </Link>
           </p>
           <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "46%" }}>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "38%" }}>
                   task_id
                 </th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>score</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>images</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>hint rule</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>when</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "7%" }}>score</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "7%" }}>img</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "10%" }}>minted</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "14%" }}>when</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>actions</th>
               </tr>
             </thead>
             <tbody>
-              {llmReviews.slice(0, 15).map((r) => (
-                <tr key={String(r.review_id)}>
-                  <td
-                    style={{
-                      padding: 6,
-                      borderBottom: "1px solid var(--border)",
-                      fontFamily: "monospace",
-                      fontSize: 11,
-                      wordBreak: "break-all",
-                      verticalAlign: "top",
-                    }}
-                  >
-                    <div style={{ userSelect: "text" }}>{String(r.task_id)}</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                      <button
-                        type="button"
-                        className="btn-ghost"
-                        style={{ fontSize: 11, padding: "4px 10px" }}
-                        onClick={() => void copyTaskIdToClipboard(String(r.task_id))}
-                        title="Copy full task_id to the clipboard"
+              {llmReviews.slice(0, 15).map((r) => {
+                const rid = String(r.review_id);
+                const tid = String(r.task_id);
+                const open = expandedLlmReviewId === rid;
+                const scoreN = r.overall_score != null ? Number(r.overall_score) : NaN;
+                const imgLen = Array.isArray(r.vision_image_urls) ? r.vision_image_urls.length : 0;
+                return (
+                  <Fragment key={rid}>
+                    <tr>
+                      <td
+                        style={{
+                          padding: 6,
+                          borderBottom: "1px solid var(--border)",
+                          fontFamily: "monospace",
+                          fontSize: 11,
+                          wordBreak: "break-all",
+                          verticalAlign: "top",
+                        }}
                       >
-                        Copy ID
-                      </button>
-                      <Link
-                        href={`/t/${encodeURIComponent(String(r.task_id))}`}
-                        className="btn-ghost"
-                        style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
-                        title="Open this task in the review app"
+                        <div style={{ userSelect: "text" }}>{tid}</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 10px" }}
+                            onClick={() => void copyTaskIdToClipboard(tid)}
+                            title="Copy full task_id to the clipboard"
+                          >
+                            Copy ID
+                          </button>
+                          <Link
+                            href={`/t/${encodeURIComponent(tid)}`}
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                            title="Human editorial workbench"
+                          >
+                            Open task
+                          </Link>
+                          <Link
+                            href={`/content/${encodeURIComponent(tid)}`}
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                            title="Approved content view (read-only)"
+                          >
+                            Read content
+                          </Link>
+                        </div>
+                      </td>
+                      <td style={{ padding: 6, borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>
+                        {Number.isFinite(scoreN) ? scoreN.toFixed(2) : "—"}
+                      </td>
+                      <td style={{ padding: 6, borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>{imgLen}</td>
+                      <td style={{ padding: 6, borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+                          {r.minted_pending_rule ? (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "var(--accent)",
+                                color: "#fff",
+                              }}
+                              title="A pending improvement rule was minted from this review"
+                            >
+                              fix
+                            </span>
+                          ) : null}
+                          {r.minted_pending_positive_rule ? (
+                            <span
+                              style={{
+                                fontSize: 10,
+                                padding: "2px 6px",
+                                borderRadius: 4,
+                                background: "var(--green)",
+                                color: "#0a0a0a",
+                              }}
+                              title="A pending strength rule was minted from this review"
+                            >
+                              str
+                            </span>
+                          ) : null}
+                          {!r.minted_pending_rule && !r.minted_pending_positive_rule ? (
+                            <span style={{ color: "var(--muted)" }}>—</span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td
+                        style={{
+                          padding: 6,
+                          borderBottom: "1px solid var(--border)",
+                          color: "var(--muted)",
+                          verticalAlign: "top",
+                        }}
                       >
-                        Open task
-                      </Link>
-                    </div>
-                  </td>
-                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
-                    {r.overall_score != null ? Number(r.overall_score).toFixed(2) : "—"}
-                  </td>
-                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
-                    {Array.isArray(r.vision_image_urls) ? r.vision_image_urls.length : 0}
-                  </td>
-                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
-                    {r.minted_pending_rule ? "yes" : "—"}
-                  </td>
-                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)", color: "var(--muted)" }}>
-                    {String(r.created_at ?? "").slice(0, 16)}
-                  </td>
-                </tr>
-              ))}
+                        {String(r.created_at ?? "").slice(0, 16)}
+                      </td>
+                      <td style={{ padding: 6, borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-start" }}>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 8px" }}
+                            onClick={() => setExpandedLlmReviewId(open ? null : rid)}
+                          >
+                            {open ? "Hide review" : "Read review"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 8px" }}
+                            disabled={!Number.isFinite(scoreN) || llmRowActionBusy !== null}
+                            title="Mint pending GENERATION_GUIDANCE from improvement bullets (score treated as below threshold)"
+                            onClick={() => void mintLlmRowHints(rid, "below")}
+                          >
+                            {llmRowActionBusy === `${rid}:below` ? "…" : "Mint fix"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 8px" }}
+                            disabled={!Number.isFinite(scoreN) || llmRowActionBusy !== null}
+                            title="Mint pending guidance from strengths (score treated as at/above threshold)"
+                            onClick={() => void mintLlmRowHints(rid, "above")}
+                          >
+                            {llmRowActionBusy === `${rid}:above` ? "…" : "Mint strengths"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    {open ? (
+                      <tr>
+                        <td colSpan={6} style={{ padding: "10px 12px 14px", background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)" }}>
+                          <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
+                            Review <code>{rid}</code>
+                            {typeof r.model === "string" && r.model ? ` · model ${r.model}` : ""}
+                          </div>
+                          {typeof r.summary === "string" && r.summary.trim() ? (
+                            <p style={{ margin: "0 0 10px", fontSize: 13, lineHeight: 1.45 }}>{r.summary.trim()}</p>
+                          ) : (
+                            <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--muted)" }}>No summary on this row.</p>
+                          )}
+                          {asStringList(r.improvement_bullets).length > 0 ? (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Improvements</div>
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.45 }}>
+                                {asStringList(r.improvement_bullets).map((b) => (
+                                  <li key={b}>{b}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {asStringList(r.strengths).length > 0 ? (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Strengths</div>
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.45 }}>
+                                {asStringList(r.strengths).map((b) => (
+                                  <li key={b}>{b}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {asStringList(r.weaknesses).length > 0 ? (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Weaknesses</div>
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.45 }}>
+                                {asStringList(r.weaknesses).map((b) => (
+                                  <li key={b}>{b}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {asStringList(r.risk_flags).length > 0 ? (
+                            <div style={{ marginBottom: 10 }}>
+                              <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 4 }}>Risk flags</div>
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, lineHeight: 1.45 }}>
+                                {asStringList(r.risk_flags).map((b) => (
+                                  <li key={b}>{b}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+                          {typeof r.raw_assistant_text === "string" && r.raw_assistant_text.trim() ? (
+                            <details style={{ marginBottom: 12, fontSize: 11 }}>
+                              <summary style={{ cursor: "pointer", color: "var(--accent)" }}>Raw model output (truncated)</summary>
+                              <pre
+                                style={{
+                                  marginTop: 8,
+                                  maxHeight: 200,
+                                  overflow: "auto",
+                                  whiteSpace: "pre-wrap",
+                                  fontSize: 11,
+                                  padding: 8,
+                                  borderRadius: 6,
+                                  border: "1px solid var(--border)",
+                                  background: "var(--card)",
+                                }}
+                              >
+                                {r.raw_assistant_text.length > 6000
+                                  ? `${r.raw_assistant_text.slice(0, 6000)}…`
+                                  : r.raw_assistant_text}
+                              </pre>
+                            </details>
+                          ) : null}
+                          <label style={{ fontSize: 11, fontWeight: 600, display: "block", marginBottom: 4 }}>
+                            Your generation guidance (pending rule)
+                          </label>
+                          <textarea
+                            value={operatorHintDrafts[rid] ?? ""}
+                            onChange={(e) => setOperatorHintDrafts((d) => ({ ...d, [rid]: e.target.value }))}
+                            placeholder="e.g. Always keep hooks under 12 words for this brand; avoid medical claims on slide 2…"
+                            rows={3}
+                            style={{
+                              width: "100%",
+                              maxWidth: 720,
+                              fontSize: 12,
+                              padding: 8,
+                              borderRadius: 6,
+                              border: "1px solid var(--border)",
+                              marginBottom: 8,
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ fontSize: 12 }}
+                            disabled={llmRowActionBusy !== null}
+                            onClick={() => void submitOperatorLlmHint(rid)}
+                          >
+                            {llmRowActionBusy === `op:${rid}` ? "Saving…" : "Save as pending guidance rule"}
+                          </button>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1182,7 +1472,7 @@ export default function LearningPage() {
         </div>
       )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div id="learning-rules" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <div className="card">
           <h3 style={{ marginBottom: 12 }}>Active Rules ({active.length})</h3>
           {active.length === 0 ? (

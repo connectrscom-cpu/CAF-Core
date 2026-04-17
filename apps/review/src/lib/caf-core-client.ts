@@ -850,6 +850,17 @@ export async function mintLlmApprovalReviewHints(
   );
 }
 
+/** Operator-written pending GENERATION_GUIDANCE tied to an LLM approval review row. */
+export async function postOperatorLlmReviewHint(
+  projectSlug: string,
+  body: { review_id: string; guidance_text: string }
+) {
+  return corePost<{ ok?: boolean; rule_id?: string; error?: string }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/llm-approval-reviews/operator-hint`,
+    body
+  );
+}
+
 export async function getLlmApprovalReviews(projectSlug: string, limit?: number) {
   const qs = limit != null ? `?limit=${limit}` : "";
   return coreGet<{ ok: boolean; reviews: Record<string, unknown>[] }>(
