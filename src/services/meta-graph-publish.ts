@@ -87,6 +87,22 @@ export function pickPageTokenFromAccountsResponse(
 }
 
 /**
+ * True when `GET me/accounts` failed because the token is already a **Page** token (that edge exists on User, not Page).
+ * Meta formats errors as `(#100) …` — not `#(100)`.
+ */
+export function graphErrorMeansPageTokenCannotListMeAccounts(msg: string): boolean {
+  const m = msg.trim();
+  return (
+    (/nonexisting field/i.test(m) && /\baccounts\b/i.test(m)) ||
+    (/\(#[0-9]+\)/i.test(m) && /Page/i.test(m)) ||
+    (/Unsupported get request/i.test(m) &&
+      /Object with ID ['"]me['"]|cannot be loaded due to missing permissions|does not support this operation/i.test(
+        m
+      ))
+  );
+}
+
+/**
  * Resolves a **Page** access token for `{page-id}/…` Graph calls.
  *
  * Facebook **multi-image** posts use `/{page-id}/photos` with `published=false`; Meta requires a **Page**
@@ -134,17 +150,7 @@ async function resolveTokenForPageGraphApi(
     // Do not treat a bare "Unsupported get request" as Page-token: some User-token / permission
     // failures can match that and would skip the exchange, leaving a User token for unpublished
     // /{page-id}/photos (Meta then returns #200 "must be posted as the page itself").
-    // Page tokens cannot call `me/accounts` (field exists on User, not on Page). Match (#100) from
-    // message text OR from graphGet-normalized prefix; also match plain "nonexisting field (accounts)"
-    // when Meta omits the (#100) prefix from `message` but sets `error.code` (handled in graphGet).
-    const looksLikePageTokenCannotListAccounts =
-      (/nonexisting field/i.test(msg) && /\baccounts\b/i.test(msg)) ||
-      (/#\(100\)|\(100\)/i.test(msg) && /Page/i.test(msg)) ||
-      (/Unsupported get request/i.test(msg) &&
-        /Object with ID ['"]me['"]|cannot be loaded due to missing permissions|does not support this operation/i.test(
-          msg
-        ));
-    if (looksLikePageTokenCannotListAccounts) {
+    if (graphErrorMeansPageTokenCannotListMeAccounts(msg)) {
       return rawToken;
     }
 

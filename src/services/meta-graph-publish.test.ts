@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  graphErrorMeansPageTokenCannotListMeAccounts,
   pickPageTokenFromAccountsResponse,
   placementPlatformToMetaIntegrationKey,
 } from "./meta-graph-publish.js";
@@ -11,6 +12,19 @@ describe("placementPlatformToMetaIntegrationKey", () => {
   });
   it("returns null for unknown", () => {
     expect(placementPlatformToMetaIntegrationKey("TikTok")).toBeNull();
+  });
+});
+
+describe("graphErrorMeansPageTokenCannotListMeAccounts", () => {
+  it("detects Meta (#100) nonexisting field (accounts) (Page token used on me/accounts)", () => {
+    expect(
+      graphErrorMeansPageTokenCannotListMeAccounts(
+        "(#100) Tried accessing nonexisting field (accounts) on node type (Page)"
+      )
+    ).toBe(true);
+  });
+  it("detects when only message body omits (#…) but code would be prefixed by graphGet", () => {
+    expect(graphErrorMeansPageTokenCannotListMeAccounts("Tried accessing nonexisting field (accounts)")).toBe(true);
   });
 });
 
