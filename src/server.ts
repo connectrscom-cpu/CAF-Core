@@ -3,6 +3,7 @@ import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
 import { loadConfig } from "./config.js";
 import { createPool } from "./db/pool.js";
+import { runPendingMigrations } from "./db/run-migrations.js";
 import { registerV1Routes } from "./routes/v1.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerProjectConfigRoutes } from "./routes/project-config.js";
@@ -24,6 +25,12 @@ import { startEditorialAnalysisCron } from "./services/editorial-analysis-cron.j
 async function main() {
   const config = loadConfig();
   const db = createPool(config);
+
+  if (config.CAF_RUN_MIGRATIONS_ON_START) {
+    await runPendingMigrations(db, {
+      log: (line) => console.log(`[caf-core] ${line}`),
+    });
+  }
 
   const app = Fastify({ logger: true });
 

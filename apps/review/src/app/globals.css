@@ -354,6 +354,17 @@ textarea { resize: vertical; }
   gap: 24px;
   align-items: start;
 }
+.publish-left{
+  /* Prevent wide tables from overflowing into the right pane (grid items default min-width:auto). */
+  min-width: 0;
+  overflow-x: auto;
+  padding-right: 6px; /* small gutter so horizontal scrollbar doesn't touch the grid gap */
+}
+.publish-right{
+  /* Opaque background so overflow never visually bleeds through. */
+  min-width: 0;
+  background: var(--bg);
+}
 .publish-preview-grid{
   display: grid;
   grid-template-columns: minmax(320px, 1fr) minmax(280px, 0.95fr);

@@ -11,6 +11,20 @@ const envSchema = z.object({
   HOST: z.string().default("0.0.0.0"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL required for CAF Core Postgres"),
 
+  /**
+   * When true (default), apply pending SQL migrations from ./migrations on API startup (idempotent, advisory-locked).
+   * Set CAF_RUN_MIGRATIONS_ON_START=0 if schema is applied only via CI or `npm run migrate`.
+   */
+  CAF_RUN_MIGRATIONS_ON_START: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+
   CAF_CORE_API_TOKEN: z.string().optional(),
   CAF_CORE_REQUIRE_AUTH: z
     .string()
@@ -19,12 +33,21 @@ const envSchema = z.object({
 
   /**
    * Publishing executor mode for the publications "start" endpoint.
-   * - "none": keep current behavior (claim + external executor posts; Core waits for /complete)
-   * - "dry_run": Core immediately completes placements with a fake platform_post_id (dev/testing)
-   *
-   * Future: "core" (real platform connectors + token storage).
+   * - "none": claim placement + return n8n payload; external worker posts and calls /complete
+   * - "dry_run": Core completes with a fake platform_post_id (plumbing tests)
+   * - "meta": Core calls Meta Graph (Facebook Page + Instagram) using project_integrations + META_GRAPH_API_VERSION
    */
-  CAF_PUBLISH_EXECUTOR: z.enum(["none", "dry_run"]).default("none"),
+  CAF_PUBLISH_EXECUTOR: z.enum(["none", "dry_run", "meta"]).default("none"),
+
+  /** Graph API version for Meta publishing (e.g. v21.0, v25.0). */
+  META_GRAPH_API_VERSION: z.string().default("v21.0"),
+
+  /**
+   * Optional long-lived Facebook Page access token for CAF_PUBLISH_EXECUTOR=meta.
+   * If set, overrides DB credentials_json (useful when Business Manager will not attach the app to the Page).
+   * Never commit real values; set only in deployment secrets / local .env.
+   */
+  CAF_META_PAGE_ACCESS_TOKEN: z.string().optional(),
 
   DECISION_ENGINE_VERSION: z.string().default("v1"),
 

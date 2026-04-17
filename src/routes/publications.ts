@@ -18,11 +18,12 @@ import {
 } from "../repositories/publications.js";
 import { buildPublicationN8nPayload } from "../services/publication-n8n-payload.js";
 import { dryRunPublishPlacement } from "../services/publish-executors/dry-run.js";
+import { publishPlacementToMeta } from "../services/meta-graph-publish.js";
 import type { AppConfig } from "../config.js";
 
 interface Deps {
   db: Pool;
-  config?: AppConfig;
+  config: AppConfig;
 }
 
 const contentFormatSchema = z.enum(["carousel", "video", "unknown"]);
@@ -156,7 +157,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
       });
     }
 
-    if (config?.CAF_PUBLISH_EXECUTOR === "dry_run") {
+    if (config.CAF_PUBLISH_EXECUTOR === "dry_run") {
       const result = dryRunPublishPlacement(row);
       const completed = await completePublicationPlacement(db, project.id, row.id, {
         post_success: true,
@@ -179,6 +180,50 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
         placement: rowToJson(completed ?? row),
         payload: buildPublicationN8nPayload(completed ?? row, project.slug),
         executor: "dry_run",
+      };
+    }
+
+    if (config.CAF_PUBLISH_EXECUTOR === "meta") {
+      const graphVersion = config.META_GRAPH_API_VERSION?.trim() || "v21.0";
+      const pub = await publishPlacementToMeta(db, row, project.id, graphVersion, {
+        pageAccessTokenFromEnv: config.CAF_META_PAGE_ACCESS_TOKEN,
+      });
+      if (!pub.ok) {
+        const failed = await completePublicationPlacement(db, project.id, row.id, {
+          post_success: false,
+          publish_error: pub.error,
+          result_json: { executor: "meta", error: pub.error },
+          external_ref: "caf_core_meta_failed",
+        });
+        return reply.code(502).send({
+          ok: false,
+          error: "meta_publish_failed",
+          message: pub.error,
+          placement: rowToJson(failed ?? row),
+          executor: "meta",
+        });
+      }
+      const completed = await completePublicationPlacement(db, project.id, row.id, {
+        post_success: true,
+        platform_post_id: pub.platform_post_id,
+        posted_url: pub.posted_url,
+        result_json: pub.result_json,
+        external_ref: "caf_core_meta",
+      });
+      if (completed) {
+        await appendPublicationResultToJob(db, project.id, completed.task_id, {
+          placement_id: completed.id,
+          platform: completed.platform,
+          posted_url: completed.posted_url,
+          platform_post_id: completed.platform_post_id,
+          published_at: completed.published_at ?? new Date().toISOString(),
+        }).catch(() => {});
+      }
+      return {
+        ok: true,
+        placement: rowToJson(completed ?? row),
+        payload: buildPublicationN8nPayload(completed ?? row, project.slug),
+        executor: "meta",
       };
     }
 

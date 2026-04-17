@@ -592,6 +592,17 @@ export async function saveHeygenConfig(projectSlug: string, data: Record<string,
   );
 }
 
+export async function saveHeygenDefaults(
+  projectSlug: string,
+  data: { voice_id?: string | null; avatar_id?: string | null; avatar_pool_json?: string | null }
+) {
+  return corePut<{
+    ok: boolean;
+    project: { id: string; slug: string };
+    applied: { voice_id: string | null; avatar_id: string | null; avatar_pool_count: number };
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/heygen-defaults`, data);
+}
+
 // ── Flow Engine (CAF-level) ──────────────────────────────────────────────
 
 export async function getFlowEngine() {

@@ -10,6 +10,8 @@
     "dev": "node --watch --import tsx src/server.ts",
     "migrate": "node --import tsx src/cli/migrate.ts",
     "seed:demo": "node --import tsx src/cli/seed-demo.ts",
+    "seed:meta-links": "node --import tsx src/cli/seed-brand-meta-from-urls.ts",
+    "seed:meta-links:sns": "node --import tsx src/cli/seed-brand-meta-from-urls.ts -- --project SNS --name \"Demo SNS\"",
     "seed:canonical-flows": "node --import tsx src/cli/seed-canonical-flows.ts",
     "seed:demo-sns": "node --import tsx src/cli/seed-canonical-flows.ts",
     "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",

@@ -417,7 +417,10 @@ export default function PublishPage() {
       </div>
 
       <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
-        <div style={{ display: activeTab === "approved" ? "block" : "none" }}>
+        <div
+          className="publish-left"
+          style={{ display: activeTab === "approved" ? "block" : "none" }}
+        >
           <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
           </Link>
@@ -445,7 +448,10 @@ export default function PublishPage() {
           )}
         </div>
 
-        <div style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}>
+        <div
+          className="publish-right"
+          style={{ borderLeft: "1px solid var(--border)", paddingLeft: 24, minHeight: 400 }}
+        >
           {activeTab === "due" && (
             <div style={{ marginBottom: 18, paddingBottom: 18, borderBottom: "1px solid var(--border)" }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>

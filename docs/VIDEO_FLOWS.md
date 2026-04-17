@@ -1,0 +1,221 @@
+## CAF Core video flows (how they work)
+
+This doc explains how **video jobs** are routed and rendered in CAF Core, with special focus on **HeyGen duration constraints**, **subtitle behavior**, and **avatar/voice selection**.
+
+### Glossary
+
+- **Job**: a row in `caf_core.content_jobs` identified by `task_id` (primary execution key).
+- **generated_output**: `content_jobs.generation_payload.generated_output` (LLM outputs and plans).
+- **Scene pipeline**: multi-scene clip concat + optional TTS + subtitle burn-in.
+- **HeyGen pipeline**: single-take (or agent-driven) HeyGen generation.
+
+---
+
+## Routing: how a job becomes a rendered video
+
+### Entry points
+
+- `POST /v1/jobs/:project_slug/:task_id/process` → `processJobByTaskId(...)` in `src/routes/runs.ts`
+- `POST /v1/runs/:project_slug/:run_id/process` → `processRunJobs(...)` in `src/routes/runs.ts`
+
+### Video decision point
+
+All video-related work routes through `processVideoJob(...)` in `src/services/job-pipeline.ts`.
+
+The routing logic is (conceptually):
+
+1) **Scene pipeline** if any of the following are true:
+- the chosen production route includes `SCENE`, or
+- `generated_output.scene_bundle` exists, or
+- `generation_payload.video_pipeline` is `"scene"`, or
+- `flow_type` matches `Video_Scene_Generator` / `FLOW_SCENE_ASSEMBLY` / `scene_assembly` patterns
+
+2) Else **HeyGen pipeline** if `HEYGEN_API_KEY` is configured:
+- pre-step: `ensureHeygenPayloadForFlowType(...)` (adds missing script/prompt fields to `generated_output`)
+- render: `runHeygenForContentJob(...)` in `src/services/heygen-renderer.ts`
+
+3) Else fallback to **remote video-assembly** `/full-pipeline` (legacy integration)
+
+Key files:
+- `src/services/job-pipeline.ts` (routing + orchestration)
+- `src/decision_engine/flow-kind.ts` (`isVideoFlow(...)` heuristic classifier)
+
+---
+
+## Scene pipeline (multi-scene): clips → concat → TTS → subtitles → mux
+
+Main orchestrator: `runScenePipeline(...)` in `src/services/scene-pipeline.ts`.
+
+### 1) Scene bundle preparation
+
+The pipeline ensures `generated_output.scene_bundle.scenes[]` exists via:
+- `ensureSceneBundleInPayload(...)` in `src/services/scene-assembly-generator.ts`
+
+Scene bundles typically contain:
+- `scenes[i].video_prompt` (visual prompt per scene)
+- optional `scenes[i].scene_narration_line` (text slice of spoken script aligned to that scene)
+- optional clip URLs (`rendered_scene_url`, etc.)
+
+### 2) Clip rendering (optional)
+
+If scene clips are missing but prompts exist, Core can generate clips:
+
+- **Sora (OpenAI Videos API)** when `SCENE_ASSEMBLY_CLIP_PROVIDER=sora`
+  - implemented in `src/services/sora-scene-clips.ts`
+  - requires `OPENAI_API_KEY` and Supabase config so clips can be uploaded to fetchable URLs
+
+- **HeyGen Video Agent fallback** when `SCENE_ASSEMBLY_CLIP_PROVIDER=heygen` and `SCENE_ASSEMBLY_HEYGEN_CLIP_FALLBACK=1`
+  - implemented in `src/services/scene-pipeline.ts` using helpers from `src/services/heygen-renderer.ts`
+  - runs in **no-avatar** mode for clip segments
+
+### 3) Concat (video-assembly)
+
+Scene MP4 URLs are passed to the Node video-assembly service:
+
+- `POST /concat-videos?async=1` with `{ video_urls, task_id, run_id }`
+- poll `GET /status/:request_id`
+
+Implementation:
+- CAF Core client: `src/services/scene-pipeline.ts` (`pollVideoAssemblyJob(...)`)
+- video-assembly server: `services/video-assembly/server.js`
+
+### 4) TTS voiceover (optional)
+
+If `generated_output.spoken_script` exists and `OPENAI_API_KEY` is configured, the scene pipeline synthesizes voiceover:
+
+- `synthesizeSpeechToStorage(...)` in `src/services/tts-service.ts`
+
+#### Script length enforcement in the scene pipeline (optional)
+
+The scene pipeline can optionally **trim `spoken_script` to fit the clip timeline**:
+
+- Controlled by `SCENE_ENFORCE_SPOKEN_SCRIPT_WORD_TRIM` (boolean)
+- Budget computed from:
+  - timeline seconds (`clipDurs`)
+  - `SCENE_VO_WORDS_PER_MINUTE`
+  - `SCENE_VO_WORD_BUDGET_SAFETY`
+- Trimming performed by `fitSpokenScriptToWordBudget(...)` in `src/services/spoken-script-word-budget.ts`
+
+If trimming occurs, the pipeline writes the shortened script back into `generated_output` (`spoken_script` and `script`).
+
+### 5) Subtitles (SRT generation) and how they’re picked
+
+Scene pipeline subtitles are **generated from text**, not from transcription:
+
+Source selection order (in `src/services/scene-pipeline.ts`):
+
+1) Use `scene_narration_line` if it aligns exactly with the `spoken_script` (strict), checked by:
+   - `narrationLinesAlignedWithScript(...)` in `src/services/scene-narration-alignment.ts`
+2) Else accept a looser concatenation alignment:
+   - `narrationLinesLooseConcatMatchesScript(...)`
+3) Else split the `spoken_script` into per-scene chunks weighted by clip durations:
+   - `splitScriptIntoSceneChunksByWeights(...)` in `src/services/caption-generator.ts`
+
+SRT is built via:
+- `buildSrtFromScenesWithSentenceCues(...)` in `src/services/caption-generator.ts`
+
+The resulting file is uploaded to:
+- `subtitles/{run}/{task}/captions.srt`
+
+### 6) Mux + burn subtitles (video-assembly)
+
+Final mux is done by video-assembly:
+- `POST /mux?async=1` with `{ video_url, audio_url, subtitles_url? }`
+
+If `subtitles_url` is provided, video-assembly downloads the SRT and runs ffmpeg with a subtitles filter to burn them into the MP4.
+
+Implementation:
+- CAF Core: `src/services/scene-pipeline.ts` (signs URLs, calls mux)
+- video-assembly: `services/video-assembly/server.js` (`muxAudioBurnSubtitles(...)`)
+
+---
+
+## HeyGen pipeline (single-take): request building, duration constraints, captions
+
+Main orchestrator: `runHeygenForContentJob(...)` in `src/services/heygen-renderer.ts`.
+
+### Script and prompt fields
+
+CAF Core extracts text from `generated_output` using aliases/nesting:
+- `extractSpokenScriptText(...)` and `extractVideoPromptText(...)` in `src/services/video-gen-fields.ts`
+
+Depending on the HeyGen path:
+
+- **HeyGen v2** (`POST /v2/video/generate`):
+  - `spoken_script` becomes `video_inputs[0].script_text`
+  - `video_prompt` becomes `video_inputs[0].prompt`
+  - a valid TTS voice must be present (`video_inputs[0].voice` object with `{ type:"text", voice_id }`), unless configured as `silence`.
+
+- **HeyGen Video Agent v1** (`POST /v1/video_agent/generate`):
+  - a single multiline prompt is constructed from fields like hook, spoken_script, video_prompt, on-screen cues, etc.
+
+### Duration constraints: what is enforced vs guidance
+
+**Important**: CAF Core does **not** enforce char/word limits for HeyGen script text today.
+
+What *is* enforced:
+
+- For **Video Agent** only, CAF Core clamps `duration_sec` in seconds:
+  - `resolveHeygenAgentDurationSec(...)` in `src/services/heygen-renderer.ts`
+  - bounds include `HEYGEN_AGENT_MIN_DURATION_SEC` and a max of 300s (hard-coded), and a fallback based on `VIDEO_TARGET_DURATION_MIN_SEC`.
+
+What is *guidance only*:
+
+- LLM prompts are told to target a duration band (e.g. X–Y seconds) via:
+  - `appendVideoUserPromptDurationHardFooter(...)` and `withVideoScriptDurationPolicy(...)` in `src/services/video-content-policy.ts`
+  - used in the script/prompt generator steps (e.g. `src/services/video-script-generator.ts`)
+
+### Subtitles / captions for HeyGen
+
+CAF Core prefers captioned MP4 outputs when HeyGen provides them:
+
+- In polling status, it selects `video_url_caption` (burned-in captions) when present; otherwise uses `video_url`.
+- Selection logic: `pickHeyGenDownloadUrlFromStatus(...)` in `src/services/heygen-renderer.ts`.
+
+CAF Core currently does not upload or store a separate SRT asset for HeyGen videos.
+
+---
+
+## Avatar + voice selection (HeyGen): precedence and config keys
+
+### Where config is stored
+
+Per-project HeyGen configuration is stored as key/value rows:
+- Postgres table: `caf_core.heygen_config` (see `migrations/002_project_config_and_runs.sql`)
+- Accessors: `listHeygenConfig(...)` / `upsertHeygenConfig(...)` in `src/repositories/project-config.ts`
+
+Rows can be scoped by optional fields:
+- `platform` (nullable; null means “all platforms”)
+- `flow_type` (nullable; null means “all flows”)
+- `render_mode` (nullable; null means “all render modes”)
+
+### How rows merge for a job
+
+`mergeHeygenConfigForJob(...)` in `src/services/heygen-renderer.ts` merges all matching rows, with wildcards allowed.
+
+Compatibility note: “Sheets style” render modes `PROMPT`/`SCRIPT` are treated as compatible with job render modes `HEYGEN_AVATAR` / `HEYGEN_NO_AVATAR` depending on the flow type.
+
+### Avatar selection
+
+Avatar can come from either:
+
+- **Pools** (preferred): `prompt_avatar_pool_json`, `script_avatar_pool_json`, `avatar_pool_json`\n  Each is a JSON array of objects like `{ \"avatar_id\": \"...\", \"voice_id\": \"...\" }` (voice_id optional).
+- **Single IDs**: `prompt_avatar_id`, `script_avatar_id`, `avatar_id`
+
+Pool picks are deterministic:
+- Seed defaults to `task_id`
+- `stablePickIndex(seed, pool.length)` selects the entry so the same task consistently picks the same avatar.
+
+No-avatar flows skip avatar injection entirely.
+
+### Voice selection
+
+Voice resolution order (simplified):
+
+1) If an avatar pool entry includes `voice_id`, use it.\n2) Else use config keys like `voice`, `voice_id`, `default_voice`, `default_voice_id`.\n3) For script-led flows, `script_voice_id` can override.\n4) Else fallback to environment `HEYGEN_DEFAULT_VOICE_ID`.\n5) Else final hard fallback constant in `src/services/heygen-renderer.ts`.
+
+---
+
+## Operational notes / debugging
+
+- Most pipeline steps insert `api_call_audit` rows via `tryInsertApiCallAudit(...)` to capture request/response metadata per `task_id`.\n- For HeyGen, the resulting `assets` row includes `metadata_json.heygen_used_video_url_caption` so you can confirm whether captioned output was used.\n- For scene pipeline, `content_jobs.scene_bundle_state` is updated with a compact report, warnings, and mux details.\n+
