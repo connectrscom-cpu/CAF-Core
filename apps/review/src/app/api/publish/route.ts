@@ -24,6 +24,9 @@ export async function GET(request: NextRequest) {
     const due_only =
       request.nextUrl.searchParams.get("due_only") === "1" ||
       request.nextUrl.searchParams.get("due_only") === "true";
+    const upcoming_only =
+      request.nextUrl.searchParams.get("upcoming_only") === "1" ||
+      request.nextUrl.searchParams.get("upcoming_only") === "true";
     const platform = request.nextUrl.searchParams.get("platform")?.trim() || undefined;
     const limit = request.nextUrl.searchParams.get("limit") ?? undefined;
     const offset = request.nextUrl.searchParams.get("offset") ?? undefined;
@@ -31,6 +34,7 @@ export async function GET(request: NextRequest) {
       task_id,
       status,
       due_only,
+      upcoming_only,
       platform,
       limit: limit ? parseInt(limit, 10) : 200,
       offset: offset ? parseInt(offset, 10) : 0,

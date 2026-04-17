@@ -65,6 +65,11 @@ function localDatetimeValue(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Default publish schedule: a bit in the future so rows stay in the “upcoming” queue, not due immediately. */
+function defaultScheduleLocalDatetime(): string {
+  return localDatetimeValue(new Date(Date.now() + 2 * 60 * 60 * 1000));
+}
+
 function safeFilename(s: string): string {
   return (s || "file").replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").slice(0, 160);
 }
@@ -122,19 +127,9 @@ function looksLikeErrorMessage(msg: string): boolean {
   );
 }
 
-function summarizeStartFailure(res: Response, text: string, json: Record<string, unknown>): string {
-  const msg = typeof json.message === "string" ? json.message.trim() : "";
-  const err = typeof json.error === "string" ? json.error.trim() : "";
-  if (msg) return msg.length > 2000 ? `${msg.slice(0, 2000)}…` : msg;
-  if (err) return err.length > 2000 ? `${err.slice(0, 2000)}…` : err;
-  const t = text.trim();
-  if (t) return t.length > 1200 ? `${t.slice(0, 1200)}…` : t;
-  return `Request failed (HTTP ${res.status}).`;
-}
-
 function PublishPageContent() {
   const searchParams = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"approved" | "due" | "published">("approved");
+  const [activeTab, setActiveTab] = useState<"approved" | "scheduled" | "published">("approved");
   const [approved, setApproved] = useState<ApprovedTasksResponse | null>(null);
   const [facets, setFacets] = useState<FacetsResponse>({});
   const [loadingApproved, setLoadingApproved] = useState(true);
@@ -148,7 +143,7 @@ function PublishPageContent() {
   const [caption, setCaption] = useState("");
   const [mediaUrlsText, setMediaUrlsText] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
-  const [scheduledLocal, setScheduledLocal] = useState(() => localDatetimeValue(new Date()));
+  const [scheduledLocal, setScheduledLocal] = useState(() => defaultScheduleLocalDatetime());
   const [selectedPlatforms, setSelectedPlatforms] = useState<Record<string, boolean>>({
     Instagram: true,
     Facebook: false,
@@ -157,17 +152,16 @@ function PublishPageContent() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [n8nPreview, setN8nPreview] = useState<string | null>(null);
-  const [duePlacements, setDuePlacements] = useState<PublicationPlacement[]>([]);
-  const [loadingDue, setLoadingDue] = useState(false);
+  const [scheduledPlacements, setScheduledPlacements] = useState<PublicationPlacement[]>([]);
+  const [loadingScheduled, setLoadingScheduled] = useState(false);
   const [publishedPlacements, setPublishedPlacements] = useState<PublicationPlacement[]>([]);
   const [loadingPublished, setLoadingPublished] = useState(false);
   const [projectStrategy, setProjectStrategy] = useState<Record<string, unknown> | null>(null);
   const [loadingStrategy, setLoadingStrategy] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
-  const [startingPlacementId, setStartingPlacementId] = useState<string | null>(null);
   const [removingPlacementId, setRemovingPlacementId] = useState<string | null>(null);
   const [feedbackAt, setFeedbackAt] = useState<Date | null>(null);
-  const autoSwitchedToDueRef = useRef(false);
+  const autoSwitchedToScheduledRef = useRef(false);
   const [publishFontZoom, setPublishFontZoom] = useState(1);
 
   const projectSlug = (selected?.project ?? "").trim();
@@ -271,22 +265,22 @@ function PublishPageContent() {
     }
   }, []);
 
-  const fetchDueQueue = useCallback(async () => {
+  const fetchScheduledQueue = useCallback(async () => {
     const p = effectiveProjectForQueue;
     if (!p) {
-      setDuePlacements([]);
+      setScheduledPlacements([]);
       return;
     }
-    setLoadingDue(true);
+    setLoadingScheduled(true);
     try {
-      const res = await fetch(`/api/publish?due_only=1&project=${encodeURIComponent(p)}&limit=50`);
+      const res = await fetch(`/api/publish?upcoming_only=1&project=${encodeURIComponent(p)}&limit=50`);
       if (!res.ok) throw new Error(await res.text());
       const json = (await res.json()) as { placements?: PublicationPlacement[] };
-      setDuePlacements(json.placements ?? []);
+      setScheduledPlacements(json.placements ?? []);
     } catch {
-      setDuePlacements([]);
+      setScheduledPlacements([]);
     } finally {
-      setLoadingDue(false);
+      setLoadingScheduled(false);
     }
   }, [effectiveProjectForQueue]);
 
@@ -311,9 +305,9 @@ function PublishPageContent() {
     }
   }, [effectiveProjectForQueue]);
 
-  const dueByTask = useMemo(() => {
+  const scheduledByTask = useMemo(() => {
     const map = new Map<string, PublicationPlacement[]>();
-    for (const pl of duePlacements) {
+    for (const pl of scheduledPlacements) {
       const tid = (pl.task_id ?? "").trim();
       if (!tid) continue;
       if (!map.has(tid)) map.set(tid, []);
@@ -335,7 +329,7 @@ function PublishPageContent() {
       return a.task_id.localeCompare(b.task_id);
     });
     return tasks;
-  }, [duePlacements]);
+  }, [scheduledPlacements]);
 
   const duePreviewByTaskId = useMemo(() => {
     const m = new Map<string, { preview_url?: string; title?: string }>();
@@ -347,9 +341,9 @@ function PublishPageContent() {
     return m;
   }, [approved?.items]);
 
-  const dueTaskRows: ReviewQueueRow[] = useMemo(() => {
+  const scheduledTaskRows: ReviewQueueRow[] = useMemo(() => {
     const proj = effectiveProjectForQueue;
-    return dueByTask.map(({ task_id, placements: rows, earliest }) => {
+    return scheduledByTask.map(({ task_id, placements: rows, earliest }) => {
       const tid = task_id.trim();
       const approvedRow = approved?.items.find((r) => (r.task_id ?? "").trim() === tid);
 
@@ -387,18 +381,18 @@ function PublishPageContent() {
         generated_title: generatedTitle,
         platform: platformLabel,
         flow_type: flowType,
-        review_status: earliestLabel ? `DUE · ${earliestLabel}` : "DUE",
-        decision: `Due: ${rows.length}`,
+        review_status: earliestLabel ? `Scheduled · ${earliestLabel}` : "Scheduled",
+        decision: `${rows.length} slot(s)`,
         recommended_route: (base.recommended_route ?? "").trim() || "—",
       };
     });
-  }, [approved?.items, dueByTask, duePreviewByTaskId, effectiveProjectForQueue]);
+  }, [approved?.items, scheduledByTask, duePreviewByTaskId, effectiveProjectForQueue]);
 
-  const selectedDuePlacements = useMemo(() => {
+  const selectedScheduledPlacements = useMemo(() => {
     const tid = (selected?.task_id ?? "").trim();
     if (!tid) return [];
-    return duePlacements.filter((p) => (p.task_id ?? "").trim() === tid);
-  }, [duePlacements, selected?.task_id]);
+    return scheduledPlacements.filter((p) => (p.task_id ?? "").trim() === tid);
+  }, [scheduledPlacements, selected?.task_id]);
 
   const publishedByTask = useMemo(() => {
     const map = new Map<string, PublicationPlacement[]>();
@@ -482,8 +476,8 @@ function PublishPageContent() {
   }, [publishedPlacements, selected?.task_id]);
 
   useEffect(() => {
-    fetchDueQueue();
-  }, [fetchDueQueue]);
+    fetchScheduledQueue();
+  }, [fetchScheduledQueue]);
 
   useEffect(() => {
     if (activeTab === "published") void fetchPublishedQueue();
@@ -494,14 +488,13 @@ function PublishPageContent() {
   }, [effectiveProjectForQueue, loadProjectStrategy]);
 
   useEffect(() => {
-    // If user opens /publish and there are due items, default to Due once for quick action.
-    // Avoid fighting the user if they explicitly switch back to Approved.
-    if (autoSwitchedToDueRef.current) return;
+    // If user opens /publish and there are upcoming scheduled items, open Scheduled once.
+    if (autoSwitchedToScheduledRef.current) return;
     if (activeTab !== "approved") return;
-    if (duePlacements.length <= 0) return;
-    autoSwitchedToDueRef.current = true;
-    setActiveTab("due");
-  }, [activeTab, duePlacements.length]);
+    if (scheduledPlacements.length <= 0) return;
+    autoSwitchedToScheduledRef.current = true;
+    setActiveTab("scheduled");
+  }, [activeTab, scheduledPlacements.length]);
 
   const loadJob = useCallback(async (row: ReviewQueueRow) => {
     const tid = row.task_id?.trim();
@@ -562,79 +555,14 @@ function PublishPageContent() {
     }
   }, []);
 
-  const startPlacement = useCallback(
-    async (
-      placementId: string,
-      project: string,
-      opts?: { allow_not_yet_due?: boolean; allow_from_draft?: boolean }
-    ) => {
-      const proj = (project ?? "").trim();
-      if (!proj) {
-        setMessage("Missing project slug; cannot start publish.");
-        return;
-      }
-      setMessage(null);
-      setFeedbackAt(new Date());
-      setStartingPlacementId(placementId);
-      try {
-        const res = await fetch(`/api/publish/${encodeURIComponent(placementId)}/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            project_slug: proj,
-            allow_not_yet_due: opts?.allow_not_yet_due,
-            allow_from_draft: opts?.allow_from_draft,
-          }),
-        });
-        const text = await res.text();
-        let json: Record<string, unknown> = {};
-        try {
-          json = JSON.parse(text) as Record<string, unknown>;
-        } catch {
-          /* ignore */
-        }
-        if (!res.ok) {
-          setMessage(summarizeStartFailure(res, text, json));
-          return;
-        }
-        const payload = json.payload as Record<string, unknown> | undefined;
-        const pretty = JSON.stringify(payload ?? {}, null, 2);
-        setN8nPreview(pretty);
-        const copied = await copyToClipboardSafe(pretty);
-        const postNow = opts?.allow_not_yet_due === true;
-        if (postNow) {
-          setMessage(
-            copied
-              ? "Post now started (publishing). n8n payload copied to clipboard."
-              : "Post now started (publishing). Clipboard unavailable—focus this tab or copy the payload from the preview below."
-          );
-        } else {
-          setMessage(
-            copied
-              ? "Started → status publishing. n8n payload copied; finish with POST …/complete from n8n."
-              : "Started → status publishing. Clipboard unavailable—copy the payload from the preview below."
-          );
-        }
-        await fetchDueQueue();
-        await fetchPublishedQueue();
-        if (selected?.task_id) await loadJob(selected);
-      } catch (e) {
-        setMessage(e instanceof Error ? e.message : "Start failed");
-      } finally {
-        setStartingPlacementId(null);
-      }
-    },
-    [fetchDueQueue, fetchPublishedQueue, loadJob, selected]
-  );
-
-  const removeDuePlacement = useCallback(
+  const removeScheduledPlacement = useCallback(
     async (placementId: string) => {
       const proj = (projectSlug || effectiveProjectForQueue).trim();
       if (!proj) {
         setMessage("Missing project slug; cannot remove placement.");
         return;
       }
-      if (!window.confirm("Remove this placement from the due queue? It will be deleted permanently.")) return;
+      if (!window.confirm("Remove this scheduled placement? It will be deleted permanently.")) return;
       setRemovingPlacementId(placementId);
       setMessage(null);
       try {
@@ -644,8 +572,8 @@ function PublishPageContent() {
         );
         const text = await res.text();
         if (!res.ok) throw new Error(text || `HTTP ${res.status}`);
-        setMessage("Placement removed from queue.");
-        await fetchDueQueue();
+        setMessage("Placement removed.");
+        await fetchScheduledQueue();
         if (selected?.task_id) await loadJob(selected);
       } catch (e) {
         setMessage(e instanceof Error ? e.message : "Delete failed");
@@ -653,20 +581,20 @@ function PublishPageContent() {
         setRemovingPlacementId(null);
       }
     },
-    [effectiveProjectForQueue, fetchDueQueue, loadJob, projectSlug, selected?.task_id]
+    [effectiveProjectForQueue, fetchScheduledQueue, loadJob, projectSlug, selected?.task_id]
   );
 
-  const removeAllDueForSelectedTask = useCallback(async () => {
+  const removeAllScheduledForSelectedTask = useCallback(async () => {
     const proj = (projectSlug || effectiveProjectForQueue).trim();
     if (!proj || !selected?.task_id) {
-      setMessage("Select a due task first.");
+      setMessage("Select a scheduled task first.");
       return;
     }
-    const rows = selectedDuePlacements;
+    const rows = selectedScheduledPlacements;
     if (rows.length === 0) return;
     if (
       !window.confirm(
-        `Delete all ${rows.length} due placement(s) for this task? They will be removed permanently.`
+        `Delete all ${rows.length} scheduled placement(s) for this task? They will be removed permanently.`
       )
     ) {
       return;
@@ -683,22 +611,22 @@ function PublishPageContent() {
         if (!res.ok) throw new Error(text || `HTTP ${res.status} (${pl.platform})`);
       }
       setMessage(`Removed ${rows.length} placement(s).`);
-      await fetchDueQueue();
+      await fetchScheduledQueue();
       if (selected?.task_id) await loadJob(selected);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Delete failed");
-      await fetchDueQueue();
+      await fetchScheduledQueue();
       if (selected?.task_id) await loadJob(selected);
     } finally {
       setRemovingPlacementId(null);
     }
   }, [
     effectiveProjectForQueue,
-    fetchDueQueue,
+    fetchScheduledQueue,
     loadJob,
     projectSlug,
     selected?.task_id,
-    selectedDuePlacements,
+    selectedScheduledPlacements,
   ]);
 
   const togglePlatform = (id: string) => {
@@ -715,7 +643,16 @@ function PublishPageContent() {
       setMessage("Choose at least one platform.");
       return;
     }
-    const scheduledIso = scheduledLocal ? new Date(scheduledLocal).toISOString() : null;
+    const schedDate = scheduledLocal ? new Date(scheduledLocal) : null;
+    if (!schedDate || Number.isNaN(schedDate.getTime())) {
+      setMessage("Pick a valid schedule time.");
+      return;
+    }
+    if (schedDate.getTime() <= Date.now() + 45_000) {
+      setMessage("Schedule must be at least ~1 minute in the future so items stay in the upcoming queue.");
+      return;
+    }
+    const scheduledIso = schedDate.toISOString();
     const media_urls_json = mediaUrlsText
       .split(/\n+/)
       .map((s) => s.trim())
@@ -747,7 +684,7 @@ function PublishPageContent() {
       }
       setMessage(`Saved ${picks.length} scheduled placement(s).`);
       await loadJob(selected);
-      await fetchDueQueue();
+      await fetchScheduledQueue();
       await fetchPublishedQueue();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Save failed");
@@ -817,8 +754,10 @@ function PublishPageContent() {
         <div>
           <h2>Publish</h2>
           <span className="page-header-sub">
-            Schedule in Review → GET <span className="mono">?due_only=1</span> or use the due list → POST{" "}
-            <span className="mono">…/start</span> (claim) → n8n Meta/TikTok → POST <span className="mono">…/complete</span>
+            Schedule in Review (future time) → <span className="mono">Scheduled</span> tab lists{" "}
+            <span className="mono">?upcoming_only=1</span>. When <span className="mono">scheduled_at</span> passes, your
+            executor uses GET <span className="mono">?due_only=1</span> → POST <span className="mono">…/start</span> →
+            n8n / Meta → POST <span className="mono">…/complete</span>.
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
@@ -868,12 +807,12 @@ function PublishPageContent() {
           <span className="tab-count">{approved?.tabCounts?.approved ?? approved?.total ?? 0}</span>
         </button>
         <button
-          className={`tab ${activeTab === "due" ? "active" : ""}`}
-          onClick={() => setActiveTab("due")}
+          className={`tab ${activeTab === "scheduled" ? "active" : ""}`}
+          onClick={() => setActiveTab("scheduled")}
           type="button"
         >
-          Due
-          <span className="tab-count">{dueTaskRows.length}</span>
+          Scheduled
+          <span className="tab-count">{scheduledTaskRows.length}</span>
         </button>
         <button
           className={`tab ${activeTab === "published" ? "active" : ""}`}
@@ -939,14 +878,14 @@ function PublishPageContent() {
             </>
           )}
 
-          {activeTab === "due" && (
+          {activeTab === "scheduled" && (
             <>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 650, margin: 0 }}>Due for publish</h3>
+                <h3 style={{ fontSize: 14, fontWeight: 650, margin: 0 }}>Upcoming publishes</h3>
                 <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
                   {effectiveProjectForQueue || "—"}
                 </span>
-                <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => fetchDueQueue()}>
+                <button type="button" className="btn-ghost" style={{ fontSize: 12 }} onClick={() => fetchScheduledQueue()}>
                   Refresh
                 </button>
               </div>
@@ -957,19 +896,24 @@ function PublishPageContent() {
                 </p>
               )}
 
-              {effectiveProjectForQueue && loadingDue && <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading due queue…</p>}
-
-              {effectiveProjectForQueue && !loadingDue && dueTaskRows.length === 0 && (
-                <p style={{ color: "var(--muted)", fontSize: 13 }}>No scheduled placements past their time.</p>
+              {effectiveProjectForQueue && loadingScheduled && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>Loading scheduled queue…</p>
               )}
 
-              {effectiveProjectForQueue && !loadingDue && dueTaskRows.length > 0 && (
+              {effectiveProjectForQueue && !loadingScheduled && scheduledTaskRows.length === 0 && (
+                <p style={{ color: "var(--muted)", fontSize: 13 }}>
+                  No upcoming scheduled placements (with a future time). Use Approved → pick a time in the future →
+                  “Schedule selected platforms”.
+                </p>
+              )}
+
+              {effectiveProjectForQueue && !loadingScheduled && scheduledTaskRows.length > 0 && (
                 <TaskTable
-                  items={dueTaskRows}
+                  items={scheduledTaskRows}
                   groupBy=""
                   page={1}
-                  limit={dueTaskRows.length}
-                  total={dueTaskRows.length}
+                  limit={scheduledTaskRows.length}
+                  total={scheduledTaskRows.length}
                   contentSlug="content"
                   showProjectColumn={approved?.scope === "all"}
                   hideTitleColumn
@@ -1038,8 +982,8 @@ function PublishPageContent() {
         >
           {!selected && (
             <p style={{ color: "var(--muted)" }}>
-              {activeTab === "due"
-                ? "Select a due task to preview and start publishing."
+              {activeTab === "scheduled"
+                ? "Select a scheduled task to preview copy and copy n8n payloads. Publishing starts from your executor when the slot is due."
                 : activeTab === "published"
                   ? "Select a published task to see live links per platform and preview."
                   : "Select a row to compose a publish."}
@@ -1117,7 +1061,7 @@ function PublishPageContent() {
                 </div>
               </div>
 
-              {(startingPlacementId != null || (message != null && message !== "")) && (
+              {message != null && message !== "" && (
                 <div
                   role="status"
                   aria-live="polite"
@@ -1126,17 +1070,13 @@ function PublishPageContent() {
                     padding: "12px 14px",
                     borderRadius: 10,
                     border: `1px solid ${
-                      startingPlacementId
-                        ? "rgba(99, 102, 241, 0.45)"
-                        : looksLikeErrorMessage(message || "")
-                          ? "rgba(248, 113, 113, 0.5)"
-                          : "rgba(34, 197, 94, 0.35)"
+                      looksLikeErrorMessage(message || "")
+                        ? "rgba(248, 113, 113, 0.5)"
+                        : "rgba(34, 197, 94, 0.35)"
                     }`,
-                    background: startingPlacementId
-                      ? "rgba(99, 102, 241, 0.1)"
-                      : looksLikeErrorMessage(message || "")
-                        ? "rgba(248, 113, 113, 0.12)"
-                        : "rgba(34, 197, 94, 0.1)",
+                    background: looksLikeErrorMessage(message || "")
+                      ? "rgba(248, 113, 113, 0.12)"
+                      : "rgba(34, 197, 94, 0.1)",
                     fontSize: 13,
                     lineHeight: 1.45,
                     whiteSpace: "pre-wrap",
@@ -1148,41 +1088,34 @@ function PublishPageContent() {
                       {feedbackAt.toLocaleString(undefined, { dateStyle: "short", timeStyle: "medium" })}
                     </div>
                   )}
-                  {startingPlacementId && (
-                    <div style={{ fontWeight: 650, marginBottom: message ? 8 : 0, color: "var(--fg)" }}>
-                      Starting publication…
-                    </div>
-                  )}
-                  {message ? (
-                    <div style={{ color: looksLikeErrorMessage(message) ? "var(--red)" : "var(--fg)" }}>{message}</div>
-                  ) : null}
+                  <div style={{ color: looksLikeErrorMessage(message) ? "var(--red)" : "var(--fg)" }}>{message}</div>
                 </div>
               )}
 
-              {activeTab === "due" && selected?.task_id && (
+              {activeTab === "scheduled" && selected?.task_id && (
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>Due placements (this task)</h3>
-                    {selectedDuePlacements.length > 0 && (
+                    <h3 style={{ margin: 0, fontSize: 14, fontWeight: 650 }}>Scheduled placements (this task)</h3>
+                    {selectedScheduledPlacements.length > 0 && (
                       <button
                         type="button"
                         className="btn-ghost"
-                        disabled={startingPlacementId != null || removingPlacementId != null}
+                        disabled={removingPlacementId != null}
                         style={{ fontSize: 12, color: "var(--red)" }}
-                        onClick={() => void removeAllDueForSelectedTask()}
+                        onClick={() => void removeAllScheduledForSelectedTask()}
                       >
                         {removingPlacementId === "__all__" ? "Removing…" : "Delete all for this task"}
                       </button>
                     )}
                   </div>
-                  {selectedDuePlacements.length === 0 ? (
-                    <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>No due rows for this task_id right now.</p>
+                  {selectedScheduledPlacements.length === 0 ? (
+                    <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>
+                      No upcoming scheduled rows for this task in the current list.
+                    </p>
                   ) : (
                     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                      {selectedDuePlacements.map((pl) => {
-                        const dueBusy = startingPlacementId != null || removingPlacementId != null;
-                        const startBlocked =
-                          pl.status === "publishing" || pl.status === "published" || pl.status === "cancelled";
+                      {selectedScheduledPlacements.map((pl) => {
+                        const schedBusy = removingPlacementId != null;
                         return (
                         <li
                           key={pl.id}
@@ -1213,39 +1146,11 @@ function PublishPageContent() {
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                               <button
                                 type="button"
-                                className="btn"
-                                disabled={dueBusy || startBlocked}
-                                title={
-                                  startBlocked
-                                    ? pl.status === "published"
-                                      ? "Already published."
-                                      : pl.status === "publishing"
-                                        ? "Already publishing—wait or refresh."
-                                        : "Cannot start from this state."
-                                    : undefined
-                                }
-                                style={{
-                                  fontSize: 12,
-                                  padding: "6px 10px",
-                                  opacity:
-                                    (dueBusy && startingPlacementId !== pl.id) || startBlocked ? 0.55 : 1,
-                                }}
-                                onClick={() =>
-                                  startPlacement(pl.id, projectSlug || effectiveProjectForQueue, {
-                                    allow_not_yet_due: true,
-                                    allow_from_draft: pl.status === "draft",
-                                  })
-                                }
-                              >
-                                {startingPlacementId === pl.id ? "Posting…" : "Post now"}
-                              </button>
-                              <button
-                                type="button"
                                 className="btn-ghost"
-                                disabled={dueBusy}
+                                disabled={schedBusy}
                                 style={{
                                   fontSize: 12,
-                                  opacity: dueBusy && startingPlacementId !== pl.id ? 0.55 : 1,
+                                  opacity: schedBusy ? 0.55 : 1,
                                 }}
                                 onClick={() => void copyN8nPayload(pl.id)}
                               >
@@ -1254,13 +1159,13 @@ function PublishPageContent() {
                               <button
                                 type="button"
                                 className="btn-ghost"
-                                disabled={dueBusy}
+                                disabled={schedBusy}
                                 style={{
                                   fontSize: 12,
                                   color: "var(--red)",
-                                  opacity: dueBusy && removingPlacementId !== pl.id ? 0.55 : 1,
+                                  opacity: schedBusy && removingPlacementId !== pl.id ? 0.55 : 1,
                                 }}
-                                onClick={() => void removeDuePlacement(pl.id)}
+                                onClick={() => void removeScheduledPlacement(pl.id)}
                               >
                                 {removingPlacementId === pl.id ? "Removing…" : "Delete"}
                               </button>

@@ -31,6 +31,8 @@ export interface ListPublicationsOpts {
   status?: PublicationStatus | null;
   /** Only `scheduled` rows whose `scheduled_at` is null or <= now(). */
   due_only?: boolean;
+  /** Only `scheduled` rows with a future `scheduled_at` (upcoming queue for operators). */
+  upcoming_only?: boolean;
   platform?: string | null;
   limit?: number;
   offset?: number;
@@ -53,6 +55,10 @@ export async function listPublicationPlacements(
   if (opts.due_only) {
     clauses.push(`status = 'scheduled'`);
     clauses.push(`(scheduled_at IS NULL OR scheduled_at <= now())`);
+  } else if (opts.upcoming_only) {
+    clauses.push(`status = 'scheduled'`);
+    clauses.push(`scheduled_at IS NOT NULL`);
+    clauses.push(`scheduled_at > now()`);
   } else if (opts.status) {
     clauses.push(`status = $${i++}`);
     params.push(opts.status);
@@ -64,7 +70,9 @@ export async function listPublicationPlacements(
   params.push(limit, offset);
   const orderBy = opts.due_only
     ? "ORDER BY scheduled_at ASC NULLS FIRST, created_at ASC"
-    : "ORDER BY scheduled_at NULLS LAST, created_at DESC";
+    : opts.upcoming_only
+      ? "ORDER BY scheduled_at ASC NULLS LAST, created_at ASC"
+      : "ORDER BY scheduled_at NULLS LAST, created_at DESC";
   return q<PublicationPlacementRow>(
     db,
     `SELECT id, project_id, task_id, content_format, platform, status, scheduled_at, published_at,

@@ -141,14 +141,12 @@ export async function POST(req: NextRequest) {
           : typeof body.mint_pending_hints_below_score === "number"
             ? body.mint_pending_hints_below_score
             : undefined,
-      auto_mint_pending_hints: body.auto_mint_pending_hints === true,
       mint_positive_hints_above_score:
         body.mint_positive_hints_above_score === null
           ? null
           : typeof body.mint_positive_hints_above_score === "number"
             ? body.mint_positive_hints_above_score
             : undefined,
-      auto_mint_positive_hints: body.auto_mint_positive_hints === true,
     });
     return NextResponse.json(result ?? { error: "Failed" });
   }

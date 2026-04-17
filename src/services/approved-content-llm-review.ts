@@ -1,7 +1,7 @@
 /**
  * LLM review of human-APPROVED content only: multimodal (images + text) when assets exist,
  * scores output for learning signal, persists llm_approval_reviews + learning_observations,
- * optionally mints pending GENERATION_GUIDANCE from low scores (improvements) or high scores (strengths to preserve).
+ * and creates pending GENERATION_GUIDANCE rules from scores + bullets (no separate mint step).
  */
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
@@ -239,6 +239,11 @@ function clamp01(n: unknown): number | null {
   return Math.min(1, Math.max(0, Math.round(n * 10000) / 10000));
 }
 
+/** Scores below this with improvement bullets → one pending GENERATION_GUIDANCE (improvement). */
+export const DEFAULT_LLM_APPROVAL_MINT_IMPROVE_BELOW = 0.75;
+/** Scores at or above this with strengths → one pending GENERATION_GUIDANCE (preserve strengths). */
+export const DEFAULT_LLM_APPROVAL_MINT_POSITIVE_AT_OR_ABOVE = 0.85;
+
 export interface RunLlmApprovalReviewParams {
   limit?: number;
   task_ids?: string[];
@@ -246,21 +251,17 @@ export interface RunLlmApprovalReviewParams {
   skip_if_reviewed_within_days?: number;
   force_rereview?: boolean;
   /**
-   * When set (e.g. 0.55), scores below this are eligible for minting one pending
-   * GENERATION_GUIDANCE rule per task from improvement_bullets.
+   * Max overall score for improvement-rule minting (defaults to DEFAULT_LLM_APPROVAL_MINT_IMPROVE_BELOW).
+   * Set lower (e.g. 0.55) to mint only on weaker reviews.
    */
   mint_pending_hints_below_score?: number | null;
-  /**
-   * If true, mint pending generation guidance automatically during the run.
-   * If false/omitted, the run returns eligibility + proposed bullets but does not create learning rules.
-   */
+  /** @deprecated Ignored — pending improvement rules are always created when thresholds match. */
   auto_mint_pending_hints?: boolean;
   /**
-   * When set (e.g. 0.85), scores at or above this with non-empty strengths mint one pending
-   * GENERATION_GUIDANCE rule capturing what worked (editorial-style pending rule; operator must apply).
+   * Min overall score for positive-rule minting (defaults to DEFAULT_LLM_APPROVAL_MINT_POSITIVE_AT_OR_ABOVE).
    */
   mint_positive_hints_above_score?: number | null;
-  /** If true, mint positive-strength guidance during the run when thresholds match. */
+  /** @deprecated Ignored — pending strength rules are always created when thresholds match. */
   auto_mint_positive_hints?: boolean;
 }
 
@@ -306,10 +307,14 @@ export async function runLlmApprovalReviewsForProject(
   const model = config.OPENAI_APPROVAL_REVIEW_MODEL;
   const maxImages = config.LLM_APPROVAL_REVIEW_MAX_IMAGES;
   const maxText = config.LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS;
-  const mintBelow = params.mint_pending_hints_below_score;
-  const autoMint = params.auto_mint_pending_hints === true;
-  const mintAbove = params.mint_positive_hints_above_score;
-  const autoMintPositive = params.auto_mint_positive_hints === true;
+  const improveBelow =
+    params.mint_pending_hints_below_score != null && Number.isFinite(params.mint_pending_hints_below_score)
+      ? Math.min(1, Math.max(0, params.mint_pending_hints_below_score))
+      : DEFAULT_LLM_APPROVAL_MINT_IMPROVE_BELOW;
+  const positiveAtOrAbove =
+    params.mint_positive_hints_above_score != null && Number.isFinite(params.mint_positive_hints_above_score)
+      ? Math.min(1, Math.max(0, params.mint_positive_hints_above_score))
+      : DEFAULT_LLM_APPROVAL_MINT_POSITIVE_AT_OR_ABOVE;
 
   const jobs = await listApprovedJobs(db, projectId, { limit, taskIds: params.task_ids });
   const results: LlmApprovalReviewJobResult[] = [];
@@ -417,12 +422,11 @@ export async function runLlmApprovalReviewsForProject(
         video_plan_score: clamp01(parsed.video_plan_score),
       };
 
-      const eligible = mintBelow != null && overall < mintBelow && improvementBullets.length > 0;
-      const positiveEligible =
-        mintAbove != null && overall >= mintAbove && strengths.length > 0;
+      const eligible = overall < improveBelow && improvementBullets.length > 0;
+      const positiveEligible = overall >= positiveAtOrAbove && strengths.length > 0;
 
       let minted = false;
-      if (eligible && autoMint) {
+      if (eligible) {
         const ruleId = `llm_hint_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
         await insertLearningRule(db, {
           rule_id: ruleId,
@@ -450,7 +454,7 @@ export async function runLlmApprovalReviewsForProject(
       }
 
       let mintedPositive = false;
-      if (positiveEligible && autoMintPositive) {
+      if (positiveEligible) {
         const ruleId = `llm_strength_${randomUUID().replace(/-/g, "").slice(0, 16)}_${Date.now()}`;
         const strengthBullets = strengths.slice(0, 8);
         const guidanceLines = [

@@ -10,7 +10,7 @@ export const LEARNING_TRANSPARENCY_STATIC = {
   schema_version: "1",
   summary:
     "Learning is not fully automatic. Editorial/market analyzers use SQL + heuristics (no LLM). " +
-    "Optional LLM post-approval review scores content that humans already approved (vision + text) and stores results; operators can then mint pending generation hints from those reviews. " +
+    "Optional LLM post-approval review scores content that humans already approved (vision + text) and stores results; Core also upserts pending GENERATION_GUIDANCE rules when scores cross configured thresholds (no separate mint step). " +
     "Pending rules must be applied by an operator. Generation injects active learning context into the main content LLM.",
   loops: [
     {
@@ -81,9 +81,9 @@ export const LEARNING_TRANSPARENCY_STATIC = {
         "Review app → Run LLM review (approved)",
       ],
       outputs:
-        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); optional pending GENERATION_GUIDANCE minted from low scores (improvements) and/or high scores (strengths) after operator confirmation; carousel primary LLM also samples recent rows + job copy as an anti-repetition lane-memory block (env LLM_APPROVAL_ANTI_REPETITION_*)",
+        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); pending GENERATION_GUIDANCE rules from low scores (improvements) and/or high scores (strengths) when thresholds match; carousel primary LLM also samples recent rows + job copy as an anti-repetition lane-memory block (env LLM_APPROVAL_ANTI_REPETITION_*)",
       requires_human:
-        "Operator runs the job; OPENAI_API_KEY required; apply any minted pending rules; default skips tasks reviewed in the last 7 days unless forced",
+        "Operator runs the job; OPENAI_API_KEY required; apply pending rules in the Learning UI; default skips tasks reviewed in the last 7 days unless forced",
     },
     {
       id: "ranking",

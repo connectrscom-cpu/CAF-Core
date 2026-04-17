@@ -502,9 +502,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         skip_if_reviewed_within_days: b.skip_if_reviewed_within_days,
         force_rereview: b.force_rereview,
         mint_pending_hints_below_score: b.mint_pending_hints_below_score ?? null,
-        auto_mint_pending_hints: b.auto_mint_pending_hints === true,
         mint_positive_hints_above_score: b.mint_positive_hints_above_score ?? null,
-        auto_mint_positive_hints: b.auto_mint_positive_hints === true,
       });
       return { ok: true, model, results };
     }

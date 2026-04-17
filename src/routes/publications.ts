@@ -100,6 +100,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
       const task_id = req.query.task_id?.trim() || undefined;
       const status = req.query.status as PublicationStatus | undefined;
       const due_only = req.query.due_only === "1" || req.query.due_only === "true";
+      const upcoming_only = req.query.upcoming_only === "1" || req.query.upcoming_only === "true";
       const platform = req.query.platform?.trim() || undefined;
       const limit = req.query.limit ? parseInt(req.query.limit, 10) : 100;
       const offset = req.query.offset ? parseInt(req.query.offset, 10) : 0;
@@ -107,8 +108,13 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
       const rows = await listPublicationPlacements(db, project.id, {
         task_id: task_id ?? null,
         status:
-          due_only ? undefined : status && statusSchema.safeParse(status).success ? status : undefined,
+          due_only || upcoming_only
+            ? undefined
+            : status && statusSchema.safeParse(status).success
+              ? status
+              : undefined,
         due_only,
+        upcoming_only: !due_only && upcoming_only,
         platform: platform ?? null,
         limit: Number.isFinite(limit) ? limit : 100,
         offset: Number.isFinite(offset) ? offset : 0,
@@ -118,6 +124,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
         ok: true,
         placements: rows.map((r) => rowToJson(r)!),
         due_only,
+        upcoming_only: !due_only && upcoming_only,
       };
     }
   );

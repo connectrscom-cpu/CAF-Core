@@ -455,12 +455,16 @@ export default function LearningPage() {
         limit: llmLimit,
         force_rereview: llmForceRereview,
       };
-      const trimmed = llmMintBelow.trim();
-      if (trimmed !== "") {
-        const n = parseFloat(trimmed);
+      const trimmedBelow = llmMintBelow.trim();
+      if (trimmedBelow !== "") {
+        const n = parseFloat(trimmedBelow);
         if (!Number.isNaN(n)) body.mint_pending_hints_below_score = n;
       }
-      body.auto_mint_pending_hints = false;
+      const trimmedAbove = llmMintAbove.trim();
+      if (trimmedAbove !== "") {
+        const n = parseFloat(trimmedAbove);
+        if (!Number.isNaN(n)) body.mint_positive_hints_above_score = n;
+      }
       const res = await fetch("/api/learning", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -848,11 +852,13 @@ export default function LearningPage() {
         <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>
           Uses OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
           rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
-          scores to Core, creates a <code>learning_observations</code> row, and can mint <strong>pending</strong>{" "}
-          generation hints from low scores (fixes) or high scores (strengths to preserve),{" "}
-          <em>after you choose thresholds and mint</em> (same pending → Apply flow as editorial rules). On Core,
-          carousel primary generation also reuses recent rows here as an <strong>anti-repetition lane memory</strong>{" "}
-          (hook/caption/slide fingerprints for the same flow + platform; configure{" "}
+          scores to Core, creates a <code>learning_observations</code> row, and{" "}
+          <strong>creates pending GENERATION_GUIDANCE rules immediately</strong> when scores cross thresholds (Core
+          defaults: improvement if overall &lt; 0.75 with bullets; strengths if overall ≥ 0.85 with strengths). Leave
+          the threshold fields blank to use those defaults, or override. Use “Mint pending hints from results” only if
+          you need to backfill rules for an older batch without re-running the model. On Core, carousel primary
+          generation also reuses recent rows here as an <strong>anti-repetition lane memory</strong> (hook/caption/slide
+          fingerprints for the same flow + platform; configure{" "}
           <code>LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS</code> / <code>LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS</code>, set
           to <code>0</code> to disable).
         </p>
@@ -869,24 +875,24 @@ export default function LearningPage() {
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Mint fixes if score &lt;{" "}
+            Improvement rules if score &lt;{" "}
             <input
-              placeholder="off"
+              placeholder="0.75"
               value={llmMintBelow}
               onChange={(e) => setLlmMintBelow(e.target.value)}
               style={{ width: 56, padding: 4 }}
             />{" "}
-            <span style={{ color: "var(--muted)" }}>(e.g. 0.55)</span>
+            <span style={{ color: "var(--muted)" }}>(blank = Core default)</span>
           </label>
           <label style={{ fontSize: 13 }}>
-            Mint strengths if score ≥{" "}
+            Strength rules if score ≥{" "}
             <input
-              placeholder="off"
+              placeholder="0.85"
               value={llmMintAbove}
               onChange={(e) => setLlmMintAbove(e.target.value)}
               style={{ width: 56, padding: 4 }}
             />{" "}
-            <span style={{ color: "var(--muted)" }}>(e.g. 0.85)</span>
+            <span style={{ color: "var(--muted)" }}>(blank = Core default)</span>
           </label>
           <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
             <input
@@ -902,7 +908,7 @@ export default function LearningPage() {
           className="btn-primary"
           onClick={runLlmApprovalReview}
           disabled={llmBusy}
-          title="Runs an LLM QA pass on content whose latest editorial decision is APPROVED. Uses text + (optional) image assets to produce a score and improvement bullets; can mint pending generation hints if configured."
+          title="Runs an LLM QA pass on approved jobs; Core writes reviews and pending GENERATION_GUIDANCE rules when score thresholds match."
         >
           {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
         </button>

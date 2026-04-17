@@ -825,12 +825,13 @@ export async function triggerLlmApprovalReview(
     task_ids?: string[];
     skip_if_reviewed_within_days?: number;
     force_rereview?: boolean;
-    /** e.g. 0.55 — scores below this mint a pending GENERATION_GUIDANCE rule from improvement bullets */
+    /** Max score (exclusive) for improvement pending rules; Core defaults ~0.75 if omitted. */
     mint_pending_hints_below_score?: number | null;
-    /** if true, mint pending hints during the run (otherwise just returns eligibility + bullets) */
+    /** @deprecated No-op — Core always creates pending rules when score thresholds match. */
     auto_mint_pending_hints?: boolean;
-    /** e.g. 0.85 — scores at or above this mint pending guidance from model strengths (good approved signal) */
+    /** Min score (inclusive) for “preserve strengths” pending rules; Core defaults ~0.85 if omitted. */
     mint_positive_hints_above_score?: number | null;
+    /** @deprecated No-op — Core always creates pending rules when score thresholds match. */
     auto_mint_positive_hints?: boolean;
   }
 ) {
@@ -905,6 +906,8 @@ export async function listPublicationPlacements(
     task_id?: string;
     status?: string;
     due_only?: boolean;
+    /** Scheduled rows with scheduled_at in the future (operator queue). */
+    upcoming_only?: boolean;
     platform?: string;
     limit?: number;
     offset?: number;
@@ -914,6 +917,7 @@ export async function listPublicationPlacements(
   if (opts?.task_id) qs.set("task_id", opts.task_id);
   if (opts?.status) qs.set("status", opts.status);
   if (opts?.due_only) qs.set("due_only", "1");
+  if (opts?.upcoming_only) qs.set("upcoming_only", "1");
   if (opts?.platform) qs.set("platform", opts.platform);
   if (opts?.limit != null) qs.set("limit", String(opts.limit));
   if (opts?.offset != null) qs.set("offset", String(opts.offset));
