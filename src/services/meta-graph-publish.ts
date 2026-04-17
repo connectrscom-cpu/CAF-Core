@@ -134,12 +134,12 @@ async function resolveTokenForPageGraphApi(
     // Do not treat a bare "Unsupported get request" as Page-token: some User-token / permission
     // failures can match that and would skip the exchange, leaving a User token for unpublished
     // /{page-id}/photos (Meta then returns #200 "must be posted as the page itself").
-    // Page tokens cannot call `me/accounts` (field exists on User, not on Page). Meta sometimes omits
-    // "on node type (Page)" from the message, so do not require /Page/ for the (#100)+accounts case.
+    // Page tokens cannot call `me/accounts` (field exists on User, not on Page). Match (#100) from
+    // message text OR from graphGet-normalized prefix; also match plain "nonexisting field (accounts)"
+    // when Meta omits the (#100) prefix from `message` but sets `error.code` (handled in graphGet).
     const looksLikePageTokenCannotListAccounts =
-      (/#\(100\)|\(100\)/i.test(msg) && /nonexisting field/i.test(msg) && /\baccounts\b/i.test(msg)) ||
+      (/nonexisting field/i.test(msg) && /\baccounts\b/i.test(msg)) ||
       (/#\(100\)|\(100\)/i.test(msg) && /Page/i.test(msg)) ||
-      (/nonexisting field/i.test(msg) && /accounts/i.test(msg) && /Page/i.test(msg)) ||
       (/Unsupported get request/i.test(msg) &&
         /Object with ID ['"]me['"]|cannot be loaded due to missing permissions|does not support this operation/i.test(
           msg
@@ -187,9 +187,14 @@ async function graphGet<T = Record<string, unknown>>(
   const u = new URL(`${GRAPH}/${version}/${path.replace(/^\//, "")}`);
   u.searchParams.set("access_token", token);
   const res = await fetch(u.toString(), { method: "GET" });
-  const j = (await res.json()) as T & { error?: { message?: string; code?: number } };
+  const j = (await res.json()) as T & { error?: { message?: string; code?: number; error_user_msg?: string } };
   if (!res.ok || (j as { error?: unknown }).error) {
-    const msg = (j as { error?: { message?: string } }).error?.message ?? res.statusText;
+    const errObj = (j as { error?: { message?: string; code?: number; error_user_msg?: string } }).error;
+    let msg = (errObj?.message ?? errObj?.error_user_msg ?? res.statusText).trim();
+    const code = errObj?.code;
+    if (code != null && msg && !/^\(#\d+\)/.test(msg)) {
+      msg = `(#${code}) ${msg}`;
+    }
     throw new Error(msg || `Graph GET ${res.status}`);
   }
   return j;
