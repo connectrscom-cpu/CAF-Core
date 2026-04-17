@@ -350,7 +350,8 @@ textarea { resize: vertical; }
 /* ── Publish page layout ─────────────────────────────────── */
 .publish-layout{
   display: grid;
-  grid-template-columns: minmax(360px, 1fr) minmax(520px, 1.1fr);
+  /* Left pane: same workbench row as Review Console (260px filters + table). Min width fits both. */
+  grid-template-columns: minmax(580px, 1fr) minmax(520px, 1.1fr);
   gap: 24px;
   align-items: start;
 }
@@ -361,19 +362,10 @@ textarea { resize: vertical; }
   padding-right: 6px; /* small gutter so horizontal scrollbar doesn't touch the grid gap */
 }
 
-/* Publish: filters above table so the left column stays usable (filters + table share width). */
+/* Publish Approved tab: keep default .workbench flex row — filters left, table right (matches Review Console). */
 .publish-left .publish-approved-workbench.workbench {
-  flex-direction: column;
-}
-.publish-left .publish-approved-workbench .workbench-filters {
-  width: 100%;
-  max-width: none;
-  border-right: none;
-  border-bottom: 1px solid var(--border);
-  padding: 0 0 16px 0;
-}
-.publish-left .publish-approved-workbench .workbench-table {
-  padding: 16px 0 0 0;
+  padding: 0;
+  margin: 0;
 }
 .publish-right{
   /* Opaque background so overflow never visually bleeds through. */

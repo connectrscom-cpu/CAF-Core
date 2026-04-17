@@ -160,6 +160,7 @@ function PublishPageContent() {
   const [loadingStrategy, setLoadingStrategy] = useState(false);
   const [downloadingZip, setDownloadingZip] = useState(false);
   const [removingPlacementId, setRemovingPlacementId] = useState<string | null>(null);
+  const [startingPlacementId, setStartingPlacementId] = useState<string | null>(null);
   const [feedbackAt, setFeedbackAt] = useState<Date | null>(null);
   const autoSwitchedToScheduledRef = useRef(false);
   const [publishFontZoom, setPublishFontZoom] = useState(1);
@@ -715,6 +716,57 @@ function PublishPageContent() {
     }
   };
 
+  /** Calls Core `…/start` with `allow_not_yet_due` so a future slot can run immediately (in-Core Meta, dry_run, or n8n handoff). */
+  const postNowPlacement = async (placementId: string) => {
+    const proj = projectSlug || effectiveProjectForQueue;
+    if (!proj) {
+      setMessage("Set or select a project before posting.");
+      return;
+    }
+    if (
+      !window.confirm(
+        "Start this placement now (before its scheduled time)?\n\nCore will run the publish executor for this row (Meta in-Core, dry-run, or external payload for n8n), depending on server config."
+      )
+    ) {
+      return;
+    }
+    setStartingPlacementId(placementId);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/publish/${encodeURIComponent(placementId)}/start?project=${encodeURIComponent(proj)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project_slug: proj, allow_not_yet_due: true }),
+      });
+      const j = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        message?: string;
+        executor?: string;
+        placement?: PublicationPlacement;
+      };
+      if (!res.ok) {
+        const detail = typeof j.message === "string" && j.message.trim() ? j.message.trim() : "";
+        const err = typeof j.error === "string" && j.error.trim() ? j.error.trim() : "";
+        throw new Error([err || `HTTP ${res.status}`, detail].filter(Boolean).join(": "));
+      }
+      const ex = typeof j.executor === "string" ? j.executor.trim() : "";
+      const st = (j.placement?.status ?? "").trim();
+      setMessage(
+        ex
+          ? `Publish started (${ex}). Placement status: ${st || "—"}.`
+          : `Publish started. Placement status: ${st || "—"}.`
+      );
+      await fetchScheduledQueue();
+      await fetchPublishedQueue();
+      if (selected?.task_id) await loadJob(selected);
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "Start failed");
+    } finally {
+      setStartingPlacementId(null);
+    }
+  };
+
   const downloadImagesZip = useCallback(async () => {
     if (contentFormat === "video") {
       setMessage("This task is video format; image zip is only available for carousel.");
@@ -983,7 +1035,7 @@ function PublishPageContent() {
           {!selected && (
             <p style={{ color: "var(--muted)" }}>
               {activeTab === "scheduled"
-                ? "Select a scheduled task to preview copy and copy n8n payloads. Publishing starts from your executor when the slot is due."
+                ? "Select a scheduled task to preview copy, use Post now to call Core /start early, or copy n8n payloads. If you do not post manually, your executor picks up due rows (GET ?due_only=1 → POST …/start)."
                 : activeTab === "published"
                   ? "Select a published task to see live links per platform and preview."
                   : "Select a row to compose a publish."}
@@ -1115,7 +1167,7 @@ function PublishPageContent() {
                   ) : (
                     <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
                       {selectedScheduledPlacements.map((pl) => {
-                        const schedBusy = removingPlacementId != null;
+                        const schedBusy = removingPlacementId != null || startingPlacementId != null;
                         return (
                         <li
                           key={pl.id}
@@ -1144,6 +1196,18 @@ function PublishPageContent() {
                               )}
                             </div>
                             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                disabled={schedBusy}
+                                style={{
+                                  fontSize: 12,
+                                  opacity: schedBusy ? 0.55 : 1,
+                                }}
+                                onClick={() => void postNowPlacement(pl.id)}
+                              >
+                                {startingPlacementId === pl.id ? "Starting…" : "Post now"}
+                              </button>
                               <button
                                 type="button"
                                 className="btn-ghost"
