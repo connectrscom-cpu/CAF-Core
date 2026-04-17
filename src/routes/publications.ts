@@ -216,7 +216,9 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
     if (config.CAF_PUBLISH_EXECUTOR === "meta") {
       const graphVersion = config.META_GRAPH_API_VERSION?.trim() || "v21.0";
       const pub = await publishPlacementToMeta(db, row, project.id, graphVersion, {
-        pageAccessTokenFromEnv: config.CAF_META_PAGE_ACCESS_TOKEN,
+        fbPageAccessTokenFromEnv: config.CAF_META_FB_PAGE_ACCESS_TOKEN,
+        igPageAccessTokenFromEnv: config.CAF_META_IG_PAGE_ACCESS_TOKEN,
+        metaPageAccessTokenLegacyFromEnv: config.CAF_META_PAGE_ACCESS_TOKEN,
       });
       if (!pub.ok) {
         const failed = await completePublicationPlacement(db, project.id, row.id, {

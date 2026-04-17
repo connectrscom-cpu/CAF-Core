@@ -1,6 +1,7 @@
 /**
  * Meta Graph API publishing for Facebook Page + Instagram professional accounts.
- * Reads tokens + ids from caf_core.project_integrations (META_FB / META_IG).
+ * Reads tokens + ids from caf_core.project_integrations (META_FB / META_IG), with optional per-channel
+ * env overrides (CAF_META_FB_PAGE_ACCESS_TOKEN, CAF_META_IG_PAGE_ACCESS_TOKEN; legacy CAF_META_PAGE_ACCESS_TOKEN).
  *
  * Limitations (MVP):
  * - Facebook: text /feed; single image /photos; multi-image via unpublished /photos then one /feed with attached_media (explicit published=true so the post is public).
@@ -39,20 +40,23 @@ function tokenFromCredentials(cred: Record<string, unknown> | undefined): string
   return str(cred["access_token"]) ?? str(cred["page_access_token"]);
 }
 
-async function getPageAccessToken(
+/**
+ * Token for one Meta channel only: env override for that integration, else legacy single secret, else DB row.
+ */
+async function getAccessTokenForMetaIntegration(
   db: Pool,
   projectId: string,
-  envToken?: string | null
+  integrationKey: "META_FB" | "META_IG",
+  envTokenForChannel?: string | null,
+  envTokenLegacyFallback?: string | null
 ): Promise<string | null> {
-  const fromEnv = str(envToken ?? undefined);
-  if (fromEnv) return fromEnv;
+  const fromChannel = str(envTokenForChannel ?? undefined);
+  if (fromChannel) return fromChannel;
+  const fromLegacy = str(envTokenLegacyFallback ?? undefined);
+  if (fromLegacy) return fromLegacy;
 
-  const fb = await getProjectIntegration(db, projectId, "META_FB");
-  const ig = await getProjectIntegration(db, projectId, "META_IG");
-  const t =
-    tokenFromCredentials(fb?.credentials_json) ??
-    tokenFromCredentials(ig?.credentials_json);
-  return t ?? null;
+  const row = await getProjectIntegration(db, projectId, integrationKey);
+  return tokenFromCredentials(row?.credentials_json) ?? null;
 }
 
 function fbPageIdFromIntegration(row: Awaited<ReturnType<typeof getProjectIntegration>>): string | undefined {
@@ -112,7 +116,7 @@ async function resolveTokenForPageGraphApi(
     }
 
     throw new Error(
-      "GET /me/accounts returned no Pages for this token. Use a User token with pages_show_list + pages_manage_posts (so Core can pick a Page token), or set CAF_META_PAGE_ACCESS_TOKEN / META_* credentials_json to the Page access_token for this Page (from Graph GET /me/accounts?fields=id,access_token)."
+      "GET /me/accounts returned no Pages for this token. Use a User token with pages_show_list + pages_manage_posts (so Core can pick a Page token), or set CAF_META_FB_PAGE_ACCESS_TOKEN / CAF_META_IG_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN) / project_integrations META_* credentials_json to the Page access_token for this Page (from Graph GET /me/accounts?fields=id,access_token)."
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -150,7 +154,7 @@ async function resolveTokenForPageGraphApi(
       throw new Error(
         "Meta access token expired or invalid while calling GET /me/accounts (needed to obtain the Page access token for your configured fb_page_id). " +
           "Both Facebook and Instagram placements use this step when META_FB or META_IG has a linked Page id. " +
-          "Renew the token: set CAF_META_PAGE_ACCESS_TOKEN on caf-core (e.g. fly secrets set), or update project_integrations META_FB / META_IG credentials_json.access_token with a fresh User token (pages_show_list + pages_manage_posts) or a long-lived Page token from Graph GET /me/accounts?fields=id,access_token. " +
+          "Renew: set CAF_META_FB_PAGE_ACCESS_TOKEN and/or CAF_META_IG_PAGE_ACCESS_TOKEN on caf-core (Fly secrets), or legacy CAF_META_PAGE_ACCESS_TOKEN for both, or update project_integrations META_FB / META_IG credentials_json.access_token (long-lived Page token or long-lived User with pages_show_list). " +
           `Graph said: ${msg}`
       );
     }
@@ -425,19 +429,32 @@ export async function publishPlacementToMeta(
   placement: PublicationPlacementRow,
   projectId: string,
   graphApiVersion: string,
-  opts?: { pageAccessTokenFromEnv?: string | null }
+  opts?: {
+    fbPageAccessTokenFromEnv?: string | null;
+    igPageAccessTokenFromEnv?: string | null;
+    /** If platform-specific env is unset, used for that platform (legacy single Fly secret). */
+    metaPageAccessTokenLegacyFromEnv?: string | null;
+  }
 ): Promise<MetaPublishResult> {
   const key = placementPlatformToMetaIntegrationKey(placement.platform);
   if (!key) {
     return { ok: false, error: `Unsupported platform for Meta executor: ${placement.platform}` };
   }
 
-  const rawToken = await getPageAccessToken(db, projectId, opts?.pageAccessTokenFromEnv);
+  const rawToken = await getAccessTokenForMetaIntegration(
+    db,
+    projectId,
+    key,
+    key === "META_FB" ? opts?.fbPageAccessTokenFromEnv : opts?.igPageAccessTokenFromEnv,
+    opts?.metaPageAccessTokenLegacyFromEnv
+  );
   if (!rawToken) {
     return {
       ok: false,
       error:
-        "Missing Page access token: set CAF_META_PAGE_ACCESS_TOKEN in Core .env, or credentials_json.access_token on META_FB / META_IG.",
+        key === "META_FB"
+          ? "Missing Facebook access token: set CAF_META_FB_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN) on caf-core, or META_FB credentials_json.access_token in project_integrations."
+          : "Missing Instagram access token: set CAF_META_IG_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN) on caf-core, or META_IG credentials_json.access_token in project_integrations.",
     };
   }
 
@@ -486,13 +503,13 @@ export async function publishPlacementToMeta(
     let tokenHint = "";
     if (/publish_actions|deprecated.*sharing/i.test(msg)) {
       tokenHint =
-        " Ensure CAF_META_PAGE_ACCESS_TOKEN is a user token with pages_show_list (so Core can call GET /me/accounts) or paste the Page access_token for your fb_page_id from /me/accounts. App needs pages_manage_posts, not publish_actions.";
+        " Ensure CAF_META_FB_PAGE_ACCESS_TOKEN (Facebook) is a user token with pages_show_list (so Core can call GET /me/accounts) or paste the Page access_token for your fb_page_id. App needs pages_manage_posts, not publish_actions.";
     } else if (/Unpublished posts must be posted to a page as the page itself/i.test(msg)) {
       tokenHint =
-        " Facebook multi-image uses unpublished /{page-id}/photos uploads, which require a **Page** access token (not a plain User token). Use GET /me/accounts?fields=id,access_token with a User token that has pages_show_list, copy the access_token for your fb_page_id into CAF_META_PAGE_ACCESS_TOKEN (or META_FB credentials_json), or fix fb_page_id so it matches a Page returned by /me/accounts.";
+        " Facebook multi-image uses unpublished /{page-id}/photos uploads, which require a **Page** access token (not a plain User token). Use GET /me/accounts?fields=id,access_token with a User token that has pages_show_list, copy the Page access_token for your fb_page_id into CAF_META_FB_PAGE_ACCESS_TOKEN (or META_FB credentials_json), or fix fb_page_id so it matches a Page returned by /me/accounts.";
     } else if (/expired|invalid.*session|invalid oauth|OAuthException|access token|Meta access token expired/i.test(msg)) {
       tokenHint =
-        " Regenerate tokens (short User sessions expire in ~1–2 hours). Use a long-lived Page access_token or a long-lived User token with pages_show_list; set CAF_META_PAGE_ACCESS_TOKEN (Fly) or META_FB/META_IG credentials_json.access_token.";
+        " Regenerate long-lived tokens. Fly: CAF_META_FB_PAGE_ACCESS_TOKEN and CAF_META_IG_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN for both), or META_FB / META_IG credentials_json.access_token in the DB.";
     }
     return { ok: false, error: msg + tokenHint };
   }

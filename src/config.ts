@@ -43,9 +43,14 @@ const envSchema = z.object({
   META_GRAPH_API_VERSION: z.string().default("v21.0"),
 
   /**
-   * Optional long-lived Facebook Page access token for CAF_PUBLISH_EXECUTOR=meta.
-   * If set, overrides DB credentials_json (useful when Business Manager will not attach the app to the Page).
-   * Never commit real values; set only in deployment secrets / local .env.
+   * Optional env overrides for CAF_PUBLISH_EXECUTOR=meta — one secret per channel (Fly / .env).
+   * Each overrides `project_integrations` credentials_json.access_token for META_FB or META_IG only.
+   */
+  CAF_META_FB_PAGE_ACCESS_TOKEN: z.string().optional(),
+  CAF_META_IG_PAGE_ACCESS_TOKEN: z.string().optional(),
+  /**
+   * Legacy single secret: if `CAF_META_FB_PAGE_ACCESS_TOKEN` (resp. IG) is unset, this is used for
+   * Facebook (resp. Instagram) publishes instead, so existing deploys keep working until Fly secrets are split.
    */
   CAF_META_PAGE_ACCESS_TOKEN: z.string().optional(),
 

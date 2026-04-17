@@ -1,7 +1,7 @@
 # CAF Core API — deploy: fly deploy (app must be linked to caf-core)
 # On boot, pending migrations/*.sql apply automatically (CAF_RUN_MIGRATIONS_ON_START, default on) so schema stays aligned with the image.
 # Fly secrets: DATABASE_URL (required); RENDERER_BASE_URL + VIDEO_ASSEMBLY_BASE_URL → caf-renderer;
-# Meta in-Core publish: CAF_PUBLISH_EXECUTOR=meta, META_GRAPH_API_VERSION=v25.0, CAF_META_PAGE_ACCESS_TOKEN (long-lived Page token; set via `fly secrets set`, never commit).
+# Meta in-Core publish: CAF_PUBLISH_EXECUTOR=meta, META_GRAPH_API_VERSION=v25.0; secrets CAF_META_FB_PAGE_ACCESS_TOKEN + CAF_META_IG_PAGE_ACCESS_TOKEN (or legacy CAF_META_PAGE_ACCESS_TOKEN for both).
 # Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
 # On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
 # OPENAI_API_KEY; optional SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
