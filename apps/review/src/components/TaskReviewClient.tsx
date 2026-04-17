@@ -54,8 +54,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const execTaskId = (data?.task_id ?? "").trim() || task_id;
 
   const { slides: initialSlides, raw: rawPayload } = useMemo(
-    () => parseSlidesFromJson(data?.generated_slides_json?.trim() || undefined),
-    [data?.generated_slides_json]
+    () =>
+      parseSlidesFromJson(
+        (data?.final_slides_json_override ?? data?.generated_slides_json)?.trim() || undefined
+      ),
+    [data?.generated_slides_json, data?.final_slides_json_override]
   );
 
   const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
@@ -271,6 +274,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               onSuccess={() => router.push("/")}
               existingDecision={decision}
               existingNotes={notes}
+              existingRewriteCopy={data.rewrite_copy !== "false"}
               finalTitleOverride={editedTitle}
               finalHookOverride={editedHook}
               finalCaptionOverride={editedCaption}

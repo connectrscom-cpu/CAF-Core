@@ -9,7 +9,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { task_id } = await params;
     const decodedId = decodeTaskIdParam(task_id);
-    const body = await request.json() as { project_slug?: string; decision?: string; notes?: string; rejection_tags?: string[]; validator?: string };
+    const body = await request.json() as {
+      project_slug?: string;
+      decision?: string;
+      notes?: string;
+      rejection_tags?: string[];
+      validator?: string;
+      final_title_override?: string;
+      final_hook_override?: string;
+      final_caption_override?: string;
+      final_hashtags_override?: string;
+      final_slides_json_override?: string;
+      rewrite_copy?: boolean;
+    };
     const decision = (body.decision ?? "").trim().toUpperCase();
     if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
       return NextResponse.json({ error: "decision must be APPROVED, NEEDS_EDIT, or REJECTED" }, { status: 400 });
@@ -23,6 +35,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       notes: body.notes,
       rejection_tags: body.rejection_tags,
       validator: body.validator,
+      ...(body.final_title_override !== undefined && { final_title_override: body.final_title_override }),
+      ...(body.final_hook_override !== undefined && { final_hook_override: body.final_hook_override }),
+      ...(body.final_caption_override !== undefined && { final_caption_override: body.final_caption_override }),
+      ...(body.final_hashtags_override !== undefined && { final_hashtags_override: body.final_hashtags_override }),
+      ...(body.final_slides_json_override !== undefined && {
+        final_slides_json_override: body.final_slides_json_override,
+      }),
+      ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
     });
     if (!result.ok) {
       const st =

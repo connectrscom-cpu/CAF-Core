@@ -50,7 +50,29 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     rejection_tags: z.array(z.string()).optional(),
     validator: z.string().optional(),
     overrides_json: z.record(z.unknown()).optional(),
+    final_title_override: z.string().optional(),
+    final_hook_override: z.string().optional(),
+    final_caption_override: z.string().optional(),
+    final_hashtags_override: z.string().optional(),
+    final_slides_json_override: z.string().optional(),
+    /** When false with copy overrides, rework prefers OVERRIDE_ONLY (patch in place). Default at review UI: true. */
+    rewrite_copy: z.boolean().optional(),
   });
+
+  function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...(body.overrides_json ?? {}) };
+    const put = (k: keyof z.infer<typeof reviewDecideBodySchema>, key: string) => {
+      const v = body[k];
+      if (v !== undefined) out[key] = v;
+    };
+    put("final_title_override", "final_title_override");
+    put("final_hook_override", "final_hook_override");
+    put("final_caption_override", "final_caption_override");
+    put("final_hashtags_override", "final_hashtags_override");
+    put("final_slides_json_override", "final_slides_json_override");
+    put("rewrite_copy", "rewrite_copy");
+    return out;
+  }
 
   async function executeEditorialReviewDecision(
     projectSlug: string,
@@ -66,7 +88,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       decision: body.decision,
       rejection_tags: body.rejection_tags ?? [],
       notes: body.notes ?? null,
-      overrides_json: body.overrides_json ?? {},
+      overrides_json: mergeEditorialDecideOverrides(body),
       validator: body.validator ?? null,
       submit: true,
     });

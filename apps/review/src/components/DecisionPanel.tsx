@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { DecisionValue } from "@/lib/types";
 
 const REVIEW_ISSUE_TAGS = [
@@ -27,6 +27,8 @@ export interface DecisionPanelProps {
   finalSlidesJsonOverride?: string;
   hasEdits?: boolean;
   editsSummary?: string[];
+  /** When false, rework prefers patching copy in place (no LLM) when slide/caption overrides exist. Default true. */
+  existingRewriteCopy?: boolean;
 }
 
 export function DecisionPanel({
@@ -42,14 +44,20 @@ export function DecisionPanel({
   finalSlidesJsonOverride,
   hasEdits = false,
   editsSummary = [],
+  existingRewriteCopy = true,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
   const [tags, setTags] = useState<string[]>([]);
   const [validator, setValidator] = useState("");
+  const [rewriteCopy, setRewriteCopy] = useState(existingRewriteCopy !== false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRewriteCopy(existingRewriteCopy !== false);
+  }, [existingRewriteCopy, taskId]);
 
   const submit = useCallback(async () => {
     if (!decision || !["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
@@ -75,6 +83,7 @@ export function DecisionPanel({
           ...(finalCaptionOverride !== undefined && { final_caption_override: finalCaptionOverride }),
           ...(finalHashtagsOverride !== undefined && { final_hashtags_override: finalHashtagsOverride }),
           ...(finalSlidesJsonOverride !== undefined && { final_slides_json_override: finalSlidesJsonOverride }),
+          ...(effectiveDecision === "NEEDS_EDIT" ? { rewrite_copy: rewriteCopy } : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -89,7 +98,22 @@ export function DecisionPanel({
     } finally {
       setSubmitting(false);
     }
-  }, [decision, notes, tags, validator, taskId, projectSlug, onSuccess, finalTitleOverride, finalHookOverride, finalCaptionOverride, finalHashtagsOverride, finalSlidesJsonOverride, hasEdits]);
+  }, [
+    decision,
+    notes,
+    tags,
+    validator,
+    taskId,
+    projectSlug,
+    onSuccess,
+    finalTitleOverride,
+    finalHookOverride,
+    finalCaptionOverride,
+    finalHashtagsOverride,
+    finalSlidesJsonOverride,
+    hasEdits,
+    rewriteCopy,
+  ]);
 
   const toggleTag = (tag: string) => {
     setTags((prev) => (prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]));
@@ -156,7 +180,7 @@ export function DecisionPanel({
         <label className="filter-label">Issue tags (what went wrong — for the next generation)</label>
         <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: 8, marginTop: 6, border: "1px solid var(--border-subtle)" }}>
           <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 8 }}>
-            Rework is always a new generation. Use hook, caption, and hashtags in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong> for concrete overrides.
+            Use hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong> — they are stored on the NEEDS_EDIT row and fed into the next rework pass.
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {REVIEW_ISSUE_TAGS.map((tag) => (
@@ -181,6 +205,24 @@ export function DecisionPanel({
           </div>
         </div>
       </div>
+
+      {(decision === "NEEDS_EDIT" || hasEdits) && (
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={rewriteCopy}
+              onChange={(e) => setRewriteCopy(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              <strong>Rewrite copy</strong> on the next rework run. Uncheck if you only want your edited slide/caption
+              text patched in (no new LLM copy) when the pipeline can apply overrides — otherwise the model still runs
+              but is instructed to keep your text verbatim.
+            </span>
+          </label>
+        </div>
+      )}
 
       <div style={{ marginBottom: 14 }}>
         <label className="filter-label">Validator</label>

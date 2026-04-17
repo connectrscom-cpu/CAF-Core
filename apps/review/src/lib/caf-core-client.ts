@@ -187,6 +187,7 @@ export interface ReviewQueueJob {
   latest_rejection_tags: unknown[];
   latest_validator: string | null;
   latest_submitted_at: string | null;
+  latest_overrides_json?: Record<string, unknown> | null;
   /** Present on `/v1/review-queue-all/...` responses. */
   project_slug?: string;
   project_display_name?: string | null;
@@ -446,6 +447,12 @@ export async function submitDecision(
     notes?: string;
     rejection_tags?: string[];
     validator?: string;
+    final_title_override?: string;
+    final_hook_override?: string;
+    final_caption_override?: string;
+    final_hashtags_override?: string;
+    final_slides_json_override?: string;
+    rewrite_copy?: boolean;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -461,6 +468,14 @@ export async function submitDecision(
         notes: body.notes,
         rejection_tags: body.rejection_tags,
         validator: body.validator,
+        ...(body.final_title_override !== undefined && { final_title_override: body.final_title_override }),
+        ...(body.final_hook_override !== undefined && { final_hook_override: body.final_hook_override }),
+        ...(body.final_caption_override !== undefined && { final_caption_override: body.final_caption_override }),
+        ...(body.final_hashtags_override !== undefined && { final_hashtags_override: body.final_hashtags_override }),
+        ...(body.final_slides_json_override !== undefined && {
+          final_slides_json_override: body.final_slides_json_override,
+        }),
+        ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
       }),
     });
   } catch (e) {

@@ -14,6 +14,12 @@ export async function POST(request: NextRequest) {
       notes?: string;
       rejection_tags?: string[];
       validator?: string;
+      final_title_override?: string;
+      final_hook_override?: string;
+      final_caption_override?: string;
+      final_hashtags_override?: string;
+      final_slides_json_override?: string;
+      rewrite_copy?: boolean;
     };
     const rawTid = (body.task_id ?? "").trim();
     if (!rawTid) return NextResponse.json({ error: "task_id required in body" }, { status: 400 });
@@ -31,6 +37,14 @@ export async function POST(request: NextRequest) {
       notes: body.notes,
       rejection_tags: body.rejection_tags,
       validator: body.validator,
+      ...(body.final_title_override !== undefined && { final_title_override: body.final_title_override }),
+      ...(body.final_hook_override !== undefined && { final_hook_override: body.final_hook_override }),
+      ...(body.final_caption_override !== undefined && { final_caption_override: body.final_caption_override }),
+      ...(body.final_hashtags_override !== undefined && { final_hashtags_override: body.final_hashtags_override }),
+      ...(body.final_slides_json_override !== undefined && {
+        final_slides_json_override: body.final_slides_json_override,
+      }),
+      ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
     });
     if (!result.ok) {
       const st =

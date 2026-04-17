@@ -16,6 +16,11 @@ function stringVal(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
+function optionalTrimmedString(v: unknown): string | undefined {
+  const s = stringVal(v).trim();
+  return s || undefined;
+}
+
 function recordVal(v: unknown): Record<string, unknown> | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   return v as Record<string, unknown>;
@@ -93,6 +98,7 @@ export async function jsonTaskDetailResponse(
     }
     const { preview_url, video_url } = previewFieldsFromJob(job);
     const generationPayload = (job.generation_payload ?? {}) as Record<string, unknown>;
+    const latestOv = recordVal(job.latest_overrides_json as Record<string, unknown> | null) ?? {};
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -112,6 +118,12 @@ export async function jsonTaskDetailResponse(
       generated_caption: pickCaptionFromGenerationPayload(generationPayload),
       generated_slides_json: jobGeneratedSlidesJson(job),
       validator: job.latest_validator ?? "",
+      final_title_override: optionalTrimmedString(latestOv.final_title_override),
+      final_hook_override: optionalTrimmedString(latestOv.final_hook_override),
+      final_caption_override: optionalTrimmedString(latestOv.final_caption_override),
+      final_hashtags_override: optionalTrimmedString(latestOv.final_hashtags_override),
+      final_slides_json_override: optionalTrimmedString(latestOv.final_slides_json_override),
+      rewrite_copy: latestOv.rewrite_copy === false ? "false" : "true",
     };
     const body: Record<string, unknown> = { rowIndex: 0, data };
     if (opts?.includeJob) body.job = job;

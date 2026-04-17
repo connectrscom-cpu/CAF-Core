@@ -201,7 +201,12 @@ export async function generateForJob(
   );
 
   const appCfg = loadConfig();
-  const hf = payload.human_feedback as { notes?: string | null; rejection_tags?: unknown } | undefined;
+  const hf = payload.human_feedback as {
+    notes?: string | null;
+    rejection_tags?: unknown;
+    rewrite_copy?: unknown;
+    editorial_overrides_json?: Record<string, unknown> | null;
+  } | undefined;
   const gr = String(payload.generation_reason ?? "");
   const reworkMode = payload.rework_mode;
   const isEditorialRework =
@@ -326,6 +331,33 @@ export async function generateForJob(
       notes ? `Reviewer notes: ${notes}` : "",
       tags.length ? `Rework tags: ${tags.join(", ")}` : "",
     ].filter(Boolean);
+    const eo = hf.editorial_overrides_json;
+    const rewriteCopy = hf.rewrite_copy !== false;
+    if (eo && typeof eo === "object") {
+      const flatLines: string[] = [];
+      for (const k of [
+        "final_title_override",
+        "final_hook_override",
+        "final_caption_override",
+        "final_hashtags_override",
+        "final_slides_json_override",
+      ] as const) {
+        const v = eo[k];
+        if (typeof v === "string" && v.trim()) {
+          const label = k.replace(/^final_/, "").replace(/_override$/, "");
+          flatLines.push(
+            `${label}: ${k === "final_slides_json_override" ? v.trim().slice(0, 8000) : v.trim()}`
+          );
+        }
+      }
+      if (flatLines.length) {
+        bits.push(
+          rewriteCopy
+            ? `Reviewer-adjusted copy (use as strong guidance; you may polish for brand fit while honoring the feedback above):\n${flatLines.join("\n")}`
+            : `Use this copy verbatim in the structured output (headlines, body, caption, hashtags, slide list) unless a schema field cannot hold it — do not paraphrase:\n${flatLines.join("\n")}`
+        );
+      }
+    }
     if (bits.length) {
       userPrompt = `${userPrompt.trim()}\n\n---\nEditorial rework for task ${job.task_id}. Address this feedback in the output:\n${bits.join("\n")}`.trim();
     }

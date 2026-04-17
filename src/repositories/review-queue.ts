@@ -51,6 +51,8 @@ export interface ReviewQueueJob {
   latest_rejection_tags: unknown[];
   latest_validator: string | null;
   latest_submitted_at: string | null;
+  /** Latest editorial row `overrides_json` (copy overrides, `rewrite_copy`, etc.). */
+  latest_overrides_json?: Record<string, unknown> | null;
   /** First asset URL for workbench thumbnails (prefers image-like assets). */
   preview_thumb_url?: string | null;
 }
@@ -84,7 +86,7 @@ export interface ReviewQueueFilters {
 const JOBS_FROM_WITH_LATEST_REVIEW = `
   FROM caf_core.content_jobs j
   LEFT JOIN LATERAL (
-    SELECT decision, notes, rejection_tags, validator, submitted_at
+    SELECT decision, notes, rejection_tags, validator, submitted_at, overrides_json
     FROM caf_core.editorial_reviews
     WHERE task_id = j.task_id AND project_id = j.project_id
     ORDER BY created_at DESC
@@ -121,6 +123,7 @@ const REVIEW_QUEUE_ROW_SELECT = `
     lr.rejection_tags AS latest_rejection_tags,
     lr.validator AS latest_validator,
     lr.submitted_at AS latest_submitted_at,
+    lr.overrides_json AS latest_overrides_json,
     ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
   ${JOBS_FROM_WITH_LATEST_REVIEW}`;
 
@@ -389,10 +392,11 @@ export async function getReviewJobDetail(
        lr.notes AS latest_notes,
        lr.rejection_tags AS latest_rejection_tags,
        lr.validator AS latest_validator,
-       lr.submitted_at AS latest_submitted_at
+       lr.submitted_at AS latest_submitted_at,
+       lr.overrides_json AS latest_overrides_json
      FROM caf_core.content_jobs j
      LEFT JOIN LATERAL (
-       SELECT decision, notes, rejection_tags, validator, submitted_at
+       SELECT decision, notes, rejection_tags, validator, submitted_at, overrides_json
        FROM caf_core.editorial_reviews
        WHERE task_id = j.task_id AND project_id = j.project_id
        ORDER BY created_at DESC LIMIT 1
@@ -461,7 +465,7 @@ const JOBS_GLOBAL_FROM = `
   FROM caf_core.content_jobs j
   INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true
   LEFT JOIN LATERAL (
-    SELECT decision, notes, rejection_tags, validator, submitted_at
+    SELECT decision, notes, rejection_tags, validator, submitted_at, overrides_json
     FROM caf_core.editorial_reviews
     WHERE task_id = j.task_id AND project_id = j.project_id
     ORDER BY created_at DESC
@@ -479,6 +483,7 @@ const REVIEW_QUEUE_GLOBAL_ROW_SELECT = `
     lr.rejection_tags AS latest_rejection_tags,
     lr.validator AS latest_validator,
     lr.submitted_at AS latest_submitted_at,
+    lr.overrides_json AS latest_overrides_json,
     p.slug AS project_slug,
     p.display_name AS project_display_name,
     ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url

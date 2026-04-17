@@ -14,13 +14,20 @@ import {
   processContentJobById,
   RenderNotReadyError,
 } from "./job-pipeline.js";
+import {
+  applyEditorialFlatOverridesToGeneratedOutput,
+  hasEditorialCopyFlatOverrides,
+  partitionEditorialOverrides,
+} from "./editorial-copy-apply.js";
 
 export type ReworkMode = "OVERRIDE_ONLY" | "FULL_REWORK" | "PARTIAL_REWRITE";
 
 export function inferReworkMode(review: {
   rejection_tags?: unknown;
   notes?: string | null;
+  overrides_json?: Record<string, unknown> | null;
 }): ReworkMode {
+  const ov = review.overrides_json ?? {};
   const tags = Array.isArray(review.rejection_tags)
     ? (review.rejection_tags as unknown[]).map((t) => String(t).toLowerCase())
     : [];
@@ -28,6 +35,8 @@ export function inferReworkMode(review: {
   if (tags.some((t) => t.includes("full") || t.includes("regenerate"))) return "FULL_REWORK";
   if (notes.includes("full rewrite") || notes.includes("start over")) return "FULL_REWORK";
   if (tags.length >= 3) return "FULL_REWORK";
+  const rewriteCopy = ov.rewrite_copy;
+  if (rewriteCopy === false && hasEditorialCopyFlatOverrides(ov)) return "OVERRIDE_ONLY";
   if (tags.some((t) => t.includes("override") || t.includes("typo")) || notes.includes("override only")) {
     return "OVERRIDE_ONLY";
   }
@@ -38,6 +47,7 @@ export function inferReworkMode(review: {
 export function hasMeaningfulOverrides(overrides: Record<string, unknown> | null | undefined): boolean {
   if (overrides == null || typeof overrides !== "object") return false;
   return Object.keys(overrides).some((k) => {
+    if (k === "rewrite_copy") return false;
     const v = (overrides as Record<string, unknown>)[k];
     if (v == null) return false;
     if (typeof v === "string") return v.trim() !== "";
@@ -153,7 +163,9 @@ export async function executeRework(
     const gp: Record<string, unknown> = { ...(job.generation_payload ?? {}) };
     const gen = (gp.generated_output as Record<string, unknown>) ?? {};
     const overrides = rev.overrides_json ?? {};
-    const mergedOutput = { ...gen, ...overrides };
+    const { structural, flat } = partitionEditorialOverrides(overrides);
+    let mergedOutput = { ...gen, ...structural };
+    mergedOutput = applyEditorialFlatOverridesToGeneratedOutput(mergedOutput, flat);
     let genSnapshot: unknown = gen;
     try {
       genSnapshot = JSON.parse(JSON.stringify(gen)) as unknown;
@@ -205,7 +217,12 @@ export async function executeRework(
     [
       JSON.stringify({
         rework_mode: mode,
-        human_feedback: { notes: rev.notes, rejection_tags: rev.rejection_tags },
+        human_feedback: {
+          notes: rev.notes,
+          rejection_tags: rev.rejection_tags,
+          rewrite_copy: rev.overrides_json?.rewrite_copy,
+          editorial_overrides_json: rev.overrides_json ?? {},
+        },
         generation_reason: mode === "PARTIAL_REWRITE" ? "REWORK_PARTIAL" : "REWORK_FULL",
       }),
       job.id,
