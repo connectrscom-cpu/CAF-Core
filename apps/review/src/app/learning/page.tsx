@@ -850,7 +850,11 @@ export default function LearningPage() {
           rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
           scores to Core, creates a <code>learning_observations</code> row, and can mint <strong>pending</strong>{" "}
           generation hints from low scores (fixes) or high scores (strengths to preserve),{" "}
-          <em>after you choose thresholds and mint</em> (same pending → Apply flow as editorial rules).
+          <em>after you choose thresholds and mint</em> (same pending → Apply flow as editorial rules). On Core,
+          carousel primary generation also reuses recent rows here as an <strong>anti-repetition lane memory</strong>{" "}
+          (hook/caption/slide fingerprints for the same flow + platform; configure{" "}
+          <code>LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS</code> / <code>LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS</code>, set
+          to <code>0</code> to disable).
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12 }}>
           <label style={{ fontSize: 13 }}>

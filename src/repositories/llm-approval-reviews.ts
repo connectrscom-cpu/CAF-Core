@@ -103,6 +103,54 @@ export async function listLlmApprovalReviews(
   );
 }
 
+/** Recent reviews joined to jobs for anti-repetition context (same flow + platform lane as current job). */
+export async function listLlmApprovalReviewsForAntiRepetition(
+  db: Pool,
+  projectId: string,
+  flowType: string,
+  platform: string | null,
+  opts: { excludeTaskId?: string | null; limit: number }
+): Promise<
+  Array<{
+    task_id: string;
+    overall_score: string | number | null;
+    summary: string | null;
+    strengths: unknown;
+    generation_payload: Record<string, unknown>;
+  }>
+> {
+  const lim = Math.min(Math.max(1, opts.limit), 40);
+  const exclude = (opts.excludeTaskId ?? "").trim();
+  const params: unknown[] = [projectId, flowType.trim()];
+  let sql = `
+    SELECT r.task_id, r.overall_score, r.summary, r.strengths, j.generation_payload
+    FROM caf_core.llm_approval_reviews r
+    INNER JOIN caf_core.content_jobs j
+      ON j.project_id = r.project_id AND j.task_id = r.task_id
+    WHERE r.project_id = $1
+      AND j.flow_type IS NOT DISTINCT FROM $2
+      AND r.overall_score IS NOT NULL
+      AND r.overall_score >= 0.5`;
+  if (platform != null && String(platform).trim() !== "") {
+    sql += ` AND j.platform IS NOT DISTINCT FROM $${params.length + 1}`;
+    params.push(String(platform).trim());
+  }
+  if (exclude) {
+    sql += ` AND r.task_id <> $${params.length + 1}`;
+    params.push(exclude);
+  }
+  sql += ` ORDER BY r.created_at DESC LIMIT $${params.length + 1}`;
+  params.push(lim);
+  const rows = await q<{
+    task_id: string;
+    overall_score: string | number | null;
+    summary: string | null;
+    strengths: unknown;
+    generation_payload: Record<string, unknown>;
+  }>(db, sql, params);
+  return rows;
+}
+
 export async function markLlmApprovalReviewMinted(
   db: Pool,
   projectId: string,

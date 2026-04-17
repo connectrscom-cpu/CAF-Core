@@ -40,6 +40,7 @@ import {
   maxSlidesFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
 import { compileLearningContexts } from "./learning-context-compiler.js";
+import { buildLlmApprovalAntiRepetitionBlock } from "./llm-approval-anti-repetition-context.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
 
 async function nextJobDraftSequence(
@@ -312,6 +313,22 @@ export async function generateForJob(
 
   if (compiledLearning.merged_guidance.trim()) {
     systemPrompt = `${systemPrompt.trim()}\n\nValidated learning context (shape tone, hooks, and structure; do not quote this section verbatim):\n${compiledLearning.merged_guidance}`.trim();
+  }
+
+  if (
+    isCarouselFlow(job.flow_type) &&
+    appCfg.LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS > 0 &&
+    appCfg.LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS > 0 &&
+    job.flow_type
+  ) {
+    const anti = await buildLlmApprovalAntiRepetitionBlock(db, job.project_id, job.flow_type, job.platform, {
+      excludeTaskId: job.task_id,
+      maxJobs: appCfg.LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS,
+      maxChars: appCfg.LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS,
+    });
+    if (anti.trim()) {
+      systemPrompt = `${systemPrompt.trim()}\n\nApproved-lane anti-repetition memory (same project, same flow and platform as this job; excludes the current task). Fingerprints summarize content that already passed human approval and post-approval QA. Treat them as negative examples for sameness: do not reuse hook devices, headline cadence, CTA shape, or slide-to-slide pacing in a way that reads as a template clone or light rewrite. Stay on-strategy for the candidate, but differentiate framing, hook angle, story arc, and slide contrast vs the items below.\n\n${anti}`.trim();
+    }
   }
 
   systemPrompt = `${systemPrompt.trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`.trim();

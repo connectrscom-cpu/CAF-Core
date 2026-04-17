@@ -166,6 +166,13 @@ const envSchema = z.object({
   LLM_LEARNING_GLOBAL_CONTEXT_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(12_000),
   LLM_LEARNING_PROJECT_CONTEXT_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(12_000),
   LLM_LEARNING_GUIDANCE_MAX_CHARS: z.coerce.number().int().min(0).max(200_000).default(18_000),
+  /**
+   * Carousel generation: inject short “lane memory” from recent post-approval LLM reviews + stored job copy
+   * (hook, title, caption excerpt, slide headlines) so the model avoids near-duplicate angles vs recently approved work.
+   * Set max chars or max jobs to 0 to disable.
+   */
+  LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS: z.coerce.number().int().min(0).max(50_000).default(3500),
+  LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS: z.coerce.number().int().min(0).max(40).default(6),
 
   /** HeyGen v2: default voice id for video_inputs[0].voice when config does not set it */
   HEYGEN_DEFAULT_VOICE_ID: z.string().optional(),
