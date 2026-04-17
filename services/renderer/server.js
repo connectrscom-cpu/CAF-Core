@@ -3,6 +3,9 @@ const path = require("path");
 const fs = require("fs");
 const Handlebars = require("handlebars");
 const { randomUUID } = require("crypto");
+const { joinEmojiOrphanLines } = require("./join-emoji-orphans.js");
+
+Handlebars.registerHelper("joinEmojiOrphans", (v) => joinEmojiOrphanLines(v));
 
 const PORT = parseInt(process.env.PORT || "3333", 10);
 const RENDERERS_BEFORE_RESET = parseInt(process.env.RENDERERS_BEFORE_RESET || "12", 10);

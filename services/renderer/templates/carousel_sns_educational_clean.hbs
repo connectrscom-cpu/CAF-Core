@@ -31,6 +31,13 @@
       display:flex;flex-direction:column;justify-content:space-between;
       position:relative;
     }
+    .inner.inner--stack{
+      justify-content:flex-start;
+      gap:28px;
+    }
+    .inner.inner--stack .top-row{
+      flex:0 0 auto;
+    }
     .top-row{display:flex;flex-direction:column;gap:18px;}
     .kicker{
       font-size:18px;
@@ -64,12 +71,12 @@
     }
     .card h3{
       font-family:Inter,sans-serif;
-      font-size:46px;
+      font-size:52px;
       letter-spacing:-0.02em;
     }
     .card p{
       margin-top:16px;
-      font-size:40px;
+      font-size:60px;
       line-height:1.38;
       color:var(--muted);
       text-align:left;
@@ -110,16 +117,16 @@
 <body>
   <!-- Cover -->
   <div class="slide">
-    <div class="inner">
+    <div class="inner inner--stack">
       <div class="top-row">
         <div class="kicker">Slide 01 / Topic</div>
         <div class="title">
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
         <div class="divider"></div>
-      </div>
-      <div class="body">
-        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+        <div class="body">
+          {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+        </div>
       </div>
     </div>
   </div>
@@ -140,14 +147,14 @@
 
   <!-- CTA -->
   <div class="slide">
-    <div class="inner">
+    <div class="inner inner--stack">
       <div class="top-row">
         <div class="kicker">Follow · Save · Share</div>
         <div class="cta">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>
+        {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       </div>
-      {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
     </div>
   </div>
 </body>

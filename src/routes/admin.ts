@@ -2062,10 +2062,27 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
     </div>
   </div>
 
+  <div id="run-output-review-modal" class="sp-modal-overlay" onclick="if(event.target===this)closeRunOutputReview()">
+    <div class="card sp-modal-card" onclick="event.stopPropagation()" style="max-width:640px">
+      <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+        <span>Run output review</span>
+        <button type="button" class="btn-ghost" onclick="closeRunOutputReview()">Close</button>
+      </div>
+      <div style="padding:16px 20px 20px">
+        <p class="runs-ops-hint" style="margin:0 0 12px">Holistic notes on this run are merged into <strong>editorial analysis</strong> (engineering brief + optional OpenAI notes synthesis), scoped by the same rolling window as the analysis job.</p>
+        <div class="form-group"><label>Review</label><textarea id="ror-body" rows="10" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px" placeholder="Overall quality, batch issues, what to change next run…"></textarea></div>
+        <div class="form-group"><label>Reviewer (optional)</label><input type="text" id="ror-validator" style="width:100%;max-width:360px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" placeholder="Name or handle"/></div>
+        <div class="form-actions"><button type="button" class="btn" onclick="saveRunOutputReview()">Save</button><button type="button" class="btn-ghost" onclick="clearRunOutputReview()">Clear review</button></div>
+        <p id="ror-msg" class="form-msg" style="margin-top:10px"></p>
+      </div>
+    </div>
+  </div>
+
   <div id="upload-panel" class="panel card" style="display:none;max-width:520px">
     <div class="card-h">Upload Signal Pack (.xlsx)</div>
     <form id="upload-form" enctype="multipart/form-data">
       <div class="form-group"><label>File</label><input type="file" name="file" accept=".xlsx,.xls" required style="background:transparent;border:none;padding:6px 0"></div>
+      <div class="form-group"><label>Run name (optional)</label><input type="text" name="run_name" maxlength="200" placeholder="Friendly label — stored on the run, does not change run_id"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
       <div class="form-group"><label>Notes (optional)</label><textarea name="notes" rows="2" placeholder="Any notes about this pack..."></textarea></div>
       <div class="form-actions"><button type="submit" class="btn" id="upload-btn">Upload &amp; Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('upload-panel')">Cancel</button><span id="upload-msg" class="form-msg"></span></div>
@@ -2076,6 +2093,7 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
     <div class="card-h">Create Run Manually</div>
     <form id="create-form">
       <div class="form-group"><label>Run ID (optional, auto-generated if empty)</label><input type="text" name="run_id" placeholder="e.g. SNS_2026W14"></div>
+      <div class="form-group"><label>Run name (optional)</label><input type="text" name="name" maxlength="200" placeholder="Friendly label for this run"></div>
       <div class="form-group"><label>Signal Pack ID (optional)</label><input type="text" name="signal_pack_id" placeholder="UUID of an existing signal pack"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
       <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('create-panel')">Cancel</button><span id="create-msg" class="form-msg"></span></div>
@@ -2128,6 +2146,55 @@ function closeRunContentLog(){
   if(m)m.style.display='none';
   try{delete window._runContentLogRows;}catch(_e){window._runContentLogRows=undefined;}
   try{delete window._runContentLogExport;}catch(_e){window._runContentLogExport=undefined;}
+}
+function closeRunOutputReview(){
+  var m=document.getElementById('run-output-review-modal');
+  if(m)m.style.display='none';
+  try{delete window._rorRunId;}catch(_e){window._rorRunId=undefined;}
+}
+async function openRunOutputReview(runId){
+  if(!SLUG){showToast('Pick a project in the sidebar first.',false);return;}
+  window._rorRunId=runId;
+  var modal=document.getElementById('run-output-review-modal');
+  var bodyEl=document.getElementById('ror-body');
+  var valEl=document.getElementById('ror-validator');
+  var msg=document.getElementById('ror-msg');
+  if(msg)msg.textContent='';
+  if(bodyEl)bodyEl.value='Loading…';
+  if(valEl)valEl.value='';
+  if(modal)modal.style.display='flex';
+  try{
+    var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(runId)+'/output-review');
+    var raw=await r.text();
+    var d;try{d=JSON.parse(raw);}catch(e){throw new Error(r.ok?'Invalid JSON':'HTTP '+r.status+' '+raw.slice(0,80));}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Load failed'));
+    if(bodyEl)bodyEl.value=(d.review&&d.review.body)?String(d.review.body):'';
+    if(valEl)valEl.value=(d.review&&d.review.validator)?String(d.review.validator):'';
+  }catch(err){
+    if(bodyEl)bodyEl.value='';
+    showToast(err.message||String(err),false);
+  }
+}
+async function saveRunOutputReview(){
+  if(!SLUG||!window._rorRunId){showToast('Nothing to save',false);return;}
+  var bodyEl=document.getElementById('ror-body');
+  var valEl=document.getElementById('ror-validator');
+  var msg=document.getElementById('ror-msg');
+  var txt=(bodyEl&&bodyEl.value||'').trim();
+  try{
+    var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(window._rorRunId)+'/output-review',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({body:txt,validator:(valEl&&valEl.value||'').trim()||undefined})});
+    var raw=await r.text();
+    var d;try{d=JSON.parse(raw);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
+    showToast(d.deleted?'Review cleared.':'Run review saved.',true);
+    if(msg)msg.textContent=d.deleted?'Cleared.':'Saved — picked up by the next editorial analysis for this project.';
+    if(d.deleted&&bodyEl)bodyEl.value='';
+  }catch(err){showToast(err.message||String(err),false);}
+}
+async function clearRunOutputReview(){
+  var bodyEl=document.getElementById('ror-body');
+  if(bodyEl)bodyEl.value='';
+  await saveRunOutputReview();
 }
 function copyRunContentLogAll(){
   const ex=window._runContentLogExport;
@@ -2286,8 +2353,10 @@ async function loadRuns(p){
   if(!d.ok){el.innerHTML='<div class="empty">'+esc(apiErr(d,'Request failed'))+'</div>';return;}
   const runs=Array.isArray(d.runs)?d.runs:[];
   if(!runs.length){el.innerHTML='<div class="empty">No runs yet. Upload a signal pack or create a run to get started.</div>';return;}
-  let h='<table><thead><tr><th>Run ID</th><th>Status</th><th>Jobs</th><th>Created</th><th>Started</th><th>Completed</th><th>Actions</th></tr></thead><tbody>';
+  let h='<table><thead><tr><th>Run ID</th><th>Name</th><th>Status</th><th>Jobs</th><th>Created</th><th>Started</th><th>Completed</th><th>Actions</th></tr></thead><tbody>';
   for(const run of runs){
+    const meta=run.metadata_json&&typeof run.metadata_json==='object'&&!Array.isArray(run.metadata_json)?run.metadata_json:{};
+    const dn=(typeof meta.display_name==='string'&&meta.display_name.trim())?meta.display_name.trim():'';
     const canStart=run.status==='CREATED';
     /** Start leaves the run in GENERATING with jobs still PLANNED until the user clicks Process. Also allow retry after a failed start if jobs were planned. */
     const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
@@ -2297,12 +2366,14 @@ async function loadRuns(p){
     h+='<tr><td class="mono" style="color:var(--accent)"><a href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">'+esc(run.run_id)+'</a>';
     if(run.source_window)h+='<br><span style="font-size:11px;color:var(--muted)">'+esc(run.source_window)+'</span>';
     h+='</td>';
+    h+='<td style="max-width:220px">'+(dn?esc(dn):'<span style="color:var(--muted)">—</span>')+'</td>';
     h+='<td>'+badge(run.status)+'</td>';
     h+='<td>'+run.jobs_completed+'/'+run.total_jobs+'</td>';
     h+='<td>'+fmtDate(run.created_at)+'</td><td>'+fmtDate(run.started_at)+'</td><td>'+fmtDate(run.completed_at)+'</td>';
     h+='<td><div class="run-actions">';
     h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/run-candidates?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(run.run_id)+'">Candidates</a> ';
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunContentLog("+JSON.stringify(run.run_id)+")' title='Carousel slide counts + copy preview; video script preview + assets'>Content log</button> ";
+    h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
     if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title='After Start: runs LLM → QC → render for each PLANNED job (can take several minutes)'>Process</button>";

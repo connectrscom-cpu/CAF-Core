@@ -1,9 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { zipSync } from "fflate";
-import { TaskTable } from "@/components/TaskTable";
+import { WorkbenchFilters } from "@/components/WorkbenchFilters";
+import { TaskTable, type GroupBy } from "@/components/TaskTable";
 import { TaskViewer } from "@/components/TaskViewer";
 import type { ReviewQueueRow } from "@/lib/types";
 import type { ReviewJobDetail, PublicationPlacement } from "@/lib/caf-core-client";
@@ -15,10 +17,25 @@ import {
   videoUrlFromJob,
 } from "@/lib/publish-prefill";
 
-interface ApprovedResponse {
+/** Same shape as GET /api/tasks while this page pins `status=approved`. */
+interface ApprovedTasksResponse {
   items: ReviewQueueRow[];
   total: number;
+  page: number;
+  limit: number;
   scope?: "all" | "single";
+  tabCounts?: { in_review: number; approved: number; rejected: number; needs_edit: number };
+  statusCounts?: Record<string, number>;
+  missingPreviewCount?: number;
+}
+
+interface FacetsResponse {
+  project?: string[];
+  run_id?: string[];
+  run_display_names?: Record<string, string>;
+  platform?: string[];
+  flow_type?: string[];
+  recommended_route?: string[];
 }
 
 const PLATFORMS: { id: string; n8nReady: boolean }[] = [
@@ -26,6 +43,22 @@ const PLATFORMS: { id: string; n8nReady: boolean }[] = [
   { id: "Facebook", n8nReady: true },
   { id: "TikTok", n8nReady: false },
 ];
+
+const PUBLISH_FONT_ZOOM_STORAGE = "caf_review_publish_font_zoom";
+
+const PUBLISH_FONT_ZOOM_OPTIONS = [
+  { label: "Small", value: 0.88 },
+  { label: "Default", value: 1 },
+  { label: "Large", value: 1.12 },
+  { label: "Extra large", value: 1.25 },
+] as const;
+
+function nearestPublishFontZoom(n: number): number {
+  const allowed = PUBLISH_FONT_ZOOM_OPTIONS.map((o) => o.value);
+  if (!Number.isFinite(n)) return 1;
+  const c = Math.min(1.35, Math.max(0.8, n));
+  return allowed.reduce((best, v) => (Math.abs(v - c) < Math.abs(best - c) ? v : best), 1);
+}
 
 function localDatetimeValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -99,9 +132,11 @@ function summarizeStartFailure(res: Response, text: string, json: Record<string,
   return `Request failed (HTTP ${res.status}).`;
 }
 
-export default function PublishPage() {
+function PublishPageContent() {
+  const searchParams = useSearchParams();
   const [activeTab, setActiveTab] = useState<"approved" | "due" | "published">("approved");
-  const [approved, setApproved] = useState<ApprovedResponse | null>(null);
+  const [approved, setApproved] = useState<ApprovedTasksResponse | null>(null);
+  const [facets, setFacets] = useState<FacetsResponse>({});
   const [loadingApproved, setLoadingApproved] = useState(true);
   const [selected, setSelected] = useState<ReviewQueueRow | null>(null);
   const [job, setJob] = useState<ReviewJobDetail | null>(null);
@@ -133,6 +168,7 @@ export default function PublishPage() {
   const [removingPlacementId, setRemovingPlacementId] = useState<string | null>(null);
   const [feedbackAt, setFeedbackAt] = useState<Date | null>(null);
   const autoSwitchedToDueRef = useRef(false);
+  const [publishFontZoom, setPublishFontZoom] = useState(1);
 
   const projectSlug = (selected?.project ?? "").trim();
   const effectiveProjectForQueue = (
@@ -144,6 +180,17 @@ export default function PublishPage() {
   useEffect(() => {
     if (message != null && message !== "") setFeedbackAt(new Date());
   }, [message]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PUBLISH_FONT_ZOOM_STORAGE);
+      if (raw == null || raw === "") return;
+      const n = Number.parseFloat(raw);
+      setPublishFontZoom(nearestPublishFontZoom(n));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const selectedRowKey = useMemo(() => {
     if (!selected?.task_id) return "";
@@ -165,23 +212,45 @@ export default function PublishPage() {
 
   const captionCharCount = useMemo(() => (caption || "").length, [caption]);
 
+  const approvedTasksQuery = useMemo(() => {
+    const q = new URLSearchParams(searchParams.toString());
+    q.set("status", "approved");
+    if (!q.get("limit")) q.set("limit", "200");
+    return q.toString();
+  }, [searchParams]);
+
+  const groupBy = (searchParams.get("group") ?? "") as GroupBy;
+
   const fetchApproved = useCallback(async () => {
     setLoadingApproved(true);
     try {
-      const res = await fetch("/api/approved");
+      const res = await fetch(`/api/tasks?${approvedTasksQuery}`);
       if (!res.ok) throw new Error(await res.text());
-      const json: ApprovedResponse = await res.json();
+      const json: ApprovedTasksResponse = await res.json();
       setApproved(json);
     } catch {
       setApproved(null);
     } finally {
       setLoadingApproved(false);
     }
-  }, []);
+  }, [approvedTasksQuery]);
 
   useEffect(() => {
     fetchApproved();
   }, [fetchApproved]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/facets")
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((f: FacetsResponse) => {
+        if (!cancelled) setFacets(f);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const loadProjectStrategy = useCallback(async (slug: string) => {
     const s = (slug || "").trim();
@@ -752,6 +821,41 @@ export default function PublishPage() {
             <span className="mono">…/start</span> (claim) → n8n Meta/TikTok → POST <span className="mono">…/complete</span>
           </span>
         </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <label htmlFor="publish-font-zoom" style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap" }}>
+            Text size
+          </label>
+          <select
+            id="publish-font-zoom"
+            aria-label="Publish page text size"
+            value={String(publishFontZoom)}
+            onChange={(e) => {
+              const v = nearestPublishFontZoom(Number.parseFloat(e.target.value));
+              setPublishFontZoom(v);
+              try {
+                localStorage.setItem(PUBLISH_FONT_ZOOM_STORAGE, String(v));
+              } catch {
+                /* ignore */
+              }
+            }}
+            style={{
+              width: 132,
+              padding: "6px 10px",
+              fontSize: 13,
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: "var(--card)",
+              color: "var(--fg)",
+              cursor: "pointer",
+            }}
+          >
+            {PUBLISH_FONT_ZOOM_OPTIONS.map((o) => (
+              <option key={o.value} value={String(o.value)}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       <div className="tabs">
@@ -761,7 +865,7 @@ export default function PublishPage() {
           type="button"
         >
           Approved
-          <span className="tab-count">{approved?.total ?? 0}</span>
+          <span className="tab-count">{approved?.tabCounts?.approved ?? approved?.total ?? 0}</span>
         </button>
         <button
           className={`tab ${activeTab === "due" ? "active" : ""}`}
@@ -781,7 +885,10 @@ export default function PublishPage() {
         </button>
       </div>
 
-      <div className="publish-layout" style={{ padding: "12px 28px 32px" }}>
+      <div
+        className="publish-layout"
+        style={{ padding: "12px 28px 32px", zoom: publishFontZoom }}
+      >
         <div className="publish-left">
           <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
@@ -794,22 +901,40 @@ export default function PublishPage() {
             <>
               {loadingApproved && <p style={{ color: "var(--muted)" }}>Loading approved…</p>}
               {approved && !loadingApproved && (
-                <TaskTable
-                  items={approved.items}
-                  groupBy=""
-                  page={1}
-                  limit={approved.total}
-                  total={approved.total}
-                  contentSlug="content"
-                  showProjectColumn={approved.scope === "all"}
-                  hideTitleColumn
-                  hideOpenColumn
-                  selectedRowKey={selectedRowKey}
-                  onRowSelect={(row) => {
-                    setSelected(row);
-                    loadJob(row);
-                  }}
-                />
+                <div className="workbench publish-approved-workbench" style={{ padding: 0, margin: 0 }}>
+                  <div className="workbench-filters">
+                    <WorkbenchFilters
+                      basePath="/publish"
+                      projectValues={facets.project ?? []}
+                      runIdValues={facets.run_id ?? []}
+                      runDisplayNames={facets.run_display_names}
+                      platformValues={facets.platform ?? []}
+                      flowTypeValues={facets.flow_type ?? []}
+                      recommendedRouteValues={facets.recommended_route ?? []}
+                      reviewStatusValues={approved.statusCounts ? Object.keys(approved.statusCounts) : undefined}
+                    />
+                  </div>
+                  <div className="workbench-table" style={{ paddingTop: 0 }}>
+                    <TaskTable
+                      items={approved.items}
+                      groupBy={groupBy}
+                      page={approved.page}
+                      limit={approved.limit}
+                      total={approved.total}
+                      statusCounts={approved.statusCounts}
+                      missingPreviewCount={approved.missingPreviewCount}
+                      contentSlug="content"
+                      showProjectColumn={approved.scope === "all"}
+                      hideTitleColumn
+                      hideOpenColumn
+                      selectedRowKey={selectedRowKey}
+                      onRowSelect={(row) => {
+                        setSelected(row);
+                        loadJob(row);
+                      }}
+                    />
+                  </div>
+                </div>
               )}
             </>
           )}
@@ -975,7 +1100,17 @@ export default function PublishPage() {
                     <>
                       <span style={{ color: "var(--muted)" }}>·</span>
                       <span style={{ color: "var(--muted)" }}>
-                        run: <span className="mono">{job.run_id}</span>
+                        run:{" "}
+                        {(facets.run_display_names?.[job.run_id] ?? "").trim() ? (
+                          <>
+                            <span>{String(facets.run_display_names?.[job.run_id]).trim()}</span>
+                            <span className="mono" style={{ marginLeft: 6 }}>
+                              ({job.run_id})
+                            </span>
+                          </>
+                        ) : (
+                          <span className="mono">{job.run_id}</span>
+                        )}
                       </span>
                     </>
                   )}
@@ -1472,5 +1607,25 @@ export default function PublishPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function PublishPage() {
+  return (
+    <Suspense
+      fallback={
+        <>
+          <div className="page-header">
+            <div>
+              <h2>Publish</h2>
+              <span className="page-header-sub">Loading…</span>
+            </div>
+          </div>
+          <div style={{ padding: "20px 28px", color: "var(--muted)" }}>Loading publish…</div>
+        </>
+      }
+    >
+      <PublishPageContent />
+    </Suspense>
   );
 }

@@ -18,6 +18,7 @@ import { triggersForInsight } from "../config/editorial-engineering-triggers.js"
 import { q } from "../db/queries.js";
 import { insertInsight } from "../repositories/learning-evidence.js";
 import { insertLearningRule } from "../repositories/learning.js";
+import { listRunOutputReviewsForEditorialWindow, type RunOutputReviewRow } from "../repositories/run-output-reviews.js";
 import { buildEngineeringRemediationPrompt } from "./editorial-engineering-prompt.js";
 import { templateNameFromPayload } from "./carousel-render-pack.js";
 import {
@@ -120,6 +121,15 @@ function mergeEngineeringMarkdown(heuristicMd: string, llmBlock: string): string
   return h || l;
 }
 
+function formatRunOutputReviewsMarkdown(rows: RunOutputReviewRow[]): string {
+  if (rows.length === 0) return "";
+  const blocks = rows.map((r) => {
+    const who = (r.validator ?? "").trim() || "operator";
+    return `### Run \`${r.run_id}\` (${who} · ${r.updated_at})\n\n${r.body.trim()}`;
+  });
+  return ["## Holistic run output reviews (operator)", "", ...blocks].join("\n\n");
+}
+
 /**
  * Analyze editorial review history for a project and generate learning rules.
  *
@@ -167,7 +177,9 @@ export async function analyzeEditorialPatterns(
     [projectId, cutoff.toISOString()]
   );
 
-  if (reviews.length === 0) {
+  const runOutputReviews = await listRunOutputReviewsForEditorialWindow(db, projectId, cutoff.toISOString());
+
+  if (reviews.length === 0 && runOutputReviews.length === 0) {
     return {
       project_slug: projectSlug,
       window_days: windowDays,
@@ -190,6 +202,7 @@ export async function analyzeEditorialPatterns(
   const approved = reviews.filter((r) => r.decision === "APPROVED").length;
   const rejected = reviews.filter((r) => r.decision === "REJECTED").length;
   const needsEdit = reviews.filter((r) => r.decision === "NEEDS_EDIT").length;
+  const approvalRateWindow = total > 0 ? approved / total : 0;
 
   // Aggregate rejection tags
   const tagCounts = new Map<string, number>();
@@ -246,7 +259,7 @@ export async function analyzeEditorialPatterns(
 
   // Insight: high rejection tags
   for (const { tag, count } of topTags) {
-    if (count >= 3 && count / total >= 0.15) {
+    if (total > 0 && count >= 3 && count / total >= 0.15) {
       const insight: EditorialInsight = {
         insight_type: "frequent_rejection_tag",
         scope: tag,
@@ -333,7 +346,7 @@ export async function analyzeEditorialPatterns(
 
   // Insight: frequently overridden fields
   for (const [field, count] of overrideFields) {
-    if (count >= 3 && count / total >= 0.2) {
+    if (total > 0 && count >= 3 && count / total >= 0.2) {
       insights.push({
         insight_type: "frequent_override_field",
         scope: field,
@@ -347,13 +360,24 @@ export async function analyzeEditorialPatterns(
 
   const reviewsWithNotes = reviews.filter((r) => (r.notes ?? "").trim().length > 0);
   const notesCount = reviewsWithNotes.length;
-  if (notesCount >= 3 && notesCount / total >= 0.08) {
+  if (total > 0 && notesCount >= 3 && notesCount / total >= 0.08) {
     insights.push({
       insight_type: "frequent_reviewer_notes",
       scope: "notes",
       detail: `${notesCount}/${total} reviews include non-empty reviewer notes (${((notesCount / total) * 100).toFixed(0)}%)`,
       confidence: Math.min(0.88, notesCount / total + 0.15),
       sample_size: notesCount,
+      rule_created: false,
+    });
+  }
+
+  if (runOutputReviews.length > 0) {
+    insights.push({
+      insight_type: "run_output_operator_review",
+      scope: `${runOutputReviews.length} run(s)`,
+      detail: `Holistic run output reviews in window: ${runOutputReviews.map((r) => r.run_id).join(", ")}`,
+      confidence: 0.72,
+      sample_size: runOutputReviews.length,
       rule_created: false,
     });
   }
@@ -385,7 +409,7 @@ export async function analyzeEditorialPatterns(
     projectSlug,
     windowDays,
     totalReviews: total,
-    approvalRate: approved / total,
+    approvalRate: approvalRateWindow,
     insights,
     reviews: reviews.map((r) => ({
       task_id: r.task_id,
@@ -395,13 +419,19 @@ export async function analyzeEditorialPatterns(
     lowApprovalFlowTaskIds,
   });
 
+  const runReviewMd = formatRunOutputReviewsMarkdown(runOutputReviews);
+  const engineeringMarkdownBase =
+    engBrief.markdown.trim() && runReviewMd
+      ? `${engBrief.markdown.trim()}\n\n---\n\n${runReviewMd}`
+      : engBrief.markdown.trim() || runReviewMd;
+
   let llmNotesResult: EditorialNotesLlmResult | null = null;
   if (runLlmOnNotes) {
     const aggregate = {
       total_reviews: total,
-      approval_rate: approved / total,
-      rejection_rate: rejected / total,
-      needs_edit_rate: needsEdit / total,
+      approval_rate: approvalRateWindow,
+      rejection_rate: total > 0 ? rejected / total : 0,
+      needs_edit_rate: total > 0 ? needsEdit / total : 0,
       top_rejection_tags: topTags,
       top_override_fields: Array.from(overrideFields.entries())
         .sort((a, b) => b[1] - a[1])
@@ -413,12 +443,19 @@ export async function analyzeEditorialPatterns(
         detail: i.detail,
       })),
       reviews_with_notes_count: notesCount,
+      run_output_reviews: runOutputReviews.map((r) => ({
+        run_id: r.run_id,
+        body: r.body.length > 4000 ? `${r.body.slice(0, 4000)}…` : r.body,
+        validator: r.validator,
+        updated_at: r.updated_at,
+      })),
     };
 
     llmNotesResult = await synthesizeEditorialNotesWithLlm(db, config, projectId, {
       projectSlug,
       windowDays,
       aggregate,
+      runOutputReviews,
       noteRows: reviews.map((r) => ({
         task_id: r.task_id,
         decision: r.decision,
@@ -570,23 +607,24 @@ export async function analyzeEditorialPatterns(
 
   const llmMdBlock =
     llmNotesResult && !("skipped" in llmNotesResult) ? formatLlmNotesForPrompt(llmNotesResult) : "";
-  const combinedEngineeringMd = mergeEngineeringMarkdown(engBrief.markdown, llmMdBlock);
+  const combinedEngineeringMd = mergeEngineeringMarkdown(engineeringMarkdownBase, llmMdBlock);
 
   let engineeringInsightId: string | null = null;
   if (combinedEngineeringMd && persistEngineeringInsight) {
     engineeringInsightId = `eng_editorial_${projectSlug}_${windowDays}d_${analysisRunDay}`;
     const triggerCount = engBrief.triggers_fired.length;
     const llmOk = llmNotesResult && !("skipped" in llmNotesResult);
+    const hasRunReviews = runOutputReviews.length > 0;
     await insertInsight(db, {
       insight_id: engineeringInsightId,
       scope_type: "engineering",
       project_id: projectId,
-      title: `Engineering brief: editorial (${windowDays}d, ${triggerCount} trigger(s)${llmOk ? ", LLM notes" : ""})`,
+      title: `Engineering brief: editorial (${windowDays}d, ${triggerCount} trigger(s)${llmOk ? ", LLM notes" : ""}${hasRunReviews ? ", run reviews" : ""})`,
       body: combinedEngineeringMd,
       derived_from_observation_ids: [],
       confidence:
-        triggerCount > 0 || llmOk
-          ? Math.min(0.9, 0.55 + triggerCount * 0.05 + (llmOk ? 0.1 : 0))
+        triggerCount > 0 || llmOk || hasRunReviews
+          ? Math.min(0.9, 0.55 + triggerCount * 0.05 + (llmOk ? 0.1 : 0) + (hasRunReviews ? 0.05 : 0))
           : null,
       status: "draft",
     });
@@ -602,9 +640,9 @@ export async function analyzeEditorialPatterns(
     project_slug: projectSlug,
     window_days: windowDays,
     total_reviews: total,
-    approval_rate: approved / total,
-    rejection_rate: rejected / total,
-    needs_edit_rate: needsEdit / total,
+    approval_rate: approvalRateWindow,
+    rejection_rate: total > 0 ? rejected / total : 0,
+    needs_edit_rate: total > 0 ? needsEdit / total : 0,
     top_rejection_tags: topTags,
     insights,
     rules_created: rulesCreated,

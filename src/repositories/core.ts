@@ -64,6 +64,14 @@ export async function getProjectBySlug(db: Pool, slug: string): Promise<ProjectR
   );
 }
 
+export async function getProjectById(db: Pool, projectId: string): Promise<ProjectRow | null> {
+  return qOne<ProjectRow>(
+    db,
+    `SELECT id, slug, display_name, active, color FROM caf_core.projects WHERE id = $1`,
+    [projectId]
+  );
+}
+
 /** Active tenant projects for scheduled editorial analysis (excludes caf-global). */
 export async function listActiveProjectsForEditorialCron(db: Pool): Promise<ProjectRow[]> {
   return q<ProjectRow>(

@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { RUN_DISPLAY_NAME_METADATA_KEY } from "../lib/run-display-name.js";
 import { deleteAllJobsForRun } from "./jobs.js";
 import { q, qOne } from "../db/queries.js";
 import type { RunPromptVersionsSnapshot } from "../services/run-prompt-versions-snapshot.js";
@@ -100,6 +101,11 @@ export async function patchRun(
     signal_pack_id?: string | null;
     source_window?: string | null;
     metadata_json?: Record<string, unknown>;
+    /**
+     * Optional display name in `metadata_json.display_name`.
+     * `null` or empty after trim removes the key (via jsonb `-`).
+     */
+    display_name?: string | null;
   }
 ): Promise<RunRow | null> {
   const sets: string[] = [];
@@ -113,10 +119,27 @@ export async function patchRun(
     sets.push(`source_window = $${i++}`);
     vals.push(patch.source_window);
   }
-  if (patch.metadata_json !== undefined) {
-    sets.push(`metadata_json = metadata_json || $${i++}::jsonb`);
-    vals.push(JSON.stringify(patch.metadata_json));
+
+  const merge = patch.metadata_json;
+  const displayName = patch.display_name;
+  if (merge !== undefined || displayName !== undefined) {
+    let expr = "coalesce(metadata_json, '{}'::jsonb)";
+    if (merge !== undefined) {
+      expr = `(${expr}) || $${i++}::jsonb`;
+      vals.push(JSON.stringify(merge));
+    }
+    if (displayName !== undefined) {
+      const trimmed = typeof displayName === "string" ? displayName.trim() : "";
+      if (displayName === null || trimmed === "") {
+        expr = `(${expr}) - '${RUN_DISPLAY_NAME_METADATA_KEY}'`;
+      } else {
+        expr = `(${expr}) || $${i++}::jsonb`;
+        vals.push(JSON.stringify({ [RUN_DISPLAY_NAME_METADATA_KEY]: trimmed }));
+      }
+    }
+    sets.push(`metadata_json = ${expr}`);
   }
+
   if (sets.length === 0) {
     return getRunById(db, runUuid);
   }

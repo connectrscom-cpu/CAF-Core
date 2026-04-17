@@ -360,6 +360,21 @@ textarea { resize: vertical; }
   overflow-x: auto;
   padding-right: 6px; /* small gutter so horizontal scrollbar doesn't touch the grid gap */
 }
+
+/* Publish: filters above table so the left column stays usable (filters + table share width). */
+.publish-left .publish-approved-workbench.workbench {
+  flex-direction: column;
+}
+.publish-left .publish-approved-workbench .workbench-filters {
+  width: 100%;
+  max-width: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+  padding: 0 0 16px 0;
+}
+.publish-left .publish-approved-workbench .workbench-table {
+  padding: 16px 0 0 0;
+}
 .publish-right{
   /* Opaque background so overflow never visually bleeds through. */
   min-width: 0;

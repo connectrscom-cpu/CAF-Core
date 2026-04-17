@@ -616,6 +616,8 @@ export type CarouselRenderCtaOptions = {
   instagramHandle?: string | null;
   /** Overrides DEFAULT_CAROUSEL_CTA_COPY when CTA text is missing. */
   defaultCtaCopy?: string;
+  /** `caf_core.projects.display_name` or slug — injected as `project_display_name` for cover branding. */
+  projectDisplayName?: string | null;
 };
 
 /** Normalize handle for carousel overlays (always leading @ when non-empty). */
@@ -757,6 +759,7 @@ export function buildSlideRenderContext(
         }
       : null;
   const cta = resolveCarouselCtaFields(base, templateShape, slides, ctaOptions);
+  const projectDisplayName = String(ctaOptions?.projectDisplayName ?? "").trim();
 
   const out: Record<string, unknown> = {
     ...base,
@@ -771,6 +774,7 @@ export function buildSlideRenderContext(
     headline,
     body,
     handle: String(current.handle ?? base.cta_handle ?? cta.cta_handle ?? ""),
+    ...(projectDisplayName ? { project_display_name: projectDisplayName } : {}),
   };
 
   return out;

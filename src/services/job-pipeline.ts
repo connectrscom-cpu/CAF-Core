@@ -17,6 +17,7 @@ import {
 } from "./validation-router.js";
 import { uploadBuffer } from "./supabase-storage.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
+import { getProjectById } from "../repositories/core.js";
 import { getStrategyDefaults } from "../repositories/project-config.js";
 import {
   carouselSlideCount,
@@ -935,6 +936,9 @@ async function processCarouselJob(
   const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload);
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectInstagramHandle = strategyRow?.instagram_handle ?? null;
+  const projectRow = await getProjectById(db, job.project_id);
+  const projectDisplayName =
+    (projectRow?.display_name?.trim() || projectRow?.slug?.trim() || "").trim() || null;
 
   // Persist chosen carousel template onto the job payload so downstream systems (review UI, editorial learning,
   // engineering prompts) can reliably resolve `carousel_template_name` by task_id. Without this, the resolver
@@ -977,6 +981,7 @@ async function processCarouselJob(
 
       const ctx = buildSlideRenderContext(renderBase, usableSlides, i, {
         instagramHandle: projectInstagramHandle,
+        projectDisplayName,
       });
       const body = {
         task_id: job.task_id,

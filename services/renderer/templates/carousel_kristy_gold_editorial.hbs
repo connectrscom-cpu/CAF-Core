@@ -35,6 +35,10 @@
       justify-content:space-between;
       position:relative;
     }
+    .wrap.wrap--stack{
+      justify-content:flex-start;
+      gap: 36px;
+    }
     .kicker{
       font-size:16px;
       letter-spacing:0.18em;
@@ -60,7 +64,7 @@
     }
     .body{
       margin-top: 34px;
-      font-size: 34px;
+      font-size: 46px;
       line-height: 1.48;
       color: var(--cream-soft);
       text-align:center;
@@ -83,6 +87,15 @@
       color: var(--champagne);
       font-size: 34px;
       margin-top: 18px;
+    }
+    .cover-meta,.cta-meta{
+      margin-top: 22px;
+      font-family: Inter,system-ui,Arial,sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: rgba(212,196,160,0.72);
+      font-size: 22px;
     }
     .cover-title{
       font-family:"DM Serif Display",serif;
@@ -108,19 +121,16 @@
 <body>
   <!-- Cover -->
   <div class="slide">
-    <div class="wrap">
+    <div class="wrap wrap--stack">
       <div style="text-align:center;">
         <div class="kicker">Slide 01 / Cover</div>
         <div class="cover-title">
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
         <div class="cover-sub">
-          {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+          {{#if cover_subtitle}}{{joinEmojiOrphans cover_subtitle}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.body}}{{/if}}{{/if}}
         </div>
-      </div>
-      <div style="text-align:center;">
-        <div class="rule"></div>
-        <div class="footer">{{#if cover_slide.author}}{{cover_slide.author}}{{else}}{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}{{/if}}</div>
+        {{#if cover_slide.author}}<div class="cover-meta">{{cover_slide.author}}</div>{{else}}{{#if cta_handle}}<div class="cover-meta">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cover-meta">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       </div>
     </div>
   </div>
@@ -133,7 +143,7 @@
         <div class="kicker">Slide / Reading</div>
         <div class="sign">{{headline}}</div>
         {{#if kicker}}<div class="subtitle">{{kicker}}</div>{{else}}{{#if subheadline}}<div class="subtitle">{{subheadline}}</div>{{/if}}{{/if}}
-        <div class="body">{{body}}</div>
+        <div class="body">{{joinEmojiOrphans body}}</div>
       </div>
       <div style="text-align:center;">
         <div class="rule"></div>
@@ -145,17 +155,14 @@
 
   <!-- CTA -->
   <div class="slide">
-    <div class="wrap">
+    <div class="wrap wrap--stack">
       <div style="text-align:center;">
         <div class="kicker">Slide / CTA</div>
         <div class="cover-title" style="font-size:110px;">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>
         {{#if cta_slide.sub}}<div class="cover-sub">{{cta_slide.sub}}</div>{{/if}}
-      </div>
-      <div style="text-align:center;">
-        <div class="rule"></div>
-        <div class="footer">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
+        {{#if cta_handle}}<div class="cta-meta">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-meta">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       </div>
     </div>
   </div>

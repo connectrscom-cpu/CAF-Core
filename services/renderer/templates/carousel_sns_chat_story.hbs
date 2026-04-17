@@ -124,7 +124,8 @@
         <div class="top">
           <div class="avatar"></div>
           <div>
-            <div class="name">{{#if cover_slide.name}}{{cover_slide.name}}{{else}}{{#if handle}}{{handle}}{{else}}SNS{{/if}}{{/if}}</div>
+            {{!-- Cover header: brand/project only (LLM often misuses cover_slide.name for hook copy). --}}
+            <div class="name">{{#if project_display_name}}{{project_display_name}}{{else}}{{#if handle}}{{handle}}{{else}}SNS{{/if}}</div>
             <div class="status">{{#if cover_slide.status}}{{cover_slide.status}}{{else}}online{{/if}}</div>
           </div>
         </div>

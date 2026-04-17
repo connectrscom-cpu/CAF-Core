@@ -24,6 +24,7 @@ interface TasksResponse {
 interface FacetsResponse {
   project?: string[];
   run_id?: string[];
+  run_display_names?: Record<string, string>;
   platform?: string[];
   flow_type?: string[];
   recommended_route?: string[];
@@ -111,6 +112,7 @@ function WorkbenchContent() {
           <WorkbenchFilters
             projectValues={facets.project ?? []}
             runIdValues={facets.run_id ?? []}
+            runDisplayNames={facets.run_display_names}
             platformValues={facets.platform ?? []}
             flowTypeValues={facets.flow_type ?? []}
             recommendedRouteValues={facets.recommended_route ?? []}

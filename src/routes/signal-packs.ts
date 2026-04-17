@@ -7,6 +7,7 @@ import { insertSignalPack, getSignalPackById, listSignalPacks } from "../reposit
 import { createRun } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { trimRunDisplayName } from "../lib/run-display-name.js";
 
 export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db } = deps;
@@ -15,6 +16,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
    * POST /v1/signal-packs/upload
    *
    * Accepts a multipart file upload (.xlsx) and a project_slug field.
+   * Optional `run_name` (or `display_name` / `name`) sets `runs.metadata_json.display_name`.
    * Parses the Excel into structured JSON, inserts a signal_pack row,
    * creates a run linked to it, and returns both IDs.
    */
@@ -25,6 +27,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     let projectSlug: string | null = null;
     let sourceWindow: string | null = null;
     let notes: string | null = null;
+    let runName: string | null = null;
 
     for await (const part of parts) {
       if (part.type === "file") {
@@ -38,6 +41,9 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         if (part.fieldname === "project_slug") projectSlug = part.value as string;
         else if (part.fieldname === "source_window") sourceWindow = part.value as string;
         else if (part.fieldname === "notes") notes = part.value as string;
+        else if (part.fieldname === "run_name" || part.fieldname === "display_name" || part.fieldname === "name") {
+          runName = part.value as string;
+        }
       }
     }
 
@@ -60,6 +66,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       ...packForDb,
     });
 
+    const displayName = trimRunDisplayName(runName);
     const run = await createRun(db, {
       run_id: runId,
       project_id: project.id,
@@ -71,6 +78,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         derived_globals: parsed.derived_globals_json,
         sheets_ingested,
         used_published_signal_pack_row: used_published_signal_pack_row ?? false,
+        ...(displayName ? { display_name: displayName } : {}),
       },
     });
 
@@ -152,6 +160,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     html_summary_json: z.unknown().optional(),
     derived_globals_json: z.record(z.unknown()).optional(),
     notes: z.string().optional(),
+    name: z.string().max(200).optional(),
   });
 
   app.post("/v1/signal-packs/ingest", async (request, reply) => {
@@ -177,12 +186,16 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       notes: body.notes ?? null,
     });
 
+    const ingestLabel = trimRunDisplayName(body.name);
     const run = await createRun(db, {
       run_id: runId,
       project_id: project.id,
       source_window: body.source_window ?? null,
       signal_pack_id: pack.id,
-      metadata_json: { total_candidates: body.overall_candidates_json.length },
+      metadata_json: {
+        total_candidates: body.overall_candidates_json.length,
+        ...(ingestLabel ? { display_name: ingestLabel } : {}),
+      },
     });
 
     await tryInsertApiCallAudit(db, {

@@ -11,6 +11,7 @@ export async function GET() {
       return NextResponse.json({
         project: facets.projects ?? [],
         run_id: facets.runs,
+        run_display_names: facets.run_display_names ?? {},
         platform: facets.platforms,
         flow_type: facets.flow_types,
         recommended_route: facets.routes,
@@ -20,6 +21,7 @@ export async function GET() {
     return NextResponse.json({
       project: [],
       run_id: facets.runs,
+      run_display_names: facets.run_display_names ?? {},
       platform: facets.platforms,
       flow_type: facets.flow_types,
       recommended_route: facets.routes,

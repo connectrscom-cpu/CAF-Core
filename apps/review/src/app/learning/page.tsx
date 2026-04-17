@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import Link from "next/link";
+
+async function copyTaskIdToClipboard(taskId: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(taskId);
+  } catch {
+    window.prompt("Copy task_id (Ctrl+C, then Enter):", taskId);
+  }
+}
 
 interface LearningRule {
   rule_id: string;
@@ -840,10 +849,15 @@ export default function LearningPage() {
       {llmReviews.length > 0 && (
         <div className="card" style={{ marginBottom: 20 }}>
           <h3 style={{ marginBottom: 8 }}>Recent LLM approval reviews ({llmReviews.length})</h3>
-          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+          <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--muted)" }}>
+            Full <code>task_id</code> is shown so you can select text or use Copy / Open.
+          </p>
+          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", tableLayout: "fixed" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>task_id</th>
+                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "46%" }}>
+                  task_id
+                </th>
                 <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>score</th>
                 <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>images</th>
                 <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>hint rule</th>
@@ -853,8 +867,36 @@ export default function LearningPage() {
             <tbody>
               {llmReviews.slice(0, 15).map((r) => (
                 <tr key={String(r.review_id)}>
-                  <td style={{ padding: 6, borderBottom: "1px solid var(--border)", fontFamily: "monospace" }}>
-                    {String(r.task_id).length > 28 ? `${String(r.task_id).slice(0, 28)}…` : String(r.task_id)}
+                  <td
+                    style={{
+                      padding: 6,
+                      borderBottom: "1px solid var(--border)",
+                      fontFamily: "monospace",
+                      fontSize: 11,
+                      wordBreak: "break-all",
+                      verticalAlign: "top",
+                    }}
+                  >
+                    <div style={{ userSelect: "text" }}>{String(r.task_id)}</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        style={{ fontSize: 11, padding: "4px 10px" }}
+                        onClick={() => void copyTaskIdToClipboard(String(r.task_id))}
+                        title="Copy full task_id to the clipboard"
+                      >
+                        Copy ID
+                      </button>
+                      <Link
+                        href={`/t/${encodeURIComponent(String(r.task_id))}`}
+                        className="btn-ghost"
+                        style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+                        title="Open this task in the review app"
+                      >
+                        Open task
+                      </Link>
+                    </div>
                   </td>
                   <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
                     {r.overall_score != null ? Number(r.overall_score).toFixed(2) : "—"}

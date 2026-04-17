@@ -13,11 +13,20 @@ const REVIEW_STATUS_FALLBACK = ["", "READY", "IN_REVIEW", "SUBMITTED", "APPROVED
 const DECISION_OPTIONS = ["", "APPROVED", "NEEDS_EDIT", "REJECTED"];
 const GROUP_OPTIONS = ["", "project", "platform", "flow_type", "recommended_route"] as const;
 
+function runOptionLabel(runId: string, names?: Record<string, string>): string {
+  const label = names?.[runId]?.trim();
+  if (!label) return runId;
+  const short = label.length > 72 ? `${label.slice(0, 70)}…` : label;
+  return `${short} — ${runId}`;
+}
+
 export interface WorkbenchFiltersProps {
   className?: string;
   basePath?: string;
   projectValues?: string[];
   runIdValues?: string[];
+  /** `run_id` → `runs.metadata_json.display_name` (from Core review facets). */
+  runDisplayNames?: Record<string, string>;
   platformValues?: string[];
   flowTypeValues?: string[];
   recommendedRouteValues?: string[];
@@ -28,6 +37,7 @@ export function WorkbenchFilters({
   basePath = "/",
   projectValues = [],
   runIdValues = [],
+  runDisplayNames,
   platformValues = [],
   flowTypeValues = [],
   recommendedRouteValues = [],
@@ -100,7 +110,11 @@ export function WorkbenchFilters({
         <label className="filter-label">Run</label>
         <select className="filter-select" value={params.run_id ?? ""} onChange={(e) => setParam("run_id", e.target.value)}>
           <option value="">All</option>
-          {runIdValues.map((v) => (<option key={v} value={v}>{v}</option>))}
+          {runIdValues.map((v) => (
+            <option key={v} value={v}>
+              {runOptionLabel(v, runDisplayNames)}
+            </option>
+          ))}
         </select>
       </div>
 

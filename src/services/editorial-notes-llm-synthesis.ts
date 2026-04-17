@@ -4,6 +4,7 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
+import type { RunOutputReviewRow } from "../repositories/run-output-reviews.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 
@@ -83,8 +84,8 @@ function safeParseSynthesisJson(raw: string): Partial<EditorialNotesLlmSynthesis
 export const EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT = `You are an analyst for CAF (Content Automation Framework), a system that generates content jobs, renders carousels/videos, and records human editorial reviews.
 
 You receive:
-- Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights).
-- Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included), plus the carousel template name when available.
+- Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights). The aggregate may include **run_output_reviews**: holistic operator write-ups on entire **runs** (batch quality, coherence, what worked or failed across jobs).
+- Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included), plus the carousel template name when available. When the aggregate field run_output_reviews is present, treat it as first-class signal even if per-task notes are sparse.
 
 Your job:
 1. Convert the notes into **guidelines** that improve next generations: what was good/bad about the body/script, what failed structurally, and what should be consistently enforced.
@@ -122,6 +123,8 @@ export async function synthesizeEditorialNotesWithLlm(
     projectSlug: string;
     windowDays: number;
     aggregate: Record<string, unknown>;
+    /** Holistic run-level reviews (same window); included in aggregate and here for clarity. */
+    runOutputReviews?: RunOutputReviewRow[];
     noteRows: EditorialNoteRow[];
   }
 ): Promise<EditorialNotesLlmResult> {
@@ -131,7 +134,8 @@ export async function synthesizeEditorialNotesWithLlm(
   }
 
   const withNotes = params.noteRows.filter((r) => r.note.trim().length > 0);
-  if (withNotes.length === 0) {
+  const runReviews = params.runOutputReviews ?? [];
+  if (withNotes.length === 0 && runReviews.length === 0) {
     return { skipped: true, reason: "no_reviewer_notes_in_window" };
   }
 

@@ -1,6 +1,34 @@
 import type { Pool } from "pg";
+import { RUN_DISPLAY_NAME_METADATA_KEY } from "../lib/run-display-name.js";
 import { q, qOne } from "../db/queries.js";
 import { slidesJsonForReviewUi } from "../services/review-ui-slides.js";
+
+function buildRunDisplayNamesFromRows(
+  rows: Array<{ run_id: string; project_slug: string; display_name: string | null }>
+): Record<string, string> {
+  const byRun = new Map<string, Map<string, string>>();
+  for (const row of rows) {
+    const dn = row.display_name?.trim();
+    if (!dn) continue;
+    let m = byRun.get(row.run_id);
+    if (!m) {
+      m = new Map();
+      byRun.set(row.run_id, m);
+    }
+    m.set(row.project_slug, dn);
+  }
+  const out: Record<string, string> = {};
+  for (const [rid, slugMap] of byRun) {
+    if (slugMap.size === 1) {
+      out[rid] = [...slugMap.values()][0]!;
+    } else {
+      out[rid] = [...slugMap.entries()]
+        .map(([slug, name]) => `${name} (${slug})`)
+        .join(" · ");
+    }
+  }
+  return out;
+}
 
 export interface ReviewQueueJob {
   id: string;
@@ -285,13 +313,25 @@ export async function getDistinctValues(
   routes: string[];
   runs: string[];
   statuses: string[];
+  /** `run_id` → label from `caf_core.runs.metadata_json.display_name` (best-effort across projects in the global facets query). */
+  run_display_names: Record<string, string>;
 }> {
-  const [platforms, flow_types, routes, runs, statuses] = await Promise.all([
+  const [platforms, flow_types, routes, runs, statuses, runLabelRows] = await Promise.all([
     q<{ v: string }>(db, `SELECT DISTINCT platform AS v FROM caf_core.content_jobs WHERE project_id = $1 AND platform IS NOT NULL ORDER BY v`, [projectId]),
     q<{ v: string }>(db, `SELECT DISTINCT flow_type AS v FROM caf_core.content_jobs WHERE project_id = $1 AND flow_type IS NOT NULL ORDER BY v`, [projectId]),
     q<{ v: string }>(db, `SELECT DISTINCT recommended_route AS v FROM caf_core.content_jobs WHERE project_id = $1 AND recommended_route IS NOT NULL ORDER BY v`, [projectId]),
     q<{ v: string }>(db, `SELECT DISTINCT run_id AS v FROM caf_core.content_jobs WHERE project_id = $1 ORDER BY v`, [projectId]),
     q<{ v: string }>(db, `SELECT DISTINCT status AS v FROM caf_core.content_jobs WHERE project_id = $1 AND status IS NOT NULL ORDER BY v`, [projectId]),
+    q<{ run_id: string; project_slug: string; display_name: string | null }>(
+      db,
+      `SELECT DISTINCT j.run_id, p.slug AS project_slug,
+         NULLIF(trim(r.metadata_json->>'${RUN_DISPLAY_NAME_METADATA_KEY}'), '') AS display_name
+       FROM caf_core.content_jobs j
+       INNER JOIN caf_core.projects p ON p.id = j.project_id
+       LEFT JOIN caf_core.runs r ON r.project_id = j.project_id AND r.run_id = j.run_id
+       WHERE j.project_id = $1`,
+      [projectId]
+    ),
   ]);
   return {
     platforms: platforms.map((r) => r.v),
@@ -299,6 +339,7 @@ export async function getDistinctValues(
     routes: routes.map((r) => r.v),
     runs: runs.map((r) => r.v),
     statuses: statuses.map((r) => r.v),
+    run_display_names: buildRunDisplayNamesFromRows(runLabelRows),
   };
 }
 
@@ -523,10 +564,11 @@ export async function getDistinctValuesAllProjects(db: Pool): Promise<{
   routes: string[];
   runs: string[];
   statuses: string[];
+  run_display_names: Record<string, string>;
 }> {
   const base = `FROM caf_core.content_jobs j
     INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true`;
-  const [projects, platforms, flow_types, routes, runs, statuses] = await Promise.all([
+  const [projects, platforms, flow_types, routes, runs, statuses, runLabelRows] = await Promise.all([
     q<{ v: string }>(db, `SELECT DISTINCT p.slug AS v ${base} ORDER BY v`),
     q<{ v: string }>(db, `SELECT DISTINCT j.platform AS v ${base} AND j.platform IS NOT NULL ORDER BY v`),
     q<{ v: string }>(db, `SELECT DISTINCT j.flow_type AS v ${base} AND j.flow_type IS NOT NULL ORDER BY v`),
@@ -536,6 +578,13 @@ export async function getDistinctValuesAllProjects(db: Pool): Promise<{
     ),
     q<{ v: string }>(db, `SELECT DISTINCT j.run_id AS v ${base} ORDER BY v`),
     q<{ v: string }>(db, `SELECT DISTINCT j.status AS v ${base} AND j.status IS NOT NULL ORDER BY v`),
+    q<{ run_id: string; project_slug: string; display_name: string | null }>(
+      db,
+      `SELECT DISTINCT j.run_id, p.slug AS project_slug,
+         NULLIF(trim(r.metadata_json->>'${RUN_DISPLAY_NAME_METADATA_KEY}'), '') AS display_name
+       ${base}
+       LEFT JOIN caf_core.runs r ON r.project_id = j.project_id AND r.run_id = j.run_id`
+    ),
   ]);
   return {
     projects: projects.map((r) => r.v),
@@ -544,6 +593,7 @@ export async function getDistinctValuesAllProjects(db: Pool): Promise<{
     routes: routes.map((r) => r.v),
     runs: runs.map((r) => r.v),
     statuses: statuses.map((r) => r.v),
+    run_display_names: buildRunDisplayNamesFromRows(runLabelRows),
   };
 }
 

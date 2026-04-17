@@ -236,6 +236,8 @@ export interface Facets {
   routes: string[];
   runs: string[];
   statuses: string[];
+  /** Human labels from `runs.metadata_json.display_name`, keyed by `run_id`. */
+  run_display_names?: Record<string, string>;
 }
 
 export interface QueueFilters {
@@ -339,7 +341,19 @@ export async function getFacets(projectSlug: string): Promise<Facets> {
   const data = await coreGetRequired<{ ok: boolean; facets: Facets }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/facets`
   );
-  return data.facets ?? { platforms: [], flow_types: [], routes: [], runs: [], statuses: [] };
+  const f = data.facets;
+  if (!f) {
+    return { platforms: [], flow_types: [], routes: [], runs: [], statuses: [], run_display_names: {} };
+  }
+  return {
+    platforms: f.platforms ?? [],
+    flow_types: f.flow_types ?? [],
+    routes: f.routes ?? [],
+    runs: f.runs ?? [],
+    statuses: f.statuses ?? [],
+    run_display_names: f.run_display_names ?? {},
+    projects: f.projects,
+  };
 }
 
 export async function getFacetsAll(): Promise<Facets> {
@@ -353,6 +367,7 @@ export async function getFacetsAll(): Promise<Facets> {
       routes: f?.routes ?? [],
       runs: f?.runs ?? [],
       statuses: f?.statuses ?? [],
+      run_display_names: f?.run_display_names ?? {},
     };
   } catch (e) {
     if (!isMissingReviewQueueAllRoute(e)) throw e;

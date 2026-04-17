@@ -94,13 +94,31 @@
     .handle{
       font-weight: 700;
     }
+    .wrap.wrap--tight .title{
+      text-align:left;
+      font-size: 76px;
+    }
+    .wrap.wrap--tight .body{
+      text-align:left;
+      font-size: 46px;
+    }
+    .wrap.wrap--tight .cta{
+      position: static;
+      margin-top: 28px;
+      justify-content:flex-start;
+      align-items:flex-start;
+      flex-direction:column;
+      gap: 10px;
+      text-align:left;
+      font-size: 16px;
+    }
   </style>
 </head>
 <body>
   <!-- Cover -->
   <div class="slide">
     <div class="grain"></div>
-    <div class="wrap">
+    <div class="wrap wrap--tight">
       <div class="kicker">Slide 01 / Cover</div>
       <div class="lines"></div>
       <div class="title">
@@ -136,13 +154,13 @@
   <!-- CTA -->
   <div class="slide">
     <div class="grain"></div>
-    <div class="wrap">
+    <div class="wrap wrap--tight">
       <div class="kicker">Slide / CTA</div>
       <div class="lines"></div>
-      <div class="title" style="font-size:90px;">
+      <div class="title" style="font-size:72px;">
         {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
       </div>
-      <div class="body" style="font-size:52px;">
+      <div class="body" style="font-size:44px;">
         {{#if cta_handle}}Follow {{cta_handle}} for more.{{else}}Follow · Save · Share for more content.{{/if}}
       </div>
       <div class="cta">
