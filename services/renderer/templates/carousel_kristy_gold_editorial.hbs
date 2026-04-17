@@ -88,18 +88,18 @@
       font-size: 34px;
       margin-top: 18px;
     }
-    .cover-meta,.cta-meta{
+    .cover-meta,    .cta-meta{
       margin-top: 22px;
       font-family: Inter,system-ui,Arial,sans-serif;
       font-weight: 700;
       letter-spacing: 0.14em;
       text-transform: uppercase;
       color: rgba(212,196,160,0.72);
-      font-size: 22px;
+      font-size: 28px;
     }
     .cover-title{
       font-family:"DM Serif Display",serif;
-      font-size: 122px;
+      font-size: 136px;
       line-height: 0.94;
       letter-spacing: -0.02em;
       color: var(--cream);
@@ -110,7 +110,7 @@
     .cover-sub{
       text-align:center;
       margin-top: 18px;
-      font-size: 28px;
+      font-size: 34px;
       line-height: 1.35;
       color: rgba(232,220,196,0.82);
       max-width: 920px;
@@ -158,7 +158,7 @@
     <div class="wrap wrap--stack">
       <div style="text-align:center;">
         <div class="kicker">Slide / CTA</div>
-        <div class="cover-title" style="font-size:110px;">
+        <div class="cover-title" style="font-size:126px;">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>
         {{#if cta_slide.sub}}<div class="cover-sub">{{cta_slide.sub}}</div>{{/if}}

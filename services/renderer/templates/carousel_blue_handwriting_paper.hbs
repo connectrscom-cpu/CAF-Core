@@ -38,6 +38,14 @@
       padding:var(--safe);
       position:relative;
     }
+    /* Cover + CTA: explicit left alignment (editorial: script font + flex rows read as centered) */
+    .wrap.wrap--tight{
+      text-align: left;
+    }
+    .wrap.wrap--tight .kicker{
+      text-align: left;
+      width: 100%;
+    }
     .lines{
       position:absolute;
       left: var(--safe);

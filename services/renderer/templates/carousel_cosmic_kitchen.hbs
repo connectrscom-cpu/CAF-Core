@@ -37,6 +37,20 @@
       text-align: center;
       background: linear-gradient(180deg, #2d2830 0%, #1a1820 100%);
     }
+    /* Readability: keep copy off the decorative “planet” orbs (no blur — Puppeteer-safe) */
+    .text-panel {
+      position: relative;
+      z-index: 2;
+      max-width: 880px;
+      padding: 44px 52px;
+      border-radius: 22px;
+      background: rgba(18, 16, 22, 0.82);
+      box-shadow: 0 14px 52px rgba(0, 0, 0, 0.45);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
     .planet {
       position: absolute;
       border-radius: 50%;
@@ -105,7 +119,6 @@
       font-weight: 600;
       color: var(--cream);
       position: relative;
-      z-index: 2;
       line-height: 1.2;
       max-width: 780px;
     }
@@ -114,7 +127,6 @@
       font-size: clamp(36px, 3.6vw, 44px);
       color: var(--gold);
       margin-top: 20px;
-      z-index: 2;
       letter-spacing: 0.06em;
     }
     .body-title {
@@ -122,7 +134,6 @@
       font-size: clamp(52px, 5.5vw, 64px);
       color: var(--cream);
       margin-bottom: 24px;
-      z-index: 2;
     }
     .body-text {
       font-family: 'Outfit', sans-serif;
@@ -130,7 +141,6 @@
       line-height: 1.45;
       color: rgba(253,248,243,0.88);
       max-width: 680px;
-      z-index: 2;
       text-align: center;
     }
     .cta-text {
@@ -138,14 +148,12 @@
       font-size: clamp(62px, 6.5vw, 78px);
       font-weight: 600;
       color: var(--gold);
-      z-index: 2;
     }
     .cta-handle {
       font-family: 'Outfit', sans-serif;
       font-size: clamp(38px, 3.8vw, 44px);
       color: var(--sage);
       margin-top: 14px;
-      z-index: 2;
     }
   </style>
 </head>
@@ -159,8 +167,10 @@
       <span class="planet tomato"></span>
       <span class="planet herb"></span>
       <span class="planet salt"></span>
-      <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
-      {{#if cover_subtitle}}<span class="subtitle-text">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-text">{{cover_slide.body}}</span>{{/if}}{{/if}}
+      <div class="text-panel">
+        <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+        {{#if cover_subtitle}}<span class="subtitle-text">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-text">{{cover_slide.body}}</span>{{/if}}{{/if}}
+      </div>
     </div>
   </div>
 
@@ -170,8 +180,10 @@
       <span class="orbit o1"></span>
       <span class="planet tomato"></span>
       <span class="planet herb"></span>
-      <span class="body-title">{{headline}}</span>
-      <p class="body-text">{{body}}</p>
+      <div class="text-panel">
+        <span class="body-title">{{headline}}</span>
+        <p class="body-text">{{body}}</p>
+      </div>
     </div>
   </div>
   {{/each}}
@@ -180,8 +192,10 @@
     <div class="slide-inner">
       <span class="planet pot"></span>
       <span class="orbit o2"></span>
-      <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
-      {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      <div class="text-panel">
+        <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+        {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      </div>
     </div>
   </div>
 

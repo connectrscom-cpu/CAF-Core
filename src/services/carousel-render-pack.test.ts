@@ -390,6 +390,10 @@ describe("renderer templates guardrails", () => {
     const src = readTemplateSource("carousel_sns_bold_text");
     expect(src).toContain("font-size:56px");
     expect(src).toContain("Follow us for more.");
+    expect(src).toContain("cta--single");
+    const ctaKicker = src.indexOf("Final / CTA");
+    expect(ctaKicker).toBeGreaterThan(-1);
+    expect(src.slice(ctaKicker)).not.toContain('<div class="body">');
   });
 
   it("carousel_sns_numbered_system increases body sizes and removes swipe footer", () => {
@@ -402,5 +406,33 @@ describe("renderer templates guardrails", () => {
     const src = readTemplateSource("carousel_candy_pop");
     expect(src).toContain("cover-title");
     expect(src).toContain("transform: none !important");
+  });
+
+  it("carousel_blue_handwriting_paper left-aligns cover and CTA stacks", () => {
+    const src = readTemplateSource("carousel_blue_handwriting_paper");
+    expect(src).toContain(".wrap.wrap--tight{");
+    expect(src).toContain("text-align: left;");
+  });
+
+  it("carousel_kristy_gold_editorial bumps cover and CTA headline sizes", () => {
+    const src = readTemplateSource("carousel_kristy_gold_editorial");
+    expect(src).toContain("font-size: 136px;");
+    expect(src).toContain("font-size: 34px;");
+    expect(src).toContain("font-size:126px");
+    expect(src).toContain("font-size: 28px;");
+  });
+
+  it("carousel_cosmic_kitchen uses a text panel for contrast over orbits", () => {
+    const src = readTemplateSource("carousel_cosmic_kitchen");
+    expect(src).toContain(".text-panel");
+    expect(src).toContain("background: rgba(18, 16, 22, 0.82);");
+  });
+
+  it("carousel_splash_party avoids tilted script secondary and flattens underline", () => {
+    const src = readTemplateSource("carousel_splash_party");
+    expect(src).toContain("transform: none !important");
+    expect(src).toContain(".subtitle-script");
+    expect(src).toContain("font-family: 'Outfit', sans-serif;");
+    expect(src).toContain("translateX(-50%) rotate(0deg)");
   });
 });
