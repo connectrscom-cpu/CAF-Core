@@ -103,12 +103,131 @@ export function pickTitleFromGenerationPayload(payload: Record<string, unknown> 
   return "";
 }
 
-/** Spoken VO for HeyGen / video script flows. */
-export function pickSpokenScriptFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
-  const go = recordVal(payload?.generated_output);
+/** Same key order as `src/services/video-gen-fields.ts` SCRIPT_KEYS — keep Workbench in sync with render/TTS. */
+const SPOKEN_SCRIPT_KEYS = [
+  "spoken_script",
+  "video_script",
+  "script",
+  "spokenScript",
+  "narration",
+  "voiceover_script",
+  "spoken_text",
+] as const;
+
+function recordFromGeneratedOutput(raw: unknown): Record<string, unknown> | null {
+  const r = recordVal(raw);
+  if (r) return r;
+  if (typeof raw === "string") {
+    const t = raw.trim();
+    if (t.startsWith("{") && t.endsWith("}")) {
+      try {
+        const o = JSON.parse(t) as unknown;
+        return recordVal(o);
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+function spokenScriptFromDialogue(gen: Record<string, unknown>): string {
+  const dialogue = gen.dialogue;
+  if (!Array.isArray(dialogue)) return "";
+  const lines = dialogue
+    .map((d) => {
+      if (d && typeof d === "object" && "line" in d) return String((d as { line: unknown }).line).trim();
+      return "";
+    })
+    .filter(Boolean);
+  return lines.join(" ").trim();
+}
+
+function spokenScriptFromBeats(gen: Record<string, unknown>): string {
+  const beats = gen.beats;
+  if (!Array.isArray(beats)) return "";
+  return beats.filter((b): b is string => typeof b === "string" && b.trim().length > 0).join(" ").trim();
+}
+
+/** Join per-scene narration slices (multi-scene assembly) when a single full `spoken_script` string is absent. */
+function spokenScriptFromSceneBundle(gen: Record<string, unknown>): string {
+  const sb = recordVal(gen.scene_bundle);
+  if (!sb) return "";
+  const scenes = arrayVal(sb.scenes);
+  if (!scenes?.length) return "";
+  const parts: string[] = [];
+  for (const sc of scenes) {
+    const r = recordVal(sc);
+    if (!r) continue;
+    const line = stringVal(r.scene_narration_line).trim();
+    if (line) parts.push(line);
+  }
+  return parts.join(" ").trim();
+}
+
+/**
+ * Extract narration text from one `generated_output`-shaped object (display: allow short scripts).
+ * Mirrors `extractSpokenScriptText` but with min length 1 and no duplicate imports from Core `src/`.
+ */
+function extractSpokenScriptFromGenRecord(gen: Record<string, unknown>): string {
+  for (const k of SPOKEN_SCRIPT_KEYS) {
+    const v = gen[k];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  const fromDialogue = spokenScriptFromDialogue(gen);
+  if (fromDialogue.trim()) return fromDialogue.trim();
+  const fromBeats = spokenScriptFromBeats(gen);
+  if (fromBeats.trim()) return fromBeats.trim();
+  for (const nestKey of ["output", "data", "video", "generated", "result"]) {
+    const nest = recordVal(gen[nestKey]);
+    if (!nest) continue;
+    const inner = extractSpokenScriptFromGenRecord(nest);
+    if (inner) return inner;
+  }
+  return "";
+}
+
+function pickSpokenScriptFromGeneratedOutputRecord(go: Record<string, unknown> | null | undefined): string {
   if (!go) return "";
-  const s = stringVal(go.spoken_script) || stringVal(go.script) || stringVal(go.video_script);
-  return s.trim();
+  const direct = extractSpokenScriptFromGenRecord(go);
+  if (direct) return direct;
+  const fromScenes = spokenScriptFromSceneBundle(go);
+  if (fromScenes.trim()) return fromScenes.trim();
+
+  const variations = arrayVal(go.variations);
+  const firstVar = variations?.[0] ? recordVal(variations[0]) : null;
+  if (firstVar) {
+    const v = extractSpokenScriptFromGenRecord(firstVar);
+    if (v) return v;
+  }
+  return "";
+}
+
+/** Spoken VO for HeyGen / video script flows — full parity with pipeline script sources. */
+export function pickSpokenScriptFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
+  const p = payload ?? {};
+
+  for (const k of SPOKEN_SCRIPT_KEYS) {
+    const s = stringVal(p[k]).trim();
+    if (s) return s;
+  }
+
+  const go = recordFromGeneratedOutput(p.generated_output);
+  let s = pickSpokenScriptFromGeneratedOutputRecord(go);
+  if (s) return s;
+
+  const data = recordVal(p.data);
+  if (data) {
+    for (const k of SPOKEN_SCRIPT_KEYS) {
+      const t = stringVal(data[k]).trim();
+      if (t) return t;
+    }
+    const goData = recordFromGeneratedOutput(data.generated_output);
+    s = pickSpokenScriptFromGeneratedOutputRecord(goData);
+    if (s) return s;
+  }
+
+  return "";
 }
 
 /** Hook line for rework / sidebar — hook_line beats generic hook. */

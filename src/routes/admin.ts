@@ -1560,6 +1560,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   // UI flow: GET source shows the `.hbs` Handlebars text; POST preview pipes a
   // small sample payload through `/preview-template` so the admin sees the
   // actual rendered slide 1 as a PNG streamed back from the renderer.
+  /** Same order of magnitude as pickCarouselTemplateForRender — a dead renderer must not hang GET /admin/carousel-templates. */
+  const carouselAdminRendererFetchMs = 10_000;
   app.get<{ Querystring: { name?: string } }>("/v1/admin/carousel-template-source", async (request, reply) => {
     const name = String(request.query?.name ?? "").trim();
     if (!name || !/^[a-zA-Z0-9_-]+\.hbs$/.test(name.endsWith(".hbs") ? name : `${name}.hbs`)) {
@@ -1568,7 +1570,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const base = (config.RENDERER_BASE_URL || "").replace(/\/$/, "");
     const safe = name.endsWith(".hbs") ? name : `${name}.hbs`;
     try {
-      const res = await fetch(`${base}/templates/source/${encodeURIComponent(safe)}`);
+      const res = await fetch(`${base}/templates/source/${encodeURIComponent(safe)}`, {
+        signal: AbortSignal.timeout(carouselAdminRendererFetchMs),
+      });
       if (!res.ok) return reply.code(res.status).send({ ok: false, error: "renderer_status_" + res.status });
       const data = (await res.json().catch(() => null)) as { name?: string; source?: string } | null;
       if (!data?.source) return reply.code(502).send({ ok: false, error: "renderer_no_source" });
@@ -1581,7 +1585,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   app.get("/v1/admin/carousel-template-list", async (_request, reply) => {
     const base = (config.RENDERER_BASE_URL || "").replace(/\/$/, "");
     try {
-      const res = await fetch(`${base}/templates`);
+      const res = await fetch(`${base}/templates`, { signal: AbortSignal.timeout(carouselAdminRendererFetchMs) });
       if (!res.ok) return reply.code(res.status).send({ ok: false, error: "renderer_status_" + res.status });
       const data = (await res.json().catch(() => null)) as { templates?: string[] } | null;
       return { ok: true, templates: Array.isArray(data?.templates) ? data!.templates : [] };
@@ -1638,6 +1642,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ template, slide_index: slideIndex, data }),
+          signal: AbortSignal.timeout(carouselAdminRendererFetchMs),
         });
         const rendererJson = (await rendererRes.json().catch(() => ({}))) as {
           ok?: boolean;
@@ -1653,7 +1658,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         const imgUrl = rendererJson.result_url.startsWith("http")
           ? rendererJson.result_url
           : `${base}${rendererJson.result_url}`;
-        const imgRes = await fetch(imgUrl);
+        const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(carouselAdminRendererFetchMs) });
         if (!imgRes.ok) return reply.code(502).send({ ok: false, error: "renderer_image_fetch_failed" });
         const buf = Buffer.from(await imgRes.arrayBuffer());
         reply.header("Content-Type", "image/png").header("Cache-Control", "no-store");

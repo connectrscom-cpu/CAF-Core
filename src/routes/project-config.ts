@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { z } from "zod";
 import { ensureProject, updateProjectBySlug } from "../repositories/core.js";
@@ -20,6 +21,7 @@ import {
 } from "../repositories/project-config.js";
 import { loadConfig } from "../config.js";
 import { fetchUrlAndUploadToHeygen } from "../services/heygen-assets.js";
+import { uploadBuffer } from "../services/supabase-storage.js";
 
 export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Pool }) {
   const { db } = deps;
@@ -437,6 +439,60 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
 
   // ── Brand assets (project kit) ───────────────────────────────────────
   const brandAssetKindSchema = z.enum(["logo", "reference_image", "palette", "font", "other"]);
+
+  function guessBrandKitContentType(filename: string): string {
+    const lower = filename.toLowerCase();
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".webp")) return "image/webp";
+    if (lower.endsWith(".gif")) return "image/gif";
+    if (lower.endsWith(".svg")) return "image/svg+xml";
+    if (lower.endsWith(".woff2")) return "font/woff2";
+    if (lower.endsWith(".woff")) return "font/woff";
+    if (lower.endsWith(".ttf")) return "font/ttf";
+    if (lower.endsWith(".otf")) return "font/otf";
+    return "application/octet-stream";
+  }
+
+  /** Multipart upload to Supabase public bucket; returns URLs for brand kit rows. */
+  app.post("/v1/projects/:project_slug/brand-assets/upload", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    await ensureProject(db, params.data.project_slug);
+    const appConfig = loadConfig();
+    const parts = request.parts();
+    let fileBuffer: Buffer | null = null;
+    let fileName = "upload.bin";
+    for await (const part of parts) {
+      if (part.type === "file") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of part.file) {
+          chunks.push(chunk);
+        }
+        fileBuffer = Buffer.concat(chunks);
+        fileName = part.filename || fileName;
+      }
+    }
+    if (!fileBuffer || fileBuffer.length === 0) {
+      return reply.code(400).send({ ok: false, error: "file_required" });
+    }
+    const safeSlug = params.data.project_slug.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 64) || "project";
+    const base = fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "") || "file";
+    const short = base.slice(0, 120);
+    const objectRel = `brand-kit/${safeSlug}/${randomUUID()}-${short}`;
+    try {
+      const up = await uploadBuffer(appConfig, objectRel, fileBuffer, guessBrandKitContentType(fileName));
+      return {
+        ok: true,
+        public_url: up.public_url,
+        storage_path: up.object_path,
+        bucket: up.bucket,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(503).send({ ok: false, error: "upload_failed", message: msg.slice(0, 500) });
+    }
+  });
 
   app.get("/v1/projects/:project_slug/brand-assets", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);

@@ -192,6 +192,7 @@ async function lookupQueueRowByTaskId(
       generated_title: pickTitleFromGenerationPayload(gen),
       generated_hook: pickHookFromGenerationPayload(gen),
       generated_caption: pickCaptionFromGenerationPayload(gen),
+      generated_spoken_script: pickSpokenScriptFromGenerationPayload(gen),
       generated_slides_json: jobGeneratedSlidesJson(detailLike),
       validator: match.latest_validator ?? "",
     };
