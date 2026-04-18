@@ -643,6 +643,81 @@ export async function saveHeygenConfig(projectSlug: string, data: Record<string,
   );
 }
 
+// ── Brand Assets (project kit) ───────────────────────────────────────────
+
+export type BrandAssetKind = "logo" | "reference_image" | "palette" | "font" | "other";
+
+export interface BrandAssetRow {
+  id: string;
+  project_id: string;
+  kind: BrandAssetKind;
+  label: string | null;
+  sort_order: number;
+  public_url: string | null;
+  storage_path: string | null;
+  heygen_asset_id: string | null;
+  heygen_synced_at: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listBrandAssets(projectSlug: string) {
+  return coreGet<{ ok: boolean; brand_assets: BrandAssetRow[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-assets`
+  );
+}
+
+export async function createBrandAsset(
+  projectSlug: string,
+  data: {
+    kind: BrandAssetKind;
+    label?: string | null;
+    sort_order?: number;
+    public_url?: string | null;
+    storage_path?: string | null;
+    heygen_asset_id?: string | null;
+    metadata_json?: Record<string, unknown>;
+  }
+) {
+  return corePost<{ ok: boolean; brand_asset: BrandAssetRow }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-assets`,
+    data
+  );
+}
+
+export async function updateBrandAsset(
+  projectSlug: string,
+  assetId: string,
+  data: Partial<{
+    kind: BrandAssetKind;
+    label: string | null;
+    sort_order: number;
+    public_url: string | null;
+    storage_path: string | null;
+    heygen_asset_id: string | null;
+    metadata_json: Record<string, unknown>;
+  }>
+) {
+  return corePatchRequired<{ ok: boolean; brand_asset: BrandAssetRow }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-assets/${encodeURIComponent(assetId)}`,
+    data
+  );
+}
+
+export async function deleteBrandAsset(projectSlug: string, assetId: string) {
+  return coreDeleteRequired<{ ok: boolean }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-assets/${encodeURIComponent(assetId)}`
+  );
+}
+
+export async function syncBrandAssetToHeygen(projectSlug: string, assetId: string) {
+  return corePostRequired<{ ok: boolean; brand_asset: BrandAssetRow; heygen: { asset_id: string } }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-assets/${encodeURIComponent(assetId)}/sync-heygen`,
+    {}
+  );
+}
+
 export async function saveHeygenDefaults(
   projectSlug: string,
   data: { voice_id?: string | null; avatar_id?: string | null; avatar_pool_json?: string | null }
