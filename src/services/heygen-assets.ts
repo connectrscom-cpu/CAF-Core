@@ -37,11 +37,8 @@ export async function uploadBufferToHeygen(
   const url = `${base}/v3/assets`;
 
   const form = new FormData();
-  form.append(
-    "file",
-    new Blob([buffer], { type: contentType || "application/octet-stream" }),
-    filename
-  );
+  const bytes = Uint8Array.from(buffer);
+  form.append("file", new Blob([bytes], { type: contentType || "application/octet-stream" }), filename);
 
   const res = await fetch(url, {
     method: "POST",
