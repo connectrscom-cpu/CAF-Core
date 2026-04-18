@@ -12,7 +12,14 @@ import {
   listViralFormats, insertViralFormat,
   listHeygenConfig, upsertHeygenConfig,
   getFullProjectProfile,
+  listProjectBrandAssets,
+  insertProjectBrandAsset,
+  updateProjectBrandAsset,
+  deleteProjectBrandAsset,
+  getProjectBrandAsset,
 } from "../repositories/project-config.js";
+import { loadConfig } from "../config.js";
+import { fetchUrlAndUploadToHeygen } from "../services/heygen-assets.js";
 
 export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Pool }) {
   const { db } = deps;
@@ -426,6 +433,109 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     const body = request.body as Record<string, unknown>;
     const id = await insertViralFormat(db, project.id, body);
     return { ok: true, id };
+  });
+
+  // ── Brand assets (project kit) ───────────────────────────────────────
+  const brandAssetKindSchema = z.enum(["logo", "reference_image", "palette", "font", "other"]);
+
+  app.get("/v1/projects/:project_slug/brand-assets", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const rows = await listProjectBrandAssets(db, project.id);
+    return { ok: true, brand_assets: rows };
+  });
+
+  app.post("/v1/projects/:project_slug/brand-assets", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = z
+      .object({
+        kind: brandAssetKindSchema,
+        label: z.string().nullish(),
+        sort_order: z.number().int().optional(),
+        public_url: z.string().nullish(),
+        storage_path: z.string().nullish(),
+        heygen_asset_id: z.string().nullish(),
+        metadata_json: z.record(z.unknown()).optional(),
+      })
+      .safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await insertProjectBrandAsset(db, project.id, {
+      kind: body.data.kind,
+      label: body.data.label ?? null,
+      sort_order: body.data.sort_order,
+      public_url: body.data.public_url?.trim() || null,
+      storage_path: body.data.storage_path ?? null,
+      heygen_asset_id: body.data.heygen_asset_id?.trim() || null,
+      metadata_json: body.data.metadata_json,
+    });
+    return { ok: true, brand_asset: row };
+  });
+
+  app.patch("/v1/projects/:project_slug/brand-assets/:asset_id", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), asset_id: z.string().uuid() }).safeParse(request.params);
+    const body = z
+      .object({
+        kind: brandAssetKindSchema.optional(),
+        label: z.string().nullish(),
+        sort_order: z.number().int().optional(),
+        public_url: z.string().nullish(),
+        storage_path: z.string().nullish(),
+        heygen_asset_id: z.string().nullish(),
+        metadata_json: z.record(z.unknown()).optional(),
+      })
+      .safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await updateProjectBrandAsset(db, project.id, params.data.asset_id, {
+      kind: body.data.kind,
+      label: body.data.label,
+      sort_order: body.data.sort_order,
+      public_url: body.data.public_url === "" ? null : body.data.public_url,
+      storage_path: body.data.storage_path,
+      heygen_asset_id: body.data.heygen_asset_id?.trim(),
+      metadata_json: body.data.metadata_json,
+    });
+    if (!row) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, brand_asset: row };
+  });
+
+  app.delete("/v1/projects/:project_slug/brand-assets/:asset_id", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), asset_id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const ok = await deleteProjectBrandAsset(db, project.id, params.data.asset_id);
+    if (!ok) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true };
+  });
+
+  app.post("/v1/projects/:project_slug/brand-assets/:asset_id/sync-heygen", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), asset_id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const asset = await getProjectBrandAsset(db, project.id, params.data.asset_id);
+    if (!asset) return reply.code(404).send({ ok: false, error: "not_found" });
+    const url = (asset.public_url ?? "").trim();
+    if (!url) {
+      return reply.code(400).send({ ok: false, error: "public_url_required", message: "Set public_url on the asset before syncing to HeyGen." });
+    }
+    const appConfig = loadConfig();
+    try {
+      const up = await fetchUrlAndUploadToHeygen(appConfig, url);
+      const row = await updateProjectBrandAsset(db, project.id, asset.id, {
+        heygen_asset_id: up.asset_id,
+        heygen_synced_at: new Date().toISOString(),
+      });
+      return { ok: true, brand_asset: row, heygen: { asset_id: up.asset_id } };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(502).send({ ok: false, error: "heygen_sync_failed", message: msg.slice(0, 800) });
+    }
   });
 
   // ── HeyGen Config ────────────────────────────────────────────────────

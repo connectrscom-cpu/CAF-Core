@@ -4,7 +4,7 @@
  */
 import pg from "pg";
 import "dotenv/config";
-import { seedCanonicalAllowedFlowTypes } from "../repositories/project-config.js";
+import { seedCanonicalAllowedFlowTypes, seedProductFlowTypesSkeleton } from "../repositories/project-config.js";
 
 async function main() {
   const url = process.env.DATABASE_URL;
@@ -49,6 +49,7 @@ async function main() {
     );
 
     await seedCanonicalAllowedFlowTypes(pool, projectId);
+    await seedProductFlowTypesSkeleton(pool, projectId);
 
     console.log("Seed OK — project:", slug, "id:", projectId);
   } finally {

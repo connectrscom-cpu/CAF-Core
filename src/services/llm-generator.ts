@@ -15,7 +15,6 @@ import { randomUUID } from "node:crypto";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { isProductImageFlow, PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE } from "../domain/product-flow-types.js";
-import { isProductImageFlow, PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE } from "../domain/product-flow-types.js";
 import { loadConfig } from "../config.js";
 import {
   appendVideoUserPromptDurationHardFooter,
