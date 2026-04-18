@@ -1,8 +1,6 @@
 "use client";
 
 export interface HeyGenReviewEditsProps {
-  editedScript: string;
-  onEditedScriptChange: (v: string) => void;
   heygenAvatarId: string;
   onHeygenAvatarIdChange: (v: string) => void;
   heygenVoiceId: string;
@@ -12,8 +10,6 @@ export interface HeyGenReviewEditsProps {
 }
 
 export function HeyGenReviewEdits({
-  editedScript,
-  onEditedScriptChange,
   heygenAvatarId,
   onHeygenAvatarIdChange,
   heygenVoiceId,
@@ -25,21 +21,11 @@ export function HeyGenReviewEdits({
     <div className="card">
       <div className="card-header">HeyGen video — edits for rework</div>
       <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 12, lineHeight: 1.45 }}>
-        Full spoken script (fed to HeyGen as <span className="font-mono">spoken_script</span>). Pair with{" "}
-        <strong>Needs Edit</strong> — values are stored on the review row and applied on the next rework run (override
-        path re-renders HeyGen when the script changes, or when you set avatar/voice ids / force re-render).
+        Edit the <strong>spoken script</strong> under the video preview (fed to HeyGen as{" "}
+        <span className="font-mono">spoken_script</span>). Pair with <strong>Needs Edit</strong> — values are stored on
+        the review row and applied on the next rework run (override path re-renders HeyGen when the script changes, or
+        when you set avatar/voice ids / force re-render).
       </p>
-
-      <div style={{ marginBottom: 12 }}>
-        <label className="filter-label">Spoken script</label>
-        <textarea
-          value={editedScript}
-          onChange={(e) => onEditedScriptChange(e.target.value)}
-          rows={12}
-          placeholder="Voiceover / narration script…"
-          style={{ width: "100%", minHeight: 200, fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13 }}
-        />
-      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div>

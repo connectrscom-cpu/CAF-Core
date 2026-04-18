@@ -20,6 +20,13 @@ export interface CarouselSliderProps {
   onSlidesChange?: (slides: NormalizedSlide[]) => void;
   className?: string;
   readOnly?: boolean;
+  /**
+   * HeyGen single-take video flows: hide per-slide headline/body/save and show one spoken script under the player.
+   * Carousel (non-HeyGen) flows keep the default slide copy editing.
+   */
+  heyGenVideoMode?: boolean;
+  spokenScript?: string;
+  onSpokenScriptChange?: (v: string) => void;
 }
 
 export function CarouselSlider({
@@ -29,6 +36,9 @@ export function CarouselSlider({
   onSlidesChange,
   className,
   readOnly = false,
+  heyGenVideoMode = false,
+  spokenScript = "",
+  onSpokenScriptChange,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -96,7 +106,7 @@ export function CarouselSlider({
   return (
     <div className={`card ${className ?? ""}`}>
       <div className="flex items-center justify-between mb-3">
-        <h3 style={{ fontSize: 13, fontWeight: 600 }}>Carousel slides</h3>
+        <h3 style={{ fontSize: 13, fontWeight: 600 }}>{heyGenVideoMode ? "Video preview" : "Carousel slides"}</h3>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
       </div>
 
@@ -167,7 +177,7 @@ export function CarouselSlider({
         </button>
       </div>
 
-      {!readOnly && (
+      {!readOnly && !heyGenVideoMode && (
         <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>
           {(slide.type === "cover" || slide.type === "body") && (
             <>
@@ -211,7 +221,36 @@ export function CarouselSlider({
         </div>
       )}
 
-      {readOnly && (slide.headline || slide.body || slide.handle) && (
+      {heyGenVideoMode && (
+        <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>
+          <label className="filter-label">Spoken script</label>
+          {readOnly || !onSpokenScriptChange ? (
+            <pre
+              style={{
+                margin: "8px 0 0",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                fontSize: 13,
+                lineHeight: 1.45,
+                color: "var(--fg-secondary)",
+              }}
+            >
+              {spokenScript.trim() ? spokenScript : "—"}
+            </pre>
+          ) : (
+            <textarea
+              value={spokenScript}
+              onChange={(e) => onSpokenScriptChange(e.target.value)}
+              rows={12}
+              placeholder="Voiceover / narration script…"
+              style={{ width: "100%", minHeight: 200, marginTop: 8, fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 13 }}
+            />
+          )}
+        </div>
+      )}
+
+      {readOnly && !heyGenVideoMode && (slide.headline || slide.body || slide.handle) && (
         <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 13, marginBottom: 12 }}>
           {slide.headline && <p style={{ fontWeight: 500 }}>{slide.headline}</p>}
           {slide.body && <p style={{ marginTop: 4, color: "var(--fg-secondary)" }}>{slide.body}</p>}

@@ -269,6 +269,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
               onSlidesChange={setEditedSlides}
               fallbackPreviewUrl={taskAssets[0]?.public_url}
+              spokenScript={heygenWorkbench ? editedScript : undefined}
+              onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
             />
 
             <div className="card mt-4">
@@ -289,8 +291,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {heygenWorkbench && (
               <HeyGenReviewEdits
-                editedScript={editedScript}
-                onEditedScriptChange={setEditedScript}
                 heygenAvatarId={heygenAvatarId}
                 onHeygenAvatarIdChange={setHeygenAvatarId}
                 heygenVoiceId={heygenVoiceId}

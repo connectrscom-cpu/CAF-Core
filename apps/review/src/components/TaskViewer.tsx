@@ -7,6 +7,7 @@ import { createSyntheticSlides } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
+import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 
 function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
@@ -21,6 +22,9 @@ export interface TaskViewerProps {
   onSlidesChange?: (slides: NormalizedSlide[]) => void;
   fallbackPreviewUrl?: string;
   readOnly?: boolean;
+  /** HeyGen workbench: controlled spoken script under the preview. Omit to use task row script (read-only views). */
+  spokenScript?: string;
+  onSpokenScriptChange?: (v: string) => void;
 }
 
 export function TaskViewer({
@@ -31,9 +35,16 @@ export function TaskViewer({
   onSlidesChange,
   fallbackPreviewUrl,
   readOnly = false,
+  spokenScript: spokenScriptProp,
+  onSpokenScriptChange,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
+  const heyGenVideoMode = isHeyGenReviewFlow(flowType);
+  const scriptFromRow = (
+    getVal(data, "final_spoken_script_override") || getVal(data, "generated_spoken_script")
+  ).trim();
+  const effectiveSpokenScript = spokenScriptProp !== undefined ? spokenScriptProp : scriptFromRow;
   const rowVideoUrl =
     getVal(data, "video_url") ||
     getVal(data, "final_video_url") ||
@@ -130,6 +141,9 @@ export function TaskViewer({
           imageUrls={imageUrlsLegacy}
           onSlidesChange={readOnly ? undefined : onSlidesChange}
           readOnly={readOnly}
+          heyGenVideoMode={heyGenVideoMode}
+          spokenScript={effectiveSpokenScript}
+          onSpokenScriptChange={heyGenVideoMode && !readOnly ? onSpokenScriptChange : undefined}
         />
       </div>
     );
@@ -156,6 +170,40 @@ export function TaskViewer({
             </a>
           )}
         </div>
+        {heyGenVideoMode && (
+          <div style={{ marginTop: 16, padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <label className="filter-label">Spoken script</label>
+            {readOnly || !onSpokenScriptChange ? (
+              <pre
+                style={{
+                  margin: "8px 0 0",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                  fontSize: 13,
+                  lineHeight: 1.45,
+                  color: "var(--fg-secondary)",
+                }}
+              >
+                {effectiveSpokenScript.trim() ? effectiveSpokenScript : "—"}
+              </pre>
+            ) : (
+              <textarea
+                value={effectiveSpokenScript}
+                onChange={(e) => onSpokenScriptChange(e.target.value)}
+                rows={12}
+                placeholder="Voiceover / narration script…"
+                style={{
+                  width: "100%",
+                  minHeight: 200,
+                  marginTop: 8,
+                  fontFamily: "var(--font-mono, ui-monospace, monospace)",
+                  fontSize: 13,
+                }}
+              />
+            )}
+          </div>
+        )}
       </div>
     );
   }
