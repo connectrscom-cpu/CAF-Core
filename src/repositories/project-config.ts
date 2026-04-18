@@ -1,5 +1,9 @@
 import type { Pool } from "pg";
 import { CANONICAL_ALLOWED_FLOW_SEEDS } from "../domain/canonical-flow-types.js";
+import {
+  PRODUCT_IMAGE_FLOW_TYPES,
+  PRODUCT_VIDEO_FLOW_TYPES,
+} from "../domain/product-flow-types.js";
 import { q, qOne } from "../db/queries.js";
 
 // ---------------------------------------------------------------------------
@@ -322,6 +326,45 @@ export async function seedCanonicalAllowedFlowTypes(db: Pool, projectId: string)
 }
 
 /**
+ * Additive product marketing flows — **disabled** until you enable per project.
+ * Does not alter canonical carousel/video rows from {@link seedCanonicalAllowedFlowTypes}.
+ */
+export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string): Promise<void> {
+  let p = 6;
+  for (const ft of PRODUCT_VIDEO_FLOW_TYPES) {
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: ft,
+      enabled: false,
+      default_variation_count: 1,
+      requires_signal_pack: true,
+      requires_learning_context: false,
+      allowed_platforms: null,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: p--,
+      notes: "Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.",
+    });
+  }
+  p = 5;
+  for (const ft of PRODUCT_IMAGE_FLOW_TYPES) {
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: ft,
+      enabled: false,
+      default_variation_count: 1,
+      requires_signal_pack: true,
+      requires_learning_context: false,
+      allowed_platforms: null,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: p--,
+      notes: "Image ad flow — generation blocked until image tool is integrated.",
+    });
+  }
+}
+
+/**
  * If the project has no enabled flow types, make Start Run usable:
  * - rows exist but all disabled → enable carousel-like row or the first row
  * - no rows → seed canonical carousel + three video flow types (workbook names)
@@ -495,10 +538,141 @@ export async function deleteRiskRule(db: Pool, id: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Brand assets (project kit for HeyGen reference files, etc.)
+// ---------------------------------------------------------------------------
+export interface ProjectBrandAssetRow {
+  id: string;
+  project_id: string;
+  kind: string;
+  label: string | null;
+  sort_order: number;
+  public_url: string | null;
+  storage_path: string | null;
+  heygen_asset_id: string | null;
+  heygen_synced_at: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listProjectBrandAssets(db: Pool, projectId: string): Promise<ProjectBrandAssetRow[]> {
+  const rows = await q<Record<string, unknown>>(db,
+    `SELECT id, project_id, kind, label, sort_order, public_url, storage_path,
+            heygen_asset_id, heygen_synced_at, metadata_json, created_at, updated_at
+     FROM caf_core.project_brand_assets WHERE project_id = $1 ORDER BY sort_order ASC, created_at ASC`,
+    [projectId]
+  );
+  return rows.map((r) => ({
+    ...r,
+    metadata_json: (r.metadata_json as Record<string, unknown>) ?? {},
+  })) as ProjectBrandAssetRow[];
+}
+
+export async function getProjectBrandAsset(
+  db: Pool,
+  projectId: string,
+  assetId: string
+): Promise<ProjectBrandAssetRow | null> {
+  const row = await qOne<Record<string, unknown>>(db,
+    `SELECT id, project_id, kind, label, sort_order, public_url, storage_path,
+            heygen_asset_id, heygen_synced_at, metadata_json, created_at, updated_at
+     FROM caf_core.project_brand_assets WHERE project_id = $1 AND id = $2`,
+    [projectId, assetId]
+  );
+  if (!row) return null;
+  return { ...row, metadata_json: (row.metadata_json as Record<string, unknown>) ?? {} } as ProjectBrandAssetRow;
+}
+
+export async function insertProjectBrandAsset(
+  db: Pool,
+  projectId: string,
+  data: {
+    kind: string;
+    label?: string | null;
+    sort_order?: number;
+    public_url?: string | null;
+    storage_path?: string | null;
+    heygen_asset_id?: string | null;
+    metadata_json?: Record<string, unknown>;
+  }
+): Promise<ProjectBrandAssetRow> {
+  const row = await qOne<ProjectBrandAssetRow>(db,
+    `INSERT INTO caf_core.project_brand_assets (
+       project_id, kind, label, sort_order, public_url, storage_path, heygen_asset_id, metadata_json
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)
+     RETURNING id, project_id, kind, label, sort_order, public_url, storage_path,
+               heygen_asset_id, heygen_synced_at, metadata_json, created_at, updated_at`,
+    [
+      projectId,
+      data.kind,
+      data.label ?? null,
+      data.sort_order ?? 0,
+      data.public_url ?? null,
+      data.storage_path ?? null,
+      data.heygen_asset_id ?? null,
+      JSON.stringify(data.metadata_json ?? {}),
+    ]
+  );
+  if (!row) throw new Error("insertProjectBrandAsset failed");
+  return row;
+}
+
+export async function updateProjectBrandAsset(
+  db: Pool,
+  projectId: string,
+  assetId: string,
+  data: Partial<{
+    kind: string;
+    label: string | null;
+    sort_order: number;
+    public_url: string | null;
+    storage_path: string | null;
+    heygen_asset_id: string | null;
+    heygen_synced_at: string | null;
+    metadata_json: Record<string, unknown>;
+  }>
+): Promise<ProjectBrandAssetRow | null> {
+  const sets: string[] = ["updated_at = now()"];
+  const vals: unknown[] = [];
+  const put = (col: string, v: unknown) => {
+    vals.push(v);
+    sets.push(`${col} = $${vals.length}`);
+  };
+  if (data.kind !== undefined) put("kind", data.kind);
+  if (data.label !== undefined) put("label", data.label);
+  if (data.sort_order !== undefined) put("sort_order", data.sort_order);
+  if (data.public_url !== undefined) put("public_url", data.public_url);
+  if (data.storage_path !== undefined) put("storage_path", data.storage_path);
+  if (data.heygen_asset_id !== undefined) put("heygen_asset_id", data.heygen_asset_id);
+  if (data.heygen_synced_at !== undefined) put("heygen_synced_at", data.heygen_synced_at);
+  if (data.metadata_json !== undefined) put("metadata_json", JSON.stringify(data.metadata_json));
+  if (sets.length === 1) return getProjectBrandAsset(db, projectId, assetId);
+  const nextParam = vals.length + 1;
+  vals.push(projectId, assetId);
+  const row = await qOne<ProjectBrandAssetRow>(
+    db,
+    `UPDATE caf_core.project_brand_assets SET ${sets.join(", ")}
+     WHERE project_id = $${nextParam} AND id = $${nextParam + 1}
+     RETURNING id, project_id, kind, label, sort_order, public_url, storage_path,
+               heygen_asset_id, heygen_synced_at, metadata_json, created_at, updated_at`,
+    vals
+  );
+  return row;
+}
+
+export async function deleteProjectBrandAsset(db: Pool, projectId: string, assetId: string): Promise<boolean> {
+  const res = await db.query(
+    `DELETE FROM caf_core.project_brand_assets WHERE project_id = $1 AND id = $2`,
+    [projectId, assetId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+// ---------------------------------------------------------------------------
 // Full Project Profile (composite read)
 // ---------------------------------------------------------------------------
 export async function getFullProjectProfile(db: Pool, projectId: string) {
-  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig] =
+  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig, brandAssets] =
     await Promise.all([
       getStrategyDefaults(db, projectId),
       getBrandConstraints(db, projectId),
@@ -507,6 +681,16 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
       listAllowedFlowTypes(db, projectId),
       listReferencePosts(db, projectId),
       listHeygenConfig(db, projectId),
+      listProjectBrandAssets(db, projectId),
     ]);
-  return { strategy, brand, platforms, risk_rules: riskRules, flow_types: flowTypes, reference_posts: referencePosts, heygen_config: heygenConfig };
+  return {
+    strategy,
+    brand,
+    platforms,
+    risk_rules: riskRules,
+    flow_types: flowTypes,
+    reference_posts: referencePosts,
+    heygen_config: heygenConfig,
+    brand_assets: brandAssets,
+  };
 }

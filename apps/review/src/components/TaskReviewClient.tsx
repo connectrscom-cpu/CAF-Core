@@ -12,6 +12,8 @@ import type { ReviewQueueRow } from "@/lib/types";
 import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
+import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
+import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -66,10 +68,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [editedTitle, setEditedTitle] = useState("");
   const [editedHook, setEditedHook] = useState("");
   const [editedHashtags, setEditedHashtags] = useState("");
+  const [editedScript, setEditedScript] = useState("");
+  const [heygenAvatarId, setHeygenAvatarId] = useState("");
+  const [heygenVoiceId, setHeygenVoiceId] = useState("");
+  const [heygenForceRerender, setHeygenForceRerender] = useState(false);
 
   useEffect(() => {
     setEditedSlides([]);
     setTaskAssets([]);
+    setEditedScript("");
+    setHeygenAvatarId("");
+    setHeygenVoiceId("");
+    setHeygenForceRerender(false);
   }, [task_id]);
 
   useEffect(() => {
@@ -102,6 +112,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setEditedTitle((data.final_title_override ?? data.generated_title ?? "").trim());
     setEditedHook((data.final_hook_override ?? data.generated_hook ?? "").trim());
     setEditedHashtags(hashtagsInitialFromRow(data));
+    setEditedScript((data.final_spoken_script_override ?? data.generated_spoken_script ?? "").trim());
+    setHeygenAvatarId((data.heygen_avatar_id ?? "").trim());
+    setHeygenVoiceId((data.heygen_voice_id ?? "").trim());
+    setHeygenForceRerender(false);
   }, [data]);
 
   const fetchTask = useCallback(async () => {
@@ -146,6 +160,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const notes = useMemo(() => (data?.notes ?? "").trim(), [data?.notes]);
   const runId = (data?.run_id ?? "").trim();
 
+  const heygenWorkbench = useMemo(() => isHeyGenReviewFlow(data?.flow_type), [data?.flow_type]);
+
   const { hasEdits, editsSummary } = useMemo(() => {
     const summary: string[] = [];
     if (!data) return { hasEdits: false, editsSummary: [] };
@@ -169,8 +185,30 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         }
       }
     }
+    if (heygenWorkbench) {
+      const initialScript = (data.final_spoken_script_override ?? data.generated_spoken_script ?? "").trim();
+      if (editedScript.trim() !== initialScript) summary.push("Spoken script");
+      const initialAv = (data.heygen_avatar_id ?? "").trim();
+      const initialVo = (data.heygen_voice_id ?? "").trim();
+      if (heygenAvatarId.trim() !== initialAv) summary.push("HeyGen avatar id");
+      if (heygenVoiceId.trim() !== initialVo) summary.push("HeyGen voice id");
+      if (heygenForceRerender) summary.push("Force HeyGen re-render");
+    }
     return { hasEdits: summary.length > 0, editsSummary: summary };
-  }, [data, editedTitle, editedHook, editedCaption, editedHashtags, editedSlides, initialSlides]);
+  }, [
+    data,
+    editedTitle,
+    editedHook,
+    editedCaption,
+    editedHashtags,
+    editedSlides,
+    initialSlides,
+    heygenWorkbench,
+    editedScript,
+    heygenAvatarId,
+    heygenVoiceId,
+    heygenForceRerender,
+  ]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -249,6 +287,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {heygenWorkbench && (
+              <HeyGenReviewEdits
+                editedScript={editedScript}
+                onEditedScriptChange={setEditedScript}
+                heygenAvatarId={heygenAvatarId}
+                onHeygenAvatarIdChange={setHeygenAvatarId}
+                heygenVoiceId={heygenVoiceId}
+                onHeygenVoiceIdChange={setHeygenVoiceId}
+                heygenForceRerender={heygenForceRerender}
+                onHeygenForceRerenderChange={setHeygenForceRerender}
+              />
+            )}
             <CarouselEdits
               taskId={execTaskId}
               runId={runId || undefined}
@@ -280,6 +330,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               finalCaptionOverride={editedCaption}
               finalHashtagsOverride={editedHashtags}
               finalSlidesJsonOverride={finalSlidesJsonOverride}
+              includeHeyGenFields={heygenWorkbench}
+              finalSpokenScriptOverride={heygenWorkbench ? editedScript : undefined}
+              heygenAvatarId={heygenWorkbench ? heygenAvatarId : undefined}
+              heygenVoiceId={heygenWorkbench ? heygenVoiceId : undefined}
+              heygenForceRerender={heygenWorkbench ? heygenForceRerender : undefined}
               hasEdits={hasEdits}
               editsSummary={editsSummary}
             />

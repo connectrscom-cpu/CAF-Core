@@ -4,6 +4,32 @@ function asRec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
 
+function str(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** Single-slide preview for video-script JSON (hook_line / cta / on-screen) when no carousel deck exists. */
+function videoScriptCoverJsonFromGeneratedOutput(go: Record<string, unknown>): string {
+  const hook = str(go.hook_line) || str(go.hook);
+  const bodyParts: string[] = [];
+  const cta = str(go.cta_line) || str(go.cta);
+  if (cta) bodyParts.push(cta);
+  const ost = Array.isArray(go.on_screen_text)
+    ? go.on_screen_text.filter((x): x is string => typeof x === "string" && x.trim() !== "").map((x) => x.trim())
+    : [];
+  if (ost.length) bodyParts.push(ost.join("\n"));
+  const disc = str(go.disclaimer_line);
+  if (disc) bodyParts.push(disc);
+  const cap = str(go.caption) || str(go.post_caption);
+  const body = cap || bodyParts.join("\n\n");
+  if (!hook && !body) return "";
+  return JSON.stringify({
+    cover_slide: { headline: hook || "—", body: body || "—" },
+    cover: hook || undefined,
+    cover_subtitle: body || undefined,
+  });
+}
+
 /**
  * When Core `review_slides_json` is missing (or the workbench fell back to a queue row), derive a slide
  * list from `candidate_data` + `generated_output` — same nesting as Flow_Carousel_Copy / carousel-render-pack
@@ -45,6 +71,9 @@ export function roughSlidesJsonFromGenerationPayload(payload: Record<string, unk
   }
   const topSlides = payload.slides;
   if (Array.isArray(topSlides) && topSlides.length > 0) return JSON.stringify(topSlides);
+
+  const vs = videoScriptCoverJsonFromGeneratedOutput(merged);
+  if (vs) return vs;
   return "";
 }
 

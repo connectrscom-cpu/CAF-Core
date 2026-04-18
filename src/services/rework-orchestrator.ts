@@ -19,6 +19,13 @@ import {
   hasEditorialCopyFlatOverrides,
   partitionEditorialOverrides,
 } from "./editorial-copy-apply.js";
+import {
+  hasNonEmptyHeyGenIdOverrides,
+  heygenForceRerenderRequested,
+  isHeyGenSingleTakeReworkFlow,
+  mergeHeyGenRequestIntoGenerationPayload,
+} from "./editorial-heygen-overrides.js";
+import { runHeygenForContentJob } from "./heygen-renderer.js";
 
 export type ReworkMode = "OVERRIDE_ONLY" | "FULL_REWORK" | "PARTIAL_REWRITE";
 
@@ -36,7 +43,9 @@ export function inferReworkMode(review: {
   if (notes.includes("full rewrite") || notes.includes("start over")) return "FULL_REWORK";
   if (tags.length >= 3) return "FULL_REWORK";
   const rewriteCopy = ov.rewrite_copy;
-  if (rewriteCopy === false && hasEditorialCopyFlatOverrides(ov)) return "OVERRIDE_ONLY";
+  if (rewriteCopy === false && (hasEditorialCopyFlatOverrides(ov) || hasNonEmptyHeyGenIdOverrides(ov))) {
+    return "OVERRIDE_ONLY";
+  }
   if (tags.some((t) => t.includes("override") || t.includes("typo")) || notes.includes("override only")) {
     return "OVERRIDE_ONLY";
   }
@@ -163,9 +172,13 @@ export async function executeRework(
     const gp: Record<string, unknown> = { ...(job.generation_payload ?? {}) };
     const gen = (gp.generated_output as Record<string, unknown>) ?? {};
     const overrides = rev.overrides_json ?? {};
+    mergeHeyGenRequestIntoGenerationPayload(gp, overrides);
     const { structural, flat } = partitionEditorialOverrides(overrides);
     let mergedOutput = { ...gen, ...structural };
     mergedOutput = applyEditorialFlatOverridesToGeneratedOutput(mergedOutput, flat);
+    const scriptBefore = `${String(gen.spoken_script ?? gen.script ?? "").trim()}`;
+    const scriptAfter = `${String(mergedOutput.spoken_script ?? mergedOutput.script ?? "").trim()}`;
+    const spokenScriptChanged = scriptBefore !== scriptAfter;
     let genSnapshot: unknown = gen;
     try {
       genSnapshot = JSON.parse(JSON.stringify(gen)) as unknown;
@@ -178,6 +191,8 @@ export async function executeRework(
       generated_output: genSnapshot,
       qc_result: gp.qc_result ?? null,
     });
+    gp.generated_output = mergedOutput;
+    gp.generation_reason = "REWORK_OVERRIDE_ONLY";
     await db.query(
       `UPDATE caf_core.content_jobs SET
         generation_payload = generation_payload || $1::jsonb,
@@ -189,10 +204,32 @@ export async function executeRework(
           generated_output: mergedOutput,
           generation_reason: "REWORK_OVERRIDE_ONLY",
           rework_history: gp.rework_history,
+          heygen_request: gp.heygen_request,
         }),
         job.id,
       ]
     );
+    const runHeyGenAfterOverride =
+      isHeyGenSingleTakeReworkFlow(job.flow_type) &&
+      (heygenForceRerenderRequested(overrides) ||
+        hasNonEmptyHeyGenIdOverrides(overrides) ||
+        spokenScriptChanged);
+    if (runHeyGenAfterOverride) {
+      try {
+        await runHeygenForContentJob(db, config, {
+          id: job.id,
+          task_id: job.task_id,
+          project_id: projectId,
+          run_id: job.run_id,
+          flow_type: job.flow_type ?? "",
+          platform: job.platform,
+          generation_payload: gp,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, mode, error: `HeyGen re-render after override failed: ${msg}`, task_id: job.task_id };
+      }
+    }
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: projectId,
@@ -207,6 +244,14 @@ export async function executeRework(
 
   const prep = await prepareContentJobForFullRerun(db, projectId, taskId);
   if (!prep.ok) return { ok: false, mode, error: prep.error };
+
+  const snapAfter = await qOne<{ generation_payload: Record<string, unknown> }>(
+    db,
+    `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+    [job.id]
+  );
+  const gpForHeygen: Record<string, unknown> = { ...(snapAfter?.generation_payload ?? {}) };
+  mergeHeyGenRequestIntoGenerationPayload(gpForHeygen, rev.overrides_json ?? {});
 
   await db.query(
     `UPDATE caf_core.content_jobs SET
@@ -224,6 +269,7 @@ export async function executeRework(
           editorial_overrides_json: rev.overrides_json ?? {},
         },
         generation_reason: mode === "PARTIAL_REWRITE" ? "REWORK_PARTIAL" : "REWORK_FULL",
+        heygen_request: gpForHeygen.heygen_request,
       }),
       job.id,
     ]

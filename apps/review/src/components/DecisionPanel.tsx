@@ -11,6 +11,7 @@ const REVIEW_ISSUE_TAGS = [
   "script_line_needs_edit", "camera_notes_needed", "audio_voiceover_issue",
   "subtitles_issue", "b_roll_weak", "pacing_off", "scene_order_issue",
   "render_settings_change",
+  "heygen_avatar_change", "heygen_voice_change", "heygen_full_regenerate",
 ];
 
 export interface DecisionPanelProps {
@@ -25,6 +26,12 @@ export interface DecisionPanelProps {
   finalCaptionOverride?: string;
   finalHashtagsOverride?: string;
   finalSlidesJsonOverride?: string;
+  /** HeyGen single-take: reviewer script + optional ids (sent only when `includeHeyGenFields` is true). */
+  finalSpokenScriptOverride?: string;
+  heygenAvatarId?: string;
+  heygenVoiceId?: string;
+  heygenForceRerender?: boolean;
+  includeHeyGenFields?: boolean;
   hasEdits?: boolean;
   editsSummary?: string[];
   /** When false, rework prefers patching copy in place (no LLM) when slide/caption overrides exist. Default true. */
@@ -42,6 +49,11 @@ export function DecisionPanel({
   finalCaptionOverride,
   finalHashtagsOverride,
   finalSlidesJsonOverride,
+  finalSpokenScriptOverride,
+  heygenAvatarId,
+  heygenVoiceId,
+  heygenForceRerender,
+  includeHeyGenFields = false,
   hasEdits = false,
   editsSummary = [],
   existingRewriteCopy = true,
@@ -67,6 +79,7 @@ export function DecisionPanel({
     setSubmitting(true);
     setError(null);
     const effectiveDecision = decision === "APPROVED" && hasEdits ? "NEEDS_EDIT" : decision;
+    const sendHeyGenFields = includeHeyGenFields && effectiveDecision === "NEEDS_EDIT";
     try {
       const res = await fetch("/api/task/decision", {
         method: "POST",
@@ -83,6 +96,16 @@ export function DecisionPanel({
           ...(finalCaptionOverride !== undefined && { final_caption_override: finalCaptionOverride }),
           ...(finalHashtagsOverride !== undefined && { final_hashtags_override: finalHashtagsOverride }),
           ...(finalSlidesJsonOverride !== undefined && { final_slides_json_override: finalSlidesJsonOverride }),
+          ...(sendHeyGenFields && finalSpokenScriptOverride !== undefined && {
+            final_spoken_script_override: finalSpokenScriptOverride,
+          }),
+          ...(sendHeyGenFields && heygenAvatarId !== undefined && heygenAvatarId.trim() !== "" && {
+            heygen_avatar_id: heygenAvatarId.trim(),
+          }),
+          ...(sendHeyGenFields && heygenVoiceId !== undefined && heygenVoiceId.trim() !== "" && {
+            heygen_voice_id: heygenVoiceId.trim(),
+          }),
+          ...(sendHeyGenFields && heygenForceRerender === true && { heygen_force_rerender: true }),
           ...(effectiveDecision === "NEEDS_EDIT" ? { rewrite_copy: rewriteCopy } : {}),
         }),
       });
@@ -111,6 +134,11 @@ export function DecisionPanel({
     finalCaptionOverride,
     finalHashtagsOverride,
     finalSlidesJsonOverride,
+    finalSpokenScriptOverride,
+    heygenAvatarId,
+    heygenVoiceId,
+    heygenForceRerender,
+    includeHeyGenFields,
     hasEdits,
     rewriteCopy,
   ]);
@@ -180,7 +208,18 @@ export function DecisionPanel({
         <label className="filter-label">Issue tags (what went wrong — for the next generation)</label>
         <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: 8, marginTop: 6, border: "1px solid var(--border-subtle)" }}>
           <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 8 }}>
-            Use hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong> — they are stored on the NEEDS_EDIT row and fed into the next rework pass.
+            {includeHeyGenFields ? (
+              <>
+                Use <strong style={{ color: "var(--fg)" }}>HeyGen video — edits for rework</strong> for script / avatar /
+                voice, and hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
+                when applicable — stored on the NEEDS_EDIT row for the next rework pass.
+              </>
+            ) : (
+              <>
+                Use hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
+                — they are stored on the NEEDS_EDIT row and fed into the next rework pass.
+              </>
+            )}
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {REVIEW_ISSUE_TAGS.map((tag) => (
@@ -216,9 +255,9 @@ export function DecisionPanel({
               style={{ marginTop: 3 }}
             />
             <span>
-              <strong>Rewrite copy</strong> on the next rework run. Uncheck if you only want your edited slide/caption
-              text patched in (no new LLM copy) when the pipeline can apply overrides — otherwise the model still runs
-              but is instructed to keep your text verbatim.
+              <strong>Rewrite copy (LLM)</strong> on the next rework run. Uncheck if you only want your edited text
+              patched in (no new LLM copy) when the pipeline can apply overrides
+              {includeHeyGenFields ? " — for HeyGen, uncheck to re-render from your script/avatar/voice edits without a full rewrite." : " — otherwise the model still runs but is instructed to keep your text verbatim."}
             </span>
           </label>
         </div>

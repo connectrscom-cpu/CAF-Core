@@ -107,6 +107,12 @@ export function applyEditorialFlatOverridesToGeneratedOutput(
     const car = asRec(out.carousel);
     if (car && (typeof car.hashtags === "string" || car.hashtags == null)) car.hashtags = hashtags;
   }
+  const spoken =
+    typeof overrides.final_spoken_script_override === "string" ? overrides.final_spoken_script_override.trim() : "";
+  if (spoken) {
+    if (typeof out.spoken_script === "string" || out.spoken_script == null) out.spoken_script = spoken;
+    if (typeof out.script === "string" || out.script == null) out.script = spoken;
+  }
   const slides = parseSlidesArray(slidesRaw);
   if (slides && slides.length > 0) {
     if (!setSlidesIfPresent(out, slides) && !out.slides) out.slides = slides;
@@ -122,6 +128,7 @@ export function hasEditorialCopyFlatOverrides(overrides: Record<string, unknown>
     "final_caption_override",
     "final_hashtags_override",
     "final_slides_json_override",
+    "final_spoken_script_override",
   ] as const;
   for (const k of keys) {
     const v = overrides[k];
@@ -136,8 +143,12 @@ const EDITORIAL_FLAT_KEYS = [
   "final_caption_override",
   "final_hashtags_override",
   "final_slides_json_override",
+  "final_spoken_script_override",
   "rewrite_copy",
 ] as const;
+
+/** Not merged into `generated_output`; handled by HeyGen rework merge + orchestrator. */
+const HEYGEN_REVIEW_META_KEYS = new Set(["heygen_avatar_id", "heygen_voice_id", "heygen_force_rerender"]);
 
 /** Keys safe to shallow-merge into `generated_output` vs human flat copy fields. */
 export function partitionEditorialOverrides(overrides: Record<string, unknown>): {
@@ -147,6 +158,7 @@ export function partitionEditorialOverrides(overrides: Record<string, unknown>):
   const structural: Record<string, unknown> = {};
   const flat: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(overrides)) {
+    if (HEYGEN_REVIEW_META_KEYS.has(k)) continue;
     if ((EDITORIAL_FLAT_KEYS as readonly string[]).includes(k)) flat[k] = v;
     else structural[k] = v;
   }

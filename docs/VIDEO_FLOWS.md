@@ -2,6 +2,8 @@
 
 This doc explains how **video jobs** are routed and rendered in CAF Core, with special focus on **HeyGen duration constraints**, **subtitle behavior**, and **avatar/voice selection**.
 
+**HeyGen HTTP API (v3) reference** (endpoints, auth, Video Agent vs direct video): [`HEYGEN_API_V3.md`](./HEYGEN_API_V3.md).
+
 ### Glossary
 
 - **Job**: a row in `caf_core.content_jobs` identified by `task_id` (primary execution key).
@@ -139,15 +141,18 @@ Main orchestrator: `runHeygenForContentJob(...)` in `src/services/heygen-rendere
 CAF Core extracts text from `generated_output` using aliases/nesting:
 - `extractSpokenScriptText(...)` and `extractVideoPromptText(...)` in `src/services/video-gen-fields.ts`
 
-Depending on the HeyGen path:
+Depending on the HeyGen path (see [`HEYGEN_API_V3.md`](./HEYGEN_API_V3.md) for upstream API details):
 
-- **HeyGen v2** (`POST /v2/video/generate`):
-  - `spoken_script` becomes `video_inputs[0].script_text`
-  - `video_prompt` becomes `video_inputs[0].prompt`
-  - a valid TTS voice must be present (`video_inputs[0].voice` object with `{ type:"text", voice_id }`), unless configured as `silence`.
+- **HeyGen v3 direct avatar video** (`POST /v3/videos`, `type: "avatar"`):
+  - Built from the same merged `video_inputs` shape as the old v2 path, then mapped to a flat v3 body (`avatar_id`, `script`, `voice_id`, `aspect_ratio`, optional `callback_url`, etc.).
+  - Used for **script-led** avatar jobs (`Video_Script_*` HeyGen flows).
 
-- **HeyGen Video Agent v1** (`POST /v1/video_agent/generate`):
-  - a single multiline prompt is constructed from fields like hook, spoken_script, video_prompt, on-screen cues, etc.
+- **HeyGen v3 Video Agent** (`POST /v3/video-agents`):
+  - A single multiline `prompt` is constructed from hook, spoken_script, video_prompt, on-screen cues, etc.
+  - Optional `avatar_id`, `voice_id`, `style_id`, `orientation`, `callback_url` are passed when configured.
+  - Used for **prompt-led** avatar jobs and **no-avatar** agent jobs.
+
+- **Legacy v2** (`POST /v2/video/generate`) — **only** when the job uses HeyGen `voice: { type: "silence" }` (visual-only / no spoken script). The v3 create-video schema has no silence-TTS equivalent, so CAF keeps this one legacy call for that edge case.
 
 ### Duration constraints: what is enforced vs guidance
 
@@ -155,7 +160,7 @@ Depending on the HeyGen path:
 
 What *is* enforced:
 
-- For **Video Agent** only, CAF Core clamps `duration_sec` in seconds:
+- For **Video Agent** only, CAF Core clamps a target length in seconds, then embeds it in the agent prompt (e.g. “Target duration: about N seconds”). HeyGen v3 does not accept a separate `duration_sec` field on `POST /v3/video-agents`.
   - `resolveHeygenAgentDurationSec(...)` in `src/services/heygen-renderer.ts`
   - bounds include `HEYGEN_AGENT_MIN_DURATION_SEC` and a max of 300s (hard-coded), and a fallback based on `VIDEO_TARGET_DURATION_MIN_SEC`.
 
@@ -169,7 +174,7 @@ What is *guidance only*:
 
 CAF Core prefers captioned MP4 outputs when HeyGen provides them:
 
-- In polling status, it selects `video_url_caption` (burned-in captions) when present; otherwise uses `video_url`.
+- Status polling uses **`GET /v3/videos/{video_id}`** (with a legacy `video_status.get` fallback on 404 for very old job ids). When HeyGen returns a captioned render, CAF prefers **`captioned_video_url`** (v3) or **`video_url_caption`** (legacy) over plain `video_url`.
 - Selection logic: `pickHeyGenDownloadUrlFromStatus(...)` in `src/services/heygen-renderer.ts`.
 
 CAF Core currently does not upload or store a separate SRT asset for HeyGen videos.

@@ -1,3 +1,5 @@
+import { PRODUCT_VIDEO_FLOW_TYPES } from "../domain/product-flow-types.js";
+
 /**
  * Default per-run generation-plan caps (each planned job / variation counts as 1).
  * Applied unless overridden for the same flow_type key in
@@ -66,6 +68,11 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     id: "heygen_render",
     label: "HeyGen render-only step",
     keys: ["HeyGen_Render_Video"],
+  },
+  {
+    id: "product_video",
+    label: "Product marketing video (FLOW_PRODUCT_*)",
+    keys: [...PRODUCT_VIDEO_FLOW_TYPES],
   },
 ] as const;
 

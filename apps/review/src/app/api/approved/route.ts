@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { getQueueTab, getQueueTabAll } from "@/lib/caf-core-client";
-import { pickCaptionFromGenerationPayload } from "@/lib/task-api-handlers";
+import {
+  pickCaptionFromGenerationPayload,
+  pickHookFromGenerationPayload,
+  pickTitleFromGenerationPayload,
+} from "@/lib/generation-display-fields";
 
 export const dynamic = "force-dynamic";
 
@@ -10,22 +14,25 @@ export async function GET() {
     const { jobs, total } = reviewUsesAllProjects()
       ? await getQueueTabAll("approved", { limit: "500", offset: "0" })
       : await getQueueTab(PROJECT_SLUG, "approved", { limit: "500", offset: "0" });
-    const items = jobs.map((j) => ({
-      task_id: j.task_id,
-      project: (j.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
-      run_id: j.run_id,
-      platform: j.platform ?? "",
-      flow_type: j.flow_type ?? "",
-      review_status: j.status ?? "",
-      decision: j.latest_decision ?? "",
-      recommended_route: j.recommended_route ?? "",
-      qc_status: j.qc_status ?? "",
-      risk_score: j.pre_gen_score ?? "",
-      generated_title: (j.generation_payload?.title ?? j.generation_payload?.generated_title ?? "") as string,
-      generated_hook: (j.generation_payload?.hook ?? j.generation_payload?.generated_hook ?? "") as string,
-      generated_caption: pickCaptionFromGenerationPayload((j.generation_payload ?? {}) as Record<string, unknown>),
-      preview_url: (j.preview_thumb_url ?? "").trim(),
-    }));
+    const items = jobs.map((j) => {
+      const gp = (j.generation_payload ?? {}) as Record<string, unknown>;
+      return {
+        task_id: j.task_id,
+        project: (j.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
+        run_id: j.run_id,
+        platform: j.platform ?? "",
+        flow_type: j.flow_type ?? "",
+        review_status: j.status ?? "",
+        decision: j.latest_decision ?? "",
+        recommended_route: j.recommended_route ?? "",
+        qc_status: j.qc_status ?? "",
+        risk_score: j.pre_gen_score ?? "",
+        generated_title: pickTitleFromGenerationPayload(gp),
+        generated_hook: pickHookFromGenerationPayload(gp),
+        generated_caption: pickCaptionFromGenerationPayload(gp),
+        preview_url: (j.preview_thumb_url ?? "").trim(),
+      };
+    });
     return NextResponse.json({
       items,
       total,

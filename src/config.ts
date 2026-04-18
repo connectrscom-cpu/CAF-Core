@@ -325,8 +325,8 @@ const envSchema = z.object({
    */
   HEYGEN_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(3_600_000).default(2_700_000),
   /**
-   * Video Agent (`/v1/video_agent/generate`) duration_sec floor for full jobs. Values below this (e.g. bad LLM `estimated_runtime_seconds`)
-   * are bumped up so HeyGen is not asked for ultra-short renders (API allows 5s; that is almost always a data bug).
+   * Video Agent duration hint floor for full jobs (embedded in the agent `prompt`; v3 `POST /v3/video-agents` has no `duration_sec` field).
+   * Values below this (e.g. bad LLM `estimated_runtime_seconds`) are bumped so HeyGen is not asked for ultra-short renders.
    */
   HEYGEN_AGENT_MIN_DURATION_SEC: z.coerce.number().int().min(10).max(120).default(30),
   /**

@@ -20,6 +20,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       final_caption_override?: string;
       final_hashtags_override?: string;
       final_slides_json_override?: string;
+      final_spoken_script_override?: string;
+      heygen_avatar_id?: string;
+      heygen_voice_id?: string;
+      heygen_force_rerender?: boolean;
       rewrite_copy?: boolean;
     };
     const decision = (body.decision ?? "").trim().toUpperCase();
@@ -42,6 +46,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(body.final_slides_json_override !== undefined && {
         final_slides_json_override: body.final_slides_json_override,
       }),
+      ...(body.final_spoken_script_override !== undefined && {
+        final_spoken_script_override: body.final_spoken_script_override,
+      }),
+      ...(body.heygen_avatar_id !== undefined && { heygen_avatar_id: body.heygen_avatar_id }),
+      ...(body.heygen_voice_id !== undefined && { heygen_voice_id: body.heygen_voice_id }),
+      ...(body.heygen_force_rerender !== undefined && { heygen_force_rerender: body.heygen_force_rerender }),
       ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
     });
     if (!result.ok) {

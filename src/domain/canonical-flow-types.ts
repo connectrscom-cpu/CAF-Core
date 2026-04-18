@@ -1,3 +1,5 @@
+import { PRODUCT_VIDEO_FLOW_TYPES } from "./product-flow-types.js";
+
 /**
  * Canonical flow_type values for planning — **must match** `Flow Definitions` in the Flow Engine workbook
  * (same strings as `flow_type` column) so prompt_templates, output_schemas, and QC rows resolve.
@@ -15,8 +17,14 @@ export interface CanonicalAllowedFlowSeed {
   allowed_platforms: string | null;
 }
 
+/** FLOW_PRODUCT_* → prompt-led video templates until dedicated Flow Engine rows exist. */
+const PRODUCT_VIDEO_LEGACY_MAP: Record<string, string> = Object.fromEntries(
+  PRODUCT_VIDEO_FLOW_TYPES.map((ft) => [ft, "Video_Prompt_Generator"])
+);
+
 /** Legacy planner / job `flow_type` → Flow Engine workbook `flow_type` for templates & schemas. */
 export const LEGACY_FLOW_TYPE_TO_FLOW_ENGINE: Readonly<Record<string, string>> = {
+  ...PRODUCT_VIDEO_LEGACY_MAP,
   FLOW_SCENE_ASSEMBLY: "Video_Scene_Generator",
   Flow_Scene_Assembly: "Video_Scene_Generator",
   VIDEO_SCENE_ASSEMBLY: "Video_Scene_Generator",

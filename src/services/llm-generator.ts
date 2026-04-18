@@ -14,6 +14,8 @@ import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js
 import { randomUUID } from "node:crypto";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { isProductImageFlow, PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE } from "../domain/product-flow-types.js";
+import { isProductImageFlow, PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE } from "../domain/product-flow-types.js";
 import { loadConfig } from "../config.js";
 import {
   appendVideoUserPromptDurationHardFooter,
@@ -105,6 +107,20 @@ export async function generateForJob(
   }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
 
   if (!job) throw new Error(`Job not found: ${jobId}`);
+
+  if (isProductImageFlow(job.flow_type)) {
+    return {
+      draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+      task_id: job.task_id,
+      raw_output: "",
+      parsed_output: null,
+      model_used: model,
+      prompt_name: String(job.generation_payload.prompt_id ?? "unknown"),
+      tokens_used: 0,
+      success: false,
+      error: PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE,
+    };
+  }
 
   /** Match Flow Engine workbook `flow_type`; legacy job rows still resolve templates. */
   const templateFlowType = resolveFlowEngineTemplateFlowType(job.flow_type);
@@ -262,8 +278,9 @@ export async function generateForJob(
     if (sceneAssemblyTemplate) {
       systemPrompt = withSceneAssemblyPolicy(systemPrompt, appCfg);
     } else if (
-      /Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
-      !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft)
+      ((/Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
+        !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft)) ||
+        /^FLOW_PRODUCT_/i.test(ft))
     ) {
       systemPrompt = withVideoPromptDurationPolicy(systemPrompt, appCfg);
     } else {
@@ -298,8 +315,9 @@ export async function generateForJob(
   if (isVideoFlow(job.flow_type) && !wantSceneBundle) {
     const ft = job.flow_type;
     const isVideoPlan =
-      /Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
-      !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft);
+      (/Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
+        !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft)) ||
+      /^FLOW_PRODUCT_/i.test(ft);
     userPrompt = appendVideoUserPromptDurationHardFooter(
       userPrompt,
       appCfg,
@@ -358,15 +376,22 @@ export async function generateForJob(
         "final_caption_override",
         "final_hashtags_override",
         "final_slides_json_override",
+        "final_spoken_script_override",
       ] as const) {
         const v = eo[k];
         if (typeof v === "string" && v.trim()) {
           const label = k.replace(/^final_/, "").replace(/_override$/, "");
-          flatLines.push(
-            `${label}: ${k === "final_slides_json_override" ? v.trim().slice(0, 8000) : v.trim()}`
-          );
+          const slice =
+            k === "final_slides_json_override" || k === "final_spoken_script_override"
+              ? v.trim().slice(0, 8000)
+              : v.trim();
+          flatLines.push(`${label}: ${slice}`);
         }
       }
+      const av = eo.heygen_avatar_id;
+      const hv = eo.heygen_voice_id;
+      if (typeof av === "string" && av.trim()) flatLines.push(`heygen_avatar_id: ${av.trim()}`);
+      if (typeof hv === "string" && hv.trim()) flatLines.push(`heygen_voice_id: ${hv.trim()}`);
       if (flatLines.length) {
         bits.push(
           rewriteCopy

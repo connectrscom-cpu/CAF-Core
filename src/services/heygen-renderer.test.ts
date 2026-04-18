@@ -5,7 +5,10 @@ import {
   applyHeygenEnvAvatarDefaults,
   buildHeyGenRequestBody,
   buildHeyGenVideoAgentRequestBody,
+  firstHeyGenVideoInputUsesSilenceVoice,
   inferHeygenRenderModeFromFlowType,
+  mapHeyGenV2StyleBodyToV3CreateVideoAvatar,
+  normalizeHeyGenVideoAgentRequestForV3,
   mergeHeygenConfig,
   mergeHeygenConfigForJob,
   normalizeHeyGenLifecycleToken,
@@ -51,21 +54,17 @@ describe("inferHeygenRenderModeFromFlowType", () => {
 });
 
 describe("resolveHeygenGeneratePath", () => {
-  it("uses v2 for script-led HEYGEN_AVATAR (n8n SCRIPT_AVATAR)", () => {
-    expect(resolveHeygenGeneratePath("Video_Script_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe("/v2/video/generate");
-    expect(resolveHeygenGeneratePath("FLOW_HEYGEN_AVATAR_SCRIPT", "HEYGEN_AVATAR")).toBe("/v2/video/generate");
+  it("uses v3 direct video for script-led HEYGEN_AVATAR (n8n SCRIPT_AVATAR)", () => {
+    expect(resolveHeygenGeneratePath("Video_Script_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe("/v3/videos");
+    expect(resolveHeygenGeneratePath("FLOW_HEYGEN_AVATAR_SCRIPT", "HEYGEN_AVATAR")).toBe("/v3/videos");
   });
 
-  it("uses Video Agent for prompt-led HEYGEN_AVATAR (n8n PROMPT_AVATAR)", () => {
-    expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe(
-      "/v1/video_agent/generate"
-    );
+  it("uses Video Agent v3 for prompt-led HEYGEN_AVATAR (n8n PROMPT_AVATAR)", () => {
+    expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe("/v3/video-agents");
   });
 
-  it("uses Video Agent for HEYGEN_NO_AVATAR (n8n SCRIPT_NO_AVATAR)", () => {
-    expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_NoAvatar", "HEYGEN_NO_AVATAR")).toBe(
-      "/v1/video_agent/generate"
-    );
+  it("uses Video Agent v3 for HEYGEN_NO_AVATAR (n8n SCRIPT_NO_AVATAR)", () => {
+    expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_NoAvatar", "HEYGEN_NO_AVATAR")).toBe("/v3/video-agents");
   });
 });
 
@@ -127,6 +126,81 @@ describe("pickHeyGenDownloadUrlFromStatus", () => {
     });
     expect(out.url).toBe("https://cdn.example/top-cap.mp4");
     expect(out.usedVideoUrlCaption).toBe(true);
+  });
+
+  it("prefers HeyGen v3 captioned_video_url when present", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({
+      data: {
+        video_url: "https://cdn.example/plain.mp4",
+        captioned_video_url: "https://cdn.example/cap-v3.mp4",
+      },
+    });
+    expect(out.url).toBe("https://cdn.example/cap-v3.mp4");
+    expect(out.usedVideoUrlCaption).toBe(true);
+  });
+});
+
+describe("normalizeHeyGenVideoAgentRequestForV3", () => {
+  it("drops duration_sec and keeps only v3-allowed keys", () => {
+    const raw = buildHeyGenVideoAgentRequestBody(
+      { prompt_avatar_id: "av1" },
+      { spoken_script: "Hello world this is long enough for the test script body here" },
+      undefined,
+      { agentMode: "prompt_avatar", flowType: "Video_Prompt_HeyGen_Avatar", taskId: "t1" }
+    );
+    const v3 = normalizeHeyGenVideoAgentRequestForV3(raw);
+    expect(v3.duration_sec).toBeUndefined();
+    expect(v3.prompt).toBeTruthy();
+    expect(v3.avatar_id).toBe("av1");
+  });
+});
+
+describe("mapHeyGenV2StyleBodyToV3CreateVideoAvatar", () => {
+  it("maps video_inputs avatar script voice to v3 type avatar", () => {
+    const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
+      orientation: "portrait",
+      video_inputs: [
+        {
+          character: { type: "avatar", avatar_id: "look_123" },
+          script_text: "Hello from the script.",
+          voice: { type: "text", voice_id: "voice_abc", input_text: "Hello from the script." },
+        },
+      ],
+    });
+    expect(v3.type).toBe("avatar");
+    expect(v3.avatar_id).toBe("look_123");
+    expect(v3.script).toBe("Hello from the script.");
+    expect(v3.voice_id).toBe("voice_abc");
+    expect(v3.aspect_ratio).toBe("9:16");
+  });
+
+  it("omits voice_id when video_inputs has no voice (HeyGen uses avatar default)", () => {
+    const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
+      orientation: "portrait",
+      video_inputs: [
+        {
+          character: { type: "avatar", avatar_id: "look_123" },
+          script_text: "Hello from the script.",
+        },
+      ],
+    });
+    expect(v3.voice_id).toBeUndefined();
+    expect(v3.script).toBe("Hello from the script.");
+  });
+});
+
+describe("firstHeyGenVideoInputUsesSilenceVoice", () => {
+  it("detects silence discriminator on first video input", () => {
+    expect(
+      firstHeyGenVideoInputUsesSilenceVoice({
+        video_inputs: [{ voice: { type: "silence", duration: "12" }, prompt: "visual only" }],
+      })
+    ).toBe(true);
+    expect(
+      firstHeyGenVideoInputUsesSilenceVoice({
+        video_inputs: [{ voice: { type: "text", voice_id: "x" }, script_text: "hi" }],
+      })
+    ).toBe(false);
   });
 });
 
@@ -449,7 +523,20 @@ describe("buildHeyGenRequestBody", () => {
     expect(vi[0].voice).toEqual({ type: "text", voice_id: "pv1", input_text: "hello" });
   });
 
-  it("uses voice from merged config when pool entry has avatar_id only", () => {
+  it("does not inject unrelated merged voice when pool entry has avatar_id only on script-led v3 jobs", () => {
+    const pool = JSON.stringify([{ avatar_id: "avatar_only_1" }]);
+    const body = buildHeyGenRequestBody(
+      { prompt_avatar_pool_json: pool, voice_id: "shared_voice_99" },
+      { spoken_script: "y" },
+      undefined,
+      { flowType: "Video_Script_HeyGen_Avatar", taskId: "t2" }
+    );
+    const vi = body.video_inputs as Record<string, unknown>[];
+    expect((vi[0].character as Record<string, unknown>).avatar_id).toBe("avatar_only_1");
+    expect(vi[0].voice).toBeUndefined();
+  });
+
+  it("still uses merged voice when pool entry has avatar_id only on prompt-led flows (v2-style voice required)", () => {
     const pool = JSON.stringify([{ avatar_id: "avatar_only_1" }]);
     const body = buildHeyGenRequestBody(
       { prompt_avatar_pool_json: pool, voice_id: "shared_voice_99" },

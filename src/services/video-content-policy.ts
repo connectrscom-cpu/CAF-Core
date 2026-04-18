@@ -39,7 +39,8 @@ export function appendVideoUserPromptDurationHardFooter(
   const label = kind === "video_plan" ? "video plan" : "script JSON";
   const footer =
     `\n\n---\n**Hard rules (${label}):** ${durBlock(config)} ` +
-    `Do not promise durations outside this band in hooks or CTA.`;
+    `Do not promise durations outside this band in hooks or CTA. ` +
+    `If any earlier line in this message contradicts that band (for example a shorter “punchy” or per-platform second target), **ignore the shorter target** and follow the band above for spoken length and estimated_runtime_seconds.`;
   return `${userPrompt.trim()}${footer}`;
 }
 

@@ -8,7 +8,12 @@ import {
   type ReviewTab,
   type QueueFilters,
 } from "@/lib/caf-core-client";
-import { pickCaptionFromGenerationPayload } from "@/lib/task-api-handlers";
+import {
+  pickCaptionFromGenerationPayload,
+  pickHookFromGenerationPayload,
+  pickTitleFromGenerationPayload,
+} from "@/lib/generation-display-fields";
+import { roughSlidesJsonFromGenerationPayload } from "@/lib/job-generated-slides";
 
 export const dynamic = "force-dynamic";
 
@@ -51,24 +56,32 @@ export async function GET(request: NextRequest) {
       allProjects ? getQueueCountsAll() : getQueueCounts(PROJECT_SLUG),
     ]);
 
-    const items = jobs.map((j) => ({
-      task_id: j.task_id,
-      project: (j.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
-      run_id: j.run_id,
-      platform: j.platform ?? "",
-      flow_type: j.flow_type ?? "",
-      review_status: j.status ?? "",
-      decision: j.latest_decision ?? "",
-      recommended_route: j.recommended_route ?? "",
-      qc_status: j.qc_status ?? "",
-      risk_score: j.pre_gen_score ?? "",
-      generated_title: (j.generation_payload?.title ?? j.generation_payload?.generated_title ?? "") as string,
-      generated_hook: (j.generation_payload?.hook ?? j.generation_payload?.generated_hook ?? "") as string,
-      generated_caption: pickCaptionFromGenerationPayload((j.generation_payload ?? {}) as Record<string, unknown>),
-      generated_slides_json: j.generation_payload?.slides ? JSON.stringify(j.generation_payload.slides) : "",
-      preview_url: (j.preview_thumb_url ?? "").trim(),
-      video_url: "",
-    }));
+    const items = jobs.map((j) => {
+      const gp = (j.generation_payload ?? {}) as Record<string, unknown>;
+      const slidesFromPayload =
+        j.generation_payload?.slides != null && typeof j.generation_payload.slides === "object"
+          ? JSON.stringify(j.generation_payload.slides)
+          : "";
+      const generated_slides_json = slidesFromPayload || roughSlidesJsonFromGenerationPayload(gp);
+      return {
+        task_id: j.task_id,
+        project: (j.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
+        run_id: j.run_id,
+        platform: j.platform ?? "",
+        flow_type: j.flow_type ?? "",
+        review_status: j.status ?? "",
+        decision: j.latest_decision ?? "",
+        recommended_route: j.recommended_route ?? "",
+        qc_status: j.qc_status ?? "",
+        risk_score: j.pre_gen_score ?? "",
+        generated_title: pickTitleFromGenerationPayload(gp),
+        generated_hook: pickHookFromGenerationPayload(gp),
+        generated_caption: pickCaptionFromGenerationPayload(gp),
+        generated_slides_json,
+        preview_url: (j.preview_thumb_url ?? "").trim(),
+        video_url: "",
+      };
+    });
 
     return NextResponse.json({
       items,

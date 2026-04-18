@@ -36,6 +36,7 @@ const HEADLINE_KEYS = [
   "slide_headline",
   "slide headline",
   "hook",
+  "hook_line",
   "slide_hook",
   "main_title",
   "hero",

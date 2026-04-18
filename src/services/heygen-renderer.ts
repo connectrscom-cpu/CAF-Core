@@ -3,7 +3,13 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import { listHeygenConfig, type HeygenConfigRow } from "../repositories/project-config.js";
+import {
+  listHeygenConfig,
+  listProjectBrandAssets,
+  type HeygenConfigRow,
+} from "../repositories/project-config.js";
+import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
+import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
 import { insertAsset } from "../repositories/assets.js";
 import { uploadBuffer, downloadUrl } from "./supabase-storage.js";
 import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
@@ -106,6 +112,23 @@ function trimConfigString(v: unknown): string | undefined {
   if (v == null) return undefined;
   const s = String(v).trim();
   return s === "" ? undefined : s;
+}
+
+/** Optional `voice_id` for `POST /v3/video-agents` (brand voice); omit if unset so the agent can choose. */
+function pickVoiceIdForVideoAgentOverride(merged: Record<string, unknown>): string | undefined {
+  for (const k of ["voice", "default_voice", "voice_id", "default_voice_id", "script_voice_id"] as const) {
+    const t = trimConfigString(merged[k]);
+    if (t) return t;
+  }
+  const char = merged.character;
+  if (char && typeof char === "object" && !Array.isArray(char)) {
+    const c = char as Record<string, unknown>;
+    for (const k of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
+      const t = trimConfigString(c[k]);
+      if (t) return t;
+    }
+  }
+  return trimConfigString(process.env.HEYGEN_DEFAULT_VOICE_ID);
 }
 
 /**
@@ -268,6 +291,8 @@ const HEYGEN_INTERNAL_CONFIG_KEYS = new Set([
   "prompt_avatar_id",
   "script_avatar_id",
   "script_voice_id",
+  /** Pool picked avatar but no paired voice — v3 omits voice_id (avatar default); do not inject unrelated env voice. */
+  "heygen_allow_missing_voice_for_avatar",
 ]);
 
 function stripInternalHeygenConfigKeys(body: Record<string, unknown>): void {
@@ -291,10 +316,13 @@ export function isPromptLedHeygenFlow(flowType: string | null | undefined): bool
   );
 }
 
-export type HeygenGeneratePath = "/v2/video/generate" | "/v1/video_agent/generate";
+/** HeyGen v3 (recommended). `/v2/video/generate` kept only for `voice.type: silence` (visual-only) which has no v3 equivalent. */
+export type HeygenGeneratePath = "/v3/videos" | "/v3/video-agents" | "/v2/video/generate";
 
 /**
- * n8n `3.2.2 - Video_Render - HeyGen`: SCRIPT_AVATAR → v2; PROMPT_AVATAR and SCRIPT_NO_AVATAR → Video Agent.
+ * n8n `3.2.2 - Video_Render - HeyGen` routing, upgraded to v3:
+ * - Script + avatar → `POST /v3/videos` (unless silence-voice visual-only → legacy v2).
+ * - Prompt avatar + no-avatar agent → `POST /v3/video-agents`.
  */
 export function resolveHeygenGeneratePath(
   flowType: string | null | undefined,
@@ -304,8 +332,8 @@ export function resolveHeygenGeneratePath(
     renderMode != null && String(renderMode).trim() !== ""
       ? String(renderMode).trim()
       : inferHeygenRenderModeFromFlowType(flowType) ?? "HEYGEN_AVATAR";
-  if (rm === "HEYGEN_AVATAR" && isScriptLedHeygenFlow(flowType)) return "/v2/video/generate";
-  return "/v1/video_agent/generate";
+  if (rm === "HEYGEN_AVATAR" && isScriptLedHeygenFlow(flowType)) return "/v3/videos";
+  return "/v3/video-agents";
 }
 
 export type HeygenAvatarPoolEntry = { avatar_id: string; voice_id: string };
@@ -323,17 +351,21 @@ function normalizePoolEntries(arr: unknown[]): HeygenAvatarPoolEntry[] {
   return out;
 }
 
-/** After picking from a pool: use paired voice_id, else merged config / script_voice_id / defaults. */
+/**
+ * After picking from a pool: use paired voice_id; script-led flows avoid unrelated merged `voice` rows.
+ * Prompt-led flows still use merged `voice` / env when the pool entry has no voice (v2-style compatibility).
+ */
 function resolveVoiceIdForPoolEntry(
   body: Record<string, unknown>,
   picked: HeygenAvatarPoolEntry,
   scriptLed: boolean
-): string {
+): string | undefined {
   const fromPick = String(picked.voice_id ?? "").trim();
   if (fromPick) return fromPick;
   if (scriptLed) {
     const sv = trimConfigString(body.script_voice_id);
     if (sv) return sv;
+    return undefined;
   }
   const fromBody =
     trimConfigString(body.voice_id) ??
@@ -410,10 +442,24 @@ export function applyHeygenAvatarFromSheetConfig(
     if (pool.length === 0) continue;
     const idx = seed ? stablePickIndex(seed, pool.length) : 0;
     const picked = pool[idx]!;
+    const pickedHasVoice = Boolean(String(picked.voice_id ?? "").trim());
+    if (scriptLed && !pickedHasVoice) {
+      for (const vk of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
+        delete body[vk];
+      }
+    }
     const voiceId = resolveVoiceIdForPoolEntry(body, picked, scriptLed);
     body.character = mergeCharacterWithAvatarId(body, picked.avatar_id);
-    body.voice_id = voiceId;
-    body.voice = voiceId;
+    if (voiceId) {
+      body.voice_id = voiceId;
+      body.voice = voiceId;
+    } else {
+      delete body.voice_id;
+      delete body.voice;
+      if (scriptLed && !pickedHasVoice) {
+        body.heygen_allow_missing_voice_for_avatar = true;
+      }
+    }
     return;
   }
 
@@ -529,7 +575,8 @@ export const HEYGEN_VIDEO_AGENT_RUBRIC_LINES = [
 ] as const;
 
 /**
- * HeyGen Video Agent (`POST /v1/video_agent/generate`) body aligned with n8n PROMPT_AVATAR / SCRIPT_NO_AVATAR builders.
+ * HeyGen Video Agent request builder (n8n PROMPT_AVATAR / SCRIPT_NO_AVATAR semantics).
+ * Normalize with {@link normalizeHeyGenVideoAgentRequestForV3} before `POST /v3/video-agents` (v3 rejects unknown keys).
  */
 export function buildHeyGenVideoAgentRequestBody(
   mergedConfig: Record<string, unknown>,
@@ -645,7 +692,15 @@ export function buildHeyGenVideoAgentRequestBody(
       );
     }
     out.avatar_id = avatarId;
+    const voicePick = pickVoiceIdForVideoAgentOverride(merged);
+    if (voicePick) out.voice_id = voicePick;
   }
+
+  const stylePick = trimConfigString(merged.style_id ?? merged.heygen_style_id);
+  if (stylePick) out.style_id = stylePick;
+
+  const modePick = trimConfigString(merged.video_agent_mode ?? merged.agent_mode);
+  if (modePick === "chat" || modePick === "generate") out.mode = modePick;
 
   const cb = trimConfigString(merged.callback_url);
   if (cb) out.callback_url = cb;
@@ -655,6 +710,30 @@ export function buildHeyGenVideoAgentRequestBody(
   if (opts.agentMode === "no_avatar" && "avatar_id" in body) delete body.avatar_id;
 
   return body;
+}
+
+const HEYGEN_V3_VIDEO_AGENT_KEYS = new Set([
+  "prompt",
+  "mode",
+  "avatar_id",
+  "voice_id",
+  "style_id",
+  "orientation",
+  "files",
+  "callback_url",
+  "callback_id",
+  "incognito_mode",
+]);
+
+/**
+ * v3 `POST /v3/video-agents` uses `additionalProperties: false` — strip legacy-only fields (`duration_sec`, etc.).
+ */
+export function normalizeHeyGenVideoAgentRequestForV3(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of HEYGEN_V3_VIDEO_AGENT_KEYS) {
+    if (body[k] !== undefined && body[k] !== null) out[k] = body[k];
+  }
+  return out;
 }
 
 function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
@@ -679,6 +758,47 @@ function extractVideoId(json: Record<string, unknown>): string | null {
   return id ? String(id) : null;
 }
 
+function extractSessionId(json: Record<string, unknown>): string | null {
+  const data = json.data as Record<string, unknown> | undefined;
+  const s = data?.session_id;
+  return typeof s === "string" && s.trim() ? s.trim() : null;
+}
+
+const HEYGEN_SESSION_VIDEO_ID_MAX_MS = 180_000;
+
+async function pollHeyGenSessionForVideoId(apiKey: string, apiBase: string, sessionId: string): Promise<string> {
+  const base = apiBase.replace(/\/$/, "");
+  const url = `${base}/v3/video-agents/${encodeURIComponent(sessionId)}`;
+  const start = Date.now();
+  let delay = 1500;
+  while (Date.now() - start < HEYGEN_SESSION_VIDEO_ID_MAX_MS) {
+    const res = await fetch(url, { headers: { "X-Api-Key": apiKey } });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`HeyGen session ${res.status}: ${text.slice(0, 400)}`);
+    let json: Record<string, unknown>;
+    try {
+      json = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(`HeyGen session: invalid JSON (${text.slice(0, 200)})`);
+    }
+    throwIfHeyGenStandardApiError(json, "get video agent session");
+    throwIfHeyGenBusinessError(json, "get video agent session");
+    const vid = extractVideoId(json);
+    if (vid) return vid;
+    const data = json.data as Record<string, unknown> | undefined;
+    const st = String(data?.status ?? "").trim().toLowerCase();
+    if (st === "failed") {
+      const detail = JSON.stringify(data?.messages ?? data).slice(0, 600);
+      throw new Error(`HeyGen Video Agent session failed: ${detail}`);
+    }
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(Math.round(delay * 1.25), 8000);
+  }
+  throw new Error(
+    `HeyGen Video Agent: no video_id after ${HEYGEN_SESSION_VIDEO_ID_MAX_MS}ms for session_id=${sessionId} — poll GET /v3/video-agents/{session_id} timed out`
+  );
+}
+
 function getHeyGenNumericCode(json: Record<string, unknown>): number | undefined {
   const c = json.code;
   if (c == null) return undefined;
@@ -687,8 +807,19 @@ function getHeyGenNumericCode(json: Record<string, unknown>): number | undefined
   return Number.isFinite(n) ? n : undefined;
 }
 
+/** v3 `{ error: { code, message } }` shape (HTTP 200 is uncommon but handle it). */
+function throwIfHeyGenStandardApiError(json: Record<string, unknown>, where: string): void {
+  const err = json.error;
+  if (err && typeof err === "object" && !Array.isArray(err)) {
+    const o = err as Record<string, unknown>;
+    const m = String(o.message ?? o.code ?? "error").trim();
+    if (m) throw new Error(`HeyGen ${where}: ${m}`);
+  }
+}
+
 /** HeyGen wraps payloads in `{ code: 100, data, message }`. Non-100 was previously misread as status "unknown" → poll timeout. */
 function throwIfHeyGenBusinessError(json: Record<string, unknown>, where: string): void {
+  throwIfHeyGenStandardApiError(json, where);
   const code = getHeyGenNumericCode(json);
   if (code !== undefined && code !== 100) {
     const m = String(json.message ?? json.msg ?? "").trim() || `API code ${code}`;
@@ -740,7 +871,9 @@ export function pickHeyGenDownloadUrlFromStatus(json: Record<string, unknown>): 
 } {
   const data = json.data as Record<string, unknown> | undefined;
   const caption =
-    trimUrlString(data?.video_url_caption) ?? trimUrlString(json.video_url_caption);
+    trimUrlString(data?.video_url_caption) ??
+    trimUrlString(data?.captioned_video_url) ??
+    trimUrlString(json.video_url_caption);
   if (caption) return { url: caption, usedVideoUrlCaption: true };
   const plain = extractVideoUrl(json);
   return { url: plain, usedVideoUrlCaption: false };
@@ -750,16 +883,17 @@ export async function submitHeyGenVideo(
   apiKey: string,
   apiBase: string,
   body: Record<string, unknown>,
-  path: HeygenGeneratePath = "/v2/video/generate"
+  path: HeygenGeneratePath
 ): Promise<string> {
   const base = apiBase.replace(/\/$/, "");
+  const payload = path === "/v3/video-agents" ? normalizeHeyGenVideoAgentRequestForV3(body) : body;
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Api-Key": apiKey,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`HeyGen generate ${res.status}: ${text.slice(0, 800)}`);
@@ -769,13 +903,31 @@ export async function submitHeyGenVideo(
   } catch {
     throw new Error("HeyGen generate: invalid JSON");
   }
+  throwIfHeyGenStandardApiError(json, `generate ${path}`);
   throwIfHeyGenBusinessError(json, `generate ${path}`);
-  const vid = extractVideoId(json);
+  let vid = extractVideoId(json);
+  if (!vid && path === "/v3/video-agents") {
+    const sid = extractSessionId(json);
+    if (sid) vid = await pollHeyGenSessionForVideoId(apiKey, apiBase, sid);
+  }
   if (!vid) throw new Error(`HeyGen generate: no video_id in response: ${text.slice(0, 400)}`);
   return vid;
 }
 
-export async function getHeyGenVideoStatus(
+function wrapV3VideoDetailJsonForCaptionPicker(json: Record<string, unknown>): Record<string, unknown> {
+  const data = json.data as Record<string, unknown> | undefined;
+  if (!data) return json;
+  const cap = data.captioned_video_url ?? data.video_url_caption;
+  return {
+    ...json,
+    data: {
+      ...data,
+      ...(typeof cap === "string" && cap.trim() ? { video_url_caption: cap } : {}),
+    },
+  };
+}
+
+async function getHeyGenVideoStatusLegacy(
   apiKey: string,
   apiBase: string,
   videoId: string
@@ -804,6 +956,43 @@ export async function getHeyGenVideoStatus(
   const status = pickHeyGenLifecycleStatusLabel(json);
   const { url: videoUrl, usedVideoUrlCaption } = pickHeyGenDownloadUrlFromStatus(json);
   return { status, videoUrl, usedVideoUrlCaption, raw: json };
+}
+
+/** Prefer `GET /v3/videos/{video_id}`; fall back to legacy `video_status.get` on 404 (pre-v3 job ids). */
+export async function getHeyGenVideoStatus(
+  apiKey: string,
+  apiBase: string,
+  videoId: string
+): Promise<{
+  status: string;
+  videoUrl: string | null;
+  usedVideoUrlCaption: boolean;
+  raw: Record<string, unknown>;
+}> {
+  const base = apiBase.replace(/\/$/, "");
+  const v3Url = `${base}/v3/videos/${encodeURIComponent(videoId)}`;
+  const res = await fetch(v3Url, {
+    headers: { "X-Api-Key": apiKey },
+  });
+  const text = await res.text();
+  if (res.status === 404) {
+    return getHeyGenVideoStatusLegacy(apiKey, apiBase, videoId);
+  }
+  if (!res.ok) throw new Error(`HeyGen status ${res.status}: ${text.slice(0, 400)}`);
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(
+      `HeyGen status: response is not JSON (${res.status}). Preview: ${text.slice(0, 240)}`
+    );
+  }
+  throwIfHeyGenStandardApiError(json, "get /v3/videos");
+  throwIfHeyGenBusinessError(json, "get /v3/videos");
+  const wrapped = wrapV3VideoDetailJsonForCaptionPicker(json);
+  const status = pickHeyGenLifecycleStatusLabel(wrapped);
+  const { url: videoUrl, usedVideoUrlCaption } = pickHeyGenDownloadUrlFromStatus(wrapped);
+  return { status, videoUrl, usedVideoUrlCaption, raw: wrapped };
 }
 
 /** Coerce nested API shapes (string | object) into a single status string for polling. */
@@ -915,6 +1104,34 @@ async function waitForHeyGenDownloadUrl(
   throw new Error(
     "HeyGen completed but no video_url (or video_url_caption) in status payload after retries — check HeyGen dashboard for this video_id"
   );
+}
+
+/**
+ * Sometimes `captioned_video_url` is populated shortly after `video_url`; keep polling to prefer burned-in captions.
+ */
+async function retryPollForCaptionedHeyGenUrl(
+  apiKey: string,
+  apiBase: string,
+  videoId: string,
+  initialUrl: string,
+  opts?: { maxMs?: number }
+): Promise<{ videoUrl: string; usedVideoUrlCaption: boolean }> {
+  const maxMs = opts?.maxMs ?? 120_000;
+  const start = Date.now();
+  let delay = 2000;
+  let bestUrl = initialUrl;
+  let bestCaption = false;
+  while (Date.now() - start < maxMs) {
+    const st = await getHeyGenVideoStatus(apiKey, apiBase, videoId);
+    const picked = pickHeyGenDownloadUrlFromStatus(st.raw);
+    if (picked.usedVideoUrlCaption && picked.url) {
+      return { videoUrl: picked.url, usedVideoUrlCaption: true };
+    }
+    if (picked.url) bestUrl = picked.url;
+    await new Promise((r) => setTimeout(r, delay));
+    delay = Math.min(Math.round(delay * 1.2), 8000);
+  }
+  return { videoUrl: bestUrl, usedVideoUrlCaption: bestCaption };
 }
 
 export async function pollHeyGenUntilComplete(
@@ -1071,6 +1288,102 @@ function pickVoiceFromBody(body: Record<string, unknown>, defaultVoiceId?: strin
   return HEYGEN_FALLBACK_VOICE_ID;
 }
 
+/** True when HeyGen v2 `voice: { type: "silence" }` is used (visual-only). v3 `POST /v3/videos` has no silence-TTS equivalent. */
+export function firstHeyGenVideoInputUsesSilenceVoice(body: Record<string, unknown>): boolean {
+  const vi = body.video_inputs;
+  if (!Array.isArray(vi) || vi.length === 0) return false;
+  const v0 = vi[0];
+  if (!v0 || typeof v0 !== "object" || Array.isArray(v0)) return false;
+  return heygenVoiceDiscriminatorType((v0 as Record<string, unknown>).voice) === "silence";
+}
+
+function heygenOrientationToV3AspectRatio(orientation: string | undefined): "9:16" | "16:9" {
+  const o = (orientation ?? "portrait").trim().toLowerCase();
+  if (o === "landscape" || o === "16:9" || o === "16x9") return "16:9";
+  if (o === "9:16" || o === "9x16") return "9:16";
+  return "9:16";
+}
+
+/** Voice id for v3 avatar map: explicit config only — no hard-coded fallback (HeyGen uses avatar default when omitted). */
+function pickExplicitVoiceIdForV3Avatar(body: Record<string, unknown>): string | undefined {
+  for (const k of ["voice", "default_voice", "voice_id", "default_voice_id"] as const) {
+    const t = trimVoiceId(body[k]);
+    if (t) return t;
+  }
+  const scriptV = trimVoiceId(body.script_voice_id);
+  if (scriptV) return scriptV;
+  const char = body.character;
+  if (char && typeof char === "object" && !Array.isArray(char)) {
+    const c = char as Record<string, unknown>;
+    for (const k of ["voice", "voice_id", "default_voice", "default_voice_id"] as const) {
+      const t = trimVoiceId(c[k]);
+      if (t) return t;
+    }
+  }
+  const envV = trimVoiceId(process.env.HEYGEN_DEFAULT_VOICE_ID);
+  if (envV) return envV;
+  return undefined;
+}
+
+/**
+ * Map CAF's v2-shaped `video_inputs` body (from {@link buildHeyGenRequestBody}) to HeyGen v3 `POST /v3/videos` avatar payload.
+ * Caller must ensure this is not a silence-voice job (use legacy v2 instead).
+ */
+export function mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body: Record<string, unknown>): Record<string, unknown> {
+  const viRaw = body.video_inputs;
+  if (!Array.isArray(viRaw) || viRaw.length === 0) {
+    throw new Error("HeyGen v3 map: missing video_inputs");
+  }
+  const vi0 = viRaw[0] as Record<string, unknown>;
+  if (firstHeyGenVideoInputUsesSilenceVoice(body)) {
+    throw new Error("HeyGen v3 map: silence voice requires legacy POST /v2/video/generate");
+  }
+  const ch = vi0.character;
+  const cr = ch && typeof ch === "object" && !Array.isArray(ch) ? (ch as Record<string, unknown>) : null;
+  const avatarId = trimConfigString(cr?.avatar_id) ?? trimConfigString(cr?.talking_photo_id);
+  if (!avatarId) throw new Error("HeyGen v3 map: missing avatar_id on video_inputs[0].character");
+
+  const script = trimConfigString(vi0.script_text);
+  if (!script) throw new Error("HeyGen v3 map: script_text is required for POST /v3/videos type avatar");
+
+  const voiceId =
+    extractVoiceIdFromHeygenVoiceValue(vi0.voice) ?? pickExplicitVoiceIdForV3Avatar(body);
+
+  const orient =
+    trimConfigString(body.orientation) ??
+    trimConfigString(body.default_orientation) ??
+    trimConfigString(vi0.orientation);
+  const aspect_ratio = heygenOrientationToV3AspectRatio(orient);
+
+  const out: Record<string, unknown> = {
+    type: "avatar",
+    avatar_id: avatarId,
+    script,
+    aspect_ratio,
+  };
+  if (voiceId) out.voice_id = voiceId;
+
+  const cb = trimConfigString(body.callback_url);
+  if (cb) out.callback_url = cb;
+  const cbi = trimConfigString(body.callback_id);
+  if (cbi) out.callback_id = cbi;
+  const title = trimConfigString(body.title);
+  if (title) out.title = title;
+
+  const of = trimConfigString(body.output_format);
+  if (of === "mp4" || of === "webm") out.output_format = of;
+
+  const res = trimConfigString(body.resolution);
+  if (res === "4k" || res === "1080p" || res === "720p") out.resolution = res;
+
+  if (body.background != null && typeof body.background === "object" && !Array.isArray(body.background)) {
+    out.background = body.background;
+  }
+  if (typeof body.remove_background === "boolean") out.remove_background = body.remove_background;
+
+  return out;
+}
+
 /** DB / sheet imports sometimes store JSON arrays or objects as strings. */
 function coerceHeyGenMergedFields(body: Record<string, unknown>): void {
   const vi = body.video_inputs;
@@ -1111,6 +1424,7 @@ function resolveVoiceForVideoInput(
     trimVoiceId(first.default_voice) ??
     trimVoiceId(first.default_voice_id);
   if (fromFirst) return fromFirst;
+  if (body.heygen_allow_missing_voice_for_avatar === true) return undefined;
   return pickVoiceFromBody(body, defaultVoiceId);
 }
 
@@ -1143,7 +1457,10 @@ export function buildHeyGenRequestBody(
   });
 
   if (typeof body.video_inputs === "undefined" && (script || prompt)) {
-    const voice = pickVoiceFromBody(body, opts?.defaultVoiceId);
+    const voice =
+      body.heygen_allow_missing_voice_for_avatar === true
+        ? undefined
+        : pickVoiceFromBody(body, opts?.defaultVoiceId);
     body = deepMerge(body, {
       video_inputs: [
         {
@@ -1167,7 +1484,10 @@ export function buildHeyGenRequestBody(
         "HeyGen: missing video_inputs and no spoken_script/script or video_prompt in generated_output. Configure heygen_config or fix LLM output."
       );
     }
-    const voice = pickVoiceFromBody(body, opts?.defaultVoiceId);
+    const voice =
+      body.heygen_allow_missing_voice_for_avatar === true
+        ? undefined
+        : pickVoiceFromBody(body, opts?.defaultVoiceId);
     body.video_inputs = [
       {
         ...(body.character != null ? { character: body.character } : {}),
@@ -1220,11 +1540,21 @@ export function buildHeyGenRequestBody(
     }
   }
 
+  const allowMissingVoice =
+    body.heygen_allow_missing_voice_for_avatar === true &&
+    opts?.flowType &&
+    isScriptLedHeygenFlow(opts.flowType) &&
+    resolveHeygenGeneratePath(opts.flowType, null) === "/v3/videos";
+
   // `override` deepMerge may replace video_inputs[0] without voice — fill id from config / default.
   const head = viArr[0];
   if (head && typeof head === "object" && !Array.isArray(head)) {
     const z = head as Record<string, unknown>;
-    if (!isHeygenNonTextVoice(z.voice) && !extractVoiceIdFromHeygenVoiceValue(z.voice)) {
+    if (
+      !allowMissingVoice &&
+      !isHeygenNonTextVoice(z.voice) &&
+      !extractVoiceIdFromHeygenVoiceValue(z.voice)
+    ) {
       const fill = pickVoiceFromBody(body, opts?.defaultVoiceId) ?? trimVoiceId(opts?.defaultVoiceId);
       if (fill) z.voice = coerceHeygenVoiceToV2Object(z.voice, fill, trimSpeechForHeygenVideoInput(z));
     }
@@ -1236,7 +1566,7 @@ export function buildHeyGenRequestBody(
     const row = raw as Record<string, unknown>;
     if (isHeygenNonTextVoice(row.voice)) continue;
     let vid = extractVoiceIdFromHeygenVoiceValue(row.voice);
-    if (!vid && i === 0) {
+    if (!vid && i === 0 && !allowMissingVoice) {
       vid = pickVoiceFromBody(body, opts?.defaultVoiceId) ?? trimVoiceId(opts?.defaultVoiceId);
     }
     if (vid) row.voice = coerceHeygenVoiceToV2Object(row.voice, vid, trimSpeechForHeygenVideoInput(row));
@@ -1248,7 +1578,7 @@ export function buildHeyGenRequestBody(
     ? extractVoiceIdFromHeygenVoiceValue((vi0 as Record<string, unknown>).voice)
     : undefined;
   const v0Silence = heygenVoiceDiscriminatorType(v0Voice) === "silence";
-  if (!v0Id && !v0Silence) {
+  if (!v0Id && !v0Silence && !allowMissingVoice) {
     throw new Error(
       "HeyGen: video_inputs[0].voice ({ type: \"text\", voice_id }) is required for TTS. In heygen_config use config_key `voice` or `voice_id` (or nest voice on `character`), or set HEYGEN_DEFAULT_VOICE_ID in the environment."
     );
@@ -1275,16 +1605,24 @@ export async function runHeygenVideoWithBody(
 ): Promise<{ videoUrl: string; videoId: string; usedVideoUrlCaption: boolean }> {
   const apiKey = appConfig.HEYGEN_API_KEY?.trim();
   if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
-  const postPath = opts?.postPath ?? "/v2/video/generate";
+  const postPath = opts?.postPath ?? "/v3/video-agents";
   const endpoint = `${appConfig.HEYGEN_API_BASE.replace(/\/$/, "")}${postPath}`;
   try {
     const videoId = await submitHeyGenVideo(apiKey, appConfig.HEYGEN_API_BASE, body, postPath);
-    const { videoUrl, usedVideoUrlCaption } = await pollHeyGenUntilComplete(
+    let { videoUrl, usedVideoUrlCaption } = await pollHeyGenUntilComplete(
       apiKey,
       appConfig.HEYGEN_API_BASE,
       videoId,
       { maxMs: appConfig.HEYGEN_POLL_MAX_MS }
     );
+    if (!usedVideoUrlCaption && postPath === "/v3/videos") {
+      ({ videoUrl, usedVideoUrlCaption } = await retryPollForCaptionedHeyGenUrl(
+        apiKey,
+        appConfig.HEYGEN_API_BASE,
+        videoId,
+        videoUrl
+      ));
+    }
     if (audit) {
       await tryInsertApiCallAudit(audit.db, {
         projectId: audit.projectId,
@@ -1341,25 +1679,43 @@ export async function runHeygenForContentJob(
   const merged = mergeHeygenConfigForJob(rows, job.platform, job.flow_type, renderMode);
   applyHeygenEnvAvatarDefaults(merged, appConfig);
   const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
-  const postPath = resolveHeygenGeneratePath(job.flow_type, renderMode);
-  const body =
-    postPath === "/v2/video/generate"
-      ? buildHeyGenRequestBody(merged, gen, override, {
-          defaultVoiceId: appConfig.HEYGEN_DEFAULT_VOICE_ID,
-          flowType: job.flow_type,
-          taskId: job.task_id,
-          visualOnlySilenceDurationSec: appConfig.HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC,
-        })
-      : buildHeyGenVideoAgentRequestBody(merged, gen, override, {
-          flowType: job.flow_type,
-          taskId: job.task_id,
-          agentMode: renderMode === "HEYGEN_NO_AVATAR" ? "no_avatar" : "prompt_avatar",
-          durationBounds: {
-            minSec: appConfig.HEYGEN_AGENT_MIN_DURATION_SEC,
-            maxSec: 300,
-            missingFallbackSec: appConfig.VIDEO_TARGET_DURATION_MIN_SEC,
-          },
-        });
+  const preferredPath = resolveHeygenGeneratePath(job.flow_type, renderMode);
+  let postPath: HeygenGeneratePath = preferredPath;
+  let body: Record<string, unknown>;
+
+  if (preferredPath === "/v3/videos") {
+    body = buildHeyGenRequestBody(merged, gen, override, {
+      defaultVoiceId: appConfig.HEYGEN_DEFAULT_VOICE_ID,
+      flowType: job.flow_type,
+      taskId: job.task_id,
+      visualOnlySilenceDurationSec: appConfig.HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC,
+    });
+    if (firstHeyGenVideoInputUsesSilenceVoice(body)) {
+      postPath = "/v2/video/generate";
+    } else {
+      body = mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body);
+    }
+  } else {
+    body = buildHeyGenVideoAgentRequestBody(merged, gen, override, {
+      flowType: job.flow_type,
+      taskId: job.task_id,
+      agentMode: renderMode === "HEYGEN_NO_AVATAR" ? "no_avatar" : "prompt_avatar",
+      durationBounds: {
+        minSec: appConfig.HEYGEN_AGENT_MIN_DURATION_SEC,
+        maxSec: 300,
+        missingFallbackSec: appConfig.VIDEO_TARGET_DURATION_MIN_SEC,
+      },
+    });
+    if (isProductVideoFlow(job.flow_type)) {
+      const suffix = productVideoAgentPromptSuffix(job.flow_type);
+      if (suffix && typeof body.prompt === "string") {
+        const p = body.prompt.trim();
+        body.prompt = p ? `${p}\n\n${suffix}` : suffix;
+      }
+      const kit = await listProjectBrandAssets(db, job.project_id);
+      mergeHeygenVideoAgentFiles(body, brandAssetsToHeygenFiles(kit));
+    }
+  }
 
   const { videoUrl, videoId, usedVideoUrlCaption } = await runHeygenVideoWithBody(
     appConfig,

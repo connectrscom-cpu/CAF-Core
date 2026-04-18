@@ -1408,7 +1408,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         intro: PROMPT_LABS_HEYGEN_INTRO,
         rubric_lines: [...HEYGEN_VIDEO_AGENT_RUBRIC_LINES],
         note:
-          "POST /v1/video_agent/generate: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Avatar script jobs use POST /v2/video/generate with video_inputs (see heygen-renderer).",
+          "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags (duration is prompt guidance only). Script-led avatar jobs use POST /v3/videos (type avatar), except silence-voice visual-only jobs which still use legacy POST /v2/video/generate (see heygen-renderer).",
       },
       prompt_templates: prompt_templates_enriched,
       flow_definitions: flowDefs,

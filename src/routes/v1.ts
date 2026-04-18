@@ -55,6 +55,13 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     final_caption_override: z.string().optional(),
     final_hashtags_override: z.string().optional(),
     final_slides_json_override: z.string().optional(),
+    /** Video / HeyGen: reviewer-edited VO script stored on NEEDS_EDIT and merged into `generated_output.spoken_script` on rework. */
+    final_spoken_script_override: z.string().optional(),
+    /** Optional HeyGen ids merged into `generation_payload.heygen_request` for the next render / rework. */
+    heygen_avatar_id: z.string().optional(),
+    heygen_voice_id: z.string().optional(),
+    /** When true with NEEDS_EDIT, single-take HeyGen override rework still calls HeyGen even if the script text is unchanged. */
+    heygen_force_rerender: z.boolean().optional(),
     /** When false with copy overrides, rework prefers OVERRIDE_ONLY (patch in place). Default at review UI: true. */
     rewrite_copy: z.boolean().optional(),
   });
@@ -70,6 +77,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("final_caption_override", "final_caption_override");
     put("final_hashtags_override", "final_hashtags_override");
     put("final_slides_json_override", "final_slides_json_override");
+    put("final_spoken_script_override", "final_spoken_script_override");
+    put("heygen_avatar_id", "heygen_avatar_id");
+    put("heygen_voice_id", "heygen_voice_id");
+    put("heygen_force_rerender", "heygen_force_rerender");
     put("rewrite_copy", "rewrite_copy");
     return out;
   }
@@ -200,11 +211,22 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   /** Shows RENDERER_BASE_URL / VIDEO_ASSEMBLY_BASE_URL for this process and probes each upstream GET /health. */
   app.get("/health/rendering", async () => {
     const rendering = await probeRenderingDeps(config);
+    const supabaseAssets =
+      Boolean(config.SUPABASE_URL?.trim()) &&
+      Boolean(config.SUPABASE_SERVICE_ROLE_KEY?.trim()) &&
+      Boolean(config.SUPABASE_ASSETS_BUCKET?.trim());
     return {
       ok: true,
       service: "caf-core",
       engine_version: config.DECISION_ENGINE_VERSION,
       rendering,
+      /** In-process flags only (no HeyGen/OpenAI calls). HeyGen single-take still needs `heygen_config` rows + job payload. */
+      video: {
+        heygen_api_key_configured: Boolean(config.HEYGEN_API_KEY?.trim()),
+        heygen_api_base: config.HEYGEN_API_BASE,
+        supabase_assets_configured: supabaseAssets,
+        openai_api_key_configured: Boolean(config.OPENAI_API_KEY?.trim()),
+      },
     };
   });
 
