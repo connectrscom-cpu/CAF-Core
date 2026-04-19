@@ -14,6 +14,7 @@ COPY package.json ./
 RUN npm install --production
 
 COPY server.js ./
+COPY join-emoji-orphans.js ./
 COPY templates/ ./templates/
 
 EXPOSE 3333

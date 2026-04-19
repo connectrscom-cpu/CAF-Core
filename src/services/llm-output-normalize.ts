@@ -44,6 +44,25 @@ function ensureStructureVariablesSlideCount(out: Record<string, unknown>, count:
   out.structure_variables = existing;
 }
 
+/** Models sometimes echo `output_schema.schema_json` with slides/caption instead of top-level fields. */
+function hoistOutputSchemaSchemaJsonCopyFields(out: Record<string, unknown>): void {
+  const os = out.output_schema;
+  if (!os || typeof os !== "object" || Array.isArray(os)) return;
+  const rec = os as Record<string, unknown>;
+  const sj = rec.schema_json;
+  if (!sj || typeof sj !== "object" || Array.isArray(sj)) return;
+  const inner = sj as Record<string, unknown>;
+  if (!String(out.caption ?? "").trim() && typeof inner.caption === "string") {
+    out.caption = inner.caption;
+  }
+  if (!Array.isArray(out.hashtags) && Array.isArray(inner.hashtags)) {
+    out.hashtags = inner.hashtags;
+  }
+  if (out.cta == null && typeof inner.cta === "string" && inner.cta.trim()) {
+    out.cta = inner.cta;
+  }
+}
+
 function slidesArrayHasRenderableContent(arr: unknown): boolean {
   if (!Array.isArray(arr)) return false;
   return arr.some(
@@ -167,6 +186,8 @@ export function normalizeLlmParsedForSchemaValidation(
   const out = { ...parsed };
   const carouselish = /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
   if (!carouselish) return out;
+
+  hoistOutputSchemaSchemaJsonCopyFields(out);
 
   const slideDeck = out.slide_deck;
   if (slideDeck && typeof slideDeck === "object" && !Array.isArray(slideDeck)) {

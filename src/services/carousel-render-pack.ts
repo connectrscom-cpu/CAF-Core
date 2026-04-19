@@ -213,6 +213,35 @@ function slidesFromContentSlidesField(contentVal: unknown): Record<string, unkno
   return out.length > 0 && out.some(slideHasRenderableContent) ? out : [];
 }
 
+/**
+ * LLM drift: nests the real deck under `output_schema.schema_json` (meta prompt echoed the schema shape).
+ * Also tolerate `output_schema` mirroring `schema_json` without the extra wrapper.
+ */
+function slidesFromOutputSchemaField(outputSchemaVal: unknown): Record<string, unknown>[] {
+  if (!outputSchemaVal || typeof outputSchemaVal !== "object" || Array.isArray(outputSchemaVal)) {
+    return [];
+  }
+  const rec = outputSchemaVal as Record<string, unknown>;
+  const fromInner = (inner: Record<string, unknown>): Record<string, unknown>[] => {
+    const direct = inner.slides;
+    if (Array.isArray(direct)) {
+      const out = direct
+        .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+        .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+      if (out.length > 0 && out.some(slideHasRenderableContent)) return out;
+    }
+    const fromCar = slidesFromCarouselField(inner.carousel);
+    if (fromCar.length > 0 && fromCar.some(slideHasRenderableContent)) return fromCar;
+    return [];
+  };
+  const sj = rec.schema_json;
+  if (sj && typeof sj === "object" && !Array.isArray(sj)) {
+    const got = fromInner(sj as Record<string, unknown>);
+    if (got.length > 0) return got;
+  }
+  return fromInner(rec);
+}
+
 function slidesFromContentField(contentVal: unknown): Record<string, unknown>[] {
   if (!contentVal || typeof contentVal !== "object" || Array.isArray(contentVal)) return [];
   const c = contentVal as Record<string, unknown>;
@@ -288,7 +317,8 @@ type CarouselDeckId =
   | "carousel"
   | "items"
   | "content_slides"
-  | "content_carousel";
+  | "content_carousel"
+  | "output_schema";
 
 /** Lower = preferred when total text is within `TIE_BAND_CHARS` (canonical LLM path vs parallel fields). */
 const DECK_PRIORITY: Record<CarouselDeckId, number> = {
@@ -298,6 +328,7 @@ const DECK_PRIORITY: Record<CarouselDeckId, number> = {
   structure_slides: 0,
   variation_content: 0,
   content_slides: 0,
+  output_schema: 0,
   variations: 1,
   carousel: 2,
   content_carousel: 2,
@@ -329,6 +360,10 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   const fromContentSlides = slidesFromContentSlidesField(gen.content);
   if (fromContentSlides.length > 0) {
     out.push({ id: "content_slides", slides: fromContentSlides });
+  }
+  const fromOutputSchema = slidesFromOutputSchemaField(gen.output_schema);
+  if (fromOutputSchema.length > 0) {
+    out.push({ id: "output_schema", slides: fromOutputSchema });
   }
   const fromContentCarousel = slidesFromContentField(gen.content);
   if (fromContentCarousel.length > 0 && fromContentCarousel.some(slideHasRenderableContent)) {

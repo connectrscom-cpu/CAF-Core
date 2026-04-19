@@ -167,4 +167,26 @@ describe("normalizeLlmParsedForSchemaValidation (carousel)", () => {
     const v = out.variations![0] as Record<string, unknown>;
     expect(v.caption).toBe("Hook line");
   });
+
+  it("unwraps output_schema.schema_json into variations (LLM echoed schema wrapper)", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      variation_name: "Plant-Based Meal Prep Carousel",
+      structure_variables: { slide_count: 6 },
+      output_schema: {
+        schema_json: {
+          slides: [
+            { headline: "H1", body: "B1".repeat(20) },
+            { headline: "H2", body: "B2".repeat(20) },
+          ],
+          caption: "Cap from schema",
+          hashtags: ["#mealprep", "#plantbased"],
+        },
+      },
+    });
+    expect(Array.isArray(out.variations)).toBe(true);
+    const v = out.variations![0] as Record<string, unknown>;
+    expect((v.slides as unknown[]).length).toBe(2);
+    expect(v.caption).toBe("Cap from schema");
+    expect(v.hashtags).toEqual(["#mealprep", "#plantbased"]);
+  });
 });
