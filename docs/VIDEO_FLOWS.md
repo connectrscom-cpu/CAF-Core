@@ -156,19 +156,22 @@ Depending on the HeyGen path (see [`HEYGEN_API_V3.md`](./HEYGEN_API_V3.md) for u
 
 ### Duration constraints: what is enforced vs guidance
 
-**Important**: CAF Core does **not** enforce char/word limits for HeyGen script text today.
+**Important**: HeyGen **avatar** `POST /v3/videos` has no `duration_sec` — runtime follows TTS. CAF enforces **word budgets** so “target 30–60s” is not only prompt text:
 
-What *is* enforced:
+- **Default:** `HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS=true` (env). Min/max words = `VIDEO_TARGET_DURATION_{MIN,MAX}_SEC` × `SCENE_VO_WORDS_PER_MINUTE` / 60 (see `heygenSpokenScriptWordBoundsFromConfig` in `src/services/spoken-script-word-budget.ts`).
+- **Before HeyGen:** `enforceHeygenSpokenScriptWordLaw` in `src/services/heygen-spoken-script-enforcement.ts` trims over-max scripts, expands under-min via OpenAI when `OPENAI_API_KEY` is set, or **fails** with a clear error.
+- **Script prep LLM:** `ensureVideoScriptInPayload` retries once if the first draft is under the minimum word count (`src/services/video-script-generator.ts`).
 
-- For **Video Agent** only, CAF Core clamps a target length in seconds, then embeds it in the agent prompt (e.g. “Target duration: about N seconds”). HeyGen v3 does not accept a separate `duration_sec` field on `POST /v3/video-agents`.
+What *is* also enforced for **Video Agent**:
+
+- CAF Core clamps a target length in seconds, then embeds it in the agent prompt (e.g. “Target duration: about N seconds”). The v3 `POST /v3/video-agents` body is normalized and may omit `duration_sec` per HeyGen schema.
   - `resolveHeygenAgentDurationSec(...)` in `src/services/heygen-renderer.ts`
   - bounds include `HEYGEN_AGENT_MIN_DURATION_SEC` and a max of 300s (hard-coded), and a fallback based on `VIDEO_TARGET_DURATION_MIN_SEC`.
 
-What is *guidance only*:
+Additional **guidance** (LLM):
 
-- LLM prompts are told to target a duration band (e.g. X–Y seconds) via:
+- Prompts are told to target a duration band via:
   - `appendVideoUserPromptDurationHardFooter(...)` and `withVideoScriptDurationPolicy(...)` in `src/services/video-content-policy.ts`
-  - used in the script/prompt generator steps (e.g. `src/services/video-script-generator.ts`)
 
 ### Subtitles / captions for HeyGen
 

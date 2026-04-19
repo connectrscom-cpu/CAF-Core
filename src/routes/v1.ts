@@ -21,6 +21,7 @@ import {
   reviewQueueStatusBreakdown,
   listReviewQueueAllProjects,
   countReviewQueueAllProjects,
+  countReviewQueueAllProjectsWithFilters,
   countReviewQueueAllProjectsFiltered,
   reviewQueueStatusBreakdownAllProjects,
   getReviewJobDetail,
@@ -678,8 +679,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   }
 
   /** All active projects — same tabs/filters as per-project queue, plus optional `project_slug` query. */
-  app.get("/v1/review-queue-all/counts", async () => {
-    const counts = await countReviewQueueAllProjects(db);
+  app.get("/v1/review-queue-all/counts", async (request) => {
+    const query = filterQuerySchema.safeParse(request.query);
+    const filters = reviewFiltersFromQuery(query.data ?? {}, { includeProjectSlugFilter: true });
+    const counts = await countReviewQueueAllProjectsWithFilters(db, filters);
     return { ok: true, counts };
   });
 

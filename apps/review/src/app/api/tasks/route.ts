@@ -49,11 +49,25 @@ export async function GET(request: NextRequest) {
       offset: String(offset),
     };
 
+    const tabCountFilters: QueueFilters = {
+      search: filters.search,
+      platform: filters.platform,
+      flow_type: filters.flow_type,
+      recommended_route: filters.recommended_route,
+      qc_status: filters.qc_status,
+      review_status: filters.review_status,
+      decision: filters.decision,
+      has_preview: filters.has_preview,
+      risk_score_min: filters.risk_score_min,
+      run_id: filters.run_id,
+      project_slug: filters.project_slug,
+    };
+
     const [{ jobs, total, status_breakdown }, tabCounts] = await Promise.all([
       allProjects
         ? getQueueTabAll(status, filters)
         : getQueueTab(PROJECT_SLUG, status, filters),
-      allProjects ? getQueueCountsAll() : getQueueCounts(PROJECT_SLUG),
+      allProjects ? getQueueCountsAll(tabCountFilters) : getQueueCounts(PROJECT_SLUG),
     ]);
 
     const items = jobs.map((j) => {

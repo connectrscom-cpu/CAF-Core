@@ -536,7 +536,13 @@ export async function reviewQueueStatusBreakdownAllProjects(
   return out;
 }
 
-export async function countReviewQueueAllProjects(db: Pool): Promise<Record<ReviewTab, number>> {
+/** Tab totals for the global queue with the same optional filters as list/count (e.g. `project_slug`). */
+export async function countReviewQueueAllProjectsWithFilters(
+  db: Pool,
+  filters: ReviewQueueFilters = {}
+): Promise<Record<ReviewTab, number>> {
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 1, { projectSlugColumn: "p.slug" });
+  const whereSql = clauses.length > 0 ? ` WHERE ${clauses.join(" AND ")}` : "";
   const row = await qOne<{
     in_review: string;
     approved: string;
@@ -552,7 +558,8 @@ export async function countReviewQueueAllProjects(db: Pool): Promise<Record<Revi
        COUNT(*) FILTER (WHERE lr.decision = 'APPROVED')::text AS approved,
        COUNT(*) FILTER (WHERE lr.decision = 'REJECTED')::text AS rejected,
        COUNT(*) FILTER (WHERE lr.decision = 'NEEDS_EDIT')::text AS needs_edit
-     ${JOBS_GLOBAL_FROM}`
+     ${JOBS_GLOBAL_FROM}${whereSql}`,
+    filterParams
   );
   return {
     in_review: row ? parseInt(row.in_review, 10) : 0,
@@ -560,6 +567,10 @@ export async function countReviewQueueAllProjects(db: Pool): Promise<Record<Revi
     rejected: row ? parseInt(row.rejected, 10) : 0,
     needs_edit: row ? parseInt(row.needs_edit, 10) : 0,
   };
+}
+
+export async function countReviewQueueAllProjects(db: Pool): Promise<Record<ReviewTab, number>> {
+  return countReviewQueueAllProjectsWithFilters(db, {});
 }
 
 export async function getDistinctValuesAllProjects(db: Pool): Promise<{

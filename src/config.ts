@@ -277,6 +277,19 @@ const envSchema = z.object({
   /** Single-take HeyGen / prompt-led videos: target spoken length band for LLM fallbacks. */
   VIDEO_TARGET_DURATION_MIN_SEC: z.coerce.number().min(5).max(300).default(30),
   VIDEO_TARGET_DURATION_MAX_SEC: z.coerce.number().min(5).max(600).default(60),
+  /**
+   * When true (default), HeyGen renders enforce `spoken_script` word count from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE
+   * (hard trim above max; below min → one LLM expand if OPENAI_API_KEY, else fail). HeyGen avatar API has no duration field — length follows TTS.
+   */
+  HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
 
   /** Supabase Storage (asset uploads from CAF Core) */
   SUPABASE_URL: z.string().optional(),

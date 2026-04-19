@@ -30,7 +30,11 @@ import {
   sceneBundleFallbackUserPrompt,
   userPromptLooksLikePerSceneVideoTemplate,
 } from "./scene-bundle-fallback-prompt.js";
-import { ensureVideoScriptInPayload } from "./video-script-generator.js";
+import {
+  ensureVideoScriptInPayload,
+  enforceSpokenScriptWordLawOnParsedOutput,
+  shouldEnforceSpokenScriptWordLawOnFlow,
+} from "./video-script-generator.js";
 import { extractSpokenScriptText, mergeSceneBundleParsedIntoGeneratedOutput } from "./video-gen-fields.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import { CAROUSEL_COPY_SYSTEM_ADDENDUM } from "./carousel-copy-prompt-policy.js";
@@ -499,6 +503,61 @@ export async function generateForJob(
     const maxSlides = maxSlidesFromPlatformConstraints(creationPack.platform_constraints);
     parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
 
+    let tokensUsed = llmResult.total_tokens;
+    let outputForJob: Record<string, unknown> = parsed;
+    if (wantSceneBundle) {
+      const fresh = await qOne<{ generation_payload: Record<string, unknown> }>(
+        db,
+        `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+        [job.id]
+      );
+      const prior = (fresh?.generation_payload?.generated_output as Record<string, unknown>) ?? {};
+      outputForJob = mergeSceneBundleParsedIntoGeneratedOutput(prior, parsed);
+      outputForJob = enrichGeneratedOutputForReview(job.flow_type, outputForJob, { maxHashtags: maxHt, maxSlides });
+    }
+
+    if (
+      appCfg.HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS &&
+      isVideoFlow(job.flow_type) &&
+      shouldEnforceSpokenScriptWordLawOnFlow(job.flow_type) &&
+      apiKey.trim()
+    ) {
+      const fe = await enforceSpokenScriptWordLawOnParsedOutput(
+        db,
+        appCfg,
+        job,
+        outputForJob,
+        apiKey,
+        model,
+        maxTokens,
+        signalPackId,
+        {
+          retrySystemPrompt: systemPrompt,
+          retryUserPromptBase: userPrompt,
+          stepPrefix: `llm_primary_${templateFlowType}`,
+        }
+      );
+      if (fe.error) {
+        return {
+          draft_id: draftId,
+          task_id: job.task_id,
+          raw_output: llmResult.content,
+          parsed_output: parsed,
+          model_used: llmResult.model,
+          prompt_name: promptTemplate.prompt_name,
+          tokens_used: tokensUsed,
+          success: false,
+          error: fe.error,
+        };
+      }
+      outputForJob = fe.parsed;
+      tokensUsed += fe.extraTokens;
+    }
+
+    if (!wantSceneBundle) {
+      parsed = outputForJob;
+    }
+
     const draftSeq = await nextJobDraftSequence(db, job.project_id, job.task_id);
     await db.query(`
       INSERT INTO caf_core.job_drafts (
@@ -512,7 +571,7 @@ export async function generateForJob(
         raw_output: llmResult.content,
         parsed: parsed,
         model: llmResult.model,
-        tokens: llmResult.total_tokens,
+        tokens: tokensUsed,
         generation_reason: payload.generation_reason ?? null,
         rework_mode: payload.rework_mode ?? null,
       }),
@@ -521,18 +580,8 @@ export async function generateForJob(
     let parsedOutputForResponse: Record<string, unknown> | null = parsed;
 
     if (parsed) {
-      let storedOutput: Record<string, unknown> = parsed;
-      if (wantSceneBundle) {
-        const fresh = await qOne<{ generation_payload: Record<string, unknown> }>(
-          db,
-          `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
-          [job.id]
-        );
-        const prior = (fresh?.generation_payload?.generated_output as Record<string, unknown>) ?? {};
-        storedOutput = mergeSceneBundleParsedIntoGeneratedOutput(prior, parsed);
-        storedOutput = enrichGeneratedOutputForReview(job.flow_type, storedOutput, { maxHashtags: maxHt, maxSlides });
-        parsedOutputForResponse = storedOutput;
-      }
+      const storedOutput = wantSceneBundle ? outputForJob : parsed;
+      parsedOutputForResponse = storedOutput;
       await db.query(
         `
         UPDATE caf_core.content_jobs
@@ -560,7 +609,7 @@ export async function generateForJob(
       parsed_output: parsedOutputForResponse,
       model_used: llmResult.model,
       prompt_name: promptTemplate.prompt_name,
-      tokens_used: llmResult.total_tokens,
+      tokens_used: tokensUsed,
       success: true,
     };
   } catch (err) {

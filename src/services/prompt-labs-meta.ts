@@ -5,9 +5,11 @@
  */
 export const PROMPT_LABS_ENV_HINTS: Record<string, string> = {
   VIDEO_TARGET_DURATION_MIN_SEC:
-    "Lower bound of the spoken video length band (seconds). Enforced in video_script / video_prompt system suffix and user hard footer.",
+    "Lower bound of the spoken video length band (seconds). With SCENE_VO_WORDS_PER_MINUTE, drives min/max spoken word counts enforced before HeyGen and in script-prep LLM.",
   VIDEO_TARGET_DURATION_MAX_SEC:
-    "Upper bound of the spoken video length band (seconds). Same enforcement points as MIN.",
+    "Upper bound of the spoken video length band (seconds). Same word-count mapping as MIN.",
+  HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS:
+    "When true (default), HeyGen submit enforces min/max spoken word counts from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE (trim / expand / fail).",
   SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN:
     "Minimum number of scenes in the scene_bundle produced by Video_Scene_Generator.",
   SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX:

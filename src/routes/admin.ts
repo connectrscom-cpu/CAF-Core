@@ -1386,6 +1386,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       env_tuning: {
         VIDEO_TARGET_DURATION_MIN_SEC: cfg.VIDEO_TARGET_DURATION_MIN_SEC,
         VIDEO_TARGET_DURATION_MAX_SEC: cfg.VIDEO_TARGET_DURATION_MAX_SEC,
+        HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS: cfg.HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS,
         SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN: cfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
         SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: cfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
         SCENE_ASSEMBLY_CLIP_DURATION_SEC: cfg.SCENE_ASSEMBLY_CLIP_DURATION_SEC,
@@ -1412,7 +1413,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         intro: PROMPT_LABS_HEYGEN_INTRO,
         rubric_lines: [...HEYGEN_VIDEO_AGENT_RUBRIC_LINES],
         note:
-          "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags (duration is prompt guidance only). Script-led avatar jobs use POST /v3/videos (type avatar), except silence-voice visual-only jobs which still use legacy POST /v2/video/generate (see heygen-renderer).",
+          "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Script-led avatar jobs use POST /v3/videos (type avatar) — no duration field; CAF enforces min/max spoken word counts from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE when HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS is true. Silence-voice visual-only jobs still use legacy POST /v2/video/generate (see heygen-renderer).",
       },
       prompt_templates: prompt_templates_enriched,
       flow_definitions: flowDefs,

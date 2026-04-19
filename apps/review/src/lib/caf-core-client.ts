@@ -270,15 +270,30 @@ export async function getQueueCounts(projectSlug: string): Promise<ReviewQueueCo
   return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
 }
 
-/** Tab counts aggregated over all active projects. */
-export async function getQueueCountsAll(): Promise<ReviewQueueCounts> {
+/** Tab counts aggregated over all active projects; optional filters match `/v1/review-queue-all/:tab` (e.g. `project_slug`). */
+export async function getQueueCountsAll(filters?: QueueFilters): Promise<ReviewQueueCounts> {
+  const params = new URLSearchParams();
+  if (filters) {
+    for (const [key, val] of Object.entries(filters)) {
+      if (val === undefined || val === null || String(val) === "") continue;
+      if (key === "limit" || key === "offset" || key === "sort" || key === "group_by") continue;
+      params.set(key, String(val));
+    }
+  }
+  const qs = params.toString();
+  const path = `/v1/review-queue-all/counts${qs ? `?${qs}` : ""}`;
   try {
-    const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(
-      `/v1/review-queue-all/counts`
-    );
+    const data = await coreGetRequired<{ ok: boolean; counts: ReviewQueueCounts }>(path);
     return data.counts ?? { in_review: 0, approved: 0, rejected: 0, needs_edit: 0 };
   } catch (e) {
     if (!isMissingReviewQueueAllRoute(e)) throw e;
+    if (filters?.project_slug?.trim()) {
+      try {
+        return await getQueueCounts(filters.project_slug.trim());
+      } catch {
+        /* fall through */
+      }
+    }
     return getQueueCounts(reviewQueueFallbackSlug());
   }
 }

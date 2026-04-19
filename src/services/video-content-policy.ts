@@ -1,9 +1,14 @@
 import type { AppConfig } from "../config.js";
+import { heygenSpokenScriptWordBoundsFromConfig } from "./spoken-script-word-budget.js";
 
 function durBlock(cfg: AppConfig): string {
   const lo = cfg.VIDEO_TARGET_DURATION_MIN_SEC;
   const hi = cfg.VIDEO_TARGET_DURATION_MAX_SEC;
-  return `Target spoken video length: **${lo}–${hi} seconds** (platform-safe). Plan pacing and script length accordingly.`;
+  const { minWords, maxWords } = heygenSpokenScriptWordBoundsFromConfig(cfg);
+  return (
+    `Target spoken video length: **${lo}–${hi} seconds** (platform-safe). ` +
+    `Spoken script must be **at least ${minWords} words** and **at most ${maxWords} words** at ${cfg.SCENE_VO_WORDS_PER_MINUTE} WPM — **enforced** server-side before HeyGen script-led avatar render (and at script-prep LLM).`
+  );
 }
 
 function sceneBlock(cfg: AppConfig): string {

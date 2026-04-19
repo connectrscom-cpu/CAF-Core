@@ -14,6 +14,7 @@ import { insertAsset } from "../repositories/assets.js";
 import { uploadBuffer, downloadUrl } from "./supabase-storage.js";
 import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
 
 function rowMatchesPlatformAndFlow(
   r: HeygenConfigRow,
@@ -1670,7 +1671,9 @@ export async function runHeygenForContentJob(
   if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
 
   const rows = await listHeygenConfig(db, job.project_id);
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  let gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const enforced = await enforceHeygenSpokenScriptWordLaw(db, appConfig, job, { ...gen });
+  gen = enforced.gen;
   const renderMode = resolveHeygenRenderMode(
     job.flow_type,
     job.generation_payload.render_mode ?? gen.render_mode ?? gen.production_route
