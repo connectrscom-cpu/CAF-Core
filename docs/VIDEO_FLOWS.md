@@ -175,12 +175,22 @@ Additional **guidance** (LLM):
 
 ### Subtitles / captions for HeyGen
 
-CAF Core prefers captioned MP4 outputs when HeyGen provides them:
+**Scope: script-led `/v3/videos` only.** Video Agent (`/v3/video-agents`) and silence-voice (`/v2/video/generate`) jobs are intentionally excluded — Video Agent prompts produce non-script narration whose words/timing aren't knowable client-side (a synthesized SRT wouldn't match what the avatar actually said), and silence-voice has nothing to caption.
 
-- Status polling uses **`GET /v3/videos/{video_id}`** (with a legacy `video_status.get` fallback on 404 for very old job ids). When HeyGen returns a captioned render, CAF prefers **`captioned_video_url`** (v3) or **`video_url_caption`** (legacy) over plain `video_url`.
-- Selection logic: `pickHeyGenDownloadUrlFromStatus(...)` in `src/services/heygen-renderer.ts`.
+HeyGen v3 `POST /v3/videos` does **not** burn captions into the MP4 — there is no v3 caption-burn parameter on the create endpoint, and `captioned_video_url` is only populated by the video-translation proofread workflow. CAF therefore does the burn locally for script-led jobs:
 
-CAF Core currently does not upload or store a separate SRT asset for HeyGen videos.
+1. **Request side:** `mapHeyGenV2StyleBodyToV3CreateVideoAvatar(...)` injects `caption: { file_format: "srt" }` (per HeyGen v3 OpenAPI `CaptionSetting`) so HeyGen renders an **SRT sidecar** at `data.subtitle_url`. The MP4 is unchanged.
+2. **Status surface:** `pickHeyGenDownloadUrlFromStatus(...)` returns `{ url, usedVideoUrlCaption, subtitleUrl, durationSec }`. CAF still prefers `captioned_video_url` / `video_url_caption` when present (legacy / proofread paths) and skips burning if HeyGen already burned in.
+3. **Burn step:** `runHeygenForContentJob(...)` calls `maybeBurnHeygenSubtitles(...)`. The function gates on `postPath === "/v3/videos"` first; if not script-led, it short-circuits with `subtitles_burn_skipped_reason: "script_led_only (postPath=...)"`. For script-led jobs it downloads HeyGen's SRT (or, only when HeyGen omits one, synthesizes via `buildRoughSrt(spoken_script, durationSec)`), uploads it + signs the stored MP4, then `POST {VIDEO_ASSEMBLY_BASE_URL}/burn-subtitles?async=1` → polls → downloads the burned MP4 → **overwrites the same Supabase object path** so the canonical asset includes captions.
+4. **video-assembly:** `services/video-assembly/server.js` exposes `POST /burn-subtitles` (added alongside `/mux`) — copies audio with `-c:a copy` and re-encodes video with `libx264 + subtitles` filter.
+
+Config keys (in `src/config.ts`):
+
+- `HEYGEN_BURN_SUBTITLES` (default `true`): set to `0`/`false` to keep the raw HeyGen MP4 (no captions).
+- `HEYGEN_BURN_SUBTITLES_POLL_MAX_MS` (default 900000): how long to wait on the burn job.
+- `HEYGEN_BURN_SUBTITLE_FORCE_STYLE` (optional): ffmpeg `force_style` override for HeyGen burns only.
+
+The resulting `assets` row records `metadata_json.subtitles_burned`, `subtitles_source` (`heygen_v3_srt` | `synthesized_from_spoken_script`), `subtitles_burn_skipped_reason`, and `subtitles_burn_error` for auditability. The burn step is best-effort: if it fails or is skipped, the raw HeyGen MP4 remains the stored asset and the failure is captured in `api_call_audit` (step `heygen_burn_subtitles`).
 
 ---
 

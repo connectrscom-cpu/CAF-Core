@@ -346,6 +346,27 @@ const envSchema = z.object({
    * Scene-level HeyGen Video Agent fallback: minimum duration_sec per clip. Keeps 4s assembly hints from clamping to 5s at HeyGen.
    */
   HEYGEN_SCENE_AGENT_CLIP_MIN_SEC: z.coerce.number().int().min(5).max(60).default(12),
+  /**
+   * HeyGen v3 `POST /v3/videos` accepts `caption: { file_format: "srt" }` which causes HeyGen to render an SRT
+   * sidecar (exposed as `data.subtitle_url` in the v3 status response) — but the MP4 itself is **not** modified.
+   * When this flag is on (default) CAF downloads the SRT, calls the local video-assembly `/burn-subtitles` service
+   * to burn captions into the MP4 with ffmpeg, and uploads the captioned version to Supabase as the canonical asset.
+   * Set to 0/false to keep the raw HeyGen MP4 (no captions). Falls back to a synthesized SRT built from
+   * `spoken_script` + reported duration when HeyGen does not return one (Video Agent / silence-voice paths).
+   */
+  HEYGEN_BURN_SUBTITLES: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  /** Max time to poll video-assembly /burn-subtitles for the HeyGen post-render burn step. */
+  HEYGEN_BURN_SUBTITLES_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(7_200_000).default(900_000),
+  /** Optional ffmpeg `force_style` for HeyGen burn-in (overrides MUX_BURN_SUBTITLE_FORCE_STYLE for HeyGen jobs only). */
+  HEYGEN_BURN_SUBTITLE_FORCE_STYLE: z.string().optional(),
 
   /** OpenAI TTS (e.g. tts-1, tts-1-hd) */
   OPENAI_TTS_MODEL: z.string().default("tts-1"),

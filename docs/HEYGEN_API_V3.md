@@ -8,7 +8,8 @@ Consolidated notes for integrating with [HeyGen](https://developers.heygen.com/)
 - **Video Agent:** `POST /v3/video-agents` with a normalized body (unknown keys stripped; target length lives in the `prompt` text, not a `duration_sec` field).
 - **Script + avatar:** `POST /v3/videos` with `{ type: "avatar", avatar_id, script, voice_id, aspect_ratio, ... }` mapped from the internal `video_inputs[0]` builder.
 - **Silence / visual-only (no spoken script):** still **`POST /v2/video/generate`** when `voice.type === "silence"` — v3 create-video has no equivalent.
-- **Captioned download:** prefer `data.captioned_video_url`, then legacy `video_url_caption`, then `video_url`.
+- **Captions on `POST /v3/videos` (script-led only):** v3 has no caption-burn parameter. For script-led avatar jobs CAF passes `caption: { file_format: "srt" }` (per HeyGen v3 OpenAPI `CaptionSetting`) so HeyGen renders an **SRT sidecar** at `data.subtitle_url` — *the MP4 itself is not modified*. CAF then burns the SRT in locally via the video-assembly `POST /burn-subtitles` endpoint and replaces the stored MP4 in Supabase. Toggle with `HEYGEN_BURN_SUBTITLES=0` to keep the raw HeyGen MP4. **Video Agent (`/v3/video-agents`) and silence-voice (`/v2/video/generate`) jobs are intentionally excluded from the burn step** — Video Agent narration is generated server-side and not knowable client-side, so a synthesized SRT wouldn't match the spoken audio.
+- **Captioned download (legacy / proofread workflows):** prefer `data.captioned_video_url`, then legacy `video_url_caption`, then `video_url`. v3 only populates `captioned_video_url` for video-translation proofread renders; the regular `POST /v3/videos` create flow does not produce a burned-in MP4.
 
 ## Documentation index (for LLMs / discovery)
 

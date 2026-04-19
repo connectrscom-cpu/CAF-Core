@@ -138,6 +138,38 @@ describe("pickHeyGenDownloadUrlFromStatus", () => {
     expect(out.url).toBe("https://cdn.example/cap-v3.mp4");
     expect(out.usedVideoUrlCaption).toBe(true);
   });
+
+  it("surfaces v3 subtitle_url for the local-burn flow (data.subtitle_url)", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({
+      data: {
+        video_url: "https://cdn.example/plain.mp4",
+        subtitle_url: "https://files.heygen.com/captions.srt",
+        duration: 12.5,
+      },
+    });
+    expect(out.url).toBe("https://cdn.example/plain.mp4");
+    expect(out.usedVideoUrlCaption).toBe(false);
+    expect(out.subtitleUrl).toBe("https://files.heygen.com/captions.srt");
+    expect(out.durationSec).toBe(12.5);
+  });
+
+  it("falls back to caption_url alias and reads duration_sec when present", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({
+      data: {
+        video_url: "https://cdn.example/v.mp4",
+        caption_url: "https://files.heygen.com/x.srt",
+        duration_sec: 30,
+      },
+    });
+    expect(out.subtitleUrl).toBe("https://files.heygen.com/x.srt");
+    expect(out.durationSec).toBe(30);
+  });
+
+  it("returns null subtitleUrl + durationSec when HeyGen does not expose them", () => {
+    const out = pickHeyGenDownloadUrlFromStatus({ data: { video_url: "https://cdn.example/v.mp4" } });
+    expect(out.subtitleUrl).toBeNull();
+    expect(out.durationSec).toBeNull();
+  });
 });
 
 describe("normalizeHeyGenVideoAgentRequestForV3", () => {
@@ -186,6 +218,50 @@ describe("mapHeyGenV2StyleBodyToV3CreateVideoAvatar", () => {
     });
     expect(v3.voice_id).toBeUndefined();
     expect(v3.script).toBe("Hello from the script.");
+  });
+
+  it("injects caption: { file_format: 'srt' } so HeyGen returns subtitle_url for the local-burn flow", () => {
+    const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
+      orientation: "portrait",
+      video_inputs: [
+        {
+          character: { type: "avatar", avatar_id: "av1" },
+          script_text: "Hi",
+          voice: { type: "text", voice_id: "v1", input_text: "Hi" },
+        },
+      ],
+    });
+    expect(v3.caption).toEqual({ file_format: "srt" });
+  });
+
+  it("preserves caller-provided caption setting (does not overwrite explicit value)", () => {
+    const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
+      orientation: "portrait",
+      caption: { file_format: "vtt" },
+      video_inputs: [
+        {
+          character: { type: "avatar", avatar_id: "av1" },
+          script_text: "Hi",
+          voice: { type: "text", voice_id: "v1", input_text: "Hi" },
+        },
+      ],
+    });
+    expect(v3.caption).toEqual({ file_format: "vtt" });
+  });
+
+  it("respects caption: false opt-out (omits caption from v3 body)", () => {
+    const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
+      orientation: "portrait",
+      caption: false,
+      video_inputs: [
+        {
+          character: { type: "avatar", avatar_id: "av1" },
+          script_text: "Hi",
+          voice: { type: "text", voice_id: "v1", input_text: "Hi" },
+        },
+      ],
+    });
+    expect(v3.caption).toBeUndefined();
   });
 });
 
