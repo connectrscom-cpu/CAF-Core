@@ -176,6 +176,54 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return out;
   }
 
+  /**
+   * The merged generation_payload still carries the raw `/object/public/` URL written by
+   * `mergeVideoPublishUrlIntoJob` / carousel renderer. The `assets` bucket is private, so the
+   * publish UI can't render those URLs in a `<video>`/`<img>`, and Meta's fetcher rejects them.
+   * Sign the known URL fields in-place before returning.
+   */
+  async function signGenerationPayloadUrls(
+    generationPayload: Record<string, unknown> | null | undefined
+  ): Promise<Record<string, unknown> | null | undefined> {
+    if (!generationPayload || typeof generationPayload !== "object") return generationPayload;
+    const out: Record<string, unknown> = { ...generationPayload };
+    const urlFieldKeys = [
+      "publish_video_url",
+      "video_url",
+      "preview_url",
+      "publish_url",
+      "thumbnail_url",
+      "thumb_url",
+    ];
+    for (const k of urlFieldKeys) {
+      const v = out[k];
+      if (typeof v === "string") {
+        const signed = await maybeSignPublicAssetUrl(v);
+        if (signed && signed !== v) out[k] = signed;
+      }
+    }
+    // Carousel slide image URLs are usually nested under publish_image_urls / generated_slides_json.
+    const arr = out.publish_image_urls;
+    if (Array.isArray(arr)) {
+      const next: unknown[] = [];
+      for (const item of arr) {
+        if (typeof item === "string") {
+          const s = await maybeSignPublicAssetUrl(item);
+          next.push(s ?? item);
+        } else next.push(item);
+      }
+      out.publish_image_urls = next;
+    }
+    return out;
+  }
+
+  async function withSignedGenerationPayload<
+    T extends { generation_payload?: Record<string, unknown> | null | undefined }
+  >(detail: T): Promise<T> {
+    const gp = await signGenerationPayloadUrls(detail.generation_payload);
+    return { ...detail, generation_payload: gp };
+  }
+
   app.get("/", async () => ({
     ok: true,
     service: "caf-core",
@@ -731,7 +779,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, resolved.project_id, tid);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    return { ok: true, job: { ...detail, assets, project_slug: resolved.project_slug } };
+    const signed = await withSignedGenerationPayload(detail);
+    return { ok: true, job: { ...signed, assets, project_slug: resolved.project_slug } };
   });
 
   app.get("/v1/review-queue-all/task/:task_id", async (request, reply) => {
@@ -743,7 +792,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, resolved.project_id, params.data.task_id.trim());
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    return { ok: true, job: { ...detail, assets, project_slug: resolved.project_slug } };
+    const signed = await withSignedGenerationPayload(detail);
+    return { ok: true, job: { ...signed, assets, project_slug: resolved.project_slug } };
   });
 
   app.get("/v1/review-queue/:project_slug/counts", async (request, reply) => {
@@ -773,9 +823,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, project.id, tid);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    const signed = await withSignedGenerationPayload(detail);
     return {
       ok: true,
-      job: { ...detail, assets, project_slug: params.data.project_slug },
+      job: { ...signed, assets, project_slug: params.data.project_slug },
     };
   });
 
@@ -815,9 +866,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, project.id, params.data.task_id);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
+    const signed = await withSignedGenerationPayload(detail);
     return {
       ok: true,
-      job: { ...detail, assets, project_slug: params.data.project_slug },
+      job: { ...signed, assets, project_slug: params.data.project_slug },
     };
   });
 

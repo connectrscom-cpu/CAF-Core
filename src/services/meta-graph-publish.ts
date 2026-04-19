@@ -360,15 +360,17 @@ async function waitIgContainerReady(
   const maxAttempts = opts.maxAttempts ?? 90;
   const delayMs = opts.delayMs ?? 2000;
   for (let i = 0; i < maxAttempts; i++) {
-    const r = await graphGet<{ status_code?: string; status?: string; error_message?: string }>(
-      `${containerId}?fields=status_code,status,error_message`,
+    // IG containers only expose `status_code` + `status` — asking for any other field returns
+    // `(#100) Tried accessing nonexisting field`. The error code we want is embedded in `status`.
+    const r = await graphGet<{ status_code?: string; status?: string }>(
+      `${containerId}?fields=status_code,status`,
       token,
       version
     );
     const code = r.status_code ?? "";
     if (code === "FINISHED") return;
     if (code === "ERROR" || code === "EXPIRED" || code === "DELETED") {
-      const statusText = (r.status ?? r.error_message ?? "").trim();
+      const statusText = (r.status ?? "").trim();
       const detailed = describeIgContainerError(statusText, opts.videoUrl ?? null);
       throw new Error(`Instagram container ${code}: ${detailed}`);
     }
