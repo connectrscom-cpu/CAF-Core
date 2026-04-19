@@ -9,7 +9,7 @@ const PORT = parseInt(process.env.PORT || "3300", 10);
 const RENDERER_PORT = parseInt(process.env.RENDERER_PORT || "3333", 10);
 const VIDEO_PORT = parseInt(process.env.VIDEO_PORT || "3334", 10);
 const SPAWN_CHILDREN = process.env.SPAWN_CHILDREN !== "false";
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 
 const children = [];
 
@@ -150,6 +150,16 @@ app.use(
     target: `http://127.0.0.1:${VIDEO_PORT}`,
     changeOrigin: true,
     pathRewrite: { "^/concat-videos": "/concat-videos" },
+  })
+);
+
+/** HeyGen v3 script-led burn pipeline: CAF Core posts SRT + MP4 here, then polls /status/:requestId. */
+app.use(
+  "/burn-subtitles",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${VIDEO_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/burn-subtitles": "/burn-subtitles" },
   })
 );
 
