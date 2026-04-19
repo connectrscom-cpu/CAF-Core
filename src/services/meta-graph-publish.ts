@@ -8,10 +8,43 @@
  * - Instagram: single image, carousel (2–10 images), or Reels-style video URL. Polls container status before media_publish, surfaces Meta error codes (e.g. 2207076).
  */
 import type { Pool } from "pg";
+import type { AppConfig } from "../config.js";
 import { getProjectIntegration } from "../repositories/project-integrations.js";
 import type { PublicationPlacementRow } from "../repositories/publications.js";
+import { createSignedUrlForObjectKey } from "./supabase-storage.js";
 
 const GRAPH = "https://graph.facebook.com";
+
+/**
+ * Convert a Supabase `/storage/v1/object/public/{bucket}/{key}` URL into a long-lived signed URL.
+ * The `assets` bucket is private — anonymous public URLs return 404 "Bucket not found", which Meta
+ * surfaces as the opaque error code 2207076. Signed URLs work because they carry a service-role JWT.
+ *
+ * Returns the original URL unchanged when:
+ *  - URL is not a Supabase public-object URL,
+ *  - Supabase client isn't configured (no service-role key),
+ *  - signing fails for any reason (we'd rather try and let Meta give the real error).
+ */
+export async function resignSupabasePublicUrlIfNeeded(
+  config: AppConfig,
+  url: string,
+  ttlSec = 7 * 24 * 3600
+): Promise<string> {
+  const u = url.trim();
+  if (!u) return u;
+  // Match `<host>/storage/v1/object/public/<bucket>/<objectKey...>`
+  const m = /^(https?:\/\/[^/]+)\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/i.exec(u);
+  if (!m) return u;
+  const bucket = decodeURIComponent(m[2]!);
+  const objectKey = m[3]!.split("?")[0]!.split("#")[0]!;
+  try {
+    const signed = await createSignedUrlForObjectKey(config, bucket, decodeURIComponent(objectKey), ttlSec);
+    if ("signedUrl" in signed && signed.signedUrl) return signed.signedUrl;
+  } catch {
+    /* fall back to original URL */
+  }
+  return u;
+}
 
 function str(v: unknown): string | undefined {
   if (typeof v !== "string") return undefined;
@@ -379,12 +412,15 @@ async function publishFacebookPage(
   pageId: string,
   token: string,
   version: string,
-  row: PublicationPlacementRow
+  row: PublicationPlacementRow,
+  config: AppConfig
 ): Promise<{ platform_post_id: string; posted_url: string | null; raw: Record<string, unknown> }> {
   const caption = row.caption_snapshot?.trim() ?? "";
   const title = row.title_snapshot?.trim() ?? "";
   const urls = parseMediaUrls(row);
-  const videoUrl = row.video_url_snapshot?.trim() ?? "";
+  const rawVideoUrl = row.video_url_snapshot?.trim() ?? "";
+  // Re-sign Supabase private-bucket URLs; Meta cannot fetch /object/public/ on a private bucket.
+  const videoUrl = rawVideoUrl ? await resignSupabasePublicUrlIfNeeded(config, rawVideoUrl) : "";
 
   // Facebook Page video: use /{page-id}/videos with file_url. Meta fetches the URL server-side and
   // returns a video_id; the post becomes visible once Meta finishes transcoding (usually seconds).
@@ -490,12 +526,16 @@ async function publishInstagram(
   igUserId: string,
   token: string,
   version: string,
-  row: PublicationPlacementRow
+  row: PublicationPlacementRow,
+  config: AppConfig
 ): Promise<{ platform_post_id: string; posted_url: string | null; raw: Record<string, unknown> }> {
   const caption = row.caption_snapshot?.trim() ?? "";
   const title = row.title_snapshot?.trim() ?? "";
   const urls = parseMediaUrls(row);
-  const videoUrl = row.video_url_snapshot?.trim() ?? "";
+  const rawVideoUrl = row.video_url_snapshot?.trim() ?? "";
+  // Re-sign Supabase private-bucket URLs; Meta cannot fetch /object/public/ on a private bucket
+  // (returns "Bucket not found" → IG container errors with code 2207076).
+  const videoUrl = rawVideoUrl ? await resignSupabasePublicUrlIfNeeded(config, rawVideoUrl) : "";
 
   if (row.content_format === "video" && videoUrl) {
     // Catch the most common cause of IG 2207076 (URL not directly downloadable, wrong Content-Type)
@@ -623,6 +663,7 @@ export async function publishPlacementToMeta(
   placement: PublicationPlacementRow,
   projectId: string,
   graphApiVersion: string,
+  config: AppConfig,
   opts?: {
     fbPageAccessTokenFromEnv?: string | null;
     igPageAccessTokenFromEnv?: string | null;
@@ -671,7 +712,7 @@ export async function publishPlacementToMeta(
             "META_FB missing account_ids_json.fb_page_id (or set META_IG.account_ids_json.linked_fb_page_id for the same Page)",
         };
       }
-      const out = await publishFacebookPage(pageId, token, v, placement);
+      const out = await publishFacebookPage(pageId, token, v, placement, config);
       return {
         ok: true,
         platform_post_id: out.platform_post_id,
@@ -685,7 +726,7 @@ export async function publishPlacementToMeta(
     if (!igUserId) {
       return { ok: false, error: "META_IG integration missing account_ids_json.ig_user_id" };
     }
-    const out = await publishInstagram(igUserId, token, v, placement);
+    const out = await publishInstagram(igUserId, token, v, placement, config);
     return {
       ok: true,
       platform_post_id: out.platform_post_id,
