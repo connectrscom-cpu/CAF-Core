@@ -4209,79 +4209,109 @@ function ctVal(id){const el=document.getElementById(id);return el?String(el.valu
 function ctNum(id){const s=ctVal(id);if(s==='')return null;const n=Number(s);return Number.isFinite(n)?n:null;}
 function ctFg(name,label,value,type,step){return '<div class="form-group"><label for="'+name+'">'+label+'</label><input type="'+(type||'text')+'" name="'+name+'" id="'+name+'" value="'+ctEsc(value)+'"'+(step?' step="'+step+'"':'')+'></div>';}
 function ctFgTa(name,label,value,rows){return '<div class="form-group"><label for="'+name+'">'+label+'</label><textarea name="'+name+'" id="'+name+'" rows="'+(rows||4)+'">'+ctEsc(value)+'</textarea></div>';}
+/** Safe DOM id fragment for .hbs filenames (ctEsc breaks ids when names contain & etc.). */
+function ctIdSafe(name){return String(name==null?'':name).replace(/[^a-zA-Z0-9._-]/g,'_');}
+
+async function ctFetchJson(url,timeoutMs){
+  var ms=timeoutMs||30000;
+  var c=new AbortController();
+  var t=setTimeout(function(){try{c.abort();}catch(_){}},ms);
+  try{
+    var res=await cafFetch(url,{signal:c.signal});
+    var j=null;
+    try{ j=await res.json(); }catch(_){ j=null; }
+    return {ok:res.ok,status:res.status,json:j};
+  }finally{ clearTimeout(t); }
+}
 
 async function ctLoad(){
-  const root=document.getElementById('ct-root');
+  var root=document.getElementById('ct-root');
+  if(!root){ return; }
   root.innerHTML='<div class="empty">Loading…</div>';
-  let dbRows=[];let fileTemplates=[];
+  var dbRows=[];
+  var fileTemplates=[];
   try{
-    const fe=await cafFetch('/v1/admin/flow-engine'); const fj=await fe.json();
-    if(fj && fj.ok && Array.isArray(fj.carousel_templates)) dbRows=fj.carousel_templates;
-    else if(Array.isArray(fj && fj.carousel_templates)) dbRows=fj.carousel_templates;
-  }catch(_){/* ignore */}
-  try{
-    const fr=await cafFetch('/v1/admin/carousel-template-list'); const fd=await fr.json();
-    if(fd && fd.ok && Array.isArray(fd.templates)) fileTemplates=fd.templates;
-  }catch(_){/* ignore */}
-  window.__CT_DB_ROWS=dbRows;
+    try{
+      var fe=await ctFetchJson('/v1/admin/flow-engine',45000);
+      var fj=fe.json||{};
+      if(fj && fj.ok && Array.isArray(fj.carousel_templates)) dbRows=fj.carousel_templates;
+      else if(Array.isArray(fj && fj.carousel_templates)) dbRows=fj.carousel_templates;
+    }catch(e){ console.warn('carousel-templates flow-engine',e); }
+    try{
+      var fr=await ctFetchJson('/v1/admin/carousel-template-list',15000);
+      var fd=fr.json||{};
+      if(fd && fd.ok && Array.isArray(fd.templates)) fileTemplates=fd.templates;
+    }catch(e){ console.warn('carousel-templates list',e); }
+    window.__CT_DB_ROWS=dbRows;
 
-  const byHtml={};
-  for(const r of dbRows){ if(r.html_template_name) (byHtml[r.html_template_name]=byHtml[r.html_template_name]||[]).push(r); }
-  const fileSet=new Set(fileTemplates);
-  const orphanDbRows=dbRows.filter(function(r){return r.html_template_name && !fileSet.has(r.html_template_name);});
+    var byHtml={};
+    for(var i=0;i<dbRows.length;i++){
+      var r=dbRows[i];
+      if(r && r.html_template_name){ (byHtml[r.html_template_name]=byHtml[r.html_template_name]||[]).push(r); }
+    }
+    var fileSet=new Set(fileTemplates);
+    var orphanDbRows=dbRows.filter(function(r){return r && r.html_template_name && !fileSet.has(r.html_template_name);});
 
-  let html='';
-  html+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 14px">';
-  html+='<button type="button" class="btn btn-sm" onclick="ctOpenEdit(null)">+ New template mapping</button>';
-  html+='<span style="color:var(--muted);font-size:12px;align-self:center">'+fileTemplates.length+' <code>.hbs</code> files · '+dbRows.length+' DB mappings</span>';
-  html+='</div>';
-  html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px">';
-  if(!fileTemplates.length){
-    html+='<div class="empty" style="grid-column:1/-1">No <code>.hbs</code> files. Set <code>CAROUSEL_TEMPLATE_DIR</code> on CAF Core and restart.</div>';
-  }
-  for(const name of fileTemplates){
-    const rows=byHtml[name]||[];
-    html+='<div class="card" style="padding:14px;display:flex;flex-direction:column">';
-    html+='<div style="aspect-ratio:4/5;background:repeating-linear-gradient(45deg,var(--card2),var(--card2) 10px,rgba(255,255,255,.02) 10px,rgba(255,255,255,.02) 20px);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;overflow:hidden" id="ct-prev-wrap-'+ctEsc(name)+'">';
-    html+='<div style="font-size:12px;color:var(--muted)" id="ct-prev-msg-'+ctEsc(name)+'">Click Preview to render slide 1</div></div>';
-    html+='<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">';
-    html+='<span class="mono" style="font-weight:600;color:var(--accent);word-break:break-all">'+ctEsc(name)+'</span>';
-    if(rows.length){
-      html+='<span style="font-size:11px;color:var(--muted)">Keys: '+rows.map(function(r){return '<code>'+ctEsc(r.template_key)+'</code>';}).join(', ')+'</span>';
-      const plats=Array.from(new Set(rows.map(function(r){return r.platform||'—';}))).join(' · ');
-      html+='<span style="font-size:11px;color:var(--muted)">Platform: '+ctEsc(plats)+'</span>';
-    }else{
-      html+='<span class="badge badge-y" style="font-size:10px;align-self:flex-start">No DB mapping</span>';
+    var html='';
+    html+='<div style="display:flex;gap:10px;flex-wrap:wrap;margin:4px 0 14px">';
+    html+='<button type="button" class="btn btn-sm" onclick="ctOpenEdit(null)">+ New template mapping</button>';
+    html+='<span style="color:var(--muted);font-size:12px;align-self:center">'+fileTemplates.length+' <code>.hbs</code> files · '+dbRows.length+' DB mappings</span>';
+    html+='</div>';
+    html+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px">';
+    if(!fileTemplates.length){
+      html+='<div class="empty" style="grid-column:1/-1">No <code>.hbs</code> files from the renderer. Set <code>RENDERER_BASE_URL</code> to your carousel renderer and ensure <code>GET /templates</code> lists <code>.hbs</code> files (or bundle templates under <code>CAROUSEL_TEMPLATES_DIR</code> on Core for template source).</div>';
+    }
+    for(var j=0;j<fileTemplates.length;j++){
+      var name=fileTemplates[j];
+      var rows=byHtml[name]||[];
+      var idSuffix=ctIdSafe(name);
+      html+='<div class="card" style="padding:14px;display:flex;flex-direction:column">';
+      html+='<div style="aspect-ratio:4/5;background:repeating-linear-gradient(45deg,var(--card2),var(--card2) 10px,rgba(255,255,255,.02) 10px,rgba(255,255,255,.02) 20px);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;overflow:hidden" id="ct-prev-wrap-'+ctEsc(idSuffix)+'">';
+      html+='<div style="font-size:12px;color:var(--muted)" id="ct-prev-msg-'+ctEsc(idSuffix)+'">Click Preview to render slide 1</div></div>';
+      html+='<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">';
+      html+='<span class="mono" style="font-weight:600;color:var(--accent);word-break:break-all">'+ctEsc(name)+'</span>';
+      if(rows.length){
+        html+='<span style="font-size:11px;color:var(--muted)">Keys: '+rows.map(function(r){return '<code>'+ctEsc(r.template_key)+'</code>';}).join(', ')+'</span>';
+        var plats=Array.from(new Set(rows.map(function(r){return r.platform||'—';}))).join(' · ');
+        html+='<span style="font-size:11px;color:var(--muted)">Platform: '+ctEsc(plats)+'</span>';
+      }else{
+        html+='<span class="badge badge-y" style="font-size:10px;align-self:flex-start">No DB mapping</span>';
+      }
+      html+='</div>';
+      html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:auto">';
+      html+='<button type="button" class="btn btn-sm" onclick="ctPreview('+JSON.stringify(name)+')">Preview</button>';
+      html+='<button type="button" class="btn-ghost btn-sm" onclick="ctShowSource('+JSON.stringify(name)+')">Source</button>';
+      if(rows.length && rows[0] && rows[0].template_key!=null){
+        html+='<button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditByKey('+JSON.stringify(rows[0].template_key)+')">Edit mapping</button>';
+      }else{
+        html+='<button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditWithHtml('+JSON.stringify(name)+')">+ Add mapping</button>';
+      }
+      html+='</div>';
+      html+='</div>';
     }
     html+='</div>';
-    html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:auto">';
-    html+='<button type="button" class="btn btn-sm" onclick="ctPreview('+JSON.stringify(name)+')">Preview</button>';
-    html+='<button type="button" class="btn-ghost btn-sm" onclick="ctShowSource('+JSON.stringify(name)+')">Source</button>';
-    if(rows.length){
-      html+='<button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditByKey('+JSON.stringify(rows[0].template_key)+')">Edit mapping</button>';
-    }else{
-      html+='<button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditWithHtml('+JSON.stringify(name)+')">+ Add mapping</button>';
-    }
-    html+='</div>';
-    html+='</div>';
-  }
-  html+='</div>';
 
-  if(orphanDbRows.length){
-    html+='<div class="card" style="margin-top:18px"><div class="card-h">DB mappings without <code>.hbs</code> file ('+orphanDbRows.length+')</div>';
-    html+='<p style="color:var(--muted);font-size:12px;margin-bottom:10px">These rows reference a renderer template that does not exist on the renderer. Either upload the file to <code>services/renderer/templates/</code> or delete / re-point the mapping.</p>';
-    html+='<table><thead><tr><th>Key</th><th>Platform</th><th>Engine</th><th>HTML name</th><th></th></tr></thead><tbody>';
-    for(const r of orphanDbRows){
-      html+='<tr><td class="mono">'+ctEsc(r.template_key)+'</td><td>'+ctEsc(r.platform||'—')+'</td><td>'+ctEsc(r.engine||'—')+'</td><td class="mono">'+ctEsc(r.html_template_name||'—')+'</td><td><button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditByKey('+JSON.stringify(r.template_key)+')">Edit</button></td></tr>';
+    if(orphanDbRows.length){
+      html+='<div class="card" style="margin-top:18px"><div class="card-h">DB mappings without <code>.hbs</code> file ('+orphanDbRows.length+')</div>';
+      html+='<p style="color:var(--muted);font-size:12px;margin-bottom:10px">These rows reference a renderer template that does not exist on the renderer. Either upload the file to <code>services/renderer/templates/</code> or delete / re-point the mapping.</p>';
+      html+='<table><thead><tr><th>Key</th><th>Platform</th><th>Engine</th><th>HTML name</th><th></th></tr></thead><tbody>';
+      for(var k=0;k<orphanDbRows.length;k++){
+        var or=orphanDbRows[k];
+        html+='<tr><td class="mono">'+ctEsc(or.template_key)+'</td><td>'+ctEsc(or.platform||'—')+'</td><td>'+ctEsc(or.engine||'—')+'</td><td class="mono">'+ctEsc(or.html_template_name||'—')+'</td><td><button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditByKey('+JSON.stringify(or.template_key)+')">Edit</button></td></tr>';
+      }
+      html+='</tbody></table></div>';
     }
-    html+='</tbody></table></div>';
+    root.innerHTML=html;
+  }catch(err){
+    root.innerHTML='<div class="empty" style="color:var(--red);max-width:720px">Could not load carousel templates. '+ctEsc(String(err&&err.message||err))+'</div><p class="empty" style="font-size:12px;color:var(--muted);margin-top:8px">If this persists, open DevTools → Network and check <code>/v1/admin/flow-engine</code> (DB) and <code>/v1/admin/carousel-template-list</code> (renderer proxy).</p>';
+    console.error(err);
   }
-  root.innerHTML=html;
 }
 
 async function ctPreview(name){
-  const wrap=document.getElementById('ct-prev-wrap-'+name);
-  const msg=document.getElementById('ct-prev-msg-'+name);
+  var ids=ctIdSafe(name);
+  const wrap=document.getElementById('ct-prev-wrap-'+ids);
+  const msg=document.getElementById('ct-prev-msg-'+ids);
   if(msg)msg.textContent='Rendering…';
   try{
     const res=await cafFetch('/v1/admin/carousel-template-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template:name,slide_index:1})});

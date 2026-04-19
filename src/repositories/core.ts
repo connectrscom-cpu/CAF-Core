@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
+import { ensureDefaultProjectProfileData } from "./project-bootstrap.js";
 
 export interface ProjectRow {
   id: string;
@@ -85,7 +86,10 @@ export async function listActiveProjectsForEditorialCron(db: Pool): Promise<Proj
 
 export async function ensureProject(db: Pool, slug: string, displayName?: string): Promise<ProjectRow> {
   const existing = await getProjectBySlug(db, slug);
-  if (existing) return existing;
+  if (existing) {
+    await ensureDefaultProjectProfileData(db, existing.id);
+    return existing;
+  }
   const row = await qOne<ProjectRow>(
     db,
     `INSERT INTO caf_core.projects (slug, display_name) VALUES ($1, $2)
@@ -94,6 +98,7 @@ export async function ensureProject(db: Pool, slug: string, displayName?: string
     [slug, displayName ?? slug]
   );
   if (!row) throw new Error("Failed to upsert project");
+  await ensureDefaultProjectProfileData(db, row.id);
   return row;
 }
 
