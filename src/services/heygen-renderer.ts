@@ -405,9 +405,38 @@ export function parseHeygenAvatarPoolJson(val: unknown): HeygenAvatarPoolEntry[]
   }
 }
 
-/** Stable pick so the same task (or scene seed) always gets the same avatar. */
+/**
+ * Round-robin index for a structured task / scene seed (`{run}__…__row{NNNN}__v{N}` or `…__scene_{i}`).
+ * Returns -1 when the seed has no `row` / `scene` / `v` markers so callers can fall back to a hash pick.
+ *
+ * Composition rule: `(row - 1) + (variation - 1) + scene` (each missing axis contributes 0). This makes:
+ * - row0001/v1/scene0 → 0, row0002/v1/scene0 → 1, row0003/v1/scene0 → 2 (round-robin across a run);
+ * - row0001/scene_1   → 1 (consecutive scenes within a multi-scene job rotate);
+ * - row0001/v2        → 1 (variations of the same row also rotate, so v1/v2 of the same row don't collide).
+ *
+ * Same `(row, scene, v)` triple → same index, so the pick stays stable across retries / restarts.
+ */
+export function roundRobinIndexFromSeed(seed: string, length: number): number {
+  if (length <= 0) return 0;
+  const rowM = /(?:^|[^a-z0-9])row0*(\d+)(?:[^a-z0-9]|$)/i.exec(seed);
+  const sceneM = /(?:^|[^a-z0-9])scene[_-]?0*(\d+)(?:[^a-z0-9]|$)/i.exec(seed);
+  const varM = /(?:^|[^a-z0-9])v0*(\d+)(?:[^a-z0-9]|$)/i.exec(seed);
+  if (!rowM && !sceneM && !varM) return -1;
+  const row = rowM ? Math.max(1, parseInt(rowM[1]!, 10) || 1) : 1;
+  const scene = sceneM ? Math.max(0, parseInt(sceneM[1]!, 10) || 0) : 0;
+  const variation = varM ? Math.max(1, parseInt(varM[1]!, 10) || 1) : 1;
+  const counter = (row - 1) + (variation - 1) + scene;
+  return ((counter % length) + length) % length;
+}
+
+/**
+ * Pool index pick: round-robin when the seed encodes per-run row/scene/variation; FNV-like hash fallback
+ * for ad-hoc seeds. Same task always returns the same index either way.
+ */
 export function stablePickIndex(seed: string, length: number): number {
   if (length <= 0) return 0;
+  const rr = roundRobinIndexFromSeed(seed, length);
+  if (rr >= 0) return rr;
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
   return h % length;

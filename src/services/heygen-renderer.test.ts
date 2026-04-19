@@ -16,7 +16,9 @@ import {
   resolveHeygenAgentDurationSec,
   resolveHeygenGeneratePath,
   resolveHeygenRenderMode,
+  roundRobinIndexFromSeed,
   sanitizeGenForHeygenNoAvatar,
+  stablePickIndex,
 } from "./heygen-renderer.js";
 
 function row(partial: Partial<HeygenConfigRow> & Pick<HeygenConfigRow, "config_id" | "config_key" | "value">): HeygenConfigRow {
@@ -660,5 +662,67 @@ describe("buildHeyGenRequestBody", () => {
         { flowType: "Video_Prompt_HeyGen_Avatar", defaultVoiceId: "v1", taskId: "t1" }
       )
     ).toThrow(/HeyGen avatar flow requires an avatar/);
+  });
+});
+
+describe("roundRobinIndexFromSeed / stablePickIndex", () => {
+  const baseRun = "RUN_20260420_AB__TT__Video_Script_HeyGen_Avatar";
+
+  it("rotates per row across a 3-entry pool, starting from row0001 → 0", () => {
+    const seeds = [
+      `${baseRun}__row0001__v1`,
+      `${baseRun}__row0002__v1`,
+      `${baseRun}__row0003__v1`,
+      `${baseRun}__row0004__v1`,
+      `${baseRun}__row0005__v1`,
+      `${baseRun}__row0006__v1`,
+    ];
+    const idxs = seeds.map((s) => roundRobinIndexFromSeed(s, 3));
+    expect(idxs).toEqual([0, 1, 2, 0, 1, 2]);
+  });
+
+  it("rotates consecutive scenes within a multi-scene job", () => {
+    const seedFor = (scene: number) => `${baseRun}__row0001__v1__scene_${scene.toString().padStart(2, "0")}`;
+    expect(roundRobinIndexFromSeed(seedFor(0), 3)).toBe(0);
+    expect(roundRobinIndexFromSeed(seedFor(1), 3)).toBe(1);
+    expect(roundRobinIndexFromSeed(seedFor(2), 3)).toBe(2);
+    expect(roundRobinIndexFromSeed(seedFor(3), 3)).toBe(0);
+  });
+
+  it("rotates variations of the same row so v1 / v2 don't collide", () => {
+    const v1 = roundRobinIndexFromSeed(`${baseRun}__row0001__v1`, 3);
+    const v2 = roundRobinIndexFromSeed(`${baseRun}__row0001__v2`, 3);
+    const v3 = roundRobinIndexFromSeed(`${baseRun}__row0001__v3`, 3);
+    expect(v1).toBe(0);
+    expect(v2).toBe(1);
+    expect(v3).toBe(2);
+  });
+
+  it("returns the same index for the same seed (stability across retries)", () => {
+    const s = `${baseRun}__row0042__v1`;
+    expect(roundRobinIndexFromSeed(s, 3)).toBe(roundRobinIndexFromSeed(s, 3));
+    expect(stablePickIndex(s, 3)).toBe(stablePickIndex(s, 3));
+  });
+
+  it("falls back to legacy hash for unstructured seeds", () => {
+    expect(roundRobinIndexFromSeed("ad-hoc-seed-no-row", 3)).toBe(-1);
+    const idx = stablePickIndex("ad-hoc-seed-no-row", 3);
+    expect(idx).toBeGreaterThanOrEqual(0);
+    expect(idx).toBeLessThan(3);
+  });
+
+  it("handles single-entry pools and zero-length pools safely", () => {
+    expect(roundRobinIndexFromSeed(`${baseRun}__row0007__v1`, 1)).toBe(0);
+    expect(roundRobinIndexFromSeed(`${baseRun}__row0007__v1`, 0)).toBe(0);
+    expect(stablePickIndex("anything", 0)).toBe(0);
+  });
+
+  it("stays in [0, length) for a large run window", () => {
+    const len = 5;
+    for (let r = 1; r <= 50; r++) {
+      const idx = roundRobinIndexFromSeed(`${baseRun}__row${String(r).padStart(4, "0")}__v1`, len);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      expect(idx).toBeLessThan(len);
+    }
   });
 });

@@ -220,9 +220,14 @@ Avatar can come from either:
 - **Pools** (preferred): `prompt_avatar_pool_json`, `script_avatar_pool_json`, `avatar_pool_json`\n  Each is a JSON array of objects like `{ \"avatar_id\": \"...\", \"voice_id\": \"...\" }` (voice_id optional).
 - **Single IDs**: `prompt_avatar_id`, `script_avatar_id`, `avatar_id`
 
-Pool picks are deterministic:
-- Seed defaults to `task_id`
-- `stablePickIndex(seed, pool.length)` selects the entry so the same task consistently picks the same avatar.
+Pool picks are deterministic **and round-robin within a run**:
+- Seed defaults to `task_id` (scene-assembly overrides to `${task_id}__scene_${i}`).
+- `stablePickIndex(seed, pool.length)` parses `row{NNNN}` / `scene_{i}` / `v{N}` from the seed and computes `((row - 1) + (variation - 1) + scene) mod pool.length`. So:
+  - Within a run, jobs `row0001`, `row0002`, `row0003` pick entries `0`, `1`, `2`, then wrap.
+  - Within a multi-scene job, scenes `0`, `1`, `2` rotate independently.
+  - Variations `v1`, `v2` of the same row also rotate (so they don't collide on a single avatar).
+- Same `(row, scene, v)` triple → same index, so retries / restarts always re-pick the same `(avatar_id, voice_id)` pair from the pool.
+- Ad-hoc seeds with no `row`/`scene`/`v` markers fall back to a stable FNV-like hash pick.
 
 No-avatar flows skip avatar injection entirely.
 
