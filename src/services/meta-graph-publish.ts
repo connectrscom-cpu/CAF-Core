@@ -3,9 +3,9 @@
  * Reads tokens + ids from caf_core.project_integrations (META_FB / META_IG), with optional per-channel
  * env overrides (CAF_META_FB_PAGE_ACCESS_TOKEN, CAF_META_IG_PAGE_ACCESS_TOKEN; legacy CAF_META_PAGE_ACCESS_TOKEN).
  *
- * Limitations (MVP):
- * - Facebook: text /feed; single image /photos; multi-image via unpublished /photos then one /feed with attached_media (explicit published=true so the post is public).
- * - Instagram: single image, carousel (2–10 images), or Reels-style video URL. Polls container status before media_publish.
+ * Coverage:
+ * - Facebook: text /feed; single image /photos; multi-image via unpublished /photos then one /feed with attached_media; video via /{page-id}/videos with file_url.
+ * - Instagram: single image, carousel (2–10 images), or Reels-style video URL. Polls container status before media_publish, surfaces Meta error codes (e.g. 2207076).
  */
 import type { Pool } from "pg";
 import { getProjectIntegration } from "../repositories/project-integrations.js";
@@ -23,6 +23,93 @@ function parseMediaUrls(row: PublicationPlacementRow): string[] {
   const m = row.media_urls_json;
   if (Array.isArray(m)) return m.filter((x): x is string => typeof x === "string" && x.trim().length > 0).map((x) => x.trim());
   return [];
+}
+
+/**
+ * Pre-flight check on a video URL Meta will fetch server-side. Catches the most common cause of
+ * IG "Media upload has failed with error code 2207076" (URL not directly downloadable, wrong
+ * Content-Type, or tiny payload). HEAD first, then GET range fallback for storage backends that
+ * 405 on HEAD (some Supabase rules / CDNs).
+ */
+export async function preflightCheckVideoUrl(url: string): Promise<
+  | { ok: true; contentType: string | null; contentLength: number | null }
+  | { ok: false; error: string }
+> {
+  const u = url.trim();
+  if (!u) return { ok: false, error: "Video URL is empty" };
+  if (!/^https:\/\//i.test(u)) {
+    return { ok: false, error: `Video URL must be HTTPS for Meta to fetch it: ${u}` };
+  }
+  try {
+    let res = await fetch(u, { method: "HEAD", redirect: "follow" });
+    if (res.status === 405 || res.status === 403) {
+      // Some object stores reject HEAD; fall back to a tiny GET range that we abort.
+      res = await fetch(u, { method: "GET", headers: { Range: "bytes=0-1" }, redirect: "follow" });
+      try {
+        await res.body?.cancel();
+      } catch {
+        /* best-effort */
+      }
+    }
+    if (!res.ok && res.status !== 206) {
+      return { ok: false, error: `Video URL not reachable: HTTP ${res.status}` };
+    }
+    const ct = res.headers.get("content-type");
+    const cl = res.headers.get("content-length");
+    const len = cl ? Number.parseInt(cl, 10) : null;
+    if (ct && !/video\/(mp4|quicktime|x-m4v)/i.test(ct) && !/octet-stream/i.test(ct)) {
+      return {
+        ok: false,
+        error: `Video URL Content-Type is "${ct}" — Meta requires video/mp4 (or video/quicktime). Re-encode to MP4 (H.264 + AAC) or fix the storage Content-Type header.`,
+      };
+    }
+    if (Number.isFinite(len) && len! <= 1024) {
+      return { ok: false, error: `Video URL returned only ${len} bytes — file is empty or unreadable.` };
+    }
+    return { ok: true, contentType: ct, contentLength: Number.isFinite(len) ? (len as number) : null };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `Video URL fetch failed before sending to Meta: ${msg}` };
+  }
+}
+
+/**
+ * Convert Meta's opaque IG container error string into actionable hints. Meta status text is something
+ * like "Error: Media upload has failed with error code 2207076"; we extract the code and append
+ * documented causes / fixes for the codes we hit most often (Reels publishing).
+ */
+export function describeIgContainerError(statusText: string, videoUrl?: string | null): string {
+  const raw = (statusText ?? "").trim();
+  const m = /error code (\d{3,7})/i.exec(raw);
+  const code = m ? m[1]! : null;
+  const url = (videoUrl ?? "").trim();
+  const lines: string[] = [raw || "Instagram container ERROR"];
+  if (code === "2207076" || code === "2207077") {
+    lines.push(
+      "Meta could not transcode the video. Most common causes (in order):",
+      "  1) Meta's fetcher could not download the URL — must be HTTPS, return Content-Type video/mp4, no auth/redirect to HTML. Public Supabase URLs sometimes get rate-limited; retry, or use a signed URL.",
+      "  2) Reels spec mismatch — H.264 (Main/High), AAC stereo 44.1/48 kHz, 9:16 aspect ratio, ≤ 60 fps, ≤ 1080×1920, ≤ 15 min, ≤ 100 MB.",
+      "  3) Known Meta-side outage — try again in a few minutes, or post on Facebook first and reuse the FB video URL on IG.",
+      url ? `  Video URL Meta tried to fetch: ${url}` : ""
+    );
+  } else if (code === "2207020") {
+    lines.push("Code 2207020: invalid `video_url` parameter. Make sure the URL is HTTPS and points directly to the .mp4 bytes.");
+  } else if (code === "2207026") {
+    lines.push("Code 2207026: video duration too short for Reels (minimum 3 seconds).");
+  } else if (code === "2207003") {
+    lines.push("Code 2207003: media file size too large or invalid — Reels are capped at 100 MB / 15 minutes.");
+  } else if (code) {
+    lines.push(`Meta error code ${code} — see https://developers.facebook.com/docs/instagram-platform/reference/error-codes for details.`);
+  }
+  return lines.filter(Boolean).join("\n");
+}
+
+/**
+ * Polls the Reels container, then waits 5–10 s extra to let Meta finalise. Some accounts need a brief
+ * settle before `media_publish` can succeed even after `status_code=FINISHED`.
+ */
+async function settleAfterIgContainerReady(ms = 6000): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Map Review UI platform names to integration keys. */
@@ -235,23 +322,26 @@ async function waitIgContainerReady(
   containerId: string,
   token: string,
   version: string,
-  maxAttempts = 45,
-  delayMs = 2000
+  opts: { videoUrl?: string | null; maxAttempts?: number; delayMs?: number } = {}
 ): Promise<void> {
+  const maxAttempts = opts.maxAttempts ?? 90;
+  const delayMs = opts.delayMs ?? 2000;
   for (let i = 0; i < maxAttempts; i++) {
-    const r = await graphGet<{ status_code?: string; status?: string }>(
-      `${containerId}?fields=status_code,status`,
+    const r = await graphGet<{ status_code?: string; status?: string; error_message?: string }>(
+      `${containerId}?fields=status_code,status,error_message`,
       token,
       version
     );
     const code = r.status_code ?? "";
     if (code === "FINISHED") return;
     if (code === "ERROR" || code === "EXPIRED" || code === "DELETED") {
-      throw new Error(`Instagram container ${code}: ${r.status ?? ""}`);
+      const statusText = (r.status ?? r.error_message ?? "").trim();
+      const detailed = describeIgContainerError(statusText, opts.videoUrl ?? null);
+      throw new Error(`Instagram container ${code}: ${detailed}`);
     }
     await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
-  throw new Error("Instagram media container processing timeout");
+  throw new Error("Instagram media container processing timeout (status_code never reached FINISHED)");
 }
 
 /**
@@ -292,7 +382,46 @@ async function publishFacebookPage(
   row: PublicationPlacementRow
 ): Promise<{ platform_post_id: string; posted_url: string | null; raw: Record<string, unknown> }> {
   const caption = row.caption_snapshot?.trim() ?? "";
+  const title = row.title_snapshot?.trim() ?? "";
   const urls = parseMediaUrls(row);
+  const videoUrl = row.video_url_snapshot?.trim() ?? "";
+
+  // Facebook Page video: use /{page-id}/videos with file_url. Meta fetches the URL server-side and
+  // returns a video_id; the post becomes visible once Meta finishes transcoding (usually seconds).
+  if (row.content_format === "video" && videoUrl) {
+    const pre = await preflightCheckVideoUrl(videoUrl);
+    if (!pre.ok) {
+      throw new Error(`Facebook video pre-flight failed: ${pre.error}`);
+    }
+    const fields: Record<string, string> = {
+      file_url: videoUrl,
+      // `description` is the visible caption on Facebook video posts (not `message`).
+      description: caption,
+      published: "true",
+    };
+    if (title) fields.title = title;
+    const r = await graphPostForm<{ id?: string; post_id?: string }>(
+      `${pageId}/videos`,
+      token,
+      version,
+      fields
+    );
+    const videoId = str(r.id);
+    const postId = str(r.post_id) ?? (videoId ? `${pageId}_${videoId}` : "unknown");
+    return {
+      platform_post_id: postId,
+      posted_url:
+        postId !== "unknown"
+          ? await resolveFacebookPostedUrl(pageId, postId, token, version)
+          : null,
+      raw: {
+        ...r,
+        mode: "fb_video",
+        video_id: videoId ?? null,
+        preflight: { content_type: pre.contentType, content_length: pre.contentLength },
+      },
+    };
+  }
 
   if (urls.length === 0) {
     const r = await graphPostForm<{ id?: string }>(`${pageId}/feed`, token, version, {
@@ -364,18 +493,33 @@ async function publishInstagram(
   row: PublicationPlacementRow
 ): Promise<{ platform_post_id: string; posted_url: string | null; raw: Record<string, unknown> }> {
   const caption = row.caption_snapshot?.trim() ?? "";
+  const title = row.title_snapshot?.trim() ?? "";
   const urls = parseMediaUrls(row);
   const videoUrl = row.video_url_snapshot?.trim() ?? "";
 
   if (row.content_format === "video" && videoUrl) {
-    const create = await graphPostForm<{ id?: string }>(`${igUserId}/media`, token, version, {
+    // Catch the most common cause of IG 2207076 (URL not directly downloadable, wrong Content-Type)
+    // *before* we burn 30+ seconds polling a doomed container.
+    const pre = await preflightCheckVideoUrl(videoUrl);
+    if (!pre.ok) {
+      throw new Error(`Instagram pre-flight failed: ${pre.error}`);
+    }
+
+    const fields: Record<string, string> = {
       media_type: "REELS",
       video_url: videoUrl,
       caption,
-    });
+      // Default Reels to the main feed so they aren't hidden in the Reels-only tab — matches Composer behaviour.
+      share_to_feed: "true",
+    };
+    // Reels have an optional `title` (used internally / on FB cross-posting). IG ignores it for the
+    // public caption, but it is harmless and useful for analytics joins.
+    if (title) fields.title = title;
+    const create = await graphPostForm<{ id?: string }>(`${igUserId}/media`, token, version, fields);
     const cid = str(create.id);
     if (!cid) throw new Error("Instagram Reels container missing id");
-    await waitIgContainerReady(cid, token, version);
+    await waitIgContainerReady(cid, token, version, { videoUrl });
+    await settleAfterIgContainerReady();
     const pub = await graphPostForm<{ id?: string }>(`${igUserId}/media_publish`, token, version, {
       creation_id: cid,
     });
@@ -387,7 +531,16 @@ async function publishInstagram(
     } catch {
       /* optional */
     }
-    return { platform_post_id: mid, posted_url: permalink, raw: { ...pub, create, mode: "ig_reels" } };
+    return {
+      platform_post_id: mid,
+      posted_url: permalink,
+      raw: {
+        ...pub,
+        create,
+        mode: "ig_reels",
+        preflight: { content_type: pre.contentType, content_length: pre.contentLength },
+      },
+    };
   }
 
   if (urls.length === 0) {
