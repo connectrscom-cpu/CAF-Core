@@ -1,12 +1,94 @@
 import type { Pool } from "pg";
 import { CANONICAL_ALLOWED_FLOW_SEEDS } from "../domain/canonical-flow-types.js";
-import { qOne } from "../db/queries.js";
+import { q, qOne } from "../db/queries.js";
 import {
   seedCanonicalAllowedFlowTypes,
   seedProductFlowTypesSkeleton,
+  type HeygenConfigRow,
   upsertHeygenConfig,
   upsertRiskRule,
 } from "./project-config.js";
+
+/** HeyGen rows are copied from this project when present (same IDs as your demo / production SNS workbook). */
+const HEYGEN_TEMPLATE_PROJECT_SLUG = "SNS";
+
+async function getProjectIdBySlug(db: Pool, slug: string): Promise<string | null> {
+  const row = await qOne<{ id: string }>(db, `SELECT id FROM caf_core.projects WHERE slug = $1`, [slug]);
+  return row?.id ?? null;
+}
+
+async function countHeygenRows(db: Pool, projectId: string): Promise<number> {
+  const row = await qOne<{ n: number }>(
+    db,
+    `SELECT COUNT(*)::int AS n FROM caf_core.heygen_config WHERE project_id = $1`,
+    [projectId]
+  );
+  return row?.n ?? 0;
+}
+
+/** True when this project only has the two empty bootstrap placeholders (not customized). */
+async function isOnlyEmptyDefaultHeygenPlaceholders(db: Pool, projectId: string): Promise<boolean> {
+  const rows = await q<{ config_id: string; value: string | null }>(
+    db,
+    `SELECT config_id, value FROM caf_core.heygen_config WHERE project_id = $1`,
+    [projectId]
+  );
+  if (rows.length !== 2) return false;
+  const ids = new Set(rows.map((r) => r.config_id));
+  if (!ids.has("defaults_voice") || !ids.has("defaults_avatar_pool")) return false;
+  const voice = rows.find((r) => r.config_id === "defaults_voice");
+  const pool = rows.find((r) => r.config_id === "defaults_avatar_pool");
+  const voiceEmpty = !voice?.value?.trim();
+  const poolRaw = (pool?.value ?? "").trim();
+  const poolEmpty = poolRaw === "" || poolRaw === "[]";
+  return voiceEmpty && poolEmpty;
+}
+
+async function copyHeygenConfigFromProject(db: Pool, targetProjectId: string, sourceProjectId: string): Promise<void> {
+  const rows = await q<HeygenConfigRow>(
+    db,
+    `SELECT * FROM caf_core.heygen_config WHERE project_id = $1 ORDER BY config_id`,
+    [sourceProjectId]
+  );
+  for (const r of rows) {
+    await upsertHeygenConfig(db, targetProjectId, {
+      config_id: r.config_id,
+      platform: r.platform,
+      flow_type: r.flow_type,
+      config_key: r.config_key,
+      value: r.value,
+      render_mode: r.render_mode,
+      value_type: r.value_type,
+      is_active: r.is_active,
+      notes: r.notes,
+    });
+  }
+}
+
+/**
+ * When project `SNS` has HeyGen rows, new projects (or empty HeyGen) get a full copy.
+ * Projects that still have only the two empty placeholder rows are upgraded to match SNS.
+ */
+async function maybeSyncHeygenFromSnsTemplate(db: Pool, projectId: string): Promise<void> {
+  const templateId = await getProjectIdBySlug(db, HEYGEN_TEMPLATE_PROJECT_SLUG);
+  if (!templateId || templateId === projectId) return;
+
+  const snsCount = await countHeygenRows(db, templateId);
+  if (snsCount === 0) return;
+
+  const targetCount = await countHeygenRows(db, projectId);
+  if (targetCount === 0) {
+    await copyHeygenConfigFromProject(db, projectId, templateId);
+    return;
+  }
+  if (await isOnlyEmptyDefaultHeygenPlaceholders(db, projectId)) {
+    await db.query(
+      `DELETE FROM caf_core.heygen_config WHERE project_id = $1 AND config_id IN ('defaults_voice', 'defaults_avatar_pool')`,
+      [projectId]
+    );
+    await copyHeygenConfigFromProject(db, projectId, templateId);
+  }
+}
 
 type ProfileCounts = {
   flow_types: number;
@@ -33,10 +115,12 @@ async function loadProfileCounts(db: Pool, projectId: string): Promise<ProfileCo
 
 /**
  * Ensures every project has baseline config: allowed flow types (canonical + product skeleton),
- * starter risk rules, HeyGen placeholder rows, and system constraints — matching `seed:demo` defaults.
+ * starter risk rules, HeyGen rows (copied from SNS when available), and system constraints — matching `seed:demo` defaults.
  * Safe to call on every request: one cheap counts query, then no-ops when already populated.
  */
 export async function ensureDefaultProjectProfileData(db: Pool, projectId: string): Promise<void> {
+  await maybeSyncHeygenFromSnsTemplate(db, projectId);
+
   const c = await loadProfileCounts(db, projectId);
   if (c.flow_types > 0 && c.risk_rules > 0 && c.heygen_config > 0 && c.constraints > 0) {
     return;
