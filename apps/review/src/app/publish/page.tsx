@@ -675,8 +675,16 @@ function PublishPageContent() {
           caption_snapshot: caption || null,
           title_snapshot: title || null,
         };
-        if (contentFormat === "video") body.video_url_snapshot = videoUrl || null;
-        else body.media_urls_json = media_urls_json;
+        if (contentFormat === "video") {
+          // Fall back to contentRow.video_url / preview_url so HeyGen / scene tasks always carry a URL,
+          // even when the user hasn't touched the Video URL field.
+          const resolvedVideoUrl =
+            videoUrl?.trim() ||
+            (contentRow?.video_url ?? "").trim() ||
+            (contentRow?.preview_url ?? "").trim() ||
+            "";
+          body.video_url_snapshot = resolvedVideoUrl || null;
+        } else body.media_urls_json = media_urls_json;
 
         const res = await fetch("/api/publish", {
           method: "POST",
@@ -1344,8 +1352,25 @@ function PublishPageContent() {
                           <div style={{ minWidth: 0 }}>
                             <TaskViewer
                               data={contentRow}
-                              assetUrls={contentFormat === "video" ? (videoUrl ? [videoUrl] : []) : mediaUrls}
-                              fallbackPreviewUrl={contentFormat === "video" ? videoUrl : mediaUrls[0]}
+                              assetUrls={
+                                contentFormat === "video"
+                                  ? (() => {
+                                      const u =
+                                        videoUrl?.trim() ||
+                                        (contentRow.video_url ?? "").trim() ||
+                                        (contentRow.preview_url ?? "").trim();
+                                      return u ? [u] : [];
+                                    })()
+                                  : mediaUrls
+                              }
+                              fallbackPreviewUrl={
+                                contentFormat === "video"
+                                  ? videoUrl?.trim() ||
+                                    (contentRow.video_url ?? "").trim() ||
+                                    (contentRow.preview_url ?? "").trim() ||
+                                    undefined
+                                  : mediaUrls[0]
+                              }
                               readOnly
                             />
                           </div>

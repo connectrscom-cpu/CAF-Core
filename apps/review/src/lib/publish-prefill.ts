@@ -1,5 +1,10 @@
 import type { ReviewJobDetail } from "./caf-core-client";
+import {
+  pickCaptionFromGenerationPayload,
+  pickTitleFromGenerationPayload,
+} from "./generation-display-fields";
 import { pickVideoUrlFromGenerationPayload } from "./job-preview-fields";
+import { isVideoFlow } from "./flow-kind";
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -10,45 +15,28 @@ function recordVal(v: unknown): Record<string, unknown> | null {
   return v as Record<string, unknown>;
 }
 
-function pickFromNestedCaptionObjects(root: Record<string, unknown> | null): string {
-  if (!root) return "";
-  const direct = str(root.caption) || str(root.post_caption) || str(root.description);
-  if (direct.trim()) return direct.trim();
-  for (const k of ["content", "publish", "publication", "post", "video", "result", "output", "data", "carousel"]) {
-    const nest = recordVal(root[k]);
-    if (!nest) continue;
-    const v = str(nest.caption) || str(nest.post_caption) || str(nest.description);
-    if (v.trim()) return v.trim();
-  }
-  return "";
+/** Editorial overrides (`final_*_override`) live on the job's latest review row, not in `generation_payload`. */
+function latestOverrides(job: ReviewJobDetail): Record<string, unknown> {
+  return recordVal(job.latest_overrides_json as Record<string, unknown> | null) ?? {};
 }
 
+/** Title for publishing: prefer human override, else the rich generation-payload picker (handles hook_line). */
 export function pickTitleFromJob(job: ReviewJobDetail): string {
+  const ov = str(latestOverrides(job).final_title_override);
+  if (ov) return ov;
   const gp = job.generation_payload as Record<string, unknown> | undefined;
-  if (!gp) return "";
-  return str(gp.title ?? gp.generated_title ?? gp.hook);
+  return pickTitleFromGenerationPayload(gp);
 }
 
+/**
+ * Caption for publishing: prefer human override, else the rich generation-payload picker
+ * (handles video-script JSON: cta_line + on_screen_text + disclaimer_line composition).
+ */
 export function pickCaptionFromJob(job: ReviewJobDetail): string {
+  const ov = str(latestOverrides(job).final_caption_override);
+  if (ov) return ov;
   const gp = job.generation_payload as Record<string, unknown> | undefined;
-  if (!gp) return "";
-  const direct =
-    str(gp.caption) ||
-    str(gp.generated_caption) ||
-    str(gp.post_caption) ||
-    str(gp.description) ||
-    str(gp.final_caption) ||
-    str(gp.final_caption_override);
-  if (direct) return direct;
-
-  const generatedOutput = recordVal(gp.generated_output);
-  const fromGo = pickFromNestedCaptionObjects(generatedOutput) || str(generatedOutput?.generated_caption);
-  if (fromGo) return fromGo;
-
-  const fromCarousel = pickFromNestedCaptionObjects(recordVal(generatedOutput?.carousel));
-  if (fromCarousel) return fromCarousel;
-
-  return "";
+  return pickCaptionFromGenerationPayload(gp);
 }
 
 /** Image URLs for carousel n8n (`publish_media_urls`); prefers signed assets, then payload fallbacks. */
@@ -92,6 +80,11 @@ export function carouselUrlsFromJob(job: ReviewJobDetail): string[] {
   return [];
 }
 
+/**
+ * Video URL for publishing — IG Reels / TikTok / FB video.
+ * Order: generation_payload (n8n shapes) → first .mp4-style asset → for video flows, the first asset
+ * of any extension (HeyGen / Supabase signed URLs sometimes drop the extension).
+ */
 export function videoUrlFromJob(job: ReviewJobDetail): string {
   const gp = job.generation_payload as Record<string, unknown> | undefined;
   const fromPayload = pickVideoUrlFromGenerationPayload(gp);
@@ -102,7 +95,11 @@ export function videoUrlFromJob(job: ReviewJobDetail): string {
   for (const a of sorted) {
     const t = (a.asset_type ?? "").toLowerCase();
     const u = (a.public_url ?? "").trim();
-    if (t.includes("video") || /\.(mp4|webm|mov)(\?|#|$)/i.test(u)) return u;
+    if (t.includes("video") || /\.(mp4|webm|mov|m4v)(\?|#|$)/i.test(u)) return u;
+  }
+  // Video flows with a single asset: trust it as the deliverable even when extension/asset_type is missing.
+  if (isVideoFlow(job.flow_type ?? "") && sorted.length > 0) {
+    return (sorted[0]!.public_url ?? "").trim();
   }
   return "";
 }

@@ -8,6 +8,7 @@ import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
+import { isVideoFlow } from "@/lib/flow-kind";
 
 function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
@@ -41,6 +42,7 @@ export function TaskViewer({
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
   const heyGenVideoMode = isHeyGenReviewFlow(flowType);
+  const isVideoFormat = isVideoFlow(flowType);
   const scriptFromRow = (
     getVal(data, "final_spoken_script_override") || getVal(data, "generated_spoken_script")
   ).trim();
@@ -50,7 +52,7 @@ export function TaskViewer({
     getVal(data, "final_video_url") ||
     getVal(data, "merged_video_url") ||
     // For video flows, `preview_url` is often the only available signed MP4 URL (especially when Core detail lookup fails).
-    (previewUrl && isVideoUrl(previewUrl) ? previewUrl : "") ||
+    (previewUrl && (isVideoUrl(previewUrl) || isVideoFormat) ? previewUrl : "") ||
     "";
   const slidesJson = getVal(data, "generated_slides_json");
 
@@ -102,10 +104,12 @@ export function TaskViewer({
   const singleAssetVideo = mediaRows.length === 1 && mediaRows[0]!.kind === "video" ? mediaRows[0]!.public_url : "";
   const singleAssetImage = mediaRows.length === 1 && mediaRows[0]!.kind === "image" ? mediaRows[0]!.public_url : "";
   const fallbackIfImage = fallbackPreviewUrl && isImageUrl(fallbackPreviewUrl) ? fallbackPreviewUrl : "";
+  // For video flows we trust the URL even without a `.mp4` extension (Supabase signed URLs, HeyGen, etc.)
+  // so the publish preview never falls back to a stale carousel JSON for HeyGen / Reel / Scene tasks.
   const rowVideo =
-    rowVideoUrl && isVideoUrl(rowVideoUrl)
+    rowVideoUrl && (isVideoUrl(rowVideoUrl) || isVideoFormat)
       ? rowVideoUrl
-      : fallbackPreviewUrl && isVideoUrl(fallbackPreviewUrl)
+      : fallbackPreviewUrl && (isVideoUrl(fallbackPreviewUrl) || isVideoFormat)
         ? fallbackPreviewUrl
         : "";
 
@@ -232,7 +236,10 @@ export function TaskViewer({
     );
   }
 
-  if (slides && slides.length > 0) {
+  // Skip the legacy carousel-JSON dump for video flows: HeyGen / video-script jobs sometimes carry a
+  // single placeholder cover slide in `generated_slides_json`, which would otherwise hide the real
+  // video URL behind an empty-looking carousel preview on the Publish page.
+  if (slides && slides.length > 0 && !isVideoFormat) {
     return (
       <div>
         <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Carousel (generated_slides_json)</p>
@@ -250,9 +257,12 @@ export function TaskViewer({
   }
 
   const reasons: string[] = [];
-  if (!fullBleedVideoUrl && mediaRows.length === 0) reasons.push("no video or image URL from task or assets");
-  else if (videoLoadFailed) reasons.push("video URL did not load");
-  if (!slidesJson) reasons.push("no generated_slides_json");
+  if (!fullBleedVideoUrl && mediaRows.length === 0) {
+    reasons.push(isVideoFormat ? "no video URL on this job yet" : "no video or image URL from task or assets");
+  } else if (videoLoadFailed) {
+    reasons.push("video URL did not load (signed URL may have expired or asset is missing)");
+  }
+  if (!isVideoFormat && !slidesJson) reasons.push("no generated_slides_json");
 
   return (
     <div className="card">
