@@ -21,6 +21,7 @@ import {
   fitSpokenScriptToWordBudget,
   heygenSpokenScriptWordBoundsFromConfig,
 } from "./spoken-script-word-budget.js";
+import { expandSpokenScriptToMinimum } from "./heygen-spoken-script-enforcement.js";
 import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
@@ -160,11 +161,43 @@ export async function enforceSpokenScriptWordLawOnParsedOutput(
     wc2 = countWords(scriptOut);
   }
   if (wc2 < minWords) {
-    return {
-      parsed: merged,
-      extraTokens: llm.total_tokens,
-      error: `spoken_script still ${wc2} words after retry (minimum ${minWords} words). Tighten prompts or raise VIDEO_TARGET_DURATION_MIN_SEC / SCENE_VO_WORDS_PER_MINUTE.`,
-    };
+    /**
+     * JSON-envelope retry drifted again — fall back to the same plain-text expander used at HeyGen
+     * preflight (`heygen-spoken-script-enforcement.ts`). It rewrites the voiceover continuously without the
+     * structural constraints that make models cap word count, so it almost always reaches `minWords`.
+     */
+    let expanded: string;
+    try {
+      expanded = await expandSpokenScriptToMinimum(config, apiKey, scriptOut, minWords, {
+        db,
+        projectId: job.project_id,
+        runId: job.run_id,
+        taskId: job.task_id,
+      });
+    } catch (err) {
+      return {
+        parsed: merged,
+        extraTokens: llm.total_tokens,
+        error: `spoken_script still ${wc2} words after retry; plain-text expansion failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      };
+    }
+    let wc3 = countWords(expanded);
+    if (wc3 > maxWords) {
+      const fitted = fitSpokenScriptToWordBudget(expanded, [], maxWords);
+      expanded = fitted.script;
+      wc3 = countWords(expanded);
+    }
+    if (wc3 < minWords) {
+      return {
+        parsed: merged,
+        extraTokens: llm.total_tokens,
+        error: `spoken_script still ${wc3} words after retry + plain-text expansion (minimum ${minWords}). Tighten prompts or raise VIDEO_TARGET_DURATION_MIN_SEC / SCENE_VO_WORDS_PER_MINUTE.`,
+      };
+    }
+    merged = applySpokenScriptToParsed(merged, expanded);
+    return { parsed: merged, extraTokens: llm.total_tokens };
   }
   return { parsed: merged, extraTokens: llm.total_tokens };
 }

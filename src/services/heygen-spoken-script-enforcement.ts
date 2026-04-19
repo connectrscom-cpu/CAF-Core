@@ -27,7 +27,7 @@ function applyScriptToGen(gen: Record<string, unknown>, script: string): Record<
   return out;
 }
 
-async function expandSpokenScriptToMinimum(
+export async function expandSpokenScriptToMinimum(
   appConfig: AppConfig,
   apiKey: string,
   script: string,

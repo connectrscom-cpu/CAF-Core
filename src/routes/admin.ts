@@ -1561,8 +1561,15 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   // UI flow: GET source shows the `.hbs` Handlebars text; POST preview pipes a
   // small sample payload through `/preview-template` so the admin sees the
   // actual rendered slide 1 as a PNG streamed back from the renderer.
-  /** Same order of magnitude as pickCarouselTemplateForRender — a dead renderer must not hang GET /admin/carousel-templates. */
+  /** Snappy timeout for non-render proxy calls (template list / template source) — a dead renderer must not hang the admin page. */
   const carouselAdminRendererFetchMs = 10_000;
+  /**
+   * Longer timeout for actual slide renders. The renderer queues Puppeteer renders serially,
+   * so during a cold-start (first visit after deploy) a request that lands deep in the queue
+   * can wait several seconds behind older renders. 60s comfortably covers ~19 templates × 3 slides
+   * even with the Puppeteer browser warming up.
+   */
+  const carouselAdminRenderFetchMs = 60_000;
   app.get<{ Querystring: { name?: string } }>("/v1/admin/carousel-template-source", async (request, reply) => {
     const name = String(request.query?.name ?? "").trim();
     if (!name || !/^[a-zA-Z0-9_-]+\.hbs$/.test(name.endsWith(".hbs") ? name : `${name}.hbs`)) {
@@ -1624,53 +1631,103 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     ],
   } as const;
 
-  app.post<{ Body: { template?: string; slide_index?: number; data?: unknown } }>(
+  /**
+   * Proxy a single preview slide image from the carousel renderer.
+   * Shared by both POST (custom data) and GET (admin UI, browser-cacheable) handlers.
+   */
+  async function proxyCarouselPreview(opts: {
+    template: string;
+    slideIndex: number;
+    data?: Record<string, unknown>;
+    force: boolean;
+  }): Promise<
+    | { ok: true; buffer: Buffer; cached: boolean }
+    | { ok: false; status: number; error: string }
+  > {
+    const base = (config.RENDERER_BASE_URL || "").replace(/\/$/, "");
+    const data = opts.data ?? CAROUSEL_PREVIEW_SAMPLE_DATA;
+    const url = `${base}/preview-template${opts.force ? "?force=1" : ""}`;
+    try {
+      const rendererRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template: opts.template, slide_index: opts.slideIndex, data }),
+        signal: AbortSignal.timeout(carouselAdminRenderFetchMs),
+      });
+      const rendererJson = (await rendererRes.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        result_url?: string;
+        resultUrl?: string;
+        cached?: boolean;
+      };
+      const resultUrl = rendererJson.result_url ?? rendererJson.resultUrl;
+      if (!rendererRes.ok || !rendererJson.ok || !resultUrl) {
+        return {
+          ok: false,
+          status: rendererRes.ok ? 502 : rendererRes.status,
+          error: rendererJson.error || "renderer_no_result_url",
+        };
+      }
+      const imgUrl = resultUrl.startsWith("http") ? resultUrl : `${base}${resultUrl}`;
+      const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(carouselAdminRenderFetchMs) });
+      if (!imgRes.ok) return { ok: false, status: 502, error: "renderer_image_fetch_failed" };
+      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      return { ok: true, buffer, cached: rendererJson.cached === true };
+    } catch (err) {
+      return { ok: false, status: 502, error: err instanceof Error ? err.message : "proxy_failed" };
+    }
+  }
+
+  function normalizeSlideIndex(raw: unknown): number {
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  }
+
+  app.post<{ Body: { template?: string; slide_index?: number; data?: unknown; force?: boolean } }>(
     "/v1/admin/carousel-template-preview",
     async (request, reply) => {
       const body = request.body ?? {};
       const template = String(body.template ?? "").trim();
       if (!template) return reply.code(400).send({ ok: false, error: "template_required" });
-      const base = (config.RENDERER_BASE_URL || "").replace(/\/$/, "");
-      const slideIndex = Number.isFinite(body.slide_index as number) && Number(body.slide_index) > 0
-        ? Number(body.slide_index)
-        : 1;
-      const data =
+      const slideIndex = normalizeSlideIndex(body.slide_index);
+      const customData =
         body.data && typeof body.data === "object" && !Array.isArray(body.data)
           ? (body.data as Record<string, unknown>)
-          : CAROUSEL_PREVIEW_SAMPLE_DATA;
-      try {
-        const rendererRes = await fetch(`${base}/preview-template`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ template, slide_index: slideIndex, data }),
-          signal: AbortSignal.timeout(carouselAdminRendererFetchMs),
-        });
-        const rendererJson = (await rendererRes.json().catch(() => ({}))) as {
-          ok?: boolean;
-          error?: string;
-          result_url?: string;
-        };
-        if (!rendererRes.ok || !rendererJson.ok || !rendererJson.result_url) {
-          return reply.code(rendererRes.ok ? 502 : rendererRes.status).send({
-            ok: false,
-            error: rendererJson.error || "renderer_no_result_url",
-          });
-        }
-        const imgUrl = rendererJson.result_url.startsWith("http")
-          ? rendererJson.result_url
-          : `${base}${rendererJson.result_url}`;
-        const imgRes = await fetch(imgUrl, { signal: AbortSignal.timeout(carouselAdminRendererFetchMs) });
-        if (!imgRes.ok) return reply.code(502).send({ ok: false, error: "renderer_image_fetch_failed" });
-        const buf = Buffer.from(await imgRes.arrayBuffer());
-        reply.header("Content-Type", "image/png").header("Cache-Control", "no-store");
-        return reply.send(buf);
-      } catch (err) {
-        return reply.code(502).send({
-          ok: false,
-          error: err instanceof Error ? err.message : "proxy_failed",
-        });
-      }
+          : undefined;
+      const force = body.force === true || customData != null;
+      const result = await proxyCarouselPreview({ template, slideIndex, data: customData, force });
+      if (!result.ok) return reply.code(result.status).send({ ok: false, error: result.error });
+      reply.header("Content-Type", "image/png").header("Cache-Control", "no-store");
+      return reply.send(result.buffer);
     }
+  );
+
+  /**
+   * GET twin used by the admin Carousel Templates page: cacheable URL the browser can store.
+   * Pair with the renderer's deterministic `__previews__/<template>/<NNN>_slide.png` path so
+   * repeat visits hit the browser HTTP cache (or, on a cold browser, the renderer disk cache).
+   * `?force=1` bypasses both the renderer disk cache AND the browser cache (`Cache-Control: no-store`).
+   */
+  app.get<{ Querystring: { template?: string; slide_index?: string; force?: string; v?: string } }>(
+    "/v1/admin/carousel-template-preview",
+    async (request, reply) => {
+      const q = request.query ?? {};
+      const template = String(q.template ?? "").trim();
+      if (!template) return reply.code(400).send({ ok: false, error: "template_required" });
+      const slideIndex = normalizeSlideIndex(q.slide_index);
+      const force = q.force === "1" || q.force === "true";
+      const result = await proxyCarouselPreview({ template, slideIndex, force });
+      if (!result.ok) return reply.code(result.status).send({ ok: false, error: result.error });
+      reply.header("Content-Type", "image/png");
+      // Force-refresh path: never cache so the user sees the freshly rendered tile.
+      // Otherwise: long-lived browser cache; the `v=` query param is the bust knob.
+      reply.header(
+        "Cache-Control",
+        force ? "no-store" : "public, max-age=86400, immutable",
+      );
+      return reply.send(result.buffer);
+    },
   );
 
   // ── HTML pages ──────────────────────────────────────────────────────
@@ -4266,9 +4323,8 @@ async function ctLoad(){
       var name=fileTemplates[j];
       var rows=byHtml[name]||[];
       var idSuffix=ctIdSafe(name);
-      html+='<div class="card" style="padding:14px;display:flex;flex-direction:column">';
-      html+='<div style="aspect-ratio:4/5;background:repeating-linear-gradient(45deg,var(--card2),var(--card2) 10px,rgba(255,255,255,.02) 10px,rgba(255,255,255,.02) 20px);border:1px solid var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;margin-bottom:12px;overflow:hidden" id="ct-prev-wrap-'+ctEsc(idSuffix)+'">';
-      html+='<div style="font-size:12px;color:var(--muted)" id="ct-prev-msg-'+ctEsc(idSuffix)+'">Click Preview to render slide 1</div></div>';
+      html+='<div class="card ct-card" data-ct-name="'+ctEsc(name)+'" data-ct-id="'+ctEsc(idSuffix)+'" style="padding:14px;display:flex;flex-direction:column">';
+      html+=ctSliderMarkup(name,idSuffix);
       html+='<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:10px">';
       html+='<span class="mono" style="font-weight:600;color:var(--accent);word-break:break-all">'+ctEsc(name)+'</span>';
       if(rows.length){
@@ -4280,7 +4336,7 @@ async function ctLoad(){
       }
       html+='</div>';
       html+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:auto">';
-      html+='<button type="button" class="btn btn-sm" onclick="ctPreview('+JSON.stringify(name)+')">Preview</button>';
+      html+='<button type="button" class="btn-ghost btn-sm" onclick="ctReloadCard('+JSON.stringify(name)+')" title="Re-render all 3 slides">Reload</button>';
       html+='<button type="button" class="btn-ghost btn-sm" onclick="ctShowSource('+JSON.stringify(name)+')">Source</button>';
       if(rows.length && rows[0] && rows[0].template_key!=null){
         html+='<button type="button" class="btn-ghost btn-sm" onclick="ctOpenEditByKey('+JSON.stringify(rows[0].template_key)+')">Edit mapping</button>';
@@ -4303,33 +4359,216 @@ async function ctLoad(){
       html+='</tbody></table></div>';
     }
     root.innerHTML=html;
+    ctObserveCards();
   }catch(err){
     root.innerHTML='<div class="empty" style="color:var(--red);max-width:720px">Could not load carousel templates. '+ctEsc(String(err&&err.message||err))+'</div><p class="empty" style="font-size:12px;color:var(--muted);margin-top:8px">If this persists, open DevTools → Network and check <code>/v1/admin/flow-engine</code> (DB) and <code>/v1/admin/carousel-template-list</code> (renderer proxy).</p>';
     console.error(err);
   }
 }
 
-async function ctPreview(name){
+// 3-slide preview: cover (slide_index 1), first body (2), CTA (4 — sample data has cover + 2 body + cta).
+var CT_SLOTS=[
+  {label:'Cover', idx:1},
+  {label:'Body',  idx:2},
+  {label:'CTA',   idx:4}
+];
+// Slide state lives in the DOM (data-state attr). Persistent caching is delegated to:
+//   - the browser HTTP cache (Cache-Control: public, max-age=86400, immutable on the GET endpoint), and
+//   - the renderer's deterministic on-disk cache (__previews__/<template>/<NNN>_slide.png).
+// We only keep an in-memory dedupe set + priority queue here so first paint does covers-first
+// across all visible cards instead of the natural document order.
+var CT_DONE={};         // key 'name|idx' -> 'loaded' | 'error'
+var CT_QUEUE=[];        // {name,idx,priority,bust}
+var CT_INFLIGHT=0;
+var CT_MAX_INFLIGHT=3;
+var CT_LOADED_CARDS={}; // name -> true once cover is in flight (avoid re-triggering on observer churn)
+
+function ctPreviewUrl(name, idx, bust){
+  var qs='template='+encodeURIComponent(name)+'&slide_index='+encodeURIComponent(idx);
+  if(bust){ qs+='&force=1&v='+encodeURIComponent(bust); }
+  return '/v1/admin/carousel-template-preview?'+qs;
+}
+
+function ctSliderMarkup(name,idSuffix){
+  var stage='<div class="ct-slider-stage" id="ct-slide-stage-'+ctEsc(idSuffix)+'" style="position:relative;width:100%;height:100%">';
+  for(var s=0;s<CT_SLOTS.length;s++){
+    var first=(s===0);
+    stage+='<div class="ct-slide" data-slot="'+s+'" data-state="pending" id="ct-slide-'+ctEsc(idSuffix)+'-'+s+'" style="position:absolute;inset:0;display:'+(first?'flex':'none')+';align-items:center;justify-content:center;text-align:center">';
+    stage+='<div class="ct-slide-msg" style="font-size:11px;color:var(--muted);padding:0 10px">'+(first?'Loading…':'—')+'</div>';
+    stage+='</div>';
+  }
+  stage+='</div>';
+
+  // idSuffix has been filtered to [a-zA-Z0-9._-] by ctIdSafe — safe to wrap in single quotes
+  // inside an onclick="..." attribute (no escaping needed).
+  var idArg="'"+idSuffix+"'";
+  var nav='';
+  nav+='<button type="button" class="ct-nav" aria-label="Previous slide" onclick="event.stopPropagation();ctNav('+idArg+',-1)" style="position:absolute;left:6px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:rgba(0,0,0,.55);color:#fff;cursor:pointer;line-height:1;padding:0;font-size:16px;display:flex;align-items:center;justify-content:center">‹</button>';
+  nav+='<button type="button" class="ct-nav" aria-label="Next slide" onclick="event.stopPropagation();ctNav('+idArg+',+1)" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;border:1px solid var(--border);background:rgba(0,0,0,.55);color:#fff;cursor:pointer;line-height:1;padding:0;font-size:16px;display:flex;align-items:center;justify-content:center">›</button>';
+
+  var dots='<div class="ct-dots" id="ct-dots-'+ctEsc(idSuffix)+'" style="position:absolute;bottom:8px;left:50%;transform:translateX(-50%);display:flex;gap:6px;background:rgba(0,0,0,.35);padding:5px 8px;border-radius:999px">';
+  for(var d=0;d<CT_SLOTS.length;d++){
+    var active=(d===0);
+    dots+='<button type="button" data-dot="'+d+'" title="'+ctEsc(CT_SLOTS[d].label)+'" onclick="event.stopPropagation();ctGoto('+idArg+','+d+')" style="width:7px;height:7px;border-radius:50%;border:1px solid rgba(255,255,255,.6);background:'+(active?'#fff':'transparent')+';padding:0;cursor:pointer"></button>';
+  }
+  dots+='</div>';
+
+  var label='<div class="ct-slide-label" id="ct-slide-label-'+ctEsc(idSuffix)+'" style="position:absolute;top:8px;left:8px;font-size:10px;color:#fff;background:rgba(0,0,0,.55);padding:2px 8px;border-radius:999px;letter-spacing:.04em;text-transform:uppercase">'+ctEsc(CT_SLOTS[0].label)+'</div>';
+
+  return '<div class="ct-prev-wrap" data-ct-name="'+ctEsc(name)+'" data-ct-id="'+ctEsc(idSuffix)+'" data-current-slot="0" style="position:relative;aspect-ratio:4/5;background:repeating-linear-gradient(45deg,var(--card2),var(--card2) 10px,rgba(255,255,255,.02) 10px,rgba(255,255,255,.02) 20px);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;overflow:hidden" id="ct-prev-wrap-'+ctEsc(idSuffix)+'">'+stage+nav+dots+label+'</div>';
+}
+
+function ctSlotElFor(name, idx){
+  var slot=-1; for(var i=0;i<CT_SLOTS.length;i++){ if(CT_SLOTS[i].idx===idx){ slot=i; break; } }
+  if(slot<0) return null;
   var ids=ctIdSafe(name);
-  const wrap=document.getElementById('ct-prev-wrap-'+ids);
-  const msg=document.getElementById('ct-prev-msg-'+ids);
-  if(msg)msg.textContent='Rendering…';
-  try{
-    const res=await cafFetch('/v1/admin/carousel-template-preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({template:name,slide_index:1})});
-    if(!res.ok){
-      let errText='Render failed ('+res.status+')';
-      try{ const j=await res.json(); if(j && j.error) errText=j.error; }catch(_){/* ignore */}
-      if(msg)msg.textContent=errText;
+  return { slot:slot, el:document.getElementById('ct-slide-'+ids+'-'+slot) };
+}
+
+function ctSetSlideMsg(name, idx, state, msg){
+  var sl=ctSlotElFor(name, idx); if(!sl || !sl.el) return;
+  sl.el.setAttribute('data-state', state);
+  var color = state==='error' ? 'var(--red)' : 'var(--muted)';
+  sl.el.innerHTML='<div class="ct-slide-msg" style="font-size:11px;color:'+color+';padding:0 10px;word-break:break-word">'+ctEsc(msg||'—')+'</div>';
+}
+
+function ctMountSlideImg(name, idx, img){
+  var sl=ctSlotElFor(name, idx); if(!sl || !sl.el) return;
+  sl.el.setAttribute('data-state','loaded');
+  img.style.width='100%'; img.style.height='100%'; img.style.objectFit='contain';
+  img.alt=name+' '+CT_SLOTS[sl.slot].label;
+  sl.el.innerHTML='';
+  sl.el.appendChild(img);
+}
+
+function ctRunNext(){
+  while(CT_INFLIGHT<CT_MAX_INFLIGHT && CT_QUEUE.length){
+    CT_QUEUE.sort(function(a,b){return b.priority-a.priority;});
+    var t=CT_QUEUE.shift();
+    var key=t.name+'|'+t.idx;
+    // Already loaded into the DOM in this session and not a forced reload? Skip.
+    if(!t.bust && CT_DONE[key]==='loaded'){ continue; }
+    var sl=ctSlotElFor(t.name, t.idx);
+    if(!sl || !sl.el){ continue; }
+    CT_INFLIGHT++;
+    ctSetSlideMsg(t.name, t.idx, 'loading', 'Rendering '+CT_SLOTS[sl.slot].label.toLowerCase()+'…');
+    (function(task){
+      var img=new Image();
+      img.decoding='async';
+      img.onload=function(){
+        CT_DONE[task.name+'|'+task.idx]='loaded';
+        ctMountSlideImg(task.name, task.idx, img);
+        // Cover landed → kick off body + cta as background work (same bust value if any).
+        if(task.idx===CT_SLOTS[0].idx){
+          for(var s=1;s<CT_SLOTS.length;s++) ctQueueRender(task.name, CT_SLOTS[s].idx, 3, task.bust);
+        }
+        CT_INFLIGHT--; ctRunNext();
+      };
+      img.onerror=function(){
+        // Cold-start of the renderer (Puppeteer warming up under load) can briefly 5xx/timeout.
+        // Retry up to twice with backoff before giving up. Cache-bust each retry so we don't
+        // hit a 5xx response cached by an intermediate.
+        var attempts=(task.attempts||0)+1;
+        if(attempts<=2){
+          var delay=attempts===1?4000:12000;
+          ctSetSlideMsg(task.name, task.idx, 'loading', 'Retrying ('+attempts+'/2)…');
+          setTimeout(function(){
+            CT_INFLIGHT--;
+            ctQueueRender(task.name, task.idx, task.priority, Date.now(), attempts);
+          }, delay);
+          return;
+        }
+        CT_DONE[task.name+'|'+task.idx]='error';
+        ctSetSlideMsg(task.name, task.idx, 'error', 'Render failed');
+        CT_INFLIGHT--; ctRunNext();
+      };
+      img.src=ctPreviewUrl(task.name, task.idx, task.bust);
+    })(t);
+  }
+}
+
+function ctQueueRender(name, idx, priority, bust, attempts){
+  var key=name+'|'+idx;
+  if(!bust && CT_DONE[key]==='loaded'){ return; }
+  // dedupe in queue — bump priority and adopt the strongest bust value if already queued
+  for(var i=0;i<CT_QUEUE.length;i++){
+    if(CT_QUEUE[i].name===name && CT_QUEUE[i].idx===idx){
+      if(priority>CT_QUEUE[i].priority) CT_QUEUE[i].priority=priority;
+      if(bust && (!CT_QUEUE[i].bust || bust>CT_QUEUE[i].bust)) CT_QUEUE[i].bust=bust;
+      if(attempts && attempts>(CT_QUEUE[i].attempts||0)) CT_QUEUE[i].attempts=attempts;
       return;
     }
-    const blob=await res.blob();
-    const url=URL.createObjectURL(blob);
-    if(wrap){
-      wrap.innerHTML='<img src="'+url+'" alt="'+ctEsc(name)+'" style="max-width:100%;max-height:100%;object-fit:contain">';
-    }
-  }catch(err){
-    if(msg)msg.textContent=String(err && err.message || err);
   }
+  CT_QUEUE.push({name:name, idx:idx, priority:priority||1, bust:bust||0, attempts:attempts||0});
+  ctRunNext();
+}
+
+function ctNav(idSuffix, dir){
+  var wrap=document.getElementById('ct-prev-wrap-'+idSuffix);
+  if(!wrap) return;
+  var cur=Number(wrap.getAttribute('data-current-slot')||'0');
+  var next=(cur+dir+CT_SLOTS.length)%CT_SLOTS.length;
+  ctGoto(idSuffix,next);
+}
+
+function ctGoto(idSuffix, slot){
+  var wrap=document.getElementById('ct-prev-wrap-'+idSuffix);
+  if(!wrap) return;
+  wrap.setAttribute('data-current-slot',String(slot));
+  var stage=document.getElementById('ct-slide-stage-'+idSuffix);
+  if(stage){
+    var slides=stage.querySelectorAll('.ct-slide');
+    for(var i=0;i<slides.length;i++) slides[i].style.display=(i===slot?'flex':'none');
+  }
+  var dotsEl=document.getElementById('ct-dots-'+idSuffix);
+  if(dotsEl){
+    var dots=dotsEl.querySelectorAll('[data-dot]');
+    for(var k=0;k<dots.length;k++) dots[k].style.background=(k===slot?'#fff':'transparent');
+  }
+  var lab=document.getElementById('ct-slide-label-'+idSuffix);
+  if(lab) lab.textContent=CT_SLOTS[slot].label;
+  var name=wrap.getAttribute('data-ct-name');
+  if(name){
+    var idx=CT_SLOTS[slot].idx;
+    var key=name+'|'+idx;
+    // If this slot hasn't loaded yet (or errored), bump it past the background prefetch.
+    if(CT_DONE[key]!=='loaded'){
+      ctQueueRender(name, idx, 8);
+    }
+  }
+}
+
+function ctReloadCard(name){
+  // Force-refresh: bypass renderer disk cache (force=1) AND browser cache (v=now).
+  var bust=Date.now();
+  for(var s=0;s<CT_SLOTS.length;s++){
+    delete CT_DONE[name+'|'+CT_SLOTS[s].idx];
+    ctSetSlideMsg(name, CT_SLOTS[s].idx, 'pending', s===0 ? 'Loading…' : '—');
+  }
+  ctQueueRender(name, CT_SLOTS[0].idx, 10, bust);
+}
+
+var CT_OBSERVER=null;
+function ctObserveCards(){
+  if(CT_OBSERVER){ try{ CT_OBSERVER.disconnect(); }catch(_){} CT_OBSERVER=null; }
+  if(typeof IntersectionObserver==='undefined'){
+    // Fallback: queue everything (slowly) — covers first.
+    document.querySelectorAll('.ct-card').forEach(function(card){
+      var name=card.getAttribute('data-ct-name'); if(name) ctQueueRender(name, CT_SLOTS[0].idx, 10);
+    });
+    return;
+  }
+  CT_OBSERVER=new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(!e.isIntersecting) return;
+      var name=e.target.getAttribute('data-ct-name');
+      if(!name || CT_LOADED_CARDS[name]) return;
+      CT_LOADED_CARDS[name]=true;
+      ctQueueRender(name, CT_SLOTS[0].idx, 10);
+      CT_OBSERVER.unobserve(e.target);
+    });
+  },{ rootMargin:'200px 0px', threshold:0.05 });
+  document.querySelectorAll('.ct-card').forEach(function(card){ CT_OBSERVER.observe(card); });
 }
 
 async function ctShowSource(name){
@@ -4556,7 +4795,7 @@ async function loadConfig(){
   h+=fg('auto_validation_pass_threshold','Auto-validation Pass Threshold',c.auto_validation_pass_threshold||'','number','0.01');
   h+=fg('max_carousel_jobs_per_run','Max carousel jobs (per run plan)',c.max_carousel_jobs_per_run??'','number');
   h+=fg('max_video_jobs_per_run','Max video/reel jobs (per run plan)',c.max_video_jobs_per_run??'','number');
-  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; overrides defaults — carousel flows default to 10 each, scene assembly + 3 HeyGen paths default to 1)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
+  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; overrides defaults — carousel flows default to 10 each, scene assembly + 4 HeyGen paths default to 1)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
   h+='<div class="form-actions"><button type="submit" class="btn">Save Constraints</button><span id="constraints-msg" class="form-msg"></span></div>';
   h+='</form></div></div>';
 

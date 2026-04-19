@@ -256,21 +256,146 @@ export function buildRoughSrtFromLines(
   return { srt: linesOut.trimEnd(), segments };
 }
 
-export function buildRoughSrt(text: string, durationSec: number): { srt: string; segments: SubtitleSegment[] } {
-  const sentences = splitSentences(text);
-  if (sentences.length === 0) {
-    return { srt: "", segments: [] };
+/** Default subtitle layout: ~broadcast TV / TikTok cap conventions. */
+export const DEFAULT_SRT_MAX_CHARS_PER_LINE = 42;
+export const DEFAULT_SRT_MAX_LINES_PER_CUE = 2;
+export const DEFAULT_SRT_MAX_WORDS_PER_CUE = 14;
+
+/** Split a sentence's words into cue-sized groups (≤ maxWords AND ≤ maxChars). Preserves order. */
+export function chunkWordsForSrtCues(
+  words: string[],
+  maxWordsPerCue: number,
+  maxCharsPerCue: number
+): string[][] {
+  const groups: string[][] = [];
+  let cur: string[] = [];
+  let curChars = 0;
+  for (const w of words) {
+    const addLen = cur.length === 0 ? w.length : curChars + 1 + w.length;
+    if (cur.length >= maxWordsPerCue || (cur.length > 0 && addLen > maxCharsPerCue)) {
+      groups.push(cur);
+      cur = [w];
+      curChars = w.length;
+    } else {
+      cur.push(w);
+      curChars = addLen;
+    }
   }
-  const slice = Math.max(0.5, durationSec / sentences.length);
+  if (cur.length > 0) groups.push(cur);
+  return groups;
+}
+
+/**
+ * Wrap a single cue's text onto at most `maxLines` visible lines (≤ maxCharsPerLine each), splitting on
+ * word boundaries closest to the centre so neither line dominates. SRT players (libass) treat literal `\n`
+ * inside cue text as a hard line break.
+ */
+export function wrapCueToLines(text: string, maxLines: number, maxCharsPerLine: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return t;
+  if (maxLines <= 1) return t;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length <= 1) return t;
+  const total = t.length;
+  if (total <= maxCharsPerLine) return t;
+
+  // Two-line case: pick the boundary closest to the middle that still respects per-line caps.
+  if (maxLines === 2) {
+    let bestIdx = -1;
+    let bestDiff = Infinity;
+    let acc = 0;
+    for (let i = 0; i < words.length - 1; i++) {
+      acc += (i === 0 ? 0 : 1) + words[i]!.length;
+      const left = acc;
+      const right = total - acc - 1;
+      if (left > maxCharsPerLine || right > maxCharsPerLine) continue;
+      const diff = Math.abs(left - right);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        bestIdx = i + 1;
+      }
+    }
+    if (bestIdx < 0) {
+      const mid = Math.ceil(words.length / 2);
+      return `${words.slice(0, mid).join(" ")}\n${words.slice(mid).join(" ")}`;
+    }
+    return `${words.slice(0, bestIdx).join(" ")}\n${words.slice(bestIdx).join(" ")}`;
+  }
+
+  // N>2 lines: greedy per-line packing up to maxCharsPerLine; capped at maxLines.
+  const out: string[] = [];
+  let line: string[] = [];
+  let lineLen = 0;
+  for (const w of words) {
+    const tentative = line.length === 0 ? w.length : lineLen + 1 + w.length;
+    if (line.length > 0 && tentative > maxCharsPerLine) {
+      out.push(line.join(" "));
+      line = [w];
+      lineLen = w.length;
+      if (out.length === maxLines - 1) break;
+    } else {
+      line.push(w);
+      lineLen = tentative;
+    }
+  }
+  if (line.length > 0 && out.length < maxLines) out.push(line.join(" "));
+  return out.join("\n");
+}
+
+/**
+ * Build a rough SRT from plain text + total duration.
+ *
+ * Old behaviour was one cue per sentence, which produced wall-of-text cues for long narrations.
+ * New behaviour chunks each sentence into cue-sized groups (≤14 words / ≤84 chars by default) and
+ * allocates time **proportional to word count** so playback stays in sync with the underlying TTS.
+ * Each cue is then wrapped into at most 2 visible lines (≈42 chars per line) for readability.
+ */
+export function buildRoughSrt(
+  text: string,
+  durationSec: number,
+  opts?: {
+    maxCharsPerLine?: number;
+    maxLinesPerCue?: number;
+    maxWordsPerCue?: number;
+  }
+): { srt: string; segments: SubtitleSegment[] } {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (!t) return { srt: "", segments: [] };
+
+  const maxCharsPerLine = Math.max(10, opts?.maxCharsPerLine ?? DEFAULT_SRT_MAX_CHARS_PER_LINE);
+  const maxLinesPerCue = Math.max(1, opts?.maxLinesPerCue ?? DEFAULT_SRT_MAX_LINES_PER_CUE);
+  const maxWordsPerCue = Math.max(2, opts?.maxWordsPerCue ?? DEFAULT_SRT_MAX_WORDS_PER_CUE);
+  const maxCharsPerCue = maxCharsPerLine * maxLinesPerCue;
+
+  const sentences = splitSentences(t);
+  if (sentences.length === 0) return { srt: "", segments: [] };
+
+  type Chunk = { text: string; words: number };
+  const chunks: Chunk[] = [];
+  for (const s of sentences) {
+    const ws = s.split(/\s+/).filter(Boolean);
+    if (ws.length === 0) continue;
+    for (const g of chunkWordsForSrtCues(ws, maxWordsPerCue, maxCharsPerCue)) {
+      chunks.push({ text: g.join(" "), words: g.length });
+    }
+  }
+  if (chunks.length === 0) return { srt: "", segments: [] };
+
+  const totalDuration = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : 1;
+  const totalWords = chunks.reduce((a, c) => a + c.words, 0) || 1;
+
   const segments: SubtitleSegment[] = [];
-  let lines = "";
-  let t = 0;
-  for (let i = 0; i < sentences.length; i++) {
-    const start = t;
-    const end = i === sentences.length - 1 ? durationSec : Math.min(durationSec, t + slice);
-    segments.push({ index: i + 1, start, end, text: sentences[i] });
-    lines += `${i + 1}\n${formatSrtTime(start)} --> ${formatSrtTime(end)}\n${sentences[i]}\n\n`;
-    t = end;
+  let out = "";
+  let cumWords = 0;
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i]!;
+    const start = (cumWords / totalWords) * totalDuration;
+    cumWords += c.words;
+    const end =
+      i === chunks.length - 1 ? totalDuration : (cumWords / totalWords) * totalDuration;
+    const wrapped = wrapCueToLines(c.text, maxLinesPerCue, maxCharsPerLine);
+    segments.push({ index: i + 1, start, end, text: wrapped });
+    out += `${i + 1}\n${formatSrtTime(start)} --> ${formatSrtTime(end)}\n${wrapped}\n\n`;
   }
-  return { srt: lines.trimEnd(), segments };
+  return { srt: out.trimEnd(), segments };
 }

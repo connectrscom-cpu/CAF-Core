@@ -77,7 +77,7 @@ const CONSTRAINT_FIELDS = [
   { key: "auto_validation_pass_threshold", label: "Auto-validation pass threshold", type: "number" },
   { key: "max_carousel_jobs_per_run", label: "Max carousel jobs (per run plan)", type: "number" },
   { key: "max_video_jobs_per_run", label: "Max video/reel jobs (per run plan)", type: "number" },
-  { key: "max_jobs_per_flow_type", label: "Per-flow caps (JSON); overrides built-in defaults (carousel types default to 5; scene + 3 HeyGen paths default to 1)", type: "textarea" },
+  { key: "max_jobs_per_flow_type", label: "Per-flow caps (JSON); overrides built-in defaults (carousel types default to 10; scene + 4 HeyGen paths default to 1)", type: "textarea" },
 ] as const;
 
 const PLATFORM_FIELDS = [
