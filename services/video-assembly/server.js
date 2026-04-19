@@ -12,7 +12,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 /** Must match CAF Core `SUPABASE_ASSETS_BUCKET` (default assets). */
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_ASSETS_BUCKET || "assets";
 const WORK_DIR = path.join(__dirname, "workdir");
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -356,6 +356,51 @@ async function muxAudioBurnSubtitles(videoPath, audioUrl, subtitlesUrl, outputOp
   return outPath;
 }
 
+/**
+ * Burn an SRT into a pre-muxed MP4 (HeyGen returns video + audio already muxed; we only need the subtitles
+ * filter, audio is copied through). Re-encodes video (libx264) — required for the subtitles filter — and
+ * copies audio with `-c:a copy` to preserve HeyGen's TTS bitrate.
+ */
+async function burnSubtitlesIntoVideo(videoPath, subtitlesUrl, options = {}) {
+  const startedAt = Date.now();
+  const jobDir = path.dirname(videoPath);
+
+  const srtBasename = "captions.srt";
+  const srtPath = path.join(jobDir, srtBasename);
+  await downloadFile(subtitlesUrl, srtPath);
+
+  const videoBasename = path.basename(videoPath);
+  const outBasename = "burned.mp4";
+  const outPath = path.join(jobDir, outBasename);
+
+  const preset = process.env.MUX_BURN_ENCODE_PRESET || "fast";
+  const crf = process.env.MUX_BURN_ENCODE_CRF || "23";
+  let vf = process.env.MUX_SUBTITLE_VF?.trim();
+  if (!vf) {
+    const base = "subtitles=captions.srt:charenc=UTF-8";
+    const fsStyle =
+      (options && typeof options.force_style === "string" && options.force_style.trim()) ||
+      process.env.HEYGEN_BURN_SUBTITLE_FORCE_STYLE?.trim() ||
+      process.env.MUX_BURN_SUBTITLE_FORCE_STYLE?.trim();
+    vf = fsStyle ? `${base}:force_style='${fsStyle.replace(/'/g, "\\'")}'` : base;
+  }
+
+  const args = [
+    "-i", videoBasename,
+    "-vf", vf,
+    "-c:v", "libx264",
+    "-preset", preset,
+    "-crf", String(crf),
+    "-pix_fmt", "yuv420p",
+    "-c:a", "copy",
+    "-movflags", "+faststart",
+    "-y", outBasename,
+  ];
+  await runFfmpeg(args, "burn-subs", { cwd: jobDir });
+  console.info(`[video-assembly] burn-subs ok duration_ms=${Date.now() - startedAt}`);
+  return outPath;
+}
+
 function cleanupJob(jobDir) {
   try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch {}
 }
@@ -534,6 +579,78 @@ app.post("/mux", async (req, res) => {
       cleanupJob(jobDir);
     }
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : muxed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Burn an SRT into a pre-muxed MP4 (no audio replacement). Used by CAF Core's HeyGen renderer to add
+ * captions to v3 videos — HeyGen's `POST /v3/videos` with `caption: { file_format: "srt" }` returns an SRT
+ * sidecar but does not modify the MP4. Audio is copied through, video is re-encoded with libx264.
+ *
+ * Body: { video_url, subtitles_url, task_id?, run_id?, options? }
+ *   options.force_style: optional ffmpeg `force_style` string (overrides env defaults)
+ * Query: ?async=1 to use the async job pattern, polled via GET /jobs/:request_id (same as /mux).
+ */
+app.post("/burn-subtitles", async (req, res) => {
+  try {
+    const { video_url, subtitles_url, task_id, run_id, options } = req.body;
+    if (!video_url || !subtitles_url) {
+      return res.status(400).json({ ok: false, error: "video_url and subtitles_url required" });
+    }
+
+    const isAsync = req.query.async === "1";
+    if (isAsync) {
+      const requestId = randomUUID();
+      asyncJobs.set(requestId, { status: "pending" });
+      (async () => {
+        const jobStartedAt = Date.now();
+        try {
+          const jobDir = path.join(WORK_DIR, randomUUID());
+          fs.mkdirSync(jobDir, { recursive: true });
+          const vidPath = path.join(jobDir, "video.mp4");
+          await Promise.race([
+            downloadFile(video_url, vidPath),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          const burned = await Promise.race([
+            burnSubtitlesIntoVideo(vidPath, subtitles_url.trim(), options),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          let publicUrl = null;
+          if (SUPABASE_URL) {
+            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
+            publicUrl = await uploadToSupabase(burned, remotePath);
+          }
+          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: burned });
+          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          console.info(`[video-assembly] async burn-subtitles done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
+        } catch (e) {
+          asyncJobs.set(requestId, { status: "error", error: e.message });
+        }
+      })();
+      return res.status(202).json({ ok: true, request_id: requestId, status: "pending" });
+    }
+
+    const jobDir = path.join(WORK_DIR, randomUUID());
+    fs.mkdirSync(jobDir, { recursive: true });
+    const vidPath = path.join(jobDir, "video.mp4");
+    await Promise.race([
+      downloadFile(video_url, vidPath),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
+    const burned = await Promise.race([
+      burnSubtitlesIntoVideo(vidPath, subtitles_url.trim(), options),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
+    let publicUrl = null;
+    if (SUPABASE_URL) {
+      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
+      publicUrl = await uploadToSupabase(burned, remotePath);
+      cleanupJob(jobDir);
+    }
+    res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : burned });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
