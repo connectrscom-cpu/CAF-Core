@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { resolveOutputSchemaValidationMode } from "./config.js";
+import { parseMetaAccountSourceMap, resolveOutputSchemaValidationMode } from "./config.js";
+
+describe("parseMetaAccountSourceMap", () => {
+  it("parses comma-separated FROM=TO pairs", () => {
+    const m = parseMetaAccountSourceMap("CUISINA=SNS, foo=bar ");
+    expect(m.get("CUISINA")).toBe("SNS");
+    expect(m.get("FOO")).toBe("BAR");
+  });
+  it("returns empty map when unset", () => {
+    expect(parseMetaAccountSourceMap(undefined).size).toBe(0);
+  });
+});
 
 describe("resolveOutputSchemaValidationMode", () => {
   it("returns the explicit mode when set (wins over legacy flag)", () => {

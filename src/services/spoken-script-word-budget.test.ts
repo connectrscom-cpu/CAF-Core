@@ -11,6 +11,7 @@ function cfg(partial: Partial<AppConfig>): AppConfig {
     SCENE_VO_WORDS_PER_MINUTE: 145,
     VIDEO_TARGET_DURATION_MIN_SEC: 30,
     VIDEO_TARGET_DURATION_MAX_SEC: 60,
+    metaAccountSourceByProjectSlug: new Map(),
     ...partial,
   } as AppConfig;
 }

@@ -53,6 +53,11 @@ const envSchema = z.object({
    * Facebook (resp. Instagram) publishes instead, so existing deploys keep working until Fly secrets are split.
    */
   CAF_META_PAGE_ACCESS_TOKEN: z.string().optional(),
+  /**
+   * Comma-separated `FROM=TO` project slug pairs. Meta publish for `FROM` uses `caf_core.project_integrations`
+   * META_FB / META_IG rows from `TO` (e.g. `CUISINA=SNS` — same Facebook Page and Instagram account as SNS).
+   */
+  CAF_META_ACCOUNT_SOURCE_MAP: z.string().optional(),
 
   DECISION_ENGINE_VERSION: z.string().default("v1"),
 
@@ -417,7 +422,25 @@ const envSchema = z.object({
   EDITORIAL_ANALYSIS_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(120_000),
 });
 
-export type AppConfig = z.infer<typeof envSchema>;
+/** Parse `CAF_META_ACCOUNT_SOURCE_MAP` (e.g. `CUISINA=SNS,OTHER=SNS`). Keys/values normalized to uppercase. */
+export function parseMetaAccountSourceMap(raw: string | undefined): Map<string, string> {
+  const m = new Map<string, string>();
+  if (!raw?.trim()) return m;
+  for (const part of raw.split(",")) {
+    const seg = part.trim();
+    if (!seg) continue;
+    const eq = seg.indexOf("=");
+    if (eq <= 0) continue;
+    const from = seg.slice(0, eq).trim().toUpperCase();
+    const to = seg.slice(eq + 1).trim().toUpperCase();
+    if (from && to) m.set(from, to);
+  }
+  return m;
+}
+
+export type AppConfig = z.infer<typeof envSchema> & {
+  metaAccountSourceByProjectSlug: Map<string, string>;
+};
 
 export type OutputSchemaValidationMode = "skip" | "warn" | "enforce";
 
@@ -451,5 +474,11 @@ export function loadConfig(): AppConfig {
     SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: sceneHi,
     VIDEO_TARGET_DURATION_MIN_SEC: vidLo,
     VIDEO_TARGET_DURATION_MAX_SEC: vidHi,
+    metaAccountSourceByProjectSlug: (() => {
+      const m = parseMetaAccountSourceMap(d.CAF_META_ACCOUNT_SOURCE_MAP);
+      /** CUISINA shares the same Meta Page / IG account as SNS unless the map sets CUISINA explicitly. */
+      if (!m.has("CUISINA")) m.set("CUISINA", "SNS");
+      return m;
+    })(),
   };
 }

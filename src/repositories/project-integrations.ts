@@ -1,6 +1,61 @@
 import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
 
+function str(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t ? t : undefined;
+}
+
+/**
+ * When set on META_IG or META_FB `config_json`, Meta publish uses that project's integrations
+ * (same fb_page_id / ig_user_id / tokens as e.g. SNS).
+ */
+export const META_ACCOUNT_SOURCE_PROJECT_SLUG_KEY = "meta_account_source_project_slug";
+
+/**
+ * Resolves which `caf_core.projects.id` owns META_FB / META_IG rows for Graph publishing.
+ * Order: optional env map (`CAF_META_ACCOUNT_SOURCE_MAP`) → integration `config_json` → same project.
+ */
+export async function resolveProjectIdForMetaIntegrations(
+  db: Pool,
+  projectId: string,
+  opts?: { accountSourceByProjectSlug?: Map<string, string> }
+): Promise<string> {
+  const self = await qOne<{ slug: string }>(
+    db,
+    `SELECT slug FROM caf_core.projects WHERE id = $1::uuid LIMIT 1`,
+    [projectId]
+  );
+  const slugUpper = self?.slug?.trim().toUpperCase();
+  if (slugUpper && opts?.accountSourceByProjectSlug?.size) {
+    const targetSlug = opts.accountSourceByProjectSlug.get(slugUpper);
+    if (targetSlug) {
+      const target = await qOne<{ id: string }>(
+        db,
+        `SELECT id FROM caf_core.projects WHERE trim(upper(slug)) = $1 LIMIT 1`,
+        [targetSlug.trim().toUpperCase()]
+      );
+      if (target?.id) return target.id;
+    }
+  }
+
+  for (const platform of ["META_IG", "META_FB"] as const) {
+    const row = await getProjectIntegration(db, projectId, platform);
+    const src = str((row?.config_json as Record<string, unknown> | undefined)?.[META_ACCOUNT_SOURCE_PROJECT_SLUG_KEY]);
+    if (src) {
+      const target = await qOne<{ id: string }>(
+        db,
+        `SELECT id FROM caf_core.projects WHERE trim(upper(slug)) = $1 LIMIT 1`,
+        [src.trim().toUpperCase()]
+      );
+      if (target?.id) return target.id;
+    }
+  }
+
+  return projectId;
+}
+
 export type IntegrationPlatform =
   | "META_IG"
   | "META_FB"

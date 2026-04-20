@@ -9,7 +9,7 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import { getProjectIntegration } from "../repositories/project-integrations.js";
+import { getProjectIntegration, resolveProjectIdForMetaIntegrations } from "../repositories/project-integrations.js";
 import type { PublicationPlacementRow } from "../repositories/publications.js";
 import { createSignedUrlForObjectKey } from "./supabase-storage.js";
 
@@ -726,9 +726,13 @@ export async function publishPlacementToMeta(
     return { ok: false, error: `Unsupported platform for Meta executor: ${placement.platform}` };
   }
 
+  const metaProjectId = await resolveProjectIdForMetaIntegrations(db, projectId, {
+    accountSourceByProjectSlug: config.metaAccountSourceByProjectSlug,
+  });
+
   const rawToken = await getAccessTokenForMetaIntegration(
     db,
-    projectId,
+    metaProjectId,
     key,
     key === "META_FB" ? opts?.fbPageAccessTokenFromEnv : opts?.igPageAccessTokenFromEnv,
     opts?.metaPageAccessTokenLegacyFromEnv
@@ -745,7 +749,7 @@ export async function publishPlacementToMeta(
 
   const v = graphApiVersion.trim().startsWith("v") ? graphApiVersion.trim() : `v${graphApiVersion.trim()}`;
 
-  const facebookPageId = await resolveFbPageId(db, projectId);
+  const facebookPageId = await resolveFbPageId(db, metaProjectId);
 
   try {
     const token =
@@ -771,7 +775,7 @@ export async function publishPlacementToMeta(
       };
     }
 
-    const integ = await getProjectIntegration(db, projectId, "META_IG");
+    const integ = await getProjectIntegration(db, metaProjectId, "META_IG");
     let igUserId = igUserIdFromIntegration(integ);
     if (!igUserId && facebookPageId) {
       igUserId = await fetchIgUserIdFromFacebookPage(facebookPageId, token, v);
