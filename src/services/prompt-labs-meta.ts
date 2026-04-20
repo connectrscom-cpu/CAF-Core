@@ -73,10 +73,19 @@ export const PROMPT_LABS_HEYGEN_INTRO =
  * Flow-engine `flow_type` values whose prompt templates belong to the HeyGen
  * path (single-video script-led and prompt-led generators). Scene assembly is
  * video but not HeyGen, so it stays under the generic Prompts tab.
+ *
+ * FLOW_PRODUCT_* flows run through the HeyGen Video Agent (prompt-led) with
+ * angle-specific dedicated templates, so they also belong in this bucket.
  */
 export const HEYGEN_FLOW_TYPES: readonly string[] = [
   "Video_Script_Generator",
   "Video_Prompt_Generator",
+  "FLOW_PRODUCT_PROBLEM",
+  "FLOW_PRODUCT_FEATURE",
+  "FLOW_PRODUCT_COMPARISON",
+  "FLOW_PRODUCT_USECASE",
+  "FLOW_PRODUCT_SOCIAL_PROOF",
+  "FLOW_PRODUCT_OFFER",
 ] as const;
 
 export function isHeygenFlowType(flowType: string | null | undefined): boolean {

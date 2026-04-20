@@ -14,7 +14,11 @@ import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js
 import { randomUUID } from "node:crypto";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
-import { isProductImageFlow, PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE } from "../domain/product-flow-types.js";
+import {
+  isProductImageFlow,
+  isProductVideoFlow,
+  PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE,
+} from "../domain/product-flow-types.js";
 import { loadConfig } from "../config.js";
 import {
   appendVideoUserPromptDurationHardFooter,
@@ -152,13 +156,29 @@ export async function generateForJob(
   const signalPackId = (payload.signal_pack_id as string) ?? null;
   const candidateData = (payload.candidate_data as Record<string, unknown>) ?? {};
 
-  let promptTemplate = promptId
-    ? await getPromptTemplate(db, promptId, templateFlowType)
-    : null;
+  /**
+   * FLOW_PRODUCT_* jobs: prefer dedicated templates keyed by the native flow_type
+   * (e.g. FLOW_PRODUCT_PROBLEM) over the shared Video_Prompt_Generator fallback so
+   * operators can edit angle-specific prompts in Prompt Labs without touching the
+   * canonical row. Other flows keep resolved-first ordering.
+   */
+  const preferNative = isProductVideoFlow(job.flow_type);
+  const lookupOrder = preferNative
+    ? [job.flow_type, templateFlowType]
+    : [templateFlowType, job.flow_type];
+
+  let promptTemplate: Awaited<ReturnType<typeof getPromptTemplate>> = null;
+  if (promptId) {
+    for (const ft of lookupOrder) {
+      if (!ft) continue;
+      promptTemplate = await getPromptTemplate(db, promptId, ft);
+      if (promptTemplate) break;
+    }
+  }
 
   if (!promptTemplate) {
     const fe = await import("../repositories/flow-engine.js");
-    const tryTypes = [...new Set([templateFlowType, job.flow_type].filter(Boolean))];
+    const tryTypes = [...new Set(lookupOrder.filter(Boolean))];
     for (const ft of tryTypes) {
       const templates = await fe.listPromptTemplates(db, ft);
       if (templates.length === 0) continue;
@@ -198,7 +218,14 @@ export async function generateForJob(
     };
   }
 
-  const flowDef = await getFlowDefinition(db, templateFlowType);
+  /**
+   * Use native flow_type first when dedicated flow_definitions exist (e.g. FLOW_PRODUCT_*),
+   * so angle-specific rows can override schema; fall back to resolved (Video_Prompt_Generator).
+   */
+  let flowDef = preferNative ? await getFlowDefinition(db, job.flow_type) : null;
+  if (!flowDef) {
+    flowDef = await getFlowDefinition(db, templateFlowType);
+  }
   let outputSchemaRow = null;
   if (flowDef?.output_schema_name && flowDef?.output_schema_version) {
     outputSchemaRow = await getOutputSchema(db, flowDef.output_schema_name, flowDef.output_schema_version);

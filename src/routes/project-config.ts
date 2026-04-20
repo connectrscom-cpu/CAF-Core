@@ -20,7 +20,10 @@ import {
   getProjectBrandAsset,
 } from "../repositories/project-config.js";
 import { loadConfig } from "../config.js";
-import { fetchUrlAndUploadToHeygen } from "../services/heygen-assets.js";
+import {
+  fetchStoragePathAndUploadToHeygen,
+  fetchUrlAndUploadToHeygen,
+} from "../services/heygen-assets.js";
 import { uploadBuffer } from "../services/supabase-storage.js";
 
 export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Pool }) {
@@ -576,13 +579,26 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     const project = await ensureProject(db, params.data.project_slug);
     const asset = await getProjectBrandAsset(db, project.id, params.data.asset_id);
     if (!asset) return reply.code(404).send({ ok: false, error: "not_found" });
+    const storagePath = (asset.storage_path ?? "").trim();
     const url = (asset.public_url ?? "").trim();
-    if (!url) {
-      return reply.code(400).send({ ok: false, error: "public_url_required", message: "Set public_url on the asset before syncing to HeyGen." });
+    if (!storagePath && !url) {
+      return reply.code(400).send({
+        ok: false,
+        error: "source_required",
+        message: "Set storage_path (preferred) or public_url on the asset before syncing to HeyGen.",
+      });
     }
     const appConfig = loadConfig();
+    const bucket = appConfig.SUPABASE_ASSETS_BUCKET || "assets";
+    /**
+     * Prefer storage_path download via the service-role client — works even when the Supabase
+     * bucket is private (the public /object/public/... URL returns 400 in that case, which is
+     * what triggered the previous sync failure).
+     */
     try {
-      const up = await fetchUrlAndUploadToHeygen(appConfig, url);
+      const up = storagePath
+        ? await fetchStoragePathAndUploadToHeygen(appConfig, bucket, storagePath, asset.label)
+        : await fetchUrlAndUploadToHeygen(appConfig, url);
       const row = await updateProjectBrandAsset(db, project.id, asset.id, {
         heygen_asset_id: up.asset_id,
         heygen_synced_at: new Date().toISOString(),

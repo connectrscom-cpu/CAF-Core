@@ -4,12 +4,14 @@
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import {
+  getBrandConstraints,
   listHeygenConfig,
   listProjectBrandAssets,
   type HeygenConfigRow,
 } from "../repositories/project-config.js";
 import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
 import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
+import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
 import { insertAsset } from "../repositories/assets.js";
 import {
   uploadBuffer,
@@ -806,14 +808,45 @@ function extractSessionId(json: Record<string, unknown>): string | null {
 }
 
 const HEYGEN_SESSION_VIDEO_ID_MAX_MS = 180_000;
+/** Per-call timeout for the submit POST and each session-poll GET — prevents an unsignaled fetch from hanging the worker indefinitely (Node fetch has no default outer timeout). */
+const HEYGEN_HTTP_PER_CALL_TIMEOUT_MS = 60_000;
 
-async function pollHeyGenSessionForVideoId(apiKey: string, apiBase: string, sessionId: string): Promise<string> {
+/**
+ * Hooks fired before the long video poll so the caller can persist resume keys to durable storage.
+ * Without these, a worker death between submit and `HeygenPollTimeoutError` loses the HeyGen ids and
+ * forces a brand-new submission on retry (double-billing).
+ */
+export interface HeygenSubmitProgress {
+  /** Fired when the v3 video-agents POST returns a `session_id` (no `video_id` yet). */
+  onSession?: (sessionId: string) => Promise<void> | void;
+  /** Fired as soon as we have a HeyGen `video_id` (either directly from POST or after session poll). */
+  onVideoId?: (videoId: string) => Promise<void> | void;
+}
+
+async function safeProgress(fn: (() => Promise<void> | void) | undefined): Promise<void> {
+  if (!fn) return;
+  try {
+    await fn();
+  } catch (e) {
+    /** Persistence is best-effort; never break the HeyGen submission because the caller's bookkeeping failed. */
+    console.warn("[heygen] progress callback failed", e);
+  }
+}
+
+async function pollHeyGenSessionForVideoId(
+  apiKey: string,
+  apiBase: string,
+  sessionId: string
+): Promise<string> {
   const base = apiBase.replace(/\/$/, "");
   const url = `${base}/v3/video-agents/${encodeURIComponent(sessionId)}`;
   const start = Date.now();
   let delay = 1500;
   while (Date.now() - start < HEYGEN_SESSION_VIDEO_ID_MAX_MS) {
-    const res = await fetch(url, { headers: { "X-Api-Key": apiKey } });
+    const res = await fetch(url, {
+      headers: { "X-Api-Key": apiKey },
+      signal: AbortSignal.timeout(HEYGEN_HTTP_PER_CALL_TIMEOUT_MS),
+    });
     const text = await res.text();
     if (!res.ok) throw new Error(`HeyGen session ${res.status}: ${text.slice(0, 400)}`);
     let json: Record<string, unknown>;
@@ -954,7 +987,8 @@ export async function submitHeyGenVideo(
   apiKey: string,
   apiBase: string,
   body: Record<string, unknown>,
-  path: HeygenGeneratePath
+  path: HeygenGeneratePath,
+  progress?: HeygenSubmitProgress
 ): Promise<string> {
   const base = apiBase.replace(/\/$/, "");
   const payload = path === "/v3/video-agents" ? normalizeHeyGenVideoAgentRequestForV3(body) : body;
@@ -965,6 +999,7 @@ export async function submitHeyGenVideo(
       "X-Api-Key": apiKey,
     },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(HEYGEN_HTTP_PER_CALL_TIMEOUT_MS),
   });
   const text = await res.text();
   if (!res.ok) throw new Error(`HeyGen generate ${res.status}: ${text.slice(0, 800)}`);
@@ -979,9 +1014,15 @@ export async function submitHeyGenVideo(
   let vid = extractVideoId(json);
   if (!vid && path === "/v3/video-agents") {
     const sid = extractSessionId(json);
-    if (sid) vid = await pollHeyGenSessionForVideoId(apiKey, apiBase, sid);
+    if (sid) {
+      /** Persist `session_id` BEFORE the (up to 180s) session poll so worker death is recoverable without re-submitting. */
+      await safeProgress(progress?.onSession ? () => progress.onSession!(sid) : undefined);
+      vid = await pollHeyGenSessionForVideoId(apiKey, apiBase, sid);
+    }
   }
   if (!vid) throw new Error(`HeyGen generate: no video_id in response: ${text.slice(0, 400)}`);
+  /** Persist `video_id` BEFORE the (up to HEYGEN_POLL_MAX_MS, default 45min) video status poll. */
+  await safeProgress(progress?.onVideoId ? () => progress.onVideoId!(vid!) : undefined);
   return vid;
 }
 
@@ -1715,7 +1756,7 @@ export async function runHeygenVideoWithBody(
   appConfig: AppConfig,
   body: Record<string, unknown>,
   audit?: HeyGenRunAudit | null,
-  opts?: { postPath?: HeygenGeneratePath }
+  opts?: { postPath?: HeygenGeneratePath; progress?: HeygenSubmitProgress }
 ): Promise<{
   videoUrl: string;
   videoId: string;
@@ -1728,7 +1769,13 @@ export async function runHeygenVideoWithBody(
   const postPath = opts?.postPath ?? "/v3/video-agents";
   const endpoint = `${appConfig.HEYGEN_API_BASE.replace(/\/$/, "")}${postPath}`;
   try {
-    const videoId = await submitHeyGenVideo(apiKey, appConfig.HEYGEN_API_BASE, body, postPath);
+    const videoId = await submitHeyGenVideo(
+      apiKey,
+      appConfig.HEYGEN_API_BASE,
+      body,
+      postPath,
+      opts?.progress
+    );
     let polled = await pollHeyGenUntilComplete(
       apiKey,
       appConfig.HEYGEN_API_BASE,
@@ -1792,7 +1839,8 @@ export async function runHeygenVideoWithBody(
 export async function runHeygenForContentJob(
   db: Pool,
   appConfig: AppConfig,
-  job: HeygenJobContext
+  job: HeygenJobContext,
+  opts?: { progress?: HeygenSubmitProgress }
 ): Promise<{ public_url: string | null; object_path: string | null; video_id: string }> {
   const apiKey = appConfig.HEYGEN_API_KEY?.trim();
   if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
@@ -1842,6 +1890,21 @@ export async function runHeygenForContentJob(
         const p = body.prompt.trim();
         body.prompt = p ? `${p}\n\n${suffix}` : suffix;
       }
+      /**
+       * Append project brand_constraints (tone/voice/banned words/disclaimers/etc.)
+       * so HeyGen's agent honours them directly — not just via the upstream LLM output.
+       * Best-effort: a missing row or empty constraints simply skips this block.
+       */
+      try {
+        const brand = await getBrandConstraints(db, job.project_id);
+        const brandBlock = buildProductVideoAgentBrandPromptBlock(brand);
+        if (brandBlock && typeof body.prompt === "string") {
+          const p = body.prompt.trim();
+          body.prompt = p ? `${p}\n\n${brandBlock}` : brandBlock;
+        }
+      } catch {
+        /* non-fatal: brand constraints are an enhancement, not a requirement */
+      }
       const kit = await listProjectBrandAssets(db, job.project_id);
       mergeHeygenVideoAgentFiles(body, brandAssetsToHeygenFiles(kit));
     }
@@ -1863,7 +1926,7 @@ export async function runHeygenForContentJob(
       taskId: job.task_id,
       step: "heygen_video_generate",
     },
-    { postPath }
+    { postPath, progress: opts?.progress }
   );
 
   const buf = await downloadUrl(videoUrl);

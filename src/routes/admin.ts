@@ -4681,6 +4681,7 @@ tr.cfg-inline-expand td{border-top:1px solid var(--border)}
   <button class="tab" onclick="cfgTab('tab-prompts',this)">Prompt Versions</button>
   <button class="tab" onclick="cfgTab('tab-refposts',this)">Reference Posts</button>
   <button class="tab" onclick="cfgTab('tab-heygen',this)">HeyGen Config</button>
+  <button class="tab" onclick="cfgTab('tab-brand-assets',this)">Brand Assets</button>
 </div>
 <div class="content" id="config-content"><div class="empty">Loading...</div></div>
 <script>
@@ -4894,6 +4895,23 @@ async function loadConfig(){
   }else h+='<div class="empty">No HeyGen configuration yet.</div>';
   h+='</div></div>';
 
+  // === Brand Assets (editable) ===
+  const ba=d.profile?.brand_assets||[];
+  h+='<div id="tab-brand-assets" class="tab-panel"><div class="card"><div class="card-h">Brand Assets ('+ba.length+')';
+  h+=' <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:8px">Logos, palettes, fonts &amp; reference images — FLOW_PRODUCT_* video jobs send synced assets (<code>heygen_asset_id</code>) or public file URLs to HeyGen.</span>';
+  h+=' <button type="button" class="btn btn-sm" style="float:right;text-transform:none;letter-spacing:0" onclick="baBeginAdd()">+ Add brand asset</button></div>';
+  h+='<div id="ba-form-container" style="padding:0 20px"></div>';
+  h+='<div id="ba-message" style="margin:0 20px 12px;font-size:12px"></div>';
+  if(ba.length){
+    h+='<div style="padding:12px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">';
+    for(const a of ba) h+=baCardHtml(a);
+    h+='</div>';
+    h+='<div style="overflow-x:auto;padding:0 20px 16px"><table><thead><tr><th>Kind</th><th>Label</th><th>Preview / URL</th><th>HeyGen</th><th>Order</th><th>Actions</th></tr></thead><tbody>';
+    for(const a of ba) h+=baRowHtml(a);
+    h+='</tbody></table></div>';
+  }else h+='<div class="empty">No brand assets yet.</div>';
+  h+='</div></div>';
+
   document.getElementById('config-content').innerHTML=h;
   bindForms();
 }
@@ -5073,6 +5091,330 @@ async function delRow(type,identifiers){
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function badge(s){const u=(s||'').toUpperCase();let c='badge-b';if(u==='ACTIVE'||u==='APPROVED')c='badge-g';else if(u==='PENDING'||u==='SCRAPED')c='badge-y';else if(u==='INACTIVE'||u==='DEPRECATED')c='badge-r';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
 function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch{return d}}
+
+// ============================================================
+// Brand Assets panel (upload / URL / palette / font)
+// ============================================================
+const BA_KINDS=['logo','reference_image','palette','font','other'];
+const BA_GOOGLE_FONTS=['Inter','Roboto','Open Sans','Lato','Montserrat','Poppins','Raleway','Playfair Display','Merriweather','Source Sans 3','Nunito','Work Sans'];
+
+function baParseHex(raw){
+  const t=String(raw||'').trim();if(!t)return null;
+  const m=t.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if(!m)return null;
+  let h=m[1];if(h.length===3)h=h.split('').map(function(c){return c+c}).join('');
+  return '#'+h.toLowerCase();
+}
+
+function baColorsFromMeta(meta){
+  const out=['','','','',''];
+  const c=meta&&meta.colors;
+  if(Array.isArray(c)){
+    for(let i=0;i<5;i++){
+      const v=baParseHex(typeof c[i]==='string'?c[i]:'');
+      if(v)out[i]=v;
+    }
+  }
+  return out;
+}
+
+function baMsg(text,type){
+  const el=document.getElementById('ba-message');if(!el)return;
+  el.textContent=text||'';
+  el.style.color=type==='error'?'var(--red)':(type==='success'?'var(--green)':'var(--muted)');
+  if(text)setTimeout(function(){if(el.textContent===text)el.textContent='';},5000);
+}
+
+function baCardHtml(a){
+  const hasUrl=typeof a.public_url==='string'&&a.public_url.trim().length>0;
+  const synced=typeof a.heygen_asset_id==='string'&&a.heygen_asset_id.length>0;
+  const isImg=(a.kind==='logo'||a.kind==='reference_image'||a.kind==='other')&&hasUrl&&!/\\.(woff2?|ttf|otf)$/i.test(a.public_url||'');
+  let preview='';
+  if(a.kind==='palette'&&a.metadata_json&&Array.isArray(a.metadata_json.colors)){
+    preview='<div style="display:flex;gap:4px;flex-wrap:wrap">';
+    const cols=a.metadata_json.colors.filter(function(c){return typeof c==='string'}).slice(0,5);
+    for(const c of cols) preview+='<span title="'+esc(c)+'" style="width:28px;height:28px;border-radius:6px;background:'+esc(c)+';border:1px solid var(--border)"></span>';
+    preview+='</div>';
+  }else if(isImg){
+    preview='<img src="'+esc(a.public_url)+'" alt="" style="width:100%;max-height:100px;object-fit:contain;border-radius:6px;background:var(--panel)">';
+  }else if(a.kind==='font'){
+    const fam=a.metadata_json&&typeof a.metadata_json.font_family==='string'?a.metadata_json.font_family:null;
+    const src=a.metadata_json&&typeof a.metadata_json.font_source==='string'?a.metadata_json.font_source:null;
+    preview='<div style="font-size:12px;color:var(--muted)">'+esc(fam||(hasUrl?'Font file':'—'))+(src?' · '+esc(src):'')+'</div>';
+  }else{
+    preview='<div style="font-size:11px;color:var(--muted);word-break:break-all">'+esc(hasUrl?(a.public_url.slice(0,80)+(a.public_url.length>80?'…':'')):'No URL')+'</div>';
+  }
+  const syncLabel=synced?'HeyGen':'Sync';
+  const syncDisabled=!hasUrl||a.kind==='palette';
+  const enc=encodeURIComponent(JSON.stringify(a)).replace(/'/g,'%27');
+  return '<div class="card" style="padding:12px;display:flex;flex-direction:column;gap:8px;min-height:120px">'+
+    '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)">'+esc(a.kind)+'</div>'+
+    '<div style="font-weight:600;font-size:13px;line-height:1.3">'+esc(a.label||'—')+'</div>'+
+    preview+
+    '<div style="margin-top:auto;display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button type="button" class="btn-ghost" onclick="baBeginEdit(\\''+enc+'\\')">Edit</button>'+
+      '<button type="button" class="btn-ghost"'+(syncDisabled?' disabled':'')+' onclick="baSyncHeygen(\\''+esc(a.id)+'\\')">'+syncLabel+'</button>'+
+      '<button type="button" class="btn-ghost" style="color:var(--red)" onclick="baDelete(\\''+esc(a.id)+'\\')">Del</button>'+
+    '</div>'+
+  '</div>';
+}
+
+function baRowHtml(a){
+  const hasUrl=typeof a.public_url==='string'&&a.public_url.trim().length>0;
+  const synced=typeof a.heygen_asset_id==='string'&&a.heygen_asset_id.length>0;
+  let preview='—';
+  if(a.kind==='palette'&&a.metadata_json&&Array.isArray(a.metadata_json.colors)){
+    const cols=a.metadata_json.colors.filter(function(c){return typeof c==='string'}).slice(0,5);
+    preview='<span style="display:inline-flex;gap:4px">';
+    for(const c of cols) preview+='<span title="'+esc(c)+'" style="width:14px;height:14px;border-radius:3px;background:'+esc(c)+';border:1px solid var(--border);display:inline-block"></span>';
+    preview+='</span>';
+  }else if(hasUrl){
+    preview='<a href="'+esc(a.public_url)+'" target="_blank" style="max-width:240px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">'+esc(a.public_url)+'</a>';
+  }
+  const heygenCell=synced
+    ?'<span title="'+esc(a.heygen_synced_at||'')+'" style="color:var(--green)">✓ '+esc(String(a.heygen_asset_id).slice(0,10))+'…</span>'
+    :'<span style="color:var(--muted)">not synced</span>';
+  const disSync=!hasUrl||a.kind==='palette';
+  const enc=encodeURIComponent(JSON.stringify(a)).replace(/'/g,'%27');
+  return '<tr><td>'+esc(a.kind)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(a.label||'—')+'</td>'+
+    '<td>'+preview+'</td>'+
+    '<td style="font-size:12px">'+heygenCell+'</td>'+
+    '<td>'+esc(a.sort_order!=null?a.sort_order:0)+'</td>'+
+    '<td style="white-space:nowrap">'+
+      '<button type="button" class="btn-ghost" onclick="baBeginEdit(\\''+enc+'\\')">Edit</button> '+
+      '<button type="button" class="btn-ghost"'+(disSync?' disabled':'')+' onclick="baSyncHeygen(\\''+esc(a.id)+'\\')">'+(synced?'Re-sync HeyGen':'Sync HeyGen')+'</button> '+
+      '<button type="button" class="btn-ghost" style="color:var(--red)" onclick="baDelete(\\''+esc(a.id)+'\\')">Del</button>'+
+    '</td></tr>';
+}
+
+function baFormHtml(data){
+  const d=data||{};
+  const kind=d.kind||'reference_image';
+  const label=d.label||'';
+  const url=d.public_url||'';
+  const sort=d.sort_order!=null?d.sort_order:0;
+  const meta=d.metadata_json||{};
+  const hex=baColorsFromMeta(meta);
+  const fontFamily=meta.font_family||BA_GOOGLE_FONTS[0];
+  const fontSource=meta.font_source||'google';
+  const isEdit=!!d.id;
+
+  let fields='';
+  // Kind selector
+  fields+='<div class="form-group"><label>Kind</label><select id="ba_kind" onchange="baOnKindChange()">';
+  for(const k of BA_KINDS) fields+='<option value="'+k+'"'+(k===kind?' selected':'')+'>'+k+'</option>';
+  fields+='</select></div>';
+
+  fields+='<div class="form-group"><label>Label</label><input type="text" id="ba_label" value="'+esc(label)+'" placeholder="e.g. Primary logo, Moodboard, Color palette"></div>';
+
+  // Sections per kind — only one is visible; baOnKindChange() toggles visibility.
+  fields+='<div id="ba_sec_image" class="ba-sec"><div class="form-group"><label>'+(isEdit?'Replace file (optional)':'Upload image(s) — one or many')+'</label><input type="file" id="ba_file" accept="image/*,.svg"'+(isEdit?'':' multiple')+'></div>';
+  fields+='<div class="form-group"><label>Or Public URL</label><input type="text" id="ba_public_url" value="'+esc(url)+'" placeholder="https://…"></div></div>';
+
+  fields+='<div id="ba_sec_palette" class="ba-sec"><div class="form-group"><label>Colors (hex, up to 5)</label><div style="display:flex;flex-direction:column;gap:8px">';
+  for(let i=0;i<5;i++) fields+='<div style="display:flex;gap:8px;align-items:center"><input type="text" id="ba_hex_'+i+'" value="'+esc(hex[i])+'" placeholder="#RRGGBB" style="flex:1" oninput="baUpdateSwatch('+i+')"><span id="ba_swatch_'+i+'" style="width:36px;height:36px;border-radius:6px;border:1px solid var(--border);background:'+esc(hex[i]||'transparent')+'"></span></div>';
+  fields+='</div></div></div>';
+
+  fields+='<div id="ba_sec_font" class="ba-sec">';
+  fields+='<div class="form-group"><label>Font source</label><select id="ba_font_source" onchange="baOnFontSourceChange()">';
+  for(const s of [['google','Google Fonts (name + optional file URL)'],['url','Font file URL'],['upload','Upload font file']]) fields+='<option value="'+s[0]+'"'+(s[0]===fontSource?' selected':'')+'>'+s[1]+'</option>';
+  fields+='</select></div>';
+  fields+='<div class="form-group ba-font-google"><label>Google font family</label><select id="ba_font_family">';
+  for(const f of BA_GOOGLE_FONTS) fields+='<option value="'+esc(f)+'"'+(f===fontFamily?' selected':'')+'>'+esc(f)+'</option>';
+  fields+='</select></div>';
+  fields+='<div class="form-group ba-font-url-or-google"><label>Direct font file URL (.woff2 / .ttf)</label><input type="text" id="ba_public_url_font" value="'+esc(url)+'" placeholder="https://…/font.woff2"></div>';
+  fields+='<div class="form-group ba-font-upload"><label>Upload font file</label><input type="file" id="ba_file_font" accept=".woff2,.woff,.ttf,.otf,font/*"></div>';
+  fields+='</div>';
+
+  fields+='<div class="form-group"><label>Sort order</label><input type="number" id="ba_sort_order" value="'+Number(sort)+'"></div>';
+
+  const actions='<div class="form-actions" style="margin-top:14px"><button type="button" class="btn" onclick="baSubmit()">'+(isEdit?'Save changes':'Save')+'</button> <button type="button" class="btn-ghost" onclick="baCancel()">Cancel</button> <span id="ba_form_msg" class="form-msg"></span></div>';
+  const idHidden='<input type="hidden" id="ba_id" value="'+esc(d.id||'')+'">';
+  return '<div class="config-form" style="padding:16px 0">'+(isEdit?'<p style="font-size:12px;font-weight:600;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em">Edit brand asset</p>':'<p style="font-size:12px;font-weight:600;color:var(--muted);margin:0 0 12px;text-transform:uppercase;letter-spacing:.04em">New brand asset</p>')+idHidden+fields+actions+'</div>';
+}
+
+function baOnKindChange(){
+  const kind=(document.getElementById('ba_kind')||{}).value||'other';
+  const show=function(id,on){const el=document.getElementById(id);if(el)el.style.display=on?'':'none'};
+  show('ba_sec_image',kind==='logo'||kind==='reference_image'||kind==='other');
+  show('ba_sec_palette',kind==='palette');
+  show('ba_sec_font',kind==='font');
+  if(kind==='font') baOnFontSourceChange();
+}
+
+function baOnFontSourceChange(){
+  const src=(document.getElementById('ba_font_source')||{}).value||'google';
+  document.querySelectorAll('.ba-font-google').forEach(function(el){el.style.display=src==='google'?'':'none'});
+  document.querySelectorAll('.ba-font-url-or-google').forEach(function(el){el.style.display=(src==='google'||src==='url')?'':'none'});
+  document.querySelectorAll('.ba-font-upload').forEach(function(el){el.style.display=src==='upload'?'':'none'});
+}
+
+function baUpdateSwatch(i){
+  const input=document.getElementById('ba_hex_'+i);
+  const sw=document.getElementById('ba_swatch_'+i);
+  if(!input||!sw)return;
+  const v=baParseHex(input.value);
+  sw.style.background=v||'transparent';
+}
+
+function baCancel(){
+  const c=document.getElementById('ba-form-container');
+  if(c)c.innerHTML='';
+}
+
+function baBeginAdd(){
+  const c=document.getElementById('ba-form-container');
+  if(!c)return;
+  c.innerHTML=baFormHtml({kind:'reference_image',sort_order:0});
+  baOnKindChange();
+  c.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+function baBeginEdit(enc){
+  let data;
+  try{data=JSON.parse(decodeURIComponent(enc));}
+  catch(e){alert('Could not open editor: '+e.message);return;}
+  const c=document.getElementById('ba-form-container');
+  if(!c)return;
+  c.innerHTML=baFormHtml(data);
+  baOnKindChange();
+  c.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+async function baUploadFile(file){
+  const fd=new FormData();
+  fd.append('file',file);
+  const r=await cafFetch('/v1/projects/'+encodeURIComponent(SLUG)+'/brand-assets/upload',{method:'POST',body:fd});
+  const d=await r.json().catch(function(){return null});
+  if(!r.ok||!d||d.ok===false) throw new Error((d&&(d.message||d.error))||('Upload failed '+r.status));
+  return {public_url:d.public_url||null,storage_path:d.storage_path||null};
+}
+
+async function baSaveOne(payload,id){
+  const isEdit=typeof id==='string'&&id.length>0;
+  const url=isEdit
+    ? '/v1/projects/'+encodeURIComponent(SLUG)+'/brand-assets/'+encodeURIComponent(id)
+    : '/v1/projects/'+encodeURIComponent(SLUG)+'/brand-assets';
+  const r=await cafFetch(url,{method:isEdit?'PATCH':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const d=await r.json().catch(function(){return null});
+  if(!r.ok||!d||d.ok===false) throw new Error((d&&(d.message||d.error))||('Save failed '+r.status));
+}
+
+async function baSubmit(){
+  const msg=document.getElementById('ba_form_msg');
+  const setMsg=function(t,c){if(msg){msg.textContent=t||'';msg.style.color=c||'var(--muted)'}};
+  setMsg('Saving…','var(--accent)');
+  try{
+    const id=(document.getElementById('ba_id')||{}).value||'';
+    const kind=(document.getElementById('ba_kind')||{}).value||'other';
+    const label=((document.getElementById('ba_label')||{}).value||'').trim();
+    const sort=Number((document.getElementById('ba_sort_order')||{}).value||0)||0;
+
+    if(kind==='palette'){
+      const colors=[];
+      for(let i=0;i<5;i++){
+        const v=baParseHex((document.getElementById('ba_hex_'+i)||{}).value||'');
+        if(v)colors.push(v);
+      }
+      if(colors.length===0){setMsg('Add at least one valid hex color (e.g. #ff5500).','var(--red)');return;}
+      await baSaveOne({kind:'palette',label:label||'Color palette',sort_order:sort,public_url:null,storage_path:null,metadata_json:{colors:colors}},id);
+    } else if(kind==='font'){
+      const src=(document.getElementById('ba_font_source')||{}).value||'google';
+      let publicUrl=null;let storagePath=null;const meta={};
+      if(src==='google'){
+        meta.font_source='google';
+        meta.font_family=(document.getElementById('ba_font_family')||{}).value||BA_GOOGLE_FONTS[0];
+        const u=((document.getElementById('ba_public_url_font')||{}).value||'').trim();
+        if(u)publicUrl=u;
+      } else if(src==='url'){
+        meta.font_source='url';
+        publicUrl=((document.getElementById('ba_public_url_font')||{}).value||'').trim()||null;
+        if(!publicUrl||!/^https?:\\/\\//i.test(publicUrl)){setMsg('Enter a valid https URL to a font file.','var(--red)');return;}
+      } else {
+        const el=document.getElementById('ba_file_font');
+        const file=el&&el.files&&el.files[0];
+        if(!id&&!file){setMsg('Choose a font file to upload.','var(--red)');return;}
+        meta.font_source='upload';
+        if(file){
+          const up=await baUploadFile(file);
+          publicUrl=up.public_url;storagePath=up.storage_path;
+          meta.original_filename=file.name;
+        }
+      }
+      await baSaveOne({kind:'font',label:label||(src==='google'?meta.font_family:'Brand font'),sort_order:sort,public_url:publicUrl,storage_path:storagePath,metadata_json:meta},id);
+    } else {
+      // logo / reference_image / other
+      const fileEl=document.getElementById('ba_file');
+      const files=fileEl&&fileEl.files?Array.from(fileEl.files):[];
+      const manualUrl=((document.getElementById('ba_public_url')||{}).value||'').trim()||null;
+
+      if(!id&&files.length>1){
+        // Multi-upload: create one row per file with label+i suffix.
+        const prefix=label||(kind==='logo'?'Logo':(kind==='reference_image'?'Reference':'Asset'));
+        for(let i=0;i<files.length;i++){
+          const up=await baUploadFile(files[i]);
+          await baSaveOne({kind:kind,label:prefix+' '+(i+1),sort_order:sort+i,public_url:up.public_url,storage_path:up.storage_path,metadata_json:{original_filename:files[i].name}});
+        }
+      } else {
+        let publicUrl=manualUrl;let storagePath=null;let metaOut={};
+        if(files.length>0){
+          const up=await baUploadFile(files[0]);
+          publicUrl=up.public_url;storagePath=up.storage_path;
+          metaOut={original_filename:files[0].name};
+        }
+        if(!id&&!publicUrl){setMsg('Add a public URL or upload a file.','var(--red)');return;}
+        const payload={kind:kind,label:label||null,sort_order:sort,public_url:publicUrl,storage_path:storagePath,metadata_json:metaOut};
+        if(id&&files.length===0&&!manualUrl){
+          // editing metadata-only: drop public_url/storage_path so they aren't wiped
+          delete payload.public_url;delete payload.storage_path;
+        }
+        await baSaveOne(payload,id);
+      }
+    }
+    setMsg('Saved','var(--green)');
+    baCancel();
+    baMsg('Brand asset saved','success');
+    await loadConfig();
+    baReopenTab();
+  }catch(err){
+    setMsg(err&&err.message?err.message:'Error','var(--red)');
+  }
+}
+
+function baReopenTab(){
+  // Keep user focused on the Brand Assets tab after loadConfig() re-renders the panel.
+  const tabBtn=document.querySelector('#config-tabs .tab[onclick*="tab-brand-assets"]');
+  if(tabBtn)tabBtn.click();
+}
+
+async function baDelete(id){
+  if(!confirm('Delete this brand asset?'))return;
+  try{
+    const r=await cafFetch('/v1/projects/'+encodeURIComponent(SLUG)+'/brand-assets/'+encodeURIComponent(id),{method:'DELETE'});
+    const d=await r.json().catch(function(){return null});
+    if(!r.ok||!d||d.ok===false)throw new Error((d&&(d.message||d.error))||('Delete failed '+r.status));
+    baMsg('Brand asset deleted','success');
+    await loadConfig();
+    baReopenTab();
+  }catch(err){
+    baMsg(err&&err.message?err.message:'Delete failed','error');
+  }
+}
+
+async function baSyncHeygen(id){
+  baMsg('Syncing to HeyGen…','info');
+  try{
+    const r=await cafFetch('/v1/projects/'+encodeURIComponent(SLUG)+'/brand-assets/'+encodeURIComponent(id)+'/sync-heygen',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json().catch(function(){return null});
+    if(!r.ok||!d||d.ok===false)throw new Error((d&&(d.message||d.error))||('HeyGen sync failed '+r.status));
+    baMsg('Uploaded to HeyGen','success');
+    await loadConfig();
+    baReopenTab();
+  }catch(err){
+    baMsg(err&&err.message?err.message:'HeyGen sync failed','error');
+  }
+}
+
 loadConfig();
 </script>`;
     reply.type("text/html").send(page(currentSlug + " — Config", "config", body, projects, currentSlug, adminHeadTokenScript(config)));
