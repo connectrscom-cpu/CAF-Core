@@ -21,6 +21,7 @@ import {
   upsertHeygenConfig, deleteHeygenConfig,
   addProjectCarouselTemplate,
   removeProjectCarouselTemplate,
+  setProjectCarouselTemplates,
 } from "../repositories/project-config.js";
 import {
   listFlowDefinitions, upsertFlowDefinition, deleteFlowDefinition,
@@ -1470,6 +1471,32 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
     await removeProjectCarouselTemplate(db, project.id, htmlName);
     return { ok: true };
+  });
+
+  /** Replace the full set of pinned carousel `.hbs` files for a project (Project Config checklist). */
+  app.post("/v1/admin/config/project-carousel-templates", async (request, reply) => {
+    try {
+      const b = (request.body ?? {}) as Record<string, unknown>;
+      const slug = normalizeProjectSlugParam(String(b._project ?? ""));
+      if (!slug) return reply.code(400).send({ ok: false, error: "Project slug required" });
+      const raw = b.html_template_names;
+      const names = Array.isArray(raw)
+        ? raw.map((x) => String(x ?? "").trim()).filter((s) => s.length > 0)
+        : [];
+      for (const n of names) {
+        if (!isSafeCarouselHbsFilename(n)) {
+          return reply.code(400).send({ ok: false, error: `Invalid template name: ${n}` });
+        }
+      }
+      const project = await resolveProject(db, slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+      await setProjectCarouselTemplates(db, project.id, names);
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      request.log.warn({ err: e }, "project-carousel-templates");
+      return reply.code(500).send({ ok: false, error: msg });
+    }
   });
 
   // --- Flow Engine CRUD (global) ---
@@ -4611,6 +4638,11 @@ function ctFgTa(name,label,value,rows){return '<div class="form-group"><label fo
 /** Safe DOM id fragment for .hbs filenames (ctEsc breaks ids when names contain & etc.). */
 function ctIdSafe(name){return String(name==null?'':name).replace(/[^a-zA-Z0-9._-]/g,'_');}
 
+/** Absolute API URL so fetch is not affected by &lt;base href&gt; or odd relative resolution. */
+function ctApiUrl(path){
+  try{ return new URL(path, window.location.origin).href; }catch(_){ return path; }
+}
+
 async function ctFetchJson(url,timeoutMs){
   var ms=timeoutMs||30000;
   var c=new AbortController();
@@ -4631,7 +4663,7 @@ async function ctAddToProject(btn, htmlName){
   if(!slug){ if(msgEl){msgEl.textContent='Choose a project first';msgEl.style.color='var(--red)';} return; }
   if(msgEl){msgEl.textContent='Saving…';msgEl.style.color='var(--muted)';}
   try{
-    var res=await cafFetch('/v1/admin/config/project-carousel-template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:slug,html_template_name:htmlName})});
+    var res=await cafFetch(ctApiUrl('/v1/admin/config/project-carousel-template'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:slug,html_template_name:htmlName}),credentials:'same-origin'});
     var txt=await res.text();
     var j={};
     try{ j=txt?JSON.parse(txt):{}; }catch(_){ j={ok:false,error:txt||'Bad response'}; }
@@ -4721,7 +4753,7 @@ async function ctLoad(){
         html+='<option value="'+ctEsc(pj.slug)+'">'+ctEsc(pj.display_name||pj.slug)+'</option>';
       }
       html+='</select>';
-      html+='<button type="button" class="btn btn-sm" onclick="ctAddToProject(this,'+JSON.stringify(name)+')">Add to project</button>';
+      html+='<button type="button" class="btn btn-sm" data-ct-add-to-project="1" data-ct-tpl="'+encodeURIComponent(name)+'">Add to project</button>';
       html+='</div>';
       html+='<div data-ct-pin-msg="1" id="ct-pin-msg-'+ctEsc(idSuffix)+'" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
       html+='</div>';
@@ -5029,6 +5061,24 @@ function ctOpenEditWithHtml(name){
   ctOpenEdit({template_key:name.replace(/\\.hbs$/,''),platform:'Instagram',engine:'handlebars',html_template_name:name,default_slide_count:null});
 }
 
+(function(){
+  var root=document.getElementById('ct-root');
+  if(!root)return;
+  root.addEventListener('click',function(ev){
+    var t=ev.target;
+    if(!t||!t.closest)return;
+    var btn=t.closest('[data-ct-add-to-project]');
+    if(!btn)return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    var enc=btn.getAttribute('data-ct-tpl');
+    if(enc==null||enc==='')return;
+    var tpl;
+    try{ tpl=decodeURIComponent(enc); }catch(_){ return; }
+    ctAddToProject(btn,tpl);
+  });
+})();
+
 ctLoad();
 </script>`;
     reply.type("text/html").send(page("Carousel templates", "carousel-templates", body, projects, "", adminHeadTokenScript(config)));
@@ -5196,15 +5246,53 @@ async function cfgRemoveCarouselTemplate(htmlName){
   if(!confirm('Remove '+htmlName+' from this project?')) return;
   try{
     const r=await cafFetch('/v1/admin/config/project-carousel-template/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,html_template_name:htmlName})});
-    const j=await r.json();
-    if(!r.ok||!j.ok){ alert(j.error||'Failed'); return; }
+    const txt=await r.text();
+    let j={}; try{ j=txt?JSON.parse(txt):{}; }catch(_){ j={ok:false}; }
+    if(!r.ok||!j.ok){ alert((j&&j.error)||txt||'Failed'); return; }
     loadConfig();
   }catch(e){ alert(String(e&&e.message||e)); }
+}
+
+function cfgCarouselPickAll(on){
+  var box=document.getElementById('cfg-carousel-picker');
+  if(!box)return;
+  box.querySelectorAll('input[name="cfg_ct_tpl"]').forEach(function(i){ i.checked=!!on; });
+}
+
+async function cfgSaveCarouselTemplates(){
+  var box=document.getElementById('cfg-carousel-picker');
+  var msg=document.getElementById('cfg-carousel-msg');
+  if(!box)return;
+  var names=Array.from(box.querySelectorAll('input[name="cfg_ct_tpl"]:checked')).map(function(i){ return i.value; });
+  if(msg){msg.textContent='Saving…';msg.style.color='var(--muted)';}
+  try{
+    var res=await cafFetch('/v1/admin/config/project-carousel-templates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,html_template_names:names})});
+    var txt=await res.text();
+    var j={};
+    try{ j=txt?JSON.parse(txt):{}; }catch(_){ j={ok:false,error:txt||'Bad response'}; }
+    if(!res.ok||!j.ok){
+      if(msg){msg.textContent=(j&&j.error)||('HTTP '+res.status);msg.style.color='var(--red)';}
+      console.error('cfgSaveCarouselTemplates',res.status,j,txt);
+      return;
+    }
+    if(msg){msg.textContent='Saved';msg.style.color='var(--green)';}
+    loadConfig();
+  }catch(e){
+    if(msg){msg.textContent=String(e&&e.message||e);msg.style.color='var(--red)';}
+  }
 }
 
 async function loadConfig(){
   const r=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));const d=await r.json();
   if(!d.ok){document.getElementById('config-content').innerHTML='<div class="empty">'+(d.error||'Error')+'</div>';return;}
+  let availTemplates=[];
+  try{
+    const tr=await cafFetch('/v1/admin/carousel-template-list');
+    const td=await tr.json();
+    if(tr.ok && td && td.ok && Array.isArray(td.templates)){
+      availTemplates=td.templates.slice().sort(function(a,b){ return String(a).localeCompare(String(b)); });
+    }
+  }catch(e){ console.warn('carousel-template-list',e); }
   let h='';
 
   // === Strategy Defaults (editable) ===
@@ -5286,19 +5374,28 @@ async function loadConfig(){
 
   // === Carousel templates (pinned .hbs for this project) ===
   const ctp=d.profile?.carousel_templates||[];
-  h+='<div id="tab-carousels" class="tab-panel"><div class="card"><div class="card-h">Carousel templates ('+ctp.length+')</div>';
-  h+='<p style="color:var(--muted);font-size:13px;margin-bottom:12px">Renderer <code>.hbs</code> files selected for <strong>'+esc(SLUG)+'</strong> from <a href="/admin/carousel-templates">Carousel templates</a>. Use this list as a shortlist for operators; pipeline routing still uses Flow Engine template keys.</p>';
-  if(ctp.length){
-    h+='<ul style="margin:0;padding-left:18px;line-height:1.65">';
-    for(const t of ctp){
-      h+='<li style="margin-bottom:8px"><span class="mono" style="font-size:13px">'+esc(t)+'</span> ';
-      h+='<button type="button" class="btn-ghost btn-sm" onclick="cfgRemoveCarouselTemplate('+JSON.stringify(t)+')">Remove</button></li>';
+  const mergedCarousel=[...new Set([...availTemplates,...ctp])].sort(function(a,b){ return String(a).localeCompare(String(b)); });
+  h+='<div id="tab-carousels" class="tab-panel"><div class="card"><div class="card-h">Carousel templates ('+ctp.length+' selected)</div>';
+  h+='<p style="color:var(--muted);font-size:13px;margin-bottom:12px">Pin renderer <code>.hbs</code> templates for <strong>'+esc(SLUG)+'</strong> (operator shortlist). Pipeline routing still uses Flow Engine template keys. You can also pin from <a href="/admin/carousel-templates">Carousel templates</a>.</p>';
+  h+='<div id="cfg-carousel-picker">';
+  if(mergedCarousel.length){
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">';
+    h+='<button type="button" class="btn btn-sm btn-ghost" onclick="cfgCarouselPickAll(true)">Select all</button>';
+    h+='<button type="button" class="btn btn-sm btn-ghost" onclick="cfgCarouselPickAll(false)">Clear all</button>';
+    h+='</div>';
+    h+='<div style="max-height:min(420px,50vh);overflow:auto;border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--card2)">';
+    for(const t of mergedCarousel){
+      const on=ctp.indexOf(t)>=0;
+      h+='<label style="display:flex;gap:10px;align-items:flex-start;margin-bottom:8px;cursor:pointer;font-size:13px;line-height:1.35">';
+      h+='<input type="checkbox" name="cfg_ct_tpl" value="'+esc(t)+'"'+(on?' checked':'')+'>';
+      h+='<span class="mono" style="word-break:break-all">'+esc(t)+'</span></label>';
     }
-    h+='</ul>';
+    h+='</div>';
   }else{
-    h+='<div class="empty">No carousel templates pinned yet. Open <a href="/admin/carousel-templates">Carousel templates</a> and use <strong>Add to project</strong> on a card.</div>';
+    h+='<div class="empty" style="margin-bottom:10px">No templates listed. Ensure the API can reach the renderer template list (<code>/v1/admin/carousel-template-list</code>) or add <code>.hbs</code> files under Core&rsquo;s bundled carousel templates.</div>';
   }
-  h+='</div></div>';
+  h+='<div class="form-actions" style="margin-top:12px"><button type="button" class="btn" onclick="cfgSaveCarouselTemplates()">Save carousel templates</button><span id="cfg-carousel-msg" class="form-msg"></span></div>';
+  h+='</div></div></div>';
 
   // === Allowed Flow Types (grouped by output format) ===
   const ft=d.profile?.flow_types||[];

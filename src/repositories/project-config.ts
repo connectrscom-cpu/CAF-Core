@@ -872,6 +872,29 @@ export async function removeProjectCarouselTemplate(
   );
 }
 
+/** Replace all pinned carousel `.hbs` names for a project (transactional). */
+export async function setProjectCarouselTemplates(db: Pool, projectId: string, names: string[]): Promise<void> {
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM caf_core.project_carousel_templates WHERE project_id = $1`, [projectId]);
+    for (const n of names) {
+      const trimmed = String(n ?? "").trim();
+      if (!trimmed) continue;
+      await client.query(
+        `INSERT INTO caf_core.project_carousel_templates (project_id, html_template_name) VALUES ($1, $2)`,
+        [projectId, trimmed]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Full Project Profile (composite read)
 // ---------------------------------------------------------------------------
