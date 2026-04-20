@@ -4,7 +4,27 @@ import {
   graphErrorMeansPageTokenCannotListMeAccounts,
   pickPageTokenFromAccountsResponse,
   placementPlatformToMetaIntegrationKey,
+  readIgUserIdFromMetaIntegrationAccountJson,
 } from "./meta-graph-publish.js";
+
+describe("readIgUserIdFromMetaIntegrationAccountJson", () => {
+  it("prefers ig_user_id", () => {
+    expect(
+      readIgUserIdFromMetaIntegrationAccountJson({
+        ig_user_id: "111",
+        ig_business_account_id: "222",
+      })
+    ).toBe("111");
+  });
+  it("falls back to ig_business_account_id (CSV import alias)", () => {
+    expect(readIgUserIdFromMetaIntegrationAccountJson({ ig_business_account_id: "17841400000000000" })).toBe(
+      "17841400000000000"
+    );
+  });
+  it("accepts instagram_user_id", () => {
+    expect(readIgUserIdFromMetaIntegrationAccountJson({ instagram_user_id: "333" })).toBe("333");
+  });
+});
 
 describe("placementPlatformToMetaIntegrationKey", () => {
   it("maps Review labels", () => {

@@ -185,10 +185,24 @@ function fbPageIdFromIntegration(row: Awaited<ReturnType<typeof getProjectIntegr
   return str(a["fb_page_id"]) ?? str(a["facebook_numeric_id_from_url"]);
 }
 
+/**
+ * Reads the Instagram **user** id used by Graph `POST /{ig-user-id}/media` from integration JSON.
+ * Accepts `ig_business_account_id` (common in CSV imports / templates) as an alias of the same id.
+ */
+export function readIgUserIdFromMetaIntegrationAccountJson(
+  accountIds: Record<string, unknown> | undefined
+): string | undefined {
+  if (!accountIds) return undefined;
+  return (
+    str(accountIds["ig_user_id"]) ??
+    str(accountIds["instagram_user_id"]) ??
+    str(accountIds["ig_business_account_id"])
+  );
+}
+
 function igUserIdFromIntegration(row: Awaited<ReturnType<typeof getProjectIntegration>>): string | undefined {
   if (!row?.is_enabled) return undefined;
-  const a = row.account_ids_json as Record<string, unknown>;
-  return str(a["ig_user_id"]) ?? str(a["instagram_user_id"]);
+  return readIgUserIdFromMetaIntegrationAccountJson(row.account_ids_json as Record<string, unknown>);
 }
 
 /**
@@ -324,6 +338,40 @@ async function graphGet<T = Record<string, unknown>>(
     throw new Error(msg || `Graph GET ${res.status}`);
   }
   return j;
+}
+
+/**
+ * When `account_ids_json` omits `ig_user_id` but the Facebook Page is linked to a professional IG account,
+ * Graph returns that id (same value often stored manually as `ig_user_id` / `ig_business_account_id`).
+ */
+async function fetchIgUserIdFromFacebookPage(
+  pageId: string,
+  token: string,
+  version: string
+): Promise<string | undefined> {
+  const pid = pageId.trim();
+  if (!pid) return undefined;
+  try {
+    const r = await graphGet<{ instagram_business_account?: { id?: string } }>(
+      `${pid}?fields=instagram_business_account{id}`,
+      token,
+      version
+    );
+    const id = str(r.instagram_business_account?.id);
+    if (id) return id;
+  } catch {
+    /* try legacy field */
+  }
+  try {
+    const r2 = await graphGet<{ connected_instagram_account?: { id?: string } }>(
+      `${pid}?fields=connected_instagram_account{id}`,
+      token,
+      version
+    );
+    return str(r2.connected_instagram_account?.id);
+  } catch {
+    return undefined;
+  }
 }
 
 async function graphPostForm<T = Record<string, unknown>>(
@@ -724,9 +772,17 @@ export async function publishPlacementToMeta(
     }
 
     const integ = await getProjectIntegration(db, projectId, "META_IG");
-    const igUserId = igUserIdFromIntegration(integ);
+    let igUserId = igUserIdFromIntegration(integ);
+    if (!igUserId && facebookPageId) {
+      igUserId = await fetchIgUserIdFromFacebookPage(facebookPageId, token, v);
+    }
     if (!igUserId) {
-      return { ok: false, error: "META_IG integration missing account_ids_json.ig_user_id" };
+      return {
+        ok: false,
+        error:
+          "META_IG integration missing account_ids_json.ig_user_id (or ig_business_account_id). " +
+          "If META_FB has fb_page_id or META_IG has linked_fb_page_id, set those and use a Page token so Core can resolve the linked Instagram account via Graph.",
+      };
     }
     const out = await publishInstagram(igUserId, token, v, placement, config);
     return {
