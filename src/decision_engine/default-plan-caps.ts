@@ -1,4 +1,11 @@
-import { PRODUCT_VIDEO_FLOW_TYPES } from "../domain/product-flow-types.js";
+import {
+  FLOW_PRODUCT_COMPARISON,
+  FLOW_PRODUCT_FEATURE,
+  FLOW_PRODUCT_OFFER,
+  FLOW_PRODUCT_PROBLEM,
+  FLOW_PRODUCT_SOCIAL_PROOF,
+  FLOW_PRODUCT_USECASE,
+} from "../domain/product-flow-types.js";
 
 /**
  * Default per-run generation-plan caps (each planned job / variation counts as 1).
@@ -78,9 +85,34 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     keys: ["HeyGen_Render_Video"],
   },
   {
-    id: "product_video",
-    label: "Product marketing video (FLOW_PRODUCT_*)",
-    keys: [...PRODUCT_VIDEO_FLOW_TYPES],
+    id: "product_video_problem",
+    label: "Product video — Problem/Pain hook",
+    keys: [FLOW_PRODUCT_PROBLEM],
+  },
+  {
+    id: "product_video_feature",
+    label: "Product video — Feature highlight",
+    keys: [FLOW_PRODUCT_FEATURE],
+  },
+  {
+    id: "product_video_comparison",
+    label: "Product video — Comparison / vs alternatives",
+    keys: [FLOW_PRODUCT_COMPARISON],
+  },
+  {
+    id: "product_video_usecase",
+    label: "Product video — Use case / scenario",
+    keys: [FLOW_PRODUCT_USECASE],
+  },
+  {
+    id: "product_video_social_proof",
+    label: "Product video — Social proof / testimonial",
+    keys: [FLOW_PRODUCT_SOCIAL_PROOF],
+  },
+  {
+    id: "product_video_offer",
+    label: "Product video — Offer / urgency / CTA",
+    keys: [FLOW_PRODUCT_OFFER],
   },
 ] as const;
 

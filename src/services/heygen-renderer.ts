@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import {
   getBrandConstraints,
+  getProductProfile,
   listHeygenConfig,
   listProjectBrandAssets,
   type HeygenConfigRow,
@@ -12,6 +13,7 @@ import {
 import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
 import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
+import { buildProductProfilePromptBlock } from "./product-video-agent-product.js";
 import { insertAsset } from "../repositories/assets.js";
 import {
   uploadBuffer,
@@ -1904,6 +1906,21 @@ export async function runHeygenForContentJob(
         }
       } catch {
         /* non-fatal: brand constraints are an enhancement, not a requirement */
+      }
+      /**
+       * Append project product_profile (value prop / features / audience pain /
+       * differentiators / offer / CTA) so HeyGen's Video Agent uses accurate
+       * product facts rather than inventing generic copy for FLOW_PRODUCT_*.
+       */
+      try {
+        const product = await getProductProfile(db, job.project_id);
+        const productBlock = buildProductProfilePromptBlock(product);
+        if (productBlock && typeof body.prompt === "string") {
+          const p = body.prompt.trim();
+          body.prompt = p ? `${p}\n\n${productBlock}` : productBlock;
+        }
+      } catch {
+        /* non-fatal: product profile is an enhancement, not a requirement */
       }
       const kit = await listProjectBrandAssets(db, job.project_id);
       mergeHeygenVideoAgentFiles(body, brandAssetsToHeygenFiles(kit));

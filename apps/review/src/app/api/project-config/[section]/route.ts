@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   getStrategy, saveStrategy,
   getBrand, saveBrand,
+  getProduct, saveProduct,
   getPlatforms, savePlatform,
   getFlowTypes, saveFlowType,
   getRiskRules, saveRiskRule,
@@ -18,6 +19,7 @@ type Ctx = { params: Promise<{ section: string }> };
 const getters: Record<string, (slug: string) => Promise<unknown>> = {
   strategy: getStrategy,
   brand: getBrand,
+  product: getProduct,
   constraints: getSystemConstraints,
   platforms: getPlatforms,
   "flow-types": getFlowTypes,
@@ -28,6 +30,7 @@ const getters: Record<string, (slug: string) => Promise<unknown>> = {
 const savers: Record<string, (slug: string, data: Record<string, unknown>) => Promise<unknown>> = {
   strategy: saveStrategy,
   brand: saveBrand,
+  product: saveProduct,
   constraints: saveSystemConstraints,
   platforms: savePlatform,
   "flow-types": saveFlowType,

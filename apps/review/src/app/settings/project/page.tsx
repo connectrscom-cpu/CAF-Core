@@ -6,6 +6,7 @@ import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
 type Section =
   | "strategy"
   | "brand"
+  | "product"
   | "constraints"
   | "platforms"
   | "flow-types"
@@ -16,6 +17,7 @@ type Section =
 const TABS: { id: Section; label: string }[] = [
   { id: "strategy", label: "Strategy" },
   { id: "brand", label: "Brand" },
+  { id: "product", label: "Product" },
   { id: "constraints", label: "System limits" },
   { id: "platforms", label: "Platforms" },
   { id: "flow-types", label: "Flow Types" },
@@ -67,6 +69,42 @@ const BRAND_FIELDS = [
   { key: "risk_level_default", label: "Default Risk Level", type: "text" },
   { key: "manual_review_required", label: "Manual Review Required", type: "boolean" },
   { key: "notes", label: "Notes", type: "textarea" },
+] as const;
+
+const PRODUCT_FIELDS = [
+  // What the product is
+  { key: "product_name", label: "Product name", type: "text" },
+  { key: "product_category", label: "Product category (SaaS, course, app, physical…)", type: "text" },
+  { key: "product_url", label: "Product URL", type: "text" },
+  { key: "one_liner", label: "One-liner (10–20 words)", type: "textarea" },
+  { key: "value_proposition", label: "Value proposition (what / to whom / outcome)", type: "textarea" },
+  { key: "elevator_pitch", label: "Elevator pitch (2–3 sentences)", type: "textarea" },
+  // Audience
+  { key: "primary_audience", label: "Primary audience", type: "textarea" },
+  { key: "audience_pain_points", label: "Audience pain points", type: "textarea" },
+  { key: "audience_desires", label: "Audience desires", type: "textarea" },
+  { key: "use_cases", label: "Top use cases / scenarios (1 per line)", type: "textarea" },
+  { key: "anti_audience", label: "Who this is NOT for", type: "textarea" },
+  // Differentiation
+  { key: "key_features", label: "Key features (1 per line — concrete)", type: "textarea" },
+  { key: "key_benefits", label: "Key benefits (what the user gets)", type: "textarea" },
+  { key: "differentiators", label: "Differentiators (why you, not them)", type: "textarea" },
+  { key: "proof_points", label: "Proof points (numbers, case studies)", type: "textarea" },
+  { key: "social_proof", label: "Social proof (testimonials, reviews)", type: "textarea" },
+  { key: "competitors", label: "Competitors", type: "textarea" },
+  { key: "comparison_angles", label: "Comparison angles", type: "textarea" },
+  // Commercial
+  { key: "pricing_summary", label: "Pricing summary", type: "text" },
+  { key: "current_offer", label: "Current offer (discount / bonus / bundle)", type: "textarea" },
+  { key: "offer_urgency", label: "Urgency (deadline / scarcity)", type: "text" },
+  { key: "guarantee", label: "Guarantee (refund / trial / warranty)", type: "text" },
+  { key: "primary_cta", label: "Primary CTA", type: "text" },
+  { key: "secondary_cta", label: "Secondary CTA", type: "text" },
+  // Language
+  { key: "do_say", label: "Always say / preferred phrasing", type: "textarea" },
+  { key: "dont_say", label: "Never say / forbidden phrasing", type: "textarea" },
+  { key: "taglines", label: "Approved taglines (1 per line)", type: "textarea" },
+  { key: "keywords", label: "SEO / talking-point keywords", type: "textarea" },
 ] as const;
 
 const CONSTRAINT_FIELDS = [
@@ -168,6 +206,7 @@ export default function ProjectConfigPage() {
   const isSingleton =
     activeTab === "strategy" ||
     activeTab === "brand" ||
+    activeTab === "product" ||
     activeTab === "constraints" ||
     activeTab === "heygen-defaults";
 
@@ -235,7 +274,7 @@ export default function ProjectConfigPage() {
         });
         setListData(null);
       } else if (isSingletonSection(section)) {
-        setData(json.strategy ?? json.brand ?? {});
+        setData(json.strategy ?? json.brand ?? json.product ?? {});
         setListData(null);
       } else {
         setListData(json.platforms ?? json.flow_types ?? json.risk_rules ?? json.heygen_config ?? []);
@@ -589,13 +628,14 @@ function FieldInput({ field, value, onChange }: {
 }
 
 function isSingletonSection(section: Section): boolean {
-  return section === "strategy" || section === "brand";
+  return section === "strategy" || section === "brand" || section === "product";
 }
 
 function getFieldsForSection(section: Section): FieldDef[] {
   switch (section) {
     case "strategy": return [...STRATEGY_FIELDS];
     case "brand": return [...BRAND_FIELDS];
+    case "product": return [...PRODUCT_FIELDS];
     case "constraints": return [...CONSTRAINT_FIELDS];
     case "platforms": return [...PLATFORM_FIELDS];
     case "flow-types": return [...FLOW_TYPE_FIELDS];

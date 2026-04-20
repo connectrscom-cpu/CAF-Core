@@ -598,6 +598,18 @@ export async function saveBrand(projectSlug: string, data: Record<string, unknow
   );
 }
 
+export async function getProduct(projectSlug: string) {
+  return coreGet<{ ok: boolean; product: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/product`
+  );
+}
+
+export async function saveProduct(projectSlug: string, data: Record<string, unknown>) {
+  return corePut<{ ok: boolean; product: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/product`, data
+  );
+}
+
 export async function getSystemConstraints(projectSlug: string) {
   return coreGet<{ ok: boolean; constraints: Record<string, unknown> | null }>(
     `/v1/projects/${encodeURIComponent(projectSlug)}/constraints`

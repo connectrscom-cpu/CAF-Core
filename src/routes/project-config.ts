@@ -13,6 +13,8 @@ import {
   listViralFormats, insertViralFormat,
   listHeygenConfig, upsertHeygenConfig,
   getFullProjectProfile,
+  getProductProfile,
+  upsertProductProfile,
   listProjectBrandAssets,
   insertProjectBrandAsset,
   updateProjectBrandAsset,
@@ -231,6 +233,90 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       notes: body.data.notes ?? null,
     });
     return { ok: true, brand: row };
+  });
+
+  // ── Product Profile (drives FLOW_PRODUCT_* video generation) ─────────
+  app.get("/v1/projects/:project_slug/product", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await getProductProfile(db, project.id);
+    return { ok: true, product: row };
+  });
+
+  const productSchema = z.object({
+    product_name: z.string().nullish(),
+    product_category: z.string().nullish(),
+    product_url: z.string().nullish(),
+    one_liner: z.string().nullish(),
+    value_proposition: z.string().nullish(),
+    elevator_pitch: z.string().nullish(),
+    primary_audience: z.string().nullish(),
+    audience_pain_points: z.string().nullish(),
+    audience_desires: z.string().nullish(),
+    use_cases: z.string().nullish(),
+    anti_audience: z.string().nullish(),
+    key_features: z.string().nullish(),
+    key_benefits: z.string().nullish(),
+    differentiators: z.string().nullish(),
+    proof_points: z.string().nullish(),
+    social_proof: z.string().nullish(),
+    competitors: z.string().nullish(),
+    comparison_angles: z.string().nullish(),
+    pricing_summary: z.string().nullish(),
+    current_offer: z.string().nullish(),
+    offer_urgency: z.string().nullish(),
+    guarantee: z.string().nullish(),
+    primary_cta: z.string().nullish(),
+    secondary_cta: z.string().nullish(),
+    do_say: z.string().nullish(),
+    dont_say: z.string().nullish(),
+    taglines: z.string().nullish(),
+    keywords: z.string().nullish(),
+    metadata_json: z.record(z.string(), z.unknown()).nullish(),
+  });
+
+  app.put("/v1/projects/:project_slug/product", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = productSchema.safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply
+        .code(400)
+        .send({ ok: false, error: "invalid_request", details: body.success ? undefined : body.error.flatten() });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await upsertProductProfile(db, project.id, {
+      product_name: body.data.product_name ?? null,
+      product_category: body.data.product_category ?? null,
+      product_url: body.data.product_url ?? null,
+      one_liner: body.data.one_liner ?? null,
+      value_proposition: body.data.value_proposition ?? null,
+      elevator_pitch: body.data.elevator_pitch ?? null,
+      primary_audience: body.data.primary_audience ?? null,
+      audience_pain_points: body.data.audience_pain_points ?? null,
+      audience_desires: body.data.audience_desires ?? null,
+      use_cases: body.data.use_cases ?? null,
+      anti_audience: body.data.anti_audience ?? null,
+      key_features: body.data.key_features ?? null,
+      key_benefits: body.data.key_benefits ?? null,
+      differentiators: body.data.differentiators ?? null,
+      proof_points: body.data.proof_points ?? null,
+      social_proof: body.data.social_proof ?? null,
+      competitors: body.data.competitors ?? null,
+      comparison_angles: body.data.comparison_angles ?? null,
+      pricing_summary: body.data.pricing_summary ?? null,
+      current_offer: body.data.current_offer ?? null,
+      offer_urgency: body.data.offer_urgency ?? null,
+      guarantee: body.data.guarantee ?? null,
+      primary_cta: body.data.primary_cta ?? null,
+      secondary_cta: body.data.secondary_cta ?? null,
+      do_say: body.data.do_say ?? null,
+      dont_say: body.data.dont_say ?? null,
+      taglines: body.data.taglines ?? null,
+      keywords: body.data.keywords ?? null,
+      metadata_json: (body.data.metadata_json as Record<string, unknown>) ?? {},
+    });
+    return { ok: true, product: row };
   });
 
   // ── Platform Constraints ─────────────────────────────────────────────

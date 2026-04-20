@@ -669,10 +669,118 @@ export async function deleteProjectBrandAsset(db: Pool, projectId: string, asset
 }
 
 // ---------------------------------------------------------------------------
+// Product Profile (per-project; drives FLOW_PRODUCT_* prompts)
+// ---------------------------------------------------------------------------
+export interface ProductProfileRow {
+  id: string;
+  project_id: string;
+  product_name: string | null;
+  product_category: string | null;
+  product_url: string | null;
+  one_liner: string | null;
+  value_proposition: string | null;
+  elevator_pitch: string | null;
+  primary_audience: string | null;
+  audience_pain_points: string | null;
+  audience_desires: string | null;
+  use_cases: string | null;
+  anti_audience: string | null;
+  key_features: string | null;
+  key_benefits: string | null;
+  differentiators: string | null;
+  proof_points: string | null;
+  social_proof: string | null;
+  competitors: string | null;
+  comparison_angles: string | null;
+  pricing_summary: string | null;
+  current_offer: string | null;
+  offer_urgency: string | null;
+  guarantee: string | null;
+  primary_cta: string | null;
+  secondary_cta: string | null;
+  do_say: string | null;
+  dont_say: string | null;
+  taglines: string | null;
+  keywords: string | null;
+  metadata_json: Record<string, unknown>;
+}
+
+const PRODUCT_PROFILE_COLS = [
+  "product_name",
+  "product_category",
+  "product_url",
+  "one_liner",
+  "value_proposition",
+  "elevator_pitch",
+  "primary_audience",
+  "audience_pain_points",
+  "audience_desires",
+  "use_cases",
+  "anti_audience",
+  "key_features",
+  "key_benefits",
+  "differentiators",
+  "proof_points",
+  "social_proof",
+  "competitors",
+  "comparison_angles",
+  "pricing_summary",
+  "current_offer",
+  "offer_urgency",
+  "guarantee",
+  "primary_cta",
+  "secondary_cta",
+  "do_say",
+  "dont_say",
+  "taglines",
+  "keywords",
+] as const;
+
+export async function getProductProfile(db: Pool, projectId: string): Promise<ProductProfileRow | null> {
+  return qOne<ProductProfileRow>(db,
+    `SELECT * FROM caf_core.project_product_profile WHERE project_id = $1`, [projectId]);
+}
+
+export async function upsertProductProfile(
+  db: Pool,
+  projectId: string,
+  data: Partial<Omit<ProductProfileRow, "id" | "project_id">>
+): Promise<ProductProfileRow> {
+  const values = PRODUCT_PROFILE_COLS.map((col) => {
+    const v = (data as Record<string, unknown>)[col];
+    if (v == null) return null;
+    if (typeof v === "string") {
+      const trimmed = v.trim();
+      return trimmed ? trimmed : null;
+    }
+    return v;
+  });
+  const metadata = data.metadata_json && typeof data.metadata_json === "object" && !Array.isArray(data.metadata_json)
+    ? data.metadata_json
+    : {};
+
+  const insertCols = ["project_id", ...PRODUCT_PROFILE_COLS, "metadata_json"];
+  const placeholders = insertCols.map((_, i) => `$${i + 1}`).join(",");
+  const updateCols = [...PRODUCT_PROFILE_COLS, "metadata_json"]
+    .map((c) => `${c} = EXCLUDED.${c}`)
+    .join(", ");
+
+  const row = await qOne<ProductProfileRow>(db, `
+    INSERT INTO caf_core.project_product_profile (${insertCols.join(",")})
+    VALUES (${placeholders})
+    ON CONFLICT (project_id) DO UPDATE SET
+      ${updateCols}, updated_at = now()
+    RETURNING *`,
+    [projectId, ...values, metadata]);
+  if (!row) throw new Error("Failed to upsert project_product_profile");
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Full Project Profile (composite read)
 // ---------------------------------------------------------------------------
 export async function getFullProjectProfile(db: Pool, projectId: string) {
-  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig, brandAssets] =
+  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig, brandAssets, product] =
     await Promise.all([
       getStrategyDefaults(db, projectId),
       getBrandConstraints(db, projectId),
@@ -682,6 +790,7 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
       listReferencePosts(db, projectId),
       listHeygenConfig(db, projectId),
       listProjectBrandAssets(db, projectId),
+      getProductProfile(db, projectId),
     ]);
   return {
     strategy,
@@ -692,5 +801,6 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
     reference_posts: referencePosts,
     heygen_config: heygenConfig,
     brand_assets: brandAssets,
+    product,
   };
 }

@@ -13,6 +13,7 @@ import { listRuns, getRunByRunId, updateRunStatus } from "../repositories/runs.j
 import { listLearningRules } from "../repositories/learning.js";
 import {
   getFullProjectProfile, upsertStrategyDefaults, upsertBrandConstraints,
+  upsertProductProfile,
   upsertPlatformConstraints, deletePlatformConstraint,
   upsertRiskRule, deleteRiskRule,
   upsertAllowedFlowType, deleteAllowedFlowType,
@@ -1205,6 +1206,46 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       storytelling_style: str("storytelling_style"), positioning_statement: str("positioning_statement"),
       differentiation_angle: str("differentiation_angle"), risk_level_default: str("risk_level_default"),
       manual_review_required: bool("manual_review_required"), notes: str("notes"),
+    });
+    return { ok: true };
+  });
+
+  app.post("/v1/admin/config/product", async (request) => {
+    const b = request.body as Record<string, unknown>;
+    const slug = normalizeProjectSlugParam(String(b._project ?? ""));
+    const project = slug ? await ensureProject(db, slug) : await resolveProject(db, undefined);
+    if (!project) return { ok: false, error: "Project not found" };
+    const str = (k: string) => (b[k] != null && String(b[k]).trim() !== "") ? String(b[k]) : null;
+    await upsertProductProfile(db, project.id, {
+      product_name: str("product_name"),
+      product_category: str("product_category"),
+      product_url: str("product_url"),
+      one_liner: str("one_liner"),
+      value_proposition: str("value_proposition"),
+      elevator_pitch: str("elevator_pitch"),
+      primary_audience: str("primary_audience"),
+      audience_pain_points: str("audience_pain_points"),
+      audience_desires: str("audience_desires"),
+      use_cases: str("use_cases"),
+      anti_audience: str("anti_audience"),
+      key_features: str("key_features"),
+      key_benefits: str("key_benefits"),
+      differentiators: str("differentiators"),
+      proof_points: str("proof_points"),
+      social_proof: str("social_proof"),
+      competitors: str("competitors"),
+      comparison_angles: str("comparison_angles"),
+      pricing_summary: str("pricing_summary"),
+      current_offer: str("current_offer"),
+      offer_urgency: str("offer_urgency"),
+      guarantee: str("guarantee"),
+      primary_cta: str("primary_cta"),
+      secondary_cta: str("secondary_cta"),
+      do_say: str("do_say"),
+      dont_say: str("dont_say"),
+      taglines: str("taglines"),
+      keywords: str("keywords"),
+      metadata_json: {},
     });
     return { ok: true };
   });
@@ -4012,8 +4053,13 @@ async function loadFE(){
 
 function feEdit(type,data){
   const fields=FE_FIELDS[type];if(!fields)return;
-  let h='<dialog id="fe-dlg" open><h3>'+(data&&data.id?'Edit':'Add')+' '+type.replace(/-/g,' ')+'</h3>';
-  h+='<form id="fe-form" class="config-form" style="max-width:100%">';
+  document.getElementById('fe-dlg')?.remove();
+  const dlg=document.createElement('dialog');
+  dlg.id='fe-dlg';
+  dlg.style.maxWidth='min(720px,96vw)';
+  dlg.style.width='100%';
+  let h='<h3>'+(data&&data.id?'Edit':'Add')+' '+type.replace(/-/g,' ')+'</h3>';
+  h+='<form id="fe-form" class="config-form" style="max-width:100%;max-height:70vh;overflow-y:auto">';
   for(const f of fields){
     const v=data[f.k]!=null?data[f.k]:'';
     if(f.t==='checkbox')h+=fgCheck('fe_'+f.k,f.l,!!v);
@@ -4021,8 +4067,10 @@ function feEdit(type,data){
     else h+=fg('fe_'+f.k,f.l,v,f.t||'text',f.step);
   }
   h+='<div class="form-actions"><button type="submit" class="btn">Save</button> <button type="button" class="btn-ghost" onclick="document.getElementById(\\'fe-dlg\\').remove()">Cancel</button><span id="fe-msg" class="form-msg"></span></div>';
-  h+='</form></dialog>';
-  document.body.insertAdjacentHTML('beforeend',h);
+  h+='</form>';
+  dlg.innerHTML=h;
+  document.body.appendChild(dlg);
+  if(typeof dlg.showModal==='function')dlg.showModal();else dlg.setAttribute('open','');
   document.getElementById('fe-form').addEventListener('submit',async(e)=>{
     e.preventDefault();
     const body={};
@@ -4674,6 +4722,7 @@ tr.cfg-inline-expand td{border-top:1px solid var(--border)}
 <div class="tabs" id="config-tabs">
   <button class="tab active" onclick="cfgTab('tab-strategy',this)">Strategy Defaults</button>
   <button class="tab" onclick="cfgTab('tab-brand',this)">Brand Constraints</button>
+  <button class="tab" onclick="cfgTab('tab-product',this)">Product</button>
   <button class="tab" onclick="cfgTab('tab-constraints',this)">System Constraints</button>
   <button class="tab" onclick="cfgTab('tab-platforms',this)">Platform Constraints</button>
   <button class="tab" onclick="cfgTab('tab-flows',this)">Allowed Flow Types</button>
@@ -4732,6 +4781,47 @@ const BRAND_FIELDS=[
   {k:'notes',l:'Notes',ta:true}
 ];
 
+const PRODUCT_FIELD_GROUPS=[
+  {title:'What the product is',fields:[
+    {k:'product_name',l:'Product Name'},
+    {k:'product_category',l:'Product Category (e.g. SaaS, course, mobile app, physical product)'},
+    {k:'product_url',l:'Product URL'},
+    {k:'one_liner',l:'One-liner (10–20 words)',ta:true},
+    {k:'value_proposition',l:'Value proposition (what you give, to whom, with what outcome)',ta:true},
+    {k:'elevator_pitch',l:'Elevator pitch (2–3 sentences)',ta:true},
+  ]},
+  {title:'Audience',fields:[
+    {k:'primary_audience',l:'Primary audience',ta:true},
+    {k:'audience_pain_points',l:'Audience pain points (concrete problems they have today)',ta:true},
+    {k:'audience_desires',l:'Audience desires (what they wish were true instead)',ta:true},
+    {k:'use_cases',l:'Top use cases / scenarios (1 per line)',ta:true},
+    {k:'anti_audience',l:'Who this is NOT for (optional, helps sharpen targeting)',ta:true},
+  ]},
+  {title:'Why it is different',fields:[
+    {k:'key_features',l:'Key features (1 per line — concrete, not abstract)',ta:true},
+    {k:'key_benefits',l:'Key benefits (what the user gets out of each feature)',ta:true},
+    {k:'differentiators',l:'Differentiators (why you, not them)',ta:true},
+    {k:'proof_points',l:'Proof points (numbers, case studies, credentials)',ta:true},
+    {k:'social_proof',l:'Social proof (testimonials, review highlights — verbatim where possible)',ta:true},
+    {k:'competitors',l:'Competitors (comma-separated or 1 per line)',ta:true},
+    {k:'comparison_angles',l:'Comparison angles (how you win in a head-to-head)',ta:true},
+  ]},
+  {title:'Commercial / offer',fields:[
+    {k:'pricing_summary',l:'Pricing summary'},
+    {k:'current_offer',l:'Current offer (discount, bonus, bundle)',ta:true},
+    {k:'offer_urgency',l:'Urgency (deadline / scarcity hook, if any)'},
+    {k:'guarantee',l:'Guarantee (refund, trial, warranty)'},
+    {k:'primary_cta',l:'Primary CTA (e.g. "Start free trial")'},
+    {k:'secondary_cta',l:'Secondary CTA (e.g. "Book a demo")'},
+  ]},
+  {title:'Language guardrails',fields:[
+    {k:'do_say',l:'Always say / preferred phrasing',ta:true},
+    {k:'dont_say',l:'Never say / forbidden phrasing',ta:true},
+    {k:'taglines',l:'Approved taglines (1 per line)',ta:true},
+    {k:'keywords',l:'SEO / talking-point keywords',ta:true},
+  ]},
+];
+
 function fg(name,label,value,type,step){
   return '<div class="form-group"><label for="'+name+'">'+label+'</label>'
     +'<input type="'+(type||'text')+'" name="'+name+'" id="'+name+'" value="'+esc(value)+'"'
@@ -4782,6 +4872,23 @@ async function loadConfig(){
     else h+=fg('b_'+f.k,f.l,b[f.k]!=null?b[f.k]:'',f.t||'text');
   }
   h+='<div class="form-actions"><button type="submit" class="btn">Save Brand Constraints</button><span id="brand-msg" class="form-msg"></span></div>';
+  h+='</form></div></div>';
+
+  // === Product (editable) — drives FLOW_PRODUCT_* LLM + HeyGen prompts ===
+  const pr=d.profile?.product||{};
+  h+='<div id="tab-product" class="tab-panel">';
+  h+='<div class="card"><div class="card-h">Product briefing';
+  h+=' <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:8px">Feeds every FLOW_PRODUCT_* video: the LLM sees <code>product_profile</code> in its creation pack and HeyGen\\'s Video Agent receives a concise product briefing appended to its prompt.</span>';
+  h+='</div>';
+  h+='<form id="product-form" class="config-form">';
+  for(const g of PRODUCT_FIELD_GROUPS){
+    h+='<div class="card-h" style="margin-top:16px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:none;padding-left:0">'+g.title+'</div>';
+    for(const f of g.fields){
+      if(f.ta) h+=fgTa('p_'+f.k,f.l,pr[f.k]||'');
+      else h+=fg('p_'+f.k,f.l,pr[f.k]||'','text');
+    }
+  }
+  h+='<div class="form-actions"><button type="submit" class="btn">Save Product briefing</button><span id="product-msg" class="form-msg"></span></div>';
   h+='</form></div></div>';
 
   // === System Constraints (editable) ===
@@ -4952,6 +5059,16 @@ function bindForms(){
       else body[key]=f.value;
     }
     await postForm('/v1/admin/config/brand',body,'brand-msg');
+  });
+  document.getElementById('product-form')?.addEventListener('submit',async(e)=>{
+    e.preventDefault();
+    const body={_project:SLUG};
+    for(const f of document.getElementById('product-form').elements){
+      if(!f.name)continue;
+      const key=f.name.replace('p_','');
+      body[key]=f.value;
+    }
+    await postForm('/v1/admin/config/product',body,'product-msg');
   });
 }
 

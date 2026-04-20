@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import {
   getStrategyDefaults,
   getBrandConstraints,
+  getProductProfile,
   listPlatformConstraints,
   type PlatformConstraintsRow,
 } from "../repositories/project-config.js";
@@ -211,11 +212,12 @@ export async function buildCreationPack(
   platform: string | null,
   flowType?: string | null
 ): Promise<Record<string, unknown>> {
-  const [strategy, brand, platforms, signalPack] = await Promise.all([
+  const [strategy, brand, platforms, signalPack, product] = await Promise.all([
     getStrategyDefaults(db, projectId),
     getBrandConstraints(db, projectId),
     listPlatformConstraints(db, projectId),
     signalPackId ? getSignalPackById(db, signalPackId) : null,
+    getProductProfile(db, projectId),
   ]);
 
   const platform_constraints = resolvePlatformConstraintsForPack(platforms, platform, flowType);
@@ -240,6 +242,7 @@ export async function buildCreationPack(
   return {
     strategy: strategy ?? {},
     brand_constraints: brand ?? {},
+    product_profile: product ?? {},
     platform_constraints,
     /** Same text appended to system prompts in llm-generator; included here for templates using {{publication_output_contract}}. */
     publication_output_contract: PUBLICATION_SYSTEM_ADDENDUM,
