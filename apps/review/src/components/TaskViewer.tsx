@@ -8,7 +8,7 @@ import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
-import { isVideoFlow } from "@/lib/flow-kind";
+import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 
 function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
@@ -42,7 +42,10 @@ export function TaskViewer({
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
   const heyGenVideoMode = isHeyGenReviewFlow(flowType);
-  const isVideoFormat = isVideoFlow(flowType);
+  const isImageFormat = isImageFlow(flowType);
+  // Image flows are classified first — `isVideoFlow` would not match FLOW_IMG_* anyway, but this guard
+  // future-proofs any overlap between image-flow naming and video substring heuristics.
+  const isVideoFormat = !isImageFormat && isVideoFlow(flowType);
   const scriptFromRow = (
     getVal(data, "final_spoken_script_override") || getVal(data, "generated_spoken_script")
   ).trim();
@@ -94,7 +97,7 @@ export function TaskViewer({
     setVideoLoadFailed(false);
   }, [rowVideoUrl, mediaRows]);
 
-  const sliderSlides = isVideoFormat
+  const sliderSlides = isVideoFormat || isImageFormat
     ? []
     : editedSlides && editedSlides.length > 0
       ? editedSlides
@@ -237,10 +240,11 @@ export function TaskViewer({
     );
   }
 
-  // Skip the legacy carousel-JSON dump for video flows: HeyGen / video-script jobs sometimes carry a
-  // single placeholder cover slide in `generated_slides_json`, which would otherwise hide the real
-  // video URL behind an empty-looking carousel preview on the Publish page.
-  if (slides && slides.length > 0 && !isVideoFormat) {
+  // Skip the legacy carousel-JSON dump for video AND image flows: HeyGen / video-script jobs — and
+  // FLOW_IMG_* product ads — sometimes carry a single placeholder cover slide in
+  // `generated_slides_json`, which would otherwise hide the real media URL behind an empty-looking
+  // carousel preview on the Publish page.
+  if (slides && slides.length > 0 && !isVideoFormat && !isImageFormat) {
     return (
       <div>
         <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Carousel (generated_slides_json)</p>
@@ -259,11 +263,17 @@ export function TaskViewer({
 
   const reasons: string[] = [];
   if (!fullBleedVideoUrl && mediaRows.length === 0) {
-    reasons.push(isVideoFormat ? "no video URL on this job yet" : "no video or image URL from task or assets");
+    reasons.push(
+      isImageFormat
+        ? "no image URL on this job yet — FLOW_IMG_* generation is not wired yet"
+        : isVideoFormat
+          ? "no video URL on this job yet"
+          : "no video or image URL from task or assets"
+    );
   } else if (videoLoadFailed) {
     reasons.push("video URL did not load (signed URL may have expired or asset is missing)");
   }
-  if (!isVideoFormat && !slidesJson) reasons.push("no generated_slides_json");
+  if (!isVideoFormat && !isImageFormat && !slidesJson) reasons.push("no generated_slides_json");
 
   return (
     <div className="card">

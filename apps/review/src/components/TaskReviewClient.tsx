@@ -14,8 +14,9 @@ import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
 import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
 import { VideoReviewEdits } from "@/components/VideoReviewEdits";
+import { ImageReviewEdits } from "@/components/ImageReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
-import { isVideoFlow } from "@/lib/flow-kind";
+import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -76,6 +77,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [heygenForceRerender, setHeygenForceRerender] = useState(false);
   const [videoPromptAnalysis, setVideoPromptAnalysis] = useState("");
   const [skipVideoRegeneration, setSkipVideoRegeneration] = useState(false);
+  const [imagePromptAnalysis, setImagePromptAnalysis] = useState("");
+  const [skipImageRegeneration, setSkipImageRegeneration] = useState(false);
 
   useEffect(() => {
     setEditedSlides([]);
@@ -86,6 +89,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setHeygenForceRerender(false);
     setVideoPromptAnalysis("");
     setSkipVideoRegeneration(false);
+    setImagePromptAnalysis("");
+    setSkipImageRegeneration(false);
   }, [task_id]);
 
   useEffect(() => {
@@ -168,9 +173,15 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const heygenWorkbench = useMemo(() => isHeyGenReviewFlow(data?.flow_type), [data?.flow_type]);
   const flowTypeStr = (data?.flow_type ?? "").trim();
-  const videoFlow = useMemo(() => (flowTypeStr ? isVideoFlow(flowTypeStr) : false), [flowTypeStr]);
-  const videoPrompt = (data?.generated_video_prompt ?? "").trim();
+  const imageFlow = useMemo(() => (flowTypeStr ? isImageFlow(flowTypeStr) : false), [flowTypeStr]);
+  // Image flows are classified first so a FLOW_IMG_* never accidentally falls into the video branch.
+  const videoFlow = useMemo(
+    () => (flowTypeStr && !imageFlow ? isVideoFlow(flowTypeStr) : false),
+    [flowTypeStr, imageFlow]
+  );
+  const mediaPrompt = (data?.generated_video_prompt ?? "").trim();
   const videoPromptLabel = heygenWorkbench ? "HeyGen" : "Video";
+  const imagePromptLabel = "Image";
 
   const { hasEdits, editsSummary } = useMemo(() => {
     const summary: string[] = [];
@@ -184,7 +195,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     if (editedCaption !== initialCaption) summary.push("Caption");
     if (editedHashtags !== initialHashtags) summary.push("Hashtags");
     const hadParsedSlides = initialSlides.length > 0;
-    if (hadParsedSlides && !videoFlow) {
+    if (hadParsedSlides && !videoFlow && !imageFlow) {
       if (editedSlides.length !== initialSlides.length) {
         summary.push("Slides (count)");
       } else {
@@ -205,6 +216,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       if (heygenForceRerender) summary.push("Force HeyGen re-render");
     }
     if (videoFlow && skipVideoRegeneration) summary.push("Keep existing video (captions-only rework)");
+    if (imageFlow && skipImageRegeneration) summary.push("Keep existing image (captions-only rework)");
     return { hasEdits: summary.length > 0, editsSummary: summary };
   }, [
     data,
@@ -220,7 +232,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     heygenVoiceId,
     heygenForceRerender,
     videoFlow,
+    imageFlow,
     skipVideoRegeneration,
+    skipImageRegeneration,
   ]);
 
   useEffect(() => {
@@ -247,7 +261,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [hasEdits]);
 
   const finalSlidesJsonOverride =
-    !videoFlow && editedSlides.length > 0 && rawPayload !== undefined
+    !videoFlow && !imageFlow && editedSlides.length > 0 && rawPayload !== undefined
       ? JSON.stringify(buildSlidesJson(editedSlides, rawPayload))
       : undefined;
 
@@ -279,8 +293,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             <TaskViewer
               data={data}
               taskAssets={taskAssets}
-              editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
-              onSlidesChange={setEditedSlides}
+              editedSlides={!videoFlow && !imageFlow && editedSlides.length > 0 ? editedSlides : undefined}
+              onSlidesChange={!videoFlow && !imageFlow ? setEditedSlides : undefined}
               fallbackPreviewUrl={taskAssets[0]?.public_url}
               spokenScript={heygenWorkbench ? editedScript : undefined}
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
@@ -314,7 +328,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             )}
             {videoFlow ? (
               <VideoReviewEdits
-                videoPrompt={videoPrompt}
+                videoPrompt={mediaPrompt}
                 provider={videoPromptLabel}
                 promptAnalysis={videoPromptAnalysis}
                 onPromptAnalysisChange={setVideoPromptAnalysis}
@@ -326,6 +340,23 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onHookChange={setEditedHook}
                 skipVideoRegeneration={skipVideoRegeneration}
                 onSkipVideoRegenerationChange={setSkipVideoRegeneration}
+              />
+            ) : imageFlow ? (
+              <ImageReviewEdits
+                imagePrompt={mediaPrompt}
+                provider={imagePromptLabel}
+                promptAnalysis={imagePromptAnalysis}
+                onPromptAnalysisChange={setImagePromptAnalysis}
+                caption={editedCaption}
+                onCaptionChange={setEditedCaption}
+                hashtags={editedHashtags}
+                onHashtagsChange={setEditedHashtags}
+                hook={editedHook}
+                onHookChange={setEditedHook}
+                title={editedTitle}
+                onTitleChange={setEditedTitle}
+                skipImageRegeneration={skipImageRegeneration}
+                onSkipImageRegenerationChange={setSkipImageRegeneration}
               />
             ) : (
               <CarouselEdits
@@ -367,11 +398,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               heygenForceRerender={heygenWorkbench ? heygenForceRerender : undefined}
               hasEdits={hasEdits}
               editsSummary={editsSummary}
-              notesAddendum={videoFlow ? videoPromptAnalysis : undefined}
-              notesAddendumLabel={videoFlow ? `${videoPromptLabel} prompt analysis` : undefined}
+              notesAddendum={imageFlow ? imagePromptAnalysis : videoFlow ? videoPromptAnalysis : undefined}
+              notesAddendumLabel={
+                imageFlow
+                  ? `${imagePromptLabel} prompt analysis`
+                  : videoFlow
+                  ? `${videoPromptLabel} prompt analysis`
+                  : undefined
+              }
               skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
+              skipImageRegeneration={imageFlow ? skipImageRegeneration : undefined}
             />
-            {!videoFlow && (
+            {!videoFlow && !imageFlow && (
               <CarouselEditsExport
                 taskId={execTaskId}
                 runId={runId || undefined}

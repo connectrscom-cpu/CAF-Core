@@ -473,6 +473,7 @@ export async function submitDecision(
     heygen_force_rerender?: boolean;
     rewrite_copy?: boolean;
     skip_video_regeneration?: boolean;
+    skip_image_regeneration?: boolean;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -504,6 +505,9 @@ export async function submitDecision(
         ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
         ...(body.skip_video_regeneration !== undefined && {
           skip_video_regeneration: body.skip_video_regeneration,
+        }),
+        ...(body.skip_image_regeneration !== undefined && {
+          skip_image_regeneration: body.skip_image_regeneration,
         }),
       }),
     });

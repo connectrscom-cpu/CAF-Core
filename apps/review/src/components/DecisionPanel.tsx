@@ -49,6 +49,12 @@ export interface DecisionPanelProps {
    * orchestrator picks the PARTIAL_NO_VIDEO path (no HeyGen / Sora re-render billed).
    */
   skipVideoRegeneration?: boolean;
+  /**
+   * Image flows only: reviewer asked to keep the existing rendered image and only re-run the
+   * caption / hashtag LLM step on rework. Sent as `skip_image_regeneration: true` so the rework
+   * orchestrator skips the image-gen call (credit-safe captions-only pass).
+   */
+  skipImageRegeneration?: boolean;
 }
 
 export function DecisionPanel({
@@ -73,6 +79,7 @@ export function DecisionPanel({
   notesAddendum,
   notesAddendumLabel = "Prompt analysis",
   skipVideoRegeneration,
+  skipImageRegeneration,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
@@ -130,6 +137,9 @@ export function DecisionPanel({
           ...(effectiveDecision === "NEEDS_EDIT" && skipVideoRegeneration === true
             ? { skip_video_regeneration: true }
             : {}),
+          ...(effectiveDecision === "NEEDS_EDIT" && skipImageRegeneration === true
+            ? { skip_image_regeneration: true }
+            : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -167,6 +177,7 @@ export function DecisionPanel({
     notesAddendum,
     notesAddendumLabel,
     skipVideoRegeneration,
+    skipImageRegeneration,
   ]);
 
   const toggleTag = (tag: string) => {

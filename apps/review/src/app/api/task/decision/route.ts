@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
       heygen_force_rerender?: boolean;
       rewrite_copy?: boolean;
       skip_video_regeneration?: boolean;
+      skip_image_regeneration?: boolean;
     };
     const rawTid = (body.task_id ?? "").trim();
     if (!rawTid) return NextResponse.json({ error: "task_id required in body" }, { status: 400 });
@@ -58,6 +59,9 @@ export async function POST(request: NextRequest) {
       ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
       ...(body.skip_video_regeneration !== undefined && {
         skip_video_regeneration: body.skip_video_regeneration,
+      }),
+      ...(body.skip_image_regeneration !== undefined && {
+        skip_image_regeneration: body.skip_image_regeneration,
       }),
     });
     if (!result.ok) {

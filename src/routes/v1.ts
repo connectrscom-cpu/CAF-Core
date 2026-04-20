@@ -71,6 +71,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
      * HeyGen / Sora submission is billed.
      */
     skip_video_regeneration: z.boolean().optional(),
+    /**
+     * Image flows only: keep the existing rendered image + assets, and run ONLY the caption /
+     * hashtag LLM regeneration on rework. Mirrors `skip_video_regeneration` for FLOW_IMG_* jobs so
+     * no image-gen tool submission is billed when only the copy needs rework.
+     */
+    skip_image_regeneration: z.boolean().optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -90,6 +96,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("heygen_force_rerender", "heygen_force_rerender");
     put("rewrite_copy", "rewrite_copy");
     put("skip_video_regeneration", "skip_video_regeneration");
+    put("skip_image_regeneration", "skip_image_regeneration");
     return out;
   }
 

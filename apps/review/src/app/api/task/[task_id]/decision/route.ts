@@ -26,6 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       heygen_force_rerender?: boolean;
       rewrite_copy?: boolean;
       skip_video_regeneration?: boolean;
+      skip_image_regeneration?: boolean;
     };
     const decision = (body.decision ?? "").trim().toUpperCase();
     if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
@@ -56,6 +57,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
       ...(body.skip_video_regeneration !== undefined && {
         skip_video_regeneration: body.skip_video_regeneration,
+      }),
+      ...(body.skip_image_regeneration !== undefined && {
+        skip_image_regeneration: body.skip_image_regeneration,
       }),
     });
     if (!result.ok) {
