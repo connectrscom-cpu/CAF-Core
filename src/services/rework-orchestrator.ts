@@ -226,10 +226,15 @@ export async function executeRework(
     });
     gp.generated_output = mergedOutput;
     gp.generation_reason = "REWORK_OVERRIDE_ONLY";
+    /**
+     * Keep `NEEDS_EDIT` until override + optional HeyGen finish. If we promoted to `IN_REVIEW` before HeyGen and
+     * HeyGen failed, we returned early without `insertReworkSupersedingReview` — leaving `IN_REVIEW` + latest
+     * `NEEDS_EDIT` (queue tabs disagree).
+     */
     await db.query(
       `UPDATE caf_core.content_jobs SET
         generation_payload = generation_payload || $1::jsonb,
-        status = 'IN_REVIEW',
+        status = 'NEEDS_EDIT',
         updated_at = now()
        WHERE id = $2`,
       [
@@ -263,6 +268,9 @@ export async function executeRework(
         return { ok: false, mode, error: `HeyGen re-render after override failed: ${msg}`, task_id: job.task_id };
       }
     }
+    await db.query(`UPDATE caf_core.content_jobs SET status = 'IN_REVIEW', updated_at = now() WHERE id = $1`, [
+      job.id,
+    ]);
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: projectId,
