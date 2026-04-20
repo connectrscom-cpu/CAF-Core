@@ -15,6 +15,13 @@ import {
   processContentJobById,
   RenderNotReadyError,
 } from "./job-pipeline.js";
+import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+import {
+  reviewRequestsCarouselTemplateChange,
+  setCarouselTemplateExcludeForNextRender,
+  stripExplicitCarouselTemplateSelection,
+} from "./carousel-render-pack.js";
 import {
   applyEditorialFlatOverridesToGeneratedOutput,
   hasEditorialCopyFlatOverrides,
@@ -184,10 +191,19 @@ export async function executeRework(
   if (mode === "OVERRIDE_ONLY" && !hasMeaningfulOverrides(rev.overrides_json)) {
     mode = "PARTIAL_REWRITE";
   }
+  /** Editorial “change template” requires a full carousel regen; override-only cannot swap `.hbs`. */
+  if (
+    mode === "OVERRIDE_ONLY" &&
+    job.flow_type &&
+    isCarouselFlow(job.flow_type) &&
+    reviewRequestsCarouselTemplateChange(rev)
+  ) {
+    mode = "PARTIAL_REWRITE";
+  }
 
   if (mode === "OVERRIDE_ONLY") {
     const gp: Record<string, unknown> = { ...(job.generation_payload ?? {}) };
-    const gen = (gp.generated_output as Record<string, unknown>) ?? {};
+    const gen = pickGeneratedOutputOrEmpty(gp);
     const overrides = rev.overrides_json ?? {};
     mergeHeyGenRequestIntoGenerationPayload(gp, overrides);
     const { structural, flat } = partitionEditorialOverrides(overrides);
@@ -257,6 +273,20 @@ export async function executeRework(
     });
     await insertReworkSupersedingReview(db, projectId, job, mode);
     return { ok: true, mode, task_id: job.task_id };
+  }
+
+  if (
+    job.flow_type &&
+    isCarouselFlow(job.flow_type) &&
+    reviewRequestsCarouselTemplateChange(rev)
+  ) {
+    const gpStrip: Record<string, unknown> = { ...(job.generation_payload ?? {}) };
+    const prev = stripExplicitCarouselTemplateSelection(gpStrip);
+    setCarouselTemplateExcludeForNextRender(gpStrip, prev);
+    await db.query(
+      `UPDATE caf_core.content_jobs SET generation_payload = $1::jsonb, updated_at = now() WHERE id = $2`,
+      [JSON.stringify(gpStrip), job.id]
+    );
   }
 
   const prep = mode === "PARTIAL_NO_VIDEO"

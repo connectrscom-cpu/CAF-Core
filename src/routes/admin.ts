@@ -28,6 +28,7 @@ import {
   listQcChecks, upsertQcCheck, deleteQcChecklist,
   listRiskPolicies, upsertRiskPolicy, deleteRiskPolicy,
 } from "../repositories/flow-engine.js";
+import { riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 import { q, qOne } from "../db/queries.js";
 import {
   getJobStats,
@@ -1333,14 +1334,14 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       claim_restrictions: str("claim_restrictions"), rejection_reason_tag: str("rejection_reason_tag"),
       rollback_flag: bool("rollback_flag"), notes: str("notes"),
     });
-    return { ok: true };
+    return { ok: true, risk_qc: riskRulesNotEnforcedNotice() };
   });
 
   app.post("/v1/admin/config/risk-rule/delete", async (request) => {
     const b = request.body as Record<string, unknown>;
     if (!b.id) return { ok: false, error: "id is required" };
     await deleteRiskRule(db, String(b.id));
-    return { ok: true };
+    return { ok: true, risk_qc: riskRulesNotEnforcedNotice() };
   });
 
   // --- Allowed Flow Types CRUD ---
@@ -1611,6 +1612,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       default_action: str("default_action"), requires_manual_review: bool("requires_manual_review"),
       block_publish: bool("block_publish"), disclaimer_template_name: str("disclaimer_template_name"),
       notes: str("notes"), active: b.active !== false && b.active !== "false",
+      applies_to_flow_type: str("applies_to_flow_type"),
     });
     return { ok: true };
   });

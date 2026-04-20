@@ -12,6 +12,7 @@ import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-type
 import { extractVideoPromptText } from "./video-gen-fields.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { withVideoPromptDurationPolicy } from "./video-content-policy.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
@@ -30,6 +31,7 @@ export const VIDEO_CAPTION_SYSTEM_ADDENDUM = `Video caption contract (TikTok / I
   * summarises the value or payoff in plain language (1–2 short sentences max),
   * ends with a clear imperative CTA (Follow / Save / Comment / Tag) that pairs with the account **@handle** when it is present in context.
 - Hashtags are REQUIRED for video flows. Emit a non-empty \`hashtags\` field (array preferred) sourced from signal_pack_publication_hints (themes, keywords, hashtag_seeds) — never return zero hashtags.
+- Aim for **at least 3–5** substantive hashtags when \`max_hashtags\` allows (discovery dies on one or two ultra-generic tags).
 - Mix one or two broad-reach tags with several niche / topical tags pulled from the signal pack. Prefer specific, research-backed tags over generic filler (avoid #love, #fyp-only, #viral-only when the pack gives better options).
 - Respect platform_constraints.max_hashtags when present; otherwise cap at ~8.
 - Do NOT fabricate handles, URLs, or hashtags not implied by the candidate or signal pack context.`;
@@ -68,7 +70,7 @@ export async function ensureVideoPromptInPayload(
   }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
   if (!job) return { ok: false, error: "job not found" };
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const resolved = extractVideoPromptText(gen, 10);
   if (resolved.length > 0) {
     let outGen = gen;

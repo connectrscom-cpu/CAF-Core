@@ -7,7 +7,7 @@ import {
   getStrategyDefaults, upsertStrategyDefaults,
   getBrandConstraints, upsertBrandConstraints,
   listPlatformConstraints, upsertPlatformConstraints,
-  listRiskRules, upsertRiskRule, deleteRiskRules,
+  listRiskRules, countRiskRules, upsertRiskRule, deleteRiskRules,
   listAllowedFlowTypes, upsertAllowedFlowType,
   listReferencePosts, upsertReferencePost,
   listViralFormats, insertViralFormat,
@@ -32,6 +32,7 @@ import {
   PROJECT_IMPORT_CSV_TEMPLATE,
 } from "../services/project-csv-import.js";
 import { exportProjectAsCsv } from "../services/project-csv-export.js";
+import { buildRiskQcStatus, riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 
 export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Pool }) {
   const { db } = deps;
@@ -539,7 +540,7 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
     const rows = await listRiskRules(db, project.id);
-    return { ok: true, risk_rules: rows };
+    return { ok: true, risk_rules: rows, risk_qc: riskRulesNotEnforcedNotice() };
   });
 
   const riskRuleSchema = z.object({
@@ -574,7 +575,7 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       rollback_flag: body.data.rollback_flag,
       notes: body.data.notes ?? null,
     });
-    return { ok: true, risk_rule: row };
+    return { ok: true, risk_rule: row, risk_qc: riskRulesNotEnforcedNotice() };
   });
 
   app.delete("/v1/projects/:project_slug/risk-rules", async (request, reply) => {
@@ -582,7 +583,19 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
     await deleteRiskRules(db, project.id);
-    return { ok: true };
+    return { ok: true, risk_qc: riskRulesNotEnforcedNotice() };
+  });
+
+  // ── Risk/QC honesty status ──────────────────────────────────────────
+  // Surfaces the fact that `risk_rules` are project-level policy
+  // documentation only and are NOT applied by the QC runtime. See
+  // `docs/RISK_RULES.md` and `src/services/risk-qc-status.ts`.
+  app.get("/v1/projects/:project_slug/risk-qc-status", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const count = await countRiskRules(db, project.id);
+    return { ok: true, project_slug: project.slug, ...buildRiskQcStatus(count) };
   });
 
   // ── Allowed Flow Types ───────────────────────────────────────────────

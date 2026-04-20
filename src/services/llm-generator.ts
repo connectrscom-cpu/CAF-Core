@@ -28,6 +28,7 @@ import {
 } from "./video-content-policy.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import {
   creationContextHasUnreplacedPlaceholders,
@@ -48,7 +49,7 @@ import {
   maxHashtagsFromPlatformConstraints,
   maxSlidesFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
-import { compileLearningContexts } from "./learning-context-compiler.js";
+import { getLearningContextForGeneration } from "./learning-rule-selection.js";
 import { buildLlmApprovalAntiRepetitionBlock } from "./llm-approval-anti-repetition-context.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
 
@@ -105,8 +106,27 @@ export async function generateForJob(
   jobId: string,
   apiKey: string,
   model: string = "gpt-4o",
-  options?: { skipOutputSchemaValidation?: boolean }
+  options?: {
+    /**
+     * Legacy binary opt-out for output-schema validation. Preserved for
+     * backward compatibility with existing callers. Prefer
+     * `schemaValidationMode` for new code.
+     */
+    skipOutputSchemaValidation?: boolean;
+    /**
+     * Tri-state rollout control:
+     *   - `skip`    — do not run validation (same as the legacy `true`)
+     *   - `warn`    — run validation, record warnings on the payload, continue
+     *   - `enforce` — run validation and fail on invalid output
+     *
+     * When both are provided, `schemaValidationMode` wins.
+     */
+    schemaValidationMode?: "skip" | "warn" | "enforce";
+  }
 ): Promise<GenerationResult> {
+  const schemaMode: "skip" | "warn" | "enforce" =
+    options?.schemaValidationMode ??
+    (options?.skipOutputSchemaValidation ? "skip" : "enforce");
   let job = await qOne<{
     id: string; task_id: string; project_id: string; run_id: string;
     candidate_id: string | null; flow_type: string; platform: string | null;
@@ -263,7 +283,7 @@ export async function generateForJob(
     reworkMode === "PARTIAL_REWRITE" ||
     (typeof payload.rework_parent_task_id === "string" && payload.rework_parent_task_id.trim() !== "");
 
-  const compiledLearningRaw = await compileLearningContexts(db, job.project_id, job.flow_type, job.platform, {
+  const compiledLearningRaw = await getLearningContextForGeneration(db, job.project_id, job.flow_type, job.platform, {
     include_pending_generation_guidance: isEditorialRework,
   });
   const compiledLearning = {
@@ -291,7 +311,7 @@ export async function generateForJob(
     learning_guidance: compiledLearning.merged_guidance,
   };
   if (isVideoFlow(job.flow_type)) {
-    const genOut = (payload.generated_output as Record<string, unknown>) ?? {};
+    const genOut = pickGeneratedOutputOrEmpty(payload);
     const includeVs = wantSceneBundle || extractSpokenScriptText(genOut, 1).length > 0;
     templateContext.script_input = buildVideoScriptInputJsonString(candidateData, genOut, {
       includeVideoScript: includeVs,
@@ -509,20 +529,29 @@ export async function generateForJob(
     }
 
     let parsed = normalizeLlmParsedForSchemaValidation(job.flow_type, parsedRaw);
-    if (!options?.skipOutputSchemaValidation) {
+    let schemaValidationWarnings: string[] | undefined;
+    if (schemaMode !== "skip") {
       const validation = validateAgainstOutputSchema(parsed, outputSchemaRow);
       if (!validation.valid) {
-        return {
-          draft_id: draftId,
-          task_id: job.task_id,
-          raw_output: llmResult.content,
-          parsed_output: parsed,
-          model_used: llmResult.model,
-          prompt_name: promptTemplate.prompt_name,
-          tokens_used: llmResult.total_tokens,
-          success: false,
-          error: `Output schema validation failed: ${validation.errors.join("; ")}`,
-        };
+        if (schemaMode === "enforce") {
+          return {
+            draft_id: draftId,
+            task_id: job.task_id,
+            raw_output: llmResult.content,
+            parsed_output: parsed,
+            model_used: llmResult.model,
+            prompt_name: promptTemplate.prompt_name,
+            tokens_used: llmResult.total_tokens,
+            success: false,
+            error: `Output schema validation failed: ${validation.errors.join("; ")}`,
+          };
+        }
+        schemaValidationWarnings = validation.errors;
+        process.stderr.write(
+          `[llm-generator] schema_validation_warn job=${job.id} flow=${job.flow_type} errors=${JSON.stringify(
+            validation.errors.slice(0, 10)
+          )}\n`
+        );
       }
     }
 
@@ -538,7 +567,7 @@ export async function generateForJob(
         `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
         [job.id]
       );
-      const prior = (fresh?.generation_payload?.generated_output as Record<string, unknown>) ?? {};
+      const prior = pickGeneratedOutputOrEmpty(fresh?.generation_payload);
       outputForJob = mergeSceneBundleParsedIntoGeneratedOutput(prior, parsed);
       outputForJob = enrichGeneratedOutputForReview(job.flow_type, outputForJob, { maxHashtags: maxHt, maxSlides });
     }
@@ -609,13 +638,20 @@ export async function generateForJob(
     if (parsed) {
       const storedOutput = wantSceneBundle ? outputForJob : parsed;
       parsedOutputForResponse = storedOutput;
+      const merge: Record<string, unknown> = {
+        generated_output: storedOutput,
+        draft_id: draftId,
+      };
+      if (schemaValidationWarnings && schemaValidationWarnings.length > 0) {
+        merge.schema_validation_warnings = schemaValidationWarnings;
+      }
       await db.query(
         `
         UPDATE caf_core.content_jobs
         SET generation_payload = generation_payload || $1::jsonb, updated_at = now()
         WHERE id = $2
       `,
-        [JSON.stringify({ generated_output: storedOutput, draft_id: draftId }), job.id]
+        [JSON.stringify(merge), job.id]
       );
     }
 

@@ -8,8 +8,10 @@ import {
   explicitCarouselTemplateBaseName,
   formatInstagramHandleForCta,
   pickCarouselTemplateForRender,
+  reviewRequestsCarouselTemplateChange,
   slidesFromGeneratedOutput,
   slideHasRenderableContent,
+  stripExplicitCarouselTemplateSelection,
   stripNonRenderableDeckFields,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
@@ -323,6 +325,29 @@ describe("carousel template shape (body_slides)", () => {
   });
 });
 
+describe("reviewRequestsCarouselTemplateChange / stripExplicitCarouselTemplateSelection", () => {
+  it("detects tag and notes", () => {
+    expect(reviewRequestsCarouselTemplateChange({ rejection_tags: ["carousel_template_change"], notes: null })).toBe(
+      true
+    );
+    expect(reviewRequestsCarouselTemplateChange({ rejection_tags: [], notes: "Please change template for IG" })).toBe(
+      true
+    );
+    expect(reviewRequestsCarouselTemplateChange({ rejection_tags: ["typo"], notes: "" })).toBe(false);
+  });
+
+  it("strips explicit template keys from payload", () => {
+    const gp: Record<string, unknown> = {
+      template: "sns5_midnight_constellation",
+      render: { html_template_name: "sns5_midnight_constellation.hbs", template_key: "x" },
+    };
+    const prev = stripExplicitCarouselTemplateSelection(gp);
+    expect(prev).toBe("sns5_midnight_constellation");
+    expect(gp.template).toBeUndefined();
+    expect(gp.render).toBeUndefined();
+  });
+});
+
 describe("explicitCarouselTemplateBaseName", () => {
   it("treats default as implicit", () => {
     expect(explicitCarouselTemplateBaseName({ template: "default" })).toBeNull();
@@ -362,6 +387,20 @@ describe("pickCarouselTemplateForRender", () => {
     );
     const p = await pickCarouselTemplateForRender("http://renderer:3333", {});
     expect(["default", "alt"]).toContain(p);
+  });
+
+  it("excludes previous template name when carousel_template_exclude_for_next_render is set", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ templates: ["a.hbs", "b.hbs"] }),
+      })
+    );
+    const p = await pickCarouselTemplateForRender("http://renderer:3333", {
+      carousel_template_exclude_for_next_render: "a",
+    });
+    expect(p).toBe("b");
   });
 });
 
@@ -408,10 +447,18 @@ describe("renderer templates guardrails", () => {
     expect(src).toContain("transform: none !important");
   });
 
-  it("carousel_blue_handwriting_paper left-aligns cover and CTA stacks", () => {
+  it("carousel_blue_handwriting_paper left-aligns cover, body slides, and joins emoji orphans", () => {
     const src = readTemplateSource("carousel_blue_handwriting_paper");
     expect(src).toContain(".wrap.wrap--tight{");
+    expect(src).toContain(".wrap.wrap--body");
+    expect(src).toContain("joinEmojiOrphans");
     expect(src).toContain("text-align: left;");
+  });
+
+  it("sns5_midnight_constellation left-aligns body slides", () => {
+    const src = readTemplateSource("sns5_midnight_constellation");
+    expect(src).toContain("sns5--body");
+    expect(src).toContain("joinEmojiOrphans");
   });
 
   it("carousel_kristy_gold_editorial bumps cover and CTA headline sizes", () => {

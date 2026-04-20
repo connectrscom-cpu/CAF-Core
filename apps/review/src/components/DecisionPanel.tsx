@@ -8,6 +8,8 @@ const REVIEW_ISSUE_TAGS = [
   "too_controversial", "unsafe_claim", "bad_structure", "weak_narrative",
   "audience_mismatch", "format_mismatch", "hook_strategy_wrong",
   "content_direction_wrong", "typo", "cta_weak", "visual_tweak_needed",
+  /** Carousel: next full rework picks a different `.hbs` (not the same layout). */
+  "carousel_template_change",
   "script_line_needs_edit", "camera_notes_needed", "audio_voiceover_issue",
   "subtitles_issue", "b_roll_weak", "pacing_off", "scene_order_issue",
   "render_settings_change",

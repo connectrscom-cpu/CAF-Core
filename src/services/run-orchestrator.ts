@@ -18,11 +18,17 @@ import { getSignalPackById } from "../repositories/signal-packs.js";
 import {
   getRunById,
   resetRunForReplan,
+  setRunContextSnapshot,
   setRunPromptVersionsSnapshot,
   updateRunStatus,
   type RunRow,
 } from "../repositories/runs.js";
-import { ensureDefaultAllowedFlowsIfNone, listAllowedFlowTypes } from "../repositories/project-config.js";
+import {
+  ensureDefaultAllowedFlowsIfNone,
+  getBrandConstraints,
+  getStrategyDefaults,
+  listAllowedFlowTypes,
+} from "../repositories/project-config.js";
 import { deleteAllJobsForRun, upsertContentJob } from "../repositories/jobs.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import type { CandidateInput } from "../decision_engine/types.js";
@@ -30,6 +36,14 @@ import { qOne } from "../db/queries.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { expandOverallCandidatesWithSceneAssemblyRouter } from "./scene-assembly-candidate-router.js";
 import { buildSnapshotFromPlannedJobs } from "./run-prompt-versions-snapshot.js";
+import { getLearningContextForGeneration } from "./learning-rule-selection.js";
+import {
+  buildRunContextSnapshot,
+  pickBrandSliceForSnapshot,
+  pickStrategySliceForSnapshot,
+  type LearningSliceInput,
+} from "./run-context-snapshot.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 
 export interface StartRunResult {
@@ -132,11 +146,80 @@ export async function startRun(
 
     await updateRunStatus(db, runUuid, "PLANNED", { total_jobs: plan.selected.length });
 
-    await setRunPromptVersionsSnapshot(
-      db,
-      runUuid,
-      buildSnapshotFromPlannedJobs(plan.selected, plan.trace_id, config.DECISION_ENGINE_VERSION)
+    const promptVersionsSnapshot = buildSnapshotFromPlannedJobs(
+      plan.selected,
+      plan.trace_id,
+      config.DECISION_ENGINE_VERSION
     );
+    await setRunPromptVersionsSnapshot(db, runUuid, promptVersionsSnapshot);
+
+    // Freeze the generation context that shaped this run. Writing a snapshot
+    // failure MUST NOT fail the run — the snapshot is forensic, not transactional.
+    try {
+      const brand = await getBrandConstraints(db, run.project_id);
+      const strategy = await getStrategyDefaults(db, run.project_id);
+      const learningSlices: LearningSliceInput[] = [];
+      const seen = new Set<string>();
+      for (const j of plan.selected) {
+        const key = `${j.flow_type ?? ""}|${j.platform ?? ""}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        try {
+          const compiled = await getLearningContextForGeneration(
+            db,
+            run.project_id,
+            j.flow_type ?? null,
+            j.platform ?? null
+          );
+          learningSlices.push({
+            flow_type: j.flow_type ?? null,
+            platform: j.platform ?? null,
+            compiled,
+          });
+        } catch {
+          // single-slice failure must not skip the whole snapshot.
+        }
+      }
+      const snapshot = buildRunContextSnapshot({
+        run_id: run.run_id,
+        project_slug: projectRow.slug,
+        engine_version: config.DECISION_ENGINE_VERSION,
+        trace_id: plan.trace_id,
+        prompt_versions: promptVersionsSnapshot,
+        project_config: {
+          enabled_flow_types: enabledFlows.map((f) => f.flow_type),
+          strategy_slice: pickStrategySliceForSnapshot(
+            (strategy as Record<string, unknown> | null) ?? null
+          ),
+          brand_slice: pickBrandSliceForSnapshot(
+            (brand as Record<string, unknown> | null) ?? null
+          ),
+        },
+        learning: learningSlices,
+      });
+      await setRunContextSnapshot(db, runUuid, snapshot as unknown as Record<string, unknown>);
+      logPipelineEvent("info", "plan", "run_context_snapshot_written", {
+        run_id: run.run_id,
+        project_id: run.project_id,
+        project_slug: projectRow.slug,
+        data: {
+          flow_type_lanes: learningSlices.length,
+          enabled_flows: enabledFlows.length,
+        },
+      });
+    } catch (err) {
+      logPipelineEvent(
+        "warn",
+        "plan",
+        "run_context_snapshot_failed",
+        {
+          run_id: run.run_id,
+          project_id: run.project_id,
+          project_slug: projectRow.slug,
+          data: { error: err instanceof Error ? err.message : String(err) },
+        }
+      );
+    }
 
     const createdJobIds: string[] = [];
     for (const job of plan.selected) {

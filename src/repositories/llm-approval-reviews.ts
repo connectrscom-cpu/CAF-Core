@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
+import type { UpstreamRecommendation } from "../domain/upstream-recommendations.js";
 
 export async function insertLlmApprovalReview(
   db: Pool,
@@ -23,16 +24,23 @@ export async function insertLlmApprovalReview(
     text_bundle_chars: number;
     minted_pending_rule: boolean;
     minted_pending_positive_rule?: boolean;
+    /**
+     * Structured "what to change upstream" suggestions emitted by the LLM.
+     * Empty array is the canonical "no recommendations" value (not null).
+     * See `src/domain/upstream-recommendations.ts`.
+     */
+    upstream_recommendations?: UpstreamRecommendation[];
   }
 ): Promise<void> {
   const mintedPos = row.minted_pending_positive_rule ?? false;
+  const upstream = row.upstream_recommendations ?? [];
   await db.query(
     `INSERT INTO caf_core.llm_approval_reviews (
        review_id, project_id, task_id, run_id, flow_type, platform, model,
        overall_score, scores_json, strengths, weaknesses, improvement_bullets,
        risk_flags, summary, raw_assistant_text, vision_image_urls, text_bundle_chars,
-       minted_pending_rule, minted_pending_positive_rule
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19)
+       minted_pending_rule, minted_pending_positive_rule, upstream_recommendations
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb)
      ON CONFLICT (project_id, review_id) DO UPDATE SET
        model = EXCLUDED.model,
        overall_score = EXCLUDED.overall_score,
@@ -46,7 +54,8 @@ export async function insertLlmApprovalReview(
        vision_image_urls = EXCLUDED.vision_image_urls,
        text_bundle_chars = EXCLUDED.text_bundle_chars,
        minted_pending_rule = EXCLUDED.minted_pending_rule,
-       minted_pending_positive_rule = EXCLUDED.minted_pending_positive_rule`,
+       minted_pending_positive_rule = EXCLUDED.minted_pending_positive_rule,
+       upstream_recommendations = EXCLUDED.upstream_recommendations`,
     [
       row.review_id,
       row.project_id,
@@ -67,6 +76,7 @@ export async function insertLlmApprovalReview(
       row.text_bundle_chars,
       row.minted_pending_rule,
       mintedPos,
+      JSON.stringify(upstream),
     ]
   );
 }

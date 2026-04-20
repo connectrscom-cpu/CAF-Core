@@ -36,7 +36,7 @@ The routing logic is (conceptually):
 - pre-step: `ensureHeygenPayloadForFlowType(...)` (adds missing script/prompt fields to `generated_output`)
 - render: `runHeygenForContentJob(...)` in `src/services/heygen-renderer.ts`
 
-3) Else fallback to **remote video-assembly** `/full-pipeline` (legacy integration)
+3) Else fallback to **remote video-assembly** `/full-pipeline`
 
 Key files:
 - `src/services/job-pipeline.ts` (routing + orchestration)
@@ -211,7 +211,7 @@ Rows can be scoped by optional fields:
 
 `mergeHeygenConfigForJob(...)` in `src/services/heygen-renderer.ts` merges all matching rows, with wildcards allowed.
 
-Compatibility note: “Sheets style” render modes `PROMPT`/`SCRIPT` are treated as compatible with job render modes `HEYGEN_AVATAR` / `HEYGEN_NO_AVATAR` depending on the flow type.
+Compatibility note: alternate render-mode spellings `PROMPT` / `SCRIPT` (from admin or imported config rows) are treated as compatible with job render modes `HEYGEN_AVATAR` / `HEYGEN_NO_AVATAR` depending on the flow type.
 
 ### Avatar selection
 

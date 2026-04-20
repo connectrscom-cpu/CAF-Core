@@ -239,6 +239,20 @@ export async function listRiskRules(db: Pool, projectId: string): Promise<RiskRu
     `SELECT * FROM caf_core.risk_rules WHERE project_id = $1 ORDER BY flow_type`, [projectId]);
 }
 
+/**
+ * Count of configured `risk_rules` for a project.
+ *
+ * NOTE: `risk_rules` are project-level policy documentation today — they are
+ * NOT applied by the QC runtime (`src/services/qc-runtime.ts`). See
+ * `docs/RISK_RULES.md` and the `/v1/projects/:slug/risk-qc-status` endpoint
+ * which surfaces this asymmetry to operators.
+ */
+export async function countRiskRules(db: Pool, projectId: string): Promise<number> {
+  const row = await qOne<{ count: string }>(db,
+    `SELECT COUNT(*)::text AS count FROM caf_core.risk_rules WHERE project_id = $1`, [projectId]);
+  return row ? Number(row.count) : 0;
+}
+
 export async function upsertRiskRule(db: Pool, projectId: string, data: Omit<RiskRuleRow, "id" | "project_id">): Promise<RiskRuleRow> {
   const row = await qOne<RiskRuleRow>(db, `
     INSERT INTO caf_core.risk_rules (

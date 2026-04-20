@@ -299,6 +299,12 @@ export interface RiskPolicyRow {
   disclaimer_template_name: string | null;
   notes: string | null;
   active: boolean;
+  /**
+   * Optional flow scope. `NULL` = global (applies to every job). When set, the
+   * policy only runs for jobs whose `flow_type` matches. See migration
+   * `024_risk_policies_scope.sql`.
+   */
+  applies_to_flow_type: string | null;
 }
 
 export async function listRiskPolicies(db: Pool): Promise<RiskPolicyRow[]> {
@@ -306,24 +312,44 @@ export async function listRiskPolicies(db: Pool): Promise<RiskPolicyRow[]> {
     `SELECT * FROM caf_core.risk_policies ORDER BY risk_policy_name`);
 }
 
-export async function upsertRiskPolicy(db: Pool, data: Omit<RiskPolicyRow, "id">): Promise<RiskPolicyRow> {
+/**
+ * Return the policies that should run for a given `flow_type`: the global ones
+ * (`applies_to_flow_type IS NULL`) plus any explicitly scoped to that flow.
+ *
+ * NULL scope is treated as "applies to everything" so pre-migration rows keep
+ * their current behavior without any data change.
+ */
+export async function listRiskPoliciesForJob(db: Pool, flowType: string): Promise<RiskPolicyRow[]> {
+  return q<RiskPolicyRow>(db,
+    `SELECT * FROM caf_core.risk_policies
+     WHERE applies_to_flow_type IS NULL OR applies_to_flow_type = $1
+     ORDER BY risk_policy_name`,
+    [flowType]);
+}
+
+export type RiskPolicyUpsert =
+  Omit<RiskPolicyRow, "id" | "applies_to_flow_type">
+  & { applies_to_flow_type?: string | null };
+
+export async function upsertRiskPolicy(db: Pool, data: RiskPolicyUpsert): Promise<RiskPolicyRow> {
   const row = await qOne<RiskPolicyRow>(db, `
     INSERT INTO caf_core.risk_policies (
       risk_policy_name, risk_policy_version, risk_category, detection_method, detection_terms,
       severity_level, default_action, requires_manual_review,
-      block_publish, disclaimer_template_name, notes
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      block_publish, disclaimer_template_name, notes, applies_to_flow_type
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
     ON CONFLICT (risk_policy_name, risk_policy_version) DO UPDATE SET
       risk_category = EXCLUDED.risk_category, detection_method = EXCLUDED.detection_method,
       detection_terms = EXCLUDED.detection_terms, severity_level = EXCLUDED.severity_level,
       default_action = EXCLUDED.default_action, requires_manual_review = EXCLUDED.requires_manual_review,
       block_publish = EXCLUDED.block_publish,
-      disclaimer_template_name = EXCLUDED.disclaimer_template_name, notes = EXCLUDED.notes
+      disclaimer_template_name = EXCLUDED.disclaimer_template_name, notes = EXCLUDED.notes,
+      applies_to_flow_type = EXCLUDED.applies_to_flow_type
     RETURNING *`, [
     data.risk_policy_name, data.risk_policy_version, data.risk_category,
     data.detection_method, data.detection_terms, data.severity_level, data.default_action,
     data.requires_manual_review, data.block_publish,
-    data.disclaimer_template_name, data.notes,
+    data.disclaimer_template_name, data.notes, data.applies_to_flow_type ?? null,
   ]);
   return row!;
 }

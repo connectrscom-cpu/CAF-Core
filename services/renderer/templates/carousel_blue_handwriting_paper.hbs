@@ -110,6 +110,15 @@
       text-align:left;
       font-size: 46px;
     }
+    /* Body slides: match cover left alignment; headline often reads odd when centered on ruled lines */
+    .wrap.wrap--body{
+      text-align:left;
+    }
+    .wrap.wrap--body .title,
+    .wrap.wrap--body .body{
+      text-align:left;
+      max-width:940px;
+    }
     .wrap.wrap--tight .cta{
       position: static;
       margin-top: 28px;
@@ -133,7 +142,7 @@
         {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
       </div>
       <div class="body">
-        {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+        {{#if cover_subtitle}}{{joinEmojiOrphans cover_subtitle}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.body}}{{/if}}{{/if}}
       </div>
       <div class="cta">
         <div>{{#if cover_slide.date}}{{cover_slide.date}}{{else}}April 2026{{/if}}</div>
@@ -146,11 +155,11 @@
   {{#each body_slides}}
   <div class="slide">
     <div class="grain"></div>
-    <div class="wrap">
+    <div class="wrap wrap--body">
       <div class="kicker">Slide / Note</div>
       <div class="lines"></div>
       <div class="title" style="font-size:86px;">{{headline}}</div>
-      <div class="body">{{body}}</div>
+      <div class="body">{{joinEmojiOrphans body}}</div>
       <div class="cta">
         <div>Swipe</div>
         <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>

@@ -174,6 +174,7 @@ export function registerFlowEngineRoutes(app: FastifyInstance, { db }: Deps) {
       disclaimer_template_name: (b.disclaimer_template_name as string) ?? null,
       notes: (b.notes as string) ?? null,
       active: b.active !== false,
+      applies_to_flow_type: (b.applies_to_flow_type as string | null | undefined) ?? null,
     });
   });
 }

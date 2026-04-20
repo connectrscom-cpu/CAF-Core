@@ -19,6 +19,12 @@ import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
 import { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "./supabase-storage.js";
+import {
+  parseUpstreamRecommendations,
+  UPSTREAM_RECOMMENDATIONS_PROMPT_ADDENDUM,
+  type UpstreamRecommendation,
+} from "../domain/upstream-recommendations.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 
 export { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 
@@ -83,7 +89,7 @@ Constraints:
 - weaknesses: 3–7 bullets; each must reference a specific issue (e.g., "slides 2–4 repeat the same structure…", "CTA is generic…", "scene 3 voiceover doesn't match the visual beat…").
 - improvement_bullets: 4–10 concrete fixes written as imperative commands.
 - risk_flags: include compliance/claim risks, misleading framing, or audience backlash triggers when applicable.
-- If a dimension does not apply (e.g. no images, no video), set that score to null and explain in summary.`;
+- If a dimension does not apply (e.g. no images, no video), set that score to null and explain in summary.${UPSTREAM_RECOMMENDATIONS_PROMPT_ADDENDUM}`;
 
 function isLikelyImageAsset(url: string, assetType: string | null): boolean {
   const u = url.toLowerCase();
@@ -305,6 +311,8 @@ export interface LlmApprovalReviewJobResult {
   images_available?: number;
   skipped?: boolean;
   reason?: string;
+  /** Structured "what to change upstream" suggestions. Empty array if none. */
+  upstream_recommendations?: UpstreamRecommendation[];
 }
 
 export async function runLlmApprovalReviewsForProject(
@@ -434,6 +442,7 @@ export async function runLlmApprovalReviewsForProject(
       const improvementBullets = asStrArray(parsed.improvement_bullets);
       const riskFlags = asStrArray(parsed.risk_flags);
       const summary = typeof parsed.summary === "string" ? parsed.summary : null;
+      const upstreamRecs = parseUpstreamRecommendations(parsed.upstream_recommendations);
 
       const scoresJson: Record<string, unknown> = {
         alignment_score: clamp01(parsed.alignment_score),
@@ -533,6 +542,7 @@ export async function runLlmApprovalReviewsForProject(
         text_bundle_chars: textBundle.length,
         minted_pending_rule: minted,
         minted_pending_positive_rule: mintedPositive,
+        upstream_recommendations: upstreamRecs,
       });
 
       await insertObservation(db, {
@@ -559,10 +569,55 @@ export async function runLlmApprovalReviewsForProject(
           minted_pending_rule: minted,
           minted_pending_positive_rule: mintedPositive,
           positive_hint_eligible: positiveEligible,
+          upstream_recommendations_count: upstreamRecs.length,
         },
         confidence: overall,
         observed_at: new Date().toISOString(),
       });
+
+      // Per-suggestion audit trail: one learning_observation per upstream
+      // recommendation so operators can filter by `target` in SQL/UI without
+      // unpacking the nested jsonb. Failing one item should not break the loop.
+      for (let i = 0; i < upstreamRecs.length; i++) {
+        const rec = upstreamRecs[i];
+        const obsId = `${reviewId}_urec_${i}`;
+        try {
+          await insertObservation(db, {
+            observation_id: obsId,
+            scope_type: "project",
+            project_id: projectId,
+            source_type: "llm_upstream_recommendation",
+            flow_type: job.flow_type ?? null,
+            platform: job.platform ?? null,
+            observation_type: "llm_upstream_recommendation",
+            entity_ref: job.task_id,
+            payload_json: {
+              review_id: reviewId,
+              index: i,
+              target: rec.target,
+              change: rec.change,
+              rationale: rec.rationale ?? "",
+              field_or_check_id: rec.field_or_check_id ?? null,
+              source_model: llm.model,
+              source_overall_score: overall,
+            },
+            confidence: overall,
+            observed_at: new Date().toISOString(),
+          });
+        } catch (e) {
+          logPipelineEvent("warn", "learn", "upstream_recommendation_log_failed", {
+            project_id: projectId,
+            run_id: job.run_id,
+            task_id: job.task_id,
+            data: {
+              review_id: reviewId,
+              index: i,
+              target: rec.target,
+              error: e instanceof Error ? e.message : String(e),
+            },
+          });
+        }
+      }
 
       results.push({
         task_id: job.task_id,
@@ -581,6 +636,7 @@ export async function runLlmApprovalReviewsForProject(
         summary,
         images_used: imageUrls.length,
         images_available: imagesAvailable,
+        upstream_recommendations: upstreamRecs,
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

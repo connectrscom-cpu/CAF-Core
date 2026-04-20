@@ -7,9 +7,9 @@ import {
   getConstraints,
   normalizePerFlowCaps,
   insertDecisionTrace,
-  listActiveAppliedLearningRules,
   listActiveSuppressionRules,
 } from "../repositories/core.js";
+import { getLearningRulesForPlanning } from "../services/learning-rule-selection.js";
 import { evaluateKillSwitches } from "./kill_switches.js";
 import { resolvePromptVersion } from "./prompt_selector.js";
 import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
@@ -127,7 +127,7 @@ export async function decideGenerationPlan(
     return result;
   }
 
-  const learningRules = await listActiveAppliedLearningRules(db, project.id);
+  const learningRules = await getLearningRulesForPlanning(db, project.id);
   const weights = defaultWeights(config);
 
   let scored: ScoredCandidate[] = req.candidates.map((c) => scoreCandidate(c, weights));

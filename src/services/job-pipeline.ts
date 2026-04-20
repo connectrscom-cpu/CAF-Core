@@ -4,7 +4,7 @@
  * PLANNED → GENERATING → (GENERATED) → QC → diagnostic → RENDERING → IN_REVIEW (or BLOCKED / …); APPROVED only via human review
  */
 import type { Pool } from "pg";
-import type { AppConfig } from "../config.js";
+import { resolveOutputSchemaValidationMode, type AppConfig } from "../config.js";
 import { q, qOne } from "../db/queries.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import { incrementRunJobsCompleted, updateRunStatus, getRunById, getRunByRunId, type RunRow } from "../repositories/runs.js";
@@ -37,6 +37,8 @@ import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 import { HeygenPollTimeoutError } from "./heygen-renderer.js";
@@ -82,14 +84,10 @@ function isVideoRenderingSafelyRetryable(j: JobRow): boolean {
   if (isCarouselFlow(j.flow_type)) return false;
   if (isOfflinePipelineFlow(j.flow_type)) return false;
   if (!isVideoFlow(j.flow_type)) return false;
-  const rs =
-    j.render_state && typeof j.render_state === "object" && !Array.isArray(j.render_state)
-      ? (j.render_state as Record<string, unknown>)
-      : {};
-  const videoId = String(rs.video_id ?? "").trim();
-  const sessionId = String(rs.session_id ?? "").trim();
-  if (videoId || sessionId) return false;
-  const phase = String(rs.phase ?? "").trim().toLowerCase();
+  // HeyGen idempotency invariant (see `src/domain/content-job-render-state.ts`):
+  // if a provider already holds a resume key we must NOT re-submit.
+  if (hasActiveProviderSession(j.render_state)) return false;
+  const { phase } = pickRenderState(j.render_state);
   /** Empty render_state, "starting", or explicit "failed" with no resume key — safe to re-enter. Avoid retrying mid-stream phases like "polling" / "sora_polling" / "submitted" that imply a HeyGen/Sora id should already exist. */
   if (phase === "" || phase === "starting" || phase === "failed") return true;
   return false;
@@ -177,7 +175,7 @@ async function processJobUpToRender(
 
   if (openaiKey && !hasGenerated) {
     const genResult = await generateForJob(db, job.id, openaiKey, openaiModel, {
-      skipOutputSchemaValidation: config.CAF_SKIP_OUTPUT_SCHEMA_VALIDATION,
+      schemaValidationMode: resolveOutputSchemaValidationMode(config),
     });
     if (!genResult.success) {
       throw new Error(`LLM generation failed: ${genResult.error}`);
@@ -1068,7 +1066,7 @@ async function processCarouselJob(
     });
   }
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const candidate = (job.generation_payload.candidate_data as Record<string, unknown>) ?? {};
   const renderCoerced =
     typeof gen.render === "object" && gen.render && !Array.isArray(gen.render)
@@ -1129,12 +1127,14 @@ async function processCarouselJob(
   // falls back to "default" even when render used a different template.
   await db.query(
     `UPDATE caf_core.content_jobs SET
-      generation_payload = jsonb_set(
+      generation_payload = (
         jsonb_set(
-          jsonb_set(COALESCE(generation_payload, '{}'::jsonb), '{template}', to_jsonb($1::text), true),
-          '{render,html_template_name}', to_jsonb(($1::text || '.hbs')::text), true
-        ),
-        '{render,template_key}', to_jsonb($1::text), true
+          jsonb_set(
+            jsonb_set(COALESCE(generation_payload, '{}'::jsonb), '{template}', to_jsonb($1::text), true),
+            '{render,html_template_name}', to_jsonb(($1::text || '.hbs')::text), true
+          ),
+          '{render,template_key}', to_jsonb($1::text), true
+        ) #- '{carousel_template_exclude_for_next_render}'
       ),
       updated_at = now()
      WHERE id = $2`,
@@ -1355,7 +1355,7 @@ async function processVideoJob(
     });
   }
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const productionRoute = String(
     job.generation_payload.production_route ?? gen.production_route ?? ""
   ).toUpperCase();
@@ -1490,8 +1490,7 @@ async function processVideoJob(
     }
 
     const freshJob = (await reloadJobRow(db, job.id)) ?? job;
-    const genOut =
-      (freshJob.generation_payload.generated_output as Record<string, unknown>) ?? {};
+    const genOut = pickGeneratedOutputOrEmpty(freshJob.generation_payload);
     const assetCount = await countAssetsForTask(db, job.project_id, job.task_id);
     const finalVidOk = finalJobStatusAfterRender(recommendedRoute);
     await recordRunContentOutcomeSafe(db, {
@@ -1534,7 +1533,7 @@ async function processVideoJob(
       throw new RenderNotReadyError(err.message);
     }
     const msg = err instanceof Error ? err.message : String(err);
-    const genSnap = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+    const genSnap = pickGeneratedOutputOrEmpty(job.generation_payload);
     const finalVid = finalJobStatusAfterRender(recommendedRoute);
     if (err instanceof TypeError && String(err.message).includes("fetch")) {
       if (videoProvider === "pending") videoProvider = "video-assembly";

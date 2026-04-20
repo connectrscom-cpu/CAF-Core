@@ -118,8 +118,15 @@ const envSchema = z.object({
   /** Serialized copy bundle (hook, caption, video plan, scenes) max size before truncation. */
   LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
   /**
-   * When true, LLM JSON is still parsed and normalized but not checked against Flow Engine output_schemas.
-   * Unset defaults to true (skip) for easier iteration; set CAF_SKIP_OUTPUT_SCHEMA_VALIDATION=0 to enforce schemas.
+   * Legacy binary switch for output-schema validation.
+   *
+   * Unset / empty → `true` (skip) for historical reasons. Kept for backward
+   * compatibility with existing deployments and docs. New deployments should
+   * prefer the tri-state `CAF_OUTPUT_SCHEMA_VALIDATION_MODE` below, which
+   * supports a gradual rollout: `skip → warn → enforce`.
+   *
+   * When `CAF_OUTPUT_SCHEMA_VALIDATION_MODE` is set explicitly it wins; this
+   * flag is only consulted as the fallback.
    */
   CAF_SKIP_OUTPUT_SCHEMA_VALIDATION: z
     .string()
@@ -130,6 +137,22 @@ const envSchema = z.object({
       if (s === "0" || s === "false" || s === "no") return false;
       return s === "1" || s === "true" || s === "yes";
     }),
+  /**
+   * Tri-state rollout control for LLM output-schema validation:
+   *   - `skip`    — do not run Flow Engine `output_schemas` validation
+   *   - `warn`    — run validation, log failures to stderr, and record them
+   *                 on `generation_payload.schema_validation_warnings`, but
+   *                 do NOT fail the generation (safe for staging rollouts)
+   *   - `enforce` — run validation and fail the generation on invalid output
+   *                 (legacy `CAF_SKIP_OUTPUT_SCHEMA_VALIDATION=0` behavior)
+   *
+   * Leave unset to preserve the legacy binary flag's meaning. Recommended
+   * rollout: `skip` → `warn` (staging) → `enforce` (prod) once warnings are
+   * driven to zero.
+   */
+  CAF_OUTPUT_SCHEMA_VALIDATION_MODE: z
+    .enum(["skip", "warn", "enforce"])
+    .optional(),
   /**
    * When true (default), QC never assigns `recommended_route = AUTO_PUBLISH` for passing jobs — they get `HUMAN_REVIEW`
    * so every job is intended for the human queue (Core still ends pipeline in IN_REVIEW; this aligns DB route + QC payload).
@@ -395,6 +418,21 @@ const envSchema = z.object({
 });
 
 export type AppConfig = z.infer<typeof envSchema>;
+
+export type OutputSchemaValidationMode = "skip" | "warn" | "enforce";
+
+/**
+ * Resolve the output-schema validation rollout mode from the new tri-state
+ * env (`CAF_OUTPUT_SCHEMA_VALIDATION_MODE`) with fallback to the legacy
+ * `CAF_SKIP_OUTPUT_SCHEMA_VALIDATION` flag. Centralizing this here keeps the
+ * rollout semantics in one file instead of scattered across callers.
+ */
+export function resolveOutputSchemaValidationMode(
+  config: Pick<AppConfig, "CAF_OUTPUT_SCHEMA_VALIDATION_MODE" | "CAF_SKIP_OUTPUT_SCHEMA_VALIDATION">
+): OutputSchemaValidationMode {
+  if (config.CAF_OUTPUT_SCHEMA_VALIDATION_MODE) return config.CAF_OUTPUT_SCHEMA_VALIDATION_MODE;
+  return config.CAF_SKIP_OUTPUT_SCHEMA_VALIDATION ? "skip" : "enforce";
+}
 
 export function loadConfig(): AppConfig {
   const parsed = envSchema.safeParse(process.env);

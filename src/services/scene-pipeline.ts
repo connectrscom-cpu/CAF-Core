@@ -27,6 +27,7 @@ import {
   runHeygenVideoWithBody,
 } from "./heygen-renderer.js";
 import { applySceneTargetsToScenes } from "./video-content-policy.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
   buildSrtFromScenesWithSentenceCues,
   splitScriptIntoSceneChunksByWeights,
@@ -334,7 +335,7 @@ export async function runScenePipeline(
   if (!fresh) throw new Error("job missing after scene bundle");
   job = fresh;
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const bundle = (gen.scene_bundle as Record<string, unknown>) ?? {};
   const rawScenes = (bundle.scenes as unknown[]) ?? [];
   const coerced: Record<string, unknown>[] = [];

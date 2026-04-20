@@ -351,6 +351,22 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               <div className="info-row"><span className="info-label">Run ID</span><span className="info-value">{runId || "—"}</span></div>
               <div className="info-row"><span className="info-label">Risk</span><span className="info-value">{data.risk_score || "—"}</span></div>
               <div className="info-row"><span className="info-label">QC</span><span className="info-value">{data.qc_status || "—"}</span></div>
+              {(data.overrides_from_last_review ?? "").trim() !== "" && (
+                <div className="info-row">
+                  <span className="info-label">Stored overrides</span>
+                  <span className="info-value" title="Fields with text on the latest NEEDS_EDIT row">
+                    {(data.overrides_from_last_review ?? "").trim()}
+                  </span>
+                </div>
+              )}
+              {(data.latest_rejection_tags ?? "").trim() !== "" && (
+                <div className="info-row">
+                  <span className="info-label">Last issue tags</span>
+                  <span className="info-value font-mono" style={{ fontSize: 12 }}>
+                    {(data.latest_rejection_tags ?? "").trim()}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 

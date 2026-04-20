@@ -9,6 +9,7 @@
  */
 
 import { randomInt } from "node:crypto";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 
 const HEADLINE_KEYS = [
   "headline",
@@ -816,7 +817,7 @@ export function buildSlideRenderContext(
 }
 
 export function templateNameFromPayload(generationPayload: Record<string, unknown>): string {
-  const gen = (generationPayload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(generationPayload);
   const render = (gen.render as Record<string, unknown>) ?? (generationPayload.render as Record<string, unknown>) ?? {};
   return String(
     render.html_template_name ?? render.template_key ?? generationPayload.template ?? "default"
@@ -835,6 +836,72 @@ export function explicitCarouselTemplateBaseName(generationPayload: Record<strin
   return base;
 }
 
+/** Payload key: after NEEDS_EDIT + “change template”, next render avoids re-picking the same `.hbs`. */
+export const CAROUSEL_TEMPLATE_EXCLUDE_FOR_NEXT_RENDER_KEY = "carousel_template_exclude_for_next_render";
+
+function normalizeCarouselTemplateBase(name: string): string {
+  return name.replace(/\.hbs$/i, "").trim().toLowerCase();
+}
+
+/**
+ * Reviewer asked for a different carousel layout on the next full generation/render pass.
+ * Tag `carousel_template_change` / `change_template`, or notes containing “change template”.
+ */
+export function reviewRequestsCarouselTemplateChange(review: {
+  rejection_tags?: unknown;
+  notes?: string | null;
+}): boolean {
+  const tags = Array.isArray(review.rejection_tags)
+    ? (review.rejection_tags as unknown[]).map((t) => String(t).toLowerCase().trim())
+    : [];
+  if (
+    tags.some(
+      (t) =>
+        t === "carousel_template_change" ||
+        t === "change_template" ||
+        t.includes("change_template") ||
+        /\bchange\s+template\b/.test(t)
+    )
+  ) {
+    return true;
+  }
+  const notes = (review.notes ?? "").toLowerCase();
+  return /\bchange\s+template\b/.test(notes);
+}
+
+/**
+ * Removes explicit template selection from payload (and nested `generated_output.render` if present)
+ * so the next render pass can pick again. Returns the previous explicit base name for exclusion.
+ */
+export function stripExplicitCarouselTemplateSelection(gp: Record<string, unknown>): string | null {
+  const prev = explicitCarouselTemplateBaseName(gp);
+  delete gp.template;
+  const stripRender = (holder: Record<string, unknown>): void => {
+    const rawRender = holder.render;
+    if (!rawRender || typeof rawRender !== "object" || Array.isArray(rawRender)) return;
+    const render = rawRender as Record<string, unknown>;
+    delete render.html_template_name;
+    delete render.template_key;
+    if (Object.keys(render).length === 0) delete holder.render;
+  };
+  stripRender(gp);
+  const gen = gp.generated_output;
+  if (gen && typeof gen === "object" && !Array.isArray(gen)) stripRender(gen as Record<string, unknown>);
+  return prev;
+}
+
+export function setCarouselTemplateExcludeForNextRender(
+  gp: Record<string, unknown>,
+  excludeBase: string | null
+): void {
+  const k = CAROUSEL_TEMPLATE_EXCLUDE_FOR_NEXT_RENDER_KEY;
+  if (!excludeBase?.trim()) {
+    delete gp[k];
+    return;
+  }
+  gp[k] = excludeBase.replace(/\.hbs$/i, "").trim();
+}
+
 /**
  * Use the payload template when set; otherwise `GET {renderer}/templates` and pick uniformly at random
  * from available `.hbs` options (local templates folder + optional remote list from the renderer).
@@ -845,6 +912,12 @@ export async function pickCarouselTemplateForRender(
 ): Promise<string> {
   const explicit = explicitCarouselTemplateBaseName(generationPayload);
   if (explicit) return explicit;
+
+  const excludeRaw = generationPayload[CAROUSEL_TEMPLATE_EXCLUDE_FOR_NEXT_RENDER_KEY];
+  const exclude =
+    typeof excludeRaw === "string" && excludeRaw.trim()
+      ? normalizeCarouselTemplateBase(excludeRaw)
+      : "";
 
   const base = rendererBaseUrl.replace(/\/$/, "");
   let templates: string[] = [];
@@ -860,6 +933,12 @@ export async function pickCarouselTemplateForRender(
 
   if (templates.length === 0) return "default";
 
-  const pick = templates[randomInt(templates.length)]!;
+  let pool = templates;
+  if (exclude) {
+    const filtered = templates.filter((t) => normalizeCarouselTemplateBase(t) !== exclude);
+    if (filtered.length > 0) pool = filtered;
+  }
+
+  const pick = pool[randomInt(pool.length)]!;
   return pick.replace(/\.hbs$/i, "");
 }

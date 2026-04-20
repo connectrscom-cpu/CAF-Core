@@ -6,7 +6,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
-import type { AppConfig } from "../config.js";
+import { resolveOutputSchemaValidationMode, type AppConfig } from "../config.js";
 import { generateForJob } from "../services/llm-generator.js";
 import { runQcForJob } from "../services/qc-runtime.js";
 import { runDiagnosticAudit } from "../services/diagnostic-runner.js";
@@ -40,7 +40,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
 
       const model = (req.body as Record<string, unknown>)?.model as string ?? config.OPENAI_MODEL;
       const result = await generateForJob(db, job.id, apiKey, model, {
-        skipOutputSchemaValidation: config.CAF_SKIP_OUTPUT_SCHEMA_VALIDATION,
+        schemaValidationMode: resolveOutputSchemaValidationMode(config),
       });
 
       if (result.success) {
@@ -122,7 +122,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
       let genResult = null;
       if (apiKey && (job.status === "PLANNED" || job.status === "GENERATING")) {
         genResult = await generateForJob(db, job.id, apiKey, model, {
-          skipOutputSchemaValidation: config.CAF_SKIP_OUTPUT_SCHEMA_VALIDATION,
+          schemaValidationMode: resolveOutputSchemaValidationMode(config),
         });
         if (genResult.success) {
           await db.query(`UPDATE caf_core.content_jobs SET status = 'GENERATED', updated_at = now() WHERE id = $1`, [job.id]);
@@ -205,7 +205,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
         try {
           if (apiKey) {
             const genResult = await generateForJob(db, job.id, apiKey, model, {
-              skipOutputSchemaValidation: config.CAF_SKIP_OUTPUT_SCHEMA_VALIDATION,
+              schemaValidationMode: resolveOutputSchemaValidationMode(config),
             });
             if (!genResult.success) {
               results.push({ task_id: job.task_id, ok: false, error: genResult.error });
@@ -317,3 +317,4 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 }
+

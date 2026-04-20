@@ -58,6 +58,18 @@ export async function jsonTaskDetailResponse(
     const { preview_url, video_url } = previewFieldsFromJob(job);
     const generationPayload = (job.generation_payload ?? {}) as Record<string, unknown>;
     const latestOv = recordVal(job.latest_overrides_json as Record<string, unknown> | null) ?? {};
+    const overrideKeysTouched = [
+      "final_title_override",
+      "final_hook_override",
+      "final_caption_override",
+      "final_hashtags_override",
+      "final_slides_json_override",
+      "final_spoken_script_override",
+    ].filter((k) => typeof latestOv[k] === "string" && String(latestOv[k]).trim() !== "");
+    const tags = job.latest_rejection_tags;
+    const rejectionTagsStr = Array.isArray(tags)
+      ? tags.map((t) => String(t).trim()).filter(Boolean).join(", ")
+      : "";
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -88,6 +100,11 @@ export async function jsonTaskDetailResponse(
       heygen_avatar_id: optionalTrimmedString(latestOv.heygen_avatar_id),
       heygen_voice_id: optionalTrimmedString(latestOv.heygen_voice_id),
       rewrite_copy: latestOv.rewrite_copy === false ? "false" : "true",
+      overrides_from_last_review:
+        overrideKeysTouched.length > 0
+          ? overrideKeysTouched.map((k) => k.replace(/^final_/, "").replace(/_override$/, "")).join(", ")
+          : "",
+      latest_rejection_tags: rejectionTagsStr || undefined,
     };
     const body: Record<string, unknown> = { rowIndex: 0, data };
     if (opts?.includeJob) body.job = job;

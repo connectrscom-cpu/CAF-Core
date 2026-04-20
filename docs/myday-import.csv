@@ -1,0 +1,275 @@
+section,row_key,field,value
+project,,slug,MYDAY
+project,,display_name,MyDay Brasil
+project,,color,#1a73e8
+project,,active,true
+strategy,,project_type,SaaS
+strategy,,core_offer,Scheduling and client management for personal trainers and fitness professionals
+strategy,,target_audience,Personal trainers; yoga instructors; fitness professionals
+strategy,,audience_problem,Professionals register but struggle to activate due to onboarding friction and client invitation setup
+strategy,,transformation_promise,Help fitness professionals start scheduling clients digitally with less admin friction
+strategy,,positioning_statement,The simple scheduling and client management platform for fitness professionals
+strategy,,primary_business_goal,Increase active professionals in Brazil
+strategy,,primary_content_goal,Activation
+strategy,,north_star_metric,Active professionals
+strategy,,monetization_model,Free entry with product-led adoption
+strategy,,traffic_destination,https://www.myday.me/
+strategy,,funnel_stage_focus,MOFU/BOFU
+strategy,,brand_archetype,Guide
+strategy,,strategic_content_pillars,Onboarding education; activation tutorials; professional workflow simplification; social proof
+strategy,,authority_angle,Built around real feedback from fitness professionals
+strategy,,differentiation_angle,"Made for fitness professionals and focused on scheduling, vouchers and client invitations"
+strategy,,growth_strategy,Meta lead generation + onboarding content + direct follow-up
+strategy,,publishing_intensity,4-5 posts/week
+strategy,,time_horizon,Q2-Q3
+strategy,,owner,marketing@myday.me
+strategy,,instagram_handle,@myday.me
+strategy,,notes,Brazil test focused on São Paulo Brasília and Balneário Camboriú; activation matters more than raw signup volume
+brand,,tone,clear and supportive
+brand,,voice_style,direct
+brand,,audience_level,beginner-to-intermediate
+brand,,emotional_intensity,0.45
+brand,,humor_level,0.15
+brand,,emoji_policy,minimal
+brand,,max_emojis_per_caption,2
+brand,,banned_claims,Guaranteed income growth; guaranteed client retention; instant business transformation
+brand,,banned_words,revolutionary; disrupt; magic
+brand,,mandatory_disclaimers,"Results depend on setup, client adoption and real usage."
+brand,,cta_style_rules,Lead with action verbs. One clear CTA per post. Prioritize activation over vague awareness.
+brand,,storytelling_style,Problem first; practical fix second; product step third
+brand,,positioning_statement,The simple scheduling and client management platform for fitness professionals
+brand,,differentiation_angle,Practical workflow support for fitness professionals who need to invite clients and manage sessions
+brand,,risk_level_default,medium
+brand,,manual_review_required,true
+brand,,notes,Emphasize that the platform is free and easy to start; avoid overclaiming before mobile app and onboarding improvements
+product,,product_name,MyDay
+product,,product_category,Fitness scheduling SaaS
+product,,product_url,https://www.myday.me/
+product,,one_liner,Scheduling and client management for personal trainers and fitness professionals
+product,,value_proposition,Help fitness professionals organize clients sessions and vouchers in one place
+product,,elevator_pitch,"MyDay helps personal trainers and other fitness professionals manage clients, sessions and scheduling in a more structured way. The current marketing challenge is not just generating leads, but helping new signups become active through better onboarding and client invitation flows."
+product,,primary_audience,Personal trainers and other fitness professionals
+product,,audience_pain_points,Client setup takes time; inviting clients is slow; some users find onboarding unintuitive; professionals postpone setup; clients may resist changing from WhatsApp or current workflows
+product,,audience_desires,Less admin; easier scheduling; easier client management; smoother onboarding; practical tools that fit daily workflow
+product,,use_cases,Invite first client; schedule training sessions; manage vouchers; organize client list; reduce WhatsApp scheduling chaos
+product,,anti_audience,General consumers; hobby users; teams outside fitness services
+product,,key_features,Client invitations; session scheduling; voucher system; onboarding tutorials; browser access
+product,,key_benefits,More organized scheduling; less manual follow-up; clearer client management workflow
+product,,differentiators,Built around the needs of personal trainers and fitness professionals rather than generic scheduling
+product,,proof_points,Instagram reach scaled strongly with ads; video creatives outperformed other formats; activation blockers have been identified through direct follow-up
+product,,social_proof,"Professionals showed interest in trying the app, but activation depended on setup time and client adoption"
+product,,competitors,Tecnofit; Trainer Fu; FitPro; Virtualgym; Nexur Trainer; PersonalGo
+product,,comparison_angles,Ease of starting; onboarding support; fitness-specific workflow; lead-to-activation support
+product,,pricing_summary,Free for professionals to start
+product,,current_offer,Free platform for professionals
+product,,offer_urgency,Activate your account and invite your first clients this week
+product,,guarantee,No guarantee stated
+product,,primary_cta,Start free
+product,,secondary_cta,Invite your first client
+product,,do_say,Free to start; built for fitness professionals; simple setup; invite your first client
+product,,dont_say,Guaranteed growth; instant results; replaces your entire business
+product,,taglines,From signup to active professional.
+product,,keywords,personal trainer app; app para personal trainer; agenda personal trainer; fitness scheduling app; gestão de clientes personal trainer
+platform,Instagram,caption_max_chars,2200
+platform,Instagram,hook_must_fit_first_lines,true
+platform,Instagram,hook_max_chars,140
+platform,Instagram,slide_min_chars,220
+platform,Instagram,slide_max_chars,400
+platform,Instagram,slide_min,5
+platform,Instagram,slide_max,14
+platform,Instagram,max_hashtags,10
+platform,Instagram,hashtag_format_rule,"Lowercase, no spam blocks, relevant only"
+platform,Instagram,line_break_policy,Short paragraphs with spacing
+platform,Instagram,emoji_allowed,true
+platform,Instagram,link_allowed,false
+platform,Instagram,tag_allowed,true
+platform,Instagram,formatting_rules,Hook must be in first 2 lines; CTA at end; structured line breaks
+platform,Instagram,posting_frequency_limit,1 per day
+platform,Instagram,best_posting_window,18:00-21:00 local time
+platform,Instagram,notes,Avoid large hashtag blocks at top
+flow_type,Video_Scene_Generator,enabled,false
+flow_type,Video_Scene_Generator,default_variation_count,1
+flow_type,Video_Scene_Generator,requires_signal_pack,true
+flow_type,Video_Scene_Generator,requires_learning_context,false
+flow_type,Video_Scene_Generator,priority_weight,9.00
+flow_type,Video_Scene_Generator,notes,Multi-scene video — scene_bundle; per-scene clips rendered upstream (URLs on scenes) → Core concat/mux
+flow_type,FLOW_PRODUCT_PROBLEM,enabled,true
+flow_type,FLOW_PRODUCT_PROBLEM,default_variation_count,1
+flow_type,FLOW_PRODUCT_PROBLEM,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_PROBLEM,requires_learning_context,false
+flow_type,FLOW_PRODUCT_PROBLEM,priority_weight,6.00
+flow_type,FLOW_PRODUCT_PROBLEM,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,enabled,false
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,priority_weight,5.00
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_HOOK,notes,Image ad flow — generation blocked until image tool is integrated.
+flow_type,FLOW_PRODUCT_FEATURE,enabled,true
+flow_type,FLOW_PRODUCT_FEATURE,default_variation_count,1
+flow_type,FLOW_PRODUCT_FEATURE,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_FEATURE,requires_learning_context,false
+flow_type,FLOW_PRODUCT_FEATURE,priority_weight,5.00
+flow_type,FLOW_PRODUCT_FEATURE,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,FLOW_PRODUCT_COMPARISON,enabled,false
+flow_type,FLOW_PRODUCT_COMPARISON,default_variation_count,1
+flow_type,FLOW_PRODUCT_COMPARISON,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_COMPARISON,requires_learning_context,false
+flow_type,FLOW_PRODUCT_COMPARISON,priority_weight,4.00
+flow_type,FLOW_PRODUCT_COMPARISON,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,enabled,false
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,priority_weight,4.00
+flow_type,FLOW_IMG_PRODUCT_PROBLEM_BEFORE_AFTER,notes,Image ad flow — generation blocked until image tool is integrated.
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,enabled,false
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,priority_weight,3.00
+flow_type,FLOW_IMG_PRODUCT_FEATURE_CALLOUT,notes,Image ad flow — generation blocked until image tool is integrated.
+flow_type,FLOW_PRODUCT_USECASE,enabled,false
+flow_type,FLOW_PRODUCT_USECASE,default_variation_count,1
+flow_type,FLOW_PRODUCT_USECASE,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_USECASE,requires_learning_context,false
+flow_type,FLOW_PRODUCT_USECASE,priority_weight,3.00
+flow_type,FLOW_PRODUCT_USECASE,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,enabled,false
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,default_variation_count,1
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,requires_learning_context,false
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,priority_weight,2.00
+flow_type,FLOW_PRODUCT_SOCIAL_PROOF,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,enabled,false
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,priority_weight,2.00
+flow_type,FLOW_IMG_PRODUCT_COMPARISON_SPLIT,notes,Image ad flow — generation blocked until image tool is integrated.
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,enabled,false
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,priority_weight,1.00
+flow_type,FLOW_IMG_PRODUCT_SOCIAL_PROOF_REVIEW,notes,Image ad flow — generation blocked until image tool is integrated.
+flow_type,FLOW_PRODUCT_OFFER,enabled,false
+flow_type,FLOW_PRODUCT_OFFER,default_variation_count,1
+flow_type,FLOW_PRODUCT_OFFER,requires_signal_pack,true
+flow_type,FLOW_PRODUCT_OFFER,requires_learning_context,false
+flow_type,FLOW_PRODUCT_OFFER,priority_weight,1.00
+flow_type,FLOW_PRODUCT_OFFER,notes,Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.
+flow_type,Flow_Carousel_Copy,enabled,true
+flow_type,Flow_Carousel_Copy,default_variation_count,3
+flow_type,Flow_Carousel_Copy,requires_signal_pack,true
+flow_type,Flow_Carousel_Copy,requires_learning_context,true
+flow_type,Flow_Carousel_Copy,allowed_platforms,Instagram
+flow_type,Flow_Carousel_Copy,output_schema_version,1
+flow_type,Flow_Carousel_Copy,qc_checklist_version,1
+flow_type,Flow_Carousel_Copy,prompt_template_id,SNS_Carousel_Flow_Generator
+flow_type,Flow_Carousel_Copy,priority_weight,0.90
+flow_type,Flow_Carousel_Copy,notes,Primary production flow
+flow_type,Hook_Variations,enabled,true
+flow_type,Hook_Variations,default_variation_count,1
+flow_type,Hook_Variations,requires_signal_pack,true
+flow_type,Hook_Variations,requires_learning_context,true
+flow_type,Hook_Variations,allowed_platforms,"Instagram,Tiktok"
+flow_type,Hook_Variations,output_schema_version,1
+flow_type,Hook_Variations,qc_checklist_version,1
+flow_type,Hook_Variations,prompt_template_id,SNS_Hook_Variations_Generator
+flow_type,Hook_Variations,priority_weight,0.80
+flow_type,Hook_Variations,notes,Feeds carousel and reel flows
+flow_type,Reel_Script,enabled,true
+flow_type,Reel_Script,default_variation_count,2
+flow_type,Reel_Script,requires_signal_pack,true
+flow_type,Reel_Script,requires_learning_context,true
+flow_type,Reel_Script,allowed_platforms,"Instagram,Tiktok"
+flow_type,Reel_Script,output_schema_version,1
+flow_type,Reel_Script,qc_checklist_version,1
+flow_type,Reel_Script,prompt_template_id,SNS_Reel_Script_Generator
+flow_type,Reel_Script,priority_weight,0.70
+flow_type,Reel_Script,notes,Used for short-form experiments
+flow_type,Video_Script_Generator,enabled,true
+flow_type,Video_Script_Generator,default_variation_count,2
+flow_type,Video_Script_Generator,requires_signal_pack,true
+flow_type,Video_Script_Generator,requires_learning_context,true
+flow_type,Video_Script_Generator,allowed_platforms,"Instagram,Tiktok"
+flow_type,Video_Script_Generator,output_schema_version,1
+flow_type,Video_Script_Generator,qc_checklist_version,1
+flow_type,Video_Script_Generator,prompt_template_id,SNS_Reel_Script_Generator
+flow_type,Video_Script_Generator,priority_weight,0.70
+flow_type,Video_Script_Generator,notes,Used for short-form experiments
+flow_type,Video_Prompt_Generator,enabled,true
+flow_type,Video_Prompt_Generator,default_variation_count,2
+flow_type,Video_Prompt_Generator,requires_signal_pack,true
+flow_type,Video_Prompt_Generator,requires_learning_context,true
+flow_type,Video_Prompt_Generator,allowed_platforms,"Instagram,Tiktok"
+flow_type,Video_Prompt_Generator,output_schema_version,1
+flow_type,Video_Prompt_Generator,qc_checklist_version,1
+flow_type,Video_Prompt_Generator,prompt_template_id,SNS_Reel_Script_Generator
+flow_type,Video_Prompt_Generator,priority_weight,0.70
+flow_type,Video_Prompt_Generator,notes,Used for short-form experiments
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,enabled,false
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,default_variation_count,1
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,requires_signal_pack,true
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,requires_learning_context,false
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,priority_weight,0.00
+flow_type,FLOW_IMG_PRODUCT_OFFER_URGENT,notes,Image ad flow — generation blocked until image tool is integrated.
+risk_rule,Flow_Carousel_Copy,trigger_condition,"Contains diagnostic mental health language (e.g., disorder, diagnose)"
+risk_rule,Flow_Carousel_Copy,risk_level,CRITICAL
+risk_rule,Flow_Carousel_Copy,auto_approve_allowed,false
+risk_rule,Flow_Carousel_Copy,requires_manual_review,true
+risk_rule,Flow_Carousel_Copy,escalation_level,Owner
+risk_rule,Flow_Carousel_Copy,sensitive_topics,mental health
+risk_rule,Flow_Carousel_Copy,claim_restrictions,No medical framing
+risk_rule,Flow_Carousel_Copy,rejection_reason_tag,Risk:MedicalFraming
+risk_rule,Flow_Carousel_Copy,rollback_flag,true
+risk_rule,Flow_Carousel_Copy,notes,Hard block and review prompt
+risk_rule,Reel_Script,trigger_condition,Topic tagged as trauma or abuse
+risk_rule,Reel_Script,risk_level,HIGH
+risk_rule,Reel_Script,auto_approve_allowed,false
+risk_rule,Reel_Script,requires_manual_review,true
+risk_rule,Reel_Script,escalation_level,Owner
+risk_rule,Reel_Script,sensitive_topics,trauma; abuse
+risk_rule,Reel_Script,claim_restrictions,No therapeutic claims
+risk_rule,Reel_Script,rejection_reason_tag,Risk:SensitiveTopic
+risk_rule,Reel_Script,rollback_flag,false
+risk_rule,Reel_Script,notes,Manual review required
+risk_rule,Video_Prompt_Generator,auto_approve_allowed,false
+risk_rule,Video_Prompt_Generator,requires_manual_review,false
+risk_rule,Video_Prompt_Generator,rollback_flag,false
+risk_rule,Video_Script_Generator,auto_approve_allowed,false
+risk_rule,Video_Script_Generator,requires_manual_review,false
+risk_rule,Video_Script_Generator,rollback_flag,false
+reference_post,REF_0001,platform,Instagram
+reference_post,REF_0001,post_url,https://www.instagram.com/reel/DR15bOfiL-B/
+reference_post,REF_0001,status,extracted
+reference_post,REF_0001,notes,Strong zodiac callout hook
+reference_post,REF_0002,platform,Instagram
+reference_post,REF_0002,post_url,https://www.instagram.com/reel/DQJSNWRkvTY/
+reference_post,REF_0002,status,extracted
+reference_post,REF_0002,notes,"Relationship carousel, high saves"
+reference_post,REF_0003,platform,TikTok
+reference_post,REF_0003,post_url,https://www.instagram.com/reel/DQG7L9Zjnk7/
+reference_post,REF_0003,status,extracted
+reference_post,REF_0003,notes,Fast-cut emotional validation
+reference_post,REF_0004,platform,TikTok
+reference_post,REF_0004,post_url,https://www.instagram.com/reel/DOxsEm9jELd/
+reference_post,REF_0004,status,extracted
+reference_post,REF_0004,notes,"POV format, strong retention"
+reference_post,REF_0005,platform,Instagram
+reference_post,REF_0005,post_url,https://www.instagram.com/reel/DVKLFr1DI85/
+reference_post,REF_0005,status,extracted
+reference_post,REF_0005,notes,Confrontational “don’t ignore this”
+heygen_defaults,,avatar_pool_json,"[{""avatar_id"":""22ad967055a94286a5aee1a4c6556a98"",""voice_id"":""c76a2a4b9976410aa76a1c5f57f38c78""},{""avatar_id"":""f4d809a64de54582813c00a1c032779c"",""voice_id"":""BwpbMiPIlqwBMbwePszy""},{""avatar_id"":""8fe13655c964420e86ff0ad3f8a5c581"",""voice_id"":""6vBodKhRGCNuGV3ixLKp""},{""avatar_id"":""8a4b6b6e47424ca19e898bdfaebf7f5d"",""voice_id"":""6vBodKhRGCNuGV3ixLKp""},{""avatar_id"":""b2a8bf7ca98e407796475f46cdf77d2e"",""voice_id"":""ede9f25862224d478c817f1f96573e3f""},{""avatar_id"":""0f59e7ff644a4aa697ed68e908bdedac"",""voice_id"":""1BnoFFUAIL9UVKUILbF8""}]"
+heygen_defaults,,voice_id,a37818640892463e9f0bea71a3eb2c55
+integration,META_FB,display_name,MyDay Brasil — Facebook
+integration,META_FB,is_enabled,true
+integration,META_FB,account_ids_json,"{""note"":""REPLACE_ME"",""fb_page_id"":""REPLACE_ME"",""source_url"":""REPLACE_ME"",""marketing_label"":""REPLACE_ME"",""facebook_numeric_id_from_url"":""REPLACE_ME""}"
+integration,META_FB,credentials_json,{}
+integration,META_FB,config_json,"{""graph_api"":{""next_steps"":[""Put a long-lived Page Access Token in credentials_json.access_token (from GET /me/accounts when non-empty, or OAuth)."",""If /me/accounts stays empty, fix Business Manager: App → Connected assets → add this Page; then regenerate user token.""]}}"
+integration,META_IG,display_name,MyDay Brasil — Instagram (@minhaterra.online)
+integration,META_IG,is_enabled,true
+integration,META_IG,account_ids_json,"{""note"":""REPLACE_ME"",""ig_user_id"":""REPLACE_ME"",""source_url"":""REPLACE_ME"",""marketing_label"":""REPLACE_ME"",""linked_fb_page_id"":""REPLACE_ME"",""instagram_username"":""REPLACE_ME""}"
+integration,META_IG,credentials_json,{}
+integration,META_IG,config_json,"{""graph_api"":{""next_steps"":[""Put a long-lived Page Access Token in credentials_json.access_token (from GET /me/accounts when non-empty, or OAuth)."",""If /me/accounts stays empty, fix Business Manager: App → Connected assets → add this Page; then regenerate user token.""]}}"

@@ -1,5 +1,6 @@
 import { slidesFromGeneratedOutput, stripNonRenderableDeckFields } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 
 /**
  * Flat slide list for the human review UI — same merge/normalize path as carousel rendering
@@ -12,7 +13,7 @@ export function slidesJsonForReviewUi(
   if (!generationPayload || typeof generationPayload !== "object") return null;
 
   const existingSlides = generationPayload.slides;
-  const gen = (generationPayload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(generationPayload);
   const candidate = (generationPayload.candidate_data as Record<string, unknown>) ?? {};
   const renderCoerced =
     typeof gen.render === "object" && gen.render && !Array.isArray(gen.render)

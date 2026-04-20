@@ -35,7 +35,7 @@ import {
   analyzeMarketPerformance,
   type PerformanceIngestionInput,
 } from "../services/market-learning.js";
-import { compileLearningContexts } from "../services/learning-context-compiler.js";
+import { getLearningContextForGeneration } from "../services/learning-rule-selection.js";
 import { LEARNING_TRANSPARENCY_STATIC, learningTransparencySnapshot } from "../services/learning-transparency.js";
 import { parseCsvToRecords } from "../services/parse-csv-simple.js";
 import {
@@ -154,7 +154,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
   }>("/v1/learning/:project_slug/context-preview", async (req, reply) => {
     const project = await getProjectBySlug(db, req.params.project_slug);
     if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
-    const compiled = await compileLearningContexts(
+    const compiled = await getLearningContextForGeneration(
       db,
       project.id,
       req.query.flow_type ?? null,

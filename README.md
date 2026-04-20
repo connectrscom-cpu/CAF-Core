@@ -4,6 +4,24 @@ CAF (Content Automation Framework) is a **content operating system**: **signals 
 
 **How you run it:** ingest research as **Excel (`.xlsx`)** (upload or CLI), store it as a **signal pack** and **run** in Postgres, plan **content jobs** with the **decision engine**, run the **job pipeline** (LLM, QC, diagnostics, carousel/video/scene rendering), approve in the **Review** app, record **publication placements**, and feed **performance** back into learning.
 
+### Documentation (start here)
+
+| Document | Purpose |
+|----------|---------|
+| **[docs/CAF_CORE_COMPLETE_GUIDE.md](docs/CAF_CORE_COMPLETE_GUIDE.md)** | **Single merged reference** — overview, stack, lifecycles, layers, QC, risk, guidance, repos (for one-file onboarding / print) |
+| **[docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)** | What CAF Core is, who it is for, workflow in plain language |
+| **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Technical layers, lifecycle, critical files, integration contracts |
+| **[docs/LIFECYCLE.md](docs/LIFECYCLE.md)** | Run & job state machines, editorial & publishing states |
+| **[docs/TECH_STACK.md](docs/TECH_STACK.md)** | Languages, services, third parties, deployment hints |
+| **[docs/layers/README.md](docs/layers/README.md)** | One page per architecture layer (HTTP → persistence) |
+| **[docs/QUALITY_CHECKS.md](docs/QUALITY_CHECKS.md)** | QC checklists and `runQcForJob` |
+| **[docs/GENERATION_GUIDANCE.md](docs/GENERATION_GUIDANCE.md)** | Learning text injected into LLM prompts |
+| **[docs/RISK_RULES.md](docs/RISK_RULES.md)** | `risk_policies` vs project `risk_rules` vs brand bans |
+| **[AGENTS.md](AGENTS.md)** | Onboarding for **AI assistants** and contributors (invariants, “where to change what”) |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | HTTP request/response examples |
+| [docs/USER_INPUT_AND_SECRETS.md](docs/USER_INPUT_AND_SECRETS.md) | Safety and secrets |
+| [ENV_AND_SECRETS_INVENTORY.md](ENV_AND_SECRETS_INVENTORY.md) | Environment variable list |
+
 ---
 
 ## What Core owns
@@ -146,7 +164,10 @@ Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applica
 - **`src/decision_engine/`** — planning: scoring, ranking, suppression, prompt selection, route selection; used by run orchestration and `POST /v1/decisions/plan`.
 - **`src/services/job-pipeline.ts`** — large but central: LLM generation, QC, diagnostics, carousel pack, video/scene/HeyGen paths, status transitions.
 - **`src/repositories/`** — Postgres access patterns per aggregate (core, runs, assets, learning, publications, etc.).
-- **`src/config.ts`** — environment schema (Zod); single place for tunables and feature flags.
+- **`src/domain/`** — typed subsets of `content_jobs` JSONB columns: `generation-payload-qc.ts` (Zod + `mergeGenerationPayloadQc`), `generation-payload-output.ts` (`pickGeneratedOutput*`, `hasGeneratedOutput`), `content-job-render-state.ts` (`pickRenderState`, `hasActiveProviderSession` — the canonical HeyGen idempotency check).
+- **`src/services/learning-rule-selection.ts`** — single facade for the two learning paths (`getLearningRulesForPlanning`, `getLearningContextForGeneration`). Prefer this over calling `learning.ts` repo + `learning-context-compiler.ts` directly.
+- **`src/services/pipeline-logger.ts`** — opt-in structured pipeline logs (`logPipelineEvent`) with `run_id` / `task_id` / `job_id` correlation; JSON lines to stderr.
+- **`src/config.ts`** — environment schema (Zod); single place for tunables and feature flags (e.g. `CAF_OUTPUT_SCHEMA_VALIDATION_MODE`).
 - **`services/renderer/templates/`** — Handlebars slide templates consumed by the renderer service (and listed via flow-engine / template APIs as configured).
 
 ---
@@ -155,10 +176,20 @@ Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applica
 
 | Doc | Use |
 |-----|-----|
+| `docs/CAF_CORE_COMPLETE_GUIDE.md` | **All-in-one** project logic: stack, lifecycle, layers, QC, risk, guidance, invariants |
+| `docs/PROJECT_OVERVIEW.md` | Stakeholder / onboarding summary of the product and workflow |
+| `docs/ARCHITECTURE.md` | Engineering: stack, modules, `generation_payload`, QC/learning notes |
+| `docs/LIFECYCLE.md` | Run & content_job lifecycles, review & placement states |
+| `docs/TECH_STACK.md` | Stack and companion services |
+| `docs/layers/README.md` | Index of per-layer docs (`docs/layers/*.md`) |
+| `docs/QUALITY_CHECKS.md` | QC checklists and runtime behavior |
+| `docs/GENERATION_GUIDANCE.md` | Prompt-side generation guidance (facade `learning-rule-selection.ts` → `compileLearningContexts`) |
+| `docs/RISK_RULES.md` | Risk policies, project risk rows, brand bans |
+| `AGENTS.md` | AI agents: invariants, file map, commands (see also `.cursor/rules/`) |
 | `docs/API_REFERENCE.md` | HTTP examples for major `/v1/...` bodies |
+| `docs/VIDEO_FLOWS.md` | Video flow behavior and options |
+| `docs/HEYGEN_API_V3.md` | HeyGen v3 integration notes |
+| `docs/FLY_PRODUCTION_CHECKLIST.md` | Production deploy checklist |
 | `docs/USER_INPUT_AND_SECRETS.md` | Safety / secrets guidance |
 | `ENV_AND_SECRETS_INVENTORY.md` | Environment variable inventory |
-| `src/adapters/README.md` | CLIs that import from Google Sheets or Supabase-shaped tables into Core (only if you use those sources) |
 | `requests/caf-core.http` | REST client snippets |
-
-Add links here to any internal architecture docs you keep outside the repo.

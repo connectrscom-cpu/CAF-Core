@@ -1,4 +1,5 @@
 /** Pure helpers: turn generation_payload into a single text block for LLM review (no I/O). */
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 
 function pickSection(label: string, value: unknown, parts: string[]): void {
   if (value == null || value === "") return;
@@ -14,7 +15,7 @@ function pickSection(label: string, value: unknown, parts: string[]): void {
 }
 
 function mergeGeneratedLayers(payload: Record<string, unknown>): Record<string, unknown> {
-  const gen = (payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(payload);
   const out: Record<string, unknown> = { ...gen };
   for (const k of Object.keys(payload)) {
     if (k === "generated_output" || k === "candidate_data") continue;

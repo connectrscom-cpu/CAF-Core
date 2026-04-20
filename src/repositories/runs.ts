@@ -94,6 +94,22 @@ export async function setRunPromptVersionsSnapshot(
   );
 }
 
+/**
+ * Write the full generation-context snapshot (prompt versions + project config
+ * slice + learning fingerprint) onto the run. See `run-context-snapshot.ts`.
+ * Column added in migration `025_upstream_recs_and_run_snapshot.sql`.
+ */
+export async function setRunContextSnapshot(
+  db: Pool,
+  runUuid: string,
+  snapshot: Record<string, unknown>
+): Promise<void> {
+  await db.query(
+    `UPDATE caf_core.runs SET context_snapshot_json = $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(snapshot), runUuid]
+  );
+}
+
 export async function patchRun(
   db: Pool,
   runUuid: string,

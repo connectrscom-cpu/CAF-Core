@@ -1,0 +1,125 @@
+section,row_key,field,value
+project,,slug,ACME
+project,,display_name,Acme Demo
+project,,color,#1a73e8
+project,,active,true
+strategy,,project_type,Consulting
+strategy,,core_offer,AI-assisted advisory
+strategy,,target_audience,B2B founders
+strategy,,audience_problem,Too much research time
+strategy,,transformation_promise,Cut research time 90%
+strategy,,positioning_statement,The always-on analyst for founders
+strategy,,primary_business_goal,Acquire 50 paying customers
+strategy,,primary_content_goal,Authority
+strategy,,north_star_metric,Qualified demo requests
+strategy,,monetization_model,SaaS subscription
+strategy,,traffic_destination,https://acme.example
+strategy,,funnel_stage_focus,TOFU/MOFU
+strategy,,brand_archetype,Sage
+strategy,,strategic_content_pillars,Research automation; workflows; case studies
+strategy,,authority_angle,Ex-McKinsey founder
+strategy,,differentiation_angle,Verifiable citations on every answer
+strategy,,growth_strategy,Thought leadership + paid social
+strategy,,publishing_intensity,5 posts/week
+strategy,,time_horizon,Q1-Q2
+strategy,,owner,marketing@acme.example
+strategy,,instagram_handle,@acmeai
+strategy,,notes,
+brand,,tone,authoritative
+brand,,voice_style,direct
+brand,,audience_level,intermediate
+brand,,emotional_intensity,0.4
+brand,,humor_level,0.2
+brand,,emoji_policy,minimal
+brand,,max_emojis_per_caption,2
+brand,,banned_claims,"Guaranteed returns; cures any condition"
+brand,,banned_words,"revolutionary; disrupt"
+brand,,mandatory_disclaimers,"Past performance is not indicative of future results."
+brand,,cta_style_rules,"Lead with verbs. One primary CTA per post."
+brand,,storytelling_style,"Case study first; lesson second"
+brand,,positioning_statement,The always-on analyst for founders
+brand,,differentiation_angle,Verifiable citations on every answer
+brand,,risk_level_default,medium
+brand,,manual_review_required,true
+brand,,notes,
+product,,product_name,Acme Assistant
+product,,product_category,Productivity SaaS
+product,,product_url,https://acme.example
+product,,one_liner,Your always-on research analyst
+product,,value_proposition,Cut research time 90% with source-verified answers
+product,,elevator_pitch,"Acme Assistant is an AI research analyst that cites every claim..."
+product,,primary_audience,B2B founders and ops leads
+product,,audience_pain_points,"Hours lost to manual research; unreliable AI summaries"
+product,,audience_desires,"Faster, trustworthy decisions"
+product,,use_cases,"Market sizing; competitive scans; exec briefings"
+product,,anti_audience,"Casual hobbyists"
+product,,key_features,"Citation-first answers; live web access; slide export"
+product,,key_benefits,"Save 8+ hours/week; zero hallucinated claims"
+product,,differentiators,"Every sentence links to a source"
+product,,proof_points,"Used by 300+ ops teams; 4.9/5 G2"
+product,,social_proof,"""This replaced my analyst"" — Jane D., COO"
+product,,competitors,"Perplexity; ChatGPT"
+product,,comparison_angles,"Traceability; export formats"
+product,,pricing_summary,"$49/mo individual; $199/mo team"
+product,,current_offer,"14-day free trial"
+product,,offer_urgency,Ends 2026-06-01
+product,,guarantee,30-day money-back
+product,,primary_cta,Start free trial
+product,,secondary_cta,See demo
+product,,do_say,"Source-verified; hallucination-free"
+product,,dont_say,"Magic; AGI"
+product,,taglines,"Every answer, sourced."
+product,,keywords,"research ai;ai analyst;citation"
+platform,Instagram,caption_max_chars,2200
+platform,Instagram,hook_must_fit_first_lines,true
+platform,Instagram,hook_max_chars,125
+platform,Instagram,slide_min_chars,40
+platform,Instagram,slide_max_chars,180
+platform,Instagram,slide_min,5
+platform,Instagram,slide_max,10
+platform,Instagram,max_hashtags,8
+platform,Instagram,hashtag_format_rule,lowercase; no spaces
+platform,Instagram,line_break_policy,blank line between paragraphs
+platform,Instagram,emoji_allowed,true
+platform,Instagram,link_allowed,false
+platform,Instagram,tag_allowed,true
+platform,Instagram,formatting_rules,Avoid ALL CAPS
+platform,Instagram,posting_frequency_limit,max 2/day
+platform,Instagram,best_posting_window,Tue-Thu 9-11am PT
+platform,TikTok,caption_max_chars,2200
+platform,TikTok,max_hashtags,5
+platform,TikTok,link_allowed,false
+platform,TikTok,best_posting_window,Mon-Fri 6-9pm PT
+flow_type,Flow_Carousel_Copy,enabled,true
+flow_type,Flow_Carousel_Copy,default_variation_count,1
+flow_type,Flow_Carousel_Copy,requires_signal_pack,true
+flow_type,Flow_Carousel_Copy,priority_weight,10
+flow_type,Video_Scene_Generator,enabled,true
+flow_type,Video_Scene_Generator,default_variation_count,1
+flow_type,Video_Script_Generator,enabled,true
+flow_type,Video_Script_Generator,default_variation_count,1
+flow_type,Video_Prompt_Generator,enabled,true
+flow_type,Video_Prompt_Generator,default_variation_count,1
+flow_type,FLOW_PRODUCT_FEATURE,enabled,false
+risk_rule,Flow_Carousel_Copy,trigger_condition,Claims touching finance or health
+risk_rule,Flow_Carousel_Copy,risk_level,medium
+risk_rule,Flow_Carousel_Copy,auto_approve_allowed,false
+risk_rule,Flow_Carousel_Copy,requires_manual_review,true
+risk_rule,Flow_Carousel_Copy,escalation_level,standard
+risk_rule,Flow_Carousel_Copy,claim_restrictions,Avoid ROI guarantees
+risk_rule,Video_Script_Generator,risk_level,medium
+risk_rule,Video_Script_Generator,requires_manual_review,true
+reference_post,ref_001,platform,Instagram
+reference_post,ref_001,post_url,https://instagram.com/p/REPLACE_ME
+reference_post,ref_001,status,pending
+reference_post,ref_001,notes,Competitor hook we want to emulate
+heygen_defaults,,voice_id,
+heygen_defaults,,avatar_id,
+heygen_defaults,,avatar_pool_json,"[]"
+integration,META_IG,display_name,Acme IG
+integration,META_IG,is_enabled,true
+integration,META_IG,account_ids_json,"{""ig_business_account_id"":""REPLACE_ME""}"
+integration,META_IG,credentials_json,"{""access_token"":""REPLACE_ME""}"
+integration,META_IG,config_json,"{}"
+integration,TIKTOK,display_name,Acme TikTok
+integration,TIKTOK,is_enabled,false

@@ -8,9 +8,11 @@
 import type { Pool } from "pg";
 import { qOne } from "../db/queries.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
-import { listQcChecks, listRiskPolicies, getFlowDefinition, type QcChecklistRow, type RiskPolicyRow } from "../repositories/flow-engine.js";
+import { listQcChecks, listRiskPoliciesForJob, getFlowDefinition, type QcChecklistRow, type RiskPolicyRow } from "../repositories/flow-engine.js";
 import { getBrandConstraints } from "../repositories/project-config.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
+import { mergeGenerationPayloadQc } from "../domain/generation-payload-qc.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 
 export interface QcCheckResult {
   check_id: string;
@@ -458,7 +460,7 @@ export async function runQcForJob(
 
   if (!job) throw new Error(`Job not found: ${jobId}`);
 
-  let qcContent = (job.generation_payload?.generated_output as Record<string, unknown>) ?? {};
+  let qcContent: Record<string, unknown> = pickGeneratedOutputOrEmpty(job.generation_payload);
   if (isCarouselFlow(job.flow_type) && Object.keys(qcContent).length > 0) {
     qcContent = normalizeLlmParsedForSchemaValidation(job.flow_type, { ...qcContent });
     await db.query(
@@ -481,7 +483,7 @@ export async function runQcForJob(
     ? await listQcChecks(db, job.flow_type)
     : [];
 
-  const policies = await listRiskPolicies(db);
+  const policies = await listRiskPoliciesForJob(db, job.flow_type);
   const brand = await getBrandConstraints(db, job.project_id);
   const brandBanned = (brand?.banned_words ?? "").split(";").map((w) => w.trim().toLowerCase()).filter(Boolean);
 
@@ -536,14 +538,10 @@ export async function runQcForJob(
     recommendedRoute,
   });
 
-  await db.query(`
-    UPDATE caf_core.content_jobs SET
-      qc_status = $1,
-      generation_payload = generation_payload || $2::jsonb,
-      recommended_route = $3,
-      updated_at = now()
-    WHERE id = $4
-  `, [qcPassed ? "PASS" : "FAIL", JSON.stringify({ qc_result: qcPayload }), recommendedRoute, job.id]);
+  await mergeGenerationPayloadQc(db, job.id, qcPayload, {
+    qc_status: qcPassed ? "PASS" : "FAIL",
+    recommended_route: recommendedRoute,
+  });
 
   return {
     task_id: job.task_id,

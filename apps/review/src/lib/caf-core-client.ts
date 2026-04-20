@@ -1023,6 +1023,59 @@ export async function getLlmApprovalReviews(projectSlug: string, limit?: number)
   );
 }
 
+// ── Runs (history / logs) ────────────────────────────────────────────────
+
+export type RunStatus =
+  | "CREATED"
+  | "PLANNING"
+  | "PLANNED"
+  | "GENERATING"
+  | "RENDERING"
+  | "REVIEWING"
+  | "COMPLETED"
+  | "FAILED"
+  | "CANCELLED";
+
+export interface RunListRow {
+  id: string;
+  run_id: string;
+  project_id: string;
+  status: RunStatus;
+  source_window: string | null;
+  signal_pack_id: string | null;
+  metadata_json: Record<string, unknown>;
+  prompt_versions_snapshot?: Record<string, unknown>;
+  context_snapshot_json?: Record<string, unknown> | null;
+  total_jobs: number;
+  jobs_completed: number;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listRuns(
+  projectSlug: string,
+  opts?: { limit?: number; offset?: number }
+): Promise<{ ok: boolean; runs: RunListRow[]; count: number } | null> {
+  const qs = new URLSearchParams();
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  const q = qs.toString();
+  return coreGet<{ ok: boolean; runs: RunListRow[]; count: number }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}${q ? `?${q}` : ""}`
+  );
+}
+
+export async function getRunDetail(
+  projectSlug: string,
+  runId: string
+): Promise<{ ok: boolean; run: RunListRow } | null> {
+  return coreGet<{ ok: boolean; run: RunListRow }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}`
+  );
+}
+
 // ── Publication placements (Review → n8n) ─────────────────────────────────
 
 export type PublicationPlacementStatus =

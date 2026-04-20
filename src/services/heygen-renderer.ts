@@ -13,6 +13,7 @@ import {
 } from "../repositories/project-config.js";
 import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
 import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
 import { buildProductProfilePromptBlock } from "./product-video-agent-product.js";
 import { insertAsset } from "../repositories/assets.js";
@@ -1868,7 +1869,7 @@ export async function runHeygenForContentJob(
   if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
 
   const rows = await listHeygenConfig(db, job.project_id);
-  let gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  let gen: Record<string, unknown> = pickGeneratedOutputOrEmpty(job.generation_payload);
   const enforced = await enforceHeygenSpokenScriptWordLaw(db, appConfig, job, { ...gen });
   gen = enforced.gen;
   const renderMode = resolveHeygenRenderMode(

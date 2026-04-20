@@ -12,6 +12,7 @@ import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-type
 import { extractSpokenScriptText } from "./video-gen-fields.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
   appendVideoUserPromptDurationHardFooter,
   withVideoScriptDurationPolicy,
@@ -27,6 +28,13 @@ import {
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
+import { isProductVideoFlow } from "../domain/product-flow-types.js";
+
+/** Reduces script ↔ scene mismatches (product demos, multi-beat layouts). */
+export const VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM = `Scene–script alignment (critical):
+- If you emit **scenes**, **shots**, **visual_direction**, or per-beat visuals, each beat must **show what the VO says at that beat** — no contradictory b-roll or a different story than the spoken line.
+- **Through-line:** The hook’s promise must match the middle and close (same product angle, same narrative spine); do not drift to unrelated topics mid-script.
+- Map beats in order: scene 1 supports the opening claim; later scenes prove or deepen it with concretes (feature, demo, payoff).`;
 
 async function pickVideoScriptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
@@ -221,7 +229,7 @@ export async function ensureVideoScriptInPayload(
   }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
   if (!job) return { ok: false, error: "job not found" };
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   if (extractSpokenScriptText(gen, 20).length > 0) {
     const tplEarly = await pickVideoScriptTemplate(db, job.flow_type);
     const baseSysEarly =
@@ -238,6 +246,8 @@ export async function ensureVideoScriptInPayload(
       job.platform,
       job.flow_type
     );
+    const alignEarly =
+      isProductVideoFlow(job.flow_type) || multiSceneEarly ? `\n\n${VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM}` : "";
     const enforcedEarly = await enforceSpokenScriptWordLawOnParsedOutput(
       db,
       config,
@@ -248,7 +258,7 @@ export async function ensureVideoScriptInPayload(
       openAiMaxTokens(tplEarly?.max_tokens_default ?? 2500),
       (job.generation_payload.signal_pack_id as string) ?? null,
       {
-        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`,
+        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${alignEarly}`,
         retryUserPromptBase: `You are revising an existing video script JSON. Meet the word count while preserving structure and other fields.\n\nDraft JSON:\n${JSON.stringify(gen).slice(0, 14000)}`,
         stepPrefix: `llm_video_script_prep_${job.flow_type}`,
       }
@@ -303,13 +313,15 @@ export async function ensureVideoScriptInPayload(
   const resolvedFt = resolveFlowEngineTemplateFlowType(job.flow_type);
   const multiScene =
     /FLOW_SCENE|scene_assembly|Video_Scene_Generator/i.test(job.flow_type) || resolvedFt === "Video_Scene_Generator";
+  const sceneAlign =
+    isProductVideoFlow(job.flow_type) || multiScene ? `\n\n${VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM}` : "";
 
   const runScriptLlm = async (user: string, stepSuffix: string) =>
     openaiChat(
       apiKey,
       {
         model: config.OPENAI_MODEL,
-        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`.trim(),
+        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${sceneAlign}`.trim(),
         user_prompt: user,
         max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2500),
       },
@@ -349,7 +361,7 @@ export async function ensureVideoScriptInPayload(
     openAiMaxTokens(tpl.max_tokens_default ?? 2500),
     (job.generation_payload.signal_pack_id as string) ?? null,
     {
-      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`,
+      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${sceneAlign}`,
       retryUserPromptBase: userPrompt,
       stepPrefix: `llm_video_script_prep_${job.flow_type}`,
     }

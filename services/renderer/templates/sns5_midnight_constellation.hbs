@@ -42,6 +42,16 @@
       text-align: center;
       background: linear-gradient(180deg, var(--navy) 0%, var(--navy-mid) 50%, #12162a 100%);
     }
+    /* Body slides: left-align copy (cover/CTA stay centered) */
+    .slide-inner.sns5--body {
+      align-items: flex-start;
+      text-align: left;
+    }
+    .slide-inner.sns5--body .heading,
+    .slide-inner.sns5--body .body-text {
+      text-align: left;
+      max-width: 900px;
+    }
     .sns5 .stars {
       position: absolute;
       inset: 0;
@@ -214,7 +224,7 @@
 
   {{#each body_slides}}
   <div class="slide">
-    <div class="slide-inner sns5">
+    <div class="slide-inner sns5 sns5--body">
       <div class="stars"></div>
       <div class="constellation">
         <span class="dot d6"></span><span class="dot d7"></span><span class="dot d8"></span>

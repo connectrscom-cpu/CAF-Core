@@ -20,6 +20,7 @@ import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { extractSpokenScriptText } from "./video-gen-fields.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import { enrichGeneratedOutputForReview, maxHashtagsFromPlatformConstraints } from "./publish-metadata-enrich.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 
 /**
  * Editorial pattern: reviewers repeatedly flagged videos where the scene visuals did not depict
@@ -192,7 +193,7 @@ export async function ensureSceneBundleInPayload(
   }>(db, `SELECT * FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
   if (jobReload) job = jobReload;
 
-  const gen = (job.generation_payload.generated_output as Record<string, unknown>) ?? {};
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const bundle = gen.scene_bundle as Record<string, unknown> | undefined;
   const scenes = bundle?.scenes;
   if (Array.isArray(scenes) && scenes.length > 0) {

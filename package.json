@@ -15,6 +15,7 @@
     "seed:canonical-flows": "node --import tsx src/cli/seed-canonical-flows.ts",
     "seed:demo-sns": "node --import tsx src/cli/seed-canonical-flows.ts",
     "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",
+    "import:project-csv": "node --import tsx src/cli/import-project-csv.ts",
     "sync:sheets": "node --import tsx src/cli/sync-sheets.ts",
     "sync:supabase": "node --import tsx src/cli/sync-supabase.ts",
     "editorial-analysis": "node dist/cli/run-editorial-analysis.js",
