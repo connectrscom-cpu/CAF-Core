@@ -21,6 +21,26 @@ import { extractSpokenScriptText } from "./video-gen-fields.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import { enrichGeneratedOutputForReview, maxHashtagsFromPlatformConstraints } from "./publish-metadata-enrich.js";
 
+/**
+ * Editorial pattern: reviewers repeatedly flagged videos where the scene visuals did not depict
+ * the thing the spoken_script was actually talking about (e.g. script discusses "sign and sound"
+ * but scenes show generic product B-roll). Inject explicit alignment rules at the system level so
+ * every scene's `video_prompt` is anchored to the matching narration slice.
+ */
+export const SCRIPT_SCENE_ALIGNMENT_POLICY = [
+  "Script ↔ scene visual alignment (hard):",
+  "- Each scene object MUST include `scene_narration_line` — a consecutive slice of spoken_script in reading order (no paraphrase, no reorder, no omissions).",
+  "- Each scene's `video_prompt` MUST visually depict the subject, action and nouns of that scene_narration_line. Do not reuse a generic B-roll prompt across scenes or describe content the narration never mentions.",
+  "- If spoken_script introduces a new concept in a sentence (e.g. a product feature, a place, an object, a person), the corresponding scene's video_prompt must show that concept explicitly in frame.",
+  "- Do not invent visuals unrelated to the script (no unprompted mascots, generic lifestyle shots, or logo montages unless the script names them).",
+  "- Preserve continuity: wardrobe, location, framing cues carry across scenes unless the script signals a hard cut.",
+  "- Before returning, verify each scene reads as '[narration slice] ↔ [matching visual]' with the same key nouns.",
+].join("\n");
+
+export function withScriptSceneAlignmentPolicy(base: string): string {
+  return `${base.trim()}\n\n${SCRIPT_SCENE_ALIGNMENT_POLICY}`.trim();
+}
+
 const SCENE_CLIP_URL_KEYS = [
   "rendered_scene_url",
   "video_url",
@@ -257,9 +277,11 @@ export async function ensureSceneBundleInPayload(
     "Return scene_bundle with scenes[] (scene_id, order, direction, video_prompt) inside one JSON object (markdown fence ok).";
   const strictBundleSys =
     "You are a video scene planner. Return only one JSON object. No markdown or commentary.";
-  const systemPrompt = usedBundleFallbackUser
-    ? withSceneAssemblyPolicy(strictBundleSys, config)
-    : withSceneAssemblyPolicy(tpl.system_prompt ?? defaultSceneSys, config);
+  const systemPrompt = withScriptSceneAlignmentPolicy(
+    usedBundleFallbackUser
+      ? withSceneAssemblyPolicy(strictBundleSys, config)
+      : withSceneAssemblyPolicy(tpl.system_prompt ?? defaultSceneSys, config)
+  );
 
   const maxTok = Number(tpl.max_tokens_default ?? 4000);
   let llm = await openaiChat(
@@ -283,7 +305,7 @@ export async function ensureSceneBundleInPayload(
   let parsed = parseJsonObjectFromLlmText(llm.content);
   if (!parsed) {
     const retryUser = sceneBundleFallbackUserPrompt(packCtx, sceneTargets);
-    const retrySys = withSceneAssemblyPolicy(strictBundleSys, config);
+    const retrySys = withScriptSceneAlignmentPolicy(withSceneAssemblyPolicy(strictBundleSys, config));
     llm = await openaiChat(
       apiKey,
       {

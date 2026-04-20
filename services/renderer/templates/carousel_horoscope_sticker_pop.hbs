@@ -68,10 +68,11 @@
 
     .cover-sticker{
       height: 100%;
-      padding: 58px 54px;
+      padding: 72px 60px;
       display:flex;
       flex-direction:column;
-      justify-content:space-between;
+      justify-content:center;
+      gap: 28px;
       background:
         radial-gradient(circle at 10% 20%, rgba(255,79,160,0.14), transparent 42%),
         radial-gradient(circle at 85% 10%, rgba(122,92,255,0.16), transparent 45%),
@@ -82,7 +83,7 @@
     .cover-title{
       font-family:"Baloo 2","Fredoka",system-ui,Arial,sans-serif;
       font-weight: 800;
-      font-size: 112px;
+      font-size: 118px;
       line-height: 0.92;
       letter-spacing: -0.03em;
       color: var(--ink);
@@ -90,7 +91,7 @@
       text-shadow:
         0 6px 0 rgba(255,255,255,0.85),
         0 14px 30px rgba(0,0,0,0.12);
-      max-width: 940px;
+      max-width: 960px;
     }
 
     .chip-row{display:flex; gap:14px; flex-wrap:wrap; margin-top: 22px;}
@@ -105,62 +106,38 @@
       color: rgba(28,24,32,0.78);
     }
 
-    .avatar{
-      width: 420px; height: 420px;
-      border-radius: 50%;
-      background:
-        radial-gradient(circle at 30% 30%, rgba(255,255,255,0.65), rgba(255,255,255,0.18)),
-        radial-gradient(circle at 55% 60%, rgba(122,92,255,0.28), transparent 58%),
-        radial-gradient(circle at 25% 70%, rgba(255,79,160,0.26), transparent 60%);
-      border: 10px solid rgba(255,255,255,0.96);
-      box-shadow: 0 28px 80px rgba(0,0,0,0.22);
-      display:grid;
-      place-items:center;
-      font-size: 160px;
-      font-weight: 800;
-      color: rgba(28,24,32,0.82);
-      align-self:center;
-      margin: 34px 0;
-      position:relative;
-    }
-    .avatar::after{
-      content:"";
-      position:absolute; inset:-26px;
-      border-radius:50%;
-      border: 4px dashed rgba(255,255,255,0.55);
-      transform: rotate(-8deg);
-    }
-
     .sub{
-      font-size:40px;
-      line-height:1.35;
-      color: rgba(28,24,32,0.72);
-      max-width: 940px;
+      font-size:42px;
+      line-height:1.38;
+      color: rgba(28,24,32,0.78);
+      max-width: 960px;
+      white-space: pre-wrap;
     }
 
     /* body slides */
     .panel{
       height: 100%;
-      padding: 54px 54px;
+      padding: 52px 50px;
       display:flex;
       flex-direction:column;
-      gap: 26px;
+      gap: 22px;
       background: #fff3f7;
     }
     .h1{
       font-family:"Baloo 2","Fredoka",system-ui,Arial,sans-serif;
       font-weight: 800;
-      font-size: 84px;
+      font-size: 76px;
       line-height: 0.98;
       letter-spacing: -0.03em;
       color: var(--ink);
       text-transform: uppercase;
     }
     .p{
-      font-size: 38px;
-      line-height: 1.38;
-      color: rgba(28,24,32,0.78);
-      max-width: 940px;
+      font-size: 34px;
+      line-height: 1.4;
+      color: rgba(28,24,32,0.82);
+      max-width: 980px;
+      white-space: pre-wrap;
     }
     .bullets{
       margin-top: 8px;
@@ -174,9 +151,9 @@
       display:flex;
       gap: 12px;
       align-items:flex-start;
-      font-size: 36px;
-      line-height: 1.35;
-      color: rgba(28,24,32,0.78);
+      font-size: 32px;
+      line-height: 1.38;
+      color: rgba(28,24,32,0.82);
     }
     .dot{
       margin-top: 12px;
@@ -205,10 +182,11 @@
       text-transform: uppercase;
     }
     .cta .small{
-      font-size: 38px;
-      line-height: 1.35;
-      color: rgba(28,24,32,0.72);
-      max-width: 940px;
+      font-size: 36px;
+      line-height: 1.38;
+      color: rgba(28,24,32,0.78);
+      max-width: 960px;
+      white-space: pre-wrap;
     }
     .handle{
       margin-top: 14px;
@@ -227,21 +205,18 @@
     <div class="wrap">
       <div class="sticker cover-sticker">
         <div>
-          <div class="kicker">Slide 01 / Cover</div>
           <div class="cover-title">
             {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
           </div>
-          <div class="chip-row">
+          {{#if cover_slide.sign}}{{#if cover_slide.date_range}}<div class="chip-row">
             {{#if cover_slide.sign}}<div class="chip">{{cover_slide.sign}}</div>{{/if}}
             {{#if cover_slide.date_range}}<div class="chip">{{cover_slide.date_range}}</div>{{/if}}
             {{#if cover_slide.version}}<div class="chip">{{cover_slide.version}}</div>{{/if}}
-          </div>
+          </div>{{/if}}{{/if}}
         </div>
 
-        <div class="avatar">{{#if cover_slide.glyph}}{{cover_slide.glyph}}{{else}}✶{{/if}}</div>
-
         <div class="sub">
-          {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
+          {{#if cover_subtitle}}{{joinEmojiOrphans cover_subtitle}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.body}}{{/if}}{{/if}}
         </div>
       </div>
     </div>
@@ -253,9 +228,9 @@
     <div class="stars"></div>
     <div class="wrap">
       <div class="sticker panel">
-        <div class="kicker">{{#if kicker}}{{kicker}}{{else}}Slide / Horoscope{{/if}}</div>
+        {{#if kicker}}<div class="kicker">{{kicker}}</div>{{/if}}
         <div class="h1">{{headline}}</div>
-        <div class="p">{{body}}</div>
+        <div class="p">{{joinEmojiOrphans body}}</div>
         {{#if bullets}}
           <ul class="bullets">
             {{#each bullets}}
@@ -274,11 +249,10 @@
     <div class="wrap">
       <div class="sticker cta">
         <div>
-          <div class="kicker">Slide / CTA</div>
-          <div class="big">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</div>
+          <div class="big">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}</div>
           {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
         </div>
-        <div class="small">Save this. Share it. Pick your sign.</div>
+        <div class="small">{{#if cta_slide.sub}}{{joinEmojiOrphans cta_slide.sub}}{{else}}Save this. Share it. Pick your sign.{{/if}}</div>
       </div>
     </div>
   </div>

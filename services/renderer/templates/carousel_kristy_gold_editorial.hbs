@@ -159,9 +159,9 @@
       <div style="text-align:center;">
         <div class="kicker">Slide / CTA</div>
         <div class="cover-title" style="font-size:126px;">
-          {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+          {{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}
         </div>
-        {{#if cta_slide.sub}}<div class="cover-sub">{{cta_slide.sub}}</div>{{/if}}
+        {{#if cta_slide.sub}}<div class="cover-sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
         {{#if cta_handle}}<div class="cta-meta">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-meta">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       </div>
     </div>

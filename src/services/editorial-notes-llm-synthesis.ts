@@ -7,6 +7,7 @@ import type { AppConfig } from "../config.js";
 import type { RunOutputReviewRow } from "../repositories/run-output-reviews.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
+import { isVideoFlow } from "../decision_engine/flow-kind.js";
 
 const NOTE_MAX_CHARS = 480;
 const MAX_NOTE_ROWS = 40;
@@ -66,6 +67,22 @@ function trimNote(s: string): string {
   return `${t.slice(0, NOTE_MAX_CHARS)}…`;
 }
 
+/**
+ * For VIDEO flows we prefix every reviewer note with a `[video · <flow_type>]` tag so downstream
+ * renderings (LLM synthesis `example_quotes`, engineering briefings for coding agents) can tell
+ * which video flow each critique belongs to without cross-referencing the `flow_type` field.
+ * Carousel notes are left untouched to keep briefings readable.
+ */
+export function annotateNoteWithFlowType(note: string, flowType: string | null | undefined): string {
+  const n = (note ?? "").trim();
+  if (!n) return n;
+  const ft = (flowType ?? "").trim();
+  if (!ft || !isVideoFlow(ft)) return n;
+  const already = new RegExp(`^\\[video\\s·\\s${ft.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")}\\]`, "i");
+  if (already.test(n)) return n;
+  return `[video · ${ft}] ${n}`;
+}
+
 function safeParseSynthesisJson(raw: string): Partial<EditorialNotesLlmSynthesis> | null {
   try {
     const o = JSON.parse(raw) as Record<string, unknown>;
@@ -87,6 +104,7 @@ You receive:
 - Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights). The aggregate may include **run_output_reviews**: holistic operator write-ups on entire **runs** (batch quality, coherence, what worked or failed across jobs).
 - Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included), plus the carousel template name when available. When the aggregate field run_output_reviews is present, treat it as first-class signal even if per-task notes are sparse.
 - Each row carries its 'flow_type' — use it to detect whether the content was a CAROUSEL/IMAGE flow (Flow_Carousel_*, FLOW_IMG_PRODUCT_*) or a VIDEO flow (Video_*, FLOW_PRODUCT_*). Apply the right failure-mode lens accordingly.
+- Notes from VIDEO flows are pre-tagged with \`[video · <flow_type>] …\`. Preserve that leading tag verbatim when you echo the note back inside \`example_quotes\`, and add the matching flow_type(s) to the recommended action's \`example_task_ids\` / \`where_to_change\` so a coding agent can immediately identify which video flow each critique targets (script generator vs prompt generator vs scene assembly vs HeyGen). Do not strip or rewrite the tag.
 
 Your job:
 1. Convert the notes into **guidelines** that improve next generations: what was good/bad about the body/script, what failed structurally, and what should be consistently enforced. Separate carousel issues from video issues in your themes and actions — do not lump them together.
@@ -169,7 +187,7 @@ export async function synthesizeEditorialNotesWithLlm(
       carousel_template_name: r.carousel_template_name ?? null,
       carousel_template_path_hint: r.carousel_template_path_hint ?? null,
       rejection_tags: Array.isArray(r.rejection_tags) ? r.rejection_tags : [],
-      note: trimNote(r.note),
+      note: trimNote(annotateNoteWithFlowType(r.note, r.flow_type)),
       created_at: r.created_at,
     })),
   };

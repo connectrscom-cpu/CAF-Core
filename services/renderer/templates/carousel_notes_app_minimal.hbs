@@ -68,9 +68,9 @@
         {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
       </div>
       {{#if cover_subtitle}}
-      <div class="sub">{{cover_subtitle}}</div>
+      <div class="sub">{{joinEmojiOrphans cover_subtitle}}</div>
       {{else}}
-      {{#if cover_slide.body}}<div class="sub">{{cover_slide.body}}</div>{{/if}}
+      {{#if cover_slide.body}}<div class="sub">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
       {{/if}}
     </div>
   </div>
@@ -79,7 +79,7 @@
   <div class="slide body-slide">
     <div class="page">
       <div class="headline">{{headline}}</div>
-      <div class="body">{{body}}</div>
+      <div class="body">{{joinEmojiOrphans body}}</div>
     </div>
   </div>
   {{/each}}
@@ -88,10 +88,10 @@
   <div class="slide cta">
     <div class="page">
       <div class="headline">
-        {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
+        {{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}
       </div>
       {{#if cta_handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_slide.handle}}</div>{{/if}}{{/if}}
-      {{#if cta_slide.sub}}<div class="sub">{{cta_slide.sub}}</div>{{/if}}
+      {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
     </div>
   </div>
 </body>

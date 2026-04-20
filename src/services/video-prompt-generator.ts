@@ -18,6 +18,22 @@ import {
   maxHashtagsFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
 
+/**
+ * Editorial pattern: reviewers repeatedly flagged videos where captions were "extremely weak"
+ * and shipped with **zero** hashtags — killing discoverability on TikTok/IG Reels. Append a
+ * video-specific captioning contract on top of PUBLICATION_SYSTEM_ADDENDUM so the LLM treats
+ * captions + hashtags as first-class outputs grounded in the signal pack.
+ */
+export const VIDEO_CAPTION_SYSTEM_ADDENDUM = `Video caption contract (TikTok / IG Reels / Shorts):
+- The on-platform caption is a primary deliverable, not an afterthought. Produce a caption that:
+  * opens with a hook line (question, bold claim, or pattern interrupt) tied to the script's first beat,
+  * summarises the value or payoff in plain language (1–2 short sentences max),
+  * ends with a clear imperative CTA (Follow / Save / Comment / Tag) that pairs with the account **@handle** when it is present in context.
+- Hashtags are REQUIRED for video flows. Emit a non-empty \`hashtags\` field (array preferred) sourced from signal_pack_publication_hints (themes, keywords, hashtag_seeds) — never return zero hashtags.
+- Mix one or two broad-reach tags with several niche / topical tags pulled from the signal pack. Prefer specific, research-backed tags over generic filler (avoid #love, #fyp-only, #viral-only when the pack gives better options).
+- Respect platform_constraints.max_hashtags when present; otherwise cap at ~8.
+- Do NOT fabricate handles, URLs, or hashtags not implied by the candidate or signal pack context.`;
+
 async function pickVideoPromptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
   const chain = [...new Set([flowType, resolved, "Video_Prompt_Generator", "Video_Prompt_HeyGen_Avatar", "FLOW_VIDEO"])];
@@ -109,7 +125,7 @@ export async function ensureVideoPromptInPayload(
     apiKey,
     {
       model: config.OPENAI_MODEL,
-      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`.trim(),
+      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}`.trim(),
       user_prompt: userPrompt,
       max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2000),
     },
