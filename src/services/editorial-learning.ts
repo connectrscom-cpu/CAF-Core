@@ -540,19 +540,36 @@ export async function analyzeEditorialPatterns(
       }
     }
 
-    // Mint pending GENERATION_GUIDANCE rules from LLM "learning_rule" actions.
-    // These rules remain pending (operator-approved) but are injected automatically into the next editorial rework.
+    // Mint pending GENERATION_GUIDANCE rules from LLM-classified actions.
+    //
+    // Three action categories translate to LLM-injectable guidance (they change what the generator is told,
+    // not the renderer code or the Core pipeline):
+    //   - learning_rule           → generic ranking/suppression/guidance rule
+    //   - generation_prompt       → edit to the text-copy / carousel generator prompt
+    //   - video_generation_prompt → edit to the video script / video prompt / scene-assembly prompt
+    //
+    // These remain pending (operator-approved) but are injected automatically into the next editorial rework.
+    // Categories like `renderer_template`, `heygen_template`, or `pipeline` intentionally *do not* mint a
+    // guidance rule — they need code changes, not LLM guidance. They still appear in the engineering brief.
     if (llmNotesResult && !("skipped" in llmNotesResult)) {
       const noteMeta = new Map(
         reviews.map((r) => [r.task_id, { flow_type: r.flow_type ?? null, platform: r.platform ?? null }]) as Array<
           [string, { flow_type: string | null; platform: string | null }]
         >
       );
-      const actions = (llmNotesResult.recommended_actions ?? []).filter(
-        (a) => String(a.category ?? "").toLowerCase() === "learning_rule"
+      const GUIDANCE_MINT_CATEGORIES = new Set([
+        "learning_rule",
+        "generation_prompt",
+        "video_generation_prompt",
+      ]);
+      const VIDEO_GUIDANCE_CATEGORIES = new Set(["video_generation_prompt"]);
+
+      const actions = (llmNotesResult.recommended_actions ?? []).filter((a) =>
+        GUIDANCE_MINT_CATEGORIES.has(String(a.category ?? "").toLowerCase())
       );
 
-      for (const a of actions.slice(0, 8)) {
+      for (const a of actions.slice(0, 10)) {
+        const category = String(a.category ?? "").toLowerCase();
         const ex = Array.isArray(a.example_task_ids)
           ? a.example_task_ids.map((x) => String(x).trim()).filter(Boolean)
           : [];
@@ -564,7 +581,10 @@ export async function analyzeEditorialPatterns(
           if (meta?.flow_type) flowCounts.set(meta.flow_type, (flowCounts.get(meta.flow_type) ?? 0) + 1);
           if (meta?.platform) platformCounts.set(meta.platform, (platformCounts.get(meta.platform) ?? 0) + 1);
         }
-        const scopeFlowType = [...flowCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? "Flow_Carousel_Copy";
+        const videoDefault = VIDEO_GUIDANCE_CATEGORIES.has(category);
+        const scopeFlowType =
+          [...flowCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ??
+          (videoDefault ? "Video_Script_HeyGen" : "Flow_Carousel_Copy");
         const scopePlatform = [...platformCounts.entries()].sort((x, y) => y[1] - x[1])[0]?.[0] ?? "Instagram";
 
         const title = String(a.title ?? "").trim() || "Editorial guideline";
@@ -584,6 +604,7 @@ export async function analyzeEditorialPatterns(
           action_payload: {
             guidance,
             title,
+            category,
             bullets: next ? next.split(/\n+/).map((s) => s.trim()).filter(Boolean).slice(0, 10) : [],
             example_task_ids: ex.slice(0, 10),
             carousel_template_name: (a.carousel_template_name as unknown) ?? null,

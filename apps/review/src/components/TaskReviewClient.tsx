@@ -13,7 +13,9 @@ import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url"
 import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
 import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
+import { VideoReviewEdits } from "@/components/VideoReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
+import { isVideoFlow } from "@/lib/flow-kind";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -72,6 +74,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [heygenAvatarId, setHeygenAvatarId] = useState("");
   const [heygenVoiceId, setHeygenVoiceId] = useState("");
   const [heygenForceRerender, setHeygenForceRerender] = useState(false);
+  const [videoPromptAnalysis, setVideoPromptAnalysis] = useState("");
 
   useEffect(() => {
     setEditedSlides([]);
@@ -80,6 +83,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setHeygenAvatarId("");
     setHeygenVoiceId("");
     setHeygenForceRerender(false);
+    setVideoPromptAnalysis("");
   }, [task_id]);
 
   useEffect(() => {
@@ -161,6 +165,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const runId = (data?.run_id ?? "").trim();
 
   const heygenWorkbench = useMemo(() => isHeyGenReviewFlow(data?.flow_type), [data?.flow_type]);
+  const flowTypeStr = (data?.flow_type ?? "").trim();
+  const videoFlow = useMemo(() => (flowTypeStr ? isVideoFlow(flowTypeStr) : false), [flowTypeStr]);
+  const videoPrompt = (data?.generated_video_prompt ?? "").trim();
+  const videoPromptLabel = heygenWorkbench ? "HeyGen" : "Video";
 
   const { hasEdits, editsSummary } = useMemo(() => {
     const summary: string[] = [];
@@ -174,7 +182,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     if (editedCaption !== initialCaption) summary.push("Caption");
     if (editedHashtags !== initialHashtags) summary.push("Hashtags");
     const hadParsedSlides = initialSlides.length > 0;
-    if (hadParsedSlides) {
+    if (hadParsedSlides && !videoFlow) {
       if (editedSlides.length !== initialSlides.length) {
         summary.push("Slides (count)");
       } else {
@@ -208,6 +216,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     heygenAvatarId,
     heygenVoiceId,
     heygenForceRerender,
+    videoFlow,
   ]);
 
   useEffect(() => {
@@ -234,7 +243,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [hasEdits]);
 
   const finalSlidesJsonOverride =
-    editedSlides.length > 0 && rawPayload !== undefined
+    !videoFlow && editedSlides.length > 0 && rawPayload !== undefined
       ? JSON.stringify(buildSlidesJson(editedSlides, rawPayload))
       : undefined;
 
@@ -299,25 +308,40 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onHeygenForceRerenderChange={setHeygenForceRerender}
               />
             )}
-            <CarouselEdits
-              taskId={execTaskId}
-              runId={runId || undefined}
-              editedSlides={editedSlides}
-              rawPayload={rawPayload ?? null}
-              finalTitleOverride={editedTitle}
-              onFinalTitleOverrideChange={setEditedTitle}
-              finalHookOverride={editedHook}
-              onFinalHookOverrideChange={setEditedHook}
-              generatedCaption={editedCaption}
-              onCaptionChange={setEditedCaption}
-              finalHashtagsOverride={editedHashtags}
-              onFinalHashtagsOverrideChange={setEditedHashtags}
-              extraFields={{
-                generated_title: (data.generated_title ?? "").trim(),
-                generated_hook: (data.generated_hook ?? "").trim(),
-              }}
-              exportAtEnd
-            />
+            {videoFlow ? (
+              <VideoReviewEdits
+                videoPrompt={videoPrompt}
+                provider={videoPromptLabel}
+                promptAnalysis={videoPromptAnalysis}
+                onPromptAnalysisChange={setVideoPromptAnalysis}
+                caption={editedCaption}
+                onCaptionChange={setEditedCaption}
+                hashtags={editedHashtags}
+                onHashtagsChange={setEditedHashtags}
+                hook={editedHook}
+                onHookChange={setEditedHook}
+              />
+            ) : (
+              <CarouselEdits
+                taskId={execTaskId}
+                runId={runId || undefined}
+                editedSlides={editedSlides}
+                rawPayload={rawPayload ?? null}
+                finalTitleOverride={editedTitle}
+                onFinalTitleOverrideChange={setEditedTitle}
+                finalHookOverride={editedHook}
+                onFinalHookOverrideChange={setEditedHook}
+                generatedCaption={editedCaption}
+                onCaptionChange={setEditedCaption}
+                finalHashtagsOverride={editedHashtags}
+                onFinalHashtagsOverrideChange={setEditedHashtags}
+                extraFields={{
+                  generated_title: (data.generated_title ?? "").trim(),
+                  generated_hook: (data.generated_hook ?? "").trim(),
+                }}
+                exportAtEnd
+              />
+            )}
             <DecisionPanel
               taskId={execTaskId}
               projectSlug={(data.project ?? projectFromUrl).trim() || undefined}
@@ -325,7 +349,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               existingDecision={decision}
               existingNotes={notes}
               existingRewriteCopy={data.rewrite_copy !== "false"}
-              finalTitleOverride={editedTitle}
+              finalTitleOverride={videoFlow ? undefined : editedTitle}
               finalHookOverride={editedHook}
               finalCaptionOverride={editedCaption}
               finalHashtagsOverride={editedHashtags}
@@ -337,21 +361,25 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               heygenForceRerender={heygenWorkbench ? heygenForceRerender : undefined}
               hasEdits={hasEdits}
               editsSummary={editsSummary}
+              notesAddendum={videoFlow ? videoPromptAnalysis : undefined}
+              notesAddendumLabel={videoFlow ? `${videoPromptLabel} prompt analysis` : undefined}
             />
-            <CarouselEditsExport
-              taskId={execTaskId}
-              runId={runId || undefined}
-              editedSlides={editedSlides}
-              rawPayload={rawPayload ?? null}
-              finalTitleOverride={editedTitle}
-              finalHookOverride={editedHook}
-              generatedCaption={editedCaption}
-              finalHashtagsOverride={editedHashtags}
-              extraFields={{
-                generated_title: (data.generated_title ?? "").trim(),
-                generated_hook: (data.generated_hook ?? "").trim(),
-              }}
-            />
+            {!videoFlow && (
+              <CarouselEditsExport
+                taskId={execTaskId}
+                runId={runId || undefined}
+                editedSlides={editedSlides}
+                rawPayload={rawPayload ?? null}
+                finalTitleOverride={editedTitle}
+                finalHookOverride={editedHook}
+                generatedCaption={editedCaption}
+                finalHashtagsOverride={editedHashtags}
+                extraFields={{
+                  generated_title: (data.generated_title ?? "").trim(),
+                  generated_hook: (data.generated_hook ?? "").trim(),
+                }}
+              />
+            )}
           </div>
         </div>
       )}

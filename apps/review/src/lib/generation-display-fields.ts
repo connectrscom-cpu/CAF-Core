@@ -230,6 +230,89 @@ export function pickSpokenScriptFromGenerationPayload(payload: Record<string, un
   return "";
 }
 
+/**
+ * Video / HeyGen prompt text for the review workbench.
+ * Mirrors `src/services/video-gen-fields.ts#extractVideoPromptText` and accepts legacy aliases
+ * (`prompt`, `heygen_prompt`, `visual_prompt`) that sometimes land on the payload.
+ * When the LLM emitted only a production-plan object (visual_direction, camera_instructions, …)
+ * we synthesize a readable prompt so reviewers can still audit what HeyGen was asked for.
+ */
+const VIDEO_PROMPT_KEYS = ["video_prompt", "prompt", "heygen_prompt", "videoPrompt", "visual_prompt"] as const;
+
+function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const hook = gen.hook;
+  if (typeof hook === "string" && hook.trim()) parts.push(`Hook: ${hook.trim()}`);
+  const vd = recordVal(gen.visual_direction);
+  if (vd) {
+    for (const k of ["scene_style", "lighting", "background", "mood"]) {
+      const v = vd[k];
+      if (typeof v === "string" && v.trim()) parts.push(`${k.replace(/_/g, " ")}: ${v.trim()}`);
+    }
+  }
+  const cam = recordVal(gen.camera_instructions);
+  if (cam) {
+    for (const k of ["framing", "movement", "angle"]) {
+      const v = cam[k];
+      if (typeof v === "string" && v.trim()) parts.push(`Camera ${k}: ${v.trim()}`);
+    }
+  }
+  const en = recordVal(gen.editing_notes);
+  if (en) {
+    for (const k of ["pacing", "cuts"]) {
+      const v = en[k];
+      if (typeof v === "string" && v.trim()) parts.push(`Editing ${k}: ${v.trim()}`);
+    }
+  }
+  const ost = arrayVal(gen.on_screen_text);
+  if (ost) {
+    const phrases = ost.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8);
+    if (phrases.length) parts.push(`On-screen text: ${phrases.join("; ")}`);
+  }
+  return parts.join(". ").trim();
+}
+
+function extractVideoPromptFromRecord(gen: Record<string, unknown>): string {
+  for (const k of VIDEO_PROMPT_KEYS) {
+    const v = gen[k];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  for (const nestKey of ["output", "data", "video", "generated", "result"]) {
+    const nest = recordVal(gen[nestKey]);
+    if (!nest) continue;
+    const s = extractVideoPromptFromRecord(nest);
+    if (s) return s;
+  }
+  const synthesized = synthesizeVideoPromptFromPlan(gen);
+  return synthesized;
+}
+
+export function pickVideoPromptFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
+  const p = payload ?? {};
+  for (const k of VIDEO_PROMPT_KEYS) {
+    const s = stringVal(p[k]).trim();
+    if (s) return s;
+  }
+  const go = recordFromGeneratedOutput(p.generated_output);
+  if (go) {
+    const s = extractVideoPromptFromRecord(go);
+    if (s) return s;
+  }
+  const data = recordVal(p.data);
+  if (data) {
+    for (const k of VIDEO_PROMPT_KEYS) {
+      const t = stringVal(data[k]).trim();
+      if (t) return t;
+    }
+    const goData = recordFromGeneratedOutput(data.generated_output);
+    if (goData) {
+      const s = extractVideoPromptFromRecord(goData);
+      if (s) return s;
+    }
+  }
+  return "";
+}
+
 /** Hook line for rework / sidebar — hook_line beats generic hook. */
 export function pickHookFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
   const p = payload ?? undefined;

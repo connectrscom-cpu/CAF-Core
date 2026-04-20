@@ -94,8 +94,9 @@ export function TaskViewer({
     setVideoLoadFailed(false);
   }, [rowVideoUrl, mediaRows]);
 
-  const sliderSlides =
-    editedSlides && editedSlides.length > 0
+  const sliderSlides = isVideoFormat
+    ? []
+    : editedSlides && editedSlides.length > 0
       ? editedSlides
       : mediaRows.length > 1
         ? createSyntheticSlides(mediaRows.length)

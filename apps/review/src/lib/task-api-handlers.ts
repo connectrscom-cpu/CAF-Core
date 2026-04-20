@@ -16,6 +16,7 @@ import {
   pickHookFromGenerationPayload,
   pickSpokenScriptFromGenerationPayload,
   pickTitleFromGenerationPayload,
+  pickVideoPromptFromGenerationPayload,
 } from "@/lib/generation-display-fields";
 
 export { pickCaptionFromGenerationPayload, pickSpokenScriptFromGenerationPayload } from "@/lib/generation-display-fields";
@@ -82,6 +83,7 @@ export async function jsonTaskDetailResponse(
       final_hashtags_override: optionalTrimmedString(latestOv.final_hashtags_override),
       final_slides_json_override: optionalTrimmedString(latestOv.final_slides_json_override),
       generated_spoken_script: pickSpokenScriptFromGenerationPayload(generationPayload),
+      generated_video_prompt: pickVideoPromptFromGenerationPayload(generationPayload),
       final_spoken_script_override: optionalTrimmedString(latestOv.final_spoken_script_override),
       heygen_avatar_id: optionalTrimmedString(latestOv.heygen_avatar_id),
       heygen_voice_id: optionalTrimmedString(latestOv.heygen_voice_id),
@@ -135,6 +137,8 @@ export async function jsonContentDetailResponse(
       generated_title: pickTitleFromGenerationPayload(generationPayload),
       generated_hook: pickHookFromGenerationPayload(generationPayload),
       generated_caption: pickCaptionFromGenerationPayload(generationPayload),
+      generated_spoken_script: pickSpokenScriptFromGenerationPayload(generationPayload),
+      generated_video_prompt: pickVideoPromptFromGenerationPayload(generationPayload),
       generated_slides_json: jobGeneratedSlidesJson(job),
     };
     return NextResponse.json({ data });
@@ -193,6 +197,7 @@ async function lookupQueueRowByTaskId(
       generated_hook: pickHookFromGenerationPayload(gen),
       generated_caption: pickCaptionFromGenerationPayload(gen),
       generated_spoken_script: pickSpokenScriptFromGenerationPayload(gen),
+      generated_video_prompt: pickVideoPromptFromGenerationPayload(gen),
       generated_slides_json: jobGeneratedSlidesJson(detailLike),
       validator: match.latest_validator ?? "",
     };

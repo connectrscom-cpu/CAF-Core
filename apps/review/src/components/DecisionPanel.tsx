@@ -36,6 +36,13 @@ export interface DecisionPanelProps {
   editsSummary?: string[];
   /** When false, rework prefers patching copy in place (no LLM) when slide/caption overrides exist. Default true. */
   existingRewriteCopy?: boolean;
+  /**
+   * Free-text appended to the reviewer `notes` on submit, under a `--- <label> ---` separator.
+   * Used by the video review panel to forward prompt-analysis into the note so the editorial learning
+   * loop can mint a GENERATION_GUIDANCE rule from it (tagged `[video · <flow_type>]`).
+   */
+  notesAddendum?: string;
+  notesAddendumLabel?: string;
 }
 
 export function DecisionPanel({
@@ -57,6 +64,8 @@ export function DecisionPanel({
   hasEdits = false,
   editsSummary = [],
   existingRewriteCopy = true,
+  notesAddendum,
+  notesAddendumLabel = "Prompt analysis",
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
@@ -80,6 +89,10 @@ export function DecisionPanel({
     setError(null);
     const effectiveDecision = decision === "APPROVED" && hasEdits ? "NEEDS_EDIT" : decision;
     const sendHeyGenFields = includeHeyGenFields && effectiveDecision === "NEEDS_EDIT";
+    const trimmedAddendum = (notesAddendum ?? "").trim();
+    const combinedNotes = trimmedAddendum
+      ? `${notes.trim() ? `${notes.trim()}\n\n` : ""}--- ${notesAddendumLabel} ---\n${trimmedAddendum}`
+      : notes.trim();
     try {
       const res = await fetch("/api/task/decision", {
         method: "POST",
@@ -88,7 +101,7 @@ export function DecisionPanel({
           task_id: taskId,
           decision: effectiveDecision,
           ...(projectSlug ? { project_slug: projectSlug } : {}),
-          notes: notes.trim() || undefined,
+          notes: combinedNotes || undefined,
           rejection_tags: tags,
           validator: validator.trim() || undefined,
           ...(finalTitleOverride !== undefined && { final_title_override: finalTitleOverride }),
@@ -141,6 +154,8 @@ export function DecisionPanel({
     includeHeyGenFields,
     hasEdits,
     rewriteCopy,
+    notesAddendum,
+    notesAddendumLabel,
   ]);
 
   const toggleTag = (tag: string) => {
