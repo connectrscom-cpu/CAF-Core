@@ -681,297 +681,331 @@ export default function LearningPage() {
   const active = rules.filter((r) => r.status === "active");
   const pending = rules.filter((r) => r.status === "pending");
 
-  return (
-    <div>
-      <div className="page-header">
-        <h2>Learning Layer</h2>
-        <p>
-          Evidence-backed rules, editorial and market analyzers, social CSV ingest, and compiled generation context.
-        </p>
-      </div>
+  const snapshotEntries: Array<[string, unknown]> =
+    transparency &&
+    transparency.snapshot != null &&
+    typeof transparency.snapshot === "object" &&
+    !Array.isArray(transparency.snapshot)
+      ? Object.entries(transparency.snapshot as Record<string, unknown>)
+      : [];
 
-      {transparency && (
-        <div className="card" style={{ marginBottom: 20, borderLeft: "4px solid var(--accent)" }}>
-          <h3 style={{ marginBottom: 8 }}>Transparency — automation and LLM role</h3>
-          <p style={{ fontSize: 14, lineHeight: 1.5, marginBottom: 14, color: "var(--fg-secondary)" }}>
-            {String(transparency.summary ?? "")}
+  return (
+    <div className="learning-root">
+      <header className="learning-hero">
+        <div className="learning-hero-title">
+          <h1>Learning Layer</h1>
+          <p>
+            Evidence-backed rules, editorial and market analyzers, social CSV ingest, and compiled generation
+            context — all in one place. Reviewer notes become <strong>pending GENERATION_GUIDANCE</strong> that
+            steer the next run after you apply them.
           </p>
-          {transparency.snapshot != null &&
-          typeof transparency.snapshot === "object" &&
-          !Array.isArray(transparency.snapshot) ? (
-            <div
-              style={{
-                display: "flex",
-                gap: 16,
-                flexWrap: "wrap",
-                fontSize: 13,
-                marginBottom: 16,
-                padding: "10px 12px",
-                background: "var(--card)",
-                borderRadius: 8,
-                border: "1px solid var(--border)",
-              }}
-            >
-              {Object.entries(transparency.snapshot as Record<string, unknown>).map(([k, v]) => (
-                <div key={k}>
-                  <span style={{ color: "var(--muted)" }}>{k.replace(/_/g, " ")}</span>{" "}
-                  <strong>
-                    {v === -1 && k === "observations_last_30d" ? "n/a (run DB migrations)" : String(v)}
-                  </strong>
+          {snapshotEntries.length > 0 && (
+            <div className="learning-hero-stats">
+              {snapshotEntries.map(([k, v]) => (
+                <div key={k} className="learning-stat-chip">
+                  <span className="k">{k.replace(/_/g, " ")}</span>
+                  <span className="v">
+                    {v === -1 && k === "observations_last_30d" ? "n/a" : String(v)}
+                  </span>
                 </div>
               ))}
             </div>
-          ) : null}
-          <div style={{ fontSize: 13, lineHeight: 1.45 }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>How each part runs</div>
-            <ul style={{ paddingLeft: 18, margin: 0 }}>
+          )}
+        </div>
+        <div className="learning-hero-project">
+          <label htmlFor="learning-project-slug">Project slug</label>
+          <input
+            id="learning-project-slug"
+            value={project}
+            onChange={(e) => setProject(e.target.value.trim())}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <Link
+              href="#learning-rules"
+              className="btn-ghost"
+              style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+            >
+              Jump to rules
+            </Link>
+            <Link
+              href="#llm-reviews"
+              className="btn-ghost"
+              style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+            >
+              LLM reviews
+            </Link>
+          </div>
+        </div>
+      </header>
+
+      {transparency && (
+        <details className="learning-accordion">
+          <summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+              <span>Transparency — automation and LLM role</span>
+              <p>{String(transparency.summary ?? "")}</p>
+            </div>
+            <span className="chev">▸</span>
+          </summary>
+          <div className="acc-body">
+            <div className="learning-section-head" style={{ marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14 }}>How each part runs</h3>
+            </div>
+            <ul className="learning-loop-list">
               {(Array.isArray(transparency.loops) ? transparency.loops : []).map((loop: unknown) => {
                 const L = loop as Record<string, unknown>;
                 const llm = Boolean(L.llm_involved);
                 return (
-                  <li key={String(L.id)} style={{ marginBottom: 12 }}>
-                    <strong>{String(L.name ?? L.id)}</strong>{" "}
-                    <span
-                      style={{
-                        fontSize: 11,
-                        padding: "2px 6px",
-                        borderRadius: 4,
-                        background: llm ? "rgba(120, 80, 200, 0.2)" : "rgba(80, 120, 80, 0.2)",
-                      }}
-                    >
-                      {llm ? "LLM consumes output" : "No LLM in analyzer"}
-                    </span>
-                    <div style={{ color: "var(--fg-secondary)", marginTop: 4 }}>{String(L.analyzer ?? "")}</div>
-                    <div style={{ color: "var(--muted)", marginTop: 2 }}>
+                  <li key={String(L.id)} className="learning-loop">
+                    <div className="learning-loop-head">
+                      <span>{String(L.name ?? L.id)}</span>
+                      <span className={`tag ${llm ? "tag-llm" : "tag-det"}`}>
+                        {llm ? "LLM consumes output" : "No LLM in analyzer"}
+                      </span>
+                    </div>
+                    <div className="learning-loop-row">{String(L.analyzer ?? "")}</div>
+                    <div className="learning-loop-row mono">
                       Automation: <code>{String(L.automation ?? "")}</code>
                     </div>
                     {L.llm_role ? (
-                      <div style={{ marginTop: 4 }}>{String(L.llm_role)}</div>
+                      <div className="learning-loop-row" style={{ marginTop: 4 }}>{String(L.llm_role)}</div>
                     ) : null}
-                    <div style={{ marginTop: 4, color: "var(--fg-secondary)" }}>
-                      {String(L.requires_human ?? "")}
-                    </div>
+                    <div className="learning-loop-row" style={{ marginTop: 4 }}>{String(L.requires_human ?? "")}</div>
                   </li>
                 );
               })}
             </ul>
+            {Array.isArray(transparency.not_implemented_yet) && transparency.not_implemented_yet.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div className="learning-section-head">
+                  <h3 style={{ fontSize: 14 }}>
+                    <span className="pill pill-warn">not automatic</span> Not running in Core today
+                  </h3>
+                </div>
+                <ul style={{ margin: "8px 0 0", paddingLeft: 20, color: "var(--fg-secondary)", fontSize: 13, lineHeight: 1.55 }}>
+                  {transparency.not_implemented_yet.map((x: unknown) => (
+                    <li key={String(x)}>{String(x)}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 16, marginBottom: 0 }}>
+              API: <code>GET /v1/learning/&lt;slug&gt;/transparency</code> — same data for tools and dashboards.
+            </p>
           </div>
-          {Array.isArray(transparency.not_implemented_yet) && transparency.not_implemented_yet.length > 0 && (
-            <div style={{ marginTop: 16, fontSize: 13 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Not automatic in Core today</div>
-              <ul style={{ paddingLeft: 18, margin: 0, color: "var(--fg-secondary)" }}>
-                {transparency.not_implemented_yet.map((x: unknown) => (
-                  <li key={String(x)}>{String(x)}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 14, marginBottom: 0 }}>
-            API: <code>GET /v1/learning/&lt;slug&gt;/transparency</code> — same data for tools and dashboards.
-          </p>
-        </div>
+        </details>
       )}
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <label style={{ display: "block", marginBottom: 8, fontSize: 13 }}>
-          Project slug
-          <input
-            style={{ marginLeft: 8, width: 120, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)" }}
-            value={project}
-            onChange={(e) => setProject(e.target.value.trim())}
-          />
-        </label>
-      </div>
+      <section className="learning-section">
+        <div className="learning-section-head">
+          <h3>
+            <span className="pill">1 · Editorial</span> Editorial analysis &amp; market signals
+          </h3>
+          <p>
+            Turn reviewer history into pending <strong>GENERATION_GUIDANCE</strong> rules. Editorial analysis
+            mines <code>editorial_reviews</code> (decisions, tags, overrides) and — when OpenAI synthesis is on —
+            converts free-text reviewer notes into structured themes, actions, and a coding-agent brief. Market
+            analysis does the same for ingested platform metrics.
+          </p>
+        </div>
 
-      <div className="card" style={{ marginBottom: 12, fontSize: 13, display: "flex", flexDirection: "column", gap: 10 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={persistEngineeringInsight}
-            onChange={(e) => setPersistEngineeringInsight(e.target.checked)}
-          />
-          After editorial analysis, save engineering brief to Core (<code>learning_insights</code>, scope{" "}
-          <code>engineering</code>) when there is content to persist
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={llmNotesSynthesis}
-            onChange={(e) => setLlmNotesSynthesis(e.target.checked)}
-          />
-          Run <strong>OpenAI</strong> on reviewer <code>notes</code> (requires Core <code>OPENAI_API_KEY</code>; themes +
-          actions JSON; merged into engineering markdown)
-        </label>
-      </div>
+        <div className="learning-inline-options">
+          <label>
+            <input
+              type="checkbox"
+              checked={persistEngineeringInsight}
+              onChange={(e) => setPersistEngineeringInsight(e.target.checked)}
+              style={{ width: "auto" }}
+            />
+            Save engineering brief to Core (<code>learning_insights</code>, scope <code>engineering</code>)
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={llmNotesSynthesis}
+              onChange={(e) => setLlmNotesSynthesis(e.target.checked)}
+              style={{ width: "auto" }}
+            />
+            Run <strong>OpenAI</strong> on reviewer <code>notes</code> (themes + actions, merged into brief)
+          </label>
+        </div>
 
-      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <button
-          className="btn-primary"
-          onClick={() => runAnalysis("editorial")}
-          disabled={running}
-          title="Analyzes human review history (APPROVED / NEEDS_EDIT / REJECTED, tags, overrides) and proposes pending learning rules that can improve future ranking/volume decisions."
-        >
-          {running ? "Running..." : "Run Editorial Analysis"}
-        </button>
-        <button
-          className="btn-primary"
-          onClick={() => runAnalysis("market")}
-          disabled={running}
-          title="Analyzes ingested social performance metrics (likes/saves/shares/etc.) and proposes pending learning rules to boost or penalize patterns/flows that perform better or worse."
-        >
-          {running ? "Running..." : "Run Market Analysis"}
-        </button>
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={loadContextPreview}
-          title="Shows the compiled learning context that will be injected into generation prompts (global → project). This is a preview only; it does not change rules."
-        >
-          Preview compiled context
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => eraseRulesAll("pending")}
-          title="Hard-deletes all pending rules for this project (does not touch caf-global rules)."
-        >
-          Erase pending rules
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => eraseRulesAll("any")}
-          title="Hard-deletes all rules for this project (does not touch caf-global rules)."
-        >
-          Erase ALL rules
-        </button>
-      </div>
+        <div className="learning-action-bar">
+          <button
+            className="btn-primary"
+            onClick={() => runAnalysis("editorial")}
+            disabled={running}
+            title="Analyzes human review history (APPROVED / NEEDS_EDIT / REJECTED, tags, overrides) and proposes pending learning rules that can improve future ranking/volume decisions."
+          >
+            {running ? "Running…" : "Run editorial analysis"}
+          </button>
+          <button
+            className="btn-primary"
+            onClick={() => runAnalysis("market")}
+            disabled={running}
+            title="Analyzes ingested social performance metrics (likes/saves/shares/etc.) and proposes pending learning rules to boost or penalize patterns/flows that perform better or worse."
+          >
+            {running ? "Running…" : "Run market analysis"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={loadContextPreview}
+            title="Shows the compiled learning context that will be injected into generation prompts (global → project). This is a preview only; it does not change rules."
+          >
+            Preview compiled context
+          </button>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => eraseRulesAll("pending")}
+            title="Hard-deletes all pending rules for this project (does not touch caf-global rules)."
+          >
+            Erase pending rules
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => eraseRulesAll("any")}
+            title="Hard-deletes all rules for this project (does not touch caf-global rules)."
+          >
+            Erase ALL rules
+          </button>
+        </div>
+      </section>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <h3 style={{ marginBottom: 8 }}>LLM review (approved content only)</h3>
-        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12, lineHeight: 1.5 }}>
-          Uses OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
-          rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
-          scores to Core, creates a <code>learning_observations</code> row, and{" "}
-          <strong>creates pending GENERATION_GUIDANCE rules immediately</strong> when scores cross thresholds (Core
-          defaults: improvement if overall &lt; 0.75 with bullets; strengths if overall ≥ 0.85 with strengths). Leave
-          the threshold fields blank to use those defaults, or override. Use “Mint pending hints from results” only if
-          you need to backfill rules for an older batch without re-running the model. On Core, carousel primary
-          generation also reuses recent rows here as an <strong>anti-repetition lane memory</strong> (hook/caption/slide
-          fingerprints for the same flow + platform; configure{" "}
-          <code>LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS</code> / <code>LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS</code>, set
-          to <code>0</code> to disable).
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 12 }}>
-          <label style={{ fontSize: 13 }}>
-            Batch size{" "}
+      <section className="learning-section">
+        <div className="learning-section-head">
+          <h3>
+            <span className="pill">2 · LLM review</span> LLM review (approved content only)
+          </h3>
+          <p>
+            Runs OpenAI vision + text on jobs whose <strong>latest</strong> editorial decision is APPROVED. Sends
+            rendered image URLs when present, plus hook, caption, slides, video prompts, and scene bundles. Writes
+            scores to Core, creates a <code>learning_observations</code> row, and{" "}
+            <strong>creates pending GENERATION_GUIDANCE rules immediately</strong> when scores cross thresholds
+            (Core defaults: improvement if overall &lt; 0.75 with bullets; strengths if overall ≥ 0.85 with
+            strengths). Leave the threshold fields blank to use those defaults, or override. On Core, carousel
+            primary generation also reuses recent rows here as an <strong>anti-repetition lane memory</strong>{" "}
+            (hook/caption/slide fingerprints for the same flow + platform; configure{" "}
+            <code>LLM_APPROVAL_ANTI_REPETITION_MAX_CHARS</code> /{" "}
+            <code>LLM_APPROVAL_ANTI_REPETITION_MAX_JOBS</code>, set to <code>0</code> to disable).
+          </p>
+        </div>
+
+        <div className="learning-inline-options">
+          <label>
+            Batch size
             <input
               type="number"
               min={1}
               max={20}
               value={llmLimit}
               onChange={(e) => setLlmLimit(parseInt(e.target.value, 10) || 3)}
-              style={{ width: 56, padding: 4, marginLeft: 6 }}
+              style={{ width: 64, padding: "4px 8px" }}
             />
           </label>
-          <label style={{ fontSize: 13 }}>
-            Improvement rules if score &lt;{" "}
+          <label>
+            Improvement rules if score &lt;
             <input
               placeholder="0.75"
               value={llmMintBelow}
               onChange={(e) => setLlmMintBelow(e.target.value)}
-              style={{ width: 56, padding: 4 }}
-            />{" "}
+              style={{ width: 64, padding: "4px 8px" }}
+            />
             <span style={{ color: "var(--muted)" }}>(blank = Core default)</span>
           </label>
-          <label style={{ fontSize: 13 }}>
-            Strength rules if score ≥{" "}
+          <label>
+            Strength rules if score ≥
             <input
               placeholder="0.85"
               value={llmMintAbove}
               onChange={(e) => setLlmMintAbove(e.target.value)}
-              style={{ width: 56, padding: 4 }}
-            />{" "}
+              style={{ width: 64, padding: "4px 8px" }}
+            />
             <span style={{ color: "var(--muted)" }}>(blank = Core default)</span>
           </label>
-          <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+          <label>
             <input
               type="checkbox"
               checked={llmForceRereview}
               onChange={(e) => setLlmForceRereview(e.target.checked)}
+              style={{ width: "auto" }}
             />
             Force re-review (ignore 7-day skip)
           </label>
         </div>
-        <button
-          type="button"
-          className="btn-primary"
-          onClick={runLlmApprovalReview}
-          disabled={llmBusy}
-          title="Runs an LLM QA pass on approved jobs; Core writes reviews and pending GENERATION_GUIDANCE rules when score thresholds match."
-        >
-          {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
-        </button>
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={mintHintsFromLastRun}
-          disabled={llmMintBusy || !llmResult}
-          title="Creates pending GENERATION_GUIDANCE rules from the last run: improvement bullets when score is below the first threshold, and strength bullets when score is at or above the second. Apply in the rules list before they affect generation."
-          style={{ marginLeft: 10 }}
-        >
-          {llmMintBusy ? "Minting…" : "Mint pending hints from results"}
-        </button>
-        {llmMintStatus ? (
-          <p style={{ marginTop: 10, fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>{llmMintStatus}</p>
-        ) : null}
-        {llmResult && (
-          <pre
-            style={{
-              marginTop: 12,
-              fontSize: 11,
-              maxHeight: 220,
-              overflow: "auto",
-              whiteSpace: "pre-wrap",
-              background: "var(--card)",
-              padding: 8,
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-            }}
+
+        <div className="learning-action-bar">
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={runLlmApprovalReview}
+            disabled={llmBusy}
+            title="Runs an LLM QA pass on approved jobs; Core writes reviews and pending GENERATION_GUIDANCE rules when score thresholds match."
           >
-            {JSON.stringify(llmResult, null, 2)}
-          </pre>
+            {llmBusy ? "Running LLM review…" : "Run LLM review (approved)"}
+          </button>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={mintHintsFromLastRun}
+            disabled={llmMintBusy || !llmResult}
+            title="Creates pending GENERATION_GUIDANCE rules from the last run: improvement bullets when score is below the first threshold, and strength bullets when score is at or above the second."
+          >
+            {llmMintBusy ? "Minting…" : "Mint pending hints from results"}
+          </button>
+        </div>
+
+        {llmMintStatus ? <p className="learning-copy-hint">{llmMintStatus}</p> : null}
+        {llmResult && (
+          <details style={{ marginTop: 4 }}>
+            <summary style={{ fontSize: 12, cursor: "pointer", color: "var(--muted)" }}>
+              Raw run result JSON
+            </summary>
+            <pre
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                maxHeight: 220,
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                background: "var(--bg)",
+                padding: 10,
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+              }}
+            >
+              {JSON.stringify(llmResult, null, 2)}
+            </pre>
+          </details>
         )}
-      </div>
+      </section>
 
       {llmReviews.length > 0 && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3 style={{ marginBottom: 8 }}>Recent LLM approval reviews ({llmReviews.length})</h3>
-          <p style={{ margin: "0 0 10px", fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
-            Read the model’s summary and bullets in place. Use <strong>Mint fix</strong> / <strong>Mint strengths</strong> to turn
-            this row into <strong>pending GENERATION_GUIDANCE</strong> rules (then Apply in the rules tables below).{" "}
-            <strong>Your guidance</strong> adds a free-text pending rule tied to the same review. Full <code>task_id</code> for
-            copy / workbench.
-          </p>
-          {llmRowActionMsg ? (
-            <p style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, color: "var(--accent)" }}>{llmRowActionMsg}</p>
-          ) : null}
-          <p style={{ margin: "0 0 8px", fontSize: 11, color: "var(--muted)" }}>
-            <Link href="#learning-rules" style={{ color: "var(--accent)" }}>
-              Jump to Active / Pending rules
-            </Link>
-          </p>
-          <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse", tableLayout: "fixed" }}>
+        <section id="llm-reviews" className="learning-section">
+          <div className="learning-section-head">
+            <h3>
+              <span className="pill">3 · Reviews</span> Recent LLM approval reviews ({llmReviews.length})
+            </h3>
+            <p>
+              Read the model’s summary and bullets in place. <strong>Mint fix</strong> /{" "}
+              <strong>Mint strengths</strong> turns a row into <strong>pending GENERATION_GUIDANCE</strong> rules
+              (then Apply in the rules tables below). <strong>Your guidance</strong> adds a free-text pending rule
+              tied to the same review.
+            </p>
+          </div>
+          {llmRowActionMsg ? <p className="learning-copy-hint">{llmRowActionMsg}</p> : null}
+          <table className="learning-llm-table">
             <thead>
               <tr>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "38%" }}>
-                  task_id
-                </th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "7%" }}>score</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "7%" }}>img</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "10%" }}>minted</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)", width: "14%" }}>when</th>
-                <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>actions</th>
+                <th style={{ width: "38%" }}>task_id</th>
+                <th style={{ width: "7%" }}>score</th>
+                <th style={{ width: "7%" }}>img</th>
+                <th style={{ width: "10%" }}>minted</th>
+                <th style={{ width: "14%" }}>when</th>
+                <th>actions</th>
               </tr>
             </thead>
             <tbody>
@@ -1214,45 +1248,79 @@ export default function LearningPage() {
               })}
             </tbody>
           </table>
-        </div>
+        </section>
       )}
 
-      <form className="card" style={{ marginBottom: 20 }} onSubmit={uploadCsv}>
-        <h3 style={{ marginBottom: 8 }}>Upload social performance CSV</h3>
-        <p style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
-          Map platform export columns if needed (JSON). Defaults recognize{" "}
-          <code>platform</code>, <code>posted_at</code>, <code>task_id</code>, metrics.
-        </p>
-        <input type="file" name="file" accept=".csv,text/csv" style={{ marginBottom: 8 }} />
+      <form className="learning-section" onSubmit={uploadCsv}>
+        <div className="learning-section-head">
+          <h3>
+            <span className="pill">4 · Ingest</span> Upload social performance CSV
+          </h3>
+          <p>
+            Map platform export columns if needed (JSON). Defaults recognize <code>platform</code>,{" "}
+            <code>posted_at</code>, <code>task_id</code>, and metrics. Ingested rows become{" "}
+            <code>performance_metrics</code> + observations for the market analyzer.
+          </p>
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+          <input type="file" name="file" accept=".csv,text/csv" style={{ width: "auto", maxWidth: 320 }} />
+          <button
+            type="submit"
+            className="btn-primary"
+            title="Uploads a social platform export CSV, maps columns to CAF metrics, writes performance_metrics rows, and creates an observation for learning/analysis."
+          >
+            Upload &amp; ingest
+          </button>
+        </div>
         <textarea
           placeholder='Optional mapping JSON, e.g. {"platform":"Channel","posted_at":"Date","likes":"Likes"}'
           value={mappingJson}
           onChange={(e) => setMappingJson(e.target.value)}
           rows={2}
-          style={{ width: "100%", marginBottom: 8, fontFamily: "monospace", fontSize: 12 }}
+          style={{ fontFamily: "monospace", fontSize: 12 }}
         />
-        <button
-          type="submit"
-          className="btn-primary"
-          title="Uploads a social platform export CSV, maps columns to CAF metrics, writes performance_metrics rows, and creates an observation for learning/analysis."
-        >
-          Upload &amp; ingest
-        </button>
-        {csvStatus && <p style={{ marginTop: 8, fontSize: 13 }}>{csvStatus}</p>}
+        {csvStatus && <p className="learning-copy-hint" style={{ color: "var(--fg-secondary)" }}>{csvStatus}</p>}
       </form>
 
       {contextPreview && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3>Compiled context preview</h3>
-          <pre style={{ fontSize: 12, maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap" }}>
+        <section className="learning-section">
+          <div className="learning-section-head">
+            <h3>
+              <span className="pill pill-ok">preview</span> Compiled context preview
+            </h3>
+            <p>
+              What Core injects into generation prompts for this project right now (global → project overlay).
+              This is a preview only; it doesn’t change rules.
+            </p>
+          </div>
+          <pre
+            style={{
+              fontSize: 12,
+              maxHeight: 320,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              background: "var(--bg)",
+              padding: 12,
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+            }}
+          >
             {JSON.stringify(contextPreview, null, 2)}
           </pre>
-        </div>
+        </section>
       )}
 
       {analysisResult && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3>Analysis Result</h3>
+        <section className="learning-section">
+          <div className="learning-section-head">
+            <h3>
+              <span className="pill">5 · Analysis</span> Last analysis result
+            </h3>
+            <p>
+              One-click export for Claude / Cursor — triggers, workflow, and the OpenAI synthesis block all
+              together, plus a raw reviewer-notes → guidelines prompt below when notes exist for the window.
+            </p>
+          </div>
           {typeof analysisResult.engineering_prompt_markdown === "string" &&
             analysisResult.engineering_prompt_markdown.length > 0 && (
               <div
@@ -1464,150 +1532,162 @@ export default function LearningPage() {
               2
             )}
           </pre>
-        </div>
+        </section>
       )}
 
       {observations.length > 0 && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <h3>Recent observations ({observations.length})</h3>
-          <ul style={{ fontSize: 12, maxHeight: 200, overflow: "auto", paddingLeft: 18 }}>
+        <section className="learning-section">
+          <div className="learning-section-head">
+            <h3>
+              <span className="pill pill-ok">log</span> Recent observations ({observations.length})
+            </h3>
+            <p>Last 15 observation rows Core has ingested (deterministic analyzers + CSV ingest).</p>
+          </div>
+          <ul style={{ fontSize: 12, maxHeight: 220, overflow: "auto", paddingLeft: 20, margin: 0, lineHeight: 1.6 }}>
             {observations.slice(0, 15).map((o) => (
               <li key={String(o.observation_id ?? o.id)}>
-                <span style={{ fontFamily: "monospace", fontSize: 11 }}>{String(o.observation_type)}</span> —{" "}
-                {String(o.source_type)} (
+                <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--accent)" }}>
+                  {String(o.observation_type)}
+                </span>{" "}
+                — {String(o.source_type)} (
                 {String(o.observed_at ?? "").slice(0, 10)})
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
 
-      <div id="learning-rules" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div className="card">
-          <h3 style={{ marginBottom: 12 }}>Active Rules ({active.length})</h3>
-          {active.length === 0 ? (
-            <p style={{ color: "#888" }}>No active learning rules yet.</p>
-          ) : (
-            <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Rule ID
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Action
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Family
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Info
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
-                </tr>
-              </thead>
-              <tbody>
-                {active.map((rule) => (
-                  <tr key={rule.rule_id}>
-                    <td
-                      style={{
-                        padding: "4px 8px",
-                        borderBottom: "1px solid var(--border)",
-                        fontSize: 11,
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {rule.rule_id.length > 36 ? `${rule.rule_id.slice(0, 36)}…` : rule.rule_id}
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      {rule.action_type}
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      {rule.rule_family ?? "—"}
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="Full rule id, trigger, and payload">
-                        Info
-                      </button>
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-ghost" onClick={() => retireRule(rule)}>
-                        Retire
-                      </button>
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
-                        Erase
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      <section id="learning-rules" className="learning-section">
+        <div className="learning-section-head">
+          <h3>
+            <span className="pill">6 · Rules</span> Active &amp; pending rules
+          </h3>
+          <p>
+            Rules live in <code>caf_core.learning_rules</code> and drive ranking / volume / generation guidance
+            at run time. <strong>Pending</strong> rules are waiting for you to Apply them — nothing ships until
+            then. Click Info to read exactly what a rule does before you enable it.
+          </p>
         </div>
-
-        <div className="card">
-          <h3 style={{ marginBottom: 12 }}>Pending Rules ({pending.length})</h3>
-          {pending.length === 0 ? (
-            <p style={{ color: "#888" }}>No pending rules.</p>
-          ) : (
-            <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Rule ID
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Action
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }}>
-                    Info
-                  </th>
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
-                  <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "2px solid var(--border)" }} />
-                </tr>
-              </thead>
-              <tbody>
-                {pending.map((rule) => (
-                  <tr key={rule.rule_id}>
-                    <td
-                      style={{
-                        padding: "4px 8px",
-                        borderBottom: "1px solid var(--border)",
-                        fontSize: 11,
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {rule.rule_id.length > 36 ? `${rule.rule_id.slice(0, 36)}…` : rule.rule_id}
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      {rule.action_type}
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="What this rule does before you apply">
-                        Info
-                      </button>
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-primary" onClick={() => applyRule(rule)}>
-                        Apply
-                      </button>
-                    </td>
-                    <td style={{ padding: "4px 8px", borderBottom: "1px solid var(--border)" }}>
-                      <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
-                        Erase
-                      </button>
-                    </td>
+        <div className="learning-rules-grid">
+          <div>
+            <div className="learning-section-head" style={{ marginBottom: 10 }}>
+              <h3 style={{ fontSize: 14 }}>
+                <span className="pill pill-ok">active</span> Active ({active.length})
+              </h3>
+            </div>
+            {active.length === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>No active learning rules yet.</p>
+            ) : (
+              <table className="learning-rule-table">
+                <thead>
+                  <tr>
+                    <th>Rule ID</th>
+                    <th>Action</th>
+                    <th>Family</th>
+                    <th />
+                    <th />
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+                </thead>
+                <tbody>
+                  {active.map((rule) => (
+                    <tr key={rule.rule_id}>
+                      <td className="learning-rule-id">
+                        {rule.rule_id.length > 28 ? `${rule.rule_id.slice(0, 28)}…` : rule.rule_id}
+                      </td>
+                      <td>
+                        <span
+                          className={`learning-action-badge${
+                            rule.rule_family === "generation" ? " family-generation" : rule.rule_family === "ranking" ? " family-ranking" : ""
+                          }`}
+                        >
+                          {rule.action_type}
+                        </span>
+                      </td>
+                      <td style={{ color: "var(--fg-secondary)", fontSize: 12 }}>{rule.rule_family ?? "—"}</td>
+                      <td>
+                        <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="Full rule id, trigger, and payload">
+                          Info
+                        </button>
+                      </td>
+                      <td>
+                        <button type="button" className="btn-ghost" onClick={() => retireRule(rule)}>
+                          Retire
+                        </button>
+                      </td>
+                      <td>
+                        <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
+                          Erase
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
 
-      {loading && <div style={{ marginTop: 16, textAlign: "center", color: "#888" }}>Loading rules...</div>}
+          <div>
+            <div className="learning-section-head" style={{ marginBottom: 10 }}>
+              <h3 style={{ fontSize: 14 }}>
+                <span className="pill pill-warn">pending</span> Pending ({pending.length})
+              </h3>
+            </div>
+            {pending.length === 0 ? (
+              <p style={{ color: "var(--muted)", fontSize: 13 }}>No pending rules.</p>
+            ) : (
+              <table className="learning-rule-table">
+                <thead>
+                  <tr>
+                    <th>Rule ID</th>
+                    <th>Action</th>
+                    <th />
+                    <th />
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {pending.map((rule) => (
+                    <tr key={rule.rule_id}>
+                      <td className="learning-rule-id">
+                        {rule.rule_id.length > 28 ? `${rule.rule_id.slice(0, 28)}…` : rule.rule_id}
+                      </td>
+                      <td>
+                        <span
+                          className={`learning-action-badge${
+                            rule.rule_family === "generation" ? " family-generation" : rule.rule_family === "ranking" ? " family-ranking" : ""
+                          }`}
+                        >
+                          {rule.action_type}
+                        </span>
+                      </td>
+                      <td>
+                        <button type="button" className="btn-ghost" onClick={() => setRuleDetail(rule)} title="What this rule does before you apply">
+                          Info
+                        </button>
+                      </td>
+                      <td>
+                        <button type="button" className="btn-primary" onClick={() => applyRule(rule)}>
+                          Apply
+                        </button>
+                      </td>
+                      <td>
+                        <button type="button" className="btn-ghost" onClick={() => eraseRule(rule)} title="Hard-delete this rule row">
+                          Erase
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {loading && (
+        <p style={{ textAlign: "center", color: "var(--muted)", fontSize: 13, marginTop: 4 }}>Loading rules…</p>
+      )}
 
       {ruleDetail ? <RuleDetailModal rule={ruleDetail} onClose={() => setRuleDetail(null)} /> : null}
     </div>
