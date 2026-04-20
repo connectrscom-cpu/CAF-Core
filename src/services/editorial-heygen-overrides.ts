@@ -45,9 +45,17 @@ export function heygenForceRerenderRequested(overrides: Record<string, unknown> 
   return overrides?.heygen_force_rerender === true;
 }
 
-/** Single-take HeyGen jobs (not multi-scene assembly). */
+/**
+ * Single-take HeyGen jobs (not multi-scene assembly).
+ *
+ * FLOW_PRODUCT_* render through HeyGen as a single take too — include them so a
+ * spoken-script edit on a product video triggers the fast HeyGen re-render path instead
+ * of a full reprocess. (Regex alone doesn't match FLOW_PRODUCT_* because they don't
+ * contain "heygen" in the name.)
+ */
 export function isHeyGenSingleTakeReworkFlow(flowType: string | null | undefined): boolean {
   const ft = flowType ?? "";
   if (/scene_assembly|FLOW_SCENE|Video_Scene_Assembly/i.test(ft)) return false;
+  if (/^FLOW_PRODUCT_/i.test(ft)) return true;
   return /heygen|HeyGen|Video_Script_HeyGen|Video_Prompt_HeyGen/i.test(ft);
 }

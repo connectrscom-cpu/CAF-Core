@@ -18,7 +18,8 @@ import {
 import { uploadBuffer } from "./supabase-storage.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
-import { getStrategyDefaults } from "../repositories/project-config.js";
+import { getStrategyDefaults, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
+import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import {
   carouselSlideCount,
   buildSlideRenderContext,
@@ -762,14 +763,40 @@ export async function reprocessJobFromScratch(
   return processJobByTaskId(db, config, projectId, taskId.trim());
 }
 
-/** Prompt-led vs script-led HeyGen prep: one LLM path per flow name; legacy video flows still run both. */
+/**
+ * Prompt-led vs script-led HeyGen prep: one LLM path per flow name; legacy video flows still run both.
+ *
+ * Product flows (FLOW_PRODUCT_*) used to hit the final fallthrough branch and run *both* generators,
+ * which produced a spoken_script and a video_prompt with independent narratives that were then glued
+ * into a single /v3/video-agents blob — the root cause of "random spoken scripts that don't match
+ * the video". We now consult the per-project `allowed_flow_types.heygen_mode` override (or the
+ * baked-in default per FLOW_PRODUCT_* angle) and run exactly one generator.
+ */
 async function ensureHeygenPayloadForFlowType(
   db: Pool,
   config: AppConfig,
   flowType: string,
-  jobId: string
+  jobId: string,
+  projectId?: string
 ): Promise<void> {
   const ft = flowType ?? "";
+
+  // FLOW_PRODUCT_*: resolve per-project or default heygen_mode before falling through.
+  if (isProductVideoFlow(ft) && projectId) {
+    const mode = await resolveProductFlowHeygenMode(db, projectId, ft);
+    if (mode === "script_led") {
+      const r = await ensureVideoScriptInPayload(db, config, jobId);
+      if (!r.ok) throw new Error(r.error ?? "video script prep failed");
+      return;
+    }
+    if (mode === "prompt_led") {
+      const r = await ensureVideoPromptInPayload(db, config, jobId);
+      if (!r.ok) throw new Error(r.error ?? "video prompt prep failed");
+      return;
+    }
+    // If somehow unresolved (no project context, impossible here but defensive), fall through.
+  }
+
   // Legacy flow names + Flow Engine: Video_Prompt_Generator (avatar mode via heygen_config)
   if (/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)) {
     const r = await ensureVideoPromptInPayload(db, config, jobId);
@@ -1350,7 +1377,7 @@ async function processVideoJob(
     } else if (config.HEYGEN_API_KEY?.trim()) {
       // Preserve any previously persisted HeyGen video_id so reprocess can resume by polling.
       await mergeJobRenderState(db, job.id, { provider: "heygen", status: "pending", phase: "starting" });
-      await ensureHeygenPayloadForFlowType(db, config, job.flow_type, job.id);
+      await ensureHeygenPayloadForFlowType(db, config, job.flow_type, job.id, job.project_id);
 
       const fresh = await qOne<JobRow>(
         db,

@@ -153,6 +153,16 @@ const FLOW_TYPE_FIELDS = [
   { key: "qc_checklist_version", label: "QC Checklist Version", type: "text" },
   { key: "prompt_template_id", label: "Prompt Template ID", type: "text" },
   { key: "priority_weight", label: "Priority Weight (0-1)", type: "number" },
+  {
+    key: "heygen_mode",
+    label: "HeyGen mode (product videos only — leave blank for code default)",
+    type: "select",
+    options: [
+      { value: "", label: "Default (FEATURE/COMPARISON/OFFER/USECASE → script-led; PROBLEM/SOCIAL_PROOF → prompt-led)" },
+      { value: "script_led", label: "script_led — /v3/videos, avatar reads spoken_script verbatim" },
+      { value: "prompt_led", label: "prompt_led — /v3/video-agents, HeyGen writes and speaks its own VO" },
+    ],
+  },
   { key: "notes", label: "Notes", type: "textarea" },
 ] as const;
 
@@ -199,7 +209,14 @@ const HEYGEN_DEFAULTS_FIELDS = [
   },
 ] as const;
 
-type FieldDef = { key: string; label: string; type: string; required?: boolean };
+type FieldDef = {
+  key: string;
+  label: string;
+  type: string;
+  required?: boolean;
+  /** For `type: "select"` — rendered as a `<select>` with these `<option>`s. */
+  options?: ReadonlyArray<{ value: string; label: string }>;
+};
 
 export default function ProjectConfigPage() {
   const { ready: projectReady, multiProject, activeProjectSlug } = useReviewProject();
@@ -607,6 +624,27 @@ function FieldInput({ field, value, onChange }: {
           value={String(value ?? "")}
           onChange={(e) => onChange(e.target.value || null)}
         />
+      </div>
+    );
+  }
+
+  if (field.type === "select") {
+    const options = field.options ?? [];
+    const current = value == null ? "" : String(value);
+    return (
+      <div className="filter-group">
+        <label className="filter-label">{field.label}</label>
+        <select
+          className="filter-input"
+          value={current}
+          onChange={(e) => onChange(e.target.value === "" ? null : e.target.value)}
+        >
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
     );
   }

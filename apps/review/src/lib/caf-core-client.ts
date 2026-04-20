@@ -403,6 +403,40 @@ export async function getJobDetail(projectSlug: string, taskId: string): Promise
   return data?.job ?? null;
 }
 
+/**
+ * Last HeyGen submission recorded for a task in `caf_core.api_call_audit`.
+ * Shape matches `LatestHeygenSubmitAudit` on the backend — used by the review
+ * console to show the exact prompt / script_text body that was POSTed to
+ * /v3/video-agents or /v3/videos.
+ */
+export interface HeygenLastSubmit {
+  id: string;
+  created_at: string;
+  ok: boolean;
+  error_message: string | null;
+  prompt: string | null;
+  script_text: string | null;
+  avatar_id: string | null;
+  voice_id: string | null;
+  post_path: string | null;
+  video_id: string | null;
+}
+
+export async function getHeygenLastSubmit(
+  projectSlug: string,
+  taskId: string
+): Promise<HeygenLastSubmit | null> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return null;
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/heygen-last-submit?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/heygen-last-submit`;
+  const data = await coreGet<{ ok: boolean; submit: HeygenLastSubmit | null }>(path);
+  return data?.submit ?? null;
+}
+
 /** Resolve a task across projects; optional `projectSlug` when the same id could exist in multiple tenants. */
 export async function getJobDetailAll(
   taskId: string,

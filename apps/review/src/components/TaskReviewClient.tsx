@@ -55,6 +55,17 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [submittedHeygenPrompt, setSubmittedHeygenPrompt] = useState<{
+    prompt: string | null;
+    script_text: string | null;
+    post_path: string | null;
+    avatar_id: string | null;
+    voice_id: string | null;
+    video_id: string | null;
+    created_at: string;
+    ok: boolean;
+    error_message: string | null;
+  } | null>(null);
 
   const execTaskId = (data?.task_id ?? "").trim() || task_id;
 
@@ -91,6 +102,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setSkipVideoRegeneration(false);
     setImagePromptAnalysis("");
     setSkipImageRegeneration(false);
+    setSubmittedHeygenPrompt(null);
   }, [task_id]);
 
   useEffect(() => {
@@ -166,6 +178,33 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [task_id, projectFromUrl]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
+
+  /**
+   * Fetch the exact prompt/script_text HeyGen received for this task (from api_call_audit).
+   * We only fetch after `data` loads so we know the flow is actually video (avoids pointless
+   * calls for carousels). Silent on error — the panel falls back to the LLM-side prompt.
+   */
+  useEffect(() => {
+    if (!data) return;
+    const flowType = (data.flow_type ?? "").trim();
+    if (!flowType) return;
+    if (!isVideoFlow(flowType) && !isHeyGenReviewFlow(flowType)) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const qs = taskApiQuery(task_id, projectFromUrl);
+        const res = await fetch(`/api/task/heygen-prompt?${qs}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { submit?: typeof submittedHeygenPrompt };
+        if (cancelled) return;
+        setSubmittedHeygenPrompt(json.submit ?? null);
+      } catch {
+        /* non-fatal: panel falls back to LLM-side videoPrompt */
+      }
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [data, task_id, projectFromUrl]);
 
   const decision = useMemo(() => (data?.decision ?? "").trim(), [data?.decision]);
   const notes = useMemo(() => (data?.notes ?? "").trim(), [data?.notes]);
@@ -330,6 +369,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               <VideoReviewEdits
                 videoPrompt={mediaPrompt}
                 provider={videoPromptLabel}
+                submittedHeygenPrompt={submittedHeygenPrompt}
                 promptAnalysis={videoPromptAnalysis}
                 onPromptAnalysisChange={setVideoPromptAnalysis}
                 caption={editedCaption}

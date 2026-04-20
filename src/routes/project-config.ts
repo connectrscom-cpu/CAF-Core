@@ -27,6 +27,11 @@ import {
   fetchUrlAndUploadToHeygen,
 } from "../services/heygen-assets.js";
 import { uploadBuffer } from "../services/supabase-storage.js";
+import {
+  importProjectFromCsv,
+  PROJECT_IMPORT_CSV_TEMPLATE,
+} from "../services/project-csv-import.js";
+import { exportProjectAsCsv } from "../services/project-csv-export.js";
 
 export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Pool }) {
   const { db } = deps;
@@ -54,6 +59,157 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body" });
     const project = await ensureProject(db, body.data.slug, body.data.display_name);
     return { ok: true, project };
+  });
+
+  // ── Import a project from CSV ────────────────────────────────────────
+  //
+  // Accepts either:
+  //   - multipart/form-data with a file field (any name, first file wins), OR
+  //   - application/json body `{ csv: "section,row_key,field,value\n..." }`
+  //
+  // Query params:
+  //   - slug        Optional. Overrides / supplies the project slug (CSV still needs matching data).
+  //   - dry_run     Optional (`true`/`false`). Parse-only; no DB writes.
+  //
+  // Returns: { ok, dry_run, project, applied: { section: rowCount, ... }, warnings, errors }
+  app.post("/v1/projects/import-csv", async (request, reply) => {
+    const query = z
+      .object({
+        slug: z.string().trim().min(1).optional(),
+        dry_run: z.coerce.boolean().default(false),
+        default_display_name: z.string().optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_query", details: query.error.flatten() });
+    }
+
+    const contentType = (request.headers["content-type"] ?? "").toLowerCase();
+
+    let csvText: string | null = null;
+
+    try {
+      if (contentType.startsWith("multipart/")) {
+        const parts = request.parts();
+        for await (const part of parts) {
+          if (part.type === "file") {
+            const chunks: Buffer[] = [];
+            for await (const chunk of part.file) chunks.push(chunk);
+            csvText = Buffer.concat(chunks).toString("utf8");
+            break;
+          }
+        }
+        if (!csvText) {
+          return reply.code(400).send({ ok: false, error: "file_required", message: "Upload a CSV file in the multipart body." });
+        }
+      } else if (contentType.startsWith("application/json")) {
+        const body = z.object({ csv: z.string().min(1) }).safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+        }
+        csvText = body.data.csv;
+      } else {
+        return reply.code(415).send({
+          ok: false,
+          error: "unsupported_media_type",
+          message: "Use multipart/form-data (file upload) or application/json { csv: \"...\" }.",
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: "read_failed", message: msg.slice(0, 500) });
+    }
+
+    const result = await importProjectFromCsv(db, csvText, {
+      slug_override: query.data.slug ?? null,
+      default_display_name: query.data.default_display_name ?? null,
+      dry_run: query.data.dry_run,
+    });
+    const status = result.ok ? 200 : 400;
+    return reply.code(status).send(result);
+  });
+
+  // ── Download a CSV template for the importer ─────────────────────────
+  app.get("/v1/projects/import-csv/template", async (_request, reply) => {
+    return reply
+      .type("text/csv; charset=utf-8")
+      .header("content-disposition", "attachment; filename=\"caf-project-template.csv\"")
+      .send(PROJECT_IMPORT_CSV_TEMPLATE);
+  });
+
+  // ── Export an existing project as an import-ready CSV ────────────────
+  //
+  // Produces the inverse of POST /v1/projects/import-csv: a CSV that, when
+  // re-uploaded, re-creates a project with the same configuration.
+  //
+  // Query params (all optional):
+  //   - new_slug              Overrides `project.slug` so the CSV re-imports as a new project.
+  //   - new_display_name      Overrides `project.display_name`.
+  //   - new_color             Overrides `project.color` (#RRGGBB).
+  //   - new_product_name      Overrides `product.product_name`.
+  //   - new_product_url       Overrides `product.product_url` and `strategy.traffic_destination`.
+  //   - new_instagram_handle  Overrides `strategy.instagram_handle`.
+  //   - secrets               `"placeholder"` (default) replaces integration secret
+  //                           values with `REPLACE_ME`; `"include"` copies them verbatim.
+  //   - risk_rules            `"highest_severity"` (default) keeps one rule per flow;
+  //                           `"keep_all"` emits every rule (not round-trip safe).
+  //   - format                `"csv"` (default) streams CSV; `"json"` returns
+  //                           `{ csv, filename, rows, warnings, metadata }`.
+  app.get("/v1/projects/:project_slug/export-csv", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "invalid_params" });
+    const query = z
+      .object({
+        new_slug: z.string().trim().min(1).optional(),
+        new_display_name: z.string().trim().min(1).optional(),
+        new_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+        new_product_name: z.string().trim().min(1).optional(),
+        new_product_url: z.string().trim().url().optional(),
+        new_instagram_handle: z.string().trim().min(1).optional(),
+        secrets: z.enum(["placeholder", "include"]).default("placeholder"),
+        risk_rules: z.enum(["highest_severity", "keep_all"]).default("highest_severity"),
+        format: z.enum(["csv", "json"]).default("csv"),
+      })
+      .safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_query", details: query.error.flatten() });
+    }
+
+    try {
+      const result = await exportProjectAsCsv(db, params.data.project_slug, {
+        new_slug: query.data.new_slug ?? null,
+        new_display_name: query.data.new_display_name ?? null,
+        new_color: query.data.new_color ?? null,
+        new_product_name: query.data.new_product_name ?? null,
+        new_product_url: query.data.new_product_url ?? null,
+        new_instagram_handle: query.data.new_instagram_handle ?? null,
+        secrets: query.data.secrets,
+        collapse_risk_rules: query.data.risk_rules,
+      });
+
+      if (query.data.format === "json") {
+        return reply.send({
+          ok: true,
+          csv: result.csv,
+          filename: result.filename,
+          rows: result.rows,
+          warnings: result.warnings,
+          metadata: result.metadata,
+        });
+      }
+
+      return reply
+        .type("text/csv; charset=utf-8")
+        .header("content-disposition", `attachment; filename="${result.filename}"`)
+        .header("x-caf-warnings", result.warnings.length ? String(result.warnings.length) : "0")
+        .send(result.csv);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/project not found/i.test(msg)) {
+        return reply.code(404).send({ ok: false, error: "not_found", message: msg });
+      }
+      return reply.code(500).send({ ok: false, error: "export_failed", message: msg.slice(0, 500) });
+    }
   });
 
   // ── Patch project metadata (admin) ────────────────────────────────────
@@ -450,6 +606,8 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     prompt_template_id: z.string().nullish(),
     priority_weight: z.number().nullish(),
     notes: z.string().nullish(),
+    /** "script_led" → /v3/videos verbatim TTS; "prompt_led" → /v3/video-agents agent-written VO; null = code default. */
+    heygen_mode: z.enum(["script_led", "prompt_led"]).nullish(),
   });
 
   app.put("/v1/projects/:project_slug/flow-types", async (request, reply) => {
@@ -469,6 +627,7 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       prompt_template_id: body.data.prompt_template_id ?? null,
       priority_weight: body.data.priority_weight ?? null,
       notes: body.data.notes ?? null,
+      heygen_mode: body.data.heygen_mode ?? null,
     });
     return { ok: true, flow_type: row };
   });

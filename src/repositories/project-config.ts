@@ -3,6 +3,10 @@ import { CANONICAL_ALLOWED_FLOW_SEEDS } from "../domain/canonical-flow-types.js"
 import {
   PRODUCT_IMAGE_FLOW_TYPES,
   PRODUCT_VIDEO_FLOW_TYPES,
+  coerceProductHeygenMode,
+  defaultProductFlowHeygenMode,
+  isProductVideoFlow,
+  type ProductHeygenMode,
 } from "../domain/product-flow-types.js";
 import { q, qOne } from "../db/queries.js";
 
@@ -273,6 +277,14 @@ export interface AllowedFlowTypeRow {
   prompt_template_id: string | null;
   priority_weight: number | null;
   notes: string | null;
+  /**
+   * For FLOW_PRODUCT_* (and any flow the operator wants to pin):
+   * 'script_led' → /v3/videos verbatim TTS.
+   * 'prompt_led' → /v3/video-agents free creative.
+   * NULL → use the code default (see domain/product-flow-types.ts#defaultProductFlowHeygenMode).
+   * Ignored for non-product flows where the legacy flow-type regex already picks a route.
+   */
+  heygen_mode: ProductHeygenMode | null;
 }
 
 export async function listAllowedFlowTypes(db: Pool, projectId: string): Promise<AllowedFlowTypeRow[]> {
@@ -287,23 +299,51 @@ export async function upsertAllowedFlowType(
     INSERT INTO caf_core.allowed_flow_types (
       project_id, flow_type, enabled, default_variation_count, requires_signal_pack,
       requires_learning_context, allowed_platforms, output_schema_version, qc_checklist_version,
-      prompt_template_id, priority_weight, notes
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      prompt_template_id, priority_weight, notes, heygen_mode
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (project_id, flow_type) DO UPDATE SET
       enabled = EXCLUDED.enabled, default_variation_count = EXCLUDED.default_variation_count,
       requires_signal_pack = EXCLUDED.requires_signal_pack, requires_learning_context = EXCLUDED.requires_learning_context,
       allowed_platforms = EXCLUDED.allowed_platforms, output_schema_version = EXCLUDED.output_schema_version,
       qc_checklist_version = EXCLUDED.qc_checklist_version, prompt_template_id = EXCLUDED.prompt_template_id,
-      priority_weight = EXCLUDED.priority_weight, notes = EXCLUDED.notes, updated_at = now()
+      priority_weight = EXCLUDED.priority_weight, notes = EXCLUDED.notes,
+      heygen_mode = EXCLUDED.heygen_mode,
+      updated_at = now()
     RETURNING *`,
     [
       projectId, data.flow_type, data.enabled, data.default_variation_count,
       data.requires_signal_pack, data.requires_learning_context, data.allowed_platforms,
       data.output_schema_version, data.qc_checklist_version, data.prompt_template_id,
       data.priority_weight, data.notes,
+      data.heygen_mode ?? null,
     ]);
   if (!row) throw new Error("Failed to upsert allowed_flow_type");
   return row;
+}
+
+/**
+ * Resolve the effective HeyGen routing mode for a product-flow job.
+ * Checks per-project override first, then falls back to the baked-in default mapping.
+ * Returns null when flow_type is not a product flow (caller should use legacy regex routing).
+ */
+export async function resolveProductFlowHeygenMode(
+  db: Pool,
+  projectId: string,
+  flowType: string | null | undefined
+): Promise<ProductHeygenMode | null> {
+  if (!isProductVideoFlow(flowType)) return null;
+  try {
+    const row = await qOne<{ heygen_mode: string | null }>(
+      db,
+      `SELECT heygen_mode FROM caf_core.allowed_flow_types WHERE project_id = $1 AND flow_type = $2`,
+      [projectId, String(flowType).trim()]
+    );
+    const override = coerceProductHeygenMode(row?.heygen_mode);
+    if (override) return override;
+  } catch {
+    /* allowed_flow_types is optional — fall through to default. */
+  }
+  return defaultProductFlowHeygenMode(flowType);
 }
 
 /** Upsert Flow Engine–aligned flows: carousel + 3 video paths (enabled). Safe to re-run. */
@@ -321,6 +361,7 @@ export async function seedCanonicalAllowedFlowTypes(db: Pool, projectId: string)
       prompt_template_id: null,
       priority_weight: row.priority_weight,
       notes: row.notes,
+      heygen_mode: null,
     });
   }
 }
@@ -328,6 +369,8 @@ export async function seedCanonicalAllowedFlowTypes(db: Pool, projectId: string)
 /**
  * Additive product marketing flows — **disabled** until you enable per project.
  * Does not alter canonical carousel/video rows from {@link seedCanonicalAllowedFlowTypes}.
+ * `heygen_mode` seeded from {@link defaultProductFlowHeygenMode} so freshly seeded rows show
+ * the operator the effective default in the Flow Types settings UI (they can flip it anytime).
  */
 export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string): Promise<void> {
   let p = 6;
@@ -344,6 +387,7 @@ export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string):
       prompt_template_id: null,
       priority_weight: p--,
       notes: "Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.",
+      heygen_mode: defaultProductFlowHeygenMode(ft),
     });
   }
   p = 5;
@@ -360,6 +404,7 @@ export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string):
       prompt_template_id: null,
       priority_weight: p--,
       notes: "Image ad flow — generation blocked until image tool is integrated.",
+      heygen_mode: null,
     });
   }
 }
@@ -389,6 +434,7 @@ export async function ensureDefaultAllowedFlowsIfNone(db: Pool, projectId: strin
       prompt_template_id: pick.prompt_template_id,
       priority_weight: pick.priority_weight,
       notes: pick.notes,
+      heygen_mode: pick.heygen_mode ?? null,
     });
     return;
   }

@@ -8,6 +8,7 @@ import {
   getProductProfile,
   listHeygenConfig,
   listProjectBrandAssets,
+  resolveProductFlowHeygenMode,
   type HeygenConfigRow,
 } from "../repositories/project-config.js";
 import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
@@ -634,6 +635,18 @@ export function buildHeyGenVideoAgentRequestBody(
     agentMode: HeygenVideoAgentMode;
     /** When omitted, uses a safe default (20–300s) suitable for unit tests only; production callers should pass config-derived bounds. */
     durationBounds?: HeygenAgentDurationBounds;
+    /**
+     * Who writes the voiceover:
+     *  - `"user_provided"` (default, legacy): include our `spoken_script` as "Main spoken content"
+     *    so the agent delivers it roughly verbatim. Use when the job actually has a spoken_script
+     *    we want HeyGen to speak.
+     *  - `"agent_writes"`: omit the "Main spoken content" line. Use for prompt-led product flows
+     *    where we deliberately skip ensureVideoScriptInPayload — the agent authors its own VO
+     *    from the visual / hook / cta context. This prevents HeyGen from paraphrasing a stale
+     *    or uncoordinated spoken_script and instead produces VO grounded in the same brief
+     *    that drives the visuals.
+     */
+    spokenMode?: "user_provided" | "agent_writes";
   }
 ): Record<string, unknown> {
   const merged: Record<string, unknown> = { ...mergedConfig };
@@ -687,8 +700,15 @@ export function buildHeyGenVideoAgentRequestBody(
     );
   }
 
+  const spokenMode = opts.spokenMode ?? "user_provided";
   if (hook) lines.push(`Hook: ${hook}`);
-  if (spokenScript) lines.push(`Main spoken content: ${spokenScript}`);
+  if (spokenMode === "user_provided" && spokenScript) {
+    lines.push(`Main spoken content: ${spokenScript}`);
+  } else if (spokenMode === "agent_writes") {
+    lines.push(
+      "Voiceover: write a natural, on-brand narration from the hook + visual direction + CTA below. Keep it tight, punchy, and native to short-form — do not read product specs as a list."
+    );
+  }
   if (videoPrompt && videoPrompt !== spokenScript) lines.push(`Visual / generation prompt: ${videoPrompt}`);
   if (onScreenText.length) lines.push(`On-screen text cues: ${onScreenText.join(" | ")}`);
 
@@ -1859,7 +1879,23 @@ export async function runHeygenForContentJob(
   const merged = mergeHeygenConfigForJob(rows, job.platform, job.flow_type, renderMode);
   applyHeygenEnvAvatarDefaults(merged, appConfig);
   const override = job.generation_payload.heygen_request as Record<string, unknown> | undefined;
-  const preferredPath = resolveHeygenGeneratePath(job.flow_type, renderMode);
+
+  /**
+   * For FLOW_PRODUCT_*, the per-project `allowed_flow_types.heygen_mode` (or the baked-in
+   * default from {@link defaultProductFlowHeygenMode}) picks the route — overriding the
+   * regex-based {@link resolveHeygenGeneratePath} which would always send product flows to
+   * /v3/video-agents. Operators can flip any angle between script_led (verbatim TTS) and
+   * prompt_led (agent-written VO) from the Flow Types settings tab.
+   */
+  const productMode = isProductVideoFlow(job.flow_type)
+    ? await resolveProductFlowHeygenMode(db, job.project_id, job.flow_type)
+    : null;
+  const preferredPath: HeygenGeneratePath =
+    productMode === "script_led"
+      ? "/v3/videos"
+      : productMode === "prompt_led"
+        ? "/v3/video-agents"
+        : resolveHeygenGeneratePath(job.flow_type, renderMode);
   let postPath: HeygenGeneratePath = preferredPath;
   let body: Record<string, unknown>;
 
@@ -1875,6 +1911,14 @@ export async function runHeygenForContentJob(
     } else {
       body = mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body);
     }
+    /**
+     * Script-led product flows: avatar reads our LLM-authored spoken_script verbatim via
+     * `video_inputs[].script_text`. Visual direction / brand / product context is already
+     * baked into the prompt templates that produced the script (see migration 021 —
+     * Product_Video_* templates), so we intentionally do NOT inject extra prompt blocks
+     * here. `/v3/videos` has no agent-guidance field, and any brand-asset `files` array
+     * would be rejected by the endpoint's `additionalProperties: false` schema.
+     */
   } else {
     body = buildHeyGenVideoAgentRequestBody(merged, gen, override, {
       flowType: job.flow_type,
@@ -1885,6 +1929,12 @@ export async function runHeygenForContentJob(
         maxSec: 300,
         missingFallbackSec: appConfig.VIDEO_TARGET_DURATION_MIN_SEC,
       },
+      /**
+       * Prompt-led product flows deliberately skip ensureVideoScriptInPayload, so there is
+       * no user-authored spoken_script to read — tell the agent to author its own VO from
+       * the hook + visual_direction + cta block. Legacy video flows stay on "user_provided".
+       */
+      spokenMode: productMode === "prompt_led" ? "agent_writes" : "user_provided",
     });
     if (isProductVideoFlow(job.flow_type)) {
       const suffix = productVideoAgentPromptSuffix(job.flow_type);

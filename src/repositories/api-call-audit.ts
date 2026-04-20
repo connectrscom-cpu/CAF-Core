@@ -132,6 +132,100 @@ export async function listApiCallAuditsForRun(
   return rows as never[];
 }
 
+export interface LatestHeygenSubmitAudit {
+  id: string;
+  created_at: string;
+  ok: boolean;
+  error_message: string | null;
+  /**
+   * Full /v3/video-agents prompt string (prompt-led) — the exact body the agent received.
+   * Null when the submission was /v3/videos (script-led path has no `prompt` field; see `script_text`).
+   */
+  prompt: string | null;
+  /**
+   * Verbatim avatar TTS text from `video_inputs[0].script_text` when script-led.
+   * Null when the submission was /v3/video-agents.
+   */
+  script_text: string | null;
+  avatar_id: string | null;
+  voice_id: string | null;
+  post_path: string | null;
+  video_id: string | null;
+}
+
+/**
+ * Most recent `heygen_video_generate` audit row for a task (there is usually only one, but
+ * re-renders produce multiple — we always show the latest). Flattens the interesting bits of
+ * request_json / response_json so the review UI can render the actual submitted prompt
+ * without having to understand HeyGen's endpoint shapes.
+ *
+ * Returns null when the task has never been submitted to HeyGen. Never throws — we prefer a
+ * missing panel to a broken review screen.
+ */
+export async function getLatestHeygenSubmitAuditForTask(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<LatestHeygenSubmitAudit | null> {
+  const { rows } = await db.query(
+    `SELECT id::text, created_at::text, ok, error_message, request_json, response_json
+     FROM caf_core.api_call_audit
+     WHERE project_id = $1
+       AND task_id = $2
+       AND step = 'heygen_video_generate'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [projectId, taskId]
+  );
+  const r = rows[0];
+  if (!r) return null;
+  const req = (r.request_json as Record<string, unknown> | null) ?? {};
+  const body = (req.body as Record<string, unknown> | null) ?? {};
+  // runHeygenVideoWithBody audits { endpoint, body, scene_index }. Older rows may use { path } / { url }.
+  const endpointStr =
+    typeof req.endpoint === "string" ? req.endpoint :
+    typeof req.path === "string" ? req.path :
+    typeof req.url === "string" ? req.url :
+    null;
+  const postPath = endpointStr ? endpointStr.replace(/^https?:\/\/[^/]+/, "") : null;
+  const prompt = typeof body.prompt === "string" ? body.prompt : null;
+  const avatarId =
+    typeof body.avatar_id === "string" && body.avatar_id ? body.avatar_id : null;
+  const voiceId =
+    typeof body.voice_id === "string" && body.voice_id ? body.voice_id : null;
+
+  // /v3/videos nests the spoken script at body.video_inputs[0].script_text; fish it out defensively.
+  let scriptText: string | null = null;
+  const vi = body.video_inputs;
+  if (Array.isArray(vi) && vi.length > 0) {
+    const head = vi[0];
+    if (head && typeof head === "object" && !Array.isArray(head)) {
+      const st = (head as Record<string, unknown>).script_text;
+      if (typeof st === "string" && st.trim()) scriptText = st;
+    }
+  }
+
+  const res = (r.response_json as Record<string, unknown> | null) ?? {};
+  const data = (res.data as Record<string, unknown> | null) ?? {};
+  const videoId =
+    (typeof data.video_id === "string" && data.video_id) ||
+    (typeof res.video_id === "string" && res.video_id) ||
+    null;
+
+  return {
+    id: String(r.id),
+    created_at: String(r.created_at),
+    ok: Boolean(r.ok),
+    error_message: r.error_message ? String(r.error_message) : null,
+    prompt,
+    script_text: scriptText,
+    avatar_id: avatarId,
+    voice_id: voiceId,
+    post_path: postPath,
+    video_id: videoId || null,
+  };
+}
+
 export async function listApiCallAuditsForSignalPack(
   db: Pool,
   projectId: string,

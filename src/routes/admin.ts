@@ -1353,6 +1353,11 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const num = (k: string) => (b[k] != null && b[k] !== "") ? Number(b[k]) : null;
     const bool = (k: string) => b[k] === true || b[k] === "true" || b[k] === "1";
     if (!b.flow_type) return { ok: false, error: "flow_type is required" };
+    const heygenModeIn = typeof b.heygen_mode === "string" ? b.heygen_mode.trim().toLowerCase() : "";
+    const heygenMode =
+      heygenModeIn === "script_led" || heygenModeIn === "prompt_led"
+        ? (heygenModeIn as "script_led" | "prompt_led")
+        : null;
     await upsertAllowedFlowType(db, project.id, {
       flow_type: String(b.flow_type), enabled: bool("enabled"),
       default_variation_count: Number(b.default_variation_count ?? 1),
@@ -1360,6 +1365,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       allowed_platforms: str("allowed_platforms"), output_schema_version: str("output_schema_version"),
       qc_checklist_version: str("qc_checklist_version"), prompt_template_id: str("prompt_template_id"),
       priority_weight: num("priority_weight"), notes: str("notes"),
+      heygen_mode: heygenMode,
     });
     return { ok: true };
   });
@@ -1811,33 +1817,220 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   // --- New Project ---
   app.get("/admin/new-project", async (_, reply) => {
     const projects = await listProjects(db);
+    // Non-system projects only, for the "clone from" dropdown.
+    const cloneableProjects = projects
+      .filter((p: any) => !p.is_system)
+      .map((p: any) => ({ slug: p.slug, display_name: p.display_name || p.slug }));
+    const cloneOptions = cloneableProjects
+      .map((p) => `<option value="${esc(p.slug)}">${esc(p.display_name)} (${esc(p.slug)})</option>`)
+      .join("");
+
     const body = `
-<div class="ph"><div><h2>Create New Project</h2><span class="ph-sub">Set up a new content project</span></div></div>
+<div class="ph"><div><h2>Create New Project</h2><span class="ph-sub">Three ways: from scratch, clone an existing project, or import a CSV</span></div></div>
 <div class="content">
+
+  <!-- 1. Create blank project ──────────────────────────────────── -->
   <div class="card">
-    <div class="card-h">Project Details</div>
+    <div class="card-h">Option 1 — Create a blank project</div>
+    <p style="color:var(--muted);font-size:13px;margin:-6px 0 14px">
+      Creates an empty shell. You fill in strategy / brand / product / platforms afterwards.
+    </p>
     <form id="new-project-form" class="config-form">
       <div class="form-group"><label for="np-slug">Project Slug (uppercase, 2-30 chars, e.g. SNS, BRAND_X)</label><input type="text" id="np-slug" name="slug" required pattern="[A-Za-z0-9_]{2,30}" placeholder="MY_PROJECT" style="text-transform:uppercase"></div>
       <div class="form-group"><label for="np-name">Display Name</label><input type="text" id="np-name" name="display_name" placeholder="My Project"></div>
       <div class="form-actions"><button type="submit" class="btn">Create Project</button><span id="np-msg" class="form-msg"></span></div>
     </form>
   </div>
+
+  <!-- 2. Clone from existing ───────────────────────────────────── -->
+  <div class="card">
+    <div class="card-h">Option 2 — Clone an existing project</div>
+    <p style="color:var(--muted);font-size:13px;margin:-6px 0 14px">
+      Copies every configured value (strategy, brand, product, platform constraints, flow types,
+      risk rules, reference posts, HeyGen defaults) from the source project. Integration secrets
+      (<code>account_ids_json</code>, <code>credentials_json</code>) are replaced with
+      <code>REPLACE_ME</code> placeholders — edit them after cloning.
+    </p>
+    <form id="clone-form" class="config-form">
+      <div class="form-group">
+        <label for="cl-source">Source project</label>
+        <select id="cl-source" required>${cloneOptions || '<option value="">(no projects to clone yet)</option>'}</select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label for="cl-slug">New slug *</label><input type="text" id="cl-slug" required pattern="[A-Za-z0-9_]{2,30}" placeholder="NEW_PROJECT" style="text-transform:uppercase"></div>
+        <div class="form-group"><label for="cl-name">New display name *</label><input type="text" id="cl-name" required placeholder="New Project"></div>
+      </div>
+      <details style="margin:6px 0 14px"><summary style="cursor:pointer;color:var(--fg2);font-size:13px">Optional identity overrides (product name, URL, Instagram handle, colour)</summary>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px">
+          <div class="form-group"><label for="cl-pname">Product name</label><input type="text" id="cl-pname" placeholder="(defaults to new display name)"></div>
+          <div class="form-group"><label for="cl-purl">Product URL</label><input type="url" id="cl-purl" placeholder="https://example.com"></div>
+          <div class="form-group"><label for="cl-ig">Instagram handle</label><input type="text" id="cl-ig" placeholder="@your_handle"></div>
+          <div class="form-group"><label for="cl-color">Colour (hex)</label><input type="text" id="cl-color" pattern="#[0-9A-Fa-f]{6}" placeholder="#1a73e8"></div>
+        </div>
+      </details>
+      <div class="form-actions">
+        <button type="button" id="cl-download" class="btn-ghost btn">Download CSV only</button>
+        <button type="submit" class="btn">Clone &amp; create now</button>
+        <span id="cl-msg" class="form-msg"></span>
+      </div>
+    </form>
+  </div>
+
+  <!-- 3. Import CSV ────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="card-h">Option 3 — Import from CSV</div>
+    <p style="color:var(--muted);font-size:13px;margin:-6px 0 14px">
+      Upload a key-value CSV (<code>section,row_key,field,value</code>). Fields not in the CSV
+      are preserved on existing projects; missing singleton sections are created for new ones.
+      <a href="#" id="dl-blank">Download a blank template</a>.
+    </p>
+    <form id="import-form" class="config-form">
+      <div class="form-group">
+        <label for="imp-file">CSV file</label>
+        <input type="file" id="imp-file" accept=".csv,text/csv" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label for="imp-slug">Slug override (optional — overrides <code>project,,slug,</code> row)</label><input type="text" id="imp-slug" pattern="[A-Za-z0-9_]{2,30}" placeholder="leave blank to use the CSV" style="text-transform:uppercase"></div>
+        <div class="form-group"><label for="imp-name">Display name override (optional)</label><input type="text" id="imp-name" placeholder="leave blank to use the CSV"></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="imp-dry" class="btn-ghost btn">Dry-run preview</button>
+        <button type="submit" class="btn">Import</button>
+        <span id="imp-msg" class="form-msg"></span>
+      </div>
+      <pre id="imp-result" style="display:none;margin-top:12px;padding:12px;background:var(--card2,#111);border:1px solid var(--border);border-radius:8px;font-size:12px;max-height:260px;overflow:auto;white-space:pre-wrap"></pre>
+    </form>
+  </div>
+
 </div>
+
 <script>
+// ── helpers ───────────────────────────────────────────────────────────
+function setMsg(el, text, kind){
+  el.textContent = text || '';
+  el.style.color = kind==='err' ? 'var(--red)' : (kind==='ok' ? 'var(--green,#16a34a)' : 'var(--accent)');
+}
+async function downloadBlob(url, fallbackName){
+  const r = await cafFetch(url);
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>String(r.status));
+    throw new Error('HTTP '+r.status+': '+txt.slice(0,200));
+  }
+  const disp = r.headers.get('content-disposition') || '';
+  const m = /filename="?([^";]+)"?/i.exec(disp);
+  const name = (m && m[1]) || fallbackName;
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();}, 500);
+}
+
+// ── 1. blank project ──────────────────────────────────────────────────
 document.getElementById('new-project-form').addEventListener('submit',async(e)=>{
   e.preventDefault();
   const msg=document.getElementById('np-msg');
   const slug=document.getElementById('np-slug').value.trim().toUpperCase();
   const display_name=document.getElementById('np-name').value.trim()||slug;
-  if(!slug){msg.textContent='Slug required';msg.style.color='var(--red)';return;}
-  msg.textContent='Creating...';msg.style.color='var(--accent)';
+  if(!slug){setMsg(msg,'Slug required','err');return;}
+  setMsg(msg,'Creating…');
   try{
     const r=await cafFetch('/v1/admin/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({slug,display_name})});
     const d=await r.json();
     if(d.ok){window.location.href='/admin/config?project='+encodeURIComponent(d.project.slug);}
-    else{msg.textContent=d.error||'Failed';msg.style.color='var(--red)';}
-  }catch(err){msg.textContent='Error: '+err.message;msg.style.color='var(--red)';}
+    else{setMsg(msg,d.error||'Failed','err');}
+  }catch(err){setMsg(msg,'Error: '+err.message,'err');}
 });
+
+// ── 2. clone from existing ────────────────────────────────────────────
+function buildExportUrl(){
+  const src=document.getElementById('cl-source').value.trim();
+  if(!src) throw new Error('Pick a source project');
+  const newSlug=document.getElementById('cl-slug').value.trim().toUpperCase();
+  const newName=document.getElementById('cl-name').value.trim();
+  if(!newSlug) throw new Error('New slug is required');
+  if(!newName) throw new Error('New display name is required');
+  const params=new URLSearchParams();
+  params.set('new_slug', newSlug);
+  params.set('new_display_name', newName);
+  const pname=document.getElementById('cl-pname').value.trim();
+  const purl=document.getElementById('cl-purl').value.trim();
+  const ig=document.getElementById('cl-ig').value.trim();
+  const color=document.getElementById('cl-color').value.trim();
+  if (pname) params.set('new_product_name', pname);
+  if (purl) params.set('new_product_url', purl);
+  if (ig) params.set('new_instagram_handle', ig);
+  if (color) params.set('new_color', color);
+  return { src, url: '/v1/projects/'+encodeURIComponent(src)+'/export-csv?'+params.toString(), newSlug, newName };
+}
+
+document.getElementById('cl-download').addEventListener('click', async () => {
+  const msg=document.getElementById('cl-msg');
+  try{
+    const { url, newSlug } = buildExportUrl();
+    setMsg(msg,'Preparing CSV…');
+    await downloadBlob(url, 'caf-project-'+newSlug.toLowerCase()+'.csv');
+    setMsg(msg,'CSV downloaded — edit if needed, then upload it in Option 3.','ok');
+  }catch(err){setMsg(msg,'Error: '+err.message,'err');}
+});
+
+document.getElementById('clone-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg=document.getElementById('cl-msg');
+  try{
+    const { url, newSlug, newName } = buildExportUrl();
+    setMsg(msg,'Fetching source config…');
+    const r1 = await cafFetch(url+'&format=json');
+    const d1 = await r1.json();
+    if (!d1.ok) { setMsg(msg, d1.error||'Export failed','err'); return; }
+    setMsg(msg,'Importing as new project…');
+    const r2 = await cafFetch('/v1/projects/import-csv?slug='+encodeURIComponent(newSlug),{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ csv: d1.csv }),
+    });
+    const d2 = await r2.json();
+    if (!d2.ok) { setMsg(msg, (d2.errors&&d2.errors.join('; '))||d2.error||'Import failed','err'); return; }
+    setMsg(msg,'Created '+newSlug+' — redirecting…','ok');
+    window.location.href = '/admin/config?project='+encodeURIComponent(newSlug);
+  }catch(err){setMsg(msg,'Error: '+err.message,'err');}
+});
+
+// ── 3. CSV import ─────────────────────────────────────────────────────
+document.getElementById('dl-blank').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try { await downloadBlob('/v1/projects/import-csv/template','caf-project-template.csv'); }
+  catch(err){ alert('Error: '+err.message); }
+});
+
+async function submitImport(dryRun){
+  const msg=document.getElementById('imp-msg');
+  const out=document.getElementById('imp-result');
+  out.style.display='none';
+  const file = document.getElementById('imp-file').files[0];
+  if(!file){ setMsg(msg,'Pick a CSV file','err'); return; }
+  const slugOverride=document.getElementById('imp-slug').value.trim().toUpperCase();
+  const nameOverride=document.getElementById('imp-name').value.trim();
+  const params=new URLSearchParams();
+  if (dryRun) params.set('dry_run','true');
+  if (slugOverride) params.set('slug', slugOverride);
+  if (nameOverride) params.set('default_display_name', nameOverride);
+  setMsg(msg, dryRun?'Parsing…':'Importing…');
+  try{
+    const fd = new FormData(); fd.append('file', file, file.name);
+    const r = await cafFetch('/v1/projects/import-csv'+(params.toString()?'?'+params.toString():''), { method:'POST', body: fd });
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+    out.style.display = 'block';
+    if (!d.ok) { setMsg(msg, (d.errors&&d.errors.join('; '))||d.error||'Failed','err'); return; }
+    if (dryRun) { setMsg(msg,'Dry-run OK. Review the plan below, then click Import.','ok'); return; }
+    setMsg(msg,'Imported — redirecting…','ok');
+    const slug = (d.project && d.project.slug) || slugOverride;
+    setTimeout(()=>{ window.location.href = '/admin/config?project='+encodeURIComponent(slug); }, 500);
+  }catch(err){setMsg(msg,'Error: '+err.message,'err');}
+}
+document.getElementById('imp-dry').addEventListener('click', ()=>submitImport(true));
+document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preventDefault(); submitImport(false); });
 </script>`;
     reply.type("text/html").send(page("New Project", "", body, projects, "", adminHeadTokenScript(config)));
   });

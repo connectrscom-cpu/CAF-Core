@@ -14,6 +14,7 @@ import {
   insertSuppressionRule,
   insertPromptVersion,
 } from "../repositories/ops.js";
+import { getLatestHeygenSubmitAuditForTask } from "../repositories/api-call-audit.js";
 import {
   listReviewQueue,
   countReviewQueue,
@@ -885,6 +886,32 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       ok: true,
       job: { ...signed, assets, project_slug: params.data.project_slug },
     };
+  });
+
+  /**
+   * Returns the most recent HeyGen submission for a task as recorded in `api_call_audit`.
+   * Powers the review console's "Exact prompt sent to HeyGen" panel so reviewers see the
+   * real body the agent received (LLM-generated prompt + appended rubric / brand / product /
+   * per-flow blocks), rather than only the upstream LLM-authored video_prompt. Returns
+   * `{ ok: true, submit: null }` when the task has never been submitted (still-rendering,
+   * carousel-only, etc.) so the UI can render a "Not submitted yet" state without an error.
+   */
+  app.get("/v1/review-queue/:project_slug/task/:task_id/heygen-last-submit", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const submit = await getLatestHeygenSubmitAuditForTask(db, project.id, params.data.task_id);
+    return { ok: true, submit };
+  });
+
+  /** Same as above but `task_id` in query string — avoids proxy limits on very long rework ids. */
+  app.get("/v1/review-queue/:project_slug/heygen-last-submit", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const submit = await getLatestHeygenSubmitAuditForTask(db, project.id, query.data.task_id);
+    return { ok: true, submit };
   });
 
   /** Prefer this over path-segment `task_id` so very long ids (video / legacy) do not hit proxy URL limits. */
