@@ -363,9 +363,37 @@ app.post("/render-carousel", async (req, res) => {
 app.post("/preview-template", async (req, res) => {
   try {
     const b = normalizeBody(req.body);
-    b.slide_index = 1;
-    const result = await enqueue(b, 1);
-    res.json({ ok: true, ...result });
+    const rawIdx = Number(req.body?.slide_index ?? b.slide_index ?? 1);
+    const slideIndex = Number.isFinite(rawIdx) && rawIdx > 0 ? Math.floor(rawIdx) : 1;
+    b.slide_index = slideIndex;
+    const force = req.query?.force === "1" || req.body?.force === true;
+    // Deterministic cache path: same template + slide_index always lands on the same file.
+    // The disk is ephemeral per machine, so a fresh deploy (= new template/.hbs source) wipes it naturally.
+    const tplName = String(getTemplateNameFromBody(b) || "").replace(/\.hbs$/i, "");
+    const safeTpl = tplName.replace(/[^a-zA-Z0-9_-]/g, "_") || "preview";
+    b.run_id = "__previews__";
+    b.task_id = safeTpl;
+    const filename = `${String(slideIndex).padStart(3, "0")}_slide.png`;
+    const cachedRel = `__previews__/${safeTpl}/${filename}`;
+    const cachedFull = path.join(OUTPUT_DIR, cachedRel);
+    if (!force && fs.existsSync(cachedFull)) {
+      return res.json({
+        ok: true,
+        slide_index: slideIndex,
+        cached: true,
+        relativePath: cachedRel,
+        resultUrl: `/output/${cachedRel}`,
+        result_url: `/output/${cachedRel}`,
+      });
+    }
+    const result = await enqueue(b, slideIndex);
+    res.json({
+      ok: true,
+      slide_index: slideIndex,
+      cached: false,
+      result_url: result.resultUrl,
+      ...result,
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

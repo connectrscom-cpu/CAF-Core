@@ -117,6 +117,23 @@ app.use(
   })
 );
 
+/**
+ * Static rendered slides served by the renderer (express.static at /output).
+ * CAF Core preview/render flow: POST /preview-template returns `result_url: /output/...png`,
+ * then CAF Core fetches `${RENDERER_BASE_URL}${result_url}`. Without this proxy that GET
+ * lands on the gateway (no /output route) and 404s, which CAF Core turns into a 502 with
+ * `renderer_image_fetch_failed` — visible as "Render failed" tiles in the admin Carousel
+ * Templates page even though the slide actually rendered fine on disk.
+ */
+app.use(
+  "/output",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${RENDERER_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/output": "/output" },
+  })
+);
+
 app.use(
   "/renderer",
   createProxyMiddleware({
