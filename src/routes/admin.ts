@@ -5079,6 +5079,20 @@ function fgCheck(name,label,checked){
     +'<input type="checkbox" name="'+name+'" id="'+name+'"'+(checked?' checked':'')+' style="width:auto">'
     +'<label for="'+name+'" style="margin:0">'+label+'</label></div>';
 }
+/**
+ * Select field for inline admin config forms (flow-type heygen_mode, etc.).
+ * options: [{v:'',l:'Default…'},{v:'script_led',l:'…'}]. Empty string "" means "use server default" (column NULL).
+ */
+function fgSel(name,label,value,options){
+  var opts='';
+  for(var i=0;i<options.length;i++){
+    var o=options[i];
+    var sel=String(value==null?'':value)===String(o.v)?' selected':'';
+    opts+='<option value="'+esc(o.v)+'"'+sel+'>'+esc(o.l)+'</option>';
+  }
+  return '<div class="form-group"><label for="'+name+'">'+label+'</label>'
+    +'<select name="'+name+'" id="'+name+'">'+opts+'</select></div>';
+}
 
 function cfgTab(id,btn){
   document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
@@ -5363,7 +5377,7 @@ async function postForm(url,body,msgId){
 
 const FORM_FIELDS={
   'platform':[{k:'platform',l:'Platform',r:true},{k:'caption_max_chars',l:'Caption Max Chars',t:'number'},{k:'hook_max_chars',l:'Hook Max Chars',t:'number'},{k:'hook_must_fit_first_lines',l:'Hook Must Fit First Lines',t:'checkbox'},{k:'slide_min_chars',l:'Slide Min Chars',t:'number'},{k:'slide_max_chars',l:'Slide Max Chars',t:'number'},{k:'slide_min',l:'Slide Min',t:'number'},{k:'slide_max',l:'Slide Max',t:'number'},{k:'max_hashtags',l:'Max Hashtags',t:'number'},{k:'hashtag_format_rule',l:'Hashtag Format Rule'},{k:'line_break_policy',l:'Line Break Policy'},{k:'emoji_allowed',l:'Emoji Allowed',t:'checkbox'},{k:'link_allowed',l:'Link Allowed',t:'checkbox'},{k:'tag_allowed',l:'Tag Allowed',t:'checkbox'},{k:'formatting_rules',l:'Formatting Rules',ta:true},{k:'posting_frequency_limit',l:'Posting Frequency Limit'},{k:'best_posting_window',l:'Best Posting Window'},{k:'notes',l:'Notes',ta:true}],
-  'flow-type':[{k:'flow_type',l:'Flow Type',r:true},{k:'enabled',l:'Enabled',t:'checkbox'},{k:'default_variation_count',l:'Default Variation Count',t:'number'},{k:'requires_signal_pack',l:'Requires Signal Pack',t:'checkbox'},{k:'requires_learning_context',l:'Requires Learning Context',t:'checkbox'},{k:'allowed_platforms',l:'Allowed Platforms'},{k:'output_schema_version',l:'Output Schema Version'},{k:'qc_checklist_version',l:'QC Checklist Version'},{k:'prompt_template_id',l:'Prompt Template ID'},{k:'priority_weight',l:'Priority Weight',t:'number',step:'0.01'},{k:'notes',l:'Notes',ta:true}],
+  'flow-type':[{k:'flow_type',l:'Flow Type',r:true},{k:'enabled',l:'Enabled',t:'checkbox'},{k:'default_variation_count',l:'Default Variation Count',t:'number'},{k:'requires_signal_pack',l:'Requires Signal Pack',t:'checkbox'},{k:'requires_learning_context',l:'Requires Learning Context',t:'checkbox'},{k:'allowed_platforms',l:'Allowed Platforms'},{k:'output_schema_version',l:'Output Schema Version'},{k:'qc_checklist_version',l:'QC Checklist Version'},{k:'prompt_template_id',l:'Prompt Template ID'},{k:'priority_weight',l:'Priority Weight',t:'number',step:'0.01'},{k:'heygen_mode',l:'HeyGen mode (product videos only — leave blank for code default)',t:'select',opts:[{v:'',l:'Default (FEATURE/COMPARISON/OFFER/USECASE \u2192 script-led; PROBLEM/SOCIAL_PROOF \u2192 prompt-led)'},{v:'script_led',l:'script_led \u2014 /v3/videos, avatar reads spoken_script verbatim'},{v:'prompt_led',l:'prompt_led \u2014 /v3/video-agents, HeyGen writes and speaks its own VO'}]},{k:'notes',l:'Notes',ta:true}],
   'risk-rule':[{k:'flow_type',l:'Flow Type',r:true},{k:'trigger_condition',l:'Trigger Condition',ta:true},{k:'risk_level',l:'Risk Level'},{k:'auto_approve_allowed',l:'Auto Approve Allowed',t:'checkbox'},{k:'requires_manual_review',l:'Requires Manual Review',t:'checkbox'},{k:'escalation_level',l:'Escalation Level'},{k:'sensitive_topics',l:'Sensitive Topics',ta:true},{k:'claim_restrictions',l:'Claim Restrictions',ta:true},{k:'rejection_reason_tag',l:'Rejection Reason Tag'},{k:'rollback_flag',l:'Rollback Flag',t:'checkbox'},{k:'notes',l:'Notes',ta:true}],
   'reference-post':[{k:'reference_post_id',l:'Reference Post ID',r:true},{k:'platform',l:'Platform'},{k:'post_url',l:'Post URL'},{k:'status',l:'Status'},{k:'last_run_id',l:'Last Run ID'},{k:'notes',l:'Notes',ta:true}],
   'heygen':[{k:'config_id',l:'Config ID',r:true},{k:'config_key',l:'Config Key',r:true},{k:'value',l:'Value',ta:true},{k:'platform',l:'Platform'},{k:'flow_type',l:'Flow Type'},{k:'render_mode',l:'Render Mode'},{k:'value_type',l:'Value Type'},{k:'is_active',l:'Active',t:'checkbox'},{k:'notes',l:'Notes',ta:true}]
@@ -5397,6 +5411,7 @@ function cfgInlineFormFieldsHtml(type,data){
     var v=data[f.k]!=null&&data[f.k]!==''?data[f.k]:'';
     var id='inline_e_'+f.k;
     if(f.t==='checkbox')inner+=fgCheck(id,f.l,v===true||v==='true'||v===1||v==='1');
+    else if(f.t==='select')inner+=fgSel(id,f.l,v,f.opts||[]);
     else if(f.ta)inner+=fgTa(id,f.l,v);
     else inner+=fg(id,f.l,v,f.t||'text',f.step);
   }
