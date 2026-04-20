@@ -585,7 +585,13 @@ export async function getDistinctValuesAllProjects(db: Pool): Promise<{
   const base = `FROM caf_core.content_jobs j
     INNER JOIN caf_core.projects p ON p.id = j.project_id AND p.active = true`;
   const [projects, platforms, flow_types, routes, runs, statuses, runLabelRows] = await Promise.all([
-    q<{ v: string }>(db, `SELECT DISTINCT p.slug AS v ${base} ORDER BY v`),
+    // Projects list comes from the `projects` table directly so freshly-created projects (no jobs yet)
+    // still show up in the review sidebar picker. System/internal projects (e.g. `caf-global` which
+    // hosts default configs and learning data) are hidden via the `is_system` flag from migration 013.
+    q<{ v: string }>(
+      db,
+      `SELECT slug AS v FROM caf_core.projects WHERE active = true AND is_system = false ORDER BY v`
+    ),
     q<{ v: string }>(db, `SELECT DISTINCT j.platform AS v ${base} AND j.platform IS NOT NULL ORDER BY v`),
     q<{ v: string }>(db, `SELECT DISTINCT j.flow_type AS v ${base} AND j.flow_type IS NOT NULL ORDER BY v`),
     q<{ v: string }>(

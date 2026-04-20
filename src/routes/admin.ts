@@ -4926,23 +4926,57 @@ async function loadConfig(){
   }else h+='<div class="empty">No platform constraints yet.</div>';
   h+='</div></div>';
 
-  // === Allowed Flow Types (editable table) ===
+  // === Allowed Flow Types (grouped by output format) ===
   const ft=d.profile?.flow_types||[];
-  h+='<div id="tab-flows" class="tab-panel"><div class="card"><div class="card-h">Allowed Flow Types ('+ft.length+') <button type="button" class="btn btn-sm" style="float:right;text-transform:none;letter-spacing:0" onclick="cfgBeginInlineAdd(this,\\'flow-type\\')">+ Add Flow Type</button></div>';
-  if(ft.length){
-    h+='<div style="overflow-x:auto"><table><thead><tr><th>Flow Type</th><th>Enabled</th><th>Variations</th><th>Platforms</th><th>Priority</th><th>Prompt Template</th><th>Notes</th><th></th></tr></thead><tbody>';
-    for(const f of ft){
-      h+='<tr><td><strong>'+esc(f.flow_type)+'</strong></td>';
-      h+='<td>'+(f.enabled?'<span class="badge badge-g">Yes</span>':'<span class="badge badge-r">No</span>')+'</td>';
-      h+='<td>'+f.default_variation_count+'</td>';
-      h+='<td>'+esc(f.allowed_platforms||'—')+'</td>';
-      h+='<td>'+esc(f.priority_weight||'—')+'</td>';
-      h+='<td class="mono">'+esc(f.prompt_template_id||'—')+'</td>';
-      h+='<td>'+esc(f.notes||'—')+'</td>';
-      h+='<td style="white-space:nowrap"><button type="button" class="btn-ghost" onclick="cfgBeginInlineEdit(this,\\'flow-type\\',\\''+encodeURIComponent(JSON.stringify(f))+'\\')">Edit</button> ';
-      h+='<button type="button" class="btn-ghost" style="color:var(--red)" onclick="cfgDel(\\'flow-type\\',\\''+encodeURIComponent(JSON.stringify({flow_type:f.flow_type}))+'\\')">Del</button></td></tr>';
+  const FT_META_STATIC={
+    'Flow_Carousel_Copy':{label:'Carousel – Copy & Slides',cat:'Carousel',defaultNotes:'Instagram/TikTok carousel (text slides).'},
+    'Video_Scene_Generator':{label:'Video – Multi-scene',cat:'Video (generic)',defaultNotes:'Multiple HeyGen scenes stitched together.'},
+    'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
+    'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
+    'Hook_Variations':{label:'Hook Variations',cat:'Hooks & Scripts',defaultNotes:'Hook text experiments; feeds carousel/reel flows.'},
+    'Reel_Script':{label:'Reel Script',cat:'Hooks & Scripts',defaultNotes:'Short-form Instagram/TikTok reel script.'}
+  };
+  const FORMAT_ORDER={'Carousel':1,'Video (generic)':2,'Product Video':3,'Product Image Ad':4,'Hooks & Scripts':5,'Other':9};
+  const toTitle=function(s){return String(s||'').split(' ').filter(Boolean).map(function(w){return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();}).join(' ');};
+  function ftMeta(id){
+    if(FT_META_STATIC[id])return FT_META_STATIC[id];
+    if(typeof id==='string'&&id.indexOf('FLOW_IMG_PRODUCT_')===0){
+      var suf=id.replace('FLOW_IMG_PRODUCT_','').replace(/_/g,' ');
+      return {label:'Product Image Ad – '+toTitle(suf),cat:'Product Image Ad',defaultNotes:'Static image ad — generation blocked until image tool is wired.'};
     }
-    h+='</tbody></table></div>';
+    if(typeof id==='string'&&id.indexOf('FLOW_PRODUCT_')===0){
+      var suf2=id.replace('FLOW_PRODUCT_','').replace(/_/g,' ');
+      return {label:'Product Video – '+toTitle(suf2),cat:'Product Video',defaultNotes:'Product marketing video — maps to Video_Prompt_Generator templates.'};
+    }
+    return {label:(id||'—'),cat:'Other',defaultNotes:''};
+  }
+  const groups={};
+  for(const f of ft){const m=ftMeta(f.flow_type);(groups[m.cat]=groups[m.cat]||[]).push({raw:f,meta:m});}
+  const cats=Object.keys(groups).sort(function(a,b){return (FORMAT_ORDER[a]||9)-(FORMAT_ORDER[b]||9);});
+  for(const k in groups){groups[k].sort(function(a,b){return (Number(b.raw.priority_weight)||0)-(Number(a.raw.priority_weight)||0);});}
+  h+='<div id="tab-flows" class="tab-panel"><div class="card">';
+  h+='<div class="card-h">Allowed Flow Types ('+ft.length+(cats.length?' in '+cats.length+' format'+(cats.length===1?'':'s'):'')+')';
+  h+=' <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:8px">Grouped by output format. Raw <code>flow_type</code> IDs are shown below each label and are the join keys used by prompts, jobs, and history.</span>';
+  h+=' <button type="button" class="btn btn-sm" style="float:right;text-transform:none;letter-spacing:0" onclick="cfgBeginInlineAdd(this,\\'flow-type\\')">+ Add Flow Type</button></div>';
+  if(ft.length){
+    for(const cat of cats){
+      const list=groups[cat];
+      h+='<div style="padding:14px 20px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600">'+esc(cat)+' <span style="color:#555;font-weight:400">· '+list.length+'</span></div>';
+      h+='<div style="overflow-x:auto;padding:0 20px 12px"><table><thead><tr><th style="min-width:300px">Flow</th><th>Enabled</th><th>Variations</th><th>Platforms</th><th>Priority</th><th>Prompt Template</th><th>Notes</th><th></th></tr></thead><tbody>';
+      for(const entry of list){
+        const f=entry.raw;
+        h+='<tr><td><div style="line-height:1.35"><strong>'+esc(entry.meta.label)+'</strong><br><span class="mono" style="font-size:11px;color:var(--muted)">'+esc(f.flow_type)+'</span></div></td>';
+        h+='<td>'+(f.enabled?'<span class="badge badge-g">Yes</span>':'<span class="badge badge-r">No</span>')+'</td>';
+        h+='<td>'+f.default_variation_count+'</td>';
+        h+='<td>'+esc(f.allowed_platforms||'—')+'</td>';
+        h+='<td>'+esc(f.priority_weight||'—')+'</td>';
+        h+='<td class="mono">'+esc(f.prompt_template_id||'—')+'</td>';
+        h+='<td>'+esc(f.notes||entry.meta.defaultNotes||'—')+'</td>';
+        h+='<td style="white-space:nowrap"><button type="button" class="btn-ghost" onclick="cfgBeginInlineEdit(this,\\'flow-type\\',\\''+encodeURIComponent(JSON.stringify(f))+'\\')">Edit</button> ';
+        h+='<button type="button" class="btn-ghost" style="color:var(--red)" onclick="cfgDel(\\'flow-type\\',\\''+encodeURIComponent(JSON.stringify({flow_type:f.flow_type}))+'\\')">Del</button></td></tr>';
+      }
+      h+='</tbody></table></div>';
+    }
   }else h+='<div class="empty">No flow types yet.</div>';
   h+='</div></div>';
 

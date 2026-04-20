@@ -2,6 +2,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
+import { useReviewProject } from "@/components/ReviewProjectContext";
+
+function projectApiSuffix(multiProject: boolean, activeProjectSlug: string): string {
+  if (multiProject && activeProjectSlug) return `?project=${encodeURIComponent(activeProjectSlug)}`;
+  return "";
+}
 
 type Section =
   | "strategy"
@@ -196,6 +202,7 @@ const HEYGEN_DEFAULTS_FIELDS = [
 type FieldDef = { key: string; label: string; type: string; required?: boolean };
 
 export default function ProjectConfigPage() {
+  const { ready: projectReady, multiProject, activeProjectSlug } = useReviewProject();
   const [activeTab, setActiveTab] = useState<Section>("strategy");
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [listData, setListData] = useState<Record<string, unknown>[] | null>(null);
@@ -214,8 +221,9 @@ export default function ProjectConfigPage() {
     setLoading(true);
     setMessage(null);
     try {
+      const suffix = projectApiSuffix(multiProject, activeProjectSlug);
       if (section === "heygen-defaults") {
-        const res = await fetch(`/api/project-config/heygen-config`);
+        const res = await fetch(`/api/project-config/heygen-config${suffix}`);
         const json = (await res.json()) as { heygen_config?: Record<string, unknown>[] };
         const rows = Array.isArray(json.heygen_config) ? json.heygen_config : [];
 
@@ -261,7 +269,7 @@ export default function ProjectConfigPage() {
         return;
       }
 
-      const res = await fetch(`/api/project-config/${section}`);
+      const res = await fetch(`/api/project-config/${section}${suffix}`);
       const json = await res.json();
       if (section === "constraints") {
         const c = (json as { constraints?: Record<string, unknown> | null }).constraints ?? {};
@@ -284,9 +292,12 @@ export default function ProjectConfigPage() {
       setMessage({ text: "Failed to load config", type: "error" });
     }
     setLoading(false);
-  }, []);
+  }, [multiProject, activeProjectSlug]);
 
-  useEffect(() => { loadSection(activeTab); }, [activeTab, loadSection]);
+  useEffect(() => {
+    if (!projectReady) return;
+    loadSection(activeTab);
+  }, [activeTab, loadSection, projectReady]);
 
   const handleTabChange = (tab: Section) => {
     setActiveTab(tab);
@@ -357,7 +368,8 @@ export default function ProjectConfigPage() {
       }
 
       const method = activeTab === "risk-rules" ? "POST" : "PUT";
-      const res = await fetch(`/api/project-config/${activeTab}`, {
+      const suffix = projectApiSuffix(multiProject, activeProjectSlug);
+      const res = await fetch(`/api/project-config/${activeTab}${suffix}`, {
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
