@@ -66,7 +66,33 @@ type JobRow = {
   run_id: string;
   platform: string | null;
   generation_payload: Record<string, unknown>;
+  /** Optional — only loaded by call sites that need to make resume/retry decisions (processRunJobs). */
+  render_state?: Record<string, unknown> | null;
 };
+
+/**
+ * Video RENDERING job is safe to re-enter from the run-level pre-render scan when no HeyGen `video_id`
+ * or `session_id` was ever persisted (i.e. worker died mid-submit, render_state stuck at `phase: starting`
+ * or empty). When a HeyGen id IS present we must NOT retry — the prior submission may still be in flight
+ * and re-submitting double-bills HeyGen credits and creates orphaned videos.
+ */
+function isVideoRenderingSafelyRetryable(j: JobRow): boolean {
+  if (j.status !== "RENDERING") return false;
+  if (isCarouselFlow(j.flow_type)) return false;
+  if (isOfflinePipelineFlow(j.flow_type)) return false;
+  if (!isVideoFlow(j.flow_type)) return false;
+  const rs =
+    j.render_state && typeof j.render_state === "object" && !Array.isArray(j.render_state)
+      ? (j.render_state as Record<string, unknown>)
+      : {};
+  const videoId = String(rs.video_id ?? "").trim();
+  const sessionId = String(rs.session_id ?? "").trim();
+  if (videoId || sessionId) return false;
+  const phase = String(rs.phase ?? "").trim().toLowerCase();
+  /** Empty render_state, "starting", or explicit "failed" with no resume key — safe to re-enter. Avoid retrying mid-stream phases like "polling" / "sora_polling" / "submitted" that imply a HeyGen/Sora id should already exist. */
+  if (phase === "" || phase === "starting" || phase === "failed") return true;
+  return false;
+}
 
 /** Video poll timeouts — job stays RENDERING; caller may retry. Do not mark FAILED. */
 export class RenderNotReadyError extends Error {
@@ -280,7 +306,8 @@ export async function processRunJobs(
 
   const jobs = await q<JobRow>(
     db,
-    `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload FROM caf_core.content_jobs
+    `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload, render_state
+       FROM caf_core.content_jobs
      WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING', 'GENERATED', 'RENDERING')
      ORDER BY created_at`,
     [run.project_id, run.run_id]
@@ -289,12 +316,16 @@ export async function processRunJobs(
   /**
    * Include GENERATED: after LLM+QC the job stays GENERATED until the render lane runs; if the worker dies
    * between the pre-render loop and carouselLane (or the HTTP request is cut off), the next Process must
-   * still see those rows. Retry carousel jobs left in RENDERING (mid-slide); skip other RENDERING (video).
+   * still see those rows. Retry carousel jobs left in RENDERING (mid-slide), and retry video jobs ONLY
+   * when no HeyGen `video_id` / `session_id` was ever persisted (worker died before the long poll started).
+   * Never retry video RENDERING jobs that already have a HeyGen id — that submission may still be in flight
+   * and re-submitting double-bills HeyGen credits.
    */
   const jobsToRun = jobs.filter(
     (j) =>
       j.status !== "RENDERING" ||
-      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type))
+      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type)) ||
+      isVideoRenderingSafelyRetryable(j)
   );
 
   /** Carousels first in the pre-render pass so tickets queue as [carousel…, video…]; render phase runs all carousels, then all videos, one job at a time. */
@@ -1202,15 +1233,44 @@ async function processVideoJob(
       );
       if (!fresh) throw new Error("job not found");
       videoProvider = "heygen";
-      await runHeygenForContentJob(db, config, {
-        id: fresh.id,
-        task_id: fresh.task_id,
-        project_id: fresh.project_id,
-        run_id: fresh.run_id,
-        flow_type: fresh.flow_type,
-        platform: fresh.platform,
-        generation_payload: fresh.generation_payload,
-      });
+      await runHeygenForContentJob(
+        db,
+        config,
+        {
+          id: fresh.id,
+          task_id: fresh.task_id,
+          project_id: fresh.project_id,
+          run_id: fresh.run_id,
+          flow_type: fresh.flow_type,
+          platform: fresh.platform,
+          generation_payload: fresh.generation_payload,
+        },
+        {
+          /**
+           * Persist HeyGen resume keys into render_state BEFORE the long video poll so a worker
+           * crash/restart between submit and HeygenPollTimeoutError doesn't lose the ids and force a
+           * fresh (double-billed) submission. Used by processRunJobs to skip in-flight retries.
+           */
+          progress: {
+            onSession: async (sid) => {
+              await mergeJobRenderState(db, job.id, {
+                provider: "heygen",
+                status: "pending",
+                phase: "submitted",
+                session_id: sid,
+              });
+            },
+            onVideoId: async (vid) => {
+              await mergeJobRenderState(db, job.id, {
+                provider: "heygen",
+                status: "pending",
+                phase: "polling",
+                video_id: vid,
+              });
+            },
+          },
+        }
+      );
       await mergeJobRenderState(db, job.id, { provider: "heygen", status: "completed" });
     } else {
       if (wantsHeygen) {
