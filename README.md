@@ -131,8 +131,9 @@ Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applica
 | App | Config |
 |-----|--------|
 | CAF Core | `fly.toml`, `Dockerfile` |
-| Review | `apps/review/fly.toml`, `apps/review/Dockerfile` |
 | Media gateway | `services/media-gateway/fly.toml`, `services/media-gateway/Dockerfile` |
+
+> The review UI (`apps/review`) ships to **Vercel** (see `apps/review/vercel.json`); there is no Fly deployment for it.
 
 **Auth:** set `CAF_CORE_REQUIRE_AUTH=1` and `CAF_CORE_API_TOKEN` on Core; clients send `x-caf-core-token` or `Authorization: Bearer …` on protected routes (see `src/server.ts` for public exceptions such as `GET /health` and public template paths).
 
