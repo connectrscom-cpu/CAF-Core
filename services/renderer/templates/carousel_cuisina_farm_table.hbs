@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <title>Cuisina — Farm Table</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --sage: #7d9364;
+      --moss: #4a5f3f;
+      --linen: #f5f0e6;
+      --wood: #5c4033;
+      --carrot: #e07a5f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Nunito Sans', sans-serif; background: #2a221c; color: #2a2419; }
+    .slide { width: 1080px; height: 1350px; overflow: hidden; flex-shrink: 0; }
+    .slide-inner {
+      width: 100%; height: 100%; position: relative;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 64px 56px;
+      text-align: center;
+      background:
+        repeating-linear-gradient(90deg, transparent, transparent 48px, rgba(92,64,51,0.06) 48px, rgba(92,64,51,0.06) 50px),
+        linear-gradient(175deg, #8faa7a 0%, var(--sage) 42%, #5a6b48 100%);
+    }
+    .grain {
+      position: absolute; inset: 0;
+      background: repeating-linear-gradient(
+        -14deg,
+        transparent,
+        transparent 4px,
+        rgba(92,64,51,0.045) 4px,
+        rgba(92,64,51,0.045) 8px
+      );
+      pointer-events: none;
+    }
+    .board {
+      position: relative; z-index: 2; max-width: 900px;
+      padding: 52px 48px 56px;
+      border-radius: 4px;
+      background: var(--linen);
+      box-shadow:
+        0 4px 0 var(--wood),
+        0 12px 0 rgba(92,64,51,0.35),
+        0 36px 80px rgba(0,0,0,0.35);
+      border: 3px solid var(--wood);
+    }
+    .title-text {
+      font-family: 'Merriweather', serif;
+      font-size: clamp(52px, 5.5vw, 74px);
+      font-weight: 900;
+      color: var(--moss);
+      line-height: 1.15;
+    }
+    .subtitle-text {
+      font-family: 'Nunito Sans', sans-serif;
+      font-size: clamp(30px, 3vw, 38px);
+      color: var(--carrot);
+      margin-top: 18px;
+      font-weight: 600;
+    }
+    .body-title {
+      font-family: 'Merriweather', serif;
+      font-size: clamp(44px, 4.5vw, 58px);
+      color: var(--moss);
+      margin-bottom: 22px;
+      line-height: 1.12;
+    }
+    .body-text {
+      font-family: 'Nunito Sans', sans-serif;
+      font-size: clamp(32px, 3.2vw, 40px);
+      line-height: 1.46;
+      color: #3d3428;
+      max-width: 770px;
+    }
+    .cta-text {
+      font-family: 'Merriweather', serif;
+      font-size: clamp(50px, 5.2vw, 68px);
+      font-weight: 900;
+      color: var(--moss);
+    }
+    .cta-handle {
+      font-family: 'Nunito Sans', sans-serif;
+      font-size: clamp(32px, 3.2vw, 40px);
+      color: var(--sage);
+      margin-top: 14px;
+      font-weight: 600;
+    }
+    .stamp {
+      display: inline-block; margin-bottom: 16px;
+      padding: 6px 14px;
+      border: 2px solid var(--moss);
+      color: var(--moss);
+      font-size: 11px; letter-spacing: 0.25em; text-transform: uppercase;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="grain"></span>
+      <div class="board">
+        <span class="stamp">Farm to fork</span>
+        <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
+        {{#if cover_subtitle}}<span class="subtitle-text">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-text">{{cover_slide.body}}</span>{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide">
+    <div class="slide-inner">
+      <div class="board">
+        <span class="body-title">{{headline}}</span>
+        <p class="body-text">{{body}}</p>
+      </div>
+    </div>
+  </div>
+  {{/each}}
+
+  <div class="slide">
+    <div class="slide-inner">
+      <span class="grain"></span>
+      <div class="board">
+        <span class="stamp">Gather round</span>
+        <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+        {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

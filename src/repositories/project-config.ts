@@ -837,10 +837,46 @@ export async function upsertProductProfile(
 }
 
 // ---------------------------------------------------------------------------
+// Project carousel template pins (.hbs names)
+// ---------------------------------------------------------------------------
+
+export async function listProjectCarouselTemplates(db: Pool, projectId: string): Promise<string[]> {
+  const rows = await q<{ html_template_name: string }>(db,
+    `SELECT html_template_name FROM caf_core.project_carousel_templates
+     WHERE project_id = $1 ORDER BY html_template_name`,
+    [projectId]);
+  return rows.map((r) => r.html_template_name);
+}
+
+export async function addProjectCarouselTemplate(
+  db: Pool,
+  projectId: string,
+  htmlTemplateName: string
+): Promise<void> {
+  await db.query(
+    `INSERT INTO caf_core.project_carousel_templates (project_id, html_template_name)
+     VALUES ($1, $2)
+     ON CONFLICT (project_id, html_template_name) DO NOTHING`,
+    [projectId, htmlTemplateName]
+  );
+}
+
+export async function removeProjectCarouselTemplate(
+  db: Pool,
+  projectId: string,
+  htmlTemplateName: string
+): Promise<void> {
+  await db.query(
+    `DELETE FROM caf_core.project_carousel_templates WHERE project_id = $1 AND html_template_name = $2`,
+    [projectId, htmlTemplateName]
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Full Project Profile (composite read)
 // ---------------------------------------------------------------------------
 export async function getFullProjectProfile(db: Pool, projectId: string) {
-  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig, brandAssets, product] =
+  const [strategy, brand, platforms, riskRules, flowTypes, referencePosts, heygenConfig, brandAssets, product, carouselTemplates] =
     await Promise.all([
       getStrategyDefaults(db, projectId),
       getBrandConstraints(db, projectId),
@@ -851,6 +887,7 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
       listHeygenConfig(db, projectId),
       listProjectBrandAssets(db, projectId),
       getProductProfile(db, projectId),
+      listProjectCarouselTemplates(db, projectId),
     ]);
   return {
     strategy,
@@ -862,5 +899,6 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
     heygen_config: heygenConfig,
     brand_assets: brandAssets,
     product,
+    carousel_templates: carouselTemplates,
   };
 }
