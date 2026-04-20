@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isVideoUrl } from "@/lib/media-url";
@@ -27,6 +27,10 @@ export interface TaskTableProps {
   onRowSelect?: (row: ReviewQueueRow) => void;
   /** `project::task_id` when `showProjectColumn`, else `task_id` — for selection highlight. */
   selectedRowKey?: string;
+  /** “Waiting for Approval” tab: row-level Approve without opening the task. */
+  showQuickApprove?: boolean;
+  /** Called after a successful quick Approve (e.g. refresh queue). */
+  onAfterDecision?: () => void;
 }
 
 function getVal(row: ReviewQueueRow, key: string): string {
@@ -53,6 +57,9 @@ function TaskRow({
   hideOpenColumn = false,
   onRowSelect,
   selected = false,
+  showQuickApprove = false,
+  approvingTaskId = null,
+  onQuickApprove,
 }: {
   row: ReviewQueueRow;
   contentSlug?: "t" | "content";
@@ -61,6 +68,9 @@ function TaskRow({
   hideOpenColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selected?: boolean;
+  showQuickApprove?: boolean;
+  approvingTaskId?: string | null;
+  onQuickApprove?: (row: ReviewQueueRow) => void;
 }) {
   const taskId = getVal(row, "task_id");
   const project = getVal(row, "project");
@@ -128,7 +138,21 @@ function TaskRow({
       <td>{decision ? statusBadge(decision) : "—"}</td>
       <td>{getVal(row, "recommended_route") || "—"}</td>
       {!hideOpenColumn && (
-        <td>
+        <td style={{ whiteSpace: "nowrap" }}>
+          {showQuickApprove && (
+            <button
+              type="button"
+              className="btn-approve-row"
+              disabled={approvingTaskId === taskId}
+              title="Approve without opening the task"
+              onClick={(e) => {
+                e.stopPropagation();
+                onQuickApprove?.(row);
+              }}
+            >
+              {approvingTaskId === taskId ? "…" : "Approve"}
+            </button>
+          )}
           <Link href={taskHref} className="btn-open-row" onClick={(e) => onRowSelect && e.stopPropagation()}>
             Open
           </Link>
@@ -147,6 +171,9 @@ function TableBody({
   hideOpenColumn = false,
   onRowSelect,
   selectedRowKey,
+  showQuickApprove = false,
+  approvingTaskId = null,
+  onQuickApprove,
 }: {
   items: ReviewQueueRow[];
   groupBy: GroupBy;
@@ -156,6 +183,9 @@ function TableBody({
   hideOpenColumn?: boolean;
   onRowSelect?: (row: ReviewQueueRow) => void;
   selectedRowKey?: string;
+  showQuickApprove?: boolean;
+  approvingTaskId?: string | null;
+  onQuickApprove?: (row: ReviewQueueRow) => void;
 }) {
   const colSpan =
     (showProjectColumn ? 10 : 9) - (hideTitleColumn ? 1 : 0) - (hideOpenColumn ? 1 : 0);
@@ -178,6 +208,9 @@ function TableBody({
             hideOpenColumn={hideOpenColumn}
             onRowSelect={onRowSelect}
             selected={isSel(row)}
+            showQuickApprove={showQuickApprove}
+            approvingTaskId={approvingTaskId}
+            onQuickApprove={onQuickApprove}
           />
         ))}
       </tbody>
@@ -205,6 +238,9 @@ function TableBody({
               hideOpenColumn={hideOpenColumn}
               onRowSelect={onRowSelect}
               selected={isSel(row)}
+              showQuickApprove={showQuickApprove}
+              approvingTaskId={approvingTaskId}
+              onQuickApprove={onQuickApprove}
             />
           ))}
         </React.Fragment>
@@ -227,7 +263,41 @@ export function TaskTable({
   hideOpenColumn = false,
   onRowSelect,
   selectedRowKey,
+  showQuickApprove = false,
+  onAfterDecision,
 }: TaskTableProps) {
+  const [approvingTaskId, setApprovingTaskId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+
+  const handleQuickApprove = useCallback(
+    async (row: ReviewQueueRow) => {
+      const taskId = getVal(row, "task_id");
+      if (!taskId) return;
+      setApprovingTaskId(taskId);
+      setApproveError(null);
+      try {
+        const project = getVal(row, "project");
+        const res = await fetch("/api/task/decision", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_id: taskId,
+            ...(project ? { project_slug: project } : {}),
+            decision: "APPROVED",
+          }),
+        });
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        onAfterDecision?.();
+      } catch (e) {
+        setApproveError(e instanceof Error ? e.message : "Approve failed");
+      } finally {
+        setApprovingTaskId(null);
+      }
+    },
+    [onAfterDecision]
+  );
+
   const start = total === 0 ? 0 : (page - 1) * limit + 1;
   const end = total === 0 ? 0 : Math.min(page * limit, total);
   const rangeLabel =
@@ -235,6 +305,11 @@ export function TaskTable({
 
   return (
     <div>
+      {approveError && (
+        <div style={{ color: "var(--red)", marginBottom: 12, fontSize: 13 }} role="alert">
+          {approveError}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-3" style={{ fontSize: 13, color: "var(--muted)" }}>
         <span>{rangeLabel}</span>
         <div className="flex gap-2">
@@ -254,7 +329,7 @@ export function TaskTable({
             <th>Status</th>
             <th>Decision</th>
             <th>Route</th>
-            {!hideOpenColumn && <th></th>}
+            {!hideOpenColumn && <th>{showQuickApprove ? "Actions" : ""}</th>}
           </tr>
         </thead>
         <TableBody
@@ -266,6 +341,9 @@ export function TaskTable({
           hideOpenColumn={hideOpenColumn}
           onRowSelect={onRowSelect}
           selectedRowKey={selectedRowKey}
+          showQuickApprove={showQuickApprove}
+          approvingTaskId={approvingTaskId}
+          onQuickApprove={showQuickApprove ? handleQuickApprove : undefined}
         />
       </table>
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}

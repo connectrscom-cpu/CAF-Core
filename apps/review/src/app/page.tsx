@@ -79,7 +79,7 @@ function WorkbenchContent() {
   const groupBy = (searchParams.get("group") ?? "") as GroupBy;
 
   const tabStatuses = [
-    { key: "in_review" as const, label: "In Review" },
+    { key: "in_review" as const, label: "Waiting for Approval" },
     { key: "needs_edit" as const, label: "Waiting for Rework" },
     { key: "approved" as const, label: "Approved" },
     { key: "rejected" as const, label: "Rejected" },
@@ -152,6 +152,8 @@ function WorkbenchContent() {
               statusCounts={data.statusCounts}
               showProjectColumn={data.scope === "all"}
               contentSlug={validStatus === "in_review" ? "t" : "content"}
+              showQuickApprove={validStatus === "in_review"}
+              onAfterDecision={fetchTasks}
             />
           )}
         </div>

@@ -251,6 +251,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   padding: 4px 0; font-weight: 500; cursor: pointer;
 }
 .btn-open-row:hover { color: var(--accent-hover); text-decoration: underline; }
+.btn-approve-row {
+  font-size: 12px;
+  background: var(--green);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-right: 10px;
+}
+.btn-approve-row:hover:not(:disabled) { filter: brightness(1.08); }
 
 /* ── Form Controls ──────────────────────────────────────── */
 input, textarea, select {
