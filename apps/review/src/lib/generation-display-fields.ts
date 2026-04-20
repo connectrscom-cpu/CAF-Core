@@ -239,27 +239,56 @@ export function pickSpokenScriptFromGenerationPayload(payload: Record<string, un
  */
 const VIDEO_PROMPT_KEYS = ["video_prompt", "prompt", "heygen_prompt", "videoPrompt", "visual_prompt"] as const;
 
+function synthesizeSceneBundlePrompt(gen: Record<string, unknown>): string {
+  const bundle = recordVal(gen.scene_bundle);
+  if (!bundle) return "";
+  const scenes = arrayVal(bundle.scenes);
+  if (!scenes || scenes.length === 0) return "";
+  const lines: string[] = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const s = recordVal(scenes[i]);
+    if (!s) continue;
+    const order = s.order ?? s.scene_id ?? i + 1;
+    const prompt = String(
+      s.video_prompt ?? s.prompt ?? s.direction ?? s.scene_prompt ?? s.scene_description ?? ""
+    ).trim();
+    const narration = String(s.scene_narration_line ?? s.narration ?? "").trim();
+    if (!prompt && !narration) continue;
+    const header = `--- Scene ${order} ---`;
+    const block = [header, prompt, narration ? `VO: ${narration}` : ""].filter(Boolean).join("\n");
+    lines.push(block);
+  }
+  return lines.join("\n\n");
+}
+
 function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): string {
+  const fromScenes = synthesizeSceneBundlePrompt(gen);
+  if (fromScenes) return fromScenes;
+
   const parts: string[] = [];
-  const hook = gen.hook;
-  if (typeof hook === "string" && hook.trim()) parts.push(`Hook: ${hook.trim()}`);
+  const hook = typeof gen.hook === "string" ? gen.hook : typeof gen.hook_line === "string" ? gen.hook_line : "";
+  if (hook && hook.trim()) parts.push(`Hook: ${hook.trim()}`);
+
+  const subject = gen.subject;
+  if (typeof subject === "string" && subject.trim()) parts.push(`Subject: ${subject.trim()}`);
+
   const vd = recordVal(gen.visual_direction);
   if (vd) {
-    for (const k of ["scene_style", "lighting", "background", "mood"]) {
+    for (const k of ["scene_style", "lighting", "background", "mood", "color_palette", "wardrobe"]) {
       const v = vd[k];
       if (typeof v === "string" && v.trim()) parts.push(`${k.replace(/_/g, " ")}: ${v.trim()}`);
     }
   }
   const cam = recordVal(gen.camera_instructions);
   if (cam) {
-    for (const k of ["framing", "movement", "angle"]) {
+    for (const k of ["framing", "movement", "angle", "lens"]) {
       const v = cam[k];
       if (typeof v === "string" && v.trim()) parts.push(`Camera ${k}: ${v.trim()}`);
     }
   }
   const en = recordVal(gen.editing_notes);
   if (en) {
-    for (const k of ["pacing", "cuts"]) {
+    for (const k of ["pacing", "cuts", "transitions"]) {
       const v = en[k];
       if (typeof v === "string" && v.trim()) parts.push(`Editing ${k}: ${v.trim()}`);
     }
@@ -269,6 +298,8 @@ function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): string {
     const phrases = ost.filter((x): x is string => typeof x === "string" && x.trim().length > 0).slice(0, 8);
     if (phrases.length) parts.push(`On-screen text: ${phrases.join("; ")}`);
   }
+  const spoken = String(gen.spoken_script ?? gen.script ?? "").trim();
+  if (spoken) parts.push(`Spoken script: ${spoken}`);
   return parts.join(". ").trim();
 }
 

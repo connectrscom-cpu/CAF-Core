@@ -232,6 +232,29 @@ async function processJobUpToRender(
     return { kind: "render_carousel", recommended_route: route };
   }
   if (isVideoFlow(job.flow_type)) {
+    /**
+     * PARTIAL_NO_VIDEO rework: the reviewer asked to keep the existing rendered video and only
+     * refresh captions / hashtags. The render state + asset_id + publish_media_urls_json were
+     * preserved by `prepareContentJobForCaptionsOnlyRerun`, so skip the render submission entirely
+     * and go straight to review. The flag is consumed (deleted) so subsequent passes don't
+     * accidentally skip render.
+     */
+    const skipVideoRender = await qOne<{ skip: boolean | null }>(
+      db,
+      `SELECT (generation_payload->>'skip_video_render') = 'true' AS skip
+       FROM caf_core.content_jobs WHERE id = $1`,
+      [job.id]
+    );
+    if (skipVideoRender?.skip === true) {
+      await db.query(
+        `UPDATE caf_core.content_jobs
+         SET generation_payload = generation_payload - 'skip_video_render', updated_at = now()
+         WHERE id = $1`,
+        [job.id]
+      );
+      await advanceToInReview(db, job, run, route);
+      return { kind: "terminal" };
+    }
     return { kind: "render_video", recommended_route: route };
   }
   await advanceToInReview(db, job, run, route);
@@ -508,11 +531,22 @@ const FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS = [
   "publish_media_urls",
 ] as const;
 
+/**
+ * Subset of the full-rerun key list that keeps the existing publish URLs / video asset references
+ * intact (only the LLM output + QC are wiped). Used by `prepareContentJobForCaptionsOnlyRerun` so the
+ * reviewer can refresh caption + hashtags without re-billing HeyGen / Sora.
+ */
+const CAPTIONS_ONLY_RERUN_GENERATION_PAYLOAD_DROP_KEYS = [
+  "generated_output",
+  "qc_result",
+  "draft_id",
+] as const;
+
 const REWORK_HISTORY_MAX_ENTRIES = 25;
 
 export interface ReworkHistoryEntry {
   archived_at: string;
-  kind: "full_rerun_reset" | "before_override_rework";
+  kind: "full_rerun_reset" | "before_override_rework" | "captions_only_rerun_reset";
   draft_id?: unknown;
   generated_output?: unknown;
   qc_result?: unknown;
@@ -619,6 +653,98 @@ export async function prepareContentJobForFullRerun(
     triggered_by: "system",
     actor: "full-job-rerun-reset",
     metadata: { cleared_for_full_pipeline: true },
+  });
+
+  return { ok: true };
+}
+
+/**
+ * Like `prepareContentJobForFullRerun` but for the PARTIAL_NO_VIDEO rework mode: clears ONLY the LLM
+ * output + QC state so the LLM re-runs on next pass (refresh caption / hashtags grounded in signal
+ * pack), while preserving `asset_id`, `render_state`, `render_provider / status / job_id`, and
+ * `publish_media_urls_json` so the already-rendered video remains authoritative (no HeyGen / Sora
+ * credits spent on rework). The pipeline short-circuits the render lane via
+ * `generation_payload.skip_video_render = true`, which the caller is expected to set.
+ */
+export async function prepareContentJobForCaptionsOnlyRerun(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const tid = taskId.trim();
+  if (!tid) return { ok: false, error: "task_id required" };
+
+  const job = await qOne<{
+    id: string;
+    task_id: string;
+    status: string | null;
+    flow_type: string | null;
+  }>(
+    db,
+    `SELECT id, task_id, status, flow_type FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
+    [projectId, tid]
+  );
+  if (!job) return { ok: false, error: "job_not_found" };
+  if (isOfflinePipelineFlow(job.flow_type ?? "")) {
+    return { ok: false, error: "offline_flow_not_supported" };
+  }
+  if (!isVideoFlow(job.flow_type ?? "")) {
+    return { ok: false, error: "partial_no_video_only_supports_video_flows" };
+  }
+
+  /** Diagnostic + auto-validation rows are per-generation — clear them so the next pass writes fresh ones. */
+  await db.query(`DELETE FROM caf_core.diagnostic_audits WHERE project_id = $1 AND task_id = $2`, [
+    projectId,
+    tid,
+  ]);
+  await db.query(`DELETE FROM caf_core.auto_validation_results WHERE project_id = $1 AND task_id = $2`, [
+    projectId,
+    tid,
+  ]);
+
+  const snap = await qOne<{ generation_payload: Record<string, unknown> }>(
+    db,
+    `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+    [job.id]
+  );
+  const gp: Record<string, unknown> = { ...(snap?.generation_payload ?? {}) };
+  const hadVersion =
+    gp.generated_output != null || gp.draft_id != null || gp.qc_result != null;
+  if (hadVersion) {
+    appendReworkHistory(gp, {
+      kind: "captions_only_rerun_reset",
+      draft_id: gp.draft_id ?? null,
+      generated_output: gp.generated_output,
+      qc_result: gp.qc_result ?? null,
+    });
+  }
+  for (const k of CAPTIONS_ONLY_RERUN_GENERATION_PAYLOAD_DROP_KEYS) {
+    delete gp[k];
+  }
+
+  /**
+   * Only reset status + QC route + recommended_route. Render provider/status/job_id and asset_id
+   * MUST survive so the existing video stays linked to this task.
+   */
+  await db.query(
+    `UPDATE caf_core.content_jobs SET
+      status = 'PLANNED',
+      recommended_route = NULL,
+      qc_status = NULL,
+      generation_payload = $1::jsonb,
+      updated_at = now()
+    WHERE id = $2`,
+    [JSON.stringify(gp), job.id]
+  );
+
+  await insertJobStateTransition(db, {
+    task_id: job.task_id,
+    project_id: projectId,
+    from_state: job.status,
+    to_state: "PLANNED",
+    triggered_by: "system",
+    actor: "captions-only-rerun-reset",
+    metadata: { cleared_for_captions_only_pipeline: true },
   });
 
   return { ok: true };

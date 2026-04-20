@@ -472,6 +472,7 @@ export async function submitDecision(
     heygen_voice_id?: string;
     heygen_force_rerender?: boolean;
     rewrite_copy?: boolean;
+    skip_video_regeneration?: boolean;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -501,6 +502,9 @@ export async function submitDecision(
         ...(body.heygen_voice_id !== undefined && { heygen_voice_id: body.heygen_voice_id }),
         ...(body.heygen_force_rerender !== undefined && { heygen_force_rerender: body.heygen_force_rerender }),
         ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
+        ...(body.skip_video_regeneration !== undefined && {
+          skip_video_regeneration: body.skip_video_regeneration,
+        }),
       }),
     });
   } catch (e) {

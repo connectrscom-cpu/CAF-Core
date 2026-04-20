@@ -19,6 +19,13 @@ export interface VideoReviewEditsProps {
   /** Optional hook / opening line — some video flows care about this for captions / on-screen text. */
   hook: string;
   onHookChange: (v: string) => void;
+  /**
+   * When true, the reviewer is asking the rework pipeline to keep the existing rendered video and
+   * only re-run the caption/hashtag LLM step (saves HeyGen/Sora credits). Mapped to
+   * `overrides_json.skip_video_regeneration` on submit.
+   */
+  skipVideoRegeneration?: boolean;
+  onSkipVideoRegenerationChange?: (v: boolean) => void;
 }
 
 /**
@@ -44,8 +51,11 @@ export function VideoReviewEdits({
   onHashtagsChange,
   hook,
   onHookChange,
+  skipVideoRegeneration = false,
+  onSkipVideoRegenerationChange,
 }: VideoReviewEditsProps) {
   const [copied, setCopied] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const trimmedPrompt = useMemo(() => videoPrompt.trim(), [videoPrompt]);
   const promptStats = useMemo(() => {
@@ -70,11 +80,8 @@ export function VideoReviewEdits({
       <div className="card">
         <div className="card-header">{provider} prompt — analyze</div>
         <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
-          Exact prompt the pipeline sent to <strong>{provider}</strong> for this job, reconstructed from{" "}
-          <span className="font-mono">generation_payload</span>. Use it to audit whether the visuals match
-          the spoken script. Your analysis below is appended to the reviewer <span className="font-mono">notes</span>
-          {" "}on submit (tagged <span className="font-mono">[video · flow_type]</span> so the editorial learning
-          loop can pick it up and mint a pending <strong>GENERATION_GUIDANCE</strong> rule).
+          Exact prompt sent to <strong>{provider}</strong>. Your analysis below is merged into the reviewer
+          notes and feeds the editorial learning loop.
         </p>
         {trimmedPrompt ? (
           <>
@@ -92,7 +99,7 @@ export function VideoReviewEdits({
                 color: "var(--fg)",
                 whiteSpace: "pre-wrap",
                 wordBreak: "break-word",
-                maxHeight: 280,
+                maxHeight: expanded ? "none" : 420,
                 overflow: "auto",
               }}
             >
@@ -106,14 +113,25 @@ export function VideoReviewEdits({
                 marginTop: 8,
                 fontSize: 11,
                 color: "var(--muted)",
+                gap: 8,
               }}
             >
               <span>
                 {promptStats.words} words · {promptStats.chars} chars
               </span>
-              <button type="button" className="btn-ghost" onClick={copyPrompt} style={{ fontSize: 11 }}>
-                {copied ? "Copied" : "Copy prompt"}
-              </button>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  onClick={() => setExpanded((v) => !v)}
+                  style={{ fontSize: 11 }}
+                >
+                  {expanded ? "Collapse" : "Expand full"}
+                </button>
+                <button type="button" className="btn-ghost" onClick={copyPrompt} style={{ fontSize: 11 }}>
+                  {copied ? "Copied" : "Copy prompt"}
+                </button>
+              </div>
             </div>
           </>
         ) : (
@@ -140,6 +158,32 @@ export function VideoReviewEdits({
 
       <div className="card">
         <div className="card-header">Edits for rework</div>
+
+        {onSkipVideoRegenerationChange && (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: 10,
+              background: "var(--bg-secondary)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: 8,
+            }}
+          >
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={skipVideoRegeneration}
+                onChange={(e) => onSkipVideoRegenerationChange(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span>
+                <strong>Keep existing video</strong> — on rework, re-run only the caption + hashtag LLM step
+                (grounded in the signal pack) and skip the {provider} render. Saves credits when the video
+                itself is fine but the copy needs work.
+              </span>
+            </label>
+          </div>
+        )}
 
         <div style={{ marginBottom: 12 }}>
           <label className="filter-label">Hook / opening line (override for next generation)</label>

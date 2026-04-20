@@ -11,6 +11,7 @@ import { insertJobStateTransition } from "../repositories/transitions.js";
 import {
   appendReworkHistory,
   prepareContentJobForFullRerun,
+  prepareContentJobForCaptionsOnlyRerun,
   processContentJobById,
   RenderNotReadyError,
 } from "./job-pipeline.js";
@@ -27,7 +28,15 @@ import {
 } from "./editorial-heygen-overrides.js";
 import { runHeygenForContentJob } from "./heygen-renderer.js";
 
-export type ReworkMode = "OVERRIDE_ONLY" | "FULL_REWORK" | "PARTIAL_REWRITE";
+/**
+ * Rework modes:
+ *  - OVERRIDE_ONLY: patch reviewer edits in place (no LLM, no render); HeyGen single-take may re-call HeyGen.
+ *  - PARTIAL_NO_VIDEO: re-run LLM (typically to refresh caption + hashtags grounded in signal pack) but
+ *    KEEP the existing rendered video + assets — no HeyGen / Sora credits spent.
+ *  - PARTIAL_REWRITE: full LLM re-run + render (same task_id, assets replaced).
+ *  - FULL_REWORK: same as PARTIAL_REWRITE today (kept for auditing / future divergence).
+ */
+export type ReworkMode = "OVERRIDE_ONLY" | "PARTIAL_NO_VIDEO" | "FULL_REWORK" | "PARTIAL_REWRITE";
 
 export function inferReworkMode(review: {
   rejection_tags?: unknown;
@@ -39,6 +48,14 @@ export function inferReworkMode(review: {
     ? (review.rejection_tags as unknown[]).map((t) => String(t).toLowerCase())
     : [];
   const notes = (review.notes ?? "").toLowerCase();
+  /**
+   * Reviewer asked to keep the existing video (skip HeyGen / Sora render) — wins over every other
+   * route. Only makes sense with rewrite_copy !== false (we do re-run the LLM); if reviewer also
+   * unchecked rewrite_copy we fall through to OVERRIDE_ONLY which already skips render.
+   */
+  if (ov.skip_video_regeneration === true && ov.rewrite_copy !== false) {
+    return "PARTIAL_NO_VIDEO";
+  }
   if (tags.some((t) => t.includes("full") || t.includes("regenerate"))) return "FULL_REWORK";
   if (notes.includes("full rewrite") || notes.includes("start over")) return "FULL_REWORK";
   if (tags.length >= 3) return "FULL_REWORK";
@@ -242,7 +259,9 @@ export async function executeRework(
     return { ok: true, mode, task_id: job.task_id };
   }
 
-  const prep = await prepareContentJobForFullRerun(db, projectId, taskId);
+  const prep = mode === "PARTIAL_NO_VIDEO"
+    ? await prepareContentJobForCaptionsOnlyRerun(db, projectId, taskId)
+    : await prepareContentJobForFullRerun(db, projectId, taskId);
   if (!prep.ok) return { ok: false, mode, error: prep.error };
 
   const snapAfter = await qOne<{ generation_payload: Record<string, unknown> }>(
@@ -252,6 +271,13 @@ export async function executeRework(
   );
   const gpForHeygen: Record<string, unknown> = { ...(snapAfter?.generation_payload ?? {}) };
   mergeHeyGenRequestIntoGenerationPayload(gpForHeygen, rev.overrides_json ?? {});
+
+  const generationReason =
+    mode === "PARTIAL_NO_VIDEO"
+      ? "REWORK_PARTIAL_NO_VIDEO"
+      : mode === "PARTIAL_REWRITE"
+        ? "REWORK_PARTIAL"
+        : "REWORK_FULL";
 
   await db.query(
     `UPDATE caf_core.content_jobs SET
@@ -266,9 +292,12 @@ export async function executeRework(
           notes: rev.notes,
           rejection_tags: rev.rejection_tags,
           rewrite_copy: rev.overrides_json?.rewrite_copy,
+          skip_video_regeneration: rev.overrides_json?.skip_video_regeneration,
           editorial_overrides_json: rev.overrides_json ?? {},
         },
-        generation_reason: mode === "PARTIAL_REWRITE" ? "REWORK_PARTIAL" : "REWORK_FULL",
+        generation_reason: generationReason,
+        /** Pipeline flag: `processJobUpToRender` sees this and short-circuits the video render lane. */
+        ...(mode === "PARTIAL_NO_VIDEO" ? { skip_video_render: true } : {}),
         heygen_request: gpForHeygen.heygen_request,
       }),
       job.id,

@@ -31,15 +31,43 @@ function nestedRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
+function synthesizeSceneBundlePrompt(gen: Record<string, unknown>): string {
+  const bundle = nestedRecord(gen.scene_bundle);
+  if (!bundle) return "";
+  const scenes = Array.isArray(bundle.scenes) ? bundle.scenes : [];
+  if (scenes.length === 0) return "";
+  const lines: string[] = [];
+  for (let i = 0; i < scenes.length; i++) {
+    const s = nestedRecord(scenes[i]);
+    if (!s) continue;
+    const order = s.order ?? s.scene_id ?? i + 1;
+    const prompt = String(
+      s.video_prompt ?? s.prompt ?? s.direction ?? s.scene_prompt ?? s.scene_description ?? ""
+    ).trim();
+    const narration = String(s.scene_narration_line ?? s.narration ?? "").trim();
+    if (!prompt && !narration) continue;
+    const header = `--- Scene ${order} ---`;
+    const block = [header, prompt, narration ? `VO: ${narration}` : ""].filter(Boolean).join("\n");
+    lines.push(block);
+  }
+  return lines.join("\n\n");
+}
+
 /** Build an AI-video prompt string from production-plan JSON when `video_prompt` is omitted. */
 export function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): string {
+  const fromScenes = synthesizeSceneBundlePrompt(gen);
+  if (fromScenes) return fromScenes;
+
   const parts: string[] = [];
-  const hook = gen.hook;
+  const hook = gen.hook ?? gen.hook_line;
   if (typeof hook === "string" && hook.trim()) parts.push(`Hook: ${hook.trim()}`);
+
+  const subject = gen.subject;
+  if (typeof subject === "string" && subject.trim()) parts.push(`Subject: ${subject.trim()}`);
 
   const vd = nestedRecord(gen.visual_direction);
   if (vd) {
-    for (const k of ["scene_style", "lighting", "background", "mood"]) {
+    for (const k of ["scene_style", "lighting", "background", "mood", "color_palette", "wardrobe"]) {
       const v = vd[k];
       if (typeof v === "string" && v.trim()) parts.push(`${k.replace(/_/g, " ")}: ${v.trim()}`);
     }
@@ -47,7 +75,7 @@ export function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): str
 
   const cam = nestedRecord(gen.camera_instructions);
   if (cam) {
-    for (const k of ["framing", "movement", "angle"]) {
+    for (const k of ["framing", "movement", "angle", "lens"]) {
       const v = cam[k];
       if (typeof v === "string" && v.trim()) parts.push(`Camera ${k}: ${v.trim()}`);
     }
@@ -55,7 +83,7 @@ export function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): str
 
   const en = nestedRecord(gen.editing_notes);
   if (en) {
-    for (const k of ["pacing", "cuts"]) {
+    for (const k of ["pacing", "cuts", "transitions"]) {
       const v = en[k];
       if (typeof v === "string" && v.trim()) parts.push(`Editing ${k}: ${v.trim()}`);
     }
@@ -68,6 +96,9 @@ export function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): str
       .slice(0, 8);
     if (phrases.length) parts.push(`On-screen text: ${phrases.join("; ")}`);
   }
+
+  const spoken = String(gen.spoken_script ?? gen.script ?? "").trim();
+  if (spoken) parts.push(`Spoken script: ${spoken}`);
 
   return parts.join(". ").trim();
 }

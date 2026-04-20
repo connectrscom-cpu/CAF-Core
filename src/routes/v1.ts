@@ -65,6 +65,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     heygen_force_rerender: z.boolean().optional(),
     /** When false with copy overrides, rework prefers OVERRIDE_ONLY (patch in place). Default at review UI: true. */
     rewrite_copy: z.boolean().optional(),
+    /**
+     * Video flows only: keep the existing rendered video + assets, and run ONLY the caption / hashtag
+     * LLM regeneration on rework. Routes the rework orchestrator into `PARTIAL_NO_VIDEO` mode so no
+     * HeyGen / Sora submission is billed.
+     */
+    skip_video_regeneration: z.boolean().optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -83,6 +89,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("heygen_voice_id", "heygen_voice_id");
     put("heygen_force_rerender", "heygen_force_rerender");
     put("rewrite_copy", "rewrite_copy");
+    put("skip_video_regeneration", "skip_video_regeneration");
     return out;
   }
 

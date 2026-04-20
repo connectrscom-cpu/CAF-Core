@@ -43,6 +43,12 @@ export interface DecisionPanelProps {
    */
   notesAddendum?: string;
   notesAddendumLabel?: string;
+  /**
+   * Video flows only: reviewer asked to keep the existing rendered video and only re-run the
+   * caption / hashtag LLM step on rework. Sent as `skip_video_regeneration: true` so the rework
+   * orchestrator picks the PARTIAL_NO_VIDEO path (no HeyGen / Sora re-render billed).
+   */
+  skipVideoRegeneration?: boolean;
 }
 
 export function DecisionPanel({
@@ -66,6 +72,7 @@ export function DecisionPanel({
   existingRewriteCopy = true,
   notesAddendum,
   notesAddendumLabel = "Prompt analysis",
+  skipVideoRegeneration,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
@@ -120,6 +127,9 @@ export function DecisionPanel({
           }),
           ...(sendHeyGenFields && heygenForceRerender === true && { heygen_force_rerender: true }),
           ...(effectiveDecision === "NEEDS_EDIT" ? { rewrite_copy: rewriteCopy } : {}),
+          ...(effectiveDecision === "NEEDS_EDIT" && skipVideoRegeneration === true
+            ? { skip_video_regeneration: true }
+            : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -156,6 +166,7 @@ export function DecisionPanel({
     rewriteCopy,
     notesAddendum,
     notesAddendumLabel,
+    skipVideoRegeneration,
   ]);
 
   const toggleTag = (tag: string) => {

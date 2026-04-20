@@ -75,6 +75,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [heygenVoiceId, setHeygenVoiceId] = useState("");
   const [heygenForceRerender, setHeygenForceRerender] = useState(false);
   const [videoPromptAnalysis, setVideoPromptAnalysis] = useState("");
+  const [skipVideoRegeneration, setSkipVideoRegeneration] = useState(false);
 
   useEffect(() => {
     setEditedSlides([]);
@@ -84,6 +85,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setHeygenVoiceId("");
     setHeygenForceRerender(false);
     setVideoPromptAnalysis("");
+    setSkipVideoRegeneration(false);
   }, [task_id]);
 
   useEffect(() => {
@@ -202,6 +204,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       if (heygenVoiceId.trim() !== initialVo) summary.push("HeyGen voice id");
       if (heygenForceRerender) summary.push("Force HeyGen re-render");
     }
+    if (videoFlow && skipVideoRegeneration) summary.push("Keep existing video (captions-only rework)");
     return { hasEdits: summary.length > 0, editsSummary: summary };
   }, [
     data,
@@ -217,6 +220,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     heygenVoiceId,
     heygenForceRerender,
     videoFlow,
+    skipVideoRegeneration,
   ]);
 
   useEffect(() => {
@@ -320,6 +324,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onHashtagsChange={setEditedHashtags}
                 hook={editedHook}
                 onHookChange={setEditedHook}
+                skipVideoRegeneration={skipVideoRegeneration}
+                onSkipVideoRegenerationChange={setSkipVideoRegeneration}
               />
             ) : (
               <CarouselEdits
@@ -363,6 +369,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               editsSummary={editsSummary}
               notesAddendum={videoFlow ? videoPromptAnalysis : undefined}
               notesAddendumLabel={videoFlow ? `${videoPromptLabel} prompt analysis` : undefined}
+              skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
             />
             {!videoFlow && (
               <CarouselEditsExport

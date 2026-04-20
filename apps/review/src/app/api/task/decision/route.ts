@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
       heygen_voice_id?: string;
       heygen_force_rerender?: boolean;
       rewrite_copy?: boolean;
+      skip_video_regeneration?: boolean;
     };
     const rawTid = (body.task_id ?? "").trim();
     if (!rawTid) return NextResponse.json({ error: "task_id required in body" }, { status: 400 });
@@ -55,6 +56,9 @@ export async function POST(request: NextRequest) {
       ...(body.heygen_voice_id !== undefined && { heygen_voice_id: body.heygen_voice_id }),
       ...(body.heygen_force_rerender !== undefined && { heygen_force_rerender: body.heygen_force_rerender }),
       ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
+      ...(body.skip_video_regeneration !== undefined && {
+        skip_video_regeneration: body.skip_video_regeneration,
+      }),
     });
     if (!result.ok) {
       const st =
