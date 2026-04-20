@@ -1439,17 +1439,23 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   });
 
   app.post("/v1/admin/config/project-carousel-template", async (request, reply) => {
-    const b = request.body as Record<string, unknown>;
-    const slug = normalizeProjectSlugParam(String(b._project ?? ""));
-    if (!slug) return reply.code(400).send({ ok: false, error: "Project slug required" });
-    const htmlName = String(b.html_template_name ?? "").trim();
-    if (!htmlName || !isSafeCarouselHbsFilename(htmlName)) {
-      return reply.code(400).send({ ok: false, error: "Invalid html_template_name" });
+    try {
+      const b = (request.body ?? {}) as Record<string, unknown>;
+      const slug = normalizeProjectSlugParam(String(b._project ?? ""));
+      if (!slug) return reply.code(400).send({ ok: false, error: "Project slug required" });
+      const htmlName = String(b.html_template_name ?? "").trim();
+      if (!htmlName || !isSafeCarouselHbsFilename(htmlName)) {
+        return reply.code(400).send({ ok: false, error: "Invalid html_template_name" });
+      }
+      const project = await resolveProject(db, slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+      await addProjectCarouselTemplate(db, project.id, htmlName);
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      request.log.warn({ err: e }, "project-carousel-template");
+      return reply.code(500).send({ ok: false, error: msg });
     }
-    const project = await resolveProject(db, slug);
-    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
-    await addProjectCarouselTemplate(db, project.id, htmlName);
-    return { ok: true };
   });
 
   app.post("/v1/admin/config/project-carousel-template/delete", async (request, reply) => {
@@ -4617,20 +4623,28 @@ async function ctFetchJson(url,timeoutMs){
   }finally{ clearTimeout(t); }
 }
 
-async function ctAddToProject(htmlName){
-  var idSuffix=ctIdSafe(htmlName);
-  var sel=document.getElementById('ct-proj-sel-'+idSuffix);
-  var msgEl=document.getElementById('ct-pin-msg-'+idSuffix);
+async function ctAddToProject(btn, htmlName){
+  var card=btn&&btn.closest?btn.closest('.ct-card'):null;
+  var sel=card?card.querySelector('[data-ct-project-select]'):null;
+  var msgEl=card?card.querySelector('[data-ct-pin-msg]'):null;
   var slug=sel?String(sel.value||'').trim():'';
   if(!slug){ if(msgEl){msgEl.textContent='Choose a project first';msgEl.style.color='var(--red)';} return; }
   if(msgEl){msgEl.textContent='Saving…';msgEl.style.color='var(--muted)';}
   try{
     var res=await cafFetch('/v1/admin/config/project-carousel-template',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:slug,html_template_name:htmlName})});
-    var j=await res.json().catch(function(){return {};});
-    if(!res.ok||!j.ok){ if(msgEl){msgEl.textContent=j.error||'Failed';msgEl.style.color='var(--red)';} return; }
+    var txt=await res.text();
+    var j={};
+    try{ j=txt?JSON.parse(txt):{}; }catch(_){ j={ok:false,error:txt||'Bad response'}; }
+    if(!res.ok||!j.ok){
+      var errMsg=(j&&j.error)||('HTTP '+res.status);
+      if(msgEl){msgEl.textContent=errMsg;msgEl.style.color='var(--red)';}
+      console.error('ctAddToProject failed',res.status,j,txt);
+      return;
+    }
     if(msgEl){msgEl.textContent='Added to '+slug;msgEl.style.color='var(--green)';}
   }catch(err){
     if(msgEl){msgEl.textContent=String(err&&err.message||err);msgEl.style.color='var(--red)';}
+    console.error('ctAddToProject',err);
   }
 }
 
@@ -4699,7 +4713,7 @@ async function ctLoad(){
       html+='<div style="margin-top:10px;padding-top:12px;border-top:1px solid var(--border)">';
       html+='<div style="font-size:11px;color:var(--muted);margin-bottom:6px">Pin for project <span style="opacity:.85">(also listed under Project Config → Carousel templates)</span></div>';
       html+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
-      html+='<select id="ct-proj-sel-'+ctEsc(idSuffix)+'" style="flex:1;min-width:150px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--fg);font-size:12px">';
+      html+='<select data-ct-project-select="1" id="ct-proj-sel-'+ctEsc(idSuffix)+'" style="flex:1;min-width:150px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--fg);font-size:12px">';
       html+='<option value="">— Project —</option>';
       var pjList=window.__CT_PROJECTS||[];
       for(var pi=0;pi<pjList.length;pi++){
@@ -4707,9 +4721,9 @@ async function ctLoad(){
         html+='<option value="'+ctEsc(pj.slug)+'">'+ctEsc(pj.display_name||pj.slug)+'</option>';
       }
       html+='</select>';
-      html+='<button type="button" class="btn btn-sm" onclick="ctAddToProject('+JSON.stringify(name)+')">Add to project</button>';
+      html+='<button type="button" class="btn btn-sm" onclick="ctAddToProject(this,'+JSON.stringify(name)+')">Add to project</button>';
       html+='</div>';
-      html+='<div id="ct-pin-msg-'+ctEsc(idSuffix)+'" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
+      html+='<div data-ct-pin-msg="1" id="ct-pin-msg-'+ctEsc(idSuffix)+'" style="font-size:11px;margin-top:6px;min-height:14px"></div>';
       html+='</div>';
       html+='</div>';
     }
