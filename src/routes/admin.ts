@@ -172,6 +172,11 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .sb-link{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:500;color:var(--fg2);transition:all .15s;text-decoration:none}
 .sb-link:hover{background:var(--card);color:var(--fg);text-decoration:none}
 .sb-link.active{background:var(--accent);color:#fff}
+.sb-sublink{margin-left:14px;padding-left:18px;font-size:12px;color:var(--muted);position:relative}
+.sb-sublink::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border)}
+.sb-sublink:hover{color:var(--fg)}
+.sb-sublink.active{background:var(--accent);color:#fff}
+.sb-sublink.active::before{background:var(--accent)}
 .sb-project-sel{margin:12px 8px 0;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
 .sb-project-sel label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .sb-project-sel select{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;width:100%;outline:none;font-family:inherit}
@@ -257,15 +262,45 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
   ];
 
-  const globalLinks = [
+  type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
+  const globalLinks: GlobalLink[] = [
     { href: "/admin/projects", label: "Projects", key: "projects" },
-    { href: "/admin/global-learning", label: "Global Learning", key: "global-learning" },
-    { href: "/admin/engine", label: "Decision Engine", key: "engine" },
+    {
+      href: "/admin/global-learning",
+      label: "Global Learning",
+      key: "global-learning",
+      // Sub-pages live under the Global Learning hub — the Decision Engine surfaces the rules
+      // and traces driving learning, and Learning Prompts shows the exact system prompts used
+      // by the LLM reviewers that feed the learning store.
+      children: [
+        { href: "/admin/engine", label: "Decision Engine", key: "engine" },
+        { href: "/admin/learning-prompts", label: "Learning Prompts", key: "learning-prompts" },
+      ],
+    },
     { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
-    { href: "/admin/learning-prompts", label: "Learning Prompts", key: "learning-prompts" },
     { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
     { href: "/admin/carousel-templates", label: "Carousel templates", key: "carousel-templates" },
   ];
+
+  const LEARNING_CHILD_KEYS = new Set(["engine", "learning-prompts"]);
+  const isParentActive = (link: GlobalLink): boolean => {
+    if (link.key === active) return true;
+    if (link.key === "global-learning" && LEARNING_CHILD_KEYS.has(active)) return true;
+    return false;
+  };
+  const renderGlobalLink = (link: GlobalLink): string => {
+    const activeCls = isParentActive(link) ? " active" : "";
+    let out = `<a href="${link.href}" class="sb-link${activeCls}">${link.label}</a>`;
+    if (link.children && link.children.length > 0) {
+      out += link.children
+        .map(
+          (c) =>
+            `<a href="${c.href}" class="sb-link sb-sublink${c.key === active ? " active" : ""}">${c.label}</a>`
+        )
+        .join("\n    ");
+    }
+    return out;
+  };
 
   return `<aside class="sb">
   <div class="sb-brand"><h1>CAF Core</h1><span>Admin Dashboard</span></div>
@@ -278,7 +313,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     <div class="sb-title">Project</div>
     ${projectLinks.map(l => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">CAF Core</div>
-    ${globalLinks.map(l => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    ${globalLinks.map(renderGlobalLink).join("\n    ")}
     <div class="sb-title" style="margin-top:auto;padding-top:24px">External</div>
     <a href="/" class="sb-link" target="_blank">API Root</a>
     <a href="/health" class="sb-link" target="_blank">Health</a>
@@ -2084,6 +2119,21 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
   </div>
 
   <div class="card">
+    <div class="card-h">Sub-sections</div>
+    <p style="color:var(--fg2);margin:0 0 12px">The learning store is fed and introspected by two sub-sections, also reachable directly from the sidebar.</p>
+    <div class="grid2">
+      <a href="/admin/engine" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
+        <span><strong style="color:var(--fg)">Decision Engine</strong><br><span style="color:var(--muted);font-size:12px">Suppression rules, learning rules, prompt versions, and decision traces.</span></span>
+        <span style="color:var(--accent)">&rarr;</span>
+      </a>
+      <a href="/admin/learning-prompts" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
+        <span><strong style="color:var(--fg)">Learning Prompts</strong><br><span style="color:var(--muted);font-size:12px">The exact system prompts used by the LLM reviewers (carousel + video) that emit learning signal.</span></span>
+        <span style="color:var(--accent)">&rarr;</span>
+      </a>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-h">API endpoints</div>
     <div class="info-row"><span class="info-l">Merged rules for a content project</span><span class="info-v mono">GET /v1/learning/&lt;project_slug&gt;/rules</span></div>
     <div class="info-row"><span class="info-l">Context preview</span><span class="info-v mono">GET /v1/learning/&lt;project_slug&gt;/context-preview</span></div>
@@ -2101,13 +2151,13 @@ document.getElementById('new-project-form').addEventListener('submit',async(e)=>
 <div class="content">
   <div class="card">
     <div class="card-h">LLM review (approved content) — system prompt</div>
-    <p style="color:var(--fg2);margin-bottom:10px">Used by <span class="mono">/v1/learning/:slug/llm-review-approved</span> (OpenAI vision+text when images are available).</p>
+    <p style="color:var(--fg2);margin-bottom:10px">Used by <span class="mono">/v1/learning/:slug/llm-review-approved</span>. Vision + text for carousel/image flows when asset URLs are available; for video flows the prompt scores the plan, script, scene bundle, captions, and CTA as a proxy (the chat API cannot ingest the rendered video). Scores <span class="mono">visual_execution_score</span>, <span class="mono">video_plan_score</span>, and <span class="mono">video_execution_score</span> are nulled when a dimension does not apply.</p>
     <pre class="json" style="white-space:pre-wrap;word-break:break-word;max-height:none">${esc(APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT)}</pre>
   </div>
 
   <div class="card">
     <div class="card-h">Editorial notes synthesis (optional OpenAI) — system prompt</div>
-    <p style="color:var(--fg2);margin-bottom:10px">Used by Editorial analysis when <span class="mono">llm_notes_synthesis</span> is enabled and there are non-empty reviewer notes.</p>
+    <p style="color:var(--fg2);margin-bottom:10px">Used by Editorial analysis when <span class="mono">llm_notes_synthesis</span> is enabled and there are non-empty reviewer notes. Separates carousel and video failure modes and routes video issues (flat opener, voice/visual drift, caption wall, weak CTA, wrong avatar/voice) to the HeyGen / scene-pipeline repo paths instead of carousel templates.</p>
     <pre class="json" style="white-space:pre-wrap;word-break:break-word;max-height:none">${esc(EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT)}</pre>
   </div>
 

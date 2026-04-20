@@ -37,20 +37,35 @@ Scoring calibration (VERY IMPORTANT):
 - Never give 0.96–1.00 unless it is genuinely world-class.
 - If anything is repetitive/generic, readability is compromised, CTA is weak, or the deck lacks a tight narrative arc, cap overall_score at 0.85.
 
-What to judge:
+Detect the flow family from the inputs:
+- CAROUSEL / IMAGE if image URLs are attached, slide arrays exist (slides, slide_deck, carousel), or flow_type starts with Flow_Carousel / FLOW_IMG_PRODUCT.
+- VIDEO if any of video_prompt, video_script, spoken_script, scene_bundle, heygen/video plan, captions/subtitles, or a video_artifact block is present, or flow_type starts with Video_ / FLOW_PRODUCT.
+- Score only the dimensions that actually apply. Set non-applicable dimensions to null and justify in the summary.
+
+What to judge — CAROUSEL / IMAGE:
 - If images are provided: visual clarity, text readability, spacing/contrast, consistency, slide-to-slide flow, and whether visuals reinforce the copy.
-- If carousel: hook strength on slide 1, progression (not repetitive), punchy headings, dense-text avoidance, and a strong final CTA.
-- If video-related JSON exists (video_prompt, scene_bundle, spoken_script, video_script): plan coherence, pacing, specificity, and hook strength (you only see text plans).
-- Penalize: repeated layouts, monotonous backgrounds, generic phrasing, walls of text, weak CTA, inconsistent slide depth, or muddled structure.
+- Hook strength on slide 1, progression (not repetitive), punchy headings, dense-text avoidance, strong final CTA.
+- Penalize: repeated layouts, monotonous backgrounds, generic phrasing, walls of text, weak CTA, inconsistent slide depth, muddled structure.
+
+What to judge — VIDEO (you cannot watch the rendered file; judge the plan + script + scenes + captions as a proxy, and note that explicitly in the summary):
+- Hook in the first 0–3 seconds: is the opening line a scroll-stopper or a warm-up?
+- Script / spoken voiceover: specificity, cadence, micro-payoffs every ~5s, avoids generic "in this video we'll…" openings.
+- Scene bundle coherence: do the scenes visually match the voiceover beat-for-beat? Are transitions motivated? Is each scene actually saying something new?
+- Pacing: is there a clear narrative arc (hook → problem → proof → payoff → CTA)? Any scene >6s doing nothing?
+- Captions / subtitles: present, time-synced-looking, free of walls-of-text, break on natural phrases, match spoken_script.
+- CTA clarity: single, specific, verb-first (e.g. "Plan your week"). Penalize vague or multi-CTA endings.
+- Brand / compliance: voice matches brand, no banned claims, no medical / "guaranteed result" framing.
+- Penalize: dead opening line, script written like a blog post, scene_bundle that describes mood without visuals, captions that duplicate the voiceover verbatim without chunking, missing CTA, voiceover length mismatched to scene count.
 
 Output (strict):
 - Return a single JSON object only (no markdown), with this shape:
 {
   "overall_score": number,
   "alignment_score": number,
-  "visual_execution_score": number,
+  "visual_execution_score": number | null,
   "copy_structure_score": number,
-  "video_plan_score": number,
+  "video_plan_score": number | null,
+  "video_execution_score": number | null,
   "strengths": string[],
   "weaknesses": string[],
   "improvement_bullets": string[],
@@ -58,12 +73,17 @@ Output (strict):
   "summary": string
 }
 
+Score semantics:
+- visual_execution_score: images / slides only. null for pure video plans with no static images.
+- video_plan_score: quality of the textual plan (video_prompt, spoken_script, scene_bundle, captions). null when there is no video material.
+- video_execution_score: inferred on-screen/on-air quality from the plan + script + scenes + captions + CTA + flow metadata. null when there is no video material. Treat this as your best estimate of the viewer experience given what the plan will produce.
+
 Constraints:
 - strengths: 2–5 bullets, only if clearly supported by the content.
-- weaknesses: 3–7 bullets; each must reference a specific issue (e.g., “slides 2–4 repeat the same structure…”, “CTA is generic…”).
+- weaknesses: 3–7 bullets; each must reference a specific issue (e.g., "slides 2–4 repeat the same structure…", "CTA is generic…", "scene 3 voiceover doesn't match the visual beat…").
 - improvement_bullets: 4–10 concrete fixes written as imperative commands.
 - risk_flags: include compliance/claim risks, misleading framing, or audience backlash triggers when applicable.
-- If a dimension does not apply (e.g. no images), set that score to null and explain in summary.`;
+- If a dimension does not apply (e.g. no images, no video), set that score to null and explain in summary.`;
 
 function isLikelyImageAsset(url: string, assetType: string | null): boolean {
   const u = url.toLowerCase();
@@ -420,6 +440,10 @@ export async function runLlmApprovalReviewsForProject(
         visual_execution_score: clamp01(parsed.visual_execution_score),
         copy_structure_score: clamp01(parsed.copy_structure_score),
         video_plan_score: clamp01(parsed.video_plan_score),
+        // New: inferred viewer-experience score for video flows (derived from plan + script + scenes
+        // + captions + CTA when the rendered file cannot be watched by the LLM). Null for pure
+        // carousel/image content.
+        video_execution_score: clamp01(parsed.video_execution_score),
       };
 
       const eligible = overall < improveBelow && improvementBullets.length > 0;
