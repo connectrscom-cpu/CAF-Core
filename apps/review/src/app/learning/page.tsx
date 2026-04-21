@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState, useCallback } from "react";
+import { Fragment, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
 
 async function copyTaskIdToClipboard(taskId: string): Promise<void> {
@@ -14,6 +14,305 @@ async function copyTaskIdToClipboard(taskId: string): Promise<void> {
 function asStringList(v: unknown, max = 24): string[] {
   if (!Array.isArray(v)) return [];
   return v.map((x) => String(x).trim()).filter(Boolean).slice(0, max);
+}
+
+function normalizeBulletKey(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[.,;:!?…]+$/g, "")
+    .trim();
+}
+
+interface AggregatedBullet {
+  count: number;
+  display: string;
+  taskIds: string[];
+}
+
+function aggregateReviewBullets(
+  reviews: Record<string, unknown>[],
+  field: "improvement_bullets" | "weaknesses" | "strengths" | "risk_flags"
+): AggregatedBullet[] {
+  const map = new Map<string, AggregatedBullet>();
+  for (const r of reviews) {
+    const tid = String(r.task_id ?? "").trim();
+    const arr = asStringList(r[field], 64);
+    for (const raw of arr) {
+      const display = raw.trim();
+      if (!display) continue;
+      const k = normalizeBulletKey(display);
+      if (!k) continue;
+      const cur = map.get(k);
+      if (!cur) {
+        map.set(k, { count: 1, display, taskIds: tid ? [tid] : [] });
+      } else {
+        cur.count += 1;
+        if (tid && !cur.taskIds.includes(tid) && cur.taskIds.length < 10) cur.taskIds.push(tid);
+      }
+    }
+  }
+  return [...map.values()].sort((a, b) => b.count - a.count);
+}
+
+function buildLlmReviewsCompiledMarkdown(projectSlug: string, reviews: Record<string, unknown>[]): string {
+  const n = reviews.length;
+  const when = new Date().toISOString().slice(0, 10);
+  const flowCounts = new Map<string, number>();
+  for (const r of reviews) {
+    const ft = String(r.flow_type ?? "").trim() || "—";
+    flowCounts.set(ft, (flowCounts.get(ft) ?? 0) + 1);
+  }
+  const flowLines = [...flowCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([ft, c]) => `- **${ft}:** ${c} review(s)`)
+    .join("\n");
+
+  const improvements = aggregateReviewBullets(reviews, "improvement_bullets");
+  const weaknesses = aggregateReviewBullets(reviews, "weaknesses");
+  const strengths = aggregateReviewBullets(reviews, "strengths");
+  const risks = aggregateReviewBullets(reviews, "risk_flags");
+
+  const formatAgg = (items: AggregatedBullet[]) =>
+    items.length === 0
+      ? "_None in this set._"
+      : items
+          .map((x) => {
+            const sample =
+              x.taskIds.length > 0
+                ? ` — e.g. \`${x.taskIds.slice(0, 4).join("`, `")}\`${x.taskIds.length > 4 ? " …" : ""}`
+                : "";
+            return `- **(${x.count}×)** ${x.display}${sample}`;
+          })
+          .join("\n");
+
+  const upstreamByTarget = new Map<string, { change: string; taskIds: string[]; rationale?: string }[]>();
+  for (const r of reviews) {
+    const tid = String(r.task_id ?? "").trim();
+    const raw = r.upstream_recommendations;
+    if (!Array.isArray(raw)) continue;
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      const target = typeof o.target === "string" && o.target.trim() ? o.target.trim() : "other";
+      const change = typeof o.change === "string" ? o.change.trim() : "";
+      if (!change) continue;
+      const rationale = typeof o.rationale === "string" ? o.rationale.trim() : "";
+      const list = upstreamByTarget.get(target) ?? [];
+      const dup = list.find((x) => normalizeBulletKey(x.change) === normalizeBulletKey(change));
+      if (dup) {
+        if (tid && !dup.taskIds.includes(tid) && dup.taskIds.length < 8) dup.taskIds.push(tid);
+      } else {
+        list.push({
+          change,
+          taskIds: tid ? [tid] : [],
+          ...(rationale ? { rationale } : {}),
+        });
+      }
+      upstreamByTarget.set(target, list);
+    }
+  }
+
+  let upstreamMd = "";
+  if (upstreamByTarget.size > 0) {
+    const parts: string[] = [];
+    for (const [target, rows] of [...upstreamByTarget.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      parts.push(`### ${target}`);
+      parts.push(
+        rows
+          .map((row) => {
+            const ids =
+              row.taskIds.length > 0
+                ? ` (\`${row.taskIds.slice(0, 4).join("`, `")}\`${row.taskIds.length > 4 ? " …" : ""})`
+                : "";
+            const rat = row.rationale ? ` — _${row.rationale}_` : "";
+            return `- ${row.change}${ids}${rat}`;
+          })
+          .join("\n")
+      );
+    }
+    upstreamMd = `## Upstream recommendations (structured)\n\n${parts.join("\n\n")}\n`;
+  }
+
+  return [
+    "# CAF — engineering remediation (from LLM approval reviews)",
+    "",
+    `**Project:** \`${projectSlug}\``,
+    `**Compiled:** ${when}`,
+    `**Reviews analyzed:** ${n}`,
+    "",
+    "## Scope",
+    "Merged **summary bullets** from every loaded LLM approval review below. Use this as a Cursor / coding-agent brief; pair with **Mint fix** on individual rows for pending `GENERATION_GUIDANCE` rules.",
+    "",
+    "### Flow mix (loaded rows)",
+    flowLines || "- _No flow_type on rows._",
+    "",
+    "## Constraints",
+    "- Preserve existing `task_id` / text-ID hierarchy; do not rename ID schemes in a partial change.",
+    "- `learning_rules` adjust ranking and volume; this brief is for **code, templates, or pipeline** when prompts alone are insufficient.",
+    "- Prefer the smallest change that addresses the pattern; add a test or rendered snapshot if the issue is visual.",
+    "",
+    "## Aggregated improvements",
+    formatAgg(improvements),
+    "",
+    "## Aggregated weaknesses",
+    formatAgg(weaknesses),
+    "",
+    "## Aggregated strengths",
+    formatAgg(strengths),
+    "",
+    "## Aggregated risk flags",
+    formatAgg(risks),
+    "",
+    upstreamMd,
+    "## Next step",
+    "Use **Compile** on this page to also generate the **Repo agent prompt** (action checklist for Cursor). Then implement and redeploy Core + renderer.",
+    "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+const UPSTREAM_TARGET_HINTS: Record<string, string> = {
+  prompt_template: "`src/repositories/flow-engine.ts` · Flow Engine DB prompt templates · `src/services/llm-generator.ts`",
+  output_schema: "`src/domain/` · generation payload shapes · `src/services/llm-output-normalize.ts`",
+  flow_definition: "`src/repositories/flow-engine.ts` · `src/domain/canonical-flow-types.ts`",
+  project_brand: "`src/repositories/project-config.ts` · brand/signal packs",
+  project_strategy: "`src/repositories/project-config.ts`",
+  learning_guidance: "`src/services/learning-rule-selection.ts` · `caf_core.learning_rules`",
+  qc_checklist: "`src/services/qc-runtime.ts` · `src/domain/generation-payload-qc.ts`",
+  risk_policy: "`src/services/risk-qc-status.ts` · risk policy migrations",
+  other: "`src/services/` · narrow using `flow_type` / evidence below",
+};
+
+function inferRepoHintsFromBullet(text: string): string[] {
+  const t = text.toLowerCase();
+  const out = new Set<string>();
+  if (/\b(carousel|slide|template|font|typograph|emoji|cta|hook|hashtag|deck|hbs|render pack)\b/i.test(t)) {
+    out.add("`services/renderer/templates/*.hbs`");
+    out.add("`src/services/carousel-render-pack.ts`");
+  }
+  if (/\b(copy|prompt|llm|json|schema|field|variation|bullet)\b/i.test(t)) {
+    out.add("`src/services/llm-generator.ts`");
+  }
+  if (/\b(video|scene|script|heygen|caption|subtitle|avatar|voice|b-?roll|reel|tiktok|spoken)\b/i.test(t)) {
+    out.add("`src/services/video-script-generator.ts`");
+    out.add("`src/services/video-prompt-generator.ts`");
+    out.add("`src/services/scene-assembly-generator.ts`");
+    out.add("`src/services/heygen-renderer.ts`");
+  }
+  if (/\b(review|workbench|ui|override|editorial)\b/i.test(t)) {
+    out.add("`apps/review/src/**`");
+  }
+  if (out.size === 0) {
+    out.add("`src/services/` (use **flow_type** + sample `task_id`s below to pick the right module)");
+  }
+  return [...out].slice(0, 5);
+}
+
+/**
+ * Imperative prompt for Cursor / repo agents — mirrors the intent of editorial `coding_agent_markdown`
+ * without calling OpenAI (heuristic routing from bullet text + upstream targets).
+ */
+function buildLlmReviewsRepoAgentPrompt(projectSlug: string, reviews: Record<string, unknown>[]): string {
+  const when = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const n = reviews.length;
+  const improvements = aggregateReviewBullets(reviews, "improvement_bullets");
+  const weaknesses = aggregateReviewBullets(reviews, "weaknesses");
+
+  type Task = { title: string; evidence: string[]; surfaces: string; acceptance: string };
+  const tasks: Task[] = [];
+
+  const upstreamFlat: { target: string; change: string; taskIds: string[] }[] = [];
+  for (const r of reviews) {
+    const tid = String(r.task_id ?? "").trim();
+    const raw = r.upstream_recommendations;
+    if (!Array.isArray(raw)) continue;
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const o = item as Record<string, unknown>;
+      const target = typeof o.target === "string" && o.target.trim() ? o.target.trim() : "other";
+      const change = typeof o.change === "string" ? o.change.trim() : "";
+      if (!change) continue;
+      const k = `${target}::${normalizeBulletKey(change)}`;
+      const existing = upstreamFlat.find((x) => `${x.target}::${normalizeBulletKey(x.change)}` === k);
+      if (existing) {
+        if (tid && !existing.taskIds.includes(tid) && existing.taskIds.length < 6) existing.taskIds.push(tid);
+      } else {
+        upstreamFlat.push({ target, change, taskIds: tid ? [tid] : [] });
+      }
+    }
+  }
+
+  for (const u of upstreamFlat.slice(0, 6)) {
+    const hint = UPSTREAM_TARGET_HINTS[u.target] ?? UPSTREAM_TARGET_HINTS.other;
+    tasks.push({
+      title: `[upstream · ${u.target}] ${u.change}`,
+      evidence: u.taskIds.map((x) => `\`${x}\``),
+      surfaces: hint,
+      acceptance: `Change matches the **${u.target}** lever; preserve task_id / run_id formats; add or extend a test if behavior is non-visual.`,
+    });
+  }
+
+  const seen = new Set<string>();
+  for (const agg of [...improvements, ...weaknesses]) {
+    if (tasks.length >= 12) break;
+    const k = normalizeBulletKey(agg.display);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const hints = inferRepoHintsFromBullet(agg.display);
+    tasks.push({
+      title: agg.display,
+      evidence: agg.taskIds.slice(0, 5).map((x) => `\`${x}\``),
+      surfaces: hints.join(" · "),
+      acceptance:
+        "Smallest fix that removes the pattern; preserve ID schemes; add a snapshot/unit test if output is visual or structured JSON.",
+    });
+  }
+
+  const taskBlocks = tasks.map((t, i) => {
+    const ev = t.evidence.length ? t.evidence.join(", ") : "_none_";
+    return [
+      `### ${i + 1}. ${t.title}`,
+      "",
+      `- **Evidence:** ${ev}`,
+      `- **Likely surfaces:** ${t.surfaces}`,
+      `- **Acceptance criteria:** ${t.acceptance}`,
+      "",
+    ].join("\n");
+  });
+
+  return [
+    `# CAF-Core — repo agent prompt (LLM approval reviews)`,
+    "",
+    `Paste this into **Cursor Agent** (or Claude Code) in the **CAF-Core** repository. Implement tasks in order unless two tasks clearly touch the same files — then batch.`,
+    "",
+    "## Role",
+    "You are a senior engineer on **CAF-Core**: Postgres-backed content jobs, LLM generation, Handlebars renderer (`services/renderer`), Next.js review app (`apps/review`).",
+    "",
+    "## Context",
+    `- **Project:** \`${projectSlug}\``,
+    `- **Evidence:** ${n} post-approval LLM review row(s), compiled ${when}`,
+    "- **Do not** rename \`task_id\`, \`run_id\`, or review text-ID formats.",
+    "",
+    "## Global constraints",
+    "- Prefer **small PR-sized** changes; no drive-by refactors.",
+    "- **learning_rules** handle ranking/volume; this work is **code / templates / pipeline** when prompts alone are not enough.",
+    "- If the issue is **visual**, change \`services/renderer/templates/*.hbs\` (or carousel pack) and add a render snapshot or fixture test if the repo already does that.",
+    "- Run **typecheck** and **tests** for files you touch before finishing.",
+    "",
+    "## Priority work items",
+    taskBlocks.length > 0 ? taskBlocks.join("\n") : "_No structured tasks inferred — expand LLM review rows on the Learning page and recompile._",
+    "",
+    "## Verification checklist",
+    "- [ ] `npx tsc --noEmit` at repository root",
+    "- [ ] `npx vitest run` for affected packages (e.g. `src/services/*.test.ts`)",
+    "- [ ] If templates changed: confirm renderer still builds / snapshot tests pass",
+    "",
+    "## Reference",
+    "The **Merged engineering brief (markdown)** on the same page lists **all** aggregated bullets (improvements, weaknesses, strengths, risks). Use it for nuance; use **this** document as the execution checklist.",
+    "",
+  ].join("\n");
 }
 
 /** Score must be below this to mint improvement rules (threshold just above actual score). */
@@ -336,6 +635,12 @@ export default function LearningPage() {
   const [operatorHintDrafts, setOperatorHintDrafts] = useState<Record<string, string>>({});
   const [llmRowActionBusy, setLlmRowActionBusy] = useState<string | null>(null);
   const [llmRowActionMsg, setLlmRowActionMsg] = useState<string | null>(null);
+  const [llmCompiledBrief, setLlmCompiledBrief] = useState<string | null>(null);
+  const [llmRepoAgentPrompt, setLlmRepoAgentPrompt] = useState<string | null>(null);
+  const [obsLogFilter, setObsLogFilter] = useState<"all" | "llm_review" | "llm_upstream_recommendation" | "other">(
+    "all"
+  );
+  const [expandedObservationId, setExpandedObservationId] = useState<string | null>(null);
   const [persistEngineeringInsight, setPersistEngineeringInsight] = useState(true);
   const [llmNotesSynthesis, setLlmNotesSynthesis] = useState(true);
   const [ruleDetail, setRuleDetail] = useState<LearningRule | null>(null);
@@ -372,7 +677,7 @@ export default function LearningPage() {
 
   const fetchLlmReviews = useCallback(async () => {
     const res = await fetch(
-      `/api/learning?project=${encodeURIComponent(project)}&section=llm_approval_reviews&limit=25`
+      `/api/learning?project=${encodeURIComponent(project)}&section=llm_approval_reviews&limit=150`
     );
     if (res.ok) {
       const j = await res.json();
@@ -394,12 +699,22 @@ export default function LearningPage() {
   }, [project]);
 
   const fetchObservations = useCallback(async () => {
-    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=observations&limit=50`);
+    const res = await fetch(`/api/learning?project=${encodeURIComponent(project)}&section=observations&limit=200`);
     if (res.ok) {
       const json = await res.json();
       setObservations(json.observations ?? []);
     }
   }, [project]);
+
+  const filteredObservations = useMemo(() => {
+    if (obsLogFilter === "all") return observations;
+    return observations.filter((o) => {
+      const st = String(o.source_type ?? "");
+      if (obsLogFilter === "llm_review") return st === "llm_review";
+      if (obsLogFilter === "llm_upstream_recommendation") return st === "llm_upstream_recommendation";
+      return st !== "llm_review" && st !== "llm_upstream_recommendation";
+    });
+  }, [observations, obsLogFilter]);
 
   useEffect(() => {
     fetchRules();
@@ -995,8 +1310,98 @@ export default function LearningPage() {
               (then Apply in the rules tables below). <strong>Your guidance</strong> adds a free-text pending rule
               tied to the same review.
             </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 12 }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  setLlmCompiledBrief(buildLlmReviewsCompiledMarkdown(project, llmReviews));
+                  setLlmRepoAgentPrompt(buildLlmReviewsRepoAgentPrompt(project, llmReviews));
+                  flashCopy("Compiled brief + repo agent prompt — see below");
+                }}
+                disabled={llmReviews.length === 0}
+                title="Deterministic merge: dedupe bullets, frequency counts, sample task_ids, optional upstream_recommendations — paste into Cursor for Core/renderer work."
+              >
+                Compile all loaded reviews → CAF brief
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => void copyEditorialExport("Merged LLM brief", llmCompiledBrief ?? "")}
+                disabled={!llmCompiledBrief}
+              >
+                Copy compiled brief
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => void copyEditorialExport("Repo agent prompt", llmRepoAgentPrompt ?? "")}
+                disabled={!llmRepoAgentPrompt}
+                title="Cursor Agent / Claude Code — action checklist with heuristic repo paths"
+              >
+                Copy repo agent prompt
+              </button>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                Fetches up to 150 reviews; table scrolls. Merge + agent prompt are on-device (no extra LLM call).
+              </span>
+            </div>
+            {llmCompiledBrief ? (
+              <details open style={{ marginTop: 14 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                  Merged engineering brief (markdown)
+                </summary>
+                <textarea
+                  readOnly
+                  aria-label="Merged LLM reviews markdown brief"
+                  value={llmCompiledBrief}
+                  rows={18}
+                  style={{
+                    width: "100%",
+                    marginTop: 10,
+                    fontFamily: "monospace",
+                    fontSize: 11,
+                    lineHeight: 1.45,
+                    padding: 12,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    resize: "vertical",
+                  }}
+                />
+              </details>
+            ) : null}
+            {llmRepoAgentPrompt ? (
+              <details open style={{ marginTop: 14 }}>
+                <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+                  Repo agent prompt (Cursor / Claude Code)
+                </summary>
+                <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--muted)", maxWidth: 720 }}>
+                  Imperative checklist derived from the same reviews: upstream targets first, then high-frequency
+                  improvements/weaknesses with heuristic paths. Paste into your agent as the task description.
+                </p>
+                <textarea
+                  readOnly
+                  aria-label="Repo agent prompt for CAF-Core"
+                  value={llmRepoAgentPrompt}
+                  rows={20}
+                  style={{
+                    width: "100%",
+                    marginTop: 10,
+                    fontFamily: "monospace",
+                    fontSize: 11,
+                    lineHeight: 1.45,
+                    padding: 12,
+                    borderRadius: 8,
+                    border: "1px solid var(--border)",
+                    background: "var(--bg)",
+                    resize: "vertical",
+                  }}
+                />
+              </details>
+            ) : null}
           </div>
           {llmRowActionMsg ? <p className="learning-copy-hint">{llmRowActionMsg}</p> : null}
+          <div style={{ maxHeight: "min(70vh, 640px)", overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
           <table className="learning-llm-table">
             <thead>
               <tr>
@@ -1009,7 +1414,7 @@ export default function LearningPage() {
               </tr>
             </thead>
             <tbody>
-              {llmReviews.slice(0, 15).map((r) => {
+              {llmReviews.map((r) => {
                 const rid = String(r.review_id);
                 const tid = String(r.task_id);
                 const open = expandedLlmReviewId === rid;
@@ -1248,6 +1653,7 @@ export default function LearningPage() {
               })}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
@@ -1536,24 +1942,139 @@ export default function LearningPage() {
       )}
 
       {observations.length > 0 && (
-        <section className="learning-section">
+        <section className="learning-section" id="learning-observations-log">
           <div className="learning-section-head">
             <h3>
-              <span className="pill pill-ok">log</span> Recent observations ({observations.length})
+              <span className="pill pill-ok">log</span> Observations log ({filteredObservations.length}
+              {obsLogFilter !== "all" ? ` of ${observations.length}` : ""})
             </h3>
-            <p>Last 15 observation rows Core has ingested (deterministic analyzers + CSV ingest).</p>
+            <p>
+              Rows from <code>caf_core.learning_observations</code> (LLM reviews, upstream recs, CSV ingest, etc.).
+              Expand a row for full JSON. Use the filter to focus on post-approval reviews or upstream signals.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", marginTop: 10 }}>
+              <label style={{ fontSize: 12, color: "var(--muted)" }}>
+                Filter by source
+                <select
+                  value={obsLogFilter}
+                  onChange={(e) =>
+                    setObsLogFilter(e.target.value as "all" | "llm_review" | "llm_upstream_recommendation" | "other")
+                  }
+                  style={{
+                    marginLeft: 8,
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "var(--card)",
+                    color: "var(--fg)",
+                    fontSize: 12,
+                  }}
+                >
+                  <option value="all">All sources</option>
+                  <option value="llm_review">llm_review</option>
+                  <option value="llm_upstream_recommendation">llm_upstream_recommendation</option>
+                  <option value="other">Other</option>
+                </select>
+              </label>
+              <button type="button" className="btn-ghost" onClick={() => void fetchObservations()} style={{ fontSize: 12 }}>
+                Refresh log
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() =>
+                  void copyEditorialExport(
+                    "Observations JSON",
+                    JSON.stringify(filteredObservations, null, 2)
+                  )
+                }
+                style={{ fontSize: 12 }}
+              >
+                Copy filtered rows (JSON)
+              </button>
+            </div>
           </div>
-          <ul style={{ fontSize: 12, maxHeight: 220, overflow: "auto", paddingLeft: 20, margin: 0, lineHeight: 1.6 }}>
-            {observations.slice(0, 15).map((o) => (
-              <li key={String(o.observation_id ?? o.id)}>
-                <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--accent)" }}>
-                  {String(o.observation_type)}
-                </span>{" "}
-                — {String(o.source_type)} (
-                {String(o.observed_at ?? "").slice(0, 10)})
-              </li>
-            ))}
-          </ul>
+          <div style={{ maxHeight: "min(65vh, 520px)", overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+              <thead style={{ position: "sticky", top: 0, background: "var(--card)", zIndex: 1 }}>
+                <tr>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>When</th>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>Type</th>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>Source</th>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>Flow / platform</th>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)" }}>Entity</th>
+                  <th style={{ textAlign: "left", padding: 8, borderBottom: "1px solid var(--border)", width: 90 }}>
+                    Payload
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredObservations.map((o, obsIdx) => {
+                  const oid = String(o.observation_id ?? (o as { id?: string }).id ?? `obs-row-${obsIdx}`);
+                  const open = expandedObservationId === oid;
+                  return (
+                    <Fragment key={oid}>
+                      <tr>
+                        <td style={{ padding: 8, borderBottom: "1px solid var(--border)", color: "var(--muted)", whiteSpace: "nowrap" }}>
+                          {String(o.observed_at ?? "").slice(0, 19).replace("T", " ")}
+                        </td>
+                        <td style={{ padding: 8, borderBottom: "1px solid var(--border)", fontFamily: "monospace", fontSize: 11 }}>
+                          {String(o.observation_type)}
+                        </td>
+                        <td style={{ padding: 8, borderBottom: "1px solid var(--border)" }}>{String(o.source_type)}</td>
+                        <td style={{ padding: 8, borderBottom: "1px solid var(--border)", color: "var(--fg-secondary)" }}>
+                          {[o.flow_type, o.platform].filter(Boolean).join(" · ") || "—"}
+                        </td>
+                        <td
+                          style={{
+                            padding: 8,
+                            borderBottom: "1px solid var(--border)",
+                            fontFamily: "monospace",
+                            fontSize: 10,
+                            wordBreak: "break-all",
+                            maxWidth: 220,
+                          }}
+                        >
+                          {o.entity_ref != null && String(o.entity_ref).trim() !== "" ? String(o.entity_ref) : "—"}
+                        </td>
+                        <td style={{ padding: 8, borderBottom: "1px solid var(--border)", verticalAlign: "top" }}>
+                          <button
+                            type="button"
+                            className="btn-ghost"
+                            style={{ fontSize: 11, padding: "4px 8px" }}
+                            onClick={() => setExpandedObservationId(open ? null : oid)}
+                          >
+                            {open ? "Hide" : "JSON"}
+                          </button>
+                        </td>
+                      </tr>
+                      {open ? (
+                        <tr>
+                          <td colSpan={6} style={{ padding: "0 10px 12px", background: "var(--bg-secondary)" }}>
+                            <pre
+                              style={{
+                                margin: 0,
+                                padding: 10,
+                                fontSize: 11,
+                                maxHeight: 280,
+                                overflow: "auto",
+                                whiteSpace: "pre-wrap",
+                                wordBreak: "break-word",
+                                borderRadius: 6,
+                                border: "1px solid var(--border)",
+                              }}
+                            >
+                              {JSON.stringify(o, null, 2)}
+                            </pre>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 

@@ -465,6 +465,8 @@ export async function generateForJob(
         system_prompt: systemPrompt,
         user_prompt: userPrompt,
         max_tokens: maxTokens,
+        response_format:
+          outputSchemaRow || isCarouselFlow(job.flow_type) || wantSceneBundle ? "json_object" : "text",
       },
       {
         db,
@@ -495,6 +497,7 @@ export async function generateForJob(
           system_prompt: strictSys,
           user_prompt: fallbackUser,
           max_tokens: maxTokens,
+          response_format: "json_object",
         },
         {
           db,

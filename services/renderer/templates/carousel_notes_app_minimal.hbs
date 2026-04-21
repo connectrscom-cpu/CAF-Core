@@ -38,6 +38,8 @@
       line-height:1.12;
       letter-spacing:-0.028em;
       color:var(--ink);
+      overflow-wrap:anywhere;
+      word-break:break-word;
     }
     .cover .headline{
       font-size:76px;
@@ -51,12 +53,19 @@
       line-height:1.45;
       color:var(--body);
       white-space:pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
     }
     .body-slide .headline{
       font-size:64px;
     }
     .cta .headline{
-      font-size:70px;
+      font-size:90px;
+      line-height:1.08;
+    }
+    .cta .sub{
+      font-size:44px;
+      line-height:1.4;
     }
   </style>
 </head>
@@ -65,7 +74,7 @@
   <div class="slide cover">
     <div class="page">
       <div class="headline">
-        {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
+        {{#if cover}}{{joinEmojiOrphans cover}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.headline}}{{else}}{{joinEmojiOrphans intro_title}}{{/if}}{{/if}}
       </div>
       {{#if cover_subtitle}}
       <div class="sub">{{joinEmojiOrphans cover_subtitle}}</div>
@@ -78,7 +87,7 @@
   {{#each body_slides}}
   <div class="slide body-slide">
     <div class="page">
-      <div class="headline">{{headline}}</div>
+      <div class="headline">{{joinEmojiOrphans headline}}</div>
       <div class="body">{{joinEmojiOrphans body}}</div>
     </div>
   </div>

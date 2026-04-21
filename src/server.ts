@@ -8,6 +8,8 @@ import { registerV1Routes } from "./routes/v1.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerProjectConfigRoutes } from "./routes/project-config.js";
 import { registerSignalPackRoutes } from "./routes/signal-packs.js";
+import { registerInputsEvidenceRoutes } from "./routes/inputs-evidence.js";
+import { registerInputsProcessingRoutes } from "./routes/inputs-processing.js";
 import { registerRunRoutes } from "./routes/runs.js";
 import { registerFlowEngineRoutes } from "./routes/flow-engine.js";
 import { registerPipelineRoutes } from "./routes/pipeline.js";
@@ -66,6 +68,8 @@ async function main() {
   registerAdminRoutes(app, { db, config });
   registerProjectConfigRoutes(app, { db });
   registerSignalPackRoutes(app, { db, config });
+  registerInputsEvidenceRoutes(app, { db });
+  registerInputsProcessingRoutes(app, { db, config });
   registerRunRoutes(app, { db, config });
   registerFlowEngineRoutes(app, { db });
   registerPipelineRoutes(app, { db, config });

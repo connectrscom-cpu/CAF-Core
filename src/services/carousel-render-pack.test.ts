@@ -12,9 +12,20 @@ import {
   slidesFromGeneratedOutput,
   slideHasRenderableContent,
   stripExplicitCarouselTemplateSelection,
+  stripHashtagsFromSlideCopy,
   stripNonRenderableDeckFields,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
+
+describe("stripHashtagsFromSlideCopy", () => {
+  it("removes spaced #hashtag tokens from slide copy", () => {
+    expect(stripHashtagsFromSlideCopy("Hook line #viral #fyp and more")).toBe("Hook line and more");
+  });
+
+  it("does not strip #1 style ordinals (digit after #)", () => {
+    expect(stripHashtagsFromSlideCopy("Top #1 tip for you")).toBe("Top #1 tip for you");
+  });
+});
 
 describe("stripNonRenderableDeckFields", () => {
   it("drops candidate empty slides so gen.carousel is the only deck (merge shadowing)", () => {
@@ -67,7 +78,17 @@ describe("slidesFromGeneratedOutput", () => {
     const slides = slidesFromGeneratedOutput(gen);
     expect(slides).toHaveLength(2);
     expect(slides[0]?.headline).toBe("Get Ready for 2026!");
-    expect(String(slides[1]?.body)).toContain("Aries");
+  });
+
+  it("strips hashtags from slide headline and body", () => {
+    const gen = {
+      slides: [
+        { headline: "Save this #recipe", body: "Try it today #foodie #yum" },
+      ],
+    };
+    const slides = slidesFromGeneratedOutput(gen);
+    expect(slides[0]?.headline).toBe("Save this");
+    expect(slides[0]?.body).toBe("Try it today");
   });
 
   it("prefers carousel[] over empty slides/variations stubs (LLM split output)", () => {

@@ -186,6 +186,7 @@ export default function RunsPage() {
                   <Th>Started</Th>
                   <Th>Completed</Th>
                   <Th>Snapshots</Th>
+                  <Th>Ideas pack</Th>
                   <Th>Created</Th>
                 </tr>
               </thead>
@@ -248,6 +249,21 @@ export default function RunsPage() {
                       >
                         context
                       </span>
+                    </Td>
+                    <Td>
+                      {r.signal_pack_id ? (
+                        <Link
+                          href={`/pipeline/pack/${encodeURIComponent(r.signal_pack_id)}${
+                            r.project_slug ? `?project=${encodeURIComponent(r.project_slug)}` : ""
+                          }`}
+                          className="detail-back"
+                          style={{ padding: 0, fontSize: 12 }}
+                        >
+                          Inspect
+                        </Link>
+                      ) : (
+                        <span style={{ color: "var(--muted)" }}>—</span>
+                      )}
                     </Td>
                     <Td>{fmt(r.created_at)}</Td>
                   </tr>

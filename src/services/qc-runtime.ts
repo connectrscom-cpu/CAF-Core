@@ -9,6 +9,7 @@ import type { Pool } from "pg";
 import { qOne } from "../db/queries.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
 import { listQcChecks, listRiskPoliciesForJob, getFlowDefinition, type QcChecklistRow, type RiskPolicyRow } from "../repositories/flow-engine.js";
+import { getQcFlowProfile } from "../repositories/qc-flow-profiles.js";
 import { getBrandConstraints } from "../repositories/project-config.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { mergeGenerationPayloadQc } from "../domain/generation-payload-qc.js";
@@ -70,6 +71,8 @@ export interface QcResultPayload {
     severity: string;
     matched_terms: string[];
   }>;
+  /** Optional per-flow hints from `caf_core.qc_flow_profiles` (Admin → Inputs & processing). */
+  flow_profile_hints?: Record<string, unknown>;
 }
 
 export function buildQcResultPayload(args: {
@@ -222,7 +225,12 @@ export function resolveExpectedSlideCountFromQcThreshold(
   return coerceSlideCountValue(content.slide_count);
 }
 
-const CAROUSEL_SLIDE_ARRAY_PATHS_TRY = ["slides", "variations[*].slides", "variations.0.slides"] as const;
+const CAROUSEL_SLIDE_ARRAY_PATHS_TRY = [
+  "slides",
+  "slides_json.slides",
+  "variations[*].slides",
+  "variations.0.slides",
+] as const;
 
 /** Resolve the canonical slides[] (or first variation's slides) for carousel QC. */
 export function resolveCarouselSlidesArrayForQc(
@@ -528,7 +536,7 @@ export async function runQcForJob(
     recommendedRoute = "HUMAN_REVIEW";
   }
 
-  const qcPayload = buildQcResultPayload({
+  let qcPayload = buildQcResultPayload({
     qcPassed,
     qcScore,
     checkResults,
@@ -537,6 +545,18 @@ export async function runQcForJob(
     riskLevel,
     recommendedRoute,
   });
+
+  try {
+    const fp = await getQcFlowProfile(db, job.project_id, job.flow_type);
+    if (fp?.profile_json && typeof fp.profile_json === "object" && !Array.isArray(fp.profile_json)) {
+      qcPayload = {
+        ...qcPayload,
+        flow_profile_hints: fp.profile_json as Record<string, unknown>,
+      };
+    }
+  } catch {
+    /* qc_flow_profiles may not exist on unmigrated DBs */
+  }
 
   await mergeGenerationPayloadQc(db, job.id, qcPayload, {
     qc_status: qcPassed ? "PASS" : "FAIL",

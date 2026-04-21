@@ -75,7 +75,9 @@ function isCarouselInsightVariationsShape(v: unknown): boolean {
   if (!Array.isArray(v) || v.length === 0) return false;
   const first = v[0];
   if (!first || typeof first !== "object" || Array.isArray(first)) return false;
-  return Array.isArray((first as Record<string, unknown>).slides);
+  const slides = (first as Record<string, unknown>).slides;
+  if (!Array.isArray(slides)) return false;
+  return slidesArrayHasRenderableContent(slides);
 }
 
 /** LLM returned slide rows in `variations` instead of variation objects. */
@@ -244,21 +246,26 @@ export function normalizeLlmParsedForSchemaValidation(
       (x): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x))
     );
   } else {
-    const usableVariations = slidesArrayHasRenderableContent(out.variations);
-    const usableSlides = slidesArrayHasRenderableContent(out.slides);
+    // Prefer pickBestSlideDeck / slidesFromGeneratedOutput first so editorial `slides_json` and
+    // nested decks win over stale merged top-level `slides` when scores tie (see DECK_PRIORITY).
+    const rebuilt = slidesFromGeneratedOutput(out);
+    const rebuiltOk =
+      rebuilt.length > 0 && rebuilt.some((s) => slideHasRenderableContent(s as Record<string, unknown>));
 
-    if (usableVariations && !usableSlides) {
-      slides = (out.variations as unknown[]).filter(
-        (x): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x))
-      );
-    } else if (usableSlides && !usableVariations) {
-      slides = (out.slides as unknown[]).filter(
-        (x): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x))
-      );
+    if (rebuiltOk) {
+      slides = rebuilt;
     } else {
-      const rebuilt = slidesFromGeneratedOutput(out);
-      if (rebuilt.length > 0 && rebuilt.some((s) => slideHasRenderableContent(s as Record<string, unknown>))) {
-        slides = rebuilt;
+      const usableVariations = slidesArrayHasRenderableContent(out.variations);
+      const usableSlides = slidesArrayHasRenderableContent(out.slides);
+
+      if (usableVariations && !usableSlides) {
+        slides = (out.variations as unknown[]).filter(
+          (x): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x))
+        );
+      } else if (usableSlides && !usableVariations) {
+        slides = (out.slides as unknown[]).filter(
+          (x): x is Record<string, unknown> => Boolean(x && typeof x === "object" && !Array.isArray(x))
+        );
       }
     }
   }

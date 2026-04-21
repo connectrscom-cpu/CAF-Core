@@ -251,3 +251,35 @@ export async function listApiCallAuditsForSignalPack(
   );
   return rows as never[];
 }
+
+/** Inputs pipeline, signal-pack ingest, and related audit rows for the Processing tab. */
+export async function listApiCallAuditsForInputsPipeline(
+  db: Pool,
+  projectId: string,
+  limit = 80
+): Promise<
+  Array<{
+    id: string;
+    step: string;
+    provider: string;
+    model: string | null;
+    ok: boolean;
+    error_message: string | null;
+    created_at: string;
+    request_json: unknown;
+    response_json: unknown;
+  }>
+> {
+  const { rows } = await db.query(
+    `SELECT id::text, step, provider, model, ok, error_message, created_at::text, request_json, response_json
+     FROM caf_core.api_call_audit
+     WHERE project_id = $1 AND (
+       step LIKE 'inputs%' OR
+       step IN ('signal_pack_xlsx_ingest', 'signal_pack_json_ingest')
+     )
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [projectId, limit]
+  );
+  return rows as never[];
+}

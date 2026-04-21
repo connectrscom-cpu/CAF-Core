@@ -82,6 +82,22 @@ function stripStandaloneEmojiLines(s: string): string {
   return out.join("\n").trim();
 }
 
+/**
+ * Remove social-style #hashtags from slide copy. Hashtags belong in captions, not slide bodies (editorial).
+ * Requires a letter after # so bare numbers like "#1" in "Top #1 tip" are left alone unless #Letter…
+ */
+export function stripHashtagsFromSlideCopy(s: string): string {
+  let t = String(s ?? "");
+  if (!t.trim()) return "";
+  t = t.replace(/(?:^|\s)#[\p{L}][\p{L}\p{N}_]*/gu, (m) => (m.startsWith(" ") ? " " : ""));
+  t = t.replace(/[ \t]{2,}/g, " ");
+  t = t
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .join("\n");
+  return t.trim();
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
   const headline = HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
   let body = BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
@@ -89,10 +105,9 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     const fromBullets = bulletsToBody(o);
     if (fromBullets) body = fromBullets;
   }
-  return {
-    headline: stripStandaloneEmojiLines(String(headline ?? "").trim()),
-    body: stripStandaloneEmojiLines(String(body ?? "").trim()),
-  };
+  const h = stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim()));
+  const b = stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim()));
+  return { headline: h, body: b };
 }
 
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
@@ -310,6 +325,7 @@ function slideDeckTextScore(slides: Record<string, unknown>[]): number {
 
 type CarouselDeckId =
   | "slides"
+  | "slides_json"
   | "slide_deck"
   | "variation"
   | "variations"
@@ -323,7 +339,9 @@ type CarouselDeckId =
 
 /** Lower = preferred when total text is within `TIE_BAND_CHARS` (canonical LLM path vs parallel fields). */
 const DECK_PRIORITY: Record<CarouselDeckId, number> = {
-  slides: 0,
+  // PARTIAL_REWRITE often puts reviewer copy under `slides_json` while merge leaves stale `slides[]`.
+  slides_json: 0,
+  slides: 1,
   slide_deck: 0,
   variation: 0,
   structure_slides: 0,
@@ -344,6 +362,11 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   const out: TaggedSlideDeck[] = [];
   const fromSlides = usableSlideArray(gen.slides);
   if (fromSlides) out.push({ id: "slides", slides: fromSlides });
+  const slidesJson = gen.slides_json;
+  if (slidesJson && typeof slidesJson === "object" && !Array.isArray(slidesJson)) {
+    const fromSlidesJson = usableSlideArray((slidesJson as Record<string, unknown>).slides);
+    if (fromSlidesJson) out.push({ id: "slides_json", slides: fromSlidesJson });
+  }
   const fromSlideDeck = slidesFromSlideDeckField(gen.slide_deck);
   if (fromSlideDeck.length > 0) out.push({ id: "slide_deck", slides: fromSlideDeck });
   const fromVariation = slidesFromVariationField(gen.variation);
@@ -378,8 +401,8 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
 }
 
 /**
- * Prefer much richer copy; when totals are close, prefer `slides` > `variations` > `carousel` > `items`
- * so planner `items` or a slightly longer `carousel[]` does not beat the main `slides[]`.
+ * Prefer much richer copy; when totals are within `TIE_BAND_CHARS`, prefer lower `DECK_PRIORITY`
+ * (e.g. `slides_json` over stale merged `slides` after PARTIAL_REWRITE).
  */
 function pickBestSlideDeck(tagged: TaggedSlideDeck[]): Record<string, unknown>[] {
   let best = tagged[0]!;
@@ -494,6 +517,12 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
     const rows = slidesFromVariationContentField(out.variation_content);
     if (rows.length === 0 || !rows.some((s) => slideHasRenderableContent(s))) {
       delete out.variation_content;
+    }
+  }
+  if (out.slides_json && typeof out.slides_json === "object" && !Array.isArray(out.slides_json)) {
+    const slides = (out.slides_json as Record<string, unknown>).slides;
+    if (Array.isArray(slides) && !slides.some(rowHasRenderableCopy)) {
+      delete out.slides_json;
     }
   }
 

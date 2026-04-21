@@ -60,7 +60,7 @@ export default function GlobalLearningPage() {
       const [sumRes, rulesRes, obsRes] = await Promise.all([
         fetch(`/api/learning?project=${encodeURIComponent(globalSlug)}&section=summary`),
         fetch(`/api/learning?project=${encodeURIComponent(globalSlug)}`),
-        fetch(`/api/learning?project=${encodeURIComponent(globalSlug)}&section=observations&limit=50`),
+        fetch(`/api/learning?project=${encodeURIComponent(globalSlug)}&section=observations&limit=200`),
       ]);
       if (sumRes.ok) setSummary((await sumRes.json()) as LearningSummary);
       if (rulesRes.ok) {
@@ -268,19 +268,38 @@ export default function GlobalLearningPage() {
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>
-        <h3 style={{ marginBottom: 10 }}>Recent global observations</h3>
+        <h3 style={{ marginBottom: 10 }}>Recent global observations ({observations.length})</h3>
+        <p style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+          Up to 200 rows from <code>caf_core.learning_observations</code> for <code>caf-global</code>. Use per-project
+          Learning for filters and full JSON.
+        </p>
         {observations.length === 0 ? (
           <p style={{ color: "var(--muted)" }}>No observations yet.</p>
         ) : (
-          <ul style={{ fontSize: 12, maxHeight: 220, overflow: "auto", paddingLeft: 18, margin: 0 }}>
-            {observations.slice(0, 20).map((o) => (
-              <li key={String(o.observation_id ?? o.id)}>
-                <span style={{ fontFamily: "monospace", fontSize: 11 }}>{String(o.observation_type)}</span>{" "}
-                <span style={{ color: "var(--fg-secondary)" }}>— {String(o.source_type)}</span>{" "}
-                <span style={{ color: "var(--muted)" }}>({String(o.observed_at ?? "").slice(0, 16)})</span>
-              </li>
-            ))}
-          </ul>
+          <div style={{ maxHeight: 400, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+            <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+              <thead style={{ position: "sticky", top: 0, background: "var(--card)", zIndex: 1 }}>
+                <tr>
+                  <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>When</th>
+                  <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>Type</th>
+                  <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>Source</th>
+                </tr>
+              </thead>
+              <tbody>
+                {observations.map((o, i) => (
+                  <tr key={String(o.observation_id ?? `gobs-${i}`)}>
+                    <td style={{ padding: 6, borderBottom: "1px solid var(--border)", color: "var(--muted)", whiteSpace: "nowrap" }}>
+                      {String(o.observed_at ?? "").slice(0, 19).replace("T", " ")}
+                    </td>
+                    <td style={{ padding: 6, borderBottom: "1px solid var(--border)", fontFamily: "monospace", fontSize: 11 }}>
+                      {String(o.observation_type)}
+                    </td>
+                    <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>{String(o.source_type)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

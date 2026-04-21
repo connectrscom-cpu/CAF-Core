@@ -129,7 +129,8 @@ export function normalizeSceneBundleScenes(
   ];
 }
 
-function splitScriptIntoSceneNarrationLines(script: string, sceneCount: number): string[] {
+/** Exported for tests — maps spoken script to scenes without splitting mid-sentence when possible. */
+export function splitScriptIntoSceneNarrationLines(script: string, sceneCount: number): string[] {
   const s = String(script ?? "").trim();
   const n = Math.max(1, Math.floor(Number(sceneCount) || 1));
   if (!s) return Array.from({ length: n }, () => "");
@@ -138,6 +139,19 @@ function splitScriptIntoSceneNarrationLines(script: string, sceneCount: number):
     .split(/(?<=[.!?])\s+/g)
     .map((x) => x.trim())
     .filter(Boolean);
+
+  if (sentences.length >= n) {
+    const out: string[] = [];
+    let idx = 0;
+    for (let i = 0; i < n; i++) {
+      const remaining = n - i;
+      const remainingSentences = sentences.length - idx;
+      const take = Math.ceil(remainingSentences / remaining);
+      out.push(sentences.slice(idx, idx + take).join(" ").trim());
+      idx += take;
+    }
+    return out;
+  }
 
   const tokens = (sentences.length ? sentences.join(" ") : s)
     .split(/\s+/g)

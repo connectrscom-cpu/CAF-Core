@@ -24,7 +24,12 @@ export async function GET(req: NextRequest) {
 
   if (section === "observations") {
     const limit = req.nextUrl.searchParams.get("limit");
-    const data = await getLearningObservations(projectSlug, limit ? parseInt(limit, 10) : undefined);
+    const sourceType = req.nextUrl.searchParams.get("source_type") ?? undefined;
+    const data = await getLearningObservations(
+      projectSlug,
+      limit ? parseInt(limit, 10) : undefined,
+      sourceType
+    );
     if (!data) return NextResponse.json({ error: "Failed to fetch observations" }, { status: 502 });
     return NextResponse.json(data);
   }

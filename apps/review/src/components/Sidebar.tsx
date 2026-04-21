@@ -10,6 +10,7 @@ const NAV_ITEMS = [
     items: [
       { href: "/", label: "Review Console", icon: ReviewIcon },
       { href: "/runs", label: "Run Logs", icon: RunsIcon },
+      { href: "/pipeline", label: "Pipeline inputs", icon: PipelineIcon },
       { href: "/publish", label: "Publish", icon: PublishIcon },
       { href: "/playground", label: "Template Playground", icon: TemplateIcon },
     ],
@@ -85,7 +86,9 @@ export function Sidebar() {
                     pathname.startsWith("/content/")
                   : item.href === "/runs"
                     ? pathname.startsWith("/runs") || pathname.startsWith("/r/")
-                    : pathname.startsWith(item.href);
+                    : item.href === "/pipeline"
+                      ? pathname.startsWith("/pipeline")
+                      : pathname.startsWith(item.href);
               return (
                 <Link
                   key={item.href}
@@ -109,6 +112,18 @@ function ReviewIcon() {
     <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 11l3 3L22 4" />
       <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+    </svg>
+  );
+}
+
+function PipelineIcon() {
+  return (
+    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19V5" />
+      <path d="M4 19h16" />
+      <rect x="8" y="9" width="3" height="7" rx="0.5" />
+      <rect x="13" y="7" width="3" height="9" rx="0.5" />
+      <path d="M8 5v3M16 5v1" />
     </svg>
   );
 }

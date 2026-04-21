@@ -958,10 +958,13 @@ export async function getLearningContextPreview(projectSlug: string, flowType?: 
   );
 }
 
-export async function getLearningObservations(projectSlug: string, limit?: number) {
-  const qs = limit ? `?limit=${limit}` : "";
+export async function getLearningObservations(projectSlug: string, limit?: number, sourceType?: string) {
+  const qs = new URLSearchParams();
+  if (limit != null) qs.set("limit", String(limit));
+  if (sourceType) qs.set("source_type", sourceType);
+  const q = qs.toString();
   return coreGet<{ ok: boolean; observations: Record<string, unknown>[] }>(
-    `/v1/learning/${encodeURIComponent(projectSlug)}/observations${qs}`
+    `/v1/learning/${encodeURIComponent(projectSlug)}/observations${q ? `?${q}` : ""}`
   );
 }
 
@@ -1073,6 +1076,125 @@ export async function getRunDetail(
 ): Promise<{ ok: boolean; run: RunListRow } | null> {
   return coreGet<{ ok: boolean; run: RunListRow }>(
     `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}`
+  );
+}
+
+// ── Pipeline: scraped inputs (evidence) + signal packs (ideas) ───────────
+
+export async function uploadInputsEvidenceWorkbook(formData: FormData) {
+  const headers: Record<string, string> = {};
+  if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
+  const res = await fetch(`${CAF_CORE_URL}/v1/inputs-evidence/upload`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Inputs evidence upload failed (${res.status}): ${text.slice(0, 600)}`);
+  }
+  return JSON.parse(text) as {
+    ok: boolean;
+    inputs_evidence_import_id: string;
+    total_rows: number;
+    sheets: unknown[];
+    workbook_sha256: string;
+  };
+}
+
+export async function listInputsEvidenceImports(
+  projectSlug: string,
+  opts?: { limit?: number; offset?: number }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  const q = qs.toString();
+  return coreGetRequired<{
+    ok: boolean;
+    imports: Array<{
+      id: string;
+      upload_filename: string | null;
+      workbook_sha256: string | null;
+      sheet_stats_json: Record<string, unknown>;
+      notes: string | null;
+      created_at: string;
+      stored_row_count: string;
+    }>;
+    count: number;
+  }>(`/v1/inputs-evidence/${encodeURIComponent(projectSlug)}${q ? `?${q}` : ""}`);
+}
+
+export async function getInputsEvidenceImportDetail(projectSlug: string, importId: string) {
+  return coreGetRequired<{
+    ok: boolean;
+    import: {
+      id: string;
+      upload_filename: string | null;
+      workbook_sha256: string | null;
+      sheet_stats_json: Record<string, unknown>;
+      notes: string | null;
+      created_at: string;
+      stored_row_count: string;
+    };
+    rows_by_sheet: Array<{ sheet_name: string; cnt: string }>;
+  }>(`/v1/inputs-evidence/${encodeURIComponent(projectSlug)}/${encodeURIComponent(importId)}`);
+}
+
+export async function listInputsEvidenceRowsPage(
+  projectSlug: string,
+  importId: string,
+  opts?: { sheet?: string; limit?: number; offset?: number }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.sheet) qs.set("sheet", opts.sheet);
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  const q = qs.toString();
+  return coreGetRequired<{
+    ok: boolean;
+    import_id: string;
+    rows: Array<{
+      id: string;
+      sheet_name: string;
+      row_index: number;
+      evidence_kind: string;
+      dedupe_key: string | null;
+      payload_json: Record<string, unknown>;
+    }>;
+  }>(
+    `/v1/inputs-evidence/${encodeURIComponent(projectSlug)}/${encodeURIComponent(importId)}/rows${q ? `?${q}` : ""}`
+  );
+}
+
+export type SignalPackListRow = {
+  id: string;
+  run_id: string;
+  project_id: string;
+  source_window: string | null;
+  upload_filename: string | null;
+  notes: string | null;
+  created_at: string;
+  overall_candidates_json: unknown[];
+  derived_globals_json: Record<string, unknown>;
+};
+
+export async function listSignalPacksForProject(
+  projectSlug: string,
+  opts?: { limit?: number; offset?: number }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.limit != null) qs.set("limit", String(opts.limit));
+  if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  const q = qs.toString();
+  return coreGetRequired<{ ok: boolean; signal_packs: SignalPackListRow[]; count: number }>(
+    `/v1/signal-packs/${encodeURIComponent(projectSlug)}${q ? `?${q}` : ""}`
+  );
+}
+
+export async function getSignalPackForProject(projectSlug: string, packId: string) {
+  return coreGetRequired<{ ok: boolean; signal_pack: SignalPackListRow & Record<string, unknown> }>(
+    `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}`
   );
 }
 

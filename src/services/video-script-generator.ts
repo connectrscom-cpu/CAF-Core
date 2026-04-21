@@ -28,6 +28,7 @@ import {
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
+import { VIDEO_CAPTION_SYSTEM_ADDENDUM } from "./video-prompt-generator.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 
 /** Reduces script ↔ scene mismatches (product demos, multi-beat layouts). */
@@ -35,6 +36,92 @@ export const VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM = `Scene–script alignment (
 - If you emit **scenes**, **shots**, **visual_direction**, or per-beat visuals, each beat must **show what the VO says at that beat** — no contradictory b-roll or a different story than the spoken line.
 - **Through-line:** The hook’s promise must match the middle and close (same product angle, same narrative spine); do not drift to unrelated topics mid-script.
 - Map beats in order: scene 1 supports the opening claim; later scenes prove or deepen it with concretes (feature, demo, payoff).`;
+
+/**
+ * Tightens the video-script JSON contract so review pipelines do not see empty captions/hashtags when
+ * prompts alone drift (see VIDEO_CAPTION_SYSTEM_ADDENDUM in video-prompt-generator.ts).
+ */
+export const VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM = `Video script JSON (mandatory fields):
+- Include a non-empty string field \`caption\`: the on-platform post caption (not the full VO verbatim). Write hook + payoff + CTA for the feed; ground in the signal pack and script beats.
+- Include \`hashtags\` as a non-empty array of strings (or a string that lists tags) when the schema allows; follow the hashtag rules in VIDEO_CAPTION_SYSTEM_ADDENDUM.`;
+
+function pickCaptionFromVideoScriptJson(o: Record<string, unknown>): string {
+  for (const k of ["caption", "post_caption"] as const) {
+    const v = o[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  const pub = o.publication;
+  if (pub && typeof pub === "object" && !Array.isArray(pub)) {
+    const p = pub as Record<string, unknown>;
+    for (const k of ["caption", "post_caption"] as const) {
+      const v = p[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  const nested = o.content;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const v = (nested as Record<string, unknown>).caption;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
+function hasNonEmptyHashtags(o: Record<string, unknown>): boolean {
+  const h = o.hashtags;
+  if (Array.isArray(h)) return h.some((t) => String(t ?? "").trim().length > 0);
+  if (typeof h === "string") return h.trim().length > 0;
+  return false;
+}
+
+function deriveFallbackCaption(o: Record<string, unknown>): string {
+  const hook = String(o.hook ?? o.hook_line ?? "").trim();
+  const script = extractSpokenScriptText(o, 1);
+  const firstChunk = script.split(/(?<=[.!?])\s+/).filter(Boolean)[0]?.trim() ?? script.slice(0, 360).trim();
+  const parts = [hook, firstChunk && firstChunk !== hook ? firstChunk : ""].filter(Boolean);
+  let cap = parts.join("\n\n").trim();
+  if (!cap) cap = script.slice(0, 900).trim();
+  return cap.slice(0, 2200);
+}
+
+function deriveFallbackHashtags(o: Record<string, unknown>): string[] {
+  const blob = `${String(o.hook ?? o.hook_line ?? "")} ${extractSpokenScriptText(o, 1)}`.toLowerCase();
+  const words = blob
+    .replace(/[^a-z0-9\s#]/g, " ")
+    .split(/\s+/)
+    .map((w) => w.replace(/^#/, ""))
+    .filter((w) => w.length >= 5);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const w of words) {
+    const tag = `#${w.slice(0, 48)}`;
+    if (seen.has(tag)) continue;
+    seen.add(tag);
+    out.push(tag);
+    if (out.length >= 6) break;
+  }
+  const pad = ["#recipe", "#cooking", "#food"];
+  for (const p of pad) {
+    if (out.length >= 3) break;
+    if (!seen.has(p)) {
+      seen.add(p);
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Ensures `caption` and `hashtags` are present for downstream review/publish when the LLM omitted them.
+ */
+export function ensureVideoScriptPublicationMetadata(parsed: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...parsed };
+  let cap = pickCaptionFromVideoScriptJson(out);
+  if (!cap) cap = deriveFallbackCaption(out);
+  const trimmed = cap.trim();
+  if (trimmed) out.caption = trimmed;
+  if (!hasNonEmptyHashtags(out)) out.hashtags = deriveFallbackHashtags(out);
+  return out;
+}
 
 async function pickVideoScriptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
@@ -258,13 +345,14 @@ export async function ensureVideoScriptInPayload(
       openAiMaxTokens(tplEarly?.max_tokens_default ?? 2500),
       (job.generation_payload.signal_pack_id as string) ?? null,
       {
-        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${alignEarly}`,
+        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${alignEarly}`,
         retryUserPromptBase: `You are revising an existing video script JSON. Meet the word count while preserving structure and other fields.\n\nDraft JSON:\n${JSON.stringify(gen).slice(0, 14000)}`,
         stepPrefix: `llm_video_script_prep_${job.flow_type}`,
       }
     );
     if (enforcedEarly.error) return { ok: false, error: enforcedEarly.error };
-    const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, enforcedEarly.parsed, {
+    const withMetaEarly = ensureVideoScriptPublicationMetadata(enforcedEarly.parsed);
+    const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, withMetaEarly, {
       maxHashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
     });
     await db.query(
@@ -321,7 +409,7 @@ export async function ensureVideoScriptInPayload(
       apiKey,
       {
         model: config.OPENAI_MODEL,
-        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${sceneAlign}`.trim(),
+        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}`.trim(),
         user_prompt: user,
         max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2500),
       },
@@ -361,13 +449,13 @@ export async function ensureVideoScriptInPayload(
     openAiMaxTokens(tpl.max_tokens_default ?? 2500),
     (job.generation_payload.signal_pack_id as string) ?? null,
     {
-      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}${sceneAlign}`,
+      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}`,
       retryUserPromptBase: userPrompt,
       stepPrefix: `llm_video_script_prep_${job.flow_type}`,
     }
   );
   if (enforced.error) return { ok: false, error: enforced.error };
-  merged = enforced.parsed;
+  merged = ensureVideoScriptPublicationMetadata(enforced.parsed);
 
   const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
     maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),

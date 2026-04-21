@@ -19,6 +19,7 @@ import {
   getRunById,
   resetRunForReplan,
   setRunContextSnapshot,
+  setRunPlanSummary,
   setRunPromptVersionsSnapshot,
   updateRunStatus,
   type RunRow,
@@ -127,6 +128,20 @@ export async function startRun(
       run_id: run.run_id,
       candidates,
     });
+
+    try {
+      await setRunPlanSummary(db, runUuid, {
+        trace_id: plan.trace_id,
+        suppressed: plan.suppressed,
+        suppression_reasons: plan.suppression_reasons,
+        selected_count: plan.selected.length,
+        dropped_count: plan.dropped_candidates.length,
+        planned_candidate_ids: plan.selected.map((j) => j.candidate_id),
+        meta: plan.meta,
+      });
+    } catch {
+      /* plan_summary_json column may be missing on older DBs */
+    }
 
     if (plan.selected.length === 0) {
       await updateRunStatus(db, runUuid, "COMPLETED", {

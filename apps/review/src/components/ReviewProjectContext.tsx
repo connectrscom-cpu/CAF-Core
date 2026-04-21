@@ -45,6 +45,7 @@ function shouldOfferRestore(pathname: string): boolean {
   if (pathname === "/") return true;
   if (pathname === "/publish" || pathname.startsWith("/publish/")) return true;
   if (pathname === "/approved" || pathname.startsWith("/approved/")) return true;
+  if (pathname === "/pipeline" || pathname.startsWith("/pipeline/")) return true;
   return (
     pathname.startsWith("/t/") ||
     pathname.startsWith("/content/") ||

@@ -38,6 +38,14 @@
       background: var(--cream);
       box-shadow: 0 28px 70px rgba(0,0,0,0.42);
       border: 2px solid rgba(96,108,56,0.2);
+      overflow: hidden;
+    }
+    .cover-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px;
+      max-width: 100%;
     }
     .title-text {
       font-family: 'Libre Baskerville', serif;
@@ -45,40 +53,75 @@
       font-weight: 700;
       color: var(--olive-dark);
       line-height: 1.18;
+      margin: 0;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
-    .subtitle-text {
+    /* Body / deck copy: clearly subordinate to the display title (not a second headline). */
+    .cover-body {
       font-family: 'Source Sans 3', sans-serif;
-      font-size: clamp(30px, 3vw, 38px);
-      color: var(--olive);
-      margin-top: 20px;
+      font-size: clamp(26px, 2.65vw, 34px);
+      font-weight: 400;
+      color: var(--muted-ink);
+      margin: 0;
+      line-height: 1.5;
+      max-width: 720px;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .cover-subtitle {
       font-weight: 600;
+      color: var(--olive);
+      font-size: clamp(28px, 2.85vw, 36px);
     }
     .body-title {
       font-family: 'Libre Baskerville', serif;
       font-size: clamp(44px, 4.6vw, 58px);
       color: var(--olive-dark);
-      margin-bottom: 24px;
+      margin: 0 0 28px 0;
       line-height: 1.15;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .body-text {
       font-family: 'Source Sans 3', sans-serif;
-      font-size: clamp(32px, 3.2vw, 40px);
-      line-height: 1.45;
+      font-size: clamp(30px, 3vw, 38px);
+      line-height: 1.52;
       color: var(--muted-ink);
       max-width: 760px;
+      margin: 0;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      white-space: pre-wrap;
+    }
+    .cta-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
+      max-width: 100%;
     }
     .cta-text {
       font-family: 'Libre Baskerville', serif;
-      font-size: clamp(52px, 5.4vw, 68px);
+      font-size: clamp(56px, 5.8vw, 74px);
       font-weight: 700;
       color: var(--olive-dark);
+      margin: 0;
+      line-height: 1.14;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      word-break: break-word;
     }
     .cta-handle {
       font-family: 'Source Sans 3', sans-serif;
-      font-size: clamp(32px, 3.3vw, 40px);
+      font-size: clamp(34px, 3.5vw, 44px);
       color: var(--gold);
-      margin-top: 14px;
+      margin: 0;
       font-weight: 600;
+      overflow-wrap: anywhere;
     }
     .ribbon {
       font-size: 12px; letter-spacing: 0.35em; text-transform: uppercase;
@@ -93,8 +136,14 @@
       <span class="olive-ring r1"></span><span class="olive-ring r2"></span>
       <div class="card">
         <div class="ribbon">Mediterranean table</div>
-        <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
-        {{#if cover_subtitle}}<span class="subtitle-text">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle-text">{{cover_slide.body}}</span>{{/if}}{{/if}}
+        <div class="cover-stack">
+          <h1 class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</h1>
+          {{#if cover_subtitle}}
+          <p class="cover-body cover-subtitle">{{cover_subtitle}}</p>
+          {{else}}
+          {{#if cover_slide.body}}<p class="cover-body">{{cover_slide.body}}</p>{{/if}}
+          {{/if}}
+        </div>
       </div>
     </div>
   </div>
@@ -104,7 +153,7 @@
     <div class="slide-inner">
       <span class="olive-ring r1"></span>
       <div class="card">
-        <span class="body-title">{{headline}}</span>
+        <h2 class="body-title">{{headline}}</h2>
         <p class="body-text">{{body}}</p>
       </div>
     </div>
@@ -116,8 +165,10 @@
       <span class="olive-ring r2"></span>
       <div class="card">
         <div class="ribbon">Taste more</div>
-        <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
-        {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+        <div class="cta-stack">
+          <p class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</p>
+          {{#if cta_handle}}<p class="cta-handle">{{cta_handle}}</p>{{else}}{{#if cta_slide.handle}}<p class="cta-handle">{{cta_slide.handle}}</p>{{/if}}{{/if}}
+        </div>
       </div>
     </div>
   </div>

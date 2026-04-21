@@ -189,4 +189,48 @@ describe("normalizeLlmParsedForSchemaValidation (carousel)", () => {
     expect(v.caption).toBe("Cap from schema");
     expect(v.hashtags).toEqual(["#mealprep", "#plantbased"]);
   });
+
+  it("prefers slides_json over stale top-level slides when both present (PARTIAL_REWRITE merge)", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      variation_name: "v1",
+      caption: "Caption",
+      slides: [
+        { headline: "Stale title", body: "1".repeat(40) },
+        { headline: "Stale two", body: "2".repeat(40) },
+      ],
+      slides_json: {
+        slides: [
+          { headline: "Editorial title", body: "3".repeat(40) },
+          { headline: "Editorial two", body: "4".repeat(40) },
+        ],
+      },
+    });
+    const v = out.variations![0] as Record<string, unknown>;
+    const slides = v.slides as Record<string, unknown>[];
+    expect(slides.length).toBe(2);
+    expect(slides[0]?.headline).toBe("Editorial title");
+    expect((slides[0]?.body as string).startsWith("3")).toBe(true);
+  });
+
+  it("wraps slides_json.slides when PARTIAL_REWRITE omits top-level slides and variations (QC shape)", () => {
+    const out = normalizeLlmParsedForSchemaValidation("Flow_Carousel_Copy", {
+      variation_name: "v1",
+      caption: "Post caption with #tags",
+      slides_json: {
+        slides: [
+          { headline: "Cover", body: "Cover body copy here." },
+          { headline: "Slide 2", body: "More body." },
+        ],
+        cover_slide: { headline: "Cover", body: "Cover body copy here." },
+      },
+    });
+    expect(Array.isArray(out.variations)).toBe(true);
+    const v = out.variations![0] as Record<string, unknown>;
+    expect((v.slides as unknown[]).length).toBe(2);
+    expect(v.caption).toBe("Post caption with #tags");
+    expect(v.inputs_used).toMatchObject({
+      reference_post_ids: [],
+      themes_used: [],
+    });
+  });
 });

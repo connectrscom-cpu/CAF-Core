@@ -48,6 +48,7 @@ import {
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
 import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
 import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
+import { adminInputsProcessingBody } from "./admin-inputs-processing-body.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
@@ -266,6 +267,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   const projectLinks = [
     { href: `/admin${pq}`, label: "Overview", key: "overview" },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
+    { href: `/admin/inputs-processing${pq}`, label: "Inputs & processing", key: "inputs-processing" },
     { href: `/admin/scene-lab${pq}`, label: "Scene lab", key: "scene-lab" },
     { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
@@ -3224,6 +3226,18 @@ loadPackView();
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
       .type("text/html")
       .send(page("Signal pack", "runs", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  app.get("/admin/inputs-processing", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? "";
+    const body = adminInputsProcessingBody(currentSlug);
+    reply
+      .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+      .type("text/html")
+      .send(page("Inputs & processing", "inputs-processing", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   app.get("/admin/scene-lab", async (request, reply) => {

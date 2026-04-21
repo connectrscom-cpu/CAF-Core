@@ -22,6 +22,7 @@ export interface RunRow {
   completed_at: string | null;
   created_at: string;
   updated_at: string;
+  plan_summary_json?: Record<string, unknown> | null;
 }
 
 export async function createRun(
@@ -107,6 +108,18 @@ export async function setRunContextSnapshot(
   await db.query(
     `UPDATE caf_core.runs SET context_snapshot_json = $1::jsonb, updated_at = now() WHERE id = $2`,
     [JSON.stringify(snapshot), runUuid]
+  );
+}
+
+/** Compact planner outcome after `decideGenerationPlan` (migration 029). */
+export async function setRunPlanSummary(
+  db: Pool,
+  runUuid: string,
+  summary: Record<string, unknown>
+): Promise<void> {
+  await db.query(
+    `UPDATE caf_core.runs SET plan_summary_json = $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(summary), runUuid]
   );
 }
 
