@@ -11,9 +11,15 @@ export function adminInputsProcessingBody(currentSlug: string): string {
       <button type="button" class="btn-ghost btn-sm" id="tab-processing" style="border-radius:8px 8px 0 0">Processing</button>
     </div>
     <div id="panel-inputs" style="padding:12px 16px 16px">
-      <p class="runs-ops-hint">Imports come from <span class="mono">POST /v1/inputs-evidence/upload</span> or Review → Pipeline. Pick a row to see sheet-level stats (posts, subreddits, handles, registry links).</p>
+      <p class="runs-ops-hint">Upload an INPUTS workbook below (same as <span class="mono">POST /v1/inputs-evidence/upload</span>), or from Review → Pipeline. Then pick a row for sheet-level stats (posts, subreddits, handles, registry links).</p>
       <div id="imports-toolbar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <label class="btn btn-sm" style="position:relative;overflow:hidden;cursor:pointer;margin:0;display:inline-flex;align-items:center">
+          Upload .xlsx
+          <input type="file" id="inputs-xlsx-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0" title="INPUTS — Sources for SNS workbook" />
+        </label>
         <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
+        <span id="upload-busy" style="display:none;font-size:12px;color:var(--muted)">Uploading…</span>
+        <span id="upload-msg" style="font-size:12px;color:var(--muted);max-width:420px"></span>
         <span id="imports-hint" style="font-size:12px;color:var(--muted)"></span>
       </div>
       <div id="imports-root" class="empty">Loading…</div>
@@ -159,6 +165,35 @@ async function loadAudit(){
   }catch(e){root.textContent=String(e);}
 }
 document.getElementById('btn-reload-imports')?.addEventListener('click',loadImports);
+document.getElementById('inputs-xlsx-file')?.addEventListener('change',async function(ev){
+  var input=ev.target;
+  var file=input&&input.files&&input.files[0];
+  if(input)input.value='';
+  if(!file)return;
+  if(!SLUG){alert('Select a project in the sidebar first.');return;}
+  var busy=document.getElementById('upload-busy');
+  var msg=document.getElementById('upload-msg');
+  if(busy)busy.style.display='inline';
+  if(msg){msg.textContent='';msg.style.color='';}
+  try{
+    var fd=new FormData();
+    fd.append('file',file);
+    fd.append('project_slug',SLUG);
+    var r=await cafFetch('/v1/inputs-evidence/upload',{method:'POST',body:fd});
+    var raw=await r.text();
+    var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(msg){
+      msg.style.color='var(--green)';
+      msg.textContent='Imported '+String(d.total_rows||0)+' rows · import '+String(d.inputs_evidence_import_id||'').slice(0,8)+'…';
+    }
+    await loadImports();
+  }catch(e){
+    if(msg){msg.style.color='var(--red)';msg.textContent=String(e.message||e);}
+  }finally{
+    if(busy)busy.style.display='none';
+  }
+});
 document.getElementById('btn-reload-audit')?.addEventListener('click',loadAudit);
 document.getElementById('btn-build-pack')?.addEventListener('click',async function(){
   var msg=document.getElementById('build-msg');
