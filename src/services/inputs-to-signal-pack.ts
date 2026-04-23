@@ -19,6 +19,7 @@ import {
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
 import { computeInputHealth, flagSparseEvidenceRows, persistImportHealth } from "./input-health.js";
 import { buildSelectionSnapshotForImport, persistSelectionSnapshot } from "./inputs-selection.js";
+import { mergePreLlmConfig, rankImportRowsForLlm } from "./inputs-pre-llm-rank.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
@@ -135,19 +136,33 @@ export async function buildSignalPackFromEvidenceImport(
   await persistImportHealth(db, project.id, importId, health);
   await flagSparseEvidenceRows(db, project.id, importId);
 
-  let snap: Record<string, unknown> | null =
-    impRow.selection_snapshot_json && typeof impRow.selection_snapshot_json === "object"
-      ? (impRow.selection_snapshot_json as Record<string, unknown>)
-      : null;
-  const snapIds = snap?.selected_row_ids;
-  if (!snap || !Array.isArray(snapIds) || snapIds.length === 0) {
-    const built = await buildSelectionSnapshotForImport(db, project.id, importId);
-    await persistSelectionSnapshot(db, project.id, importId, built);
-    snap = built as unknown as Record<string, unknown>;
+  const preLlmCfg = mergePreLlmConfig(criteria);
+  let selectedIds: string[] = [];
+  /** Snapshot persisted on the import (cap-based v1 or pre_llm_v1). */
+  let selectionSnapshot: Record<string, unknown> | null = null;
+
+  if (preLlmCfg.enabled) {
+    const ranked = await rankImportRowsForLlm(db, project.id, importId, criteria, maxRate);
+    await persistSelectionSnapshot(db, project.id, importId, ranked.snapshot);
+    selectionSnapshot = ranked.snapshot as unknown as Record<string, unknown>;
+    selectedIds = ranked.selected_row_ids.map((x) => String(x)).slice(0, maxRate);
+  } else {
+    let snap: Record<string, unknown> | null =
+      impRow.selection_snapshot_json && typeof impRow.selection_snapshot_json === "object"
+        ? (impRow.selection_snapshot_json as Record<string, unknown>)
+        : null;
+    const snapIds = snap?.selected_row_ids;
+    if (!snap || !Array.isArray(snapIds) || snapIds.length === 0) {
+      const built = await buildSelectionSnapshotForImport(db, project.id, importId);
+      await persistSelectionSnapshot(db, project.id, importId, built);
+      snap = built as unknown as Record<string, unknown>;
+    }
+    selectionSnapshot = snap;
+    selectedIds = (Array.isArray(snap!.selected_row_ids) ? snap!.selected_row_ids : [])
+      .map((x) => String(x))
+      .slice(0, maxRate);
   }
-  const selectedIds = (Array.isArray(snap!.selected_row_ids) ? snap!.selected_row_ids : [])
-    .map((x) => String(x))
-    .slice(0, maxRate);
+
   let rows =
     selectedIds.length > 0
       ? await listEvidenceRowsByIds(db, project.id, importId, selectedIds)
@@ -311,7 +326,7 @@ ${JSON.stringify(synthInput, null, 0)}`;
     body_json: {
       pipeline: "inputs_to_signal_pack_v1",
       input_health: health,
-      selection: snap,
+      selection: selectionSnapshot ?? {},
       stats,
       overall_candidates_count: normalized.length,
     },

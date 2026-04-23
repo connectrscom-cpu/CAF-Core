@@ -48,7 +48,8 @@ import {
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
 import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
 import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
-import { adminInputsProcessingBody } from "./admin-inputs-processing-body.js";
+import { adminInputsBody } from "./admin-inputs-body.js";
+import { adminProcessingBody } from "./admin-processing-body.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
@@ -267,7 +268,8 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   const projectLinks = [
     { href: `/admin${pq}`, label: "Overview", key: "overview" },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
-    { href: `/admin/inputs-processing${pq}`, label: "Inputs & processing", key: "inputs-processing" },
+    { href: `/admin/inputs${pq}`, label: "Inputs", key: "inputs" },
+    { href: `/admin/processing${pq}`, label: "Processing", key: "processing" },
     { href: `/admin/scene-lab${pq}`, label: "Scene lab", key: "scene-lab" },
     { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
@@ -3229,15 +3231,39 @@ loadPackView();
   });
 
   app.get("/admin/inputs-processing", async (request, reply) => {
+    const raw = request.query as Record<string, string | string[] | undefined>;
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(raw)) {
+      if (v === undefined) continue;
+      if (Array.isArray(v)) v.forEach((x) => qs.append(k, String(x)));
+      else qs.set(k, String(v));
+    }
+    const tail = qs.toString();
+    return reply.redirect(`/admin/processing${tail ? `?${tail}` : ""}`, 302);
+  });
+
+  app.get("/admin/inputs", async (request, reply) => {
     const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
-    const body = adminInputsProcessingBody(currentSlug);
+    const body = adminInputsBody(currentSlug);
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
       .type("text/html")
-      .send(page("Inputs & processing", "inputs-processing", body, projects, currentSlug, adminHeadTokenScript(config)));
+      .send(page("Inputs", "inputs", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  app.get("/admin/processing", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? "";
+    const body = adminProcessingBody(currentSlug);
+    reply
+      .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+      .type("text/html")
+      .send(page("Processing", "processing", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   app.get("/admin/scene-lab", async (request, reply) => {

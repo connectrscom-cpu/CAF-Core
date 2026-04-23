@@ -352,3 +352,42 @@ export async function getImportEvidenceStats(
     distinct_registry_links: parseInt(reg?.n ?? "0", 10) || 0,
   };
 }
+
+/** Load rows for deterministic pre-LLM scoring (bounded for very large imports). */
+export async function listEvidenceRowsForPreLlmScoring(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  limit: number
+): Promise<Array<{ id: string; evidence_kind: string; payload_json: Record<string, unknown> }>> {
+  const lim = Math.min(Math.max(limit, 1), 20_000);
+  return q(
+    db,
+    `SELECT id::text, evidence_kind, payload_json
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2
+      ORDER BY evidence_kind ASC, sheet_name ASC, row_index ASC, id ASC
+      LIMIT $3`,
+    [importId, projectId, lim]
+  );
+}
+
+/** All rows of one evidence_kind for an import (pre-LLM preview; bounded). */
+export async function listEvidenceRowsByImportAndKind(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  evidenceKind: string,
+  maxRows: number
+): Promise<Array<{ id: string; evidence_kind: string; payload_json: Record<string, unknown> }>> {
+  const lim = Math.min(Math.max(maxRows, 1), 15_000);
+  return q(
+    db,
+    `SELECT id::text, evidence_kind, payload_json
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2 AND evidence_kind = $3
+      ORDER BY id ASC
+      LIMIT $4`,
+    [importId, projectId, evidenceKind, lim]
+  );
+}

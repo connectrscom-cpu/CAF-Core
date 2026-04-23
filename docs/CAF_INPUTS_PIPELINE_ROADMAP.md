@@ -6,7 +6,7 @@ This backlog tracks **CAF Core** (APIs + Admin). The **Review** app stays focuse
 
 | Surface | Role |
 |--------|------|
-| **CAF Core Admin** (`/admin/inputs-processing`) | Profile, caps, models, import stats, health recompute, build signal pack, audit tail, RTP summary, QC flow profiles, insights packs (full operator tooling). |
+| **CAF Core Admin** (`/admin/inputs`, `/admin/processing`; legacy `/admin/inputs-processing` → redirect) | Upload/history; pre-LLM + broad + top-performer (image, carousel, video) insights; profile, build signal pack, audit, RTP, QC flow profiles, insights packs. |
 | **Review → Pipeline** | Light touch only: upload evidence XLSX into Core, browse imports, **inspect** signal-pack ideas for editorial context next to review work. No processing controls here. |
 
 ## Done (Core + Admin)
@@ -17,7 +17,16 @@ This backlog tracks **CAF Core** (APIs + Admin). The **Review** app stays focuse
 - **Evidence upload API** — `POST /v1/inputs-evidence/upload`, list/detail/rows.
 - **Processing API** — `GET/PUT …/profile`, import stats (`recompute_health`), `POST …/build-signal-pack`, audit, insights packs list, RTP summary, QC flow profiles CRUD.
 - **Rating + synthesis** — OpenAI batch scoring → persisted rating columns → synthesis to `overall_candidates_json` (planner contract aligned with XLSX packs).
-- **Admin UI** — **Inputs & processing**: Inputs tab (imports, stats, build pack) and Processing tab (profile, audit).
+- **Admin UI** — **Inputs** vs **Processing** (sidebar); Processing segments: Evidence, broad insights per platform, top performers (image / carousel / video), profile & audit.
+- **030–032** — `inputs_evidence_row_insights`: tiers `broad_llm`, `top_performer_deep`, `top_performer_video`, `top_performer_carousel` (migrations **030**, **031**, **032**).
+
+### Stage 2 (evidence insights) — complete
+
+Row-level LLM passes are in place: text broad, single-image vision, multi-slide carousel vision, sampled-frame + transcript video. Admin can run each tier and list results by platform (`evidence_kind` on insights API).
+
+### Stage 3 (before signal pack) — ideas
+
+**Ideas** are a structured list (many items) stored on or beside the signal pack. When a run creates **candidates**, the system mixes **project configuration constraints** with **selected ideas**: either an LLM chooses which ideas fit the run context, or a **human** picks them in admin/review. Implementation TBD (schema + UI + prompt contract).
 
 ## Done (Review, minimal)
 

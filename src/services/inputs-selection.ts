@@ -10,6 +10,7 @@ export interface SelectionCaps {
   reddit_post: number;
   tiktok_video: number;
   instagram_post: number;
+  facebook_post: number;
   scraped_page: number;
   html_summary: number;
   source_registry: number;
@@ -20,6 +21,7 @@ export const DEFAULT_SELECTION_CAPS: SelectionCaps = {
   reddit_post: 120,
   tiktok_video: 80,
   instagram_post: 80,
+  facebook_post: 80,
   scraped_page: 200,
   html_summary: 200,
   source_registry: 150,
@@ -32,11 +34,26 @@ function capFor(kind: string, caps: SelectionCaps): number {
   return caps.default_kind;
 }
 
+/** Optional block when `rule_version` is `pre_llm_v1` (deterministic rank before OpenAI). */
+export interface SelectionSnapshotPreLlmMeta {
+  enabled: boolean;
+  min_primary_text_chars: number;
+  total_rows_scored: number;
+  rows_after_filter: number;
+  rows_sent_to_llm: number;
+  dropped_below_min_score: number;
+  dropped_sparse_text: number;
+  by_kind_sent: Record<string, number>;
+  /** Effective per-kind profiles (weights + min_score) after merge with defaults. */
+  profiles_used: Record<string, { min_score: number; weights: Record<string, number> }>;
+}
+
 export interface SelectionSnapshot {
   rule_version: string;
   caps: SelectionCaps;
   selected_row_ids: string[];
   stats: { total_in_import: number; selected: number; by_kind: Record<string, number> };
+  pre_llm?: SelectionSnapshotPreLlmMeta;
 }
 
 /**
@@ -58,9 +75,10 @@ export async function buildSelectionSnapshotForImport(
           WHEN 'reddit_post' THEN 1
           WHEN 'tiktok_video' THEN 2
           WHEN 'instagram_post' THEN 3
-          WHEN 'scraped_page' THEN 4
-          WHEN 'html_summary' THEN 5
-          ELSE 6
+          WHEN 'facebook_post' THEN 4
+          WHEN 'scraped_page' THEN 5
+          WHEN 'html_summary' THEN 6
+          ELSE 7
         END,
         row_index ASC`,
     [importId, projectId]

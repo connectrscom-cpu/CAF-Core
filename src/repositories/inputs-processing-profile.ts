@@ -24,6 +24,34 @@ const DEFAULT_CRITERIA: Record<string, unknown> = {
   },
   notes:
     "LLM scores each row 0–1 on the components; overall_score is the weighted sum. Rows at or above min_llm_score_for_pack are eligible for the signal-pack synthesis pass.",
+  /**
+   * Pre-LLM gate (deterministic). Set pre_llm.enabled=true to rank/filter rows from payload stats
+   * before OpenAI rating. Tune per evidence_kind via pre_llm.kinds.<kind>.weights and .min_score.
+   */
+  pre_llm: {
+    enabled: false,
+    min_primary_text_chars: 12,
+  },
+  /** Labels for custom_label_1..3 in broad LLM prompts (Phase 2; optional). */
+  insight_column_labels: {
+    custom_label_1: "",
+    custom_label_2: "",
+    custom_label_3: "",
+  },
+  /** Top-performer deep tier: stricter pre-LLM cutoff + row cap (Phase 2; optional). */
+  top_performer: {
+    pre_llm_min_score: 0.35,
+    max_rows: 24,
+    max_carousel_rows: 10,
+  },
+  inputs_insights: {
+    broad_model: "gpt-4o-mini",
+    broad_batch_size: 6,
+    deep_image_model: "gpt-4o-mini",
+    deep_image_max: 24,
+    deep_carousel_model: "gpt-4o-mini",
+    deep_carousel_max: 10,
+  },
 };
 
 export async function getInputsProcessingProfile(db: Pool, projectId: string): Promise<InputsProcessingProfileRow | null> {

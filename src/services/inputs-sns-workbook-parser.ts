@@ -43,13 +43,18 @@ export function sheetNameToEvidenceKind(sheetName: string): string {
     tiktokaccounts: "source_registry",
     igaccounts: "source_registry",
     facebook: "source_registry",
+    // "INPUTS_Example.xlsx" naming (exported from current inputs pipeline)
+    fbaccounts: "source_registry",
     knowledge_pool: "reference_pool",
     scraped: "scraped_page",
+    scrapedtext: "scraped_page",
     html_findings_summary: "html_summary",
     reddit_raw_info: "reddit_post",
+    rdtpostdata: "reddit_post",
     tiktok_videos: "tiktok_video",
     instagrampostdata: "instagram_post",
     facebook_info: "facebook_post",
+    facebookpostdata: "facebook_post",
   };
   return map[k] ?? `sheet_${k}`;
 }
