@@ -190,6 +190,7 @@ const SLUG=${SLUG};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 let selectedImportId='';
+var selectedImportLabel='';
 var prellmKind='';
 var prellmKinds=[];
 var broadKind='';
@@ -285,6 +286,16 @@ async function loadImports(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var rows=d.imports||[];
+    if(selectedImportId){
+      selectedImportLabel='';
+      for(var si=0;si<rows.length;si++){
+        var imp=rows[si];
+        if(imp&&imp.id===selectedImportId){
+          selectedImportLabel=String(imp.upload_filename||'').trim();
+          break;
+        }
+      }
+    }
     if(rows.length===0){root.innerHTML='<div class="empty">No evidence imports for this project.</div>';hint.textContent='';wb.style.display='none';return;}
     var tb='<table class="sp-modal-table"><thead><tr><th>Created</th><th>File</th><th>Rows</th><th></th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
@@ -299,6 +310,11 @@ async function loadImports(){
     root.querySelectorAll('.sel-import').forEach(function(btn){
       btn.addEventListener('click',function(){
         selectedImportId=btn.getAttribute('data-id')||'';
+        try{
+          var tr=btn.closest('tr');
+          var tds=tr?tr.querySelectorAll('td'):null;
+          selectedImportLabel=(tds&&tds.length>=2)?String(tds[1].textContent||'').trim():'';
+        }catch(e){selectedImportLabel='';}
         setImportInUrl(selectedImportId);
         wb.style.display='block';
         loadImportStats();
@@ -1026,6 +1042,9 @@ async function loadBroadTable(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     meta.textContent=JSON.stringify({
+      project_slug:SLUG,
+      inputs_import_id:selectedImportId,
+      upload_filename:selectedImportLabel||null,
       evidence_kind:broadKind,
       counts_this_tab:d.counts,
       counts_whole_import:d.counts_import||d.counts
