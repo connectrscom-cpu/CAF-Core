@@ -23,6 +23,8 @@ export interface RunBroadInsightsOptions {
   evidence_kind?: string | null;
   max_rows?: number;
   rescan?: boolean;
+  /** If set, only include rows with pre_llm_score >= this value (in addition to passing profile min + text gate). */
+  min_pre_llm_score?: number;
   custom_label_1?: string | null;
   custom_label_2?: string | null;
   custom_label_3?: string | null;
@@ -267,6 +269,9 @@ export async function runBroadInsightsForImport(
   const model = broadModel(profile);
   const batchSize = broadBatchSize(criteria);
   const maxRows = Math.min(Math.max(opts.max_rows ?? 800, 1), 5000);
+  const minPre = typeof opts.min_pre_llm_score === "number" && Number.isFinite(opts.min_pre_llm_score)
+    ? Math.max(0, Math.min(1, opts.min_pre_llm_score))
+    : null;
   const kindFilter = opts.evidence_kind?.trim() || null;
 
   const existingIds = await listEvidenceRowInsightIdsByImportTier(db, importId, "broad_llm");
@@ -282,6 +287,7 @@ export async function runBroadInsightsForImport(
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
+    if (minPre != null && ev.pre_llm_score < minPre) continue;
     if (existing.has(r.id)) continue;
     candidates.push({ id: r.id, evidence_kind: r.evidence_kind, payload, pre_llm_score: ev.pre_llm_score });
     if (candidates.length >= maxRows) break;

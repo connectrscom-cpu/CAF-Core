@@ -80,6 +80,7 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-use-cutoff" type="checkbox" checked /> Use cutoff</label>
             <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
           </div>
           <div id="broad-prompt-panel" style="display:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg);margin-bottom:10px">
@@ -88,6 +89,7 @@ export function adminProcessingBody(currentSlug: string): string {
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                 <button type="button" class="btn-ghost btn-sm" id="btn-load-broad-prompt">Load current prompt</button>
                 <button type="button" class="btn-ghost btn-sm" id="btn-reset-broad-prompt">Reset overrides</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-save-broad-labels">Save labels</button>
               </div>
             </div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
@@ -572,6 +574,30 @@ document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',func
   loadBroadPromptIntoEditor();
 });
 
+document.getElementById('btn-save-broad-labels')?.addEventListener('click',async function(){
+  var m=document.getElementById('broad-prompt-msg');
+  if(!SLUG){if(m){m.textContent='Select a project.';m.style.color='var(--red)';}return;}
+  try{
+    if(m){m.textContent='Saving labels…';m.style.color='';}
+    var pc=await loadProfileForPrellm();
+    if(!pc||!pc.profile)throw new Error('Profile not loaded');
+    var criteria=JSON.parse(JSON.stringify(pc.criteria||{}));
+    if(!criteria.insight_column_labels||typeof criteria.insight_column_labels!=='object')criteria.insight_column_labels={};
+    criteria.insight_column_labels.custom_label_1=(document.getElementById('broad-label-1')?.value||'').trim();
+    criteria.insight_column_labels.custom_label_2=(document.getElementById('broad-label-2')?.value||'').trim();
+    criteria.insight_column_labels.custom_label_3=(document.getElementById('broad-label-3')?.value||'').trim();
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({criteria_json:criteria})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
+    profileCache={profile:d.profile,criteria:(d.profile&&d.profile.criteria_json)||criteria};
+    if(m){m.textContent='Saved labels to profile.';m.style.color='var(--muted)';}
+    broadPromptDirty=false;
+    loadBroadPromptIntoEditor();
+  }catch(e){
+    if(m){m.textContent=String(e.message||e);m.style.color='var(--red)';}
+  }
+});
+
 function markBroadPromptDirty(){
   broadPromptDirty=true;
   var m=document.getElementById('broad-prompt-msg');
@@ -708,11 +734,15 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
     var rescan=!!document.getElementById('broad-rescan')?.checked;
+    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var kind=broadKind||prellmKind||null;
+    var cutoff=(kind&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
     var o=readBroadOverrides();
     var body={
-      evidence_kind:broadKind||prellmKind||null,
+      evidence_kind:kind,
       max_rows:maxRows,
       rescan:rescan,
+      min_pre_llm_score:(useCutoff&&cutoff!=null&&Number.isFinite(cutoff))?cutoff:undefined,
       custom_label_1:o.custom_label_1,
       custom_label_2:o.custom_label_2,
       custom_label_3:o.custom_label_3,
