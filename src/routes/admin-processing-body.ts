@@ -137,6 +137,16 @@ var prellmTimer=null;
 var currentSeg='evidence';
 var prellmMinByKind={};
 var profileCache=null; // { profile, criteria }
+// Suggested defaults (mirror server-side defaults in inputs-pre-llm-rank.ts)
+var PRELLM_SUGGESTED={
+  reddit_post:{min_score:0.08,weights:{reddit_score:0.35,reddit_comments:0.25,reddit_upvote_ratio:0.2,text_signal:0.2}},
+  tiktok_video:{min_score:0.1,weights:{tt_plays:0.35,tt_likes:0.2,tt_comments:0.15,tt_author_followers:0.15,text_signal:0.15}},
+  instagram_post:{min_score:0.08,weights:{ig_likes:0.45,ig_comments:0.25,text_signal:0.3}},
+  facebook_post:{min_score:0.06,weights:{fb_likes:0.35,fb_comments:0.25,fb_shares:0.2,text_signal:0.2}},
+  scraped_page:{min_score:0.05,weights:{scraped_main:0.55,scraped_title:0.15,text_signal:0.3}},
+  source_registry:{min_score:0.02,weights:{registry_has_link:0.35,registry_topic:0.35,registry_followers:0.3}},
+  _default:{min_score:0,weights:{text_signal:1}}
+};
 
 function readImportFromUrl(){
   try{
@@ -428,7 +438,7 @@ function renderWeightsTable(weights){
   if(!wrap)return;
   var keys=Object.keys(weights||{}).sort();
   if(keys.length===0){
-    wrap.innerHTML='<div class="empty" style="padding:10px">No weights configured. Add a feature.</div>';
+    wrap.innerHTML='<div class="empty" style="padding:10px">No weights configured.</div>';
     return;
   }
   var h='<table class="sp-modal-table" style="margin:0"><thead><tr><th>Feature</th><th>Weight</th><th></th></tr></thead><tbody>';
@@ -449,19 +459,27 @@ async function renderPrellmFormulaEditor(){
   var hint=document.getElementById('prellm-formula-hint');
   var minEl=document.getElementById('prellm-profile-min');
   var minTextEl=document.getElementById('prellm-min-text');
+  var saveMsg=document.getElementById('prellm-save-msg');
   if(!minEl||!minTextEl)return;
   var pc=await loadProfileForPrellm();
   var criteria=(pc&&pc.criteria)||{};
   var pre=(criteria.pre_llm&&typeof criteria.pre_llm==='object')?criteria.pre_llm:{};
   var kinds=(pre.kinds&&typeof pre.kinds==='object')?pre.kinds:{};
   var prof=(kinds[prellmKind]&&typeof kinds[prellmKind]==='object')?kinds[prellmKind]:null;
+  var hasCustom=!!(prof&&prof.weights&&typeof prof.weights==='object'&&Object.keys(prof.weights||{}).length);
+  var suggested=PRELLM_SUGGESTED[prellmKind]||PRELLM_SUGGESTED._default;
   var weights=(prof&&prof.weights&&typeof prof.weights==='object')?prof.weights:{};
+  if(!hasCustom)weights=(suggested&&suggested.weights)||{};
   var minScore=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
-  if(minScore==null||!Number.isFinite(minScore))minScore=0;
+  if(minScore==null||!Number.isFinite(minScore))minScore=(suggested&&suggested.min_score)||0;
   minEl.value=String(Math.max(0,Math.min(1,minScore)));
   var mt=(typeof pre.min_primary_text_chars==='number')?pre.min_primary_text_chars:12;
   minTextEl.value=String(mt);
   if(hint)hint.textContent='Score = Σ(feature_i × weight_i) / Σ(weights). Features are normalized 0–1 in code. Platform: '+prellmKind+'.';
+  if(saveMsg){
+    saveMsg.textContent=hasCustom?'':'Suggested defaults loaded (not saved yet).';
+    saveMsg.style.color=hasCustom?'var(--muted)':'var(--muted)';
+  }
   renderWeightsTable(weights);
 }
 
