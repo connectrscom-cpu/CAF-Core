@@ -97,6 +97,7 @@ export function adminProcessingBody(currentSlug: string): string {
             <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
               You can edit the prompts and labels below. Use <span class="mono">{{ROWS_JSON}}</span> to control where the batch payload is inserted (otherwise it’s appended).
               Labels can also be referenced as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
+              <span style="display:block;margin-top:6px">If you loaded a prompt preview, don’t keep a hard-coded <span class="mono">Rows (JSON): …</span> snapshot in your override — it will go stale across batches. Prefer <span class="mono">{{ROWS_JSON}}</span> (or leave the default user prompt alone).</span>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
               <label style="font-size:12px;color:var(--muted)">custom_label_1 <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Angle / Theme" /></label>

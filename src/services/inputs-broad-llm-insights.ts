@@ -135,6 +135,18 @@ function substitutePromptVars(text: string, vars: Record<string, string>): strin
   return out;
 }
 
+/**
+ * User prompt overrides often include a snapshot `Rows (JSON): ...` from the UI preview.
+ * That snapshot becomes stale across batches/kinds; if we keep it, the model will echo
+ * the wrong `row_db_id`s and nothing will upsert. Strip any legacy rows block before injecting
+ * the current batch payload.
+ */
+function stripLegacyRowsJsonBlock(text: string): string {
+  const m = text.match(/(?:^|\n)\s*Rows \(JSON\):/);
+  if (!m || m.index == null) return text;
+  return text.slice(0, m.index).trimEnd();
+}
+
 function defaultBroadSystemPrompt(): string {
   return `You analyze social/scraper evidence for a marketing content pipeline.
 Return ONLY valid JSON with shape:
@@ -203,12 +215,11 @@ function buildBroadPrompts(params: {
   const system = substitutePromptVars(systemRaw, vars);
 
   const userRaw = (params.userOverride ?? "").trim() || defaultBroadUserPrompt(labels, params.rowsPayload);
-  const userSub = substitutePromptVars(userRaw, vars);
+  const userSub0 = substitutePromptVars(userRaw, vars);
+  const userSub = stripLegacyRowsJsonBlock(userSub0);
   const user = userSub.includes("{{ROWS_JSON}}")
     ? userSub
-    : userSub.includes("Rows (JSON):")
-      ? userSub
-      : `${userSub}\n\nRows (JSON):\n${rowsJson}`;
+    : `${userSub}\n\nRows (JSON):\n${rowsJson}`;
 
   return { labels, system, user };
 }
