@@ -329,7 +329,8 @@ export async function runBroadInsightsForImport(
   };
   let upserted = 0;
   let batches = 0;
-  const debugBatches: RunBroadInsightsResult["debug"] extends { batches: infer T } ? T : never = [];
+  type BroadDebug = NonNullable<RunBroadInsightsResult["debug"]>;
+  const debugBatches: BroadDebug["batches"] = [];
 
   const auditBase = {
     db,
