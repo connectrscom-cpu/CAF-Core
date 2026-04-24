@@ -13,6 +13,7 @@ import {
 import { getImportEvidenceStats, getInputsEvidenceImport } from "../repositories/inputs-evidence.js";
 import {
   countEvidenceRowInsightsByImportTier,
+  countEvidenceRowInsightsByImportTierAndKind,
   listEvidenceRowInsightsEnriched,
 } from "../repositories/inputs-evidence-insights.js";
 import {
@@ -193,18 +194,55 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       limit: query.data.limit,
       offset: query.data.offset,
     });
-    const broad = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "broad_llm");
-    const deep = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_deep");
-    const video = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_video");
-    const carousel = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_carousel");
+    const broadAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "broad_llm");
+    const deepAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_deep");
+    const videoAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_video");
+    const carouselAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_carousel");
+    const countsImport = {
+      broad_llm: broadAll,
+      top_performer_deep: deepAll,
+      top_performer_video: videoAll,
+      top_performer_carousel: carouselAll,
+    };
+    // When the client filters by evidence_kind, tier totals must match that filter (otherwise UI shows "6" for IG while the table is empty).
+    let counts = countsImport;
+    if (evidenceKind) {
+      counts = {
+        broad_llm: await countEvidenceRowInsightsByImportTierAndKind(
+          db,
+          project.id,
+          params.data.import_id,
+          "broad_llm",
+          evidenceKind
+        ),
+        top_performer_deep: await countEvidenceRowInsightsByImportTierAndKind(
+          db,
+          project.id,
+          params.data.import_id,
+          "top_performer_deep",
+          evidenceKind
+        ),
+        top_performer_video: await countEvidenceRowInsightsByImportTierAndKind(
+          db,
+          project.id,
+          params.data.import_id,
+          "top_performer_video",
+          evidenceKind
+        ),
+        top_performer_carousel: await countEvidenceRowInsightsByImportTierAndKind(
+          db,
+          project.id,
+          params.data.import_id,
+          "top_performer_carousel",
+          evidenceKind
+        ),
+      };
+    }
     return {
       ok: true,
-      counts: {
-        broad_llm: broad,
-        top_performer_deep: deep,
-        top_performer_video: video,
-        top_performer_carousel: carousel,
-      },
+      evidence_kind: evidenceKind,
+      counts,
+      counts_import: countsImport,
       insights: rows,
     };
   });

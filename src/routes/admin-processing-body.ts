@@ -917,9 +917,17 @@ async function loadBroadTable(){
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?'+q);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    meta.textContent=JSON.stringify({counts:d.counts,evidence_kind:broadKind},null,2);
+    meta.textContent=JSON.stringify({
+      evidence_kind:broadKind,
+      counts_this_tab:d.counts,
+      counts_whole_import:d.counts_import||d.counts
+    },null,2);
     var rows=d.insights||[];
-    if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for this platform yet. Run broad LLM above (this tab or all platforms).</div>';return;}
+    var nTab=(d.counts&&typeof d.counts.broad_llm==='number')?d.counts.broad_llm:0;
+    if(rows.length===0){
+      wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
+      return;
+    }
     var tb='<table class="sp-modal-table"><thead><tr><th>Kind</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];

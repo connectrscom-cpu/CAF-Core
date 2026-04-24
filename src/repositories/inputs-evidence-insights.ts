@@ -202,6 +202,33 @@ export async function countEvidenceRowInsightsByImportTier(
   return parseInt(row?.n ?? "0", 10) || 0;
 }
 
+/** Count insights for one analysis tier restricted to rows of a single evidence_kind (joins evidence rows). */
+export async function countEvidenceRowInsightsByImportTierAndKind(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  tier: EvidenceInsightTier,
+  evidenceKind: string
+): Promise<number> {
+  const kind = String(evidenceKind ?? "").trim();
+  if (!kind) return 0;
+  const row = await qOne<{ n: string }>(
+    db,
+    `SELECT COUNT(*)::text AS n
+       FROM caf_core.inputs_evidence_row_insights i
+       INNER JOIN caf_core.inputs_evidence_rows r
+         ON r.id = i.source_evidence_row_id
+        AND r.import_id = i.inputs_import_id
+        AND r.project_id = i.project_id
+      WHERE i.inputs_import_id = $1
+        AND i.project_id = $2
+        AND i.analysis_tier = $3
+        AND r.evidence_kind = $4`,
+    [importId, projectId, tier, kind]
+  );
+  return parseInt(row?.n ?? "0", 10) || 0;
+}
+
 const INSIGHT_SELECT_ENRICHED = `SELECT i.id::text, i.project_id::text, i.inputs_import_id::text, i.source_evidence_row_id::text, i.insights_id, i.analysis_tier,
        i.pre_llm_score::text, i.llm_model,
        i.why_it_worked, i.primary_emotion, i.secondary_emotion, i.hook_type,
