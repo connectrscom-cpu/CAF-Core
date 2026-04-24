@@ -77,6 +77,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) stored per evidence row. Filter by platform tab.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-broad-insights">Run broad LLM</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights-all">Run ALL platforms</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
@@ -754,6 +755,51 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     if(msg)msg.textContent='Broad done: upserted '+String(d.upserted||0)+' · batches '+String(d.batches||0)+' · total '+String(d.broad_insights_total||0)+'.';
   }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+});
+
+var broadAllRunning=false;
+document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',async function(){
+  var msg=document.getElementById('prellm-insight-msg');
+  if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
+  if(broadAllRunning){if(msg)msg.textContent='Already running ALL platforms…';return;}
+  if(!broadKinds||!broadKinds.length){if(msg)msg.textContent='No platforms found for this import.';return;}
+  broadAllRunning=true;
+  try{
+    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
+    var rescan=!!document.getElementById('broad-rescan')?.checked;
+    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var o=readBroadOverrides();
+
+    var total=0;
+    for(var i=0;i<broadKinds.length;i++){
+      var kind=broadKinds[i];
+      if(msg){msg.textContent='Running broad: '+kindLabel(kind,'insights')+' ('+(i+1)+'/'+broadKinds.length+')…';msg.style.color='';}
+      var cutoff=(useCutoff&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
+      var body={
+        evidence_kind:kind,
+        max_rows:maxRows,
+        rescan:rescan,
+        min_pre_llm_score:(useCutoff&&cutoff!=null&&Number.isFinite(cutoff))?cutoff:undefined,
+        custom_label_1:o.custom_label_1,
+        custom_label_2:o.custom_label_2,
+        custom_label_3:o.custom_label_3,
+        system_prompt:o.system_prompt,
+        user_prompt:o.user_prompt
+      };
+      var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      var d=await r.json().catch(function(){return {};});
+      if(!r.ok||!d.ok)throw new Error(kindLabel(kind,'insights')+': '+apiErr(d,'HTTP '+r.status));
+      total+=Number(d.upserted||0);
+    }
+    if(msg){msg.textContent='ALL platforms done. Total upserted '+String(total)+'.';}
+    // Refresh current view
+    loadBroadTable();
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }finally{
+    broadAllRunning=false;
+  }
 });
 
 document.getElementById('btn-run-deep-image-insights')?.addEventListener('click',async function(){
