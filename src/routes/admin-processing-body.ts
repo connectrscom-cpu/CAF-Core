@@ -514,6 +514,9 @@ function readBroadOverrides(){
   };
 }
 
+var broadPromptDirty=false;
+var broadPromptLoadedKind='';
+
 async function loadBroadPromptIntoEditor(){
   var m=document.getElementById('broad-prompt-msg');
   var msg=document.getElementById('prellm-insight-msg');
@@ -525,16 +528,21 @@ async function loadBroadPromptIntoEditor(){
     var qp='evidence_kind='+encodeURIComponent(k)+
       '&custom_label_1='+encodeURIComponent(o.custom_label_1||'')+
       '&custom_label_2='+encodeURIComponent(o.custom_label_2||'')+
-      '&custom_label_3='+encodeURIComponent(o.custom_label_3||'');
+      '&custom_label_3='+encodeURIComponent(o.custom_label_3||'')+
+      // Only pass prompt overrides when the user is actively editing.
+      (broadPromptDirty ? ('&system_prompt='+encodeURIComponent(o.system_prompt||'')+'&user_prompt='+encodeURIComponent(o.user_prompt||'')) : '');
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt?'+qp);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    // Fill labels only if empty (so user can override)
-    if(document.getElementById('broad-label-1')?.value==='' )document.getElementById('broad-label-1').value=d.labels&&d.labels.l1||'';
-    if(document.getElementById('broad-label-2')?.value==='' )document.getElementById('broad-label-2').value=d.labels&&d.labels.l2||'';
-    if(document.getElementById('broad-label-3')?.value==='' )document.getElementById('broad-label-3').value=d.labels&&d.labels.l3||'';
-    document.getElementById('broad-system-prompt').value=d.system_prompt||'';
-    document.getElementById('broad-user-prompt').value=d.user_prompt||'';
+    // Always show "what we're using" as the preview; if user edits, we stop auto-overwriting.
+    if(!broadPromptDirty){
+      document.getElementById('broad-label-1').value=d.labels&&d.labels.l1||'';
+      document.getElementById('broad-label-2').value=d.labels&&d.labels.l2||'';
+      document.getElementById('broad-label-3').value=d.labels&&d.labels.l3||'';
+      document.getElementById('broad-system-prompt').value=d.system_prompt||'';
+      document.getElementById('broad-user-prompt').value=d.user_prompt||'';
+      broadPromptLoadedKind=k;
+    }
     if(m){m.textContent='Loaded. Model '+d.model+' · batch '+d.batch_size+'.';m.style.color='var(--muted)';}
   }catch(e){
     if(m){m.textContent=String(e.message||e);m.style.color='var(--red)';}
@@ -545,6 +553,10 @@ document.getElementById('btn-toggle-broad-prompt')?.addEventListener('click',fun
   var panel=document.getElementById('broad-prompt-panel');
   if(!panel)return;
   panel.style.display=panel.style.display==='none'?'block':'none';
+  if(panel.style.display==='block'){
+    // Populate immediately with current prompts if not editing.
+    if(!broadPromptDirty)loadBroadPromptIntoEditor();
+  }
 });
 document.getElementById('btn-load-broad-prompt')?.addEventListener('click',loadBroadPromptIntoEditor);
 document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',function(){
@@ -553,9 +565,23 @@ document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',func
   document.getElementById('broad-label-3').value='';
   document.getElementById('broad-system-prompt').value='';
   document.getElementById('broad-user-prompt').value='';
+  broadPromptDirty=false;
+  broadPromptLoadedKind='';
   var m=document.getElementById('broad-prompt-msg');
   if(m){m.textContent='Overrides cleared (not saved).';m.style.color='var(--muted)';}
+  loadBroadPromptIntoEditor();
 });
+
+function markBroadPromptDirty(){
+  broadPromptDirty=true;
+  var m=document.getElementById('broad-prompt-msg');
+  if(m){m.textContent='Editing overrides (will apply on Run).';m.style.color='var(--muted)';}
+}
+document.getElementById('broad-label-1')?.addEventListener('input',markBroadPromptDirty);
+document.getElementById('broad-label-2')?.addEventListener('input',markBroadPromptDirty);
+document.getElementById('broad-label-3')?.addEventListener('input',markBroadPromptDirty);
+document.getElementById('broad-system-prompt')?.addEventListener('input',markBroadPromptDirty);
+document.getElementById('broad-user-prompt')?.addEventListener('input',markBroadPromptDirty);
 
 function renderWeightsTable(weights){
   var wrap=document.getElementById('prellm-weights-wrap');
@@ -780,6 +806,8 @@ async function initBroadPanel(){
       initBroadPanel();
     });
   });
+  // Keep prompt preview in sync with platform unless user is editing.
+  if(!broadPromptDirty)loadBroadPromptIntoEditor();
   loadBroadTable();
 }
 
