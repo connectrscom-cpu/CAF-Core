@@ -82,6 +82,7 @@ export function adminProcessingBody(currentSlug: string): string {
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-use-cutoff" type="checkbox" checked /> Use cutoff</label>
+            <span id="broad-eligible-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
             <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
           </div>
           <div id="broad-prompt-panel" style="display:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg);margin-bottom:10px">
@@ -536,6 +537,70 @@ function readBroadOverrides(){
 var broadPromptDirty=false;
 var broadPromptLoadedKind='';
 
+var broadEligTimer=null;
+var broadEligSeq=0;
+function scheduleBroadEligibilityEstimate(){
+  try{
+    if(broadEligTimer)clearTimeout(broadEligTimer);
+    broadEligTimer=setTimeout(loadBroadEligibilityEstimate,250);
+  }catch(e){}
+}
+
+async function loadBroadEligibilityEstimate(){
+  var el=document.getElementById('broad-eligible-msg');
+  if(!el)return;
+  if(!SLUG||!selectedImportId||!broadKind||!broadKinds||!broadKinds.length){el.textContent='';return;}
+  if(isSourceEvidenceKind(broadKind)){el.textContent='';return;}
+  var seq=++broadEligSeq;
+  el.textContent='Eligible evidence after cutoff: computing…';
+  el.style.color='';
+  try{
+    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
+    var rescan=!!document.getElementById('broad-rescan')?.checked;
+    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var o=readBroadOverrides();
+
+    async function dryRunForKind(kind){
+      var cutoff=(useCutoff&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
+      var body={
+        evidence_kind:kind,
+        max_rows:maxRows,
+        rescan:rescan,
+        min_pre_llm_score:(useCutoff&&cutoff!=null&&Number.isFinite(cutoff))?cutoff:undefined,
+        custom_label_1:o.custom_label_1,
+        custom_label_2:o.custom_label_2,
+        custom_label_3:o.custom_label_3,
+        system_prompt:o.system_prompt,
+        user_prompt:o.user_prompt,
+        dry_run:true
+      };
+      var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+      });
+      var d=await r.json().catch(function(){return {};});
+      if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+      return Number(d.rows_eligible_new||0);
+    }
+
+    var nTab=await dryRunForKind(broadKind);
+    if(seq!==broadEligSeq)return;
+
+    // Also compute "all platforms" total (usually 3–6 kinds), so user sees it before clicking.
+    var total=0;
+    for(var i=0;i<broadKinds.length;i++){
+      var k=broadKinds[i];
+      total+=await dryRunForKind(k);
+      if(seq!==broadEligSeq)return;
+    }
+    el.textContent='Eligible evidence after cutoff: this tab '+String(nTab)+' · all platforms '+String(total)+'.';
+  }catch(e){
+    if(seq!==broadEligSeq)return;
+    el.textContent='Eligible evidence after cutoff: '+String(e.message||e);
+    el.style.color='var(--red)';
+  }
+}
+
 async function loadBroadPromptIntoEditor(){
   var m=document.getElementById('broad-prompt-msg');
   var msg=document.getElementById('prellm-insight-msg');
@@ -781,11 +846,13 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     if(!r0.ok||!d0.ok)throw new Error(apiErr(d0,'HTTP '+r0.status));
     var nElig=Number(d0.rows_eligible_new||0);
     if(msg){msg.textContent='Running broad LLM (this platform tab) — will analyze '+String(nElig)+' evidence rows…';msg.style.color='';}
+    scheduleBroadEligibilityEstimate();
     if(nElig<=0){loadBroadTable();return;}
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     if(msg)msg.textContent='Broad ('+kindLabel(kind,'insights')+') done: upserted '+String(d.upserted||0)+' · batches '+String(d.batches||0)+' · total '+String(d.broad_insights_total||0)+'.';
+    scheduleBroadEligibilityEstimate();
   }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
 });
 
@@ -826,6 +893,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
       totalElig+=Number(dd.rows_eligible_new||0);
     }
     if(msg){msg.textContent='Running broad (all platforms) — will analyze '+String(totalElig)+' evidence rows total…';msg.style.color='';}
+    scheduleBroadEligibilityEstimate();
     if(totalElig<=0){loadBroadTable();return;}
 
     var total=0;
@@ -852,6 +920,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     if(msg){msg.textContent='All social platforms done. Total upserted '+String(total)+'.';}
     // Refresh current view
     loadBroadTable();
+    scheduleBroadEligibilityEstimate();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }finally{
@@ -942,6 +1011,7 @@ async function initBroadPanel(){
   // Keep prompt preview in sync with platform unless user is editing.
   if(!broadPromptDirty)loadBroadPromptIntoEditor();
   loadBroadTable();
+  scheduleBroadEligibilityEstimate();
 }
 
 async function loadBroadTable(){
@@ -1000,6 +1070,9 @@ async function loadBroadTable(){
   }catch(e){meta.textContent=String(e);}
 }
 document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadTable);
+document.getElementById('broad-max-rows')?.addEventListener('input',scheduleBroadEligibilityEstimate);
+document.getElementById('broad-rescan')?.addEventListener('change',scheduleBroadEligibilityEstimate);
+document.getElementById('broad-use-cutoff')?.addEventListener('change',scheduleBroadEligibilityEstimate);
 
 function renderInsightTable(rows,cols){
   if(!rows.length)return '<div class="empty" style="padding:12px">No rows.</div>';
