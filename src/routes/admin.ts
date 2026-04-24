@@ -841,6 +841,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         notes: p.notes,
         created_at: p.created_at,
         candidate_count: Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0,
+        ideas_count: Array.isArray(p.ideas_json) ? p.ideas_json.length : 0,
       })),
     };
   });
@@ -1083,6 +1084,12 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
     const api_audits = await listApiCallAuditsForRun(db, project.id, run.run_id, 150);
 
+    const candRaw = run.candidates_json as unknown;
+    const candidates_row_count = Array.isArray(candRaw) ? candRaw.length : 0;
+    const meta = (run.metadata_json ?? {}) as Record<string, unknown>;
+    const ideasRaw = signalPack?.ideas_json;
+    const signal_pack_ideas_count = Array.isArray(ideasRaw) ? ideasRaw.length : 0;
+
     return {
       ok: true,
       run: {
@@ -1092,18 +1099,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         total_jobs: run.total_jobs,
         jobs_completed: run.jobs_completed,
         prompt_versions_snapshot: run.prompt_versions_snapshot ?? {},
+        candidates_row_count,
+        candidates_provenance: meta.candidates_provenance ?? null,
       },
       notes: {
         stored_signal_pack:
-          "Rows below are exactly what is in Postgres (upload). Scene-router may add seeds only in memory at Start — see newest planning trace + api_audits step llm_scene_assembly_candidate_router.",
+          "Pack still holds research (`ideas_json`, `overall_candidates_json`). Planner input for Start is `runs.candidates_json` — materialize via POST /v1/runs/.../candidates before Start.",
         planner:
-          "Each planning trace 'candidates' list is signal-pack rows × enabled flow types (after router), with outcome planned/dropped/unknown.",
+          "Each planning trace 'candidates' list is runs.candidates_json rows × enabled flow types (after scene-router), with outcome planned/dropped/unknown.",
         jobs:
           "Per-job LLM prompts and renders: open Jobs, expand a task row → Content preview + API & LLM audit.",
         prompt_versions_snapshot:
           "run.prompt_versions_snapshot records which caf_core.prompt_versions row was selected per flow_type when jobs were planned (decision engine or scene lab). Join prompt_version_id for experiments / learning.",
       },
       signal_pack_overall_candidates: signalPack?.overall_candidates_json ?? [],
+      signal_pack_ideas_count,
       signal_pack_meta: signalPack
         ? {
             id: signalPack.id,
@@ -2554,9 +2564,9 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     <div class="runs-ops-title">Operations</div>
     <div class="runs-ops-row">
       <button type="button" class="btn" onclick="togglePanel('upload-panel')">Upload signal pack (.xlsx)</button>
-      <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="togglePanel('create-panel')">Create run (manual)</button>
+      <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="togglePanel('create-panel')">Create run (pick signal pack)</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
-      <p class="runs-ops-hint">Upload ingests <strong>Overall</strong> rows into the DB and creates a run in <strong>CREATED</strong> (no jobs yet — only <strong>Start</strong> writes <code>content_jobs</code>). Use <strong>Start</strong> to plan jobs: aggregate <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run (when System limits leave those empty), and <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> job per other flow type. Use <strong>Re-plan</strong> to wipe jobs and plan again. On the <strong>Jobs</strong> tab, filter by <strong>Run</strong> so you are not looking at a different run’s rows. <strong>Transparency:</strong> <strong>Pack</strong> = stored signal pack JSON; <strong>Candidates</strong> = Overall rows + planner rows (× flows) + run-level API audit; expand a row on <strong>Jobs</strong> for per-task LLM prompts and content preview.</p>
+      <p class="runs-ops-hint"><strong>Create run</strong> picks a <strong>signal pack</strong> (research + <code>ideas_json</code>). Before <strong>Start</strong>, open <strong>Runs → Candidates</strong> and materialize <code>runs.candidates_json</code> from pack ideas (all, LLM subset, manual <code>idea_id</code>s) or legacy <code>overall_candidates_json</code>. <strong>Start</strong> expands that JSON × flows and plans jobs. <strong>Upload .xlsx</strong> is optional legacy ingest. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps <code>candidates_json</code>). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
     <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:flex-start">
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -2626,12 +2636,12 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     </form>
   </div>
 
-  <div id="create-panel" class="panel card" style="display:none;max-width:520px">
-    <div class="card-h">Create Run Manually</div>
+  <div id="create-panel" class="panel card" style="display:none;max-width:560px">
+    <div class="card-h">Create run</div>
     <form id="create-form">
+      <div class="form-group"><label>Signal pack <span style="color:var(--red)">*</span></label><select name="signal_pack_id" id="create-signal-pack" required style="width:100%;max-width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"><option value="">Loading…</option></select><p class="runs-ops-hint" style="margin:8px 0 0">Built in <strong>Processing</strong>; shows created date and idea/overall counts.</p></div>
       <div class="form-group"><label>Run ID (optional, auto-generated if empty)</label><input type="text" name="run_id" placeholder="e.g. SNS_2026W14"></div>
       <div class="form-group"><label>Run name (optional)</label><input type="text" name="name" maxlength="200" placeholder="Friendly label for this run"></div>
-      <div class="form-group"><label>Signal Pack ID (optional)</label><input type="text" name="signal_pack_id" placeholder="UUID of an existing signal pack"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
       <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('create-panel')">Cancel</button><span id="create-msg" class="form-msg"></span></div>
     </form>
@@ -2657,7 +2667,32 @@ function togglePanel(id){
   if(!el)return;
   const panels=['upload-panel','create-panel'];
   panels.forEach(p=>{if(p!==id){const x=document.getElementById(p);if(x)x.style.display='none';}});
-  el.style.display=el.style.display==='none'?'block':'none';
+  const next=el.style.display==='none'?'block':'none';
+  el.style.display=next;
+  if(id==='create-panel'&&next==='block')loadSignalPackSelect();
+}
+
+async function loadSignalPackSelect(){
+  const sel=document.getElementById('create-signal-pack');
+  if(!sel||!SLUG)return;
+  sel.innerHTML='<option value="">Loading…</option>';
+  try{
+    const r=await cafFetch('/v1/signal-packs/'+encodeURIComponent(SLUG)+'?summary=1&limit=80');
+    const d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    const packs=d.signal_packs||[];
+    if(packs.length===0){sel.innerHTML='<option value="">No signal packs — use Processing → Build signal pack</option>';return;}
+    var h='<option value="">Select a signal pack…</option>';
+    for(var i=0;i<packs.length;i++){
+      var p=packs[i];
+      var when=fmtDate(p.created_at);
+      var fn=esc(p.upload_filename||p.run_id||p.id);
+      h+='<option value="'+esc(p.id)+'">'+when+' · '+fn+' (ideas '+(p.ideas_count||0)+', overall '+(p.overall_candidates_count||0)+')</option>';
+    }
+    sel.innerHTML=h;
+  }catch(e){
+    sel.innerHTML='<option value="">Could not load signal packs</option>';
+  }
 }
 
 function showToast(msg,ok){
@@ -3206,6 +3241,7 @@ async function loadPackView(){
     }
     const p=d.signal_pack;
     const oc=Array.isArray(p.overall_candidates_json)?p.overall_candidates_json:[];
+    const idz=Array.isArray(p.ideas_json)?p.ideas_json:[];
     let tb='<table class="sp-modal-table"><thead><tr><th>#</th><th>Overall row</th></tr></thead><tbody>';
     const n=Math.min(oc.length,150);
     for(let i=0;i<n;i++){
@@ -3214,9 +3250,19 @@ async function loadPackView(){
     }
     tb+='</tbody></table>';
     if(oc.length>150)tb+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+oc.length+' rows.</p>';
+    let ib='<table class="sp-modal-table"><thead><tr><th>#</th><th>Idea (insights-backed)</th></tr></thead><tbody>';
+    const ni=Math.min(idz.length,150);
+    for(let i=0;i<ni;i++){
+      const row=idz[i];
+      ib+='<tr><td>'+(i+1)+'</td><td><pre style="margin:0;font-size:10px;white-space:pre-wrap;word-break:break-word">'+esc(pretty(row))+'</pre></td></tr>';
+    }
+    ib+='</tbody></table>';
+    if(idz.length>150)ib+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+idz.length+' ideas.</p>';
     const rest={...p};
     delete rest.overall_candidates_json;
-    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="card-h">overall_candidates_json ('+oc.length+' rows)</div><div style="padding:12px 16px 16px">'+tb+'</div></div>'+
+    delete rest.ideas_json;
+    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="card-h">ideas_json ('+idz.length+' — materialize into <span class="mono">runs.candidates_json</span> before Start)</div><div style="padding:12px 16px 16px">'+(idz.length?ib:'<p class="runs-ops-hint" style="margin:0">Empty — use legacy <strong>overall_candidates_json</strong> when building <span class="mono">candidates_json</span> on the run, or rebuild the pack in Processing.</p>')+'</div></div>'+
+      '<div class="card" style="margin-bottom:16px"><div class="card-h">overall_candidates_json ('+oc.length+' rows)</div><div style="padding:12px 16px 16px">'+tb+'</div></div>'+
       '<div class="card"><div class="card-h">Other pack fields (IG / TikTok / Reddit / HTML summaries, globals, …)</div><div style="padding:12px 16px 16px"><pre style="font-size:10px;line-height:1.45;max-height:480px;overflow:auto;margin:0">'+esc(pretty(rest))+'</pre></div></div>';
   }catch(e){
     root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||String(e))+'</div>';
@@ -3586,9 +3632,18 @@ document.getElementById('slab-copy-btn').addEventListener('click',async function
     const runIdQ = (query.run_id ?? "").trim();
 
     const body = `
-<div class="ph"><div><h2>Run transparency</h2><span class="ph-sub">Stored Overall rows · planner candidates (× flows) · run-level API audit</span></div></div>
+<div class="ph"><div><h2>Run transparency</h2><span class="ph-sub"><span class="mono">candidates_json</span> on the run · pack research · planner traces · API audit</span></div></div>
 <div class="content">
-<p class="runs-ops-hint">Open from <strong>Runs</strong> → <strong>Candidates</strong>, or use <span class="mono">?project=SLUG&amp;run_id=RUN_ID</span>. Per-task prompts: <a href="/admin/jobs?project=${encodeURIComponent(currentSlug)}${runIdQ ? `&run_id=${encodeURIComponent(runIdQ)}` : ""}">Jobs</a> → expand a row.</p>
+<p class="runs-ops-hint">Open from <strong>Runs</strong> → <strong>Candidates</strong>, or use <span class="mono">?project=SLUG&amp;run_id=RUN_ID</span>. Materialize <span class="mono">candidates_json</span> from pack <strong>ideas</strong> (buttons below) before <strong>Start</strong> on Runs. Per-task prompts: <a href="/admin/jobs?project=${encodeURIComponent(currentSlug)}${runIdQ ? `&run_id=${encodeURIComponent(runIdQ)}` : ""}">Jobs</a> → expand a row.</p>
+<div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize <span class="mono">runs.candidates_json</span></div><div style="padding:12px 16px 16px">
+<p class="runs-ops-hint" style="margin-top:0">Required before Start. Uses the run's signal pack <span class="mono">ideas_json</span> (or legacy overall).</p>
+<p style="margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+<button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack ideas</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-llm">LLM pick subset</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-overall">From pack overall (legacy)</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick by idea_id…</button></p>
+<p id="rc-mat-msg" style="font-size:12px;margin:0;min-height:1.2em;color:var(--muted)"></p>
+</div></div>
 <div id="rc-root"><div class="empty">Loading…</div></div>
 </div>
 <script>
@@ -3617,11 +3672,16 @@ async function loadRunTransparency(){
       return;
     }
     const notes=d.notes||{};
+    const candN=typeof d.run.candidates_row_count==='number'?d.run.candidates_row_count:0;
+    const ideasN=typeof d.signal_pack_ideas_count==='number'?d.signal_pack_ideas_count:0;
+    const prov=d.run.candidates_provenance&&typeof d.run.candidates_provenance==='object'?pretty(d.run.candidates_provenance):'—';
     const snap=d.run.prompt_versions_snapshot;
     const snapKeys=snap&&typeof snap==='object'&&!Array.isArray(snap)?Object.keys(snap):[];
     const hasSnap=snapKeys.length>0;
     let h='<div class="card" style="margin-bottom:14px"><div class="card-h">Run</div><div style="padding:12px 16px 16px;font-size:13px">'+
       '<p style="margin:0 0 8px"><span class="mono">'+esc(d.run.run_id)+'</span> · '+esc(d.run.status)+' · jobs '+esc(String(d.run.jobs_completed))+'/'+esc(String(d.run.total_jobs))+'</p>'+
+      '<p style="margin:0 0 8px;font-size:12px;color:var(--muted)"><strong>candidates_json</strong>: '+esc(String(candN))+' planner row(s) on run · pack <strong>ideas_json</strong>: '+esc(String(ideasN))+' idea(s)</p>'+
+      '<details style="margin:8px 0 0"><summary style="cursor:pointer;font-size:12px">candidates_provenance</summary><pre style="margin:8px 0 0;font-size:10px;max-height:160px;overflow:auto">'+esc(prov)+'</pre></details>'+
       '<ul style="margin:0;padding-left:18px;color:var(--muted);font-size:12px;line-height:1.5">'+
       '<li>'+esc(notes.stored_signal_pack||'')+'</li><li>'+esc(notes.planner||'')+'</li><li>'+esc(notes.jobs||'')+'</li><li>'+esc(notes.prompt_versions_snapshot||'')+'</li></ul>';
     if(hasSnap){
@@ -3699,6 +3759,28 @@ async function loadRunTransparency(){
     root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||String(e))+'</div>';
   }
 }
+async function postRunCandidates(body){
+  var msg=document.getElementById('rc-mat-msg');
+  if(!SLUG||!RUN_ID){if(msg)msg.textContent='Missing project or run.';return;}
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Working…';}
+  try{
+    var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(RUN_ID)+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error((d&&d.message)||(d&&d.error)||'HTTP '+r.status);
+    if(msg){msg.style.color='var(--muted)';msg.textContent='Saved '+d.planner_rows+' planner row(s).';}
+    await loadRunTransparency();
+  }catch(e){if(msg){msg.style.color='var(--red)';msg.textContent=String((e&&e.message)||e);}}
+}
+document.getElementById('rc-btn-all')?.addEventListener('click',function(){postRunCandidates({mode:'from_pack_ideas_all'});});
+document.getElementById('rc-btn-llm')?.addEventListener('click',function(){postRunCandidates({mode:'llm'});});
+document.getElementById('rc-btn-overall')?.addEventListener('click',function(){postRunCandidates({mode:'from_pack_overall'});});
+document.getElementById('rc-btn-manual')?.addEventListener('click',function(){
+  var raw=prompt('Comma-separated idea_id values (from pack ideas_json):','');
+  if(!raw)return;
+  var ids=raw.split(',').map(function(s){return s.trim();}).filter(Boolean);
+  if(!ids.length)return;
+  postRunCandidates({mode:'manual',idea_ids:ids});
+});
 loadRunTransparency();
 </script>`;
     reply

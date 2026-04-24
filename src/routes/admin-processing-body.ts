@@ -68,13 +68,15 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="deep-video-table" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-profile" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint">Models, caps, <span class="mono">criteria_json</span> (pre-LLM, top_performer, insight column labels). OpenAI audit tail for inputs pipeline steps.</p>
+          <p class="runs-ops-hint">Models, caps, <span class="mono">criteria_json</span> (pre-LLM, top_performer, insight column labels). <strong>Ideas from insights</strong> passes up to <span class="mono">max_insights_for_ideas_llm</span> insight rows into the LLM (including at least <span class="mono">min_top_performer_insights_for_ideas_llm</span> top-performer–enriched rows when available), then writes up to <span class="mono">max_ideas_in_signal_pack</span> rows into <span class="mono">ideas_json</span>. Uses the same <span class="mono">synth_model</span> as overall synthesis.</p>
           <form id="profile-form" class="config-form" style="max-width:720px">
             <div class="form-group"><label>Rating model</label><input type="text" name="rating_model" id="pf-rating-model" placeholder="gpt-4o-mini"></div>
             <div class="form-group"><label>Synthesis model</label><input type="text" name="synth_model" id="pf-synth-model" placeholder="gpt-4o-mini"></div>
             <div class="form-group"><label>Max rows to rate (per import)</label><input type="number" name="max_rows_for_rating" id="pf-max-rows" min="1" max="5000"></div>
             <div class="form-group"><label>Rows per OpenAI batch</label><input type="number" name="max_rows_per_llm_batch" id="pf-batch" min="1" max="80"></div>
-            <div class="form-group"><label>Max ideas in signal pack</label><input type="number" name="max_ideas_in_signal_pack" id="pf-ideas" min="1" max="200"></div>
+            <div class="form-group"><label>Max ideas in signal pack (<span class="mono">ideas_json</span> output count)</label><input type="number" name="max_ideas_in_signal_pack" id="pf-ideas" min="1" max="200"></div>
+            <div class="form-group"><label>Max insights for idea-creation LLM</label><input type="number" name="max_insights_for_ideas_llm" id="pf-insights-ctx" min="20" max="2000" title="Cap on evidence-level insight rows sent as context to the ideas LLM"></div>
+            <div class="form-group"><label>Min top-performer rows in that context</label><input type="number" name="min_top_performer_insights_for_ideas_llm" id="pf-min-tp-ctx" min="0" max="500" title="Target minimum context rows that include top-performer analysis; must be ≤ max insights"></div>
             <div class="form-group"><label>Min LLM score to include before synthesis pool</label><input type="number" name="min_llm_score_for_pack" id="pf-min" step="0.01" min="0" max="1"></div>
             <div class="form-group"><label>criteria_json (JSON)</label><textarea name="criteria_json" id="pf-criteria" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea></div>
             <div class="form-group"><label>Extra instructions (prepended to rating prompt)</label><textarea name="extra_instructions" id="pf-extra" rows="4" style="width:100%"></textarea></div>
@@ -201,6 +203,8 @@ async function loadProfile(){
     document.getElementById('pf-max-rows').value=p.max_rows_for_rating;
     document.getElementById('pf-batch').value=p.max_rows_per_llm_batch;
     document.getElementById('pf-ideas').value=p.max_ideas_in_signal_pack;
+    document.getElementById('pf-insights-ctx').value=p.max_insights_for_ideas_llm!=null?p.max_insights_for_ideas_llm:200;
+    document.getElementById('pf-min-tp-ctx').value=p.min_top_performer_insights_for_ideas_llm!=null?p.min_top_performer_insights_for_ideas_llm:20;
     document.getElementById('pf-min').value=p.min_llm_score_for_pack;
     document.getElementById('pf-criteria').value=JSON.stringify(p.criteria_json||{},null,2);
     document.getElementById('pf-extra').value=p.extra_instructions||'';
@@ -218,6 +222,8 @@ document.getElementById('profile-form')?.addEventListener('submit',async functio
     max_rows_for_rating:parseInt(document.getElementById('pf-max-rows').value,10),
     max_rows_per_llm_batch:parseInt(document.getElementById('pf-batch').value,10),
     max_ideas_in_signal_pack:parseInt(document.getElementById('pf-ideas').value,10),
+    max_insights_for_ideas_llm:parseInt(document.getElementById('pf-insights-ctx').value,10),
+    min_top_performer_insights_for_ideas_llm:parseInt(document.getElementById('pf-min-tp-ctx').value,10),
     min_llm_score_for_pack:parseFloat(document.getElementById('pf-min').value),
     criteria_json:criteria,
     extra_instructions:document.getElementById('pf-extra').value||null
@@ -535,7 +541,7 @@ document.getElementById('btn-build-pack')?.addEventListener('click',async functi
     var raw=await r.text();
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · '+d.overall_candidates_count+' ideas · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
+    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) · overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
 

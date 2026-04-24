@@ -4,8 +4,8 @@
  * When a run is started, the orchestrator:
  * 1. Loads the signal pack attached to the run
  * 2. Loads the project config (allowed flows, constraints, prompt versions)
- * 3. Optionally expands overall_candidates_json via LLM (scene-assembly candidate router)
- * 4. Builds candidates from overall_candidates_json × enabled flows
+ * 3. Optionally expands planner source rows via LLM (scene-assembly candidate router)
+ * 4. Expands `runs.candidates_json` (materialized from pack ideas — manual or LLM) × enabled flows
  * 5. Calls the decision engine to score/filter/plan
  * 6. Bulk-creates content_jobs from the planned output
  * 7. Updates run status through the lifecycle
@@ -14,7 +14,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { decideGenerationPlan } from "../decision_engine/index.js";
-import { getSignalPackById } from "../repositories/signal-packs.js";
+import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
 import {
   getRunById,
   resetRunForReplan,
@@ -46,6 +46,21 @@ import {
 } from "./run-context-snapshot.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
+
+/** Planner source rows written to the run before Start (`POST .../candidates`). */
+function plannerSourceRowsFromRun(run: RunRow): Record<string, unknown>[] {
+  const raw = run.candidates_json as unknown;
+  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
+  if (typeof raw === "string") {
+    try {
+      const p = JSON.parse(raw) as unknown;
+      return Array.isArray(p) ? (p as Record<string, unknown>[]) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
 
 export interface StartRunResult {
   run_id: string;
@@ -83,6 +98,13 @@ export async function startRun(
       throw new Error(`Signal pack ${run.signal_pack_id} not found`);
     }
 
+    let overallCandidates = plannerSourceRowsFromRun(run);
+    if (overallCandidates.length === 0) {
+      throw new Error(
+        `Run ${run.run_id} has empty candidates_json. Materialize from the signal pack first: POST /v1/runs/:project_slug/<slug>/${run.run_id}/candidates with body {"mode":"from_pack_ideas_all"} or {"mode":"manual","idea_ids":["idea_…"]} or {"mode":"llm"}. Packs without ideas_json may use {"mode":"from_pack_overall"}.`
+      );
+    }
+
     await ensureDefaultAllowedFlowsIfNone(db, run.project_id);
     const allowedFlows = await listAllowedFlowTypes(db, run.project_id);
     const enabledFlows = allowedFlows.filter((f) => f.enabled && !isOfflinePipelineFlow(f.flow_type));
@@ -91,9 +113,6 @@ export async function startRun(
       throw new Error(`No enabled flow types for project ${run.project_id}`);
     }
 
-    let overallCandidates = Array.isArray(pack.overall_candidates_json)
-      ? (pack.overall_candidates_json as Record<string, unknown>[])
-      : [];
     overallCandidates = await expandOverallCandidatesWithSceneAssemblyRouter(db, config, {
       projectId: run.project_id,
       runId: run.run_id,
@@ -352,7 +371,7 @@ function resolveCandidateDataForPlannedJob(
 /**
  * Build CandidateInput[] from the overall_candidates_json and allowed flows.
  *
- * Each row in overall_candidates_json becomes one candidate per enabled flow type.
+ * Each planner source row becomes one candidate per enabled flow type.
  * The "sign" or "topic" field becomes the candidate_id.
  */
 function buildCandidatesFromSignalPack(

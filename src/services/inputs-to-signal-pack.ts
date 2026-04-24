@@ -23,6 +23,7 @@ import { mergePreLlmConfig, rankImportRowsForLlm } from "./inputs-pre-llm-rank.j
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
+import { synthesizeIdeasJsonFromInsightsLlm } from "./ideas-from-insights-llm.js";
 
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
@@ -88,6 +89,9 @@ export interface BuildSignalPackFromImportResult {
   pack_run_id: string;
   insights_pack_id: string;
   overall_candidates_count: number;
+  ideas_count: number;
+  ideas_llm_context_insights: number;
+  ideas_llm_top_performer_rows_in_context: number;
   rows_rated: number;
   rows_considered_for_rating: number;
   synth_used_rows: number;
@@ -119,6 +123,12 @@ export async function buildSignalPackFromEvidenceImport(
   const maxRate = clamp(profile.max_rows_for_rating, 1, 5000);
   const batchSize = clamp(profile.max_rows_per_llm_batch, 1, 80);
   const maxIdeas = clamp(profile.max_ideas_in_signal_pack, 1, 200);
+  const contextInsightCap = clamp(Number(profile.max_insights_for_ideas_llm) || 200, 20, 2000);
+  const minTopPerformerInContext = clamp(
+    Number(profile.min_top_performer_insights_for_ideas_llm) || 20,
+    0,
+    contextInsightCap
+  );
   const minScore = clamp(parseFloat(String(profile.min_llm_score_for_pack ?? 0.35)), 0, 1);
   const extra = profile.extra_instructions?.trim() || "";
   const ratingModel = profile.rating_model || "gpt-4o-mini";
@@ -292,11 +302,31 @@ ${JSON.stringify(synthInput, null, 0)}`;
   const packRunId = `SIG_INPUTS_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
   const normalized = normalizeOverallCandidateRows(rawList, packRunId);
 
+  const ideasLlm = await synthesizeIdeasJsonFromInsightsLlm(db, config, project.id, {
+    importId,
+    packRunId,
+    targetIdeaCount: maxIdeas,
+    contextInsightCap,
+    minTopPerformerInContext,
+    model: synthModel,
+    extraInstructions: extra,
+  });
+  const ideasJson = ideasLlm.ideas;
+
   const stats = await getImportEvidenceStats(db, project.id, importId);
   const derived_globals_json: Record<string, unknown> = {
     from_inputs_evidence_import_id: importId,
     inputs_stats: stats,
     total_candidates: normalized.length,
+    ideas_count: ideasJson.length,
+    ideas_from_insights_llm: {
+      context_insights_used: ideasLlm.context_insights_used,
+      top_performer_rows_in_context: ideasLlm.top_performer_rows_in_context,
+      target_idea_count: maxIdeas,
+      context_cap: contextInsightCap,
+      min_top_performer_requested: minTopPerformerInContext,
+      model: synthModel,
+    },
     platforms_found: [...new Set(normalized.map((c) => c.platform).filter(Boolean))],
     signs_found: [...new Set(normalized.map((c) => c.sign).filter(Boolean))],
     synthesized_at: new Date().toISOString(),
@@ -307,6 +337,7 @@ ${JSON.stringify(synthInput, null, 0)}`;
     project_id: project.id,
     source_window: null,
     overall_candidates_json: normalized,
+    ideas_json: ideasJson,
     ig_summary_json: null,
     tiktok_summary_json: null,
     reddit_summary_json: null,
@@ -329,6 +360,8 @@ ${JSON.stringify(synthInput, null, 0)}`;
       selection: selectionSnapshot ?? {},
       stats,
       overall_candidates_count: normalized.length,
+      ideas_count: ideasJson.length,
+      ideas_from_insights_llm: derived_globals_json.ideas_from_insights_llm,
     },
     evidence_refs_json: [
       {
@@ -344,6 +377,9 @@ ${JSON.stringify(synthInput, null, 0)}`;
     pack_run_id: packRunId,
     insights_pack_id: insights.id,
     overall_candidates_count: normalized.length,
+    ideas_count: ideasJson.length,
+    ideas_llm_context_insights: ideasLlm.context_insights_used,
+    ideas_llm_top_performer_rows_in_context: ideasLlm.top_performer_rows_in_context,
     rows_rated: rated,
     rows_considered_for_rating: rows.length,
     synth_used_rows: synthSlice.length,

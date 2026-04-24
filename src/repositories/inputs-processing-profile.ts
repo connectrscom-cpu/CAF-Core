@@ -10,6 +10,10 @@ export interface InputsProcessingProfileRow {
   max_rows_for_rating: number;
   max_rows_per_llm_batch: number;
   max_ideas_in_signal_pack: number;
+  /** Max insight rows sent into the ideas-from-insights LLM (context). Present after migration 034. */
+  max_insights_for_ideas_llm?: number;
+  /** Prefer at least this many context rows that have top-performer enrichment. Present after migration 034. */
+  min_top_performer_insights_for_ideas_llm?: number;
   min_llm_score_for_pack: string;
   extra_instructions: string | null;
   updated_at: string;
@@ -72,6 +76,8 @@ export async function upsertInputsProcessingProfile(
     max_rows_for_rating: number;
     max_rows_per_llm_batch: number;
     max_ideas_in_signal_pack: number;
+    max_insights_for_ideas_llm: number;
+    min_top_performer_insights_for_ideas_llm: number;
     min_llm_score_for_pack: number;
     extra_instructions: string | null;
   }>
@@ -84,6 +90,12 @@ export async function upsertInputsProcessingProfile(
     max_rows_for_rating: patch.max_rows_for_rating ?? existing?.max_rows_for_rating ?? 250,
     max_rows_per_llm_batch: patch.max_rows_per_llm_batch ?? existing?.max_rows_per_llm_batch ?? 20,
     max_ideas_in_signal_pack: patch.max_ideas_in_signal_pack ?? existing?.max_ideas_in_signal_pack ?? 35,
+    max_insights_for_ideas_llm:
+      patch.max_insights_for_ideas_llm ?? existing?.max_insights_for_ideas_llm ?? 200,
+    min_top_performer_insights_for_ideas_llm:
+      patch.min_top_performer_insights_for_ideas_llm ??
+      existing?.min_top_performer_insights_for_ideas_llm ??
+      20,
     min_llm_score_for_pack: patch.min_llm_score_for_pack ?? Number(existing?.min_llm_score_for_pack ?? 0.35),
     extra_instructions:
       patch.extra_instructions !== undefined ? patch.extra_instructions : (existing?.extra_instructions ?? null),
@@ -95,8 +107,9 @@ export async function upsertInputsProcessingProfile(
       `INSERT INTO caf_core.inputs_processing_profiles (
          project_id, criteria_json, rating_model, synth_model,
          max_rows_for_rating, max_rows_per_llm_batch, max_ideas_in_signal_pack,
+         max_insights_for_ideas_llm, min_top_performer_insights_for_ideas_llm,
          min_llm_score_for_pack, extra_instructions
-       ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9)
+       ) VALUES ($1, $2::jsonb, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         projectId,
@@ -106,6 +119,8 @@ export async function upsertInputsProcessingProfile(
         merged.max_rows_for_rating,
         merged.max_rows_per_llm_batch,
         merged.max_ideas_in_signal_pack,
+        merged.max_insights_for_ideas_llm,
+        merged.min_top_performer_insights_for_ideas_llm,
         merged.min_llm_score_for_pack,
         merged.extra_instructions,
       ]
@@ -123,8 +138,10 @@ export async function upsertInputsProcessingProfile(
        max_rows_for_rating = $5,
        max_rows_per_llm_batch = $6,
        max_ideas_in_signal_pack = $7,
-       min_llm_score_for_pack = $8,
-       extra_instructions = $9,
+       max_insights_for_ideas_llm = $8,
+       min_top_performer_insights_for_ideas_llm = $9,
+       min_llm_score_for_pack = $10,
+       extra_instructions = $11,
        updated_at = now()
      WHERE project_id = $1
      RETURNING *`,
@@ -136,6 +153,8 @@ export async function upsertInputsProcessingProfile(
       merged.max_rows_for_rating,
       merged.max_rows_per_llm_batch,
       merged.max_ideas_in_signal_pack,
+      merged.max_insights_for_ideas_llm,
+      merged.min_top_performer_insights_for_ideas_llm,
       merged.min_llm_score_for_pack,
       merged.extra_instructions,
     ]

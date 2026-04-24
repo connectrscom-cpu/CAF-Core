@@ -271,3 +271,49 @@ export async function listEvidenceRowInsightsEnriched(
     [projectId, importId, lim, off]
   );
 }
+
+const BROAD_WITH_RATING_SELECT = `${INSIGHT_SELECT_ENRICHED},
+       r.rating_score::text AS evidence_rating_score`;
+
+/** Broad LLM insights joined with evidence row rating (for ideas-from-insights context ordering). */
+export interface BroadInsightWithRating extends EvidenceRowInsightEnrichedRow {
+  evidence_rating_score: string | null;
+}
+
+export async function listBroadInsightsWithEvidenceRating(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  limit: number
+): Promise<BroadInsightWithRating[]> {
+  const lim = Math.min(Math.max(limit, 1), 3000);
+  return q(
+    db,
+    `${BROAD_WITH_RATING_SELECT}
+     ${INSIGHT_JOIN}
+     WHERE i.project_id = $1 AND i.inputs_import_id = $2 AND i.analysis_tier = 'broad_llm'
+     ORDER BY r.rating_score DESC NULLS LAST, i.updated_at DESC
+     LIMIT $3`,
+    [projectId, importId, lim]
+  );
+}
+
+/** All top-performer tier insights for an import (may be multiple rows per evidence row). */
+export async function listTopPerformerInsightsEnriched(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  limit: number
+): Promise<EvidenceRowInsightEnrichedRow[]> {
+  const lim = Math.min(Math.max(limit, 1), 3000);
+  return q(
+    db,
+    `${INSIGHT_SELECT_ENRICHED}
+     ${INSIGHT_JOIN}
+     WHERE i.project_id = $1 AND i.inputs_import_id = $2
+       AND i.analysis_tier IN ('top_performer_deep', 'top_performer_video', 'top_performer_carousel')
+     ORDER BY r.rating_score DESC NULLS LAST, i.updated_at DESC
+     LIMIT $3`,
+    [projectId, importId, lim]
+  );
+}

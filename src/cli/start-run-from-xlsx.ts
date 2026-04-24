@@ -16,9 +16,10 @@ import "dotenv/config";
 import { loadConfig } from "../config.js";
 import { createPool } from "../db/pool.js";
 import { ensureProject } from "../repositories/core.js";
-import { insertSignalPack } from "../repositories/signal-packs.js";
-import { createRun } from "../repositories/runs.js";
+import { getSignalPackById, insertSignalPack } from "../repositories/signal-packs.js";
+import { createRun, getRunById } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
+import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 import { startRun } from "../services/run-orchestrator.js";
 import { processRunJobs } from "../services/job-pipeline.js";
 
@@ -72,6 +73,7 @@ async function main() {
       notes: "start-run-from-xlsx CLI",
       ...packForDb,
       overall_candidates_json: overall,
+      ideas_json: [],
     });
 
     const run = await createRun(pool, {
@@ -91,6 +93,15 @@ async function main() {
     console.log("Created signal_pack_id:", pack.id);
     console.log("Run:", run.run_id, "uuid:", run.id);
     console.log("Overall candidates rows:", overall.length);
+
+    const packRow = await getSignalPackById(pool, pack.id);
+    if (!packRow) throw new Error("Signal pack row missing after insert");
+    await materializeRunCandidates(pool, config, project.id, run, packRow, { mode: "from_pack_overall" });
+    const runAfterMat = await getRunById(pool, run.id);
+    console.log(
+      "Materialized runs.candidates_json rows:",
+      Array.isArray(runAfterMat?.candidates_json) ? runAfterMat.candidates_json.length : 0
+    );
 
     const startResult = await startRun(pool, config, run.id);
     console.log("Start result:", JSON.stringify(startResult, null, 2));

@@ -46,22 +46,43 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     return { ok: true, profile: row, criteria_help: defaultCriteriaJson() };
   });
 
-  const putProfileSchema = z.object({
-    criteria_json: z.record(z.unknown()).optional(),
-    rating_model: z.string().max(80).optional(),
-    synth_model: z.string().max(80).optional(),
-    max_rows_for_rating: z.number().int().min(1).max(5000).optional(),
-    max_rows_per_llm_batch: z.number().int().min(1).max(80).optional(),
-    max_ideas_in_signal_pack: z.number().int().min(1).max(200).optional(),
-    min_llm_score_for_pack: z.number().min(0).max(1).optional(),
-    extra_instructions: z.string().max(8000).nullable().optional(),
-  });
+  const putProfileSchema = z
+    .object({
+      criteria_json: z.record(z.unknown()).optional(),
+      rating_model: z.string().max(80).optional(),
+      synth_model: z.string().max(80).optional(),
+      max_rows_for_rating: z.number().int().min(1).max(5000).optional(),
+      max_rows_per_llm_batch: z.number().int().min(1).max(80).optional(),
+      max_ideas_in_signal_pack: z.number().int().min(1).max(200).optional(),
+      max_insights_for_ideas_llm: z.number().int().min(20).max(2000).optional(),
+      min_top_performer_insights_for_ideas_llm: z.number().int().min(0).max(500).optional(),
+      min_llm_score_for_pack: z.number().min(0).max(1).optional(),
+      extra_instructions: z.string().max(8000).nullable().optional(),
+    })
+    .superRefine((b, ctx) => {
+      const cap = b.max_insights_for_ideas_llm;
+      const minTp = b.min_top_performer_insights_for_ideas_llm;
+      if (cap != null && minTp != null && minTp > cap) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "min_top_performer_insights_for_ideas_llm must be <= max_insights_for_ideas_llm",
+          path: ["min_top_performer_insights_for_ideas_llm"],
+        });
+      }
+    });
 
   app.put("/v1/inputs-processing/:project_slug/profile", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     const body = putProfileSchema.safeParse(request.body);
     if (!params.success || !body.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_body" });
+      return reply.code(400).send({
+        ok: false,
+        error: "invalid_body",
+        details: {
+          ...(params.success ? {} : { params: params.error.flatten() }),
+          ...(body.success ? {} : { body: body.error.flatten() }),
+        },
+      });
     }
     const project = await ensureProject(db, params.data.project_slug);
     const row = await upsertInputsProcessingProfile(db, project.id, body.data);

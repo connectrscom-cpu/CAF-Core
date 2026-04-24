@@ -8,9 +8,10 @@ import { createRun } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
+import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 
 export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
-  const { db } = deps;
+  const { db, config } = deps;
 
   /**
    * POST /v1/signal-packs/upload
@@ -58,12 +59,13 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     const runId = `RUN_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
 
     const pack = await insertSignalPack(db, {
+      ...packForDb,
       run_id: runId,
       project_id: project.id,
       source_window: sourceWindow,
       upload_filename: fileName,
       notes,
-      ...packForDb,
+      ideas_json: [],
     });
 
     const displayName = trimRunDisplayName(runName);
@@ -81,6 +83,13 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         ...(displayName ? { display_name: displayName } : {}),
       },
     });
+
+    const packRow = await getSignalPackById(db, pack.id);
+    if (packRow) {
+      const ideas = Array.isArray(packRow.ideas_json) ? packRow.ideas_json : [];
+      const mode = ideas.length > 0 ? "from_pack_ideas_all" : "from_pack_overall";
+      await materializeRunCandidates(db, config, project.id, run, packRow, { mode });
+    }
 
     const fieldSizes = (v: unknown) =>
       v == null ? 0 : typeof v === "string" ? v.length : JSON.stringify(v).length;
@@ -153,6 +162,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     run_id: z.string().optional(),
     source_window: z.string().optional(),
     overall_candidates_json: z.array(z.record(z.unknown())),
+    ideas_json: z.array(z.record(z.unknown())).optional(),
     ig_summary_json: z.unknown().optional(),
     tiktok_summary_json: z.unknown().optional(),
     reddit_summary_json: z.unknown().optional(),
@@ -177,6 +187,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       project_id: project.id,
       source_window: body.source_window ?? null,
       overall_candidates_json: body.overall_candidates_json,
+      ideas_json: body.ideas_json ?? [],
       ig_summary_json: body.ig_summary_json,
       tiktok_summary_json: body.tiktok_summary_json,
       reddit_summary_json: body.reddit_summary_json,
@@ -197,6 +208,13 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         ...(ingestLabel ? { display_name: ingestLabel } : {}),
       },
     });
+
+    const packRowIngest = await getSignalPackById(db, pack.id);
+    if (packRowIngest) {
+      const ideas = Array.isArray(packRowIngest.ideas_json) ? packRowIngest.ideas_json : [];
+      const mode = ideas.length > 0 ? "from_pack_ideas_all" : "from_pack_overall";
+      await materializeRunCandidates(db, config, project.id, run, packRowIngest, { mode });
+    }
 
     await tryInsertApiCallAudit(db, {
       projectId: project.id,
@@ -235,9 +253,35 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
   app.get("/v1/signal-packs/:project_slug", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
-    const query = z.object({ limit: z.coerce.number().int().default(50), offset: z.coerce.number().int().default(0) }).safeParse(request.query);
+    const query = z
+      .object({
+        limit: z.coerce.number().int().default(50),
+        offset: z.coerce.number().int().default(0),
+        /** When set, omit bulky JSON — for run picker UIs. */
+        summary: z.enum(["1", "true"]).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
     const packs = await listSignalPacks(db, project.id, query.data?.limit ?? 50, query.data?.offset ?? 0);
+    const slim = query.data.summary === "1" || query.data.summary === "true";
+    if (slim) {
+      return {
+        ok: true,
+        signal_packs: packs.map((p) => ({
+          id: p.id,
+          run_id: p.run_id,
+          created_at: p.created_at,
+          source_window: p.source_window,
+          upload_filename: p.upload_filename,
+          notes: p.notes,
+          source_inputs_import_id: p.source_inputs_import_id ?? null,
+          overall_candidates_count: Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0,
+          ideas_count: Array.isArray(p.ideas_json) ? p.ideas_json.length : 0,
+        })),
+        count: packs.length,
+      };
+    }
     return { ok: true, signal_packs: packs, count: packs.length };
   });
 

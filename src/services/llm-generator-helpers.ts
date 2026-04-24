@@ -18,6 +18,7 @@ function signalPackContextForLlm(sp: SignalPackRow): Record<string, unknown> {
     run_id: sp.run_id,
     source_window: sp.source_window,
     notes: sp.notes,
+    ideas_json: Array.isArray(sp.ideas_json) ? sp.ideas_json : [],
     overall_candidates_json: sp.overall_candidates_json,
     derived_globals_json: sp.derived_globals_json,
     ig_summary: sp.ig_summary_json,
@@ -82,8 +83,18 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
   }
 
   const candidates = asArray(signalPack.overall_candidates_json) ?? [];
+  const ideaRows = asArray(signalPack.ideas_json) ?? [];
   const hashtagCandidates: string[] = [];
   const keywordCandidates: string[] = [];
+  for (let i = 0; i < Math.min(24, ideaRows.length); i++) {
+    const row = asRecord(ideaRows[i]);
+    if (!row) continue;
+    const ci = row.content_idea;
+    if (typeof ci === "string") {
+      const tags = ci.match(/#[\w\u00c0-\u024f]+/gu) ?? [];
+      for (const t of tags) hashtagCandidates.push(t);
+    }
+  }
   for (let i = 0; i < Math.min(40, candidates.length); i++) {
     const row = asRecord(candidates[i]);
     if (!row) continue;

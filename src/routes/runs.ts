@@ -14,7 +14,9 @@ import {
   updateRunStatus,
   patchRun,
 } from "../repositories/runs.js";
+import { getSignalPackById } from "../repositories/signal-packs.js";
 import { replanRun, startRun } from "../services/run-orchestrator.js";
+import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 import { processRunJobs, processJobByTaskId } from "../services/job-pipeline.js";
 import { getRunOutputReview, upsertRunOutputReview } from "../repositories/run-output-reviews.js";
 
@@ -51,7 +53,8 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
   const createRunSchema = z.object({
     run_id: z.string().optional(),
     name: z.string().max(200).optional(),
-    signal_pack_id: z.string().optional(),
+    /** Required: pick an existing signal pack (e.g. from Processing or legacy XLSX ingest). */
+    signal_pack_id: z.string().uuid({ message: "signal_pack_id must be a UUID of an existing signal pack" }),
     source_window: z.string().optional(),
     metadata_json: z.record(z.unknown()).optional(),
   });
@@ -60,9 +63,21 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     const body = createRunSchema.safeParse(request.body);
     if (!params.success || !body.success) {
-      return reply.code(400).send({ ok: false, error: "invalid_request" });
+      return reply.code(400).send({
+        ok: false,
+        error: "invalid_request",
+        details: {
+          ...(params.success ? {} : { params: params.error.flatten() }),
+          ...(body.success ? {} : { body: body.error.flatten() }),
+        },
+      });
     }
     const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, body.data.signal_pack_id);
+    if (!pack || pack.project_id !== project.id) {
+      return reply.code(400).send({ ok: false, error: "invalid_signal_pack", message: "Signal pack not found for this project." });
+    }
+
     const runId = body.data.run_id ?? `RUN_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
 
     const label = trimRunDisplayName(body.data.name);
@@ -70,7 +85,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       run_id: runId,
       project_id: project.id,
       source_window: body.data.source_window ?? null,
-      signal_pack_id: body.data.signal_pack_id ?? null,
+      signal_pack_id: body.data.signal_pack_id,
       metadata_json: {
         ...(body.data.metadata_json ?? {}),
         ...(label ? { display_name: label } : {}),
@@ -162,6 +177,65 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     return { ok: true, run: updated };
   });
 
+  const materializeCandidatesSchema = z.discriminatedUnion("mode", [
+    z.object({ mode: z.literal("manual"), idea_ids: z.array(z.string()).min(1) }),
+    z.object({ mode: z.literal("llm"), max_ideas: z.number().int().min(1).max(100).optional() }),
+    z.object({ mode: z.literal("from_pack_ideas_all") }),
+    z.object({ mode: z.literal("from_pack_overall") }),
+  ]);
+
+  /**
+   * Materialize `runs.candidates_json` from the run's signal pack (`ideas_json` or legacy `overall_candidates_json`).
+   * Required before Start (orchestrator no longer reads the pack directly for planner rows).
+   */
+  app.post("/v1/runs/:project_slug/:run_id/candidates", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    const body = materializeCandidatesSchema.safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({
+        ok: false,
+        error: "invalid_request",
+        details: {
+          ...(params.success ? {} : { params: params.error.flatten() }),
+          ...(body.success ? {} : { body: body.error.flatten() }),
+        },
+      });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    let run = await getRunByRunId(db, project.id, params.data.run_id);
+    if (!run) run = await getRunById(db, params.data.run_id);
+    if (!run || run.project_id !== project.id) {
+      return reply.code(404).send({ ok: false, error: "run_not_found" });
+    }
+    if (run.status !== "CREATED") {
+      return reply.code(400).send({
+        ok: false,
+        error: "bad_request",
+        message: "Candidates can only be set while the run is in CREATED status.",
+      });
+    }
+    if (!run.signal_pack_id) {
+      return reply.code(400).send({ ok: false, error: "bad_request", message: "Run has no signal_pack_id." });
+    }
+    const pack = await getSignalPackById(db, run.signal_pack_id);
+    if (!pack || pack.project_id !== project.id) {
+      return reply.code(400).send({ ok: false, error: "bad_request", message: "Signal pack not found for this run." });
+    }
+    try {
+      const out = await materializeRunCandidates(db, config, project.id, run, pack, body.data);
+      const fresh = await getRunById(db, run.id);
+      return {
+        ok: true,
+        planner_rows: out.planner_rows,
+        candidates_provenance: out.candidates_provenance,
+        run: fresh,
+      };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: "materialize_failed", message: msg });
+    }
+  });
+
   // ── Start run (triggers orchestrator) ────────────────────────────────
   app.post("/v1/runs/:project_slug/:run_id/start", async (request, reply) => {
     const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
@@ -187,7 +261,9 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
         message.includes("expected CREATED") ||
         message.includes("no signal pack") ||
         (message.includes("Signal pack") && message.includes("not found")) ||
-        message.includes("No enabled flow types");
+        message.includes("No enabled flow types") ||
+        message.includes("candidates_json") ||
+        message.includes("Materialize");
       return reply
         .code(badReq ? 400 : 500)
         .send({ ok: false, error: badReq ? "bad_request" : "run_start_failed", message });

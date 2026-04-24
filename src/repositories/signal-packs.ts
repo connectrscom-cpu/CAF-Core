@@ -6,7 +6,10 @@ export interface SignalPackRow {
   run_id: string;
   project_id: string;
   source_window: string | null;
+  /** Planner-facing rows (synth / XLSX); see `ideas_json` for insight-backed ideas. */
   overall_candidates_json: unknown[];
+  /** Curated ideas from inputs Processing; preferred at run start when non-empty. */
+  ideas_json?: unknown[] | null;
   ig_summary_json: unknown | null;
   tiktok_summary_json: unknown | null;
   reddit_summary_json: unknown | null;
@@ -36,6 +39,7 @@ export async function insertSignalPack(
     project_id: string;
     source_window?: string | null;
     overall_candidates_json: unknown[];
+    ideas_json?: unknown[];
     ig_summary_json?: unknown;
     tiktok_summary_json?: unknown;
     reddit_summary_json?: unknown;
@@ -59,7 +63,7 @@ export async function insertSignalPack(
 ): Promise<{ id: string }> {
   const row = await qOne<{ id: string }>(db, `
     INSERT INTO caf_core.signal_packs (
-      run_id, project_id, source_window, overall_candidates_json,
+      run_id, project_id, source_window, overall_candidates_json, ideas_json,
       ig_summary_json, tiktok_summary_json, reddit_summary_json, fb_summary_json, html_summary_json,
       ig_archetypes_json, ig_7day_plan_json, ig_top_examples_json,
       tiktok_archetypes_json, tiktok_7day_plan_json, tiktok_top_examples_json,
@@ -67,13 +71,14 @@ export async function insertSignalPack(
       html_findings_raw_json, reddit_subreddit_insights_json,
       derived_globals_json, upload_filename, notes, source_inputs_import_id
     ) VALUES (
-      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,
-      $10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,
-      $16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21,$22,$23
+      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,
+      $11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,
+      $17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22,$23,$24
     ) RETURNING id`,
     [
       data.run_id, data.project_id, data.source_window ?? null,
       JSON.stringify(data.overall_candidates_json),
+      JSON.stringify(data.ideas_json ?? []),
       j(data.ig_summary_json), j(data.tiktok_summary_json),
       j(data.reddit_summary_json), j(data.fb_summary_json), j(data.html_summary_json),
       j(data.ig_archetypes_json), j(data.ig_7day_plan_json), j(data.ig_top_examples_json),
@@ -81,7 +86,8 @@ export async function insertSignalPack(
       j(data.reddit_archetypes_json), j(data.reddit_top_examples_json),
       j(data.html_findings_raw_json), j(data.reddit_subreddit_insights_json),
       JSON.stringify(data.derived_globals_json ?? {}),
-      data.upload_filename ?? null, data.notes ?? null,
+      data.upload_filename ?? null,
+      data.notes ?? null,
       data.source_inputs_import_id ?? null,
     ]);
   if (!row) throw new Error("Failed to insert signal_pack");

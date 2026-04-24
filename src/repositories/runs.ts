@@ -13,6 +13,8 @@ export interface RunRow {
   status: RunStatus;
   source_window: string | null;
   signal_pack_id: string | null;
+  /** Planner source rows materialized from pack ideas (manual / LLM) or legacy overall; required before Start. */
+  candidates_json?: unknown;
   metadata_json: Record<string, unknown>;
   /** Prompt version picks per flow_type at plan time (see run-prompt-versions-snapshot). Omitted before migration 008. */
   prompt_versions_snapshot?: Record<string, unknown>;
@@ -120,6 +122,26 @@ export async function setRunPlanSummary(
   await db.query(
     `UPDATE caf_core.runs SET plan_summary_json = $1::jsonb, updated_at = now() WHERE id = $2`,
     [JSON.stringify(summary), runUuid]
+  );
+}
+
+/** Persist planner rows on the run before `startRun` (see `run-candidates-materialize.ts`). */
+export async function updateRunCandidatesJson(
+  db: Pool,
+  runUuid: string,
+  candidates: unknown[],
+  provenance: Record<string, unknown>
+): Promise<RunRow | null> {
+  const metaPatch = JSON.stringify({ candidates_provenance: provenance });
+  return qOne<RunRow>(
+    db,
+    `UPDATE caf_core.runs SET
+      candidates_json = $2::jsonb,
+      metadata_json = coalesce(metadata_json, '{}'::jsonb) || $3::jsonb,
+      updated_at = now()
+     WHERE id = $1
+     RETURNING *`,
+    [runUuid, JSON.stringify(candidates), metaPatch]
   );
 }
 
