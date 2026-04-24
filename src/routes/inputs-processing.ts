@@ -291,6 +291,49 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     }
   });
 
+  /**
+   * POST /v1/inputs-processing/:project_slug/import/:import_id/broad-insights-prompt
+   * Same as GET, but avoids huge URL query strings (prompt overrides can exceed header limits).
+   */
+  app.post("/v1/inputs-processing/:project_slug/import/:import_id/broad-insights-prompt", async (request, reply) => {
+    const params = z
+      .object({ project_slug: z.string(), import_id: z.string() })
+      .safeParse(request.params);
+    const body = z
+      .object({
+        evidence_kind: z.string().max(80).nullable().optional(),
+        custom_label_1: z.string().max(120).nullable().optional(),
+        custom_label_2: z.string().max(120).nullable().optional(),
+        custom_label_3: z.string().max(120).nullable().optional(),
+        system_prompt: z.string().max(50_000).nullable().optional(),
+        user_prompt: z.string().max(50_000).nullable().optional(),
+      })
+      .safeParse(request.body ?? {});
+    if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    try {
+      const out = await previewBroadInsightsPrompt(
+        db,
+        config,
+        params.data.project_slug,
+        params.data.import_id,
+        {
+          evidence_kind: body.data.evidence_kind ?? null,
+          custom_label_1: body.data.custom_label_1 ?? null,
+          custom_label_2: body.data.custom_label_2 ?? null,
+          custom_label_3: body.data.custom_label_3 ?? null,
+          system_prompt: body.data.system_prompt ?? null,
+          user_prompt: body.data.user_prompt ?? null,
+        }
+      );
+      return { ok: true, ...out };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(500).send({ ok: false, error: "prompt_preview_failed", message: msg });
+    }
+  });
+
   app.post("/v1/inputs-processing/:project_slug/import/:import_id/run-deep-image-insights", async (request, reply) => {
     const params = z
       .object({ project_slug: z.string(), import_id: z.string() })

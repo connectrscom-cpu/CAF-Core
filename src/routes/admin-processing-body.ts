@@ -74,10 +74,10 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) stored per evidence row. Filter by platform tab.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) per <strong>social platform</strong> evidence row. Source kinds (<span class="mono">source_registry</span>, <span class="mono">scraped_page</span>) stay under <strong>Sources</strong> — they are not run here.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-run-broad-insights">Run broad LLM</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights-all">Run ALL platforms</button>
+            <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all">Run broad LLM — all platforms</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights">Run broad LLM — this platform tab only</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
@@ -115,7 +115,10 @@ export function adminProcessingBody(currentSlug: string): string {
             </div>
           </div>
           <div id="broad-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-          <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
+            <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
+          </div>
           <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
           <div id="broad-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
@@ -183,6 +186,12 @@ var prellmKind='';
 var prellmKinds=[];
 var broadKind='';
 var broadKinds=[];
+function isSourceEvidenceKind(k){
+  return k==='source_registry'||k==='scraped_page';
+}
+function platformKindsFromStats(bk){
+  return Object.keys(bk||{}).filter(function(k){return (bk[k]||0)>0&&!isSourceEvidenceKind(k);}).sort();
+}
 var prellmTimer=null;
 var currentSeg='evidence';
 var prellmMinByKind={};
@@ -209,8 +218,8 @@ function kindLabel(kind,mode){
     source_registry:'SRC'
   };
   var p=map[base]||base.toUpperCase().slice(0,6);
-  if(mode==='evidence')return p+' Evidence';
-  if(mode==='insights')return p+' Insights';
+  if(mode==='evidence')return p+' (platform)';
+  if(mode==='insights')return p+' (broad tab)';
   if(mode==='top')return p+' Top';
   return p;
 }
@@ -394,7 +403,7 @@ async function loadPrellmKindsAndPreview(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var bk=d.stats&&d.stats.by_kind||{};
-    prellmKinds=Object.keys(bk).filter(function(k){return (bk[k]||0)>0;}).sort();
+    prellmKinds=platformKindsFromStats(bk);
     if(prellmKinds.length===0){bar.innerHTML='<span class="empty">No rows in this import.</span>';return;}
     if(!prellmKind||prellmKinds.indexOf(prellmKind)<0)prellmKind=prellmKinds[0];
     var h='';
@@ -435,7 +444,7 @@ function syncPrellmSliderFromKind(){
 }
 
 function syncBroadKindsFromStats(bk){
-  broadKinds=Object.keys(bk).filter(function(k){return (bk[k]||0)>0;}).sort();
+  broadKinds=platformKindsFromStats(bk);
   if(!broadKind||broadKinds.indexOf(broadKind)<0)broadKind=broadKinds[0]||'';
 }
 
@@ -526,15 +535,24 @@ async function loadBroadPromptIntoEditor(){
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   try{
     if(m){m.textContent='Loading…';m.style.color='';}
-    var k=broadKind||prellmKind||'';
+    var kRaw=broadKind||prellmKind||'';
+    var k=isSourceEvidenceKind(kRaw)?(broadKinds[0]||''):kRaw;
     var o=readBroadOverrides();
-    var qp='evidence_kind='+encodeURIComponent(k)+
-      '&custom_label_1='+encodeURIComponent(o.custom_label_1||'')+
-      '&custom_label_2='+encodeURIComponent(o.custom_label_2||'')+
-      '&custom_label_3='+encodeURIComponent(o.custom_label_3||'')+
-      // Only pass prompt overrides when the user is actively editing.
-      (broadPromptDirty ? ('&system_prompt='+encodeURIComponent(o.system_prompt||'')+'&user_prompt='+encodeURIComponent(o.user_prompt||'')) : '');
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt?'+qp);
+    var body={
+      evidence_kind:k||null,
+      custom_label_1:o.custom_label_1,
+      custom_label_2:o.custom_label_2,
+      custom_label_3:o.custom_label_3
+    };
+    if(broadPromptDirty){
+      body.system_prompt=o.system_prompt;
+      body.user_prompt=o.user_prompt;
+    }
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     // Always show "what we're using" as the preview; if user edits, we stop auto-overwriting.
@@ -730,13 +748,14 @@ document.getElementById('prellm-save-formula')?.addEventListener('click',async f
 document.getElementById('btn-run-broad-insights')?.addEventListener('click',async function(){
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
-  if(msg){msg.textContent='Running broad LLM…';}
+  if(msg){msg.textContent='Running broad LLM (this platform tab)…';}
   try{
     var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
     var rescan=!!document.getElementById('broad-rescan')?.checked;
     var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
     var kind=broadKind||prellmKind||null;
+    if(kind&&isSourceEvidenceKind(kind))throw new Error('Broad insights apply to social platforms only. Use the Sources tab for '+kind+'.');
     var cutoff=(kind&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
     var o=readBroadOverrides();
     var body={
@@ -753,7 +772,7 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    if(msg)msg.textContent='Broad done: upserted '+String(d.upserted||0)+' · batches '+String(d.batches||0)+' · total '+String(d.broad_insights_total||0)+'.';
+    if(msg)msg.textContent='Broad ('+kindLabel(kind,'insights')+') done: upserted '+String(d.upserted||0)+' · batches '+String(d.batches||0)+' · total '+String(d.broad_insights_total||0)+'.';
   }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
 });
 
@@ -762,7 +781,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   if(broadAllRunning){if(msg)msg.textContent='Already running ALL platforms…';return;}
-  if(!broadKinds||!broadKinds.length){if(msg)msg.textContent='No platforms found for this import.';return;}
+  if(!broadKinds||!broadKinds.length){if(msg)msg.textContent='No social platforms found for broad insights in this import.';return;}
   broadAllRunning=true;
   try{
     var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
@@ -774,7 +793,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     var total=0;
     for(var i=0;i<broadKinds.length;i++){
       var kind=broadKinds[i];
-      if(msg){msg.textContent='Running broad: '+kindLabel(kind,'insights')+' ('+(i+1)+'/'+broadKinds.length+')…';msg.style.color='';}
+      if(msg){msg.textContent='Running broad (all platforms): '+kindLabel(kind,'insights')+' ('+(i+1)+'/'+broadKinds.length+')…';msg.style.color='';}
       var cutoff=(useCutoff&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
       var body={
         evidence_kind:kind,
@@ -792,7 +811,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
       if(!r.ok||!d.ok)throw new Error(kindLabel(kind,'insights')+': '+apiErr(d,'HTTP '+r.status));
       total+=Number(d.upserted||0);
     }
-    if(msg){msg.textContent='ALL platforms done. Total upserted '+String(total)+'.';}
+    if(msg){msg.textContent='All social platforms done. Total upserted '+String(total)+'.';}
     // Refresh current view
     loadBroadTable();
   }catch(e){
@@ -865,7 +884,7 @@ async function initBroadPanel(){
     }
   }
   if(!broadKinds.length){
-    bar.innerHTML='<span class="empty">No rows in this import.</span>';
+    bar.innerHTML='<span class="empty">No social platform rows for broad insights. Source rows are under Sources.</span>';
     if(meta)meta.textContent='';
     if(wrap)wrap.innerHTML='';
     return;
@@ -900,7 +919,7 @@ async function loadBroadTable(){
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     meta.textContent=JSON.stringify({counts:d.counts,evidence_kind:broadKind},null,2);
     var rows=d.insights||[];
-    if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for this platform yet. Run broad from Evidence.</div>';return;}
+    if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for this platform yet. Run broad LLM above (this tab or all platforms).</div>';return;}
     var tb='<table class="sp-modal-table"><thead><tr><th>Kind</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
@@ -1031,7 +1050,7 @@ async function initSourcesPanel(){
     var h='';
     for(var i=0;i<kinds.length;i++){
       var k=kinds[i];
-      h+='<button type="button" class="'+(k===cur?'btn btn-sm':'btn-ghost btn-sm')+' src-kind" data-kind="'+esc(k)+'">'+esc(kindLabel(k,'evidence'))+'</button>';
+      h+='<button type="button" class="'+(k===cur?'btn btn-sm':'btn-ghost btn-sm')+' src-kind" data-kind="'+esc(k)+'">'+esc((k==='source_registry'?'Registry':'Web page'))+'</button>';
     }
     bar.innerHTML=h;
     bar.querySelectorAll('.src-kind').forEach(function(btn){
