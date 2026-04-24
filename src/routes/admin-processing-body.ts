@@ -34,9 +34,43 @@ export function adminProcessingBody(currentSlug: string): string {
               <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
             </div>
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px">
-              <label style="font-size:13px">Min pre-LLM score <span id="prellm-min-val" class="mono">0.00</span></label>
-              <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="width:min(420px,100%)" />
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px">
+              <div style="flex:1;min-width:280px">
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                  <label style="font-size:13px">Cutoff for this platform <span id="prellm-min-val" class="mono">0.00</span></label>
+                  <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="width:min(420px,100%)" />
+                </div>
+                <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                  <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+                    <input type="checkbox" id="prellm-show-below" /> Show rows below cutoff (still passing profile min)
+                  </label>
+                  <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+                    Sort
+                    <select id="prellm-sort" style="font-size:12px">
+                      <option value="score_desc">Score ↓</option>
+                      <option value="score_asc">Score ↑</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+              <div style="flex:1;min-width:320px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
+                <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
+                  <strong style="font-size:12px">Formula for this platform</strong>
+                  <button type="button" class="btn-ghost btn-sm" id="prellm-save-formula">Save formula</button>
+                </div>
+                <div id="prellm-formula-hint" style="font-size:11px;color:var(--muted);margin-bottom:8px">
+                  Score is a weighted average of normalized features (0–1). Change weights/min score per platform.
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+                  <label style="font-size:12px">Profile min score <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:92px;font-size:12px" /></label>
+                  <label style="font-size:12px">Min primary text chars <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:92px;font-size:12px" /></label>
+                </div>
+                <div id="prellm-weights-wrap" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+                <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
+                  <span id="prellm-save-msg" style="font-size:11px;color:var(--muted)"></span>
+                </div>
+              </div>
             </div>
             <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-bottom:10px;white-space:pre-wrap"></pre>
             <div id="prellm-table-wrap" style="font-size:12px;max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -101,6 +135,8 @@ var broadKind='';
 var broadKinds=[];
 var prellmTimer=null;
 var currentSeg='evidence';
+var prellmMinByKind={};
+var profileCache=null; // { profile, criteria }
 
 function readImportFromUrl(){
   try{
@@ -198,6 +234,7 @@ async function loadProfile(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var p=d.profile;
+    profileCache={profile:p,criteria:(p.criteria_json||{})};
     document.getElementById('pf-rating-model').value=p.rating_model||'';
     document.getElementById('pf-synth-model').value=p.synth_model||'';
     document.getElementById('pf-max-rows').value=p.max_rows_for_rating;
@@ -209,6 +246,12 @@ async function loadProfile(){
     document.getElementById('pf-criteria').value=JSON.stringify(p.criteria_json||{},null,2);
     document.getElementById('pf-extra').value=p.extra_instructions||'';
   }catch(e){alert(e.message||e);}
+}
+
+async function loadProfileForPrellm(){
+  if(profileCache&&profileCache.criteria)return profileCache;
+  await loadProfile();
+  return profileCache;
 }
 
 document.getElementById('profile-form')?.addEventListener('submit',async function(e){
@@ -280,12 +323,31 @@ async function loadPrellmKindsAndPreview(){
     bar.querySelectorAll('.prellm-kind').forEach(function(btn){
       btn.addEventListener('click',function(){
         prellmKind=btn.getAttribute('data-kind')||'';
+        syncPrellmSliderFromKind();
+        renderPrellmFormulaEditor();
         loadPrellmKindsAndPreview();
       });
     });
+    syncPrellmSliderFromKind();
+    await renderPrellmFormulaEditor();
     schedulePrellmPreview();
     syncBroadKindsFromStats(bk);
   }catch(e){bar.innerHTML='<span style="color:var(--red)">'+esc(e.message||e)+'</span>';}
+}
+
+function syncPrellmSliderFromKind(){
+  var minEl=document.getElementById('prellm-min-score');
+  var minVal=document.getElementById('prellm-min-val');
+  if(!minEl||!prellmKind)return;
+  var v=prellmMinByKind[prellmKind];
+  if(typeof v!=='number'){
+    // Default to 0.35 (useful for top-performer actions) but keep it per-kind once changed.
+    v=parseFloat(minEl.value||'0.35');
+    if(!Number.isFinite(v))v=0.35;
+    prellmMinByKind[prellmKind]=v;
+  }
+  minEl.value=String(v);
+  if(minVal)minVal.textContent=Number(v).toFixed(2);
 }
 
 function syncBroadKindsFromStats(bk){
@@ -303,13 +365,19 @@ async function loadPrellmPreview(){
   var wrap=document.getElementById('prellm-table-wrap');
   var minEl=document.getElementById('prellm-min-score');
   var minVal=document.getElementById('prellm-min-val');
-  if(!SLUG||!selectedImportId||!prellmKind||!counts||!wrap||!minEl)return;
+  var showBelow=document.getElementById('prellm-show-below');
+  var sortEl=document.getElementById('prellm-sort');
+  if(!SLUG||!selectedImportId||!prellmKind||!counts||!wrap||!minEl||!sortEl)return;
   var minScore=parseFloat(minEl.value)||0;
+  prellmMinByKind[prellmKind]=minScore;
   if(minVal)minVal.textContent=minScore.toFixed(2);
   counts.textContent='Loading…';
   wrap.innerHTML='';
   try{
-    var q='evidence_kind='+encodeURIComponent(prellmKind)+'&min_score='+encodeURIComponent(String(minScore))+'&limit=80&offset=0';
+    var q='evidence_kind='+encodeURIComponent(prellmKind)+'&min_score='+encodeURIComponent(String(minScore))+
+      '&include_below_cutoff='+(showBelow&&showBelow.checked?'1':'0')+
+      '&sort='+encodeURIComponent(sortEl.value||'score_desc')+
+      '&limit=120&offset=0';
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/pre-llm-evidence?'+q);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
@@ -327,17 +395,142 @@ async function loadPrellmPreview(){
     },null,2);
     var rows=d.rows||[];
     if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No rows at or above this cutoff.</div>';return;}
-    var tb='<table class="sp-modal-table"><thead><tr><th>Score</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
+    var tb='<table class="sp-modal-table"><thead><tr>'+
+      '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
+      '<th>Included</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
+      var inc=!!x.included_by_cutoff;
       var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">—</span>';
-      tb+='<tr><td class="mono">'+esc(String(x.pre_llm_score))+'</td><td style="max-width:200px;word-break:break-all">'+urlCell+'</td><td style="max-width:360px;white-space:pre-wrap;word-break:break-word">'+esc(x.caption||'')+'</td><td style="max-width:200px;word-break:break-word">'+esc(x.hashtags||'')+'</td></tr>';
+      tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
+        '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
+        '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
+        '<td style="max-width:200px;word-break:break-all">'+urlCell+'</td>'+
+        '<td style="max-width:360px;white-space:pre-wrap;word-break:break-word">'+esc(x.caption||'')+'</td>'+
+        '<td style="max-width:200px;word-break:break-word">'+esc(x.hashtags||'')+'</td></tr>';
     }
     tb+='</tbody></table>';
     wrap.innerHTML=tb;
+    document.getElementById('prellm-th-score')?.addEventListener('click',function(){
+      var cur=document.getElementById('prellm-sort');
+      if(!cur)return;
+      cur.value=(cur.value==='score_desc')?'score_asc':'score_desc';
+      schedulePrellmPreview();
+    });
   }catch(e){counts.textContent=String(e);}
 }
 document.getElementById('prellm-min-score')?.addEventListener('input',schedulePrellmPreview);
+document.getElementById('prellm-show-below')?.addEventListener('change',schedulePrellmPreview);
+document.getElementById('prellm-sort')?.addEventListener('change',schedulePrellmPreview);
+
+function renderWeightsTable(weights){
+  var wrap=document.getElementById('prellm-weights-wrap');
+  if(!wrap)return;
+  var keys=Object.keys(weights||{}).sort();
+  if(keys.length===0){
+    wrap.innerHTML='<div class="empty" style="padding:10px">No weights configured. Add a feature.</div>';
+    return;
+  }
+  var h='<table class="sp-modal-table" style="margin:0"><thead><tr><th>Feature</th><th>Weight</th><th></th></tr></thead><tbody>';
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i];
+    h+='<tr>'+
+      '<td class="mono" style="max-width:220px;word-break:break-word">'+esc(k)+'</td>'+
+      '<td><input type="number" step="0.01" min="0" value="'+esc(String(weights[k]))+'" data-wkey="'+esc(k)+'" class="prellm-wt" style="width:92px;font-size:12px" /></td>'+
+      '<td><button type="button" class="btn-ghost btn-sm prellm-del-wt" data-wkey="'+esc(k)+'">Remove</button></td>'+
+    '</tr>';
+  }
+  h+='</tbody></table>';
+  wrap.innerHTML=h;
+}
+
+async function renderPrellmFormulaEditor(){
+  if(!SLUG||!prellmKind)return;
+  var hint=document.getElementById('prellm-formula-hint');
+  var minEl=document.getElementById('prellm-profile-min');
+  var minTextEl=document.getElementById('prellm-min-text');
+  if(!minEl||!minTextEl)return;
+  var pc=await loadProfileForPrellm();
+  var criteria=(pc&&pc.criteria)||{};
+  var pre=(criteria.pre_llm&&typeof criteria.pre_llm==='object')?criteria.pre_llm:{};
+  var kinds=(pre.kinds&&typeof pre.kinds==='object')?pre.kinds:{};
+  var prof=(kinds[prellmKind]&&typeof kinds[prellmKind]==='object')?kinds[prellmKind]:null;
+  var weights=(prof&&prof.weights&&typeof prof.weights==='object')?prof.weights:{};
+  var minScore=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
+  if(minScore==null||!Number.isFinite(minScore))minScore=0;
+  minEl.value=String(Math.max(0,Math.min(1,minScore)));
+  var mt=(typeof pre.min_primary_text_chars==='number')?pre.min_primary_text_chars:12;
+  minTextEl.value=String(mt);
+  if(hint)hint.textContent='Score = Σ(feature_i × weight_i) / Σ(weights). Features are normalized 0–1 in code. Platform: '+prellmKind+'.';
+  renderWeightsTable(weights);
+}
+
+function readWeightsFromEditor(){
+  var weights={};
+  document.querySelectorAll('.prellm-wt').forEach(function(inp){
+    var k=inp.getAttribute('data-wkey')||'';
+    if(!k)return;
+    var v=parseFloat(inp.value||'0');
+    if(!Number.isFinite(v)||v<0)v=0;
+    weights[k]=v;
+  });
+  return weights;
+}
+
+document.getElementById('prellm-weights-wrap')?.addEventListener('click',function(e){
+  var t=e&&e.target;
+  if(!t||!t.classList||!t.classList.contains('prellm-del-wt'))return;
+  var k=t.getAttribute('data-wkey')||'';
+  if(!k)return;
+  // Remove row in DOM
+  var row=t.closest('tr');
+  if(row)row.remove();
+});
+
+document.getElementById('prellm-add-weight')?.addEventListener('click',function(){
+  var key=prompt('Feature key (e.g. ig_likes, tt_plays, text_signal)');
+  if(!key)return;
+  key=String(key).trim();
+  if(!key)return;
+  var wrap=document.getElementById('prellm-weights-wrap');
+  if(!wrap)return;
+  // If table empty, re-render from scratch with single key.
+  var weights=readWeightsFromEditor();
+  if(weights[key]!=null){alert('That feature already exists.');return;}
+  weights[key]=0.1;
+  renderWeightsTable(weights);
+});
+
+document.getElementById('prellm-save-formula')?.addEventListener('click',async function(){
+  var msg=document.getElementById('prellm-save-msg');
+  if(!SLUG||!prellmKind){if(msg)msg.textContent='Select a platform first.';return;}
+  if(msg){msg.textContent='Saving…';msg.style.color='';}
+  try{
+    var pc=await loadProfileForPrellm();
+    if(!pc||!pc.profile)throw new Error('Profile not loaded');
+    var criteria=JSON.parse(JSON.stringify(pc.criteria||{})); // deep-ish clone for safety
+    if(!criteria.pre_llm||typeof criteria.pre_llm!=='object')criteria.pre_llm={};
+    if(!criteria.pre_llm.kinds||typeof criteria.pre_llm.kinds!=='object')criteria.pre_llm.kinds={};
+    var minScore=parseFloat(document.getElementById('prellm-profile-min')?.value||'0');
+    if(!Number.isFinite(minScore))minScore=0;
+    minScore=Math.max(0,Math.min(1,minScore));
+    var mt=parseInt(document.getElementById('prellm-min-text')?.value||'12',10);
+    if(!Number.isFinite(mt)||mt<0)mt=12;
+    criteria.pre_llm.min_primary_text_chars=mt;
+    criteria.pre_llm.enabled=true;
+    criteria.pre_llm.kinds[prellmKind]={min_score:minScore,weights:readWeightsFromEditor()};
+    var body={criteria_json:criteria};
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
+    profileCache={profile:d.profile,criteria:(d.profile&&d.profile.criteria_json)||criteria};
+    if(msg){msg.textContent='Saved.';msg.style.color='var(--muted)';}
+    // Refresh counts/table because profile min score might change results.
+    schedulePrellmPreview();
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
 
 document.getElementById('btn-run-broad-insights')?.addEventListener('click',async function(){
   var msg=document.getElementById('prellm-insight-msg');

@@ -13,6 +13,7 @@ export interface PreLlmEvidencePreviewRow {
   profile_min_score: number;
   dropped_reason: string | null;
   passes_text_gate: boolean;
+  included_by_cutoff: boolean;
   url: string | null;
   caption: string | null;
   hashtags: string | null;
@@ -35,6 +36,8 @@ export interface PreLlmEvidencePreviewResult {
   has_more: boolean;
 }
 
+export type PreLlmEvidencePreviewSort = "score_desc" | "score_asc";
+
 export async function getPreLlmEvidencePreview(
   db: Pool,
   projectId: string,
@@ -43,7 +46,12 @@ export async function getPreLlmEvidencePreview(
   criteria: Record<string, unknown>,
   userMinScore: number,
   limit: number,
-  offset: number
+  offset: number,
+  options?: {
+    /** When true, return all rows that pass the profile min score, marking which are included by the cutoff. */
+    include_below_cutoff?: boolean;
+    sort?: PreLlmEvidencePreviewSort;
+  }
 ): Promise<PreLlmEvidencePreviewResult> {
   const cfg = mergePreLlmConfig(criteria);
   const prof = cfg.kinds?.[evidenceKind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
@@ -67,6 +75,7 @@ export async function getPreLlmEvidencePreview(
       profile_min_score: ev.profile_min_score,
       dropped_reason: ev.dropped_reason,
       passes_text_gate: ev.passes_text_gate,
+      included_by_cutoff: ev.dropped_reason == null && ev.pre_llm_score >= userMinScore,
       url: disp.url,
       caption: disp.caption,
       hashtags: disp.hashtags,
@@ -74,15 +83,27 @@ export async function getPreLlmEvidencePreview(
   });
 
   const passingProfile = evaluated.filter((e) => e.dropped_reason == null);
-  const afterUserCutoff = passingProfile.filter((e) => e.pre_llm_score >= userMinScore);
-  afterUserCutoff.sort((a, b) => {
-    if (b.pre_llm_score !== a.pre_llm_score) return b.pre_llm_score - a.pre_llm_score;
-    return a.id.localeCompare(b.id);
-  });
+  const afterUserCutoff = passingProfile.filter((e) => e.included_by_cutoff);
+
+  const sort: PreLlmEvidencePreviewSort = options?.sort ?? "score_desc";
+  const cmp =
+    sort === "score_asc"
+      ? (a: PreLlmEvidencePreviewRow, b: PreLlmEvidencePreviewRow) => {
+          if (a.pre_llm_score !== b.pre_llm_score) return a.pre_llm_score - b.pre_llm_score;
+          return a.id.localeCompare(b.id);
+        }
+      : (a: PreLlmEvidencePreviewRow, b: PreLlmEvidencePreviewRow) => {
+          if (b.pre_llm_score !== a.pre_llm_score) return b.pre_llm_score - a.pre_llm_score;
+          return a.id.localeCompare(b.id);
+        };
+
+  const includeBelow = Boolean(options?.include_below_cutoff);
+  const sorted = includeBelow ? passingProfile.slice() : afterUserCutoff.slice();
+  sorted.sort(cmp);
 
   const lim = Math.min(Math.max(limit, 1), 500);
   const off = Math.max(offset, 0);
-  const slice = afterUserCutoff.slice(off, off + lim);
+  const slice = sorted.slice(off, off + lim);
 
   return {
     evidence_kind: evidenceKind,
@@ -98,6 +119,6 @@ export async function getPreLlmEvidencePreview(
     rows: slice,
     offset: off,
     limit: lim,
-    has_more: afterUserCutoff.length > off + lim,
+    has_more: sorted.length > off + lim,
   };
 }

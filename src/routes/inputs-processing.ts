@@ -128,6 +128,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .object({
         evidence_kind: z.string().min(1).max(80),
         min_score: z.coerce.number().min(0).max(1).default(0),
+        include_below_cutoff: z
+          .union([z.literal("1"), z.literal("true")])
+          .optional()
+          .transform((v) => v === "1" || v === "true"),
+        sort: z.enum(["score_desc", "score_asc"]).optional(),
         limit: z.coerce.number().int().min(1).max(500).default(50),
         offset: z.coerce.number().int().min(0).default(0),
       })
@@ -151,7 +156,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       criteria,
       query.data.min_score,
       query.data.limit,
-      query.data.offset
+      query.data.offset,
+      {
+        include_below_cutoff: query.data.include_below_cutoff ?? false,
+        sort: query.data.sort,
+      }
     );
     return { ok: true, ...preview };
   });
