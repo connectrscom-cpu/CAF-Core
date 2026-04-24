@@ -77,10 +77,39 @@ export function adminProcessingBody(currentSlug: string): string {
           <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) stored per evidence row. Filter by platform tab.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-broad-insights">Run broad LLM</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-show-broad-prompt">View prompt</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
             <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
+          </div>
+          <div id="broad-prompt-panel" style="display:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg);margin-bottom:10px">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <strong style="font-size:12px">Prompt preview + overrides</strong>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <button type="button" class="btn-ghost btn-sm" id="btn-load-broad-prompt">Load current prompt</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-reset-broad-prompt">Reset overrides</button>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+              You can edit the prompts and labels below. Use <span class="mono">{{ROWS_JSON}}</span> to control where the batch payload is inserted (otherwise it’s appended).
+              Labels can also be referenced as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <label style="font-size:12px;color:var(--muted)">custom_label_1 <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Angle / Theme" /></label>
+              <label style="font-size:12px;color:var(--muted)">custom_label_2 <input id="broad-label-2" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
+              <label style="font-size:12px;color:var(--muted)">custom_label_3 <input id="broad-label-3" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
+              <span id="broad-prompt-msg" style="font-size:11px;color:var(--muted)"></span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr;gap:10px">
+              <div>
+                <div style="font-size:12px;color:var(--muted);margin-bottom:6px">System prompt</div>
+                <textarea id="broad-system-prompt" rows="6" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+              </div>
+              <div>
+                <div style="font-size:12px;color:var(--muted);margin-bottom:6px">User prompt</div>
+                <textarea id="broad-user-prompt" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+              </div>
+            </div>
           </div>
           <div id="broad-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
@@ -475,18 +504,57 @@ document.getElementById('prellm-min-score')?.addEventListener('input',schedulePr
 document.getElementById('prellm-show-below')?.addEventListener('change',schedulePrellmPreview);
 document.getElementById('prellm-sort')?.addEventListener('change',schedulePrellmPreview);
 
-document.getElementById('btn-show-broad-prompt')?.addEventListener('click',async function(){
+function readBroadOverrides(){
+  return {
+    custom_label_1:(document.getElementById('broad-label-1')?.value||'').trim()||null,
+    custom_label_2:(document.getElementById('broad-label-2')?.value||'').trim()||null,
+    custom_label_3:(document.getElementById('broad-label-3')?.value||'').trim()||null,
+    system_prompt:(document.getElementById('broad-system-prompt')?.value||'').trim()||null,
+    user_prompt:(document.getElementById('broad-user-prompt')?.value||'').trim()||null
+  };
+}
+
+async function loadBroadPromptIntoEditor(){
+  var m=document.getElementById('broad-prompt-msg');
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   try{
+    if(m){m.textContent='Loading…';m.style.color='';}
     var k=broadKind||prellmKind||'';
-    var q='evidence_kind='+encodeURIComponent(k);
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt?'+q);
+    var o=readBroadOverrides();
+    var qp='evidence_kind='+encodeURIComponent(k)+
+      '&custom_label_1='+encodeURIComponent(o.custom_label_1||'')+
+      '&custom_label_2='+encodeURIComponent(o.custom_label_2||'')+
+      '&custom_label_3='+encodeURIComponent(o.custom_label_3||'');
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt?'+qp);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    var text='Model: '+d.model+' · batch_size '+d.batch_size+'\\n\\nSYSTEM:\\n'+d.system_prompt+'\\n\\nUSER:\\n'+d.user_prompt;
-    alert(text.slice(0,12000));
-  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+    // Fill labels only if empty (so user can override)
+    if(document.getElementById('broad-label-1')?.value==='' )document.getElementById('broad-label-1').value=d.labels&&d.labels.l1||'';
+    if(document.getElementById('broad-label-2')?.value==='' )document.getElementById('broad-label-2').value=d.labels&&d.labels.l2||'';
+    if(document.getElementById('broad-label-3')?.value==='' )document.getElementById('broad-label-3').value=d.labels&&d.labels.l3||'';
+    document.getElementById('broad-system-prompt').value=d.system_prompt||'';
+    document.getElementById('broad-user-prompt').value=d.user_prompt||'';
+    if(m){m.textContent='Loaded. Model '+d.model+' · batch '+d.batch_size+'.';m.style.color='var(--muted)';}
+  }catch(e){
+    if(m){m.textContent=String(e.message||e);m.style.color='var(--red)';}
+  }
+}
+
+document.getElementById('btn-toggle-broad-prompt')?.addEventListener('click',function(){
+  var panel=document.getElementById('broad-prompt-panel');
+  if(!panel)return;
+  panel.style.display=panel.style.display==='none'?'block':'none';
+});
+document.getElementById('btn-load-broad-prompt')?.addEventListener('click',loadBroadPromptIntoEditor);
+document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',function(){
+  document.getElementById('broad-label-1').value='';
+  document.getElementById('broad-label-2').value='';
+  document.getElementById('broad-label-3').value='';
+  document.getElementById('broad-system-prompt').value='';
+  document.getElementById('broad-user-prompt').value='';
+  var m=document.getElementById('broad-prompt-msg');
+  if(m){m.textContent='Overrides cleared (not saved).';m.style.color='var(--muted)';}
 });
 
 function renderWeightsTable(weights){
@@ -614,7 +682,17 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
     var rescan=!!document.getElementById('broad-rescan')?.checked;
-    var body={evidence_kind:broadKind||prellmKind||null,max_rows:maxRows,rescan:rescan};
+    var o=readBroadOverrides();
+    var body={
+      evidence_kind:broadKind||prellmKind||null,
+      max_rows:maxRows,
+      rescan:rescan,
+      custom_label_1:o.custom_label_1,
+      custom_label_2:o.custom_label_2,
+      custom_label_3:o.custom_label_3,
+      system_prompt:o.system_prompt,
+      user_prompt:o.user_prompt
+    };
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));

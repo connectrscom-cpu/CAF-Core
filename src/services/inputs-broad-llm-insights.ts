@@ -23,6 +23,16 @@ export interface RunBroadInsightsOptions {
   evidence_kind?: string | null;
   max_rows?: number;
   rescan?: boolean;
+  custom_label_1?: string | null;
+  custom_label_2?: string | null;
+  custom_label_3?: string | null;
+  /**
+   * Optional overrides for the OpenAI prompts.
+   * - `{{CUSTOM_LABEL_1}}`, `{{CUSTOM_LABEL_2}}`, `{{CUSTOM_LABEL_3}}` are substituted.
+   * - `{{ROWS_JSON}}` is substituted with the current batch payload JSON; if omitted, rows JSON is appended.
+   */
+  system_prompt?: string | null;
+  user_prompt?: string | null;
 }
 
 export interface RunBroadInsightsResult {
@@ -87,6 +97,92 @@ function parseRiskFlags(v: unknown): string[] {
   return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
 }
 
+function substitutePromptVars(text: string, vars: Record<string, string>): string {
+  let out = text;
+  for (const [k, v] of Object.entries(vars)) {
+    out = out.split(`{{${k}}}`).join(v);
+  }
+  return out;
+}
+
+function defaultBroadSystemPrompt(): string {
+  return `You analyze social/scraper evidence for a marketing content pipeline.
+Return ONLY valid JSON with shape:
+{"insights":[
+  {
+    "row_db_id":"string (must match input)",
+    "why_it_worked":"string",
+    "primary_emotion":"string",
+    "secondary_emotion":"string",
+    "hook_type":"string",
+    "custom_label_1":"string (short; use label meaning if provided)",
+    "custom_label_2":"string",
+    "custom_label_3":"string",
+    "cta_type":"string",
+    "hashtags":"string (normalized list or sentence)",
+    "caption_style":"string",
+    "hook_text":"string (short hook if visible)",
+    "risk_flags":["string"]
+  }
+]}
+One object per input row in this batch only. Do not invent row_db_id values.`;
+}
+
+function defaultBroadUserPrompt(labels: { l1: string; l2: string; l3: string }, rowsPayload: unknown[]): string {
+  return `Custom column label hints (may be empty — still output strings, can be ""):
+- custom_label_1: ${labels.l1 || "(none)"}
+- custom_label_2: ${labels.l2 || "(none)"}
+- custom_label_3: ${labels.l3 || "(none)"}
+
+Rows (JSON):
+${JSON.stringify(rowsPayload, null, 0)}`;
+}
+
+function resolveLabels(
+  criteria: Record<string, unknown>,
+  overrides?: { l1?: string | null; l2?: string | null; l3?: string | null }
+): { l1: string; l2: string; l3: string } {
+  const base = insightLabels(criteria);
+  const l1 = (overrides?.l1 ?? "").trim();
+  const l2 = (overrides?.l2 ?? "").trim();
+  const l3 = (overrides?.l3 ?? "").trim();
+  return {
+    l1: l1 !== "" ? l1 : base.l1,
+    l2: l2 !== "" ? l2 : base.l2,
+    l3: l3 !== "" ? l3 : base.l3,
+  };
+}
+
+function buildBroadPrompts(params: {
+  criteria: Record<string, unknown>;
+  rowsPayload: unknown[];
+  systemOverride?: string | null;
+  userOverride?: string | null;
+  labelOverrides?: { l1?: string | null; l2?: string | null; l3?: string | null };
+}): { labels: { l1: string; l2: string; l3: string }; system: string; user: string } {
+  const labels = resolveLabels(params.criteria, params.labelOverrides);
+  const rowsJson = JSON.stringify(params.rowsPayload, null, 0);
+  const vars = {
+    CUSTOM_LABEL_1: labels.l1 || "(none)",
+    CUSTOM_LABEL_2: labels.l2 || "(none)",
+    CUSTOM_LABEL_3: labels.l3 || "(none)",
+    ROWS_JSON: rowsJson,
+  };
+
+  const systemRaw = (params.systemOverride ?? "").trim() || defaultBroadSystemPrompt();
+  const system = substitutePromptVars(systemRaw, vars);
+
+  const userRaw = (params.userOverride ?? "").trim() || defaultBroadUserPrompt(labels, params.rowsPayload);
+  const userSub = substitutePromptVars(userRaw, vars);
+  const user = userSub.includes("{{ROWS_JSON}}")
+    ? userSub
+    : userSub.includes("Rows (JSON):")
+      ? userSub
+      : `${userSub}\n\nRows (JSON):\n${rowsJson}`;
+
+  return { labels, system, user };
+}
+
 export async function previewBroadInsightsPrompt(
   db: Pool,
   config: AppConfig,
@@ -126,43 +222,25 @@ export async function previewBroadInsightsPrompt(
     bundle: summarizePayloadForLlm(c.evidence_kind, c.payload, 4000),
   }));
 
-  const labels = insightLabels(criteria);
-  const system = `You analyze social/scraper evidence for a marketing content pipeline.
-Return ONLY valid JSON with shape:
-{"insights":[
-  {
-    "row_db_id":"string (must match input)",
-    "why_it_worked":"string",
-    "primary_emotion":"string",
-    "secondary_emotion":"string",
-    "hook_type":"string",
-    "custom_label_1":"string (short; use label meaning if provided)",
-    "custom_label_2":"string",
-    "custom_label_3":"string",
-    "cta_type":"string",
-    "hashtags":"string (normalized list or sentence)",
-    "caption_style":"string",
-    "hook_text":"string (short hook if visible)",
-    "risk_flags":["string"]
-  }
-]}
-One object per input row in this batch only. Do not invent row_db_id values.`;
-
-  const user = `Custom column label hints (may be empty — still output strings, can be ""):
-- custom_label_1: ${labels.l1 || "(none)"}
-- custom_label_2: ${labels.l2 || "(none)"}
-- custom_label_3: ${labels.l3 || "(none)"}
-
-Rows (JSON):
-${JSON.stringify(rowsPayload, null, 0)}`;
+  const prompts = buildBroadPrompts({
+    criteria,
+    rowsPayload,
+    systemOverride: opts.system_prompt,
+    userOverride: opts.user_prompt,
+    labelOverrides: {
+      l1: opts.custom_label_1,
+      l2: opts.custom_label_2,
+      l3: opts.custom_label_3,
+    },
+  });
 
   return {
     model,
     batch_size: batchSize,
     kind_filter: kindFilter,
-    labels,
-    system_prompt: system,
-    user_prompt: user,
+    labels: prompts.labels,
+    system_prompt: prompts.system,
+    user_prompt: prompts.user,
     rows_payload: rowsPayload,
   };
 }
@@ -209,7 +287,11 @@ export async function runBroadInsightsForImport(
     if (candidates.length >= maxRows) break;
   }
 
-  const labels = insightLabels(criteria);
+  const labelOverrides = {
+    l1: opts.custom_label_1,
+    l2: opts.custom_label_2,
+    l3: opts.custom_label_3,
+  };
   let upserted = 0;
   let batches = 0;
 
@@ -233,41 +315,20 @@ export async function runBroadInsightsForImport(
       bundle: summarizePayloadForLlm(c.evidence_kind, c.payload, 4000),
     }));
 
-    const system = `You analyze social/scraper evidence for a marketing content pipeline.
-Return ONLY valid JSON with shape:
-{"insights":[
-  {
-    "row_db_id":"string (must match input)",
-    "why_it_worked":"string",
-    "primary_emotion":"string",
-    "secondary_emotion":"string",
-    "hook_type":"string",
-    "custom_label_1":"string (short; use label meaning if provided)",
-    "custom_label_2":"string",
-    "custom_label_3":"string",
-    "cta_type":"string",
-    "hashtags":"string (normalized list or sentence)",
-    "caption_style":"string",
-    "hook_text":"string (short hook if visible)",
-    "risk_flags":["string"]
-  }
-]}
-One object per input row in this batch only. Do not invent row_db_id values.`;
-
-    const user = `Custom column label hints (may be empty — still output strings, can be ""):
-- custom_label_1: ${labels.l1 || "(none)"}
-- custom_label_2: ${labels.l2 || "(none)"}
-- custom_label_3: ${labels.l3 || "(none)"}
-
-Rows (JSON):
-${JSON.stringify(rowsPayload, null, 0)}`;
+    const prompts = buildBroadPrompts({
+      criteria,
+      rowsPayload,
+      systemOverride: opts.system_prompt,
+      userOverride: opts.user_prompt,
+      labelOverrides,
+    });
 
     const out = await openaiChat(
       apiKey,
       {
         model,
-        system_prompt: system,
-        user_prompt: user,
+        system_prompt: prompts.system,
+        user_prompt: prompts.user,
         max_tokens: 8192,
         response_format: "json_object",
       },

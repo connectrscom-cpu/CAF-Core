@@ -218,6 +218,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         evidence_kind: z.string().max(80).nullable().optional(),
         max_rows: z.number().int().min(1).max(5000).optional(),
         rescan: z.boolean().optional(),
+        custom_label_1: z.string().max(120).nullable().optional(),
+        custom_label_2: z.string().max(120).nullable().optional(),
+        custom_label_3: z.string().max(120).nullable().optional(),
+        system_prompt: z.string().max(50_000).nullable().optional(),
+        user_prompt: z.string().max(50_000).nullable().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -228,6 +233,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         evidence_kind: body.data.evidence_kind ?? null,
         max_rows: body.data.max_rows,
         rescan: body.data.rescan,
+        custom_label_1: body.data.custom_label_1 ?? null,
+        custom_label_2: body.data.custom_label_2 ?? null,
+        custom_label_3: body.data.custom_label_3 ?? null,
+        system_prompt: body.data.system_prompt ?? null,
+        user_prompt: body.data.user_prompt ?? null,
       });
       return { ok: true, ...result };
     } catch (e) {
@@ -247,6 +257,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     const query = z
       .object({
         evidence_kind: z.string().max(80).nullable().optional(),
+        custom_label_1: z.string().max(120).nullable().optional(),
+        custom_label_2: z.string().max(120).nullable().optional(),
+        custom_label_3: z.string().max(120).nullable().optional(),
+        system_prompt: z.string().max(50_000).nullable().optional(),
+        user_prompt: z.string().max(50_000).nullable().optional(),
       })
       .safeParse(request.query);
     if (!params.success || !UUID_RE.test(params.data.import_id) || !query.success) {
@@ -260,6 +275,11 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         params.data.import_id,
         {
           evidence_kind: query.data.evidence_kind ?? null,
+          custom_label_1: query.data.custom_label_1 ?? null,
+          custom_label_2: query.data.custom_label_2 ?? null,
+          custom_label_3: query.data.custom_label_3 ?? null,
+          system_prompt: query.data.system_prompt ?? null,
+          user_prompt: query.data.user_prompt ?? null,
         }
       );
       return { ok: true, ...out };
