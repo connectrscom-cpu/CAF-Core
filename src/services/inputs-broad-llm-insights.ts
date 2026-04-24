@@ -25,6 +25,8 @@ export interface RunBroadInsightsOptions {
   rescan?: boolean;
   /** If set, only include rows with pre_llm_score >= this value (in addition to passing profile min + text gate). */
   min_pre_llm_score?: number;
+  /** If true, include a debug object in the result for easier troubleshooting. */
+  debug?: boolean;
   custom_label_1?: string | null;
   custom_label_2?: string | null;
   custom_label_3?: string | null;
@@ -47,6 +49,23 @@ export interface RunBroadInsightsResult {
   batches: number;
   upserted: number;
   broad_insights_total: number;
+  debug?: {
+    kind_filter: string | null;
+    max_rows: number;
+    min_pre_llm_score: number | null;
+    rescan: boolean;
+    batch_size: number;
+    candidates_sample_row_ids: string[];
+    batches: Array<{
+      batch_index: number;
+      chunk_size: number;
+      parsed_insights: number;
+      matched_row_ids: number;
+      upserted: number;
+      missing_from_output_sample: string[];
+      extra_output_sample: string[];
+    }>;
+  };
 }
 
 export interface BroadInsightsEligibilityEstimate {
@@ -282,6 +301,7 @@ export async function runBroadInsightsForImport(
     ? Math.max(0, Math.min(1, opts.min_pre_llm_score))
     : null;
   const kindFilter = opts.evidence_kind?.trim() || null;
+  const wantDebug = !!opts.debug;
 
   const existingIds = await listEvidenceRowInsightIdsByImportTier(db, importId, "broad_llm");
   const alreadyHad = existingIds.size;
@@ -309,6 +329,7 @@ export async function runBroadInsightsForImport(
   };
   let upserted = 0;
   let batches = 0;
+  const debugBatches: RunBroadInsightsResult["debug"] extends { batches: infer T } ? T : never = [];
 
   const auditBase = {
     db,
@@ -322,6 +343,8 @@ export async function runBroadInsightsForImport(
     const chunk = candidates.slice(off, off + batchSize);
     if (chunk.length === 0) break;
     batches++;
+    const batchIndex = batches;
+    const beforeUpsert = upserted;
 
     const rowsPayload = chunk.map((c) => ({
       row_db_id: c.id,
@@ -357,10 +380,18 @@ export async function runBroadInsightsForImport(
         : [];
 
     const byId = new Map(chunk.map((c) => [c.id, c]));
+    const expectedIds = new Set(chunk.map((c) => c.id));
+    const matchedIds = new Set<string>();
+    const extraIds: string[] = [];
     for (const item of arr) {
       const rid = String(item.row_db_id ?? "").trim();
-      if (!rid || !byId.has(rid)) continue;
+      if (!rid) continue;
+      if (!byId.has(rid)) {
+        extraIds.push(rid);
+        continue;
+      }
       const c = byId.get(rid)!;
+      matchedIds.add(rid);
       const risks = parseRiskFlags(item.risk_flags);
       await upsertEvidenceRowInsight(db, {
         project_id: project.id,
@@ -387,6 +418,22 @@ export async function runBroadInsightsForImport(
       });
       upserted++;
     }
+
+    if (wantDebug) {
+      const missing: string[] = [];
+      for (const id of expectedIds) {
+        if (!matchedIds.has(id)) missing.push(id);
+      }
+      debugBatches.push({
+        batch_index: batchIndex,
+        chunk_size: chunk.length,
+        parsed_insights: arr.length,
+        matched_row_ids: matchedIds.size,
+        upserted: upserted - beforeUpsert,
+        missing_from_output_sample: missing.slice(0, 12),
+        extra_output_sample: extraIds.slice(0, 12),
+      });
+    }
   }
 
   const broadTotal = await countEvidenceRowInsightsByImportTier(db, importId, "broad_llm");
@@ -401,6 +448,17 @@ export async function runBroadInsightsForImport(
     batches,
     upserted,
     broad_insights_total: broadTotal,
+    debug: wantDebug
+      ? {
+          kind_filter: kindFilter,
+          max_rows: maxRows,
+          min_pre_llm_score: minPre,
+          rescan: !!opts.rescan,
+          batch_size: batchSize,
+          candidates_sample_row_ids: candidates.slice(0, 24).map((c) => c.id),
+          batches: debugBatches,
+        }
+      : undefined,
   };
 }
 
