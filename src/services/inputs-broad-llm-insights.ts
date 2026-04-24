@@ -49,6 +49,15 @@ export interface RunBroadInsightsResult {
   broad_insights_total: number;
 }
 
+export interface BroadInsightsEligibilityEstimate {
+  import_id: string;
+  model: string;
+  rows_scanned: number;
+  rows_eligible_new: number;
+  already_had_broad: number;
+  rows_would_send: number;
+}
+
 export interface BroadInsightsPromptPreview {
   model: string;
   batch_size: number;
@@ -392,5 +401,57 @@ export async function runBroadInsightsForImport(
     batches,
     upserted,
     broad_insights_total: broadTotal,
+  };
+}
+
+export async function estimateBroadInsightsForImport(
+  db: Pool,
+  config: AppConfig,
+  projectSlug: string,
+  importId: string,
+  opts: RunBroadInsightsOptions = {}
+): Promise<BroadInsightsEligibilityEstimate> {
+  const project = await ensureProject(db, projectSlug);
+  const imp = await getInputsEvidenceImport(db, project.id, importId);
+  if (!imp) throw new Error(`Import not found: ${importId}`);
+
+  let profile = await getInputsProcessingProfile(db, project.id);
+  if (!profile) {
+    profile = await upsertInputsProcessingProfile(db, project.id, {});
+  }
+  const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+  const model = broadModel(profile);
+  const maxRows = Math.min(Math.max(opts.max_rows ?? 800, 1), 5000);
+  const minPre =
+    typeof opts.min_pre_llm_score === "number" && Number.isFinite(opts.min_pre_llm_score)
+      ? Math.max(0, Math.min(1, opts.min_pre_llm_score))
+      : null;
+  const kindFilter = opts.evidence_kind?.trim() || null;
+
+  const existingIds = await listEvidenceRowInsightIdsByImportTier(db, importId, "broad_llm");
+  const alreadyHad = existingIds.size;
+  const existing = opts.rescan ? new Set<string>() : existingIds;
+
+  const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
+
+  let eligibleNew = 0;
+  for (const r of dbRows) {
+    if (kindFilter && r.evidence_kind !== kindFilter) continue;
+    const payload = (r.payload_json ?? {}) as Record<string, unknown>;
+    const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
+    if (ev.dropped_reason != null) continue;
+    if (minPre != null && ev.pre_llm_score < minPre) continue;
+    if (existing.has(r.id)) continue;
+    eligibleNew++;
+    if (eligibleNew >= maxRows) break;
+  }
+
+  return {
+    import_id: importId,
+    model,
+    rows_scanned: dbRows.length,
+    rows_eligible_new: eligibleNew,
+    already_had_broad: alreadyHad,
+    rows_would_send: eligibleNew,
   };
 }

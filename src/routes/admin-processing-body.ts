@@ -120,6 +120,13 @@ export function adminProcessingBody(currentSlug: string): string {
             <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
           </div>
           <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
+          <div id="broad-evidence-viewer" style="display:none;margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);font-size:12px">
+            <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:6px">
+              <div id="broad-evidence-title" class="mono" style="font-size:12px;color:var(--muted)"></div>
+              <button type="button" class="btn-ghost btn-sm" id="btn-close-broad-evidence">Close</button>
+            </div>
+            <pre id="broad-evidence-pre" style="margin:0;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto"></pre>
+          </div>
           <div id="broad-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
@@ -748,7 +755,6 @@ document.getElementById('prellm-save-formula')?.addEventListener('click',async f
 document.getElementById('btn-run-broad-insights')?.addEventListener('click',async function(){
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
-  if(msg){msg.textContent='Running broad LLM (this platform tab)…';}
   try{
     var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
@@ -769,6 +775,13 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
       system_prompt:o.system_prompt,
       user_prompt:o.user_prompt
     };
+    if(msg){msg.textContent='Checking eligible evidence rows…';msg.style.color='';}
+    var r0=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},body,{dry_run:true}))});
+    var d0=await r0.json().catch(function(){return {};});
+    if(!r0.ok||!d0.ok)throw new Error(apiErr(d0,'HTTP '+r0.status));
+    var nElig=Number(d0.rows_eligible_new||0);
+    if(msg){msg.textContent='Running broad LLM (this platform tab) — will analyze '+String(nElig)+' evidence rows…';msg.style.color='';}
+    if(nElig<=0){loadBroadTable();return;}
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
@@ -789,6 +802,31 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     var rescan=!!document.getElementById('broad-rescan')?.checked;
     var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
     var o=readBroadOverrides();
+
+    if(msg){msg.textContent='Checking eligible evidence rows (all platforms)…';msg.style.color='';}
+    var totalElig=0;
+    for(var j=0;j<broadKinds.length;j++){
+      var k0=broadKinds[j];
+      var cutoff0=(useCutoff&&prellmMinByKind[k0]!=null)?Number(prellmMinByKind[k0]):null;
+      var body0={
+        evidence_kind:k0,
+        max_rows:maxRows,
+        rescan:rescan,
+        min_pre_llm_score:(useCutoff&&cutoff0!=null&&Number.isFinite(cutoff0))?cutoff0:undefined,
+        custom_label_1:o.custom_label_1,
+        custom_label_2:o.custom_label_2,
+        custom_label_3:o.custom_label_3,
+        system_prompt:o.system_prompt,
+        user_prompt:o.user_prompt,
+        dry_run:true
+      };
+      var rr=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body0)});
+      var dd=await rr.json().catch(function(){return {};});
+      if(!rr.ok||!dd.ok)throw new Error(kindLabel(k0,'insights')+': '+apiErr(dd,'HTTP '+rr.status));
+      totalElig+=Number(dd.rows_eligible_new||0);
+    }
+    if(msg){msg.textContent='Running broad (all platforms) — will analyze '+String(totalElig)+' evidence rows total…';msg.style.color='';}
+    if(totalElig<=0){loadBroadTable();return;}
 
     var total=0;
     for(var i=0;i<broadKinds.length;i++){
@@ -928,13 +966,37 @@ async function loadBroadTable(){
       wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
       return;
     }
-    var tb='<table class="sp-modal-table"><thead><tr><th>Kind</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
+    var tb='<table class="sp-modal-table"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Kind</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
-      tb+='<tr><td class="mono">'+esc(x.evidence_kind)+'</td><td style="max-width:360px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td><td>'+esc(x.hook_text||'')+'</td><td>'+esc(x.primary_emotion||'')+'</td></tr>';
+      var insightId=String(x.insights_id||'');
+      var rowId=String(x.source_evidence_row_id||'');
+      tb+='<tr>'+
+        '<td class="mono">'+esc(insightId)+'</td>'+
+        '<td class="mono"><a href="#" class="broad-ev-link" data-row-id="'+esc(rowId)+'">'+esc(rowId)+'</a></td>'+
+        '<td class="mono">'+esc(x.evidence_kind)+'</td>'+
+        '<td style="max-width:360px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td>'+
+        '<td>'+esc(x.hook_text||'')+'</td>'+
+        '<td>'+esc(x.primary_emotion||'')+'</td>'+
+      '</tr>';
     }
     tb+='</tbody></table>';
     wrap.innerHTML=tb;
+    wrap.querySelectorAll('.broad-ev-link').forEach(function(a){
+      a.addEventListener('click',async function(ev){
+        ev.preventDefault();
+        try{
+          var id=this.getAttribute('data-row-id');
+          if(!id)return;
+          await showBroadEvidenceRow(id);
+        }catch(e){
+          var pre=document.getElementById('broad-evidence-pre');
+          var box=document.getElementById('broad-evidence-viewer');
+          if(box)box.style.display='block';
+          if(pre)pre.textContent=String(e.message||e);
+        }
+      });
+    });
   }catch(e){meta.textContent=String(e);}
 }
 document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadTable);
@@ -956,6 +1018,37 @@ function renderInsightTable(rows,cols){
   tb+='</tbody></table>';
   return tb;
 }
+
+async function showBroadEvidenceRow(rowId){
+  var box=document.getElementById('broad-evidence-viewer');
+  var pre=document.getElementById('broad-evidence-pre');
+  var title=document.getElementById('broad-evidence-title');
+  if(!box||!pre||!title)return;
+  if(!SLUG||!selectedImportId)throw new Error('Select an import first.');
+  box.style.display='block';
+  title.textContent='Evidence row '+String(rowId||'');
+  pre.textContent='Loading…';
+  var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-row/'+encodeURIComponent(rowId));
+  var d=await r.json().catch(function(){return {};});
+  if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+  var row=d.row||{};
+  pre.textContent=JSON.stringify({
+    id: row.id,
+    evidence_kind: row.evidence_kind,
+    sheet_name: row.sheet_name,
+    row_index: row.row_index,
+    dedupe_key: row.dedupe_key,
+    payload_json: row.payload_json,
+    rating_score: row.rating_score,
+    rating_rationale: row.rating_rationale,
+    rated_at: row.rated_at
+  },null,2);
+}
+
+document.getElementById('btn-close-broad-evidence')?.addEventListener('click',function(){
+  var box=document.getElementById('broad-evidence-viewer');
+  if(box)box.style.display='none';
+});
 
 async function loadDeepImageTable(){
   var el=document.getElementById('deep-image-table');

@@ -10,7 +10,11 @@ import {
   listQcFlowProfiles,
   upsertQcFlowProfile,
 } from "../repositories/qc-flow-profiles.js";
-import { getImportEvidenceStats, getInputsEvidenceImport } from "../repositories/inputs-evidence.js";
+import {
+  getImportEvidenceStats,
+  getInputsEvidenceImport,
+  listEvidenceRowsByIds,
+} from "../repositories/inputs-evidence.js";
 import {
   countEvidenceRowInsightsByImportTier,
   countEvidenceRowInsightsByImportTierAndKind,
@@ -24,7 +28,11 @@ import {
 import { computeInputHealth, persistImportHealth } from "../services/input-health.js";
 import { buildSignalPackFromEvidenceImport } from "../services/inputs-to-signal-pack.js";
 import { getPreLlmEvidencePreview } from "../services/inputs-pre-llm-preview.js";
-import { previewBroadInsightsPrompt, runBroadInsightsForImport } from "../services/inputs-broad-llm-insights.js";
+import {
+  estimateBroadInsightsForImport,
+  previewBroadInsightsPrompt,
+  runBroadInsightsForImport,
+} from "../services/inputs-broad-llm-insights.js";
 import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-insights.js";
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
@@ -262,12 +270,27 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         custom_label_3: z.string().max(120).nullable().optional(),
         system_prompt: z.string().max(50_000).nullable().optional(),
         user_prompt: z.string().max(50_000).nullable().optional(),
+        dry_run: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
       return reply.code(400).send({ ok: false, error: "bad_params" });
     }
     try {
+      if (body.data.dry_run) {
+        const est = await estimateBroadInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
+          evidence_kind: body.data.evidence_kind ?? null,
+          max_rows: body.data.max_rows,
+          rescan: body.data.rescan,
+          min_pre_llm_score: body.data.min_pre_llm_score,
+          custom_label_1: body.data.custom_label_1 ?? null,
+          custom_label_2: body.data.custom_label_2 ?? null,
+          custom_label_3: body.data.custom_label_3 ?? null,
+          system_prompt: body.data.system_prompt ?? null,
+          user_prompt: body.data.user_prompt ?? null,
+        });
+        return { ok: true, dry_run: true, ...est };
+      }
       const result = await runBroadInsightsForImport(db, config, params.data.project_slug, params.data.import_id, {
         evidence_kind: body.data.evidence_kind ?? null,
         max_rows: body.data.max_rows,
@@ -285,6 +308,28 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       return reply.code(500).send({ ok: false, error: "broad_insights_failed", message: msg });
     }
   });
+
+  app.get(
+    "/v1/inputs-processing/:project_slug/import/:import_id/evidence-row/:row_id",
+    async (request, reply) => {
+      const params = z
+        .object({ project_slug: z.string(), import_id: z.string(), row_id: z.string() })
+        .safeParse(request.params);
+      if (!params.success || !UUID_RE.test(params.data.import_id)) {
+        return reply.code(400).send({ ok: false, error: "bad_params" });
+      }
+      try {
+        const project = await ensureProject(db, params.data.project_slug);
+        const rows = await listEvidenceRowsByIds(db, project.id, params.data.import_id, [params.data.row_id]);
+        const row = rows[0] ?? null;
+        if (!row) return reply.code(404).send({ ok: false, error: "not_found" });
+        return reply.send({ ok: true, row });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(500).send({ ok: false, error: "server_error", message: msg });
+      }
+    }
+  );
 
   /**
    * GET /v1/inputs-processing/:project_slug/import/:import_id/broad-insights-prompt
