@@ -37,6 +37,16 @@ export interface RunBroadInsightsResult {
   broad_insights_total: number;
 }
 
+export interface BroadInsightsPromptPreview {
+  model: string;
+  batch_size: number;
+  kind_filter: string | null;
+  labels: { l1: string; l2: string; l3: string };
+  system_prompt: string;
+  user_prompt: string;
+  rows_payload: unknown[];
+}
+
 function insightLabels(criteria: Record<string, unknown>): { l1: string; l2: string; l3: string } {
   const raw = criteria.insight_column_labels;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -75,6 +85,86 @@ function makeInsightsId(importId: string, rowId: string): string {
 function parseRiskFlags(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
+}
+
+export async function previewBroadInsightsPrompt(
+  db: Pool,
+  config: AppConfig,
+  projectSlug: string,
+  importId: string,
+  opts: RunBroadInsightsOptions = {}
+): Promise<BroadInsightsPromptPreview> {
+  const project = await ensureProject(db, projectSlug);
+  const imp = await getInputsEvidenceImport(db, project.id, importId);
+  if (!imp) throw new Error(`Import not found: ${importId}`);
+
+  let profile = await getInputsProcessingProfile(db, project.id);
+  if (!profile) {
+    profile = await upsertInputsProcessingProfile(db, project.id, {});
+  }
+  const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+  const model = broadModel(profile);
+  const batchSize = broadBatchSize(criteria);
+  const kindFilter = opts.evidence_kind?.trim() || null;
+
+  const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
+  type Cand = { id: string; evidence_kind: string; payload: Record<string, unknown>; pre_llm_score: number };
+  const candidates: Cand[] = [];
+  for (const r of dbRows) {
+    if (kindFilter && r.evidence_kind !== kindFilter) continue;
+    const payload = (r.payload_json ?? {}) as Record<string, unknown>;
+    const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
+    if (ev.dropped_reason != null) continue;
+    candidates.push({ id: r.id, evidence_kind: r.evidence_kind, payload, pre_llm_score: ev.pre_llm_score });
+    if (candidates.length >= batchSize) break;
+  }
+
+  const rowsPayload = candidates.map((c) => ({
+    row_db_id: c.id,
+    evidence_kind: c.evidence_kind,
+    pre_llm_score: c.pre_llm_score,
+    bundle: summarizePayloadForLlm(c.evidence_kind, c.payload, 4000),
+  }));
+
+  const labels = insightLabels(criteria);
+  const system = `You analyze social/scraper evidence for a marketing content pipeline.
+Return ONLY valid JSON with shape:
+{"insights":[
+  {
+    "row_db_id":"string (must match input)",
+    "why_it_worked":"string",
+    "primary_emotion":"string",
+    "secondary_emotion":"string",
+    "hook_type":"string",
+    "custom_label_1":"string (short; use label meaning if provided)",
+    "custom_label_2":"string",
+    "custom_label_3":"string",
+    "cta_type":"string",
+    "hashtags":"string (normalized list or sentence)",
+    "caption_style":"string",
+    "hook_text":"string (short hook if visible)",
+    "risk_flags":["string"]
+  }
+]}
+One object per input row in this batch only. Do not invent row_db_id values.`;
+
+  const user = `Custom column label hints (may be empty — still output strings, can be ""):
+- custom_label_1: ${labels.l1 || "(none)"}
+- custom_label_2: ${labels.l2 || "(none)"}
+- custom_label_3: ${labels.l3 || "(none)"}
+
+Rows (JSON):
+${JSON.stringify(rowsPayload, null, 0)}`;
+
+  return {
+    model,
+    batch_size: batchSize,
+    kind_filter: kindFilter,
+    labels,
+    system_prompt: system,
+    user_prompt: user,
+    rows_payload: rowsPayload,
+  };
 }
 
 export async function runBroadInsightsForImport(

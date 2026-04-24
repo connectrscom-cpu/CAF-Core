@@ -4,7 +4,7 @@ export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   return `
-<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Pre-LLM evidence · broad LLM · top-performer image, carousel, video · profile · signal packs</span></div></div>
+<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Evidence cutoffs & formulas · Broad insights · Top performers · Sources · Signal pack · Profile</span></div></div>
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
@@ -20,19 +20,13 @@ export function adminProcessingBody(currentSlug: string): string {
           <button type="button" class="btn btn-sm" id="seg-evidence" style="border-radius:8px 8px 0 0">Evidence</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-broad" style="border-radius:8px 8px 0 0">Insights (broad)</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-top" style="border-radius:8px 8px 0 0">Top performers</button>
+          <button type="button" class="btn-ghost btn-sm" id="seg-sources" style="border-radius:8px 8px 0 0">Sources</button>
+          <button type="button" class="btn-ghost btn-sm" id="seg-pack" style="border-radius:8px 8px 0 0">Signal pack</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-profile" style="border-radius:8px 8px 0 0">Profile &amp; audit</button>
         </div>
         <div id="panel-evidence" style="padding:12px 0 0">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-build-pack">Build signal pack</button>
-            <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
-          </div>
           <pre id="import-stats" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;overflow:auto;max-height:180px;margin-bottom:12px"></pre>
           <div id="prellm-root">
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-              <button type="button" class="btn btn-sm" id="btn-run-broad-insights">Run broad LLM (text)</button>
-              <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
-            </div>
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px">
               <div style="flex:1;min-width:280px">
@@ -70,6 +64,9 @@ export function adminProcessingBody(currentSlug: string): string {
                   <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
                   <span id="prellm-save-msg" style="font-size:11px;color:var(--muted)"></span>
                 </div>
+                <div style="margin-top:8px;font-size:11px;color:var(--muted)">
+                  <span class="mono">text_signal</span> is a text-length signal (normalized 0–1) derived from title/body/caption fields. It helps favor rows with enough context for analysis.
+                </div>
               </div>
             </div>
             <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-bottom:10px;white-space:pre-wrap"></pre>
@@ -77,7 +74,14 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Text-only <span class="mono">broad_llm</span> rows stored per evidence row. Filter by platform tab.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) stored per evidence row. Filter by platform tab.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
+            <button type="button" class="btn btn-sm" id="btn-run-broad-insights">Run broad LLM</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-show-broad-prompt">View prompt</button>
+            <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
+            <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
+          </div>
           <div id="broad-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
           <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
@@ -120,6 +124,20 @@ export function adminProcessingBody(currentSlug: string): string {
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-audit">Refresh audit</button>
           <div id="audit-root" style="margin-top:10px;font-size:11px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:8px">Loading…</div>
         </div>
+        <div id="panel-sources" style="display:none;padding:12px 0 0">
+          <p class="runs-ops-hint" style="margin-bottom:10px">Sources are non-social evidence kinds like <span class="mono">source_registry</span> and <span class="mono">scraped_page</span>.</p>
+          <div id="sources-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+          <pre id="sources-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
+          <div id="sources-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+        </div>
+        <div id="panel-pack" style="display:none;padding:12px 0 0">
+          <p class="runs-ops-hint" style="margin-bottom:10px">Build a signal pack from this import (rating + synthesis + ideas). Review settings first.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+            <button type="button" class="btn btn-sm" id="btn-build-pack">Build signal pack</button>
+            <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto"></pre>
+        </div>
       </div>
     </div>
   </div>
@@ -148,6 +166,23 @@ var PRELLM_SUGGESTED={
   _default:{min_score:0,weights:{text_signal:1}}
 };
 
+function kindLabel(kind,mode){
+  var base=String(kind||'').trim();
+  var map={
+    instagram_post:'IG',
+    facebook_post:'FB',
+    reddit_post:'RDT',
+    tiktok_video:'TT',
+    scraped_page:'WEB',
+    source_registry:'SRC'
+  };
+  var p=map[base]||base.toUpperCase().slice(0,6);
+  if(mode==='evidence')return p+' Evidence';
+  if(mode==='insights')return p+' Insights';
+  if(mode==='top')return p+' Top';
+  return p;
+}
+
 function readImportFromUrl(){
   try{
     var u=new URLSearchParams(window.location.search);
@@ -167,8 +202,10 @@ function showSeg(which){
   document.getElementById('panel-evidence').style.display=which==='evidence'?'block':'none';
   document.getElementById('panel-broad').style.display=which==='broad'?'block':'none';
   document.getElementById('panel-top').style.display=which==='top'?'block':'none';
+  document.getElementById('panel-sources').style.display=which==='sources'?'block':'none';
+  document.getElementById('panel-pack').style.display=which==='pack'?'block':'none';
   document.getElementById('panel-profile').style.display=which==='profile'?'block':'none';
-  var ids=[['seg-evidence','evidence'],['seg-broad','broad'],['seg-top','top'],['seg-profile','profile']];
+  var ids=[['seg-evidence','evidence'],['seg-broad','broad'],['seg-top','top'],['seg-sources','sources'],['seg-pack','pack'],['seg-profile','profile']];
   for(var i=0;i<ids.length;i++){
     var el=document.getElementById(ids[i][0]);
     if(!el)continue;
@@ -177,11 +214,15 @@ function showSeg(which){
   if(which==='broad')initBroadPanel();
   if(which==='top'){loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();}
   if(which==='profile'){loadProfile();loadAudit();}
+  if(which==='pack'){loadProfile().then(renderPackSettings);}
+  if(which==='sources'){initSourcesPanel();}
 }
 
 document.getElementById('seg-evidence')?.addEventListener('click',function(){showSeg('evidence');});
 document.getElementById('seg-broad')?.addEventListener('click',function(){showSeg('broad');});
 document.getElementById('seg-top')?.addEventListener('click',function(){showSeg('top');});
+document.getElementById('seg-sources')?.addEventListener('click',function(){showSeg('sources');});
+document.getElementById('seg-pack')?.addEventListener('click',function(){showSeg('pack');});
 document.getElementById('seg-profile')?.addEventListener('click',function(){showSeg('profile');});
 
 async function loadImports(){
@@ -200,7 +241,8 @@ async function loadImports(){
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var sel=x.id===selectedImportId?'btn btn-sm':'btn-ghost btn-sm';
-      tb+='<tr><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.upload_filename||'—')+'</td><td>'+esc(x.stored_row_count)+'</td><td><button type="button" class="'+sel+' sel-import" data-id="'+esc(x.id)+'">Select</button></td></tr>';
+      var trStyle=x.id===selectedImportId?'background:rgba(100,160,255,0.10);outline:1px solid rgba(100,160,255,0.25);':'';
+      tb+='<tr style="'+trStyle+'"><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.upload_filename||'—')+'</td><td>'+esc(x.stored_row_count)+'</td><td><button type="button" class="'+sel+' sel-import" data-id="'+esc(x.id)+'">'+(x.id===selectedImportId?'Selected':'Select')+'</button></td></tr>';
     }
     tb+='</tbody></table>';
     root.innerHTML=tb;
@@ -327,7 +369,7 @@ async function loadPrellmKindsAndPreview(){
     for(var i=0;i<prellmKinds.length;i++){
       var k=prellmKinds[i];
       h+='<button type="button" class="'+(k===prellmKind?'btn btn-sm':'btn-ghost btn-sm')+' prellm-kind" data-kind="'+esc(k)+'">'+
-        esc(k)+' <span style="color:var(--muted)">('+String(bk[k]||0)+')</span></button>';
+        esc(kindLabel(k,'evidence'))+' <span style="color:var(--muted)">('+String(bk[k]||0)+')</span></button>';
     }
     bar.innerHTML=h;
     bar.querySelectorAll('.prellm-kind').forEach(function(btn){
@@ -432,6 +474,20 @@ async function loadPrellmPreview(){
 document.getElementById('prellm-min-score')?.addEventListener('input',schedulePrellmPreview);
 document.getElementById('prellm-show-below')?.addEventListener('change',schedulePrellmPreview);
 document.getElementById('prellm-sort')?.addEventListener('change',schedulePrellmPreview);
+
+document.getElementById('btn-show-broad-prompt')?.addEventListener('click',async function(){
+  var msg=document.getElementById('prellm-insight-msg');
+  if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
+  try{
+    var k=broadKind||prellmKind||'';
+    var q='evidence_kind='+encodeURIComponent(k);
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/broad-insights-prompt?'+q);
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var text='Model: '+d.model+' · batch_size '+d.batch_size+'\\n\\nSYSTEM:\\n'+d.system_prompt+'\\n\\nUSER:\\n'+d.user_prompt;
+    alert(text.slice(0,12000));
+  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+});
 
 function renderWeightsTable(weights){
   var wrap=document.getElementById('prellm-weights-wrap');
@@ -555,7 +611,10 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   if(msg){msg.textContent='Running broad LLM…';}
   try{
-    var body={evidence_kind:prellmKind||null,max_rows:800,rescan:false};
+    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
+    var rescan=!!document.getElementById('broad-rescan')?.checked;
+    var body={evidence_kind:broadKind||prellmKind||null,max_rows:maxRows,rescan:rescan};
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
@@ -634,7 +693,7 @@ async function initBroadPanel(){
   var h='';
   for(var i=0;i<broadKinds.length;i++){
     var k=broadKinds[i];
-    h+='<button type="button" class="'+(k===broadKind?'btn btn-sm':'btn-ghost btn-sm')+' broad-kind" data-kind="'+esc(k)+'">'+esc(k)+'</button>';
+    h+='<button type="button" class="'+(k===broadKind?'btn btn-sm':'btn-ghost btn-sm')+' broad-kind" data-kind="'+esc(k)+'">'+esc(kindLabel(k,'insights'))+'</button>';
   }
   bar.innerHTML=h;
   bar.querySelectorAll('.broad-kind').forEach(function(btn){
@@ -755,6 +814,87 @@ document.getElementById('btn-build-pack')?.addEventListener('click',async functi
     msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) · overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
+
+function renderPackSettings(){
+  var pre=document.getElementById('pack-settings');
+  if(!pre)return;
+  var c=(profileCache&&profileCache.profile)?profileCache.profile:{};
+  pre.textContent=JSON.stringify({
+    rating_model:c.rating_model||'',
+    synth_model:c.synth_model||'',
+    max_rows_for_rating:c.max_rows_for_rating,
+    max_rows_per_llm_batch:c.max_rows_per_llm_batch,
+    min_llm_score_for_pack:c.min_llm_score_for_pack,
+    max_ideas_in_signal_pack:c.max_ideas_in_signal_pack,
+    max_insights_for_ideas_llm:c.max_insights_for_ideas_llm,
+    min_top_performer_insights_for_ideas_llm:c.min_top_performer_insights_for_ideas_llm
+  },null,2);
+}
+
+async function initSourcesPanel(){
+  if(!SLUG||!selectedImportId)return;
+  var bar=document.getElementById('sources-kind-bar');
+  var meta=document.getElementById('sources-meta');
+  var wrap=document.getElementById('sources-table-wrap');
+  if(!bar||!meta||!wrap)return;
+  bar.innerHTML='Loading…';
+  try{
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats');
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var bk=d.stats&&d.stats.by_kind||{};
+    var kinds=Object.keys(bk).filter(function(k){return (bk[k]||0)>0 && (k==='source_registry'||k==='scraped_page');}).sort();
+    if(kinds.length===0){bar.innerHTML='<span class="empty">No source rows in this import.</span>';meta.textContent='';wrap.innerHTML='';return;}
+    var cur=kinds[0];
+    var h='';
+    for(var i=0;i<kinds.length;i++){
+      var k=kinds[i];
+      h+='<button type="button" class="'+(k===cur?'btn btn-sm':'btn-ghost btn-sm')+' src-kind" data-kind="'+esc(k)+'">'+esc(kindLabel(k,'evidence'))+'</button>';
+    }
+    bar.innerHTML=h;
+    bar.querySelectorAll('.src-kind').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        var k=btn.getAttribute('data-kind')||'';
+        loadSourcesEvidence(k);
+      });
+    });
+    loadSourcesEvidence(cur);
+  }catch(e){
+    bar.innerHTML='<span style="color:var(--red)">'+esc(e.message||e)+'</span>';
+  }
+}
+
+async function loadSourcesEvidence(kind){
+  var meta=document.getElementById('sources-meta');
+  var wrap=document.getElementById('sources-table-wrap');
+  if(!meta||!wrap||!kind)return;
+  meta.textContent='Loading…';
+  wrap.innerHTML='';
+  try{
+    var minScore=prellmMinByKind[kind]||0;
+    var q='evidence_kind='+encodeURIComponent(kind)+'&min_score='+encodeURIComponent(String(minScore))+'&include_below_cutoff=1&sort=score_desc&limit=120&offset=0';
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/pre-llm-evidence?'+q);
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    meta.textContent=JSON.stringify({kind:kind,label:kindLabel(kind,'evidence'),counts:d.totals},null,2);
+    var rows=d.rows||[];
+    if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No rows.</div>';return;}
+    var tb='<table class="sp-modal-table"><thead><tr><th>Score</th><th>Included</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
+    for(var i=0;i<rows.length;i++){
+      var x=rows[i];
+      var inc=!!x.included_by_cutoff;
+      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">—</span>';
+      tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
+        '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
+        '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
+        '<td style="max-width:200px;word-break:break-all">'+urlCell+'</td>'+
+        '<td style="max-width:360px;white-space:pre-wrap;word-break:break-word">'+esc(x.caption||'')+'</td>'+
+        '<td style="max-width:200px;word-break:break-word">'+esc(x.hashtags||'')+'</td></tr>';
+    }
+    tb+='</tbody></table>';
+    wrap.innerHTML=tb;
+  }catch(e){meta.textContent=String(e);}
+}
 
 readImportFromUrl();
 showSeg('evidence');

@@ -23,7 +23,7 @@ import {
 import { computeInputHealth, persistImportHealth } from "../services/input-health.js";
 import { buildSignalPackFromEvidenceImport } from "../services/inputs-to-signal-pack.js";
 import { getPreLlmEvidencePreview } from "../services/inputs-pre-llm-preview.js";
-import { runBroadInsightsForImport } from "../services/inputs-broad-llm-insights.js";
+import { previewBroadInsightsPrompt, runBroadInsightsForImport } from "../services/inputs-broad-llm-insights.js";
 import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-insights.js";
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
@@ -129,7 +129,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         evidence_kind: z.string().min(1).max(80),
         min_score: z.coerce.number().min(0).max(1).default(0),
         include_below_cutoff: z
-          .union([z.literal("1"), z.literal("true")])
+          .enum(["1", "0", "true", "false"])
           .optional()
           .transform((v) => v === "1" || v === "true"),
         sort: z.enum(["score_desc", "score_asc"]).optional(),
@@ -233,6 +233,39 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return reply.code(500).send({ ok: false, error: "broad_insights_failed", message: msg });
+    }
+  });
+
+  /**
+   * GET /v1/inputs-processing/:project_slug/import/:import_id/broad-insights-prompt
+   * Preview the exact system/user prompt (with a sample batch payload) for broad insights.
+   */
+  app.get("/v1/inputs-processing/:project_slug/import/:import_id/broad-insights-prompt", async (request, reply) => {
+    const params = z
+      .object({ project_slug: z.string(), import_id: z.string() })
+      .safeParse(request.params);
+    const query = z
+      .object({
+        evidence_kind: z.string().max(80).nullable().optional(),
+      })
+      .safeParse(request.query);
+    if (!params.success || !UUID_RE.test(params.data.import_id) || !query.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    try {
+      const out = await previewBroadInsightsPrompt(
+        db,
+        config,
+        params.data.project_slug,
+        params.data.import_id,
+        {
+          evidence_kind: query.data.evidence_kind ?? null,
+        }
+      );
+      return { ok: true, ...out };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(500).send({ ok: false, error: "prompt_preview_failed", message: msg });
     }
   });
 
