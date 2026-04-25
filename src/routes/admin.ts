@@ -2670,6 +2670,10 @@ function togglePanel(id){
   const next=el.style.display==='none'?'block':'none';
   el.style.display=next;
   if(id==='create-panel'&&next==='block')loadSignalPackSelect();
+  if(next==='block'){
+    try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
+    try{showToast((id==='create-panel'?'Create run':'Upload signal pack')+' panel opened.',true);}catch(_e){}
+  }
 }
 
 async function loadSignalPackSelect(){
