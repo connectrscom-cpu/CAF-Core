@@ -2677,21 +2677,22 @@ async function loadSignalPackSelect(){
   if(!sel||!SLUG)return;
   sel.innerHTML='<option value="">Loading…</option>';
   try{
-    const r=await cafFetch('/v1/signal-packs/'+encodeURIComponent(SLUG)+'?summary=1&limit=80');
+    const r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=80&offset=0');
     const d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    const packs=d.signal_packs||[];
+    const packs=d.rows||[];
     if(packs.length===0){sel.innerHTML='<option value="">No signal packs — use Processing → Build signal pack</option>';return;}
     var h='<option value="">Select a signal pack…</option>';
     for(var i=0;i<packs.length;i++){
       var p=packs[i];
       var when=fmtDate(p.created_at);
       var fn=esc(p.upload_filename||p.run_id||p.id);
-      h+='<option value="'+esc(p.id)+'">'+when+' · '+fn+' (ideas '+(p.ideas_count||0)+', overall '+(p.overall_candidates_count||0)+')</option>';
+      h+='<option value="'+esc(p.id)+'">'+when+' · '+fn+' (ideas '+(p.ideas_count||0)+', overall '+(p.candidate_count||0)+')</option>';
     }
     sel.innerHTML=h;
   }catch(e){
     sel.innerHTML='<option value="">Could not load signal packs</option>';
+    showToast('Could not load signal packs: '+String(e.message||e),false);
   }
 }
 
