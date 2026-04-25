@@ -2985,13 +2985,41 @@ async function runAction(runId,action){
   try{
     const base='/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(runId);
     const isDelete=action==='delete';
-    const r=await cafFetch(isDelete?base:base+'/'+action,isDelete?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    const raw=await r.text();
-    let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid JSON':'HTTP '+r.status+' '+raw.slice(0,80));}
+    async function doReq(url,opts){
+      const r=await cafFetch(url,opts);
+      const raw=await r.text();
+      let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid JSON':'HTTP '+r.status+' '+raw.slice(0,160));}
+      return {r,d};
+    }
+    let {r,d}=await doReq(isDelete?base:base+'/'+action,isDelete?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     if(action==='process'&&r.status===202&&d.ok){
       showToast(d.message||'Processing started in the background — open Jobs and refresh to watch all jobs advance (can take many minutes).',true,32000);
       loadRuns(runsPage);
       return;
+    }
+    // If Start fails because candidates_json is empty, offer to materialize candidates automatically.
+    if(action==='start'&&(!r.ok||!d.ok)){
+      const msg=apiErr(d,'start failed');
+      const looksLikeCandidatesIssue=String(msg||'').toLowerCase().includes('candidates_json')||String(msg||'').toLowerCase().includes('materialize');
+      if(r.status===400&&looksLikeCandidatesIssue){
+        const ok=confirm(
+          'This run cannot Start because candidates_json is empty.\\n\\n' +
+          'Fix now by materializing candidates from the selected signal pack ideas, then re-trying Start?'
+        );
+        if(ok){
+          showToast('Materializing candidates from signal pack…',true,16000);
+          let mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_ideas_all'})});
+          if(!mat.r.ok||!mat.d.ok){
+            // Fallback to legacy overall candidates if ideas_json is empty.
+            mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_overall'})});
+          }
+          if(!mat.r.ok||!mat.d.ok)throw new Error(apiErr(mat.d,'Materialize failed'));
+          const n=Array.isArray(mat.d.planner_rows)?mat.d.planner_rows.length:0;
+          showToast('Candidates materialized ('+n+' planner row(s)). Starting run…',true,20000);
+          const again=await doReq(base+'/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+          r=again.r; d=again.d;
+        }
+      }
     }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,action+' failed'));
     const msgs={start:'Run started — '+(d.planned_jobs||0)+' jobs planned',cancel:'Run cancelled',process:'Pipeline processing triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
