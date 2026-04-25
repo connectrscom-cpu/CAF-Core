@@ -33,6 +33,7 @@ export function adminProcessingBody(currentSlug: string): string {
                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
                   <label style="font-size:13px">Cutoff for this platform <span id="prellm-min-val" class="mono">0.00</span></label>
                   <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="width:min(420px,100%)" />
+                <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:92px;font-size:12px" title="Set cutoff value (0–1)" />
                 </div>
                 <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
                   <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
@@ -460,6 +461,7 @@ async function loadPrellmKindsAndPreview(){
 
 function syncPrellmSliderFromKind(){
   var minEl=document.getElementById('prellm-min-score');
+  var minNum=document.getElementById('prellm-min-score-num');
   var minVal=document.getElementById('prellm-min-val');
   if(!minEl||!prellmKind)return;
   var v=prellmMinByKind[prellmKind];
@@ -470,6 +472,7 @@ function syncPrellmSliderFromKind(){
     prellmMinByKind[prellmKind]=v;
   }
   minEl.value=String(v);
+  if(minNum)minNum.value=String(v);
   if(minVal)minVal.textContent=Number(v).toFixed(2);
 }
 
@@ -487,12 +490,14 @@ async function loadPrellmPreview(){
   var counts=document.getElementById('prellm-counts');
   var wrap=document.getElementById('prellm-table-wrap');
   var minEl=document.getElementById('prellm-min-score');
+  var minNum=document.getElementById('prellm-min-score-num');
   var minVal=document.getElementById('prellm-min-val');
   var showBelow=document.getElementById('prellm-show-below');
   var sortEl=document.getElementById('prellm-sort');
   if(!SLUG||!selectedImportId||!prellmKind||!counts||!wrap||!minEl||!sortEl)return;
   var minScore=parseFloat(minEl.value)||0;
   prellmMinByKind[prellmKind]=minScore;
+  if(minNum)minNum.value=String(minScore);
   if(minVal)minVal.textContent=minScore.toFixed(2);
   counts.textContent='Loading…';
   wrap.innerHTML='';
@@ -542,7 +547,56 @@ async function loadPrellmPreview(){
     });
   }catch(e){counts.textContent=String(e);}
 }
-document.getElementById('prellm-min-score')?.addEventListener('input',schedulePrellmPreview);
+var prellmCutoffSaveTimer=null;
+async function savePrellmCutoffToProfile(){
+  var msg=document.getElementById('prellm-save-msg');
+  try{
+    if(!SLUG||!prellmKind)return;
+    var minEl=document.getElementById('prellm-min-score');
+    if(!minEl)return;
+    var v=parseFloat(minEl.value||'0');
+    if(!Number.isFinite(v))v=0;
+    v=Math.max(0,Math.min(1,v));
+    if(msg){msg.textContent='Saving cutoff…';msg.style.color='';}
+    var pc=await loadProfileForPrellm();
+    if(!pc||!pc.profile)throw new Error('Profile not loaded');
+    var criteria=JSON.parse(JSON.stringify(pc.criteria||{}));
+    if(!criteria.pre_llm||typeof criteria.pre_llm!=='object')criteria.pre_llm={};
+    if(!criteria.pre_llm.kinds||typeof criteria.pre_llm.kinds!=='object')criteria.pre_llm.kinds={};
+    if(!criteria.pre_llm.kinds[prellmKind]||typeof criteria.pre_llm.kinds[prellmKind]!=='object')criteria.pre_llm.kinds[prellmKind]={};
+    criteria.pre_llm.enabled=true;
+    criteria.pre_llm.kinds[prellmKind].min_score=v;
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({criteria_json:criteria})});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
+    profileCache={profile:d.profile,criteria:(d.profile&&d.profile.criteria_json)||criteria};
+    if(msg){msg.textContent='Saved cutoff.';msg.style.color='var(--muted)';}
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+}
+function scheduleSavePrellmCutoff(){
+  try{
+    if(prellmCutoffSaveTimer)clearTimeout(prellmCutoffSaveTimer);
+    prellmCutoffSaveTimer=setTimeout(savePrellmCutoffToProfile,600);
+  }catch(e){}
+}
+
+document.getElementById('prellm-min-score')?.addEventListener('input',function(){
+  var minNum=document.getElementById('prellm-min-score-num');
+  if(minNum)minNum.value=String(this.value||'0');
+  schedulePrellmPreview();
+  scheduleSavePrellmCutoff();
+});
+document.getElementById('prellm-min-score-num')?.addEventListener('input',function(){
+  var v=parseFloat(this.value||'0');
+  if(!Number.isFinite(v))v=0;
+  v=Math.max(0,Math.min(1,v));
+  var minEl=document.getElementById('prellm-min-score');
+  if(minEl)minEl.value=String(v);
+  schedulePrellmPreview();
+  scheduleSavePrellmCutoff();
+});
 document.getElementById('prellm-show-below')?.addEventListener('change',schedulePrellmPreview);
 document.getElementById('prellm-sort')?.addEventListener('change',schedulePrellmPreview);
 
