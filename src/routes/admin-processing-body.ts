@@ -4,7 +4,7 @@ export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   return `
-<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Evidence cutoffs & formulas · Broad insights · Top performers · Sources · Signal pack · Profile</span></div></div>
+<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Evidence · Broad insights · Top performers · Sources · Ideas · Signal pack · Profile</span></div></div>
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
@@ -21,6 +21,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <button type="button" class="btn-ghost btn-sm" id="seg-broad" style="border-radius:8px 8px 0 0">Insights (broad)</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-top" style="border-radius:8px 8px 0 0">Top performers</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-sources" style="border-radius:8px 8px 0 0">Sources</button>
+          <button type="button" class="btn-ghost btn-sm" id="seg-ideas" style="border-radius:8px 8px 0 0">Ideas</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-pack" style="border-radius:8px 8px 0 0">Signal pack</button>
           <button type="button" class="btn-ghost btn-sm" id="seg-profile" style="border-radius:8px 8px 0 0">Profile &amp; audit</button>
         </div>
@@ -194,10 +195,58 @@ export function adminProcessingBody(currentSlug: string): string {
           <pre id="sources-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
           <div id="sources-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
+        <div id="panel-ideas" style="display:none;padding:12px 0 0">
+          <p class="runs-ops-hint" style="margin-bottom:10px">Generate a curated idea list from your insights (broad + top-performer context per profile), then review rows here. Use the <strong>Signal pack</strong> tab to build a pack from a selected list, with optional caps per <span class="mono">format</span> (carousel, video, post, etc.).</p>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px">
+            <div class="form-group" style="margin:0;min-width:200px;flex:1;max-width:360px">
+              <label style="font-size:12px">List title (optional)</label>
+              <input type="text" id="idea-list-title" style="width:100%;font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" placeholder="e.g. Jan sprint" maxlength="200"/>
+            </div>
+            <div class="form-group" style="margin:0;width:120px">
+              <label style="font-size:12px">Target # ideas</label>
+              <input type="number" id="idea-list-target" min="1" max="200" value="35" style="width:100%;font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border)"/>
+            </div>
+            <button type="button" class="btn btn-sm" id="btn-generate-idea-list">Generate idea list (LLM)</button>
+            <span id="idea-list-generate-msg" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <label style="font-size:12px;color:var(--muted)">Idea list
+              <select id="idea-list-select" style="min-width:min(100%,400px);max-width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                <option value="">Select an import first</option>
+              </select>
+            </label>
+            <button type="button" class="btn-ghost btn-sm" id="btn-reload-idea-lists">Reload</button>
+          </div>
+          <pre id="idea-list-list-meta" style="font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;white-space:pre-wrap;max-height:120px;overflow:auto"></pre>
+          <div id="idea-list-table-wrap" style="margin-top:8px;width:100%;max-height:480px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+        </div>
         <div id="panel-pack" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Build a signal pack from this import (rating + synthesis + ideas). Review settings first.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px">Prefer building from an <strong>idea list</strong> you created in the Ideas tab, then add per-format limits if needed. Or run the full import pipeline (rating + synthesis) when you do not have a list yet.</p>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg);margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:8px">Build from idea list</div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">
+              <label style="font-size:12px;color:var(--muted)">Idea list
+                <select id="pack-idea-list-select" style="min-width:min(100%,400px);max-width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
+                  <option value="">—</option>
+                </select>
+              </label>
+            </div>
+            <p style="font-size:11px;color:var(--muted);margin:0 0 6px;max-width:800px">Max per format: leave <strong>blank</strong> for no cap in that bucket, <strong>0</strong> to exclude, or a number to take the top N by confidence within that format (blog, memo, slides, … use <span class="mono">Other</span>).</p>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
+              <label class="fl-cap" style="font-size:11px">Carousel <input type="number" id="fl-carousel" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
+              <label class="fl-cap" style="font-size:11px">Video <input type="number" id="fl-video" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
+              <label class="fl-cap" style="font-size:11px">Post <input type="number" id="fl-post" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
+              <label class="fl-cap" style="font-size:11px">Thread <input type="number" id="fl-thread" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
+              <label class="fl-cap" style="font-size:11px">Other <input type="number" id="fl-other" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="btn btn-sm" id="btn-build-pack-from-idea-list">Build signal pack from idea list</button>
+              <span id="build-from-ideas-msg" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+          </div>
+          <p class="runs-ops-hint" style="margin-bottom:8px"><strong>Full pipeline</strong> — rate + synthesize + idea LLM in one go (ignores idea lists). Review profile caps first.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-build-pack">Build signal pack</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack">Build signal pack (full import)</button>
             <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
           </div>
           <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto"></pre>
@@ -243,6 +292,7 @@ function fmtInsightScore(v){
 }
 let selectedImportId='';
 var selectedImportLabel='';
+var selectedIdeaListId='';
 var prellmKind='';
 var prellmKinds=[];
 var broadKind='';
@@ -305,9 +355,10 @@ function showSeg(which){
   document.getElementById('panel-broad').style.display=which==='broad'?'block':'none';
   document.getElementById('panel-top').style.display=which==='top'?'block':'none';
   document.getElementById('panel-sources').style.display=which==='sources'?'block':'none';
+  document.getElementById('panel-ideas').style.display=which==='ideas'?'block':'none';
   document.getElementById('panel-pack').style.display=which==='pack'?'block':'none';
   document.getElementById('panel-profile').style.display=which==='profile'?'block':'none';
-  var ids=[['seg-evidence','evidence'],['seg-broad','broad'],['seg-top','top'],['seg-sources','sources'],['seg-pack','pack'],['seg-profile','profile']];
+  var ids=[['seg-evidence','evidence'],['seg-broad','broad'],['seg-top','top'],['seg-sources','sources'],['seg-ideas','ideas'],['seg-pack','pack'],['seg-profile','profile']];
   for(var i=0;i<ids.length;i++){
     var el=document.getElementById(ids[i][0]);
     if(!el)continue;
@@ -316,14 +367,16 @@ function showSeg(which){
   if(which==='broad')initBroadPanel();
   if(which==='top'){loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();}
   if(which==='profile'){loadProfile();loadAudit();}
-  if(which==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();}
+  if(which==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();loadIdeaListDropdowns();}
   if(which==='sources'){initSourcesPanel();}
+  if(which==='ideas'){loadIdeaListTab();}
 }
 
 document.getElementById('seg-evidence')?.addEventListener('click',function(){showSeg('evidence');});
 document.getElementById('seg-broad')?.addEventListener('click',function(){showSeg('broad');});
 document.getElementById('seg-top')?.addEventListener('click',function(){showSeg('top');});
 document.getElementById('seg-sources')?.addEventListener('click',function(){showSeg('sources');});
+document.getElementById('seg-ideas')?.addEventListener('click',function(){showSeg('ideas');});
 document.getElementById('seg-pack')?.addEventListener('click',function(){showSeg('pack');});
 document.getElementById('seg-profile')?.addEventListener('click',function(){showSeg('profile');});
 
@@ -362,6 +415,7 @@ async function loadImports(){
     root.querySelectorAll('.sel-import').forEach(function(btn){
       btn.addEventListener('click',function(){
         selectedImportId=btn.getAttribute('data-id')||'';
+        selectedIdeaListId='';
         try{
           var tr=btn.closest('tr');
           var tds=tr?tr.querySelectorAll('td'):null;
@@ -373,6 +427,7 @@ async function loadImports(){
         loadPrellmKindsAndPreview();
         showSeg(currentSeg);
         loadImports();
+        loadIdeaListDropdowns();
       });
     });
     if(selectedImportId){
@@ -380,6 +435,7 @@ async function loadImports(){
       loadImportStats();
       loadPrellmKindsAndPreview();
       showSeg(currentSeg);
+      loadIdeaListDropdowns();
     }
   }catch(e){root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||e)+'</div>';}
 }
@@ -1244,9 +1300,9 @@ function renderInsightTable(rows,cols){
       var k=cols[j].key;
       var v=x[k];
       var cell;
-      if(k==='pre_llm_score'||k==='evidence_rating_score')cell=fmtInsightScore(v);
+      if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score')cell=fmtInsightScore(v);
       else cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
-      tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word"'+(k==='pre_llm_score'||k==='evidence_rating_score'?' class="mono"':'')+'>'+cell+'</td>';
+      tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word"'+(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'?' class="mono"':'')+'>'+cell+'</td>';
     }
     tb+='</tr>';
   }
@@ -1254,6 +1310,107 @@ function renderInsightTable(rows,cols){
   return tb;
 }
 
+function readFormatLimitsPayload(){
+  var map=[['fl-carousel','carousel'],['fl-video','video'],['fl-post','post'],['fl-thread','thread'],['fl-other','other']];
+  var o={};
+  for(var i=0;i<map.length;i++){
+    var el=document.getElementById(map[i][0]);
+    if(!el)continue;
+    var t=String(el.value||'').trim();
+    if(t==='')continue;
+    var n=parseInt(t,10);
+    if(!Number.isFinite(n))continue;
+    o[map[i][1]]=Math.min(200,Math.max(0,n));
+  }
+  return Object.keys(o).length?o:null;
+}
+async function loadIdeaListDropdowns(){
+  var s1=document.getElementById('idea-list-select');
+  var s2=document.getElementById('pack-idea-list-select');
+  if(!SLUG||!selectedImportId){
+    if(s1){s1.innerHTML='<option value="">Select an import first</option>';s1.disabled=true;}
+    if(s2){s2.innerHTML='<option value="">—</option>';s2.disabled=true;}
+    return;
+  }
+  if(s1)s1.disabled=false;
+  if(s2)s2.disabled=false;
+  if(s1)s1.innerHTML='<option value="">Loading…</option>';
+  if(s2)s2.innerHTML='<option value="">Loading…</option>';
+  try{
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/idea-lists?limit=50&offset=0');
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var lists=d.idea_lists||[];
+    var body='';
+    for(var i=0;i<lists.length;i++){
+      var L=lists[i]||{};
+      var when=String(L.created_at||'').slice(0,19);
+      var title=String(L.title||'Untitled').trim()||'Untitled';
+      body+='<option value="'+esc(String(L.id||''))+'">'+esc(when+' · '+title)+'</option>';
+    }
+    if(s1){
+      s1.innerHTML=lists.length?('<option value="">Select a list…</option>'+body):'<option value="">No idea lists yet</option>';
+      if(selectedIdeaListId){
+        s1.value=selectedIdeaListId;
+        if(s1.value!==selectedIdeaListId)selectedIdeaListId='';
+      }
+      s1.value=selectedIdeaListId;
+    }
+    if(s2){
+      s2.innerHTML=lists.length?('<option value="">—</option>'+body):'<option value="">No idea lists yet</option>';
+      s2.value=selectedIdeaListId||'';
+    }
+  }catch(e){
+    if(s1)s1.innerHTML='<option value="">Could not load</option>';
+    if(s2)s2.innerHTML='<option value="">Could not load</option>';
+  }
+}
+function loadIdeaListTab(){
+  loadIdeaListDropdowns().then(function(){
+    loadIdeaListIdeasTable();
+  });
+}
+async function loadIdeaListIdeasTable(){
+  var wrap=document.getElementById('idea-list-table-wrap');
+  var meta=document.getElementById('idea-list-list-meta');
+  if(!SLUG||!selectedImportId||!wrap)return;
+  var listId=selectedIdeaListId;
+  if(!listId){
+    wrap.innerHTML='';
+    if(meta)meta.textContent='';
+    return;
+  }
+  wrap.innerHTML='Loading…';
+  if(meta)meta.textContent='';
+  try{
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/idea-lists/'+encodeURIComponent(listId)+'/ideas?limit=200&offset=0');
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var list=d.idea_list||{};
+    var ideas=(d.ideas||[]).map(function(row){
+      var j=row.idea_json||{};
+      return {
+        id:j.id||row.idea_id||'',
+        title:j.title||'',
+        format:j.format||'',
+        platform:j.platform||'',
+        confidence_score:j.confidence_score,
+        three_liner:String(j.three_liner||'').slice(0,220)
+      };
+    });
+    if(meta)meta.textContent=JSON.stringify({list_id:list.id,title:list.title,created_at:list.created_at,params_json:list.params_json,derived_globals_json:list.derived_globals_json},null,2);
+    wrap.innerHTML=ideas.length?renderInsightTable(ideas,[
+      {key:'id',label:'Idea id'},
+      {key:'format',label:'Format'},
+      {key:'platform',label:'Platform'},
+      {key:'title',label:'Title'},
+      {key:'three_liner',label:'3-liner (preview)'},
+      {key:'confidence_score',label:'Conf.'}
+    ]):'<div class="empty" style="padding:12px">No rows in this list.</div>';
+  }catch(e){
+    wrap.textContent=String(e.message||e);
+  }
+}
 async function loadSignalPacksForInspector(){
   var sel=document.getElementById('pack-inspect-select');
   var msg=document.getElementById('pack-inspect-msg');
@@ -1471,6 +1628,76 @@ async function loadDeepCarouselTable(){
 document.getElementById('btn-reload-deep-image')?.addEventListener('click',loadDeepImageTable);
 document.getElementById('btn-reload-deep-carousel')?.addEventListener('click',loadDeepCarouselTable);
 document.getElementById('btn-reload-deep-video')?.addEventListener('click',loadDeepVideoTable);
+
+document.getElementById('idea-list-select')?.addEventListener('change',function(){
+  var s=document.getElementById('idea-list-select');
+  selectedIdeaListId=(s&&s.value)?s.value.trim():'';
+  var s2=document.getElementById('pack-idea-list-select');
+  if(s2)s2.value=selectedIdeaListId;
+  loadIdeaListIdeasTable();
+});
+document.getElementById('pack-idea-list-select')?.addEventListener('change',function(){
+  var s=document.getElementById('pack-idea-list-select');
+  selectedIdeaListId=(s&&s.value)?s.value.trim():'';
+  var s1=document.getElementById('idea-list-select');
+  if(s1)s1.value=selectedIdeaListId;
+});
+document.getElementById('btn-reload-idea-lists')?.addEventListener('click',function(){
+  loadIdeaListTab();
+});
+document.getElementById('btn-generate-idea-list')?.addEventListener('click',async function(){
+  var msg=document.getElementById('idea-list-generate-msg');
+  if(!SLUG||!selectedImportId){
+    if(msg)msg.textContent='Select an import first.';
+    return;
+  }
+  if(msg){msg.textContent='Working (LLM)…';msg.style.color='';}
+  try{
+    var titleEl=document.getElementById('idea-list-title');
+    var tgtEl=document.getElementById('idea-list-target');
+    var title=titleEl&&titleEl.value?String(titleEl.value).trim():'';
+    var tRaw=tgtEl?parseInt(tgtEl.value,10):35;
+    var target=Number.isFinite(tRaw)?Math.min(200,Math.max(1,tRaw)):35;
+    var body={target_idea_count:target};
+    if(title)body.title=title;
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/build-ideas-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(msg)msg.textContent='Done. '+d.ideas_count+' ideas stored.';
+    if(d.idea_list_id)selectedIdeaListId=d.idea_list_id;
+    loadIdeaListTab();
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
+document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('click',async function(){
+  var msg=document.getElementById('build-from-ideas-msg');
+  if(!SLUG||!selectedImportId){
+    if(msg)msg.textContent='Select an import first.';
+    return;
+  }
+  var s=document.getElementById('pack-idea-list-select');
+  var lid=(s&&s.value)?s.value.trim():'';
+  if(!lid)lid=selectedIdeaListId;
+  if(!lid){
+    if(msg)msg.textContent='Select an idea list, or create one in the Ideas tab.';
+    return;
+  }
+  if(msg){msg.textContent='Building pack…';msg.style.color='';}
+  try{
+    var fl=readFormatLimitsPayload();
+    var body={idea_list_id:lid};
+    if(fl)body.format_limits=fl;
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/build-signal-pack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var raw=await r.text();
+    var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(msg)msg.innerHTML='Done. <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open pack</a> · ideas in pack: '+esc(String(d.ideas_count||0))+'.';
+    loadSignalPacksForInspector();
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
 
 document.getElementById('btn-build-pack')?.addEventListener('click',async function(){
   var msg=document.getElementById('build-msg');

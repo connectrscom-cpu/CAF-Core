@@ -45,7 +45,7 @@ import {
   listInputsIdeasForList,
 } from "../repositories/inputs-idea-lists.js";
 import { synthesizeIdeasJsonFromInsightsLlm } from "../services/ideas-from-insights-llm.js";
-import { buildSignalPackFromIdeaList } from "../services/idea-list-to-signal-pack.js";
+import { buildSignalPackFromIdeaList, type IdeaFormatLimits } from "../services/idea-list-to-signal-pack.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -719,14 +719,28 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         idea_list_id: z.string().uuid().optional(),
         run_name: z.string().max(200).optional(),
         notes: z.string().max(4000).optional(),
+        /** Per-format caps (0 = none; omit key = unlimited in that bucket). Omitted / empty = all ideas. */
+        format_limits: z
+          .object({
+            carousel: z.number().int().min(0).max(200).optional(),
+            video: z.number().int().min(0).max(200).optional(),
+            post: z.number().int().min(0).max(200).optional(),
+            thread: z.number().int().min(0).max(200).optional(),
+            other: z.number().int().min(0).max(200).optional(),
+          })
+          .strict()
+          .optional(),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
     try {
       if (body.data.idea_list_id) {
+        const fl = body.data.format_limits;
+        const hasLimits = fl && Object.values(fl).some((v) => v !== undefined);
         const out = await buildSignalPackFromIdeaList(db, config, params.data.project_slug, body.data.idea_list_id, {
           run_name: body.data.run_name ?? null,
           notes: body.data.notes ?? null,
+          format_limits: hasLimits ? (fl as IdeaFormatLimits) : null,
         });
         return { ok: true, mode: "from_idea_list", ...out };
       }
