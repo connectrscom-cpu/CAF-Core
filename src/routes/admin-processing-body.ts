@@ -120,6 +120,20 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="broad-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">Sort
+              <select id="broad-insight-sort" style="font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                <option value="rating_desc">Row rating ↓</option>
+                <option value="pre_llm_desc">Pre-LLM score ↓</option>
+                <option value="updated_desc">Updated ↓</option>
+              </select>
+            </label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">Rows
+              <select id="broad-insight-limit" style="font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                <option value="80">80</option>
+                <option value="120">120</option>
+                <option value="200" selected>200</option>
+              </select>
+            </label>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
             <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
           </div>
@@ -135,7 +149,7 @@ export function adminProcessingBody(currentSlug: string): string {
             </div>
             <pre id="broad-evidence-pre" style="margin:0;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto"></pre>
           </div>
-          <div id="broad-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+          <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
           <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>). Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>.</p>
@@ -147,13 +161,13 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <h4 style="font-size:13px;margin:16px 0 8px">Image deep rows</h4>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-image">Reload</button>
-          <div id="deep-image-table" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+          <div id="deep-image-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
           <h4 style="font-size:13px;margin:16px 0 8px">Carousel deck rows</h4>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-carousel">Reload</button>
-          <div id="deep-carousel-table" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+          <div id="deep-carousel-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
           <h4 style="font-size:13px;margin:16px 0 8px">Video frame rows</h4>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-video">Reload</button>
-          <div id="deep-video-table" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+          <div id="deep-video-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-profile" style="display:none;padding:12px 0 0">
           <p class="runs-ops-hint">Models, caps, <span class="mono">criteria_json</span> (pre-LLM, top_performer, insight column labels). <strong>Ideas from insights</strong> passes up to <span class="mono">max_insights_for_ideas_llm</span> insight rows into the LLM (including at least <span class="mono">min_top_performer_insights_for_ideas_llm</span> top-performer–enriched rows when available), then writes up to <span class="mono">max_ideas_in_signal_pack</span> rows into <span class="mono">ideas_json</span>. Uses the same <span class="mono">synth_model</span> as overall synthesis.</p>
@@ -220,6 +234,13 @@ export function adminProcessingBody(currentSlug: string): string {
 const SLUG=${SLUG};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
+/** Format numeric scores from insights API (often string); em dash when missing */
+function fmtInsightScore(v){
+  if(v===null||v===undefined||v==='')return '—';
+  var n=(typeof v==='number')?v:parseFloat(String(v));
+  if(Number.isNaN(n))return esc(String(v));
+  return esc(String(Math.round(n*10000)/10000));
+}
 let selectedImportId='';
 var selectedImportLabel='';
 var prellmKind='';
@@ -1144,7 +1165,12 @@ async function loadBroadTable(){
   meta.textContent='Loading…';
   wrap.innerHTML='';
   try{
-    var q='tier=broad_llm&evidence_kind='+encodeURIComponent(broadKind)+'&limit=80&offset=0';
+    var sortSel=document.getElementById('broad-insight-sort');
+    var limitSel=document.getElementById('broad-insight-limit');
+    var sort=(sortSel&&sortSel.value)?sortSel.value:'rating_desc';
+    var limRaw=(limitSel&&limitSel.value)?parseInt(limitSel.value,10):200;
+    var limit=(!Number.isFinite(limRaw)||limRaw<1)?200:Math.min(200,limRaw);
+    var q='tier=broad_llm&evidence_kind='+encodeURIComponent(broadKind)+'&limit='+encodeURIComponent(String(limit))+'&offset=0&sort='+encodeURIComponent(sort);
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?'+q);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
@@ -1162,7 +1188,7 @@ async function loadBroadTable(){
       wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
       return;
     }
-    var tb='<table class="sp-modal-table"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Kind</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
+    var tb='<table class="sp-modal-table" style="width:100%;min-width:1180px;table-layout:auto"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Kind</th><th>Pre-LLM score</th><th>Row rating</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var insightId=String(x.insights_id||'');
@@ -1171,7 +1197,9 @@ async function loadBroadTable(){
         '<td class="mono">'+esc(insightId)+'</td>'+
         '<td class="mono"><a href="#" class="broad-ev-link" data-row-id="'+esc(rowId)+'">'+esc(rowId)+'</a></td>'+
         '<td class="mono">'+esc(x.evidence_kind)+'</td>'+
-        '<td style="max-width:360px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td>'+
+        '<td class="mono">'+fmtInsightScore(x.pre_llm_score)+'</td>'+
+        '<td class="mono">'+fmtInsightScore(x.evidence_rating_score)+'</td>'+
+        '<td style="max-width:380px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td>'+
         '<td>'+esc(x.hook_text||'')+'</td>'+
         '<td>'+esc(x.primary_emotion||'')+'</td>'+
       '</tr>';
@@ -1196,6 +1224,8 @@ async function loadBroadTable(){
   }catch(e){meta.textContent=String(e);}
 }
 document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadTable);
+document.getElementById('broad-insight-sort')?.addEventListener('change',loadBroadTable);
+document.getElementById('broad-insight-limit')?.addEventListener('change',loadBroadTable);
 document.getElementById('broad-max-rows')?.addEventListener('input',scheduleBroadEligibilityEstimate);
 document.getElementById('broad-rescan')?.addEventListener('change',scheduleBroadEligibilityEstimate);
 document.getElementById('broad-use-cutoff')?.addEventListener('change',scheduleBroadEligibilityEstimate);
@@ -1204,15 +1234,19 @@ document.getElementById('pack-inspect-select')?.addEventListener('change',loadSe
 
 function renderInsightTable(rows,cols){
   if(!rows.length)return '<div class="empty" style="padding:12px">No rows.</div>';
-  var tb='<table class="sp-modal-table"><thead><tr>';
+  var tb='<table class="sp-modal-table" style="width:100%;min-width:980px;table-layout:auto"><thead><tr>';
   for(var c=0;c<cols.length;c++)tb+='<th>'+esc(cols[c].label)+'</th>';
   tb+='</tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var x=rows[i];
     tb+='<tr>';
     for(var j=0;j<cols.length;j++){
-      var v=x[cols[j].key];
-      tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word">'+esc(typeof v==='string'?v:JSON.stringify(v||''))+'</td>';
+      var k=cols[j].key;
+      var v=x[k];
+      var cell;
+      if(k==='pre_llm_score'||k==='evidence_rating_score')cell=fmtInsightScore(v);
+      else cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
+      tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word"'+(k==='pre_llm_score'||k==='evidence_rating_score'?' class="mono"':'')+'>'+cell+'</td>';
     }
     tb+='</tr>';
   }
@@ -1383,11 +1417,13 @@ async function loadDeepImageTable(){
   if(!SLUG||!selectedImportId||!el)return;
   el.innerHTML='Loading…';
   try{
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_deep&limit=80&offset=0');
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_deep&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
       {key:'evidence_kind',label:'Platform'},
+      {key:'pre_llm_score',label:'Pre-LLM'},
+      {key:'evidence_rating_score',label:'Row rating'},
       {key:'why_it_worked',label:'Why'},
       {key:'caption_style',label:'Caption style'},
       {key:'hook_text',label:'Hook'}
@@ -1400,11 +1436,13 @@ async function loadDeepVideoTable(){
   if(!SLUG||!selectedImportId||!el)return;
   el.innerHTML='Loading…';
   try{
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_video&limit=80&offset=0');
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_video&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
       {key:'evidence_kind',label:'Platform'},
+      {key:'pre_llm_score',label:'Pre-LLM'},
+      {key:'evidence_rating_score',label:'Row rating'},
       {key:'why_it_worked',label:'Why'},
       {key:'hook_text',label:'Hook visual'},
       {key:'hook_type',label:'Format'}
@@ -1417,11 +1455,13 @@ async function loadDeepCarouselTable(){
   if(!SLUG||!selectedImportId||!el)return;
   el.innerHTML='Loading…';
   try{
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=80&offset=0');
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
       {key:'evidence_kind',label:'Platform'},
+      {key:'pre_llm_score',label:'Pre-LLM'},
+      {key:'evidence_rating_score',label:'Row rating'},
       {key:'why_it_worked',label:'Why'},
       {key:'hook_text',label:'Slide arc'},
       {key:'cta_type',label:'CTA clarity'}
