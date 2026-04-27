@@ -86,8 +86,6 @@ export async function startRun(
   /** CREATED runs must not carry jobs; wipe orphans (e.g. legacy reset without delete, or external sync). */
   await deleteAllJobsForRun(db, run.project_id, run.run_id);
 
-  await updateRunStatus(db, runUuid, "PLANNING", { started_at: new Date().toISOString() });
-
   try {
     if (!run.signal_pack_id) {
       throw new Error(`Run ${run.run_id} has no signal pack attached`);
@@ -112,6 +110,9 @@ export async function startRun(
     if (enabledFlows.length === 0) {
       throw new Error(`No enabled flow types for project ${run.project_id}`);
     }
+
+    // Only mark the run as PLANNING once the request is actually actionable.
+    await updateRunStatus(db, runUuid, "PLANNING", { started_at: new Date().toISOString() });
 
     overallCandidates = await expandOverallCandidatesWithSceneAssemblyRouter(db, config, {
       projectId: run.project_id,
@@ -314,9 +315,20 @@ export async function startRun(
       created_job_ids: createdJobIds,
     };
   } catch (err) {
-    await updateRunStatus(db, runUuid, "FAILED", {
-      completed_at: new Date().toISOString(),
-    });
+    // These are "fix inputs then retry" errors; don't poison the run status.
+    const msg = err instanceof Error ? err.message : String(err);
+    const recoverable =
+      msg.includes("empty candidates_json") ||
+      msg.includes("has no signal pack") ||
+      (msg.includes("Signal pack") && msg.includes("not found")) ||
+      msg.includes("No enabled flow types");
+    if (recoverable) {
+      await resetRunForReplan(db, runUuid);
+    } else {
+      await updateRunStatus(db, runUuid, "FAILED", {
+        completed_at: new Date().toISOString(),
+      });
+    }
     throw err;
   }
 }
