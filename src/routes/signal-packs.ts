@@ -3,12 +3,19 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { z } from "zod";
 import { ensureProject } from "../repositories/core.js";
-import { insertSignalPack, getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
+import {
+  insertSignalPack,
+  getSignalPackById,
+  listSignalPacks,
+  updateSignalPackIdeasV2,
+  updateSignalPackSelectedIdeaIds,
+} from "../repositories/signal-packs.js";
 import { createRun } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
+import { parseIdeasV2, parseSelectedIdeaIds } from "../domain/signal-pack-ideas-v2.js";
 
 export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -291,5 +298,48 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     const pack = await getSignalPackById(db, params.data.id);
     if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
     return { ok: true, signal_pack: pack };
+  });
+
+  /**
+   * POST /v1/signal-packs/:project_slug/:id/ideas-v2
+   *
+   * Upserts rich idea objects on the pack. This is stage 3 output (Ideas).
+   */
+  app.post("/v1/signal-packs/:project_slug/:id/ideas-v2", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({ ideas: z.unknown() }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
+
+    const ideas = parseIdeasV2(body.data.ideas);
+    const n = await updateSignalPackIdeasV2(db, pack.id, ideas);
+    return { ok: true, updated: n, ideas_count: ideas.length };
+  });
+
+  /**
+   * POST /v1/signal-packs/:project_slug/:id/select-ideas
+   *
+   * Sets the ordered selection of idea IDs on the pack (stage 4 output).
+   * This selection is what should flow into run materialization and content jobs downstream.
+   */
+  app.post("/v1/signal-packs/:project_slug/:id/select-ideas", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({ idea_ids: z.unknown() }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
+
+    const selected = parseSelectedIdeaIds(body.data.idea_ids);
+    const n = await updateSignalPackSelectedIdeaIds(db, pack.id, selected);
+    return { ok: true, updated: n, selected_count: selected.length, selected_idea_ids: selected };
   });
 }

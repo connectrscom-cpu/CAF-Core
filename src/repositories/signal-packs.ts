@@ -10,6 +10,10 @@ export interface SignalPackRow {
   overall_candidates_json: unknown[];
   /** Curated ideas from inputs Processing; preferred at run start when non-empty. */
   ideas_json?: unknown[] | null;
+  /** Richer idea objects (boss-facing), derived from Insights and ready for selection. */
+  ideas_v2_json?: unknown[] | null;
+  /** Ordered list of selected idea IDs (stage 4). */
+  selected_idea_ids_json?: unknown[] | null;
   ig_summary_json: unknown | null;
   tiktok_summary_json: unknown | null;
   reddit_summary_json: unknown | null;
@@ -40,6 +44,8 @@ export async function insertSignalPack(
     source_window?: string | null;
     overall_candidates_json: unknown[];
     ideas_json?: unknown[];
+    ideas_v2_json?: unknown[];
+    selected_idea_ids_json?: unknown[];
     ig_summary_json?: unknown;
     tiktok_summary_json?: unknown;
     reddit_summary_json?: unknown;
@@ -64,6 +70,7 @@ export async function insertSignalPack(
   const row = await qOne<{ id: string }>(db, `
     INSERT INTO caf_core.signal_packs (
       run_id, project_id, source_window, overall_candidates_json, ideas_json,
+      ideas_v2_json, selected_idea_ids_json,
       ig_summary_json, tiktok_summary_json, reddit_summary_json, fb_summary_json, html_summary_json,
       ig_archetypes_json, ig_7day_plan_json, ig_top_examples_json,
       tiktok_archetypes_json, tiktok_7day_plan_json, tiktok_top_examples_json,
@@ -71,14 +78,17 @@ export async function insertSignalPack(
       html_findings_raw_json, reddit_subreddit_insights_json,
       derived_globals_json, upload_filename, notes, source_inputs_import_id
     ) VALUES (
-      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,
-      $11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,
-      $17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,$21::jsonb,$22,$23,$24
+      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,
+      $8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,
+      $13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,
+      $19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24,$25,$26
     ) RETURNING id`,
     [
       data.run_id, data.project_id, data.source_window ?? null,
       JSON.stringify(data.overall_candidates_json),
       JSON.stringify(data.ideas_json ?? []),
+      JSON.stringify(data.ideas_v2_json ?? []),
+      JSON.stringify(data.selected_idea_ids_json ?? []),
       j(data.ig_summary_json), j(data.tiktok_summary_json),
       j(data.reddit_summary_json), j(data.fb_summary_json), j(data.html_summary_json),
       j(data.ig_archetypes_json), j(data.ig_7day_plan_json), j(data.ig_top_examples_json),
@@ -92,6 +102,38 @@ export async function insertSignalPack(
     ]);
   if (!row) throw new Error("Failed to insert signal_pack");
   return row;
+}
+
+export async function updateSignalPackIdeasV2(
+  db: Pool,
+  signalPackId: string,
+  ideasV2: unknown[]
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs
+        SET ideas_v2_json = $2::jsonb
+      WHERE id = $1
+      RETURNING 1::text AS n`,
+    [signalPackId, JSON.stringify(ideasV2 ?? [])]
+  );
+  return row ? 1 : 0;
+}
+
+export async function updateSignalPackSelectedIdeaIds(
+  db: Pool,
+  signalPackId: string,
+  selectedIdeaIds: string[]
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs
+        SET selected_idea_ids_json = $2::jsonb
+      WHERE id = $1
+      RETURNING 1::text AS n`,
+    [signalPackId, JSON.stringify(selectedIdeaIds ?? [])]
+  );
+  return row ? 1 : 0;
 }
 
 export async function getSignalPackById(db: Pool, id: string): Promise<SignalPackRow | null> {

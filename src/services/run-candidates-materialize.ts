@@ -18,6 +18,7 @@ export type RunCandidatesMaterializeMode =
   | "manual"
   | "llm"
   | "from_pack_ideas_all"
+  | "from_pack_selected_ideas_v2"
   | "from_pack_overall";
 
 export interface RunCandidatesMaterializeBody {
@@ -32,6 +33,66 @@ function ideasArray(pack: SignalPackRow): SignalPackIdea[] {
   const raw = pack.ideas_json;
   if (!Array.isArray(raw) || raw.length === 0) return [];
   return raw as SignalPackIdea[];
+}
+
+function ideasV2Array(pack: SignalPackRow): Record<string, unknown>[] {
+  const raw = pack.ideas_v2_json;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw as Record<string, unknown>[];
+}
+
+function selectedIdeaIds(pack: SignalPackRow): string[] {
+  const raw = pack.selected_idea_ids_json;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw.map((x) => String(x).trim()).filter(Boolean);
+}
+
+function mapIdeasV2ToPlannerSourceRows(ideas: Record<string, unknown>[]): Record<string, unknown>[] {
+  return ideas.map((i) => {
+    const id = String(i.id ?? "").trim() || String(i.idea_id ?? "").trim();
+    const title = String(i.title ?? "").trim();
+    const three = String(i.three_liner ?? i["3_liner"] ?? "").trim();
+    const thesis = String(i.thesis ?? "").trim();
+    const platform = String(i.platform ?? "Multi").trim() || "Multi";
+    const format = String(i.format ?? "post").trim();
+    const cta = String(i.cta ?? "").trim();
+    const whyNow = String(i.why_now ?? "").trim();
+    const novelty = String(i.novelty_angle ?? "").trim();
+    const keyPoints = Array.isArray(i.key_points) ? i.key_points.map((x) => String(x).trim()).filter(Boolean) : [];
+    const confidence = typeof i.confidence_score === "number" ? i.confidence_score : undefined;
+    const ideaScore = typeof i.idea_score === "number" ? i.idea_score : undefined;
+    const riskFlags = Array.isArray(i.risk_flags) ? i.risk_flags.map((x) => String(x).trim()).filter(Boolean) : [];
+    const grounding = Array.isArray(i.grounding_insight_ids)
+      ? i.grounding_insight_ids.map((x) => String(x).trim()).filter(Boolean)
+      : [];
+
+    // Planner expects a loose "overall_candidates_json-like" row shape.
+    const contentIdea = title || thesis || three || id || "Selected idea";
+    const summary = three || [whyNow, novelty].filter(Boolean).join(" — ") || contentIdea;
+
+    return {
+      idea_id: id,
+      candidate_id: id,
+      platform,
+      target_platform: platform,
+      format,
+      content_idea: contentIdea,
+      summary,
+      confidence_score: confidence ?? ideaScore ?? 0.8,
+      confidence: confidence ?? ideaScore ?? 0.8,
+      novelty_score: 0.6,
+      platform_fit: 0.75,
+      past_performance: 0.5,
+      recommended_route: "HUMAN_REVIEW",
+      cta,
+      why_now: whyNow || undefined,
+      novelty_angle: novelty || undefined,
+      key_points: keyPoints.length ? keyPoints : undefined,
+      risk_flags: riskFlags.length ? riskFlags : undefined,
+      grounding_insight_ids: grounding.length ? grounding : undefined,
+      provenance: "signal_pack.ideas_v2_json",
+    } satisfies Record<string, unknown>;
+  });
 }
 
 function normalizePlannerRows(rows: Record<string, unknown>[], runIdHint: string): Record<string, unknown>[] {
@@ -76,6 +137,22 @@ export async function materializeRunCandidates(
     const mapped = mapIdeasJsonToPlannerSourceRows(ideas);
     rows = normalizePlannerRows(mapped as unknown as Record<string, unknown>[], run.run_id);
     provenance = { ...provenance, source: "signal_pack.ideas_json", idea_count: ideas.length, row_count: rows.length };
+  } else if (body.mode === "from_pack_selected_ideas_v2") {
+    const ids = selectedIdeaIds(pack);
+    const ideasV2 = ideasV2Array(pack);
+    if (ids.length === 0) throw new Error("signal_pack.selected_idea_ids_json is empty");
+    if (ideasV2.length === 0) throw new Error("signal_pack.ideas_v2_json is empty");
+    const want = new Set(ids);
+    const chosen = ideasV2.filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
+    if (chosen.length === 0) throw new Error("No matching ideas_v2_json rows for selected_idea_ids_json");
+    const mapped = mapIdeasV2ToPlannerSourceRows(chosen);
+    rows = normalizePlannerRows(mapped, run.run_id);
+    provenance = {
+      ...provenance,
+      source: "signal_pack.selected_idea_ids_json",
+      idea_count: chosen.length,
+      row_count: rows.length,
+    };
   } else if (body.mode === "manual") {
     const ids = body.idea_ids ?? [];
     if (ids.length === 0) throw new Error("idea_ids required when mode=manual");
