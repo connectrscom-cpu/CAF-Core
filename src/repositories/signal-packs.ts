@@ -17,6 +17,8 @@ export interface SignalPackRow {
   ideas_v2_json?: unknown[] | null;
   /** Ordered list of selected idea IDs (stage 4). */
   selected_idea_ids_json?: unknown[] | null;
+  /** Optional link to a specific inputs idea list used to build this pack. */
+  source_inputs_idea_list_id?: string | null;
   ig_summary_json: unknown | null;
   tiktok_summary_json: unknown | null;
   reddit_summary_json: unknown | null;
@@ -49,6 +51,7 @@ export async function insertSignalPack(
     ideas_json?: unknown[];
     ideas_v2_json?: unknown[];
     selected_idea_ids_json?: unknown[];
+    source_inputs_idea_list_id?: string | null;
     ig_summary_json?: unknown;
     tiktok_summary_json?: unknown;
     reddit_summary_json?: unknown;
@@ -74,6 +77,7 @@ export async function insertSignalPack(
     INSERT INTO caf_core.signal_packs (
       run_id, project_id, source_window, overall_candidates_json, ideas_json,
       ideas_v2_json, selected_idea_ids_json,
+      source_inputs_idea_list_id,
       ig_summary_json, tiktok_summary_json, reddit_summary_json, fb_summary_json, html_summary_json,
       ig_archetypes_json, ig_7day_plan_json, ig_top_examples_json,
       tiktok_archetypes_json, tiktok_7day_plan_json, tiktok_top_examples_json,
@@ -82,9 +86,10 @@ export async function insertSignalPack(
       derived_globals_json, upload_filename, notes, source_inputs_import_id
     ) VALUES (
       $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,
-      $8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,
-      $13::jsonb,$14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,
-      $19::jsonb,$20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24,$25,$26
+      $8,
+      $9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,
+      $14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,
+      $20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25,$26,$27
     ) RETURNING id`,
     [
       data.run_id, data.project_id, data.source_window ?? null,
@@ -92,6 +97,7 @@ export async function insertSignalPack(
       JSON.stringify(data.ideas_json ?? []),
       JSON.stringify(data.ideas_v2_json ?? []),
       JSON.stringify(data.selected_idea_ids_json ?? []),
+      data.source_inputs_idea_list_id ?? null,
       j(data.ig_summary_json), j(data.tiktok_summary_json),
       j(data.reddit_summary_json), j(data.fb_summary_json), j(data.html_summary_json),
       j(data.ig_archetypes_json), j(data.ig_7day_plan_json), j(data.ig_top_examples_json),

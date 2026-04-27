@@ -36,6 +36,7 @@ export interface EvidenceRowInsightRow {
 
 export interface EvidenceRowInsightEnrichedRow extends EvidenceRowInsightRow {
   evidence_kind: string;
+  evidence_rating_score?: string | null;
 }
 
 export interface UpsertEvidenceInsightInput {
@@ -236,7 +237,8 @@ const INSIGHT_SELECT_ENRICHED = `SELECT i.id::text, i.project_id::text, i.inputs
        i.cta_type, i.hashtags, i.caption_style, i.hook_text,
        i.risk_flags_json, i.aesthetic_analysis_json, i.raw_llm_json,
        i.created_at::text, i.updated_at::text,
-       r.evidence_kind`;
+       r.evidence_kind,
+       r.rating_score::text AS evidence_rating_score`;
 
 const INSIGHT_JOIN = `FROM caf_core.inputs_evidence_row_insights i
  INNER JOIN caf_core.inputs_evidence_rows r
