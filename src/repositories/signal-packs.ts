@@ -10,7 +10,10 @@ export interface SignalPackRow {
   overall_candidates_json: unknown[];
   /** Curated ideas from inputs Processing; preferred at run start when non-empty. */
   ideas_json?: unknown[] | null;
-  /** Richer idea objects (boss-facing), derived from Insights and ready for selection. */
+  /**
+   * Deprecated. Kept for backward compatibility with one iteration where we introduced a parallel rich idea list.
+   * Do not write new data here — use `ideas_json` as the canonical rich idea contract.
+   */
   ideas_v2_json?: unknown[] | null;
   /** Ordered list of selected idea IDs (stage 4). */
   selected_idea_ids_json?: unknown[] | null;
@@ -116,6 +119,22 @@ export async function updateSignalPackIdeasV2(
       WHERE id = $1
       RETURNING 1::text AS n`,
     [signalPackId, JSON.stringify(ideasV2 ?? [])]
+  );
+  return row ? 1 : 0;
+}
+
+export async function updateSignalPackIdeasJson(
+  db: Pool,
+  signalPackId: string,
+  ideas: unknown[]
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs
+        SET ideas_json = $2::jsonb
+      WHERE id = $1
+      RETURNING 1::text AS n`,
+    [signalPackId, JSON.stringify(ideas ?? [])]
   );
   return row ? 1 : 0;
 }

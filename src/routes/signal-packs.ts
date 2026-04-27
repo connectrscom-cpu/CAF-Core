@@ -8,6 +8,7 @@ import {
   getSignalPackById,
   listSignalPacks,
   updateSignalPackIdeasV2,
+  updateSignalPackIdeasJson,
   updateSignalPackSelectedIdeaIds,
 } from "../repositories/signal-packs.js";
 import { createRun } from "../repositories/runs.js";
@@ -301,9 +302,29 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
   });
 
   /**
-   * POST /v1/signal-packs/:project_slug/:id/ideas-v2
+   * POST /v1/signal-packs/:project_slug/:id/ideas
    *
-   * Upserts rich idea objects on the pack. This is stage 3 output (Ideas).
+   * Upserts rich idea objects on the pack (canonical: stored in `ideas_json`).
+   */
+  app.post("/v1/signal-packs/:project_slug/:id/ideas", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({ ideas: z.unknown() }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
+
+    const ideas = parseIdeasV2(body.data.ideas);
+    const n = await updateSignalPackIdeasJson(db, pack.id, ideas);
+    return { ok: true, updated: n, ideas_count: ideas.length };
+  });
+
+  /**
+   * Backward-compatible alias for the earlier /ideas-v2 endpoint.
+   * Writes to canonical `ideas_json` so there's a single truth going forward.
    */
   app.post("/v1/signal-packs/:project_slug/:id/ideas-v2", async (request, reply) => {
     const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
@@ -317,8 +338,10 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
 
     const ideas = parseIdeasV2(body.data.ideas);
-    const n = await updateSignalPackIdeasV2(db, pack.id, ideas);
-    return { ok: true, updated: n, ideas_count: ideas.length };
+    const n = await updateSignalPackIdeasJson(db, pack.id, ideas);
+    // best-effort: keep the deprecated column in sync for now (non-blocking)
+    await updateSignalPackIdeasV2(db, pack.id, ideas);
+    return { ok: true, updated: n, ideas_count: ideas.length, note: "stored_in: ideas_json" };
   });
 
   /**

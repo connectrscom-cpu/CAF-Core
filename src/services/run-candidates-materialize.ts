@@ -11,6 +11,7 @@ import { mapIdeasJsonToPlannerSourceRows, type SignalPackIdea } from "./signal-p
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
@@ -33,6 +34,13 @@ function ideasArray(pack: SignalPackRow): SignalPackIdea[] {
   const raw = pack.ideas_json;
   if (!Array.isArray(raw) || raw.length === 0) return [];
   return raw as SignalPackIdea[];
+}
+
+function ideasJsonAsRich(pack: SignalPackRow): Record<string, unknown>[] {
+  const raw = pack.ideas_json;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  // parseIdeasV2 is now the canonical rich-idea parser (stored in ideas_json).
+  return parseIdeasV2(raw) as unknown as Record<string, unknown>[];
 }
 
 function ideasV2Array(pack: SignalPackRow): Record<string, unknown>[] {
@@ -105,10 +113,16 @@ export function plannerRowsFromIdeaSubset(
   runIdHint: string
 ): Record<string, unknown>[] {
   const want = new Set(ideaIds.map((x) => String(x).trim()).filter(Boolean));
-  const ideas = ideasArray(pack).filter((i) => want.has(String(i.idea_id ?? "").trim()));
-  if (ideas.length === 0) return [];
-  const mapped = mapIdeasJsonToPlannerSourceRows(ideas);
-  return normalizePlannerRows(mapped as unknown as Record<string, unknown>[], runIdHint);
+  // Prefer canonical rich ideas stored in ideas_json (id field), fall back to legacy idea_id shape.
+  const rich = ideasJsonAsRich(pack).filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
+  if (rich.length > 0) {
+    const mapped = mapIdeasV2ToPlannerSourceRows(rich);
+    return normalizePlannerRows(mapped, runIdHint);
+  }
+  const legacy = ideasArray(pack).filter((i) => want.has(String(i.idea_id ?? "").trim()));
+  if (legacy.length === 0) return [];
+  const mappedLegacy = mapIdeasJsonToPlannerSourceRows(legacy);
+  return normalizePlannerRows(mappedLegacy as unknown as Record<string, unknown>[], runIdHint);
 }
 
 export async function materializeRunCandidates(
@@ -132,24 +146,41 @@ export async function materializeRunCandidates(
     rows = normalizeOverallCandidateRows(list, run.run_id) as Record<string, unknown>[];
     provenance = { ...provenance, source: "signal_pack.overall_candidates_json", row_count: rows.length };
   } else if (body.mode === "from_pack_ideas_all") {
-    const ideas = ideasArray(pack);
-    if (ideas.length === 0) throw new Error("signal_pack.ideas_json is empty — build a pack in Processing or use from_pack_overall");
-    const mapped = mapIdeasJsonToPlannerSourceRows(ideas);
-    rows = normalizePlannerRows(mapped as unknown as Record<string, unknown>[], run.run_id);
-    provenance = { ...provenance, source: "signal_pack.ideas_json", idea_count: ideas.length, row_count: rows.length };
+    // Canonical: rich ideas are stored in ideas_json.
+    const rich = ideasJsonAsRich(pack);
+    if (rich.length > 0) {
+      const mapped = mapIdeasV2ToPlannerSourceRows(rich);
+      rows = normalizePlannerRows(mapped, run.run_id);
+      provenance = { ...provenance, source: "signal_pack.ideas_json", idea_count: rich.length, row_count: rows.length };
+    } else {
+      const ideas = ideasArray(pack);
+      if (ideas.length === 0) {
+        throw new Error("signal_pack.ideas_json is empty — build a pack in Processing or use from_pack_overall");
+      }
+      const mapped = mapIdeasJsonToPlannerSourceRows(ideas);
+      rows = normalizePlannerRows(mapped as unknown as Record<string, unknown>[], run.run_id);
+      provenance = { ...provenance, source: "signal_pack.ideas_json(legacy)", idea_count: ideas.length, row_count: rows.length };
+    }
   } else if (body.mode === "from_pack_selected_ideas_v2") {
     const ids = selectedIdeaIds(pack);
-    const ideasV2 = ideasV2Array(pack);
     if (ids.length === 0) throw new Error("signal_pack.selected_idea_ids_json is empty");
-    if (ideasV2.length === 0) throw new Error("signal_pack.ideas_v2_json is empty");
+
+    // Prefer canonical storage in ideas_json; keep fallback to deprecated ideas_v2_json.
     const want = new Set(ids);
-    const chosen = ideasV2.filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
+    const richIdeas = ideasJsonAsRich(pack);
+    let chosen = richIdeas.filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
+    let source = "signal_pack.selected_idea_ids_json + ideas_json";
+    if (chosen.length === 0) {
+      const deprecated = ideasV2Array(pack);
+      chosen = deprecated.filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
+      source = "signal_pack.selected_idea_ids_json + ideas_v2_json(deprecated)";
+    }
     if (chosen.length === 0) throw new Error("No matching ideas_v2_json rows for selected_idea_ids_json");
     const mapped = mapIdeasV2ToPlannerSourceRows(chosen);
     rows = normalizePlannerRows(mapped, run.run_id);
     provenance = {
       ...provenance,
-      source: "signal_pack.selected_idea_ids_json",
+      source,
       idea_count: chosen.length,
       row_count: rows.length,
     };

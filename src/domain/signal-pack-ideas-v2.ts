@@ -8,7 +8,13 @@ export const ideaFormatSchema = z
   .enum(["carousel", "video", "post", "thread", "blog", "memo", "slides", "script"])
   .or(z.string().min(1));
 
-export const signalPackIdeaV2Schema = z.object({
+/**
+ * Canonical rich idea schema stored in `signal_packs.ideas_json`.
+ *
+ * Note: file name kept for compatibility with the earlier iteration, but this is no longer a "v2 variant" —
+ * it is the main idea contract.
+ */
+export const signalPackIdeaSchema = z.object({
   id: z.string().min(1),
   created_at: z.string().min(1).optional(),
   run_id: z.string().min(1).optional(),
@@ -36,9 +42,9 @@ export const signalPackIdeaV2Schema = z.object({
   idea_score: z.number().min(0).max(1).optional(),
 });
 
-export type SignalPackIdeaV2 = z.infer<typeof signalPackIdeaV2Schema>;
+export type SignalPackIdeaV2 = z.infer<typeof signalPackIdeaSchema>;
 
-export const signalPackIdeasV2ArraySchema = z.array(signalPackIdeaV2Schema);
+export const signalPackIdeasV2ArraySchema = z.array(signalPackIdeaSchema);
 
 export function parseIdeasV2(raw: unknown): SignalPackIdeaV2[] {
   const parsed = signalPackIdeasV2ArraySchema.safeParse(raw);
