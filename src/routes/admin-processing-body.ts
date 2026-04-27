@@ -187,6 +187,30 @@ export function adminProcessingBody(currentSlug: string): string {
             <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
           </div>
           <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto"></pre>
+          <div class="card" style="margin-top:12px">
+            <div class="card-h">Inspect an existing signal pack</div>
+            <div style="padding:12px 16px 16px">
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                <select id="pack-inspect-select" style="min-width:320px;max-width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Loading…</option>
+                </select>
+                <button type="button" class="btn-ghost btn-sm" id="btn-pack-inspect-reload">Reload list</button>
+              </div>
+              <div id="pack-inspect-msg" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+              <details id="pack-inspect-ideas-details" style="display:none;margin-top:10px">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">ideas_json (curated ideas)</summary>
+                <div id="pack-inspect-ideas" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+              </details>
+              <details id="pack-inspect-overall-details" style="display:none;margin-top:10px">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">overall_candidates_json (legacy planner rows)</summary>
+                <div id="pack-inspect-overall" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+              </details>
+              <details id="pack-inspect-raw-details" style="display:none;margin-top:10px">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Raw signal pack JSON</summary>
+                <pre id="pack-inspect-raw" style="margin-top:8px;font-size:11px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:360px;overflow:auto"></pre>
+              </details>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -271,7 +295,7 @@ function showSeg(which){
   if(which==='broad')initBroadPanel();
   if(which==='top'){loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();}
   if(which==='profile'){loadProfile();loadAudit();}
-  if(which==='pack'){loadProfile().then(renderPackSettings);}
+  if(which==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();}
   if(which==='sources'){initSourcesPanel();}
 }
 
@@ -1175,6 +1199,8 @@ document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadT
 document.getElementById('broad-max-rows')?.addEventListener('input',scheduleBroadEligibilityEstimate);
 document.getElementById('broad-rescan')?.addEventListener('change',scheduleBroadEligibilityEstimate);
 document.getElementById('broad-use-cutoff')?.addEventListener('change',scheduleBroadEligibilityEstimate);
+document.getElementById('btn-pack-inspect-reload')?.addEventListener('click',loadSignalPacksForInspector);
+document.getElementById('pack-inspect-select')?.addEventListener('change',loadSelectedSignalPack);
 
 function renderInsightTable(rows,cols){
   if(!rows.length)return '<div class="empty" style="padding:12px">No rows.</div>';
@@ -1192,6 +1218,105 @@ function renderInsightTable(rows,cols){
   }
   tb+='</tbody></table>';
   return tb;
+}
+
+async function loadSignalPacksForInspector(){
+  var sel=document.getElementById('pack-inspect-select');
+  var msg=document.getElementById('pack-inspect-msg');
+  if(!sel||!SLUG)return;
+  sel.innerHTML='<option value="">Loading…</option>';
+  if(msg){msg.textContent='';msg.style.color='';}
+  try{
+    var r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=120&offset=0');
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var rows=d.rows||[];
+    if(!rows.length){
+      sel.innerHTML='<option value="">No signal packs for this project yet</option>';
+      if(msg)msg.textContent='Build one in this tab (Build signal pack).';
+      return;
+    }
+    var h='<option value="">Select a signal pack…</option>';
+    for(var i=0;i<rows.length;i++){
+      var p=rows[i]||{};
+      var when=String(p.created_at||'').slice(0,19);
+      var fn=p.upload_filename||p.run_id||p.id;
+      var ideasN=Number(p.ideas_count||0);
+      var overallN=Number(p.candidate_count||0);
+      h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' · '+String(fn||'')+' (ideas '+ideasN+', overall '+overallN+')')+'</option>';
+    }
+    sel.innerHTML=h;
+  }catch(e){
+    sel.innerHTML='<option value="">Could not load signal packs</option>';
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+}
+
+async function loadSelectedSignalPack(){
+  var sel=document.getElementById('pack-inspect-select');
+  var msg=document.getElementById('pack-inspect-msg');
+  var ideasD=document.getElementById('pack-inspect-ideas-details');
+  var overallD=document.getElementById('pack-inspect-overall-details');
+  var rawD=document.getElementById('pack-inspect-raw-details');
+  var ideasWrap=document.getElementById('pack-inspect-ideas');
+  var overallWrap=document.getElementById('pack-inspect-overall');
+  var rawPre=document.getElementById('pack-inspect-raw');
+  if(!sel||!SLUG)return;
+  var id=(sel.value||'').trim();
+  if(!id){
+    if(ideasD)ideasD.style.display='none';
+    if(overallD)overallD.style.display='none';
+    if(rawD)rawD.style.display='none';
+    if(msg){msg.textContent='';msg.style.color='';}
+    return;
+  }
+  if(msg){msg.textContent='Loading pack…';msg.style.color='';}
+  if(ideasWrap)ideasWrap.innerHTML='Loading…';
+  if(overallWrap)overallWrap.innerHTML='Loading…';
+  if(rawPre)rawPre.textContent='Loading…';
+  try{
+    var r=await cafFetch('/v1/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(id));
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var pack=d.signal_pack||{};
+    var ideas=Array.isArray(pack.ideas_json)?pack.ideas_json:[];
+    var overall=Array.isArray(pack.overall_candidates_json)?pack.overall_candidates_json:[];
+    if(msg)msg.textContent='Pack loaded. ideas_json '+String(ideas.length)+', overall_candidates_json '+String(overall.length)+'.';
+    if(ideasD)ideasD.style.display='block';
+    if(overallD)overallD.style.display='block';
+    if(rawD)rawD.style.display='block';
+    if(ideasWrap)ideasWrap.innerHTML=renderInsightTable(ideas.slice(0,120),[
+      {key:'idea_id',label:'idea_id'},
+      {key:'title',label:'title'},
+      {key:'platform',label:'platform'},
+      {key:'hook',label:'hook'}
+    ]);
+    if(overallWrap)overallWrap.innerHTML=renderInsightTable(overall.slice(0,120),[
+      {key:'candidate_id',label:'candidate_id'},
+      {key:'platform',label:'platform'},
+      {key:'summary',label:'summary'},
+      {key:'content_idea',label:'content_idea'}
+    ]);
+    if(rawPre)rawPre.textContent=JSON.stringify({
+      id: pack.id,
+      run_id: pack.run_id,
+      created_at: pack.created_at,
+      upload_filename: pack.upload_filename,
+      source_window: pack.source_window,
+      source_inputs_import_id: pack.source_inputs_import_id ?? null,
+      ideas_count: ideas.length,
+      overall_candidates_count: overall.length,
+      ideas_json: ideas,
+      overall_candidates_json: overall,
+      derived_globals_json: pack.derived_globals_json ?? {},
+      notes: pack.notes ?? null
+    },null,2);
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+    if(ideasD)ideasD.style.display='none';
+    if(overallD)overallD.style.display='none';
+    if(rawD)rawD.style.display='none';
+  }
 }
 
 var lastBroadRunDebug=null;
@@ -1317,6 +1442,7 @@ document.getElementById('btn-build-pack')?.addEventListener('click',async functi
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) · overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
+    loadSignalPacksForInspector();
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
 
