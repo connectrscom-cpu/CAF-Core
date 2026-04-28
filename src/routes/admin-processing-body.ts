@@ -1986,12 +1986,28 @@ async function loadDeepImageTable(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
+      {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
+      {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'insights_id',label:'Insight ID'},
+      {key:'llm_model',label:'Model'},
+      {key:'updated_at',label:'Updated'},
       {key:'pre_llm_score',label:'Pre-LLM'},
       {key:'evidence_rating_score',label:'Row rating'},
-      {key:'why_it_worked',label:'Why'},
+      {key:'hook_type',label:'Hook type'},
+      {key:'cta_type',label:'CTA type'},
       {key:'caption_style',label:'Caption style'},
-      {key:'hook_text',label:'Hook'}
+      {key:'hashtags',label:'Hashtags'},
+      {key:'why_it_worked',label:'Why'},
+      {key:'hook_text',label:'Hook text'},
+      {key:'primary_emotion',label:'Emotion (1)'},
+      {key:'secondary_emotion',label:'Emotion (2)'},
+      {key:'custom_label_1',label:'Label 1'},
+      {key:'custom_label_2',label:'Label 2'},
+      {key:'custom_label_3',label:'Label 3'},
+      {key:'risk_flags_json',label:'Risk flags'},
+      {key:'aesthetic_analysis_json',label:'Aesthetic'},
+      {key:'raw_llm_json',label:'Raw LLM'}
     ]);
   }catch(e){el.textContent=String(e);}
 }
@@ -2005,12 +2021,28 @@ async function loadDeepVideoTable(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
+      {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
+      {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'insights_id',label:'Insight ID'},
+      {key:'llm_model',label:'Model'},
+      {key:'updated_at',label:'Updated'},
       {key:'pre_llm_score',label:'Pre-LLM'},
       {key:'evidence_rating_score',label:'Row rating'},
+      {key:'hook_type',label:'Hook type'},
+      {key:'cta_type',label:'CTA type'},
+      {key:'caption_style',label:'Caption style'},
+      {key:'hashtags',label:'Hashtags'},
       {key:'why_it_worked',label:'Why'},
-      {key:'hook_text',label:'Hook visual'},
-      {key:'hook_type',label:'Format'}
+      {key:'hook_text',label:'Hook text'},
+      {key:'primary_emotion',label:'Emotion (1)'},
+      {key:'secondary_emotion',label:'Emotion (2)'},
+      {key:'custom_label_1',label:'Label 1'},
+      {key:'custom_label_2',label:'Label 2'},
+      {key:'custom_label_3',label:'Label 3'},
+      {key:'risk_flags_json',label:'Risk flags'},
+      {key:'aesthetic_analysis_json',label:'Aesthetic'},
+      {key:'raw_llm_json',label:'Raw LLM'}
     ]);
   }catch(e){el.textContent=String(e);}
 }
@@ -2024,12 +2056,28 @@ async function loadDeepCarouselTable(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=renderInsightTable(d.insights||[],[
+      {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
+      {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'insights_id',label:'Insight ID'},
+      {key:'llm_model',label:'Model'},
+      {key:'updated_at',label:'Updated'},
       {key:'pre_llm_score',label:'Pre-LLM'},
       {key:'evidence_rating_score',label:'Row rating'},
+      {key:'hook_type',label:'Hook type'},
+      {key:'cta_type',label:'CTA type'},
+      {key:'caption_style',label:'Caption style'},
+      {key:'hashtags',label:'Hashtags'},
       {key:'why_it_worked',label:'Why'},
-      {key:'hook_text',label:'Slide arc'},
-      {key:'cta_type',label:'CTA clarity'}
+      {key:'hook_text',label:'Hook text'},
+      {key:'primary_emotion',label:'Emotion (1)'},
+      {key:'secondary_emotion',label:'Emotion (2)'},
+      {key:'custom_label_1',label:'Label 1'},
+      {key:'custom_label_2',label:'Label 2'},
+      {key:'custom_label_3',label:'Label 3'},
+      {key:'risk_flags_json',label:'Risk flags'},
+      {key:'aesthetic_analysis_json',label:'Aesthetic'},
+      {key:'raw_llm_json',label:'Raw LLM'}
     ]);
   }catch(e){el.textContent=String(e);}
 }
