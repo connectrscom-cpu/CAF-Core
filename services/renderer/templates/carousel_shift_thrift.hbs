@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-top: #ff8a5c;
+      --bg-mid: #ffb088;
+      --bg-bottom: #fff5ef;
+      --ink: #2d1810;
+      --accent: #c73e1d;
+      --cream: #fffdf9;
+      --safe: 72px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'DM Sans', system-ui, sans-serif; background: #222; }
+    .slide {
+      width: 1080px; height: 1350px;
+      overflow: hidden;
+      flex-shrink: 0;
+      position: relative;
+      background: linear-gradient(165deg, var(--bg-top) 0%, var(--bg-mid) 42%, var(--bg-bottom) 100%);
+      color: var(--ink);
+    }
+    .slide::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Ccircle cx='8' cy='8' r='1.2' fill='%23ffffff22'/%3E%3C/svg%3E");
+      pointer-events: none;
+      opacity: 0.9;
+    }
+    .slide-inner {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      padding: var(--safe);
+      justify-content: space-between;
+    }
+    .brand-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 24px;
+      border-bottom: 4px solid var(--ink);
+      padding-bottom: 20px;
+    }
+    .brand-word {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: 52px;
+      letter-spacing: -0.02em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+    .brand-dot { color: var(--accent); }
+    .cover-hero {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 18px;
+      max-width: 920px;
+    }
+    .eyebrow {
+      font-size: 36px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: var(--accent);
+    }
+    .cover-title {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: clamp(72px, 9vw, 118px);
+      line-height: 0.95;
+      text-transform: uppercase;
+      letter-spacing: -0.03em;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .cover-body {
+      font-size: 40px;
+      font-weight: 600;
+      line-height: 1.35;
+      max-width: 880px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .tag-pill {
+      align-self: flex-start;
+      background: var(--ink);
+      color: var(--cream);
+      padding: 14px 28px;
+      font-size: 28px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      border-radius: 4px;
+    }
+    .body-slide .slide-inner { justify-content: center; gap: 32px; }
+    .body-title {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: clamp(56px, 6vw, 76px);
+      line-height: 1.08;
+      text-transform: uppercase;
+      max-width: 920px;
+      overflow-wrap: anywhere;
+    }
+    .body-text {
+      font-size: 38px;
+      font-weight: 500;
+      line-height: 1.45;
+      max-width: 900px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .cta-slide .slide-inner { justify-content: center; text-align: center; gap: 28px; }
+    .cta-main {
+      font-family: 'Archivo Black', sans-serif;
+      font-size: clamp(64px, 7vw, 96px);
+      line-height: 1.05;
+      text-transform: uppercase;
+      max-width: 920px;
+      overflow-wrap: anywhere;
+    }
+    .cta-handle {
+      font-size: 44px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+    .site-bar {
+      margin-top: auto;
+      background: var(--ink);
+      color: var(--cream);
+      padding: 28px 36px;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+{{#if cover_slide}}
+  <div class="slide cover-slide">
+    <div class="slide-inner">
+      <div class="brand-row">
+        <span class="brand-word">Shift<span class="brand-dot">·</span>Thrift</span>
+      </div>
+      <div class="cover-hero">
+        <span class="eyebrow">Big savings</span>
+        <h1 class="cover-title">{{cover_slide.headline}}</h1>
+        {{#if cover_slide.body}}<p class="cover-body">{{cover_slide.body}}</p>{{/if}}
+      </div>
+      <div class="site-bar">Your one-stop thrift store — save more, waste less</div>
+    </div>
+  </div>
+{{/if}}
+{{#each body_slides}}
+  <div class="slide body-slide">
+    <div class="slide-inner">
+      <span class="tag-pill">Thrift finds</span>
+      <h2 class="body-title">{{headline}}</h2>
+      {{#if body}}<p class="body-text">{{body}}</p>{{/if}}
+    </div>
+  </div>
+{{/each}}
+{{#if cta_slide}}
+  <div class="slide cta-slide">
+    <div class="slide-inner">
+      <p class="cta-main">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</p>
+      {{#if cta_handle}}<div class="cta-handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      <div class="site-bar">www.thrift.com · Save with thrift</div>
+    </div>
+  </div>
+{{/if}}
+</body>
+</html>
