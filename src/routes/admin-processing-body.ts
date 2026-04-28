@@ -269,6 +269,20 @@ export function adminProcessingBody(currentSlug: string): string {
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (idea list JSON)</summary>
             <pre id="idea-list-list-meta" style="font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;white-space:pre-wrap;max-height:160px;overflow:auto;margin-top:8px"></pre>
           </details>
+          <div id="idea-preview" style="display:none;margin:10px 0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:8px">
+              <div style="min-width:240px">
+                <div style="font-size:12px;color:var(--muted)">Selected idea</div>
+                <div id="idea-preview-title" style="font-size:13px;font-weight:600"></div>
+              </div>
+              <button type="button" class="btn-ghost btn-sm" id="btn-close-idea-preview">Close</button>
+            </div>
+            <div id="idea-preview-body" style="font-size:12px;white-space:pre-wrap;word-break:break-word"></div>
+            <details style="margin-top:10px">
+              <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (raw idea_json)</summary>
+              <pre id="idea-preview-json" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:320px;overflow:auto"></pre>
+            </details>
+          </div>
           <div id="idea-list-table-wrap" style="margin-top:8px;width:100%;max-height:480px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-pack" style="display:none;padding:12px 0 0">
@@ -1585,6 +1599,39 @@ function saveIdeaSelection(sel){
   }catch(e){}
 }
 
+var lastIdeasById={};
+function pickIdeaText(j){
+  if(!j||typeof j!=='object')return '';
+  var lines=[];
+  if(j.title)lines.push(String(j.title));
+  if(j.hook)lines.push('Hook: '+String(j.hook));
+  if(j.three_liner)lines.push(String(j.three_liner));
+  if(j.content_idea)lines.push(String(j.content_idea));
+  if(j.angle)lines.push('Angle: '+String(j.angle));
+  if(j.script_outline)lines.push('Outline: '+String(j.script_outline));
+  return lines.filter(Boolean).join('\n');
+}
+
+function openIdeaPreview(id){
+  var box=document.getElementById('idea-preview');
+  var title=document.getElementById('idea-preview-title');
+  var body=document.getElementById('idea-preview-body');
+  var pre=document.getElementById('idea-preview-json');
+  if(!box||!title||!body||!pre)return;
+  var row=lastIdeasById && lastIdeasById[id];
+  if(!row){box.style.display='none';return;}
+  box.style.display='block';
+  var t=String(row.title||'').trim()||String(id||'');
+  title.textContent=t;
+  body.textContent=pickIdeaText(row.raw||row);
+  pre.textContent=JSON.stringify(row.raw||row,null,2);
+}
+
+document.getElementById('btn-close-idea-preview')?.addEventListener('click',function(){
+  var box=document.getElementById('idea-preview');
+  if(box)box.style.display='none';
+});
+
 function renderIdeasTable(rows){
   if(!rows.length)return '<div class="empty" style="padding:12px">No rows in this list.</div>';
   var sel=loadIdeaSelection();
@@ -1594,20 +1641,22 @@ function renderIdeasTable(rows){
     if(!id)continue;
     if(!sel[id]){checkedAll=false;break;}
   }
-  var tb='<table class="sp-modal-table" style="width:100%;min-width:1100px;table-layout:auto"><thead><tr>'+
+  var tb='<table class="sp-modal-table" style="width:100%;min-width:1500px;table-layout:auto"><thead><tr>'+
     '<th style="width:44px"><input type="checkbox" id="ideas-check-all" '+(checkedAll?'checked':'')+' title="Select/deselect all ideas in this list"/></th>'+
-    '<th>Idea</th><th>Format</th><th>Platform</th><th>3-liner</th><th>Conf.</th></tr></thead><tbody>';
+    '<th>Title</th><th>Format</th><th>Platform</th><th>Hook</th><th>3-liner</th><th class="mono">Conf.</th><th class="mono">ID</th></tr></thead><tbody>';
   for(var j=0;j<rows.length;j++){
     var x=rows[j];
     var id2=String(x.id||'');
     var on=!!sel[id2];
-    tb+='<tr style="'+(on?'':'opacity:0.65')+'">'+
+    tb+='<tr class="idea-row" data-id="'+esc(id2)+'" style="cursor:pointer;'+(on?'':'opacity:0.65')+'">'+
       '<td><input class="idea-check" type="checkbox" data-id="'+esc(id2)+'" '+(on?'checked':'')+' /></td>'+
-      '<td style="max-width:320px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
+      '<td style="max-width:340px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
       '<td class="mono">'+esc(x.format||'')+'</td>'+
       '<td class="mono">'+esc(x.platform||'')+'</td>'+
+      '<td style="max-width:300px;white-space:pre-wrap;word-break:break-word">'+esc(x.hook||'')+'</td>'+
       '<td style="max-width:520px;white-space:pre-wrap;word-break:break-word">'+esc(x.three_liner||'')+'</td>'+
       '<td class="mono">'+fmtInsightScore(x.confidence_score)+'</td>'+
+      '<td class="mono">'+esc(id2)+'</td>'+
     '</tr>';
   }
   tb+='</tbody></table>';
@@ -1693,6 +1742,7 @@ async function loadIdeaListIdeasTable(){
     if(state)state.textContent='';
     stepState.ideas_present=false;
     renderStepper();
+    try{lastIdeasById={};}catch(e){}
     return;
   }
   wrap.innerHTML='Loading…';
@@ -1710,10 +1760,17 @@ async function loadIdeaListIdeasTable(){
         title:j.title||'',
         format:j.format||'',
         platform:j.platform||'',
+        hook:j.hook||j.hook_text||'',
         confidence_score:j.confidence_score,
-        three_liner:String(j.three_liner||'').slice(0,220)
+        three_liner:String(j.three_liner||''),
+        raw:j
       };
     });
+    lastIdeasById={};
+    for(var ii=0;ii<ideas.length;ii++){
+      var idX=String(ideas[ii].id||'');
+      if(idX)lastIdeasById[idX]=ideas[ii];
+    }
     if(meta)meta.textContent=JSON.stringify({list_id:list.id,title:list.title,created_at:list.created_at,params_json:list.params_json,derived_globals_json:list.derived_globals_json},null,2);
     stepState.ideas_present=ideas.length>0;
     renderStepper();
@@ -1734,6 +1791,16 @@ async function loadIdeaListIdeasTable(){
         if(this.checked)cur[id]=true;else delete cur[id];
         saveIdeaSelection(cur);
         loadIdeaListIdeasTable();
+      });
+    });
+    wrap.querySelectorAll('.idea-row').forEach(function(tr){
+      tr.addEventListener('click',function(ev){
+        // ignore clicks on checkbox itself
+        var t=ev && ev.target;
+        if(t && t.tagName && String(t.tagName).toLowerCase()==='input')return;
+        var id=this.getAttribute('data-id')||'';
+        if(!id)return;
+        openIdeaPreview(id);
       });
     });
     wrap.querySelector('#ideas-check-all')?.addEventListener('change',function(){

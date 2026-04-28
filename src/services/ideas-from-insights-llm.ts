@@ -14,8 +14,10 @@ import {
 } from "../repositories/inputs-evidence-insights.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChat } from "./openai-chat.js";
-import type { SignalPackIdea } from "./signal-pack-compile-ideas.js";
 import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
+import type { SignalPackIdeaV2 } from "../domain/signal-pack-ideas-v2.js";
+import { signalPackIdeaSchema } from "../domain/signal-pack-ideas-v2.js";
+import { z } from "zod";
 
 export const STEP_IDEAS_FROM_INSIGHTS = "inputs_ideas_from_insights_llm";
 
@@ -85,7 +87,7 @@ export interface IdeasFromInsightsLlmOpts {
 }
 
 export interface IdeasFromInsightsLlmResult {
-  ideas: SignalPackIdea[];
+  ideas: SignalPackIdeaV2[];
   context_insights_used: number;
   top_performer_rows_in_context: number;
 }
@@ -103,6 +105,7 @@ export function selectInsightContextForIdeasLlm(
   source_evidence_row_id: string;
   evidence_kind: string;
   evidence_rating: number | null;
+  grounding_insight_ids: string[];
   broad: Record<string, unknown> | null;
   top_performer_styles: Record<string, unknown> | null;
 }> {
@@ -157,6 +160,7 @@ export function selectInsightContextForIdeasLlm(
     source_evidence_row_id: string;
     evidence_kind: string;
     evidence_rating: number | null;
+    grounding_insight_ids: string[];
     broad: Record<string, unknown> | null;
     top_performer_styles: Record<string, unknown> | null;
   }> = [];
@@ -167,57 +171,20 @@ export function selectInsightContextForIdeasLlm(
     const kind = br?.evidence_kind ?? tops[0]?.evidence_kind ?? "instagram_post";
     const ratingRaw = br?.evidence_rating_score ?? null;
     const rating = ratingRaw == null || ratingRaw === "" ? null : ratingNum(ratingRaw);
+    const grounding_insight_ids = [
+      ...(br?.insights_id ? [String(br.insights_id).trim()] : []),
+      ...tops.map((t) => String(t.insights_id ?? "").trim()).filter(Boolean),
+    ];
     out.push({
       source_evidence_row_id: id,
       evidence_kind: kind,
       evidence_rating: rating,
+      grounding_insight_ids,
       broad: br ? compactBroad(br) : null,
       top_performer_styles: mergeTopTiers(tops),
     });
   }
 
-  return out;
-}
-
-function parseLlmIdeas(raw: unknown, targetMax: number): Array<{
-  content_idea: string;
-  summary?: string;
-  platform?: string;
-  confidence_score?: number;
-  supporting_evidence_row_ids?: string[];
-  primary_emotion?: string | null;
-  why_it_worked?: string | null;
-}> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
-  const arr = (raw as { ideas?: unknown }).ideas;
-  if (!Array.isArray(arr)) return [];
-  const out: Array<{
-    content_idea: string;
-    summary?: string;
-    platform?: string;
-    confidence_score?: number;
-    supporting_evidence_row_ids?: string[];
-    primary_emotion?: string | null;
-    why_it_worked?: string | null;
-  }> = [];
-  for (const item of arr) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const o = item as Record<string, unknown>;
-    const ci = typeof o.content_idea === "string" ? o.content_idea.trim() : "";
-    if (!ci) continue;
-    const sup = o.supporting_evidence_row_ids;
-    const ids = Array.isArray(sup) ? sup.map((x) => String(x).trim()).filter(Boolean) : [];
-    out.push({
-      content_idea: ci.slice(0, 2000),
-      summary: typeof o.summary === "string" ? o.summary.trim().slice(0, 2000) : undefined,
-      platform: typeof o.platform === "string" ? o.platform.trim() : undefined,
-      confidence_score: typeof o.confidence_score === "number" ? clamp(o.confidence_score, 0, 1) : undefined,
-      supporting_evidence_row_ids: ids.length ? ids : undefined,
-      primary_emotion: typeof o.primary_emotion === "string" ? o.primary_emotion : null,
-      why_it_worked: typeof o.why_it_worked === "string" ? o.why_it_worked : null,
-    });
-    if (out.length >= targetMax) break;
-  }
   return out;
 }
 
@@ -250,25 +217,38 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
   const topInCtx = context.filter((c) => c.top_performer_styles != null).length;
 
   const target = clamp(opts.targetIdeaCount, 1, 200);
-  const system = `You are a senior social content strategist. You receive INSIGHTS from a research pipeline:
-each item is one evidence row with optional "broad" LLM fields and optional "top_performer_styles" (richer visual/format analysis for standout posts).
+  const system = `You are a senior social content strategist for an automated content pipeline.
+You receive an INSIGHT CONTEXT array; each item is one evidence row with:
+- "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
+- optional "top_performer_styles" (richer analysis for standout posts)
+- "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
-Your job: propose ${target} DISTINCT content ideas the brand should actually create (new posts / carousels / short video concepts — not summaries of the dataset).
+Your job: propose up to ${target} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
+
+Return ONLY valid JSON: {"ideas":[...]} — no markdown.
+
+Each idea object MUST match this contract exactly (all fields required unless noted):
+- title: string (<=200)
+- three_liner: string (<=1200)
+- thesis: string (<=800)
+- who_for: string (<=200)
+- format: string (e.g. "carousel" | "video" | "post" | "thread")
+- platform: string (e.g. Instagram, TikTok, Reddit, Facebook, Multi)
+- why_now: string (<=800)
+- key_points: string[] (3–10 items)
+- novelty_angle: string (<=800)
+- cta: string (<=200)
+- grounding_insight_ids: string[] (min 1; ideally 1–3; MUST be chosen from the provided grounding_insight_ids in the context)
+- expected_outcome: string (<=400)
+- risk_flags: string[] (optional; default [])
+- status: "proposed" (always)
+- confidence_score: number 0–1 (optional but recommended)
 
 Rules:
-- Each idea must be actionable and specific enough to brief a creator.
-- Ground ideas in the insight patterns; you may combine multiple evidence rows into one idea.
-- Prefer angles supported by top_performer_styles when present.
-- Vary platforms and formats where evidence supports it.
-- Return ONLY valid JSON: {"ideas":[...]} — no markdown.
-- Each idea object MUST include:
-  - "content_idea": string (the hook / creative concept)
-  - "summary": string (1–2 sentences)
-  - "platform": string (e.g. Instagram, TikTok, Multi)
-  - "confidence_score": number 0–1
-  - "supporting_evidence_row_ids": string[] (subset of source_evidence_row_id values you used; can be one or many)
-  Optional: "primary_emotion", "why_it_worked" (short).
-- Maximum ${target} ideas. Fewer only if evidence is too thin to justify more.`;
+- Every idea MUST include grounding_insight_ids (no orphan ideas).
+- Be specific (no generic "post about astrology" ideas).
+- Vary platforms and formats when evidence supports it.
+- Keep claims safe; use risk_flags for things like "medical_claim", "financial_claim", "adult_content", "policy_risk", "brand_risk".`;
 
   const user = `Project notes: ${opts.extraInstructions || "(none)"}
 
@@ -295,27 +275,55 @@ ${JSON.stringify(context, null, 0)}`;
   );
 
   const parsed = parseJsonObjectFromLlmText(out.content);
-  const rawIdeas = parseLlmIdeas(parsed, target);
+  const rawIdeas = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as { ideas?: unknown }).ideas : [];
+  const llmIdeaSchema = signalPackIdeaSchema
+    .omit({
+      id: true,
+      created_at: true,
+      run_id: true,
+      status: true,
+    })
+    .extend({
+      risk_flags: z.array(z.string().min(1).max(60)).optional(),
+      confidence_score: z.number().min(0).max(1).optional(),
+    });
+  const ideasArr = z.array(llmIdeaSchema).safeParse(Array.isArray(rawIdeas) ? rawIdeas : []);
+  if (!ideasArr.success || ideasArr.data.length === 0) {
+    throw new Error("Ideas-from-insights LLM returned invalid ideas contract (expected canonical signal pack idea schema)");
+  }
   const slug = opts.packRunId.replace(/[^a-zA-Z0-9_]/g, "").slice(-12) || "pack";
 
-  const ideas: SignalPackIdea[] = rawIdeas.map((r, i) => {
-    const primaryId = r.supporting_evidence_row_ids?.[0];
-    const kind = context.find((c) => c.source_evidence_row_id === primaryId)?.evidence_kind ?? "instagram_post";
-    const plat = r.platform?.trim() || platformFromEvidenceKind(kind);
+  const ideas: SignalPackIdeaV2[] = ideasArr.data.slice(0, target).map((r, i) => {
+    // Enforce deterministic IDs and minimal metadata while keeping the canonical contract.
     const ideaId = `idea_${slug}_${i + 1}`;
+    const grounding = Array.isArray(r.grounding_insight_ids) ? r.grounding_insight_ids.map((x) => String(x).trim()).filter(Boolean) : [];
+    const safeGrounding = grounding.length
+      ? grounding
+      : (() => {
+          // Hard fallback to first available grounding id from context (breaking change: we still require grounding).
+          const first = context.find((c) => (c.grounding_insight_ids ?? []).length > 0)?.grounding_insight_ids?.[0];
+          return first ? [String(first).trim()] : [];
+        })();
+    if (safeGrounding.length === 0) {
+      throw new Error("Ideas-from-insights: could not resolve grounding_insight_ids (no insight ids in context)");
+    }
+
+    // If platform is missing/blank, infer from evidence kinds present in context.
+    const inferredPlatform =
+      typeof r.platform === "string" && r.platform.trim()
+        ? r.platform.trim()
+        : platformFromEvidenceKind(context[0]?.evidence_kind ?? "instagram_post");
+
     return {
-      idea_id: ideaId,
-      platform: plat,
-      content_idea: r.content_idea,
-      summary: r.summary ?? r.content_idea,
-      why_it_worked: r.why_it_worked ?? null,
-      primary_emotion: r.primary_emotion ?? null,
-      secondary_emotion: null,
-      evidence_kind: kind,
-      source_evidence_row_id: primaryId,
-      analysis_tier: "ideas_from_insights_llm",
-      confidence_score: r.confidence_score ?? 0.75,
-    } satisfies SignalPackIdea;
+      ...r,
+      id: ideaId,
+      run_id: opts.packRunId,
+      created_at: new Date().toISOString(),
+      platform: inferredPlatform,
+      status: "proposed",
+      grounding_insight_ids: safeGrounding,
+      risk_flags: Array.isArray(r.risk_flags) ? r.risk_flags : [],
+    };
   });
 
   return {

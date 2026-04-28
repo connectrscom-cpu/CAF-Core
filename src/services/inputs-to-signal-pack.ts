@@ -317,10 +317,12 @@ ${JSON.stringify(synthInput, null, 0)}`;
   });
   /**
    * `ideas-from-insights-llm` returns a lightweight idea shape used historically for `signal_packs.ideas_json`.
-   * We now normalize into the canonical rich idea contract (same as UI POST /signal-packs/:id/ideas),
-   * but we keep writing `ideas_json` for downstream compatibility.
+   * We now require the canonical rich idea contract (same as UI POST /signal-packs/:id/ideas).
    */
   const ideasJson = parseIdeasV2(ideasLlm.ideas);
+  if (ideasLlm.ideas.length > 0 && ideasJson.length === 0) {
+    throw new Error("Ideas-from-insights returned invalid idea contract (expected canonical signal pack ideas)");
+  }
 
   const stats = await getImportEvidenceStats(db, project.id, importId);
   const derived_globals_json: Record<string, unknown> = {

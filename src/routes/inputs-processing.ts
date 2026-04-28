@@ -382,9 +382,9 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       project_id: project.id,
       idea_list_id: listRow.id,
       ideas: result.ideas.map((i) => ({
-        idea_id: String(i.idea_id ?? "").trim() || String(i.content_idea ?? "").slice(0, 40),
-        platform: i.platform ?? null,
-        confidence_score: i.confidence_score ?? null,
+        idea_id: String(i.id ?? "").trim(),
+        platform: String(i.platform ?? "").trim() || null,
+        confidence_score: typeof i.confidence_score === "number" ? i.confidence_score : null,
         idea_json: i as unknown as Record<string, unknown>,
       })),
     });
