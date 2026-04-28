@@ -36,6 +36,99 @@ function ratingNum(s: string | null | undefined): number {
   return Number.isNaN(n) ? 0 : n;
 }
 
+function normFormat(fmt: unknown): "carousel" | "video" | "post" | "thread" | "other" {
+  const f = String(fmt ?? "")
+    .toLowerCase()
+    .trim();
+  if (f === "carousel") return "carousel";
+  if (f === "video") return "video";
+  if (f === "post") return "post";
+  if (f === "thread") return "thread";
+  return "other";
+}
+
+function formatQuotas(target: number): { carousel: number; video: number; post: number; thread: number } {
+  const n = clamp(target, 1, 200);
+  let carousel = Math.floor(n * 0.4);
+  let video = Math.floor(n * 0.3);
+  let post = Math.floor(n * 0.1);
+  let thread = Math.floor(n * 0.1);
+  // allocate remainder deterministically: carousel → video → post → thread
+  let used = carousel + video + post + thread;
+  const order: Array<keyof ReturnType<typeof formatQuotas>> = ["carousel", "video", "post", "thread"];
+  let idx = 0;
+  while (used < n) {
+    const k = order[idx % order.length]!;
+    if (k === "carousel") carousel++;
+    else if (k === "video") video++;
+    else if (k === "post") post++;
+    else thread++;
+    used++;
+    idx++;
+  }
+  // if rounding overshoots (shouldn't), trim from thread → post → video → carousel
+  while (used > n) {
+    if (thread > 0) thread--;
+    else if (post > 0) post--;
+    else if (video > 0) video--;
+    else if (carousel > 1) carousel--;
+    used--;
+  }
+  // Ensure we don't end up with zero buckets for reasonable N (avoid pathological rounding at small N).
+  if (n >= 10) {
+    if (post === 0) post = 1;
+    if (thread === 0) thread = 1;
+    used = carousel + video + post + thread;
+    while (used > n && carousel > 1) {
+      carousel--;
+      used--;
+    }
+    while (used > n && video > 1) {
+      video--;
+      used--;
+    }
+  }
+  return { carousel, video, post, thread };
+}
+
+function meetsQuota(ideas: Array<{ format: unknown }>, q: { carousel: number; video: number; post: number; thread: number }): boolean {
+  const c = { carousel: 0, video: 0, post: 0, thread: 0, other: 0 };
+  for (const i of ideas) c[normFormat(i.format)]++;
+  return c.carousel >= q.carousel && c.video >= q.video && c.post >= q.post && c.thread >= q.thread;
+}
+
+function pickWithQuota<T extends { format: unknown; confidence_score?: number }>(
+  ideas: T[],
+  q: { carousel: number; video: number; post: number; thread: number }
+): T[] {
+  const by: Record<"carousel" | "video" | "post" | "thread" | "other", T[]> = {
+    carousel: [],
+    video: [],
+    post: [],
+    thread: [],
+    other: [],
+  };
+  for (const it of ideas) by[normFormat(it.format)].push(it);
+  const byConf = (a: T, b: T) => (b.confidence_score ?? 0) - (a.confidence_score ?? 0);
+  for (const k of Object.keys(by) as Array<keyof typeof by>) by[k].sort(byConf);
+
+  const out: T[] = [];
+  out.push(...by.carousel.slice(0, q.carousel));
+  out.push(...by.video.slice(0, q.video));
+  out.push(...by.post.slice(0, q.post));
+  out.push(...by.thread.slice(0, q.thread));
+
+  // Fill any leftover slots (if LLM over-produced in some buckets) by best remaining confidence across all.
+  const need = Math.max(0, (q.carousel + q.video + q.post + q.thread) - out.length);
+  if (need > 0) {
+    const used = new Set(out);
+    const rest = ([] as T[]).concat(by.carousel, by.video, by.post, by.thread, by.other).filter((x) => !used.has(x));
+    rest.sort(byConf);
+    out.push(...rest.slice(0, need));
+  }
+  return out;
+}
+
 function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, unknown> | null {
   if (!tops.length) return null;
   let best = tops[0];
@@ -217,13 +310,22 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
   const topInCtx = context.filter((c) => c.top_performer_styles != null).length;
 
   const target = clamp(opts.targetIdeaCount, 1, 200);
+  const quotas = formatQuotas(target);
   const system = `You are a senior social content strategist for an automated content pipeline.
 You receive an INSIGHT CONTEXT array; each item is one evidence row with:
 - "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
 - optional "top_performer_styles" (richer analysis for standout posts)
 - "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
-Your job: propose up to ${target} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
+Your job: propose EXACTLY ${target} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
+
+CRITICAL FORMAT SPLIT (MUST HIT):
+- carousel: ${quotas.carousel}
+- video: ${quotas.video}
+- post: ${quotas.post}
+- thread: ${quotas.thread}
+
+Do not output any other format values. Use only: "carousel" | "video" | "post" | "thread".
 
 Return ONLY valid JSON: {"ideas":[...]} — no markdown.
 
@@ -247,7 +349,7 @@ Each idea object MUST match this contract exactly (all fields required unless no
 Rules:
 - Every idea MUST include grounding_insight_ids (no orphan ideas).
 - Be specific (no generic "post about astrology" ideas).
-- Vary platforms and formats when evidence supports it.
+- The format split above is mandatory even if the dataset is skewed.
 - Keep claims safe; use risk_flags for things like "medical_claim", "financial_claim", "adult_content", "policy_risk", "brand_risk".`;
 
   const user = `Project notes: ${opts.extraInstructions || "(none)"}
@@ -255,27 +357,39 @@ Rules:
 Insight context (${context.length} rows; ${topInCtx} include top-performer enrichment):
 ${JSON.stringify(context, null, 0)}`;
 
-  const out = await openaiChat(
-    apiKey,
-    {
-      model: opts.model,
-      system_prompt: system,
-      user_prompt: user,
-      max_tokens: 8192,
-      response_format: "json_object",
-    },
-    {
-      db,
-      projectId,
-      runId: null,
-      taskId: null,
-      signalPackId: null,
-      step: STEP_IDEAS_FROM_INSIGHTS,
-    }
-  );
-
-  const parsed = parseJsonObjectFromLlmText(out.content);
-  const rawIdeas = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as { ideas?: unknown }).ideas : [];
+  let parsed: unknown = null;
+  let rawIdeas: unknown = null;
+  let lastText = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const out = await openaiChat(
+      apiKey,
+      {
+        model: opts.model,
+        system_prompt:
+          attempt === 1
+            ? system
+            : `${system}\n\nYou failed to match the required format split previously. Try again and hit the exact counts.`,
+        user_prompt:
+          attempt === 1
+            ? user
+            : `${user}\n\nIMPORTANT: Output exactly ${target} ideas and exactly this split: carousel=${quotas.carousel}, video=${quotas.video}, post=${quotas.post}, thread=${quotas.thread}.`,
+        max_tokens: 8192,
+        response_format: "json_object",
+      },
+      {
+        db,
+        projectId,
+        runId: null,
+        taskId: null,
+        signalPackId: null,
+        step: STEP_IDEAS_FROM_INSIGHTS,
+      }
+    );
+    lastText = out.content;
+    parsed = parseJsonObjectFromLlmText(out.content);
+    rawIdeas = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as { ideas?: unknown }).ideas : [];
+    if (Array.isArray(rawIdeas)) break;
+  }
   const llmIdeaSchema = signalPackIdeaSchema
     .omit({
       id: true,
@@ -291,9 +405,16 @@ ${JSON.stringify(context, null, 0)}`;
   if (!ideasArr.success || ideasArr.data.length === 0) {
     throw new Error("Ideas-from-insights LLM returned invalid ideas contract (expected canonical signal pack idea schema)");
   }
+  if (!meetsQuota(ideasArr.data, quotas)) {
+    // Hard enforce: if we can't satisfy the split, fail loudly so the operator can adjust prompts/data.
+    throw new Error(
+      `Ideas-from-insights did not meet required format split (carousel=${quotas.carousel}, video=${quotas.video}, post=${quotas.post}, thread=${quotas.thread}).`
+    );
+  }
   const slug = opts.packRunId.replace(/[^a-zA-Z0-9_]/g, "").slice(-12) || "pack";
 
-  const ideas: SignalPackIdeaV2[] = ideasArr.data.slice(0, target).map((r, i) => {
+  const quotaPicked = pickWithQuota(ideasArr.data, quotas).slice(0, target);
+  const ideas: SignalPackIdeaV2[] = quotaPicked.map((r, i) => {
     // Enforce deterministic IDs and minimal metadata while keeping the canonical contract.
     const ideaId = `idea_${slug}_${i + 1}`;
     const grounding = Array.isArray(r.grounding_insight_ids) ? r.grounding_insight_ids.map((x) => String(x).trim()).filter(Boolean) : [];
