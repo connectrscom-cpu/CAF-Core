@@ -4,29 +4,64 @@ export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   return `
-<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Evidence · Broad insights · Top performers · Sources · Ideas · Signal pack · Profile</span></div></div>
+<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Inputs → Evidence → Insights → Ideas → Signal pack → Run</span></div></div>
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
-      <p class="runs-ops-hint">Select an import, then use the segments below. Carousels need ≥2 HTTPS URLs (e.g. <span class="mono">carousel_slide_urls</span>). Video uses <span class="mono">analysis_frame_urls</span> + transcript — no raw MP4 in Core.</p>
+      <p class="runs-ops-hint">Work through the pipeline steps below. Raw JSON is hidden under Debug panels.</p>
       <div id="imports-toolbar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
         <a class="btn-ghost btn-sm" href="/admin/inputs${inputsPq}">Upload on Inputs</a>
+        <button type="button" class="btn-ghost btn-sm" id="btn-open-profile" title="Edit processing profile caps/models and view audit logs.">Profile &amp; audit</button>
         <span id="imports-hint" style="font-size:12px;color:var(--muted)"></span>
       </div>
       <div id="imports-root" class="empty">Loading…</div>
       <div id="import-workbench" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <div style="display:flex;gap:8px;border-bottom:1px solid var(--border);padding:0 0 8px;flex-wrap:wrap">
-          <button type="button" class="btn btn-sm" id="seg-evidence" style="border-radius:8px 8px 0 0">Evidence</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-broad" style="border-radius:8px 8px 0 0">Insights (broad)</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-top" style="border-radius:8px 8px 0 0">Top performers</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-sources" style="border-radius:8px 8px 0 0">Sources</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-ideas" style="border-radius:8px 8px 0 0">Ideas</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-pack" style="border-radius:8px 8px 0 0">Signal pack</button>
-          <button type="button" class="btn-ghost btn-sm" id="seg-profile" style="border-radius:8px 8px 0 0">Profile &amp; audit</button>
+        <div id="stepper" style="display:flex;gap:8px;border-bottom:1px solid var(--border);padding:0 0 10px;flex-wrap:wrap;align-items:center">
+          <button type="button" class="btn btn-sm step-btn" id="step-select" data-step="select" title="Pick the evidence import you want to process.">
+            1. Select import <span class="badge badge-y" id="step-badge-select">in progress</span>
+          </button>
+          <button type="button" class="btn-ghost btn-sm step-btn" id="step-evidence" data-step="evidence" title="Filter evidence using profile gates + cutoff (no LLM).">
+            2. Filter evidence <span class="badge badge-b" id="step-badge-evidence">not started</span>
+          </button>
+          <button type="button" class="btn-ghost btn-sm step-btn" id="step-insights" data-step="insights" title="Run broad insights and top-performer extraction.">
+            3. Generate insights <span class="badge badge-b" id="step-badge-insights">not started</span>
+          </button>
+          <button type="button" class="btn-ghost btn-sm step-btn" id="step-ideas" data-step="ideas" title="Generate and curate ideas from insights.">
+            4. Extract ideas <span class="badge badge-b" id="step-badge-ideas">not started</span>
+          </button>
+          <button type="button" class="btn-ghost btn-sm step-btn" id="step-pack" data-step="pack" title="Build a signal pack from an idea list or full import pipeline.">
+            5. Build signal pack <span class="badge badge-b" id="step-badge-pack">not started</span>
+          </button>
+          <button type="button" class="btn-ghost btn-sm step-btn" id="step-run" data-step="run" title="Proceed to Runs using the latest signal pack.">
+            6. Run <span class="badge badge-b" id="step-badge-run">not started</span>
+          </button>
         </div>
         <div id="panel-evidence" style="padding:12px 0 0">
-          <pre id="import-stats" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;overflow:auto;max-height:180px;margin-bottom:12px"></pre>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px">
+            <div style="flex:1;min-width:280px">
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+                <div>
+                  <div style="font-size:12px;color:var(--muted);margin-bottom:2px">Selected import</div>
+                  <div style="font-size:13px;font-weight:600" id="evidence-import-label">—</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="btn-ghost btn-sm" id="btn-refresh-evidence" title="Reload import stats + evidence preview from the database (no LLM).">Refresh</button>
+                </div>
+              </div>
+              <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
+                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Evidence funnel</div>
+                <div id="evidence-funnel" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
+                <div id="evidence-funnel-hint" style="margin-top:6px;font-size:11px;color:var(--muted)"></div>
+              </div>
+            </div>
+            <div style="flex:1;min-width:320px">
+              <details id="import-stats-debug" style="margin:0">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (import stats JSON)</summary>
+                <pre id="import-stats" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;overflow:auto;max-height:260px;margin-top:8px;white-space:pre-wrap"></pre>
+              </details>
+            </div>
+          </div>
           <div id="prellm-root">
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px">
@@ -71,15 +106,18 @@ export function adminProcessingBody(currentSlug: string): string {
                 </div>
               </div>
             </div>
-            <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-bottom:10px;white-space:pre-wrap"></pre>
+            <details id="prellm-debug" style="margin:10px 0">
+              <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (pre-LLM preview JSON)</summary>
+              <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
+            </details>
             <div id="prellm-table-wrap" style="font-size:12px;max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
           <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) per <strong>social platform</strong> evidence row. Source kinds (<span class="mono">source_registry</span>, <span class="mono">scraped_page</span>) stay under <strong>Sources</strong> — they are not run here.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all">Run broad LLM — all platforms</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights">Run broad LLM — this platform tab only</button>
+            <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all" title="Analyzes filtered evidence across all platform tabs, writing broad insights rows to the database. May overwrite if Rescan is enabled.">Analyze all selected evidence</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights" title="Analyzes the currently selected platform tab only, writing broad insights rows to the database. May overwrite if Rescan is enabled.">Analyze this platform only</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
             <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
@@ -138,7 +176,16 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
             <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
           </div>
-          <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap"></pre>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin:10px 0">
+            <div style="flex:1;min-width:320px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px">State</div>
+              <div id="broad-state" style="font-size:12px;color:var(--muted)"></div>
+            </div>
+            <details id="broad-meta-debug" style="flex:1;min-width:320px;margin:0">
+              <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (broad meta JSON)</summary>
+              <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
+            </details>
+          </div>
           <details id="broad-debug-details" style="display:none;margin:10px 0">
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Last broad run debug (copy/paste this into chat)</summary>
             <pre id="broad-debug-pre" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin:10px 0;white-space:pre-wrap;max-height:360px;overflow:auto"></pre>
@@ -216,8 +263,12 @@ export function adminProcessingBody(currentSlug: string): string {
               </select>
             </label>
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-idea-lists">Reload</button>
+            <span id="ideas-state" style="font-size:12px;color:var(--muted)"></span>
           </div>
-          <pre id="idea-list-list-meta" style="font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;white-space:pre-wrap;max-height:120px;overflow:auto"></pre>
+          <details id="idea-list-debug" style="margin:0 0 8px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (idea list JSON)</summary>
+            <pre id="idea-list-list-meta" style="font-size:12px;background:var(--bg);padding:8px 10px;border-radius:8px;white-space:pre-wrap;max-height:160px;overflow:auto;margin-top:8px"></pre>
+          </details>
           <div id="idea-list-table-wrap" style="margin-top:8px;width:100%;max-height:480px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-pack" style="display:none;padding:12px 0 0">
@@ -231,6 +282,7 @@ export function adminProcessingBody(currentSlug: string): string {
                 </select>
               </label>
             </div>
+            <div id="pack-summary" style="font-size:12px;color:var(--muted);margin:0 0 8px"></div>
             <p style="font-size:11px;color:var(--muted);margin:0 0 6px;max-width:800px">Max per format: leave <strong>blank</strong> for no cap in that bucket, <strong>0</strong> to exclude, or a number to take the top N by confidence within that format (blog, memo, slides, … use <span class="mono">Other</span>).</p>
             <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
               <label class="fl-cap" style="font-size:11px">Carousel <input type="number" id="fl-carousel" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
@@ -240,16 +292,19 @@ export function adminProcessingBody(currentSlug: string): string {
               <label class="fl-cap" style="font-size:11px">Other <input type="number" id="fl-other" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-              <button type="button" class="btn btn-sm" id="btn-build-pack-from-idea-list">Build signal pack from idea list</button>
+              <button type="button" class="btn btn-sm" id="btn-build-pack-from-idea-list" title="Builds a signal pack from the selected idea list (and optional per-format caps). Writes a new signal pack row in the database.">Build signal pack from idea list</button>
               <span id="build-from-ideas-msg" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
           <p class="runs-ops-hint" style="margin-bottom:8px"><strong>Full pipeline</strong> — rate + synthesize + idea LLM in one go (ignores idea lists). Review profile caps first.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack">Build signal pack (full import)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack" title="Runs rating + synthesis directly from the evidence import (ignores idea lists). Writes a new signal pack row in the database.">Build signal pack (full import)</button>
             <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
           </div>
-          <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto"></pre>
+          <details id="pack-settings-debug" style="margin:10px 0">
+            <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (config/profile JSON)</summary>
+            <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto;margin-top:8px"></pre>
+          </details>
           <div class="card" style="margin-top:12px">
             <div class="card-h">Inspect an existing signal pack</div>
             <div style="padding:12px 16px 16px">
@@ -271,6 +326,29 @@ export function adminProcessingBody(currentSlug: string): string {
               <details id="pack-inspect-raw-details" style="display:none;margin-top:10px">
                 <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Raw signal pack JSON</summary>
                 <pre id="pack-inspect-raw" style="margin-top:8px;font-size:11px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:360px;overflow:auto"></pre>
+              </details>
+            </div>
+          </div>
+        </div>
+        <div id="panel-run" style="display:none;padding:12px 0 0">
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+            <div style="flex:1;min-width:320px">
+              <h3 style="font-size:14px;margin:0 0 8px">Run</h3>
+              <p class="runs-ops-hint" style="margin:0 0 12px">
+                Use the latest signal pack you built to proceed to runs. This step keeps system internals hidden; open Debug only if needed.
+              </p>
+              <div class="card" style="padding:12px 14px;margin:0">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:4px">Latest signal pack</div>
+                    <div class="mono" id="run-latest-pack">—</div>
+                  </div>
+                  <a class="btn btn-sm" id="btn-go-runs" href="/admin/runs" title="Go to Runs to start or inspect generation runs.">Go to Runs</a>
+                </div>
+              </div>
+              <details id="run-debug-details" style="margin-top:10px;display:none">
+                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (JSON)</summary>
+                <pre id="run-debug-pre" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:360px;overflow:auto"></pre>
               </details>
             </div>
           </div>
@@ -304,7 +382,7 @@ function platformKindsFromStats(bk){
   return Object.keys(bk||{}).filter(function(k){return (bk[k]||0)>0&&!isSourceEvidenceKind(k);}).sort();
 }
 var prellmTimer=null;
-var currentSeg='evidence';
+var currentStep='select';
 var prellmMinByKind={};
 var profileCache=null; // { profile, criteria }
 // Suggested defaults (mirror server-side defaults in inputs-pre-llm-rank.ts)
@@ -349,36 +427,173 @@ function setImportInUrl(id){
   window.history.replaceState({},'',url.toString());
 }
 
-function showSeg(which){
-  currentSeg=which;
-  document.getElementById('panel-evidence').style.display=which==='evidence'?'block':'none';
-  document.getElementById('panel-broad').style.display=which==='broad'?'block':'none';
-  document.getElementById('panel-top').style.display=which==='top'?'block':'none';
-  document.getElementById('panel-sources').style.display=which==='sources'?'block':'none';
-  document.getElementById('panel-ideas').style.display=which==='ideas'?'block':'none';
-  document.getElementById('panel-pack').style.display=which==='pack'?'block':'none';
-  document.getElementById('panel-profile').style.display=which==='profile'?'block':'none';
-  var ids=[['seg-evidence','evidence'],['seg-broad','broad'],['seg-top','top'],['seg-sources','sources'],['seg-ideas','ideas'],['seg-pack','pack'],['seg-profile','profile']];
-  for(var i=0;i<ids.length;i++){
-    var el=document.getElementById(ids[i][0]);
-    if(!el)continue;
-    el.className='btn btn-sm'+(which===ids[i][1]?'':' btn-ghost');
-  }
-  if(which==='broad')initBroadPanel();
-  if(which==='top'){loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();}
-  if(which==='profile'){loadProfile();loadAudit();}
-  if(which==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();loadIdeaListDropdowns();}
-  if(which==='sources'){initSourcesPanel();}
-  if(which==='ideas'){loadIdeaListTab();}
+function fmtN(n){
+  var x=parseInt(String(n||'0'),10);
+  if(!Number.isFinite(x))x=0;
+  return x.toLocaleString();
 }
 
-document.getElementById('seg-evidence')?.addEventListener('click',function(){showSeg('evidence');});
-document.getElementById('seg-broad')?.addEventListener('click',function(){showSeg('broad');});
-document.getElementById('seg-top')?.addEventListener('click',function(){showSeg('top');});
-document.getElementById('seg-sources')?.addEventListener('click',function(){showSeg('sources');});
-document.getElementById('seg-ideas')?.addEventListener('click',function(){showSeg('ideas');});
-document.getElementById('seg-pack')?.addEventListener('click',function(){showSeg('pack');});
-document.getElementById('seg-profile')?.addEventListener('click',function(){showSeg('profile');});
+function renderFunnel(totals){
+  var root=document.getElementById('evidence-funnel');
+  var hint=document.getElementById('evidence-funnel-hint');
+  if(!root||!hint)return;
+  var t=totals||{};
+  var total=Number(t.rows_in_kind||0);
+  var passing=Number(t.passing_profile_min||0);
+  var after=Number(t.after_user_cutoff||0);
+  var sparseDrop=Number(t.sparse_text_dropped||0);
+  var belowDrop=Number(t.below_profile_min_dropped||0);
+  root.innerHTML=
+    '<span class="badge badge-b">TOTAL '+esc(fmtN(total))+'</span>'+
+    '<span style="color:var(--muted)">→</span>'+
+    '<span class="badge badge-p">PROFILE '+esc(fmtN(passing))+'</span>'+
+    '<span style="color:var(--muted)">→</span>'+
+    '<span class="badge '+(after>0?'badge-g':'badge-y')+'">CUTOFF '+esc(fmtN(after))+'</span>'+
+    '<span style="color:var(--muted)">→</span>'+
+    '<span class="badge '+(after>0?'badge-g':'badge-y')+'">FINAL '+esc(fmtN(after))+'</span>';
+  hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' · Below profile min dropped: '+fmtN(belowDrop);
+}
+
+async function refreshInsightCounts(){
+  try{
+    if(!SLUG||!selectedImportId)return;
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=broad_llm&limit=1&offset=0');
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var c=d.counts||{};
+    var total=(Number(c.broad_llm||0)+Number(c.top_performer_deep||0)+Number(c.top_performer_video||0)+Number(c.top_performer_carousel||0));
+    stepState.insights_present=total>0;
+  }catch(e){
+    // no-op
+  }finally{
+    renderStepper();
+  }
+}
+
+function syncEvidenceHeader(){
+  var el=document.getElementById('evidence-import-label');
+  if(!el)return;
+  if(!selectedImportId){el.textContent='—';return;}
+  var label=(selectedImportLabel||'').trim();
+  el.textContent=label?label:('Import '+selectedImportId.slice(0,8));
+}
+
+var stepState={
+  evidence_valid:false,
+  insights_present:false,
+  ideas_present:false,
+  pack_id:'',
+  pack_created_at:'',
+  last_import_stats:null,
+  last_prellm_preview:null
+};
+
+function setBadge(id,text,kind){
+  var el=document.getElementById(id);
+  if(!el)return;
+  el.textContent=text;
+  el.className='badge '+(kind||'badge-b');
+}
+
+function computeStepStatus(){
+  var hasImport=!!selectedImportId;
+  var evidenceOk=!!stepState.evidence_valid;
+  var insightsOk=!!stepState.insights_present;
+  var ideasOk=!!stepState.ideas_present;
+  var packOk=!!stepState.pack_id;
+  return {hasImport,evidenceOk,insightsOk,ideasOk,packOk};
+}
+
+function renderStepper(){
+  var s=computeStepStatus();
+  setBadge('step-badge-select',s.hasImport?'completed':'in progress',s.hasImport?'badge-g':'badge-y');
+  setBadge('step-badge-evidence',s.evidenceOk?'completed':(s.hasImport?'in progress':'not started'),s.evidenceOk?'badge-g':(s.hasImport?'badge-y':'badge-b'));
+  setBadge('step-badge-insights',s.insightsOk?'completed':(s.evidenceOk?'in progress':'not started'),s.insightsOk?'badge-g':(s.evidenceOk?'badge-y':'badge-b'));
+  setBadge('step-badge-ideas',s.ideasOk?'completed':(s.insightsOk?'in progress':'not started'),s.ideasOk?'badge-g':(s.insightsOk?'badge-y':'badge-b'));
+  setBadge('step-badge-pack',s.packOk?'completed':(s.ideasOk?'in progress':'not started'),s.packOk?'badge-g':(s.ideasOk?'badge-y':'badge-b'));
+  setBadge('step-badge-run',s.packOk?'in progress':'not started',s.packOk?'badge-y':'badge-b');
+
+  var unlock={select:true,evidence:s.hasImport,insights:s.evidenceOk,ideas:s.insightsOk,pack:s.ideasOk,run:s.packOk};
+  var buttons=document.querySelectorAll('.step-btn');
+  buttons.forEach(function(btn){
+    var step=btn.getAttribute('data-step')||'';
+    var ok=!!unlock[step];
+    btn.disabled=!ok && step!=='select';
+    btn.className=(step===currentStep?'btn btn-sm step-btn':'btn-ghost btn-sm step-btn')+(btn.disabled?' disabled':'');
+    if(btn.disabled){
+      btn.title='Complete the previous step first.';
+    }
+  });
+}
+
+function setStep(step){
+  currentStep=step;
+  syncEvidenceHeader();
+  document.getElementById('panel-evidence').style.display=step==='evidence'?'block':'none';
+  var showInsights=step==='insights';
+  document.getElementById('panel-broad').style.display=showInsights?'block':'none';
+  document.getElementById('panel-top').style.display=showInsights?'block':'none';
+  document.getElementById('panel-ideas').style.display=step==='ideas'?'block':'none';
+  document.getElementById('panel-pack').style.display=step==='pack'?'block':'none';
+  document.getElementById('panel-run').style.display=step==='run'?'block':'none';
+  // keep these as auxiliary panels opened via the toolbar button
+  document.getElementById('panel-sources').style.display='none';
+  document.getElementById('panel-profile').style.display='none';
+
+  if(step==='insights'){initBroadPanel();loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();refreshInsightCounts();}
+  if(step==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();loadIdeaListDropdowns();}
+  if(step==='ideas'){loadIdeaListTab();}
+  if(step==='run'){syncRunPanel();}
+  renderStepper();
+}
+
+function syncRunPanel(){
+  var el=document.getElementById('run-latest-pack');
+  if(el){
+    if(stepState.pack_id){
+      el.textContent=stepState.pack_id+(stepState.pack_created_at?(' · '+String(stepState.pack_created_at)):'');
+    }else{
+      el.textContent='—';
+    }
+  }
+  var link=document.getElementById('btn-go-runs');
+  if(link){
+    var href='/admin/runs';
+    if(SLUG)href+='?project='+encodeURIComponent(SLUG);
+    link.setAttribute('href',href);
+  }
+  var dbgDetails=document.getElementById('run-debug-details');
+  var dbgPre=document.getElementById('run-debug-pre');
+  if(dbgDetails&&dbgPre){
+    if(stepState.pack_id){
+      dbgDetails.style.display='block';
+      dbgPre.textContent=JSON.stringify({signal_pack_id:stepState.pack_id,created_at:stepState.pack_created_at||null},null,2);
+    }else{
+      dbgDetails.style.display='none';
+      dbgPre.textContent='';
+    }
+  }
+}
+
+document.querySelectorAll('.step-btn').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var step=btn.getAttribute('data-step')||'select';
+    setStep(step);
+  });
+});
+
+document.getElementById('btn-open-profile')?.addEventListener('click',function(){
+  var p=document.getElementById('panel-profile');
+  if(!p)return;
+  var isOpen=p.style.display==='block';
+  p.style.display=isOpen?'none':'block';
+  if(!isOpen){loadProfile();loadAudit();}
+});
+
+document.getElementById('btn-refresh-evidence')?.addEventListener('click',function(){
+  loadImportStats();
+  loadPrellmKindsAndPreview();
+});
 
 async function loadImports(){
   var root=document.getElementById('imports-root');
@@ -416,6 +631,11 @@ async function loadImports(){
       btn.addEventListener('click',function(){
         selectedImportId=btn.getAttribute('data-id')||'';
         selectedIdeaListId='';
+        stepState.evidence_valid=false;
+        stepState.insights_present=false;
+        stepState.ideas_present=false;
+        stepState.pack_id='';
+        stepState.pack_created_at='';
         try{
           var tr=btn.closest('tr');
           var tds=tr?tr.querySelectorAll('td'):null;
@@ -425,7 +645,7 @@ async function loadImports(){
         wb.style.display='block';
         loadImportStats();
         loadPrellmKindsAndPreview();
-        showSeg(currentSeg);
+        setStep('evidence');
         loadImports();
         loadIdeaListDropdowns();
       });
@@ -434,7 +654,7 @@ async function loadImports(){
       wb.style.display='block';
       loadImportStats();
       loadPrellmKindsAndPreview();
-      showSeg(currentSeg);
+      setStep(currentStep||'evidence');
       loadIdeaListDropdowns();
     }
   }catch(e){root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||e)+'</div>';}
@@ -449,6 +669,9 @@ async function loadImportStats(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     pre.textContent=JSON.stringify(d,null,2);
+    stepState.last_import_stats=d;
+    syncEvidenceHeader();
+    renderStepper();
   }catch(e){pre.textContent=String(e);}
 }
 
@@ -610,7 +833,11 @@ async function loadPrellmPreview(){
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/pre-llm-evidence?'+q);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    stepState.last_prellm_preview=d;
     var t=d.totals||{};
+    stepState.evidence_valid=!!t.after_user_cutoff && Number(t.after_user_cutoff)>0;
+    renderFunnel(t);
+    renderStepper();
     counts.textContent=JSON.stringify({
       evidence_kind:d.evidence_kind,
       min_score_cutoff:d.min_score_cutoff,
@@ -1002,6 +1229,10 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
     var rescan=!!document.getElementById('broad-rescan')?.checked;
     var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    if(rescan){
+      var ok=confirm('Rescan is enabled. This will overwrite existing broad insights rows for this platform tab. Continue?');
+      if(!ok)return;
+    }
     var kind=broadKind||prellmKind||null;
     if(kind&&isSourceEvidenceKind(kind))throw new Error('Broad insights apply to social platforms only. Use the Sources tab for '+kind+'.');
     var cutoff=(kind&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
@@ -1041,6 +1272,7 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
       response:d
     });
     scheduleBroadEligibilityEstimate();
+    refreshInsightCounts();
   }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
 });
 
@@ -1057,6 +1289,10 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     var rescan=!!document.getElementById('broad-rescan')?.checked;
     var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
     var o=readBroadOverrides();
+    if(rescan){
+      var ok=confirm('Rescan is enabled. This will overwrite existing broad insights rows across ALL platform tabs. Continue?');
+      if(!ok){broadAllRunning=false;return;}
+    }
 
     if(msg){msg.textContent='Checking eligible evidence rows (all platforms)…';msg.style.color='';}
     var totalElig=0;
@@ -1125,6 +1361,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }finally{
     broadAllRunning=false;
+    refreshInsightCounts();
   }
 });
 
@@ -1216,9 +1453,11 @@ async function initBroadPanel(){
 
 async function loadBroadTable(){
   var meta=document.getElementById('broad-meta');
+  var state=document.getElementById('broad-state');
   var wrap=document.getElementById('broad-table-wrap');
   if(!SLUG||!selectedImportId||!broadKind||!meta||!wrap)return;
   meta.textContent='Loading…';
+  if(state)state.textContent='Loading…';
   wrap.innerHTML='';
   try{
     var sortSel=document.getElementById('broad-insight-sort');
@@ -1230,15 +1469,25 @@ async function loadBroadTable(){
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?'+q);
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var countsTab=d.counts||{};
+    var countsImp=d.counts_import||d.counts||{};
+    var rows=d.insights||[];
+    var lastAt=rows.length?String(rows[0].updated_at||rows[0].created_at||''):'';
+    if(state){
+      state.textContent=
+        'Rows in DB (this tab): '+String(countsTab.broad_llm||0)+
+        ' · Import total broad: '+String(countsImp.broad_llm||0)+
+        (lastAt?(' · Last updated: '+lastAt):'');
+    }
     meta.textContent=JSON.stringify({
       project_slug:SLUG,
       inputs_import_id:selectedImportId,
       upload_filename:selectedImportLabel||null,
       evidence_kind:broadKind,
-      counts_this_tab:d.counts,
-      counts_whole_import:d.counts_import||d.counts
+      counts_this_tab:countsTab,
+      counts_whole_import:countsImp,
+      last_updated_at:lastAt||null
     },null,2);
-    var rows=d.insights||[];
     var nTab=(d.counts&&typeof d.counts.broad_llm==='number')?d.counts.broad_llm:0;
     if(rows.length===0){
       wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
@@ -1277,6 +1526,7 @@ async function loadBroadTable(){
         }
       });
     });
+    refreshInsightCounts();
   }catch(e){meta.textContent=String(e);}
 }
 document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadTable);
@@ -1287,6 +1537,12 @@ document.getElementById('broad-rescan')?.addEventListener('change',scheduleBroad
 document.getElementById('broad-use-cutoff')?.addEventListener('change',scheduleBroadEligibilityEstimate);
 document.getElementById('btn-pack-inspect-reload')?.addEventListener('click',loadSignalPacksForInspector);
 document.getElementById('pack-inspect-select')?.addEventListener('change',loadSelectedSignalPack);
+document.getElementById('pack-idea-list-select')?.addEventListener('change',function(){
+  var id=(this.value||'').trim();
+  if(id)selectedIdeaListId=id;
+  loadIdeaListIdeasTable();
+  updatePackSummary();
+});
 
 function renderInsightTable(rows,cols){
   if(!rows.length)return '<div class="empty" style="padding:12px">No rows.</div>';
@@ -1310,6 +1566,54 @@ function renderInsightTable(rows,cols){
   return tb;
 }
 
+function ideaSelKey(){
+  return 'caf.inputs_processing.idea_selection.'+String(SLUG||'')+'.'+String(selectedImportId||'')+'.'+String(selectedIdeaListId||'');
+}
+
+function loadIdeaSelection(){
+  try{
+    var raw=localStorage.getItem(ideaSelKey());
+    if(!raw)return {};
+    var obj=JSON.parse(raw);
+    return (obj&&typeof obj==='object')?obj:{};
+  }catch(e){return {};}
+}
+
+function saveIdeaSelection(sel){
+  try{
+    localStorage.setItem(ideaSelKey(),JSON.stringify(sel||{}));
+  }catch(e){}
+}
+
+function renderIdeasTable(rows){
+  if(!rows.length)return '<div class="empty" style="padding:12px">No rows in this list.</div>';
+  var sel=loadIdeaSelection();
+  var checkedAll=true;
+  for(var i=0;i<rows.length;i++){
+    var id=String(rows[i].id||'');
+    if(!id)continue;
+    if(!sel[id]){checkedAll=false;break;}
+  }
+  var tb='<table class="sp-modal-table" style="width:100%;min-width:1100px;table-layout:auto"><thead><tr>'+
+    '<th style="width:44px"><input type="checkbox" id="ideas-check-all" '+(checkedAll?'checked':'')+' title="Select/deselect all ideas in this list"/></th>'+
+    '<th>Idea</th><th>Format</th><th>Platform</th><th>3-liner</th><th>Conf.</th></tr></thead><tbody>';
+  for(var j=0;j<rows.length;j++){
+    var x=rows[j];
+    var id2=String(x.id||'');
+    var on=!!sel[id2];
+    tb+='<tr style="'+(on?'':'opacity:0.65')+'">'+
+      '<td><input class="idea-check" type="checkbox" data-id="'+esc(id2)+'" '+(on?'checked':'')+' /></td>'+
+      '<td style="max-width:320px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
+      '<td class="mono">'+esc(x.format||'')+'</td>'+
+      '<td class="mono">'+esc(x.platform||'')+'</td>'+
+      '<td style="max-width:520px;white-space:pre-wrap;word-break:break-word">'+esc(x.three_liner||'')+'</td>'+
+      '<td class="mono">'+fmtInsightScore(x.confidence_score)+'</td>'+
+    '</tr>';
+  }
+  tb+='</tbody></table>';
+  return tb;
+}
+
 function readFormatLimitsPayload(){
   var map=[['fl-carousel','carousel'],['fl-video','video'],['fl-post','post'],['fl-thread','thread'],['fl-other','other']];
   var o={};
@@ -1324,6 +1628,12 @@ function readFormatLimitsPayload(){
   }
   return Object.keys(o).length?o:null;
 }
+
+document.getElementById('fl-carousel')?.addEventListener('input',updatePackSummary);
+document.getElementById('fl-video')?.addEventListener('input',updatePackSummary);
+document.getElementById('fl-post')?.addEventListener('input',updatePackSummary);
+document.getElementById('fl-thread')?.addEventListener('input',updatePackSummary);
+document.getElementById('fl-other')?.addEventListener('input',updatePackSummary);
 async function loadIdeaListDropdowns(){
   var s1=document.getElementById('idea-list-select');
   var s2=document.getElementById('pack-idea-list-select');
@@ -1368,20 +1678,26 @@ async function loadIdeaListDropdowns(){
 function loadIdeaListTab(){
   loadIdeaListDropdowns().then(function(){
     loadIdeaListIdeasTable();
+    updatePackSummary();
   });
 }
 async function loadIdeaListIdeasTable(){
   var wrap=document.getElementById('idea-list-table-wrap');
   var meta=document.getElementById('idea-list-list-meta');
+  var state=document.getElementById('ideas-state');
   if(!SLUG||!selectedImportId||!wrap)return;
   var listId=selectedIdeaListId;
   if(!listId){
     wrap.innerHTML='';
     if(meta)meta.textContent='';
+    if(state)state.textContent='';
+    stepState.ideas_present=false;
+    renderStepper();
     return;
   }
   wrap.innerHTML='Loading…';
   if(meta)meta.textContent='';
+  if(state)state.textContent='Loading…';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/idea-lists/'+encodeURIComponent(listId)+'/ideas?limit=200&offset=0');
     var d=await r.json();
@@ -1399,16 +1715,41 @@ async function loadIdeaListIdeasTable(){
       };
     });
     if(meta)meta.textContent=JSON.stringify({list_id:list.id,title:list.title,created_at:list.created_at,params_json:list.params_json,derived_globals_json:list.derived_globals_json},null,2);
-    wrap.innerHTML=ideas.length?renderInsightTable(ideas,[
-      {key:'id',label:'Idea id'},
-      {key:'format',label:'Format'},
-      {key:'platform',label:'Platform'},
-      {key:'title',label:'Title'},
-      {key:'three_liner',label:'3-liner (preview)'},
-      {key:'confidence_score',label:'Conf.'}
-    ]):'<div class="empty" style="padding:12px">No rows in this list.</div>';
+    stepState.ideas_present=ideas.length>0;
+    renderStepper();
+    var sel=loadIdeaSelection();
+    var selectedN=0;
+    for(var i=0;i<ideas.length;i++){
+      var id=String(ideas[i].id||'');
+      if(id && sel[id])selectedN++;
+    }
+    if(state){
+      state.textContent='Ideas: '+String(ideas.length)+' · Selected: '+String(selectedN);
+    }
+    wrap.innerHTML=renderIdeasTable(ideas);
+    wrap.querySelectorAll('.idea-check').forEach(function(cb){
+      cb.addEventListener('change',function(){
+        var id=this.getAttribute('data-id')||'';
+        var cur=loadIdeaSelection();
+        if(this.checked)cur[id]=true;else delete cur[id];
+        saveIdeaSelection(cur);
+        loadIdeaListIdeasTable();
+      });
+    });
+    wrap.querySelector('#ideas-check-all')?.addEventListener('change',function(){
+      var cur={};
+      if(this.checked){
+        for(var k=0;k<ideas.length;k++){
+          var id=String(ideas[k].id||'');
+          if(id)cur[id]=true;
+        }
+      }
+      saveIdeaSelection(cur);
+      loadIdeaListIdeasTable();
+    });
   }catch(e){
     wrap.textContent=String(e.message||e);
+    if(state)state.textContent='';
   }
 }
 async function loadSignalPacksForInspector(){
@@ -1666,6 +2007,7 @@ document.getElementById('btn-generate-idea-list')?.addEventListener('click',asyn
     if(msg)msg.textContent='Done. '+d.ideas_count+' ideas stored.';
     if(d.idea_list_id)selectedIdeaListId=d.idea_list_id;
     loadIdeaListTab();
+    refreshInsightCounts();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }
@@ -1685,6 +2027,12 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
   }
   if(msg){msg.textContent='Building pack…';msg.style.color='';}
   try{
+    var sel=loadIdeaSelection();
+    var selectedN=Object.keys(sel||{}).length;
+    if(selectedN>0){
+      var ok=confirm('You have '+String(selectedN)+' ideas selected in the Ideas step. Build signal pack uses the full idea list in the backend (selection is UI-only). Continue?');
+      if(!ok){if(msg)msg.textContent='Cancelled.';return;}
+    }
     var fl=readFormatLimitsPayload();
     var body={idea_list_id:lid};
     if(fl)body.format_limits=fl;
@@ -1693,6 +2041,10 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     if(msg)msg.innerHTML='Done. <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open pack</a> · ideas in pack: '+esc(String(d.ideas_count||0))+'.';
+    stepState.pack_id=String(d.signal_pack_id||'');
+    stepState.pack_created_at=String(d.created_at||'');
+    renderStepper();
+    syncRunPanel();
     loadSignalPacksForInspector();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
@@ -1702,6 +2054,8 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
 document.getElementById('btn-build-pack')?.addEventListener('click',async function(){
   var msg=document.getElementById('build-msg');
   if(!SLUG||!selectedImportId){msg.textContent='Select an import first.';return;}
+  var ok=confirm('This runs the full pipeline (rating + synthesis + ideas LLM) and writes a new signal pack. Continue?');
+  if(!ok){msg.textContent='Cancelled.';return;}
   msg.textContent='Working (OpenAI)…';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/build-signal-pack',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
@@ -1709,6 +2063,10 @@ document.getElementById('btn-build-pack')?.addEventListener('click',async functi
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) · overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
+    stepState.pack_id=String(d.signal_pack_id||'');
+    stepState.pack_created_at=String(d.created_at||'');
+    renderStepper();
+    syncRunPanel();
     loadSignalPacksForInspector();
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
@@ -1727,6 +2085,20 @@ function renderPackSettings(){
     max_insights_for_ideas_llm:c.max_insights_for_ideas_llm,
     min_top_performer_insights_for_ideas_llm:c.min_top_performer_insights_for_ideas_llm
   },null,2);
+}
+
+function updatePackSummary(){
+  var el=document.getElementById('pack-summary');
+  if(!el)return;
+  if(!selectedIdeaListId){
+    el.textContent='Pick an idea list to build from.';
+    return;
+  }
+  var sel=loadIdeaSelection();
+  var selectedN=Object.keys(sel||{}).length;
+  var fl=readFormatLimitsPayload();
+  var caps=fl?JSON.stringify(fl):'none';
+  el.textContent='Selected ideas (UI): '+String(selectedN||0)+' · Per-format caps: '+caps;
 }
 
 async function initSourcesPanel(){
@@ -1795,7 +2167,7 @@ async function loadSourcesEvidence(kind){
 }
 
 readImportFromUrl();
-showSeg('evidence');
+setStep(selectedImportId?'evidence':'select');
 if(SLUG)loadImports();
 </script>`;
 }
