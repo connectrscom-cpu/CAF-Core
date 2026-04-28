@@ -1609,7 +1609,7 @@ function pickIdeaText(j){
   if(j.content_idea)lines.push(String(j.content_idea));
   if(j.angle)lines.push('Angle: '+String(j.angle));
   if(j.script_outline)lines.push('Outline: '+String(j.script_outline));
-  return lines.filter(Boolean).join('\n');
+  return lines.filter(Boolean).join('\\n');
 }
 
 function openIdeaPreview(id){
