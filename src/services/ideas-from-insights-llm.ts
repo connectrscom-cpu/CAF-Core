@@ -97,6 +97,12 @@ function meetsQuota(ideas: Array<{ format: unknown }>, q: { carousel: number; vi
   return c.carousel >= q.carousel && c.video >= q.video && c.post >= q.post && c.thread >= q.thread;
 }
 
+function quotaCounts(ideas: Array<{ format: unknown }>): { carousel: number; video: number; post: number; thread: number; other: number } {
+  const c = { carousel: 0, video: 0, post: 0, thread: 0, other: 0 };
+  for (const i of ideas) c[normFormat(i.format)]++;
+  return c;
+}
+
 function pickWithQuota<T extends { format: unknown; confidence_score?: number }>(
   ideas: T[],
   q: { carousel: number; video: number; post: number; thread: number }
@@ -423,28 +429,35 @@ ${JSON.stringify(context, null, 0)}`;
     if (n === 0) return [] as z.infer<typeof llmIdeaSchema>[];
     const fmtSystem = `You are generating IDEAS for a content pipeline.\n\nReturn ONLY valid JSON: {"ideas":[...]} — no markdown.\n\nGenerate EXACTLY ${n} ideas.\n\nEvery idea MUST follow the canonical idea contract (all fields required unless noted):\n- title (<=200)\n- three_liner (<=1200)\n- thesis (<=800)\n- who_for (<=200)\n- format MUST be exactly \"${format}\" (no other values)\n- platform (Instagram|TikTok|Reddit|Facebook|Multi)\n- why_now (<=800)\n- key_points (3-10)\n- novelty_angle (<=800)\n- cta (<=200)\n- grounding_insight_ids (min 1; choose ONLY from the provided context grounding_insight_ids)\n- expected_outcome (<=400)\n- risk_flags (optional; default [])\n- status: \"proposed\" (always)\n- confidence_score 0-1 (optional)\n\nCRITICAL: output ${n} ideas with format=\"${format}\".\n`;
     const fmtUser = `Project notes: ${opts.extraInstructions || "(none)"}\n\nInsight context (${context.length} rows; ${topInCtx} include top-performer enrichment):\n${JSON.stringify(context, null, 0)}\n`;
-    const out = await openaiChat(
-      apiKey ?? "",
-      {
-        model: opts.model,
-        system_prompt: fmtSystem,
-        user_prompt: fmtUser,
-        max_tokens: 8192,
-        response_format: "json_object",
-      },
-      {
-        db,
-        projectId,
-        runId: null,
-        taskId: null,
-        signalPackId: null,
-        step: STEP_IDEAS_FROM_INSIGHTS,
-      }
-    );
-    const p = parseJsonObjectFromLlmText(out.content);
-    const ri = p && typeof p === "object" && !Array.isArray(p) ? (p as { ideas?: unknown }).ideas : [];
-    const arr = z.array(llmIdeaSchema).safeParse(Array.isArray(ri) ? ri : []);
-    if (!arr.success || arr.data.length === 0) {
+    let arr: z.SafeParseReturnType<unknown, z.infer<typeof llmIdeaSchema>[]> | null = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const out = await openaiChat(
+        apiKey ?? "",
+        {
+          model: opts.model,
+          system_prompt:
+            attempt === 1
+              ? fmtSystem
+              : `${fmtSystem}\nYou must return EXACTLY ${n} objects. No commentary. No missing fields.`,
+          user_prompt: fmtUser,
+          max_tokens: 8192,
+          response_format: "json_object",
+        },
+        {
+          db,
+          projectId,
+          runId: null,
+          taskId: null,
+          signalPackId: null,
+          step: STEP_IDEAS_FROM_INSIGHTS,
+        }
+      );
+      const p = parseJsonObjectFromLlmText(out.content);
+      const ri = p && typeof p === "object" && !Array.isArray(p) ? (p as { ideas?: unknown }).ideas : [];
+      arr = z.array(llmIdeaSchema).safeParse(Array.isArray(ri) ? ri : []);
+      if (arr.success && arr.data.length >= Math.min(n, 1)) break;
+    }
+    if (!arr || !arr.success || arr.data.length === 0) {
       throw new Error(`Ideas-from-insights: failed generating ${format} batch (invalid JSON contract)`);
     }
     // force format (belt + suspenders)
@@ -453,32 +466,48 @@ ${JSON.stringify(context, null, 0)}`;
 
   // If the single-call model misses quota, fall back to per-format batches to guarantee the split.
   if (baseIdeas.length === 0 || !meetsQuota(baseIdeas, quotas)) {
-    const picked = pickWithQuota(baseIdeas, quotas);
-    const have = { carousel: 0, video: 0, post: 0, thread: 0 };
-    for (const it of picked) {
-      const k = normFormat(it.format);
-      if (k === "carousel" || k === "video" || k === "post" || k === "thread") have[k]++;
-    }
-    const need = {
-      carousel: Math.max(0, quotas.carousel - have.carousel),
-      video: Math.max(0, quotas.video - have.video),
-      post: Math.max(0, quotas.post - have.post),
-      thread: Math.max(0, quotas.thread - have.thread),
+    const seedPicked = pickWithQuota(baseIdeas, quotas);
+    const buckets: Record<"carousel" | "video" | "post" | "thread", z.infer<typeof llmIdeaSchema>[]> = {
+      carousel: [],
+      video: [],
+      post: [],
+      thread: [],
     };
-    const extra: z.infer<typeof llmIdeaSchema>[] = [];
-    extra.push(...(await generateFormatBatch("carousel", need.carousel)));
-    extra.push(...(await generateFormatBatch("video", need.video)));
-    extra.push(...(await generateFormatBatch("post", need.post)));
-    extra.push(...(await generateFormatBatch("thread", need.thread)));
-    baseIdeas = dedupeIdeas([...picked, ...extra]) as unknown as z.infer<typeof llmIdeaSchema>[];
+    for (const it of seedPicked) {
+      const k = normFormat(it.format);
+      if (k === "carousel" || k === "video" || k === "post" || k === "thread") buckets[k].push(it);
+    }
+
+    // Self-heal each bucket until we have enough rows, allowing minor dedupe shrink.
+    const maxRounds = 3;
+    for (const k of ["carousel", "video", "post", "thread"] as const) {
+      for (let round = 1; round <= maxRounds; round++) {
+        const want = quotas[k];
+        buckets[k] = dedupeIdeas(buckets[k]);
+        const have = buckets[k].length;
+        if (have >= want) break;
+        const missing = want - have;
+        // Over-generate slightly to absorb dedupe collisions.
+        const batch = await generateFormatBatch(k, missing + 2);
+        buckets[k] = dedupeIdeas([...buckets[k], ...batch]);
+      }
+    }
+
+    baseIdeas = ([] as z.infer<typeof llmIdeaSchema>[]).concat(
+      buckets.carousel,
+      buckets.video,
+      buckets.post,
+      buckets.thread
+    );
   }
 
   if (baseIdeas.length === 0) {
     throw new Error("Ideas-from-insights LLM returned invalid ideas contract (expected canonical signal pack idea schema)");
   }
   if (!meetsQuota(baseIdeas, quotas)) {
+    const c = quotaCounts(baseIdeas);
     throw new Error(
-      `Ideas-from-insights did not meet required format split (carousel=${quotas.carousel}, video=${quotas.video}, post=${quotas.post}, thread=${quotas.thread}).`
+      `Ideas-from-insights did not meet required format split (required carousel=${quotas.carousel}, video=${quotas.video}, post=${quotas.post}, thread=${quotas.thread}; got carousel=${c.carousel}, video=${c.video}, post=${c.post}, thread=${c.thread}, other=${c.other}).`
     );
   }
   const slug = opts.packRunId.replace(/[^a-zA-Z0-9_]/g, "").slice(-12) || "pack";
