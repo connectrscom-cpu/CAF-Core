@@ -82,14 +82,17 @@ export async function bulkInsertInputsIdeas(
   }
   const row = await qOne<{ n: string }>(
     db,
-    `INSERT INTO caf_core.inputs_ideas (
-       project_id, idea_list_id, idea_id, platform, confidence_score, idea_json
-     ) VALUES ${chunks.join(",")}
-     ON CONFLICT (idea_list_id, idea_id) DO UPDATE SET
-       platform = EXCLUDED.platform,
-       confidence_score = EXCLUDED.confidence_score,
-       idea_json = EXCLUDED.idea_json
-     RETURNING COUNT(*)::text AS n`,
+    `WITH ins AS (
+       INSERT INTO caf_core.inputs_ideas (
+         project_id, idea_list_id, idea_id, platform, confidence_score, idea_json
+       ) VALUES ${chunks.join(",")}
+       ON CONFLICT (idea_list_id, idea_id) DO UPDATE SET
+         platform = EXCLUDED.platform,
+         confidence_score = EXCLUDED.confidence_score,
+         idea_json = EXCLUDED.idea_json
+       RETURNING 1
+     )
+     SELECT COUNT(*)::text AS n FROM ins`,
     values
   );
   return parseInt(row?.n ?? "0", 10) || 0;
