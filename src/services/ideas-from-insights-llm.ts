@@ -129,6 +129,20 @@ function pickWithQuota<T extends { format: unknown; confidence_score?: number }>
   return out;
 }
 
+function dedupeIdeas<T extends { title: string; thesis: string; key_points: string[] }>(ideas: T[]): T[] {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (const it of ideas) {
+    const key = `${String(it.title ?? "").trim().toLowerCase()}::${String(it.thesis ?? "")
+      .trim()
+      .toLowerCase()}::${(Array.isArray(it.key_points) ? it.key_points : []).join("|").toLowerCase()}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(it);
+  }
+  return out;
+}
+
 function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, unknown> | null {
   if (!tops.length) return null;
   let best = tops[0];
@@ -402,18 +416,74 @@ ${JSON.stringify(context, null, 0)}`;
       confidence_score: z.number().min(0).max(1).optional(),
     });
   const ideasArr = z.array(llmIdeaSchema).safeParse(Array.isArray(rawIdeas) ? rawIdeas : []);
-  if (!ideasArr.success || ideasArr.data.length === 0) {
+  let baseIdeas = ideasArr.success ? ideasArr.data : [];
+
+  async function generateFormatBatch(format: "carousel" | "video" | "post" | "thread", count: number) {
+    const n = Math.max(0, Math.min(200, count));
+    if (n === 0) return [] as z.infer<typeof llmIdeaSchema>[];
+    const fmtSystem = `You are generating IDEAS for a content pipeline.\n\nReturn ONLY valid JSON: {"ideas":[...]} — no markdown.\n\nGenerate EXACTLY ${n} ideas.\n\nEvery idea MUST follow the canonical idea contract (all fields required unless noted):\n- title (<=200)\n- three_liner (<=1200)\n- thesis (<=800)\n- who_for (<=200)\n- format MUST be exactly \"${format}\" (no other values)\n- platform (Instagram|TikTok|Reddit|Facebook|Multi)\n- why_now (<=800)\n- key_points (3-10)\n- novelty_angle (<=800)\n- cta (<=200)\n- grounding_insight_ids (min 1; choose ONLY from the provided context grounding_insight_ids)\n- expected_outcome (<=400)\n- risk_flags (optional; default [])\n- status: \"proposed\" (always)\n- confidence_score 0-1 (optional)\n\nCRITICAL: output ${n} ideas with format=\"${format}\".\n`;
+    const fmtUser = `Project notes: ${opts.extraInstructions || "(none)"}\n\nInsight context (${context.length} rows; ${topInCtx} include top-performer enrichment):\n${JSON.stringify(context, null, 0)}\n`;
+    const out = await openaiChat(
+      apiKey ?? "",
+      {
+        model: opts.model,
+        system_prompt: fmtSystem,
+        user_prompt: fmtUser,
+        max_tokens: 8192,
+        response_format: "json_object",
+      },
+      {
+        db,
+        projectId,
+        runId: null,
+        taskId: null,
+        signalPackId: null,
+        step: STEP_IDEAS_FROM_INSIGHTS,
+      }
+    );
+    const p = parseJsonObjectFromLlmText(out.content);
+    const ri = p && typeof p === "object" && !Array.isArray(p) ? (p as { ideas?: unknown }).ideas : [];
+    const arr = z.array(llmIdeaSchema).safeParse(Array.isArray(ri) ? ri : []);
+    if (!arr.success || arr.data.length === 0) {
+      throw new Error(`Ideas-from-insights: failed generating ${format} batch (invalid JSON contract)`);
+    }
+    // force format (belt + suspenders)
+    return arr.data.map((x) => ({ ...x, format })) as z.infer<typeof llmIdeaSchema>[];
+  }
+
+  // If the single-call model misses quota, fall back to per-format batches to guarantee the split.
+  if (baseIdeas.length === 0 || !meetsQuota(baseIdeas, quotas)) {
+    const picked = pickWithQuota(baseIdeas, quotas);
+    const have = { carousel: 0, video: 0, post: 0, thread: 0 };
+    for (const it of picked) {
+      const k = normFormat(it.format);
+      if (k === "carousel" || k === "video" || k === "post" || k === "thread") have[k]++;
+    }
+    const need = {
+      carousel: Math.max(0, quotas.carousel - have.carousel),
+      video: Math.max(0, quotas.video - have.video),
+      post: Math.max(0, quotas.post - have.post),
+      thread: Math.max(0, quotas.thread - have.thread),
+    };
+    const extra: z.infer<typeof llmIdeaSchema>[] = [];
+    extra.push(...(await generateFormatBatch("carousel", need.carousel)));
+    extra.push(...(await generateFormatBatch("video", need.video)));
+    extra.push(...(await generateFormatBatch("post", need.post)));
+    extra.push(...(await generateFormatBatch("thread", need.thread)));
+    baseIdeas = dedupeIdeas([...picked, ...extra]) as unknown as z.infer<typeof llmIdeaSchema>[];
+  }
+
+  if (baseIdeas.length === 0) {
     throw new Error("Ideas-from-insights LLM returned invalid ideas contract (expected canonical signal pack idea schema)");
   }
-  if (!meetsQuota(ideasArr.data, quotas)) {
-    // Hard enforce: if we can't satisfy the split, fail loudly so the operator can adjust prompts/data.
+  if (!meetsQuota(baseIdeas, quotas)) {
     throw new Error(
       `Ideas-from-insights did not meet required format split (carousel=${quotas.carousel}, video=${quotas.video}, post=${quotas.post}, thread=${quotas.thread}).`
     );
   }
   const slug = opts.packRunId.replace(/[^a-zA-Z0-9_]/g, "").slice(-12) || "pack";
 
-  const quotaPicked = pickWithQuota(ideasArr.data, quotas).slice(0, target);
+  const quotaPicked = pickWithQuota(baseIdeas, quotas).slice(0, target);
   const ideas: SignalPackIdeaV2[] = quotaPicked.map((r, i) => {
     // Enforce deterministic IDs and minimal metadata while keeping the canonical contract.
     const ideaId = `idea_${slug}_${i + 1}`;
