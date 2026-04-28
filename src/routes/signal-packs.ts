@@ -17,6 +17,9 @@ import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 import { parseIdeasV2, parseSelectedIdeaIds } from "../domain/signal-pack-ideas-v2.js";
+import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
+import { replaceSignalPackIdeas, replaceSignalPackSelectedIdeas } from "../repositories/signal-pack-ideas.js";
+import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
 
 export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -319,6 +322,59 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
 
     const ideas = parseIdeasV2(body.data.ideas);
     const n = await updateSignalPackIdeasJson(db, pack.id, ideas);
+
+    // Dual-write: upsert idea rows + pack links (best-effort, non-blocking).
+    try {
+      const insightIds = [
+        ...new Set(
+          ideas
+            .flatMap((i) => (Array.isArray(i.grounding_insight_ids) ? i.grounding_insight_ids : []))
+            .map((x) => String(x).trim())
+            .filter(Boolean)
+        ),
+      ];
+      const insightUuidById = await getInsightRowUuidsByInsightsIds(db, project.id, insightIds);
+      const ideaRowIdsOrdered: string[] = [];
+      for (const idea of ideas) {
+        const row = await upsertIdea(db, {
+          project_id: project.id,
+          idea_id: idea.id,
+          inputs_import_id: pack.source_inputs_import_id ?? null,
+          run_id: pack.run_id,
+          title: idea.title,
+          three_liner: idea.three_liner,
+          thesis: idea.thesis,
+          who_for: idea.who_for,
+          format: String(idea.format ?? "post"),
+          platform: String(idea.platform ?? "Multi"),
+          why_now: idea.why_now,
+          key_points: Array.isArray(idea.key_points) ? idea.key_points : [],
+          novelty_angle: idea.novelty_angle,
+          cta: idea.cta,
+          expected_outcome: idea.expected_outcome,
+          risk_flags: Array.isArray(idea.risk_flags) ? idea.risk_flags : [],
+          status: idea.status,
+          idea_json: idea as unknown as Record<string, unknown>,
+        });
+        ideaRowIdsOrdered.push(row.id);
+        const grounding = Array.isArray(idea.grounding_insight_ids) ? idea.grounding_insight_ids : [];
+        const resolved = grounding
+          .map((gid) => insightUuidById.get(String(gid).trim()) ?? "")
+          .filter(Boolean);
+        await replaceIdeaGroundingInsights(db, {
+          project_id: project.id,
+          idea_row_id: row.id,
+          insight_row_ids: resolved,
+        });
+      }
+      await replaceSignalPackIdeas(db, {
+        project_id: project.id,
+        signal_pack_id: pack.id,
+        idea_row_ids_ordered: ideaRowIdsOrdered,
+      });
+    } catch {
+      /* ignore */
+    }
     return { ok: true, updated: n, ideas_count: ideas.length };
   });
 
@@ -363,6 +419,27 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
 
     const selected = parseSelectedIdeaIds(body.data.idea_ids);
     const n = await updateSignalPackSelectedIdeaIds(db, pack.id, selected);
+
+    // Dual-write selection order as join rows (best-effort).
+    try {
+      // Resolve to idea row UUIDs by looking up on caf_core.ideas by stable idea_id.
+      const rows = await db.query(
+        `SELECT id::text, idea_id FROM caf_core.ideas WHERE project_id = $1 AND idea_id = ANY($2::text[])`,
+        [project.id, selected]
+      );
+      const byIdeaId = new Map<string, string>();
+      for (const r of rows.rows as Array<{ id: string; idea_id: string }>) {
+        if (r.idea_id && r.id) byIdeaId.set(r.idea_id, r.id);
+      }
+      const selectedRowIds = selected.map((id) => byIdeaId.get(id) ?? "").filter(Boolean);
+      await replaceSignalPackSelectedIdeas(db, {
+        project_id: project.id,
+        signal_pack_id: pack.id,
+        selected_idea_row_ids_ordered: selectedRowIds,
+      });
+    } catch {
+      /* ignore */
+    }
     return { ok: true, updated: n, selected_count: selected.length, selected_idea_ids: selected };
   });
 }

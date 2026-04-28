@@ -24,6 +24,10 @@ import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { synthesizeIdeasJsonFromInsightsLlm } from "./ideas-from-insights-llm.js";
+import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
+import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
+import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
+import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
 
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
@@ -311,7 +315,12 @@ ${JSON.stringify(synthInput, null, 0)}`;
     model: synthModel,
     extraInstructions: extra,
   });
-  const ideasJson = ideasLlm.ideas;
+  /**
+   * `ideas-from-insights-llm` returns a lightweight idea shape used historically for `signal_packs.ideas_json`.
+   * We now normalize into the canonical rich idea contract (same as UI POST /signal-packs/:id/ideas),
+   * but we keep writing `ideas_json` for downstream compatibility.
+   */
+  const ideasJson = parseIdeasV2(ideasLlm.ideas);
 
   const stats = await getImportEvidenceStats(db, project.id, importId);
   const derived_globals_json: Record<string, unknown> = {
@@ -348,6 +357,63 @@ ${JSON.stringify(synthInput, null, 0)}`;
     notes: `Synthesized from inputs evidence import ${importId} (${rated} rows rated).`,
     source_inputs_import_id: importId,
   });
+
+  // Dual-write: persist canonical Ideas + ordered pack links as tables (best-effort; never break pack creation).
+  try {
+    const insightIds = [
+      ...new Set(
+        ideasJson
+          .flatMap((i) => (Array.isArray(i.grounding_insight_ids) ? i.grounding_insight_ids : []))
+          .map((x) => String(x).trim())
+          .filter(Boolean)
+      ),
+    ];
+    const insightUuidById = await getInsightRowUuidsByInsightsIds(db, project.id, insightIds);
+
+    const ideaRowIdsOrdered: string[] = [];
+    for (let pos = 0; pos < ideasJson.length; pos++) {
+      const idea = ideasJson[pos]!;
+      const row = await upsertIdea(db, {
+        project_id: project.id,
+        idea_id: idea.id,
+        inputs_import_id: importId,
+        run_id: packRunId,
+        title: idea.title,
+        three_liner: idea.three_liner,
+        thesis: idea.thesis,
+        who_for: idea.who_for,
+        format: String(idea.format ?? "post"),
+        platform: String(idea.platform ?? "Multi"),
+        why_now: idea.why_now,
+        key_points: Array.isArray(idea.key_points) ? idea.key_points : [],
+        novelty_angle: idea.novelty_angle,
+        cta: idea.cta,
+        expected_outcome: idea.expected_outcome,
+        risk_flags: Array.isArray(idea.risk_flags) ? idea.risk_flags : [],
+        status: idea.status,
+        idea_json: idea as unknown as Record<string, unknown>,
+      });
+      ideaRowIdsOrdered.push(row.id);
+
+      const grounding = Array.isArray(idea.grounding_insight_ids) ? idea.grounding_insight_ids : [];
+      const resolved = grounding
+        .map((gid) => insightUuidById.get(String(gid).trim()) ?? "")
+        .filter(Boolean);
+      await replaceIdeaGroundingInsights(db, {
+        project_id: project.id,
+        idea_row_id: row.id,
+        insight_row_ids: resolved,
+      });
+    }
+
+    await replaceSignalPackIdeas(db, {
+      project_id: project.id,
+      signal_pack_id: pack.id,
+      idea_row_ids_ordered: ideaRowIdsOrdered,
+    });
+  } catch {
+    // non-fatal
+  }
 
   const insights = await insertInsightsPack(db, {
     project_id: project.id,

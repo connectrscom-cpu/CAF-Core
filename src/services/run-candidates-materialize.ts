@@ -12,6 +12,7 @@ import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
+import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
@@ -162,7 +163,14 @@ export async function materializeRunCandidates(
       provenance = { ...provenance, source: "signal_pack.ideas_json(legacy)", idea_count: ideas.length, row_count: rows.length };
     }
   } else if (body.mode === "from_pack_selected_ideas_v2") {
-    const ids = selectedIdeaIds(pack);
+    // Prefer the new join table selection; fall back to legacy JSON column.
+    let ids: string[] = [];
+    try {
+      ids = await listSignalPackSelectedIdeaIds(db, { project_id: projectId, signal_pack_id: pack.id });
+    } catch {
+      ids = [];
+    }
+    if (ids.length === 0) ids = selectedIdeaIds(pack);
     if (ids.length === 0) throw new Error("signal_pack.selected_idea_ids_json is empty");
 
     // Prefer canonical storage in ideas_json; keep fallback to deprecated ideas_v2_json.

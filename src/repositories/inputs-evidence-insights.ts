@@ -346,3 +346,29 @@ export async function listTopPerformerInsightsEnriched(
     [projectId, importId, lim]
   );
 }
+
+/**
+ * Resolve DB primary keys for insight rows by their public `insights_id` strings.
+ * Used by stage-3 idea grounding links (ideas store grounding_insight_ids).
+ */
+export async function getInsightRowUuidsByInsightsIds(
+  db: Pool,
+  projectId: string,
+  insightsIds: string[]
+): Promise<Map<string, string>> {
+  const ids = (insightsIds ?? []).map((x) => String(x).trim()).filter(Boolean).slice(0, 500);
+  if (ids.length === 0) return new Map();
+  const rows = await q<{ insights_id: string; id: string }>(
+    db,
+    `SELECT insights_id, id::text AS id
+       FROM caf_core.inputs_evidence_row_insights
+      WHERE project_id = $1 AND insights_id = ANY($2::text[])`,
+    [projectId, ids]
+  );
+  const out = new Map<string, string>();
+  for (const r of rows) {
+    if (!r.insights_id || !r.id) continue;
+    out.set(r.insights_id, r.id);
+  }
+  return out;
+}

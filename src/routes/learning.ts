@@ -32,9 +32,9 @@ import {
 import { analyzeEditorialPatterns } from "../services/editorial-learning.js";
 import {
   ingestPerformanceMetrics,
-  analyzeMarketPerformance,
+  analyzePerformanceAnalysis,
   type PerformanceIngestionInput,
-} from "../services/market-learning.js";
+} from "../services/performance-learning.js";
 import { getLearningContextForGeneration } from "../services/learning-rule-selection.js";
 import { LEARNING_TRANSPARENCY_STATIC, learningTransparencySnapshot } from "../services/learning-transparency.js";
 import { parseCsvToRecords } from "../services/parse-csv-simple.js";
@@ -720,9 +720,9 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 
-  // ── Market performance analysis (Loop C) ─────────────────────────────
+  // ── Performance analysis (Loop C) ────────────────────────────────────
   app.post<{ Params: { project_slug: string }; Body: { window_days?: number; auto_create_rules?: boolean } }>(
-    "/v1/learning/:project_slug/market-analysis",
+    "/v1/learning/:project_slug/performance-analysis",
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
@@ -731,7 +731,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const windowDays = (body.window_days as number) ?? 60;
       const autoCreate = body.auto_create_rules !== false;
 
-      const result = await analyzeMarketPerformance(db, project.id, project.slug, windowDays, autoCreate);
+      const result = await analyzePerformanceAnalysis(db, project.id, project.slug, windowDays, autoCreate);
       return { ok: true, ...result };
     }
   );

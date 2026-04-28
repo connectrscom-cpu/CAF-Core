@@ -1,4 +1,4 @@
-import type { PerformanceIngestionInput } from "./market-learning.js";
+import type { PerformanceIngestionInput } from "./performance-learning.js";
 
 export type CsvPerformanceColumnMap = Record<string, string>;
 
