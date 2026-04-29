@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import * as crypto from "node:crypto";
 import type { AppConfig } from "../config.js";
 import type { HeygenConfigRow } from "../repositories/project-config.js";
 import {
@@ -536,7 +535,6 @@ describe("buildHeyGenRequestBody", () => {
   });
 
   it("picks avatar+voice from prompt_avatar_pool_json using taskId (stable) and strips internal keys", () => {
-    const rand = vi.spyOn(crypto, "randomInt").mockReturnValue(1);
     const pool = JSON.stringify([
       { avatar_id: "a1", voice_id: "v1" },
       { avatar_id: "a2", voice_id: "v2" },
@@ -554,7 +552,6 @@ describe("buildHeyGenRequestBody", () => {
       flowType: "Video_Prompt_HeyGen_Avatar",
       taskId: "TASK_stable_seed",
     });
-    rand.mockRestore();
     expect(a.prompt_avatar_pool_json).toBeUndefined();
     expect(a.heygen_model).toBeUndefined();
     const via = a.video_inputs as Record<string, unknown>[];

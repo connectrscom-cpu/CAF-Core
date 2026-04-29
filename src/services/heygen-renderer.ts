@@ -3,7 +3,6 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import { randomInt } from "node:crypto";
 import {
   getBrandConstraints,
   getProductProfile,
@@ -491,7 +490,7 @@ export function applyHeygenAvatarFromSheetConfig(
     // Stable pick when a seed is provided (task_id / avatarPickSeed). When absent, allow randomness so
     // manual/operator runs don't always reuse the same avatar+voice pair.
     // Voice is resolved from the picked entry first, so avatar+voice pairing is preserved when provided.
-    const idx = seed ? stablePickIndex(seed, pool.length) : randomInt(pool.length);
+    const idx = seed ? stablePickIndex(seed, pool.length) : Math.floor(Math.random() * pool.length);
     const picked = pool[idx]!;
     const pickedHasVoice = Boolean(String(picked.voice_id ?? "").trim());
     if (scriptLed && !pickedHasVoice) {
