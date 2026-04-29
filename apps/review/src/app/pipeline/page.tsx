@@ -19,7 +19,8 @@ interface PackRow {
   run_id: string;
   upload_filename: string | null;
   created_at: string;
-  overall_candidates_json: unknown[];
+  overall_candidates_count?: number;
+  ideas_count?: number;
 }
 
 export default function PipelinePage() {
@@ -235,12 +236,13 @@ export default function PipelinePage() {
                   </thead>
                   <tbody>
                     {packs.map((p) => {
-                      const n = Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0;
+                      const nIdeas = Number(p.ideas_count ?? 0);
+                      const nOverall = Number(p.overall_candidates_count ?? 0);
                       return (
                         <tr key={p.id} style={{ borderTop: "1px solid var(--border)" }}>
                           <Td>{p.upload_filename ?? p.id.slice(0, 8)}</Td>
                           <Td style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{p.run_id}</Td>
-                          <Td>{n}</Td>
+                          <Td>{nIdeas > 0 ? nIdeas : nOverall}</Td>
                           <Td>{fmt(p.created_at)}</Td>
                           <Td>
                             <Link href={navHref(`/pipeline/pack/${p.id}`)} className="detail-back">

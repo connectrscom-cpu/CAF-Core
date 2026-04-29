@@ -1170,13 +1170,12 @@ export async function listInputsEvidenceRowsPage(
 export type SignalPackListRow = {
   id: string;
   run_id: string;
-  project_id: string;
   source_window: string | null;
   upload_filename: string | null;
   notes: string | null;
   created_at: string;
-  overall_candidates_json: unknown[];
-  derived_globals_json: Record<string, unknown>;
+  overall_candidates_count?: number;
+  ideas_count?: number;
 };
 
 export async function listSignalPacksForProject(
@@ -1186,6 +1185,8 @@ export async function listSignalPacksForProject(
   const qs = new URLSearchParams();
   if (opts?.limit != null) qs.set("limit", String(opts.limit));
   if (opts?.offset != null) qs.set("offset", String(opts.offset));
+  // Prefer the lightweight summary response (counts only) for list UIs.
+  qs.set("summary", "1");
   const q = qs.toString();
   return coreGetRequired<{ ok: boolean; signal_packs: SignalPackListRow[]; count: number }>(
     `/v1/signal-packs/${encodeURIComponent(projectSlug)}${q ? `?${q}` : ""}`
@@ -1193,7 +1194,7 @@ export async function listSignalPacksForProject(
 }
 
 export async function getSignalPackForProject(projectSlug: string, packId: string) {
-  return coreGetRequired<{ ok: boolean; signal_pack: SignalPackListRow & Record<string, unknown> }>(
+  return coreGetRequired<{ ok: boolean; signal_pack: Record<string, unknown> }>(
     `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}`
   );
 }

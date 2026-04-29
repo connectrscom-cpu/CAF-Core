@@ -13,6 +13,7 @@ export default function SignalPackIdeasPage() {
   const qs = useMemo(() => (slug ? `?project=${encodeURIComponent(slug)}` : ""), [slug]);
 
   const [pack, setPack] = useState<Record<string, unknown> | null>(null);
+  const [source, setSource] = useState<"ideas_json" | "overall_candidates_json">("ideas_json");
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -33,17 +34,34 @@ export default function SignalPackIdeasPage() {
     void load();
   }, [load]);
 
-  const ideas = useMemo(() => {
-    const oc = pack?.overall_candidates_json;
-    if (!Array.isArray(oc)) return [] as Record<string, unknown>[];
-    return oc.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+  const ideasJson = useMemo(() => {
+    const v = pack?.ideas_json;
+    if (!Array.isArray(v)) return [] as Record<string, unknown>[];
+    return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
   }, [pack]);
+
+  const overallCandidates = useMemo(() => {
+    const v = pack?.overall_candidates_json;
+    if (!Array.isArray(v)) return [] as Record<string, unknown>[];
+    return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+  }, [pack]);
+
+  const rows = useMemo(() => {
+    if (source === "overall_candidates_json") return overallCandidates;
+    return ideasJson;
+  }, [ideasJson, overallCandidates, source]);
+
+  useEffect(() => {
+    // Default to ideas_json when present; otherwise fall back to overall_candidates_json.
+    if (ideasJson.length > 0) setSource("ideas_json");
+    else setSource("overall_candidates_json");
+  }, [ideasJson.length, packId]);
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return ideas;
-    return ideas.filter((row) => JSON.stringify(row).toLowerCase().includes(q));
-  }, [ideas, filter]);
+    if (!q) return rows;
+    return rows.filter((row) => JSON.stringify(row).toLowerCase().includes(q));
+  }, [rows, filter]);
 
   const columns = useMemo(() => {
     const keys = new Set<string>();
@@ -66,8 +84,8 @@ export default function SignalPackIdeasPage() {
           </Link>
           <h2 style={{ marginTop: 8 }}>Signal pack — ideas</h2>
           <span className="page-header-sub">
-            {(pack?.upload_filename as string) || packId} · {ideas.length} overall candidate
-            {ideas.length === 1 ? "" : "s"}
+            {(pack?.upload_filename as string) || packId} ·{" "}
+            {ideasJson.length > 0 ? `${ideasJson.length} ideas_json` : `${overallCandidates.length} overall candidates`}
           </span>
         </div>
       </div>
@@ -77,19 +95,45 @@ export default function SignalPackIdeasPage() {
 
         {pack && (
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              Filter rows
-              <input
-                type="search"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Substring match on full row JSON"
-                style={{ padding: "8px 12px", minWidth: 280, borderRadius: 6, border: "1px solid var(--border)" }}
-              />
-              <span style={{ color: "var(--muted)" }}>
-                Showing {filtered.length} of {ideas.length}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                Source
+                <select
+                  value={source}
+                  onChange={(e) => setSource(e.target.value as "ideas_json" | "overall_candidates_json")}
+                  style={{
+                    padding: "8px 10px",
+                    borderRadius: 6,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "inherit",
+                    fontSize: 13,
+                  }}
+                >
+                  <option value="ideas_json" disabled={ideasJson.length === 0}>
+                    ideas_json ({ideasJson.length})
+                  </option>
+                  <option value="overall_candidates_json" disabled={overallCandidates.length === 0}>
+                    overall_candidates_json ({overallCandidates.length})
+                  </option>
+                </select>
+              </label>
+
+              <label style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
+                Filter rows
+                <input
+                  type="search"
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Substring match on full row JSON"
+                  style={{ padding: "8px 12px", minWidth: 280, borderRadius: 6, border: "1px solid var(--border)" }}
+                />
+              </label>
+
+              <span style={{ color: "var(--muted)", fontSize: 13 }}>
+                Showing {filtered.length} of {rows.length}
               </span>
-            </label>
+            </div>
           </div>
         )}
 
@@ -120,8 +164,12 @@ export default function SignalPackIdeasPage() {
           </div>
         )}
 
-        {pack && ideas.length === 0 && (
-          <p style={{ color: "var(--muted)" }}>This pack has no overall_candidates_json rows.</p>
+        {pack && rows.length === 0 && (
+          <p style={{ color: "var(--muted)" }}>
+            This pack has no {source} rows.
+            {source === "overall_candidates_json" && ideasJson.length > 0 ? " Try switching to ideas_json." : ""}
+            {source === "ideas_json" && overallCandidates.length > 0 ? " Try switching to overall_candidates_json." : ""}
+          </p>
         )}
       </div>
     </>

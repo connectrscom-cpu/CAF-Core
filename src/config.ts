@@ -82,6 +82,21 @@ const envSchema = z.object({
 
   RENDERER_BASE_URL: z.string().default("http://localhost:3333"),
   /**
+   * DraftPackage contract enforcement (5A).
+   * - skip: do not validate execution-readiness
+   * - warn: validate and log warnings; attempt safe auto-repair where possible
+   * - enforce: fail generation when the output is not execution-ready
+   *
+   * Keep default "warn" so existing prompts continue working while we tighten contracts.
+   */
+  CAF_DRAFT_PACKAGE_CONTRACT_MODE: z.enum(["skip", "warn", "enforce"]).default("warn"),
+  /**
+   * Rendering throughput controls (5B). Defaults keep existing sequential behavior.
+   * Set to 2–4 for small parallelism; keep separate caps because HeyGen and the renderer have different limits.
+   */
+  CAROUSEL_RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(12).default(1),
+  VIDEO_RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
+  /**
    * Directory of carousel .hbs files served at GET /api/templates/* for the Puppeteer renderer
    * (set CAF_TEMPLATE_API_URL=https://your-caf-core-host on the renderer). Fly image uses /app/carousel-templates.
    */

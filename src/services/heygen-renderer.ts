@@ -3,6 +3,7 @@
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
+import { randomInt } from "node:crypto";
 import {
   getBrandConstraints,
   getProductProfile,
@@ -487,7 +488,10 @@ export function applyHeygenAvatarFromSheetConfig(
   for (const key of poolKeys) {
     const pool = parseHeygenAvatarPoolJson(body[key]);
     if (pool.length === 0) continue;
-    const idx = seed ? stablePickIndex(seed, pool.length) : 0;
+    // Stable pick when a seed is provided (task_id / avatarPickSeed). When absent, allow randomness so
+    // manual/operator runs don't always reuse the same avatar+voice pair.
+    // Voice is resolved from the picked entry first, so avatar+voice pairing is preserved when provided.
+    const idx = seed ? stablePickIndex(seed, pool.length) : randomInt(pool.length);
     const picked = pool[idx]!;
     const pickedHasVoice = Boolean(String(picked.voice_id ?? "").trim());
     if (scriptLed && !pickedHasVoice) {
@@ -2055,6 +2059,41 @@ export async function runHeygenForContentJob(
       subtitles_source: burnReport.subtitleSource,
     },
   });
+
+  // 5B render manifest (additive): stable “what we produced” snapshot for downstream audit/review/learning.
+  await db.query(
+    `UPDATE caf_core.content_jobs SET
+       generation_payload = jsonb_set(
+         COALESCE(generation_payload, '{}'::jsonb),
+         '{render_manifest}',
+         $1::jsonb,
+         true
+       ),
+       updated_at = now()
+     WHERE project_id = $2 AND task_id = $3`,
+    [
+      JSON.stringify({
+        render_type: "heygen",
+        asset_type: "video",
+        provider: "heygen",
+        heygen_post_path: postPath,
+        video_id: videoId,
+        source_url: videoUrl,
+        subtitles_burned: burnReport.burned,
+        subtitles_source: burnReport.subtitleSource,
+        subtitles_burn_skipped_reason: burnReport.skippedReason,
+        duration_sec: durationSec,
+        output: {
+          object_path: storedObjectPath,
+          public_url: publicUrl,
+          asset_id: assetId,
+        },
+        finished_at: new Date().toISOString(),
+      }),
+      job.project_id,
+      job.task_id,
+    ]
+  );
 
   return { public_url: publicUrl, object_path: storedObjectPath, video_id: videoId };
 }

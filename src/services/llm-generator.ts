@@ -49,6 +49,7 @@ import {
   maxHashtagsFromPlatformConstraints,
   maxSlidesFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
+import { validateAndNormalizeDraftPackage } from "./draft-package-contract.js";
 import { getLearningContextForGeneration } from "./learning-rule-selection.js";
 import { buildLlmApprovalAntiRepetitionBlock } from "./llm-approval-anti-repetition-context.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
@@ -615,6 +616,44 @@ export async function generateForJob(
 
     if (!wantSceneBundle) {
       parsed = outputForJob;
+    }
+
+    // 5A DraftPackage contract: validate + add canonical package_type field.
+    // Keep the rollout decoupled from output-schema validation: warn by default, enforce only when configured.
+    const cfg = loadConfig();
+    const contractMode = cfg.CAF_DRAFT_PACKAGE_CONTRACT_MODE;
+    if (contractMode !== "skip") {
+      const v = validateAndNormalizeDraftPackage(job.flow_type, parsed);
+      parsed = v.output;
+      if (v.warnings.length > 0) {
+        process.stderr.write(
+          `[llm-generator] draft_package_contract_warn task_id=${job.task_id} flow=${job.flow_type} warnings=${JSON.stringify(
+            v.warnings.slice(0, 12)
+          )}\n`
+        );
+      }
+      if (v.errors.length > 0) {
+        const msg = `DraftPackage contract failed: ${v.errors.join("; ")}`;
+        if (contractMode === "enforce") {
+          return {
+            draft_id: draftId,
+            task_id: job.task_id,
+            raw_output: llmResult.content,
+            parsed_output: parsed,
+            model_used: llmResult.model,
+            prompt_name: promptTemplate.prompt_name,
+            tokens_used: tokensUsed,
+            success: false,
+            error: msg,
+          };
+        } else {
+          process.stderr.write(
+            `[llm-generator] draft_package_contract_error task_id=${job.task_id} flow=${job.flow_type} errors=${JSON.stringify(
+              v.errors.slice(0, 12)
+            )}\n`
+          );
+        }
+      }
     }
 
     const draftSeq = await nextJobDraftSequence(db, job.project_id, job.task_id);

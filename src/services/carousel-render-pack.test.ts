@@ -410,6 +410,22 @@ describe("pickCarouselTemplateForRender", () => {
     expect(["default", "alt"]).toContain(p);
   });
 
+  it("restricts random picks to allowedTemplates when provided", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ templates: ["a.hbs", "b.hbs"] }),
+      })
+    );
+    const p = await pickCarouselTemplateForRender(
+      "http://renderer:3333",
+      {},
+      { allowedTemplates: ["a.hbs"] }
+    );
+    expect(p).toBe("a");
+  });
+
   it("excludes previous template name when carousel_template_exclude_for_next_render is set", async () => {
     vi.stubGlobal(
       "fetch",
@@ -422,6 +438,16 @@ describe("pickCarouselTemplateForRender", () => {
       carousel_template_exclude_for_next_render: "a",
     });
     expect(p).toBe("b");
+  });
+
+  it("falls back to allowedTemplates when renderer template list is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network")));
+    const p = await pickCarouselTemplateForRender(
+      "http://renderer:3333",
+      {},
+      { allowedTemplates: ["only_one.hbs"] }
+    );
+    expect(p).toBe("only_one");
   });
 });
 

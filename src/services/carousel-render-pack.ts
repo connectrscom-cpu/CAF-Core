@@ -872,6 +872,20 @@ function normalizeCarouselTemplateBase(name: string): string {
   return name.replace(/\.hbs$/i, "").trim().toLowerCase();
 }
 
+function normalizeTemplateAllowlistBases(allowlist: string[] | undefined): string[] {
+  if (!allowlist || allowlist.length === 0) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of allowlist) {
+    const base = normalizeCarouselTemplateBase(String(raw ?? ""));
+    if (!base) continue;
+    if (seen.has(base)) continue;
+    seen.add(base);
+    out.push(base);
+  }
+  return out;
+}
+
 /**
  * Reviewer asked for a different carousel layout on the next full generation/render pass.
  * Tag `carousel_template_change` / `change_template`, or notes containing “change template”.
@@ -937,7 +951,14 @@ export function setCarouselTemplateExcludeForNextRender(
  */
 export async function pickCarouselTemplateForRender(
   rendererBaseUrl: string,
-  generationPayload: Record<string, unknown>
+  generationPayload: Record<string, unknown>,
+  opts?: {
+    /**
+     * Project-pinned templates (names with or without `.hbs`). When provided, implicit/random selection is
+     * restricted to this allowlist instead of the renderer's full template library.
+     */
+    allowedTemplates?: string[];
+  }
 ): Promise<string> {
   const explicit = explicitCarouselTemplateBaseName(generationPayload);
   if (explicit) return explicit;
@@ -947,6 +968,9 @@ export async function pickCarouselTemplateForRender(
     typeof excludeRaw === "string" && excludeRaw.trim()
       ? normalizeCarouselTemplateBase(excludeRaw)
       : "";
+
+  const allowedBases = normalizeTemplateAllowlistBases(opts?.allowedTemplates);
+  const allowedSet = allowedBases.length ? new Set(allowedBases) : null;
 
   const base = rendererBaseUrl.replace(/\/$/, "");
   let templates: string[] = [];
@@ -960,11 +984,21 @@ export async function pickCarouselTemplateForRender(
     // fall through to default
   }
 
-  if (templates.length === 0) return "default";
+  // If the project has pinned templates, prefer them even when the renderer's list is missing/unreachable.
+  if (templates.length === 0) {
+    if (allowedBases.length > 0) return allowedBases[randomInt(allowedBases.length)]!;
+    return "default";
+  }
 
   let pool = templates;
+  if (allowedSet) {
+    const filtered = templates.filter((t) => allowedSet.has(normalizeCarouselTemplateBase(t)));
+    // If none of the renderer-reported templates intersect the project pins, fall back to the pins anyway.
+    // (The renderer still might support them even if it didn't list them, e.g. remote list disabled.)
+    pool = filtered.length > 0 ? filtered : allowedBases.map((b) => `${b}.hbs`);
+  }
   if (exclude) {
-    const filtered = templates.filter((t) => normalizeCarouselTemplateBase(t) !== exclude);
+    const filtered = pool.filter((t) => normalizeCarouselTemplateBase(t) !== exclude);
     if (filtered.length > 0) pool = filtered;
   }
 

@@ -18,7 +18,7 @@ import {
 import { uploadBuffer } from "./supabase-storage.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
-import { getStrategyDefaults, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
+import { getStrategyDefaults, listProjectCarouselTemplates, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import {
   carouselSlideCount,
@@ -49,6 +49,8 @@ export interface PipelineConfig {
   videoAssemblyBaseUrl: string;
   carouselRendererSlideTimeoutMs: number;
   carouselRendererSlideRetryAttempts: number;
+  carouselRenderConcurrency: number;
+  videoRenderConcurrency: number;
 }
 
 export function getPipelineConfig(config: AppConfig): PipelineConfig {
@@ -57,6 +59,8 @@ export function getPipelineConfig(config: AppConfig): PipelineConfig {
     videoAssemblyBaseUrl: config.VIDEO_ASSEMBLY_BASE_URL.replace(/\/$/, ""),
     carouselRendererSlideTimeoutMs: config.CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS,
     carouselRendererSlideRetryAttempts: config.CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS,
+    carouselRenderConcurrency: config.CAROUSEL_RENDER_CONCURRENCY,
+    videoRenderConcurrency: config.VIDEO_RENDER_CONCURRENCY,
   };
 }
 
@@ -402,8 +406,29 @@ export async function processRunJobs(
     }
   };
 
+  async function runWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<void>
+  ): Promise<void> {
+    const limit = Math.max(1, Math.floor(concurrency));
+    let idx = 0;
+    const workers: Promise<void>[] = [];
+    const work = async () => {
+      while (true) {
+        const i = idx++;
+        if (i >= items.length) return;
+        await fn(items[i]!);
+      }
+    };
+    for (let i = 0; i < Math.min(limit, items.length); i++) {
+      workers.push(work());
+    }
+    await Promise.all(workers);
+  }
+
   const carouselLane = async () => {
-    for (const t of carouselTickets) {
+    await runWithConcurrency(carouselTickets, pipeConfig.carouselRenderConcurrency, async (t) => {
       try {
         await runOneRender(t);
         const refreshed = await qOne<{ status: string }>(
@@ -417,16 +442,16 @@ export async function processRunJobs(
         }
       } catch (err) {
         if (err instanceof RenderNotReadyError) {
-          continue;
+          return;
         }
         const msg = err instanceof Error ? err.message : String(err);
         await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
       }
-    }
+    });
   };
 
   const videoLane = async () => {
-    for (const t of videoTickets) {
+    await runWithConcurrency(videoTickets, pipeConfig.videoRenderConcurrency, async (t) => {
       try {
         await runOneRender(t);
         const refreshed = await qOne<{ status: string }>(
@@ -440,12 +465,12 @@ export async function processRunJobs(
         }
       } catch (err) {
         if (err instanceof RenderNotReadyError) {
-          continue;
+          return;
         }
         const msg = err instanceof Error ? err.message : String(err);
         await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
       }
-    }
+    });
   };
 
   await carouselLane();
@@ -1115,7 +1140,10 @@ async function processCarouselJob(
   if (!Number.isFinite(n) || n < 1) {
     throw new Error(`Invalid carousel slide count (${String(n)}); check generated_output / structure_variables.slide_count.`);
   }
-  const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload);
+  const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
+  const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
+    allowedTemplates: projectPinnedTemplates,
+  });
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectInstagramHandle = strategyRow?.instagram_handle ?? null;
   const projectRow = await getProjectById(db, job.project_id);
@@ -1237,6 +1265,35 @@ async function processCarouselJob(
       status: "completed",
       slides: slideResults,
     });
+
+    // 5B render manifest (additive): stable “what we produced” snapshot for downstream audit/review/learning.
+    await db.query(
+      `UPDATE caf_core.content_jobs SET
+         generation_payload = jsonb_set(
+           COALESCE(generation_payload, '{}'::jsonb),
+           '{render_manifest}',
+           $1::jsonb,
+           true
+         ),
+         updated_at = now()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          render_type: "template",
+          asset_type: "carousel",
+          template,
+          renderer: "carousel-renderer",
+          slide_count: n,
+          slides: slideResults.map((s) => ({
+            index: s.index,
+            object_path: s.object_path,
+            public_url: s.public_url,
+          })),
+          finished_at: new Date().toISOString(),
+        }),
+        job.id,
+      ]
+    );
 
     const finalStatusOk = finalJobStatusAfterRender(recommendedRoute);
     await recordRunContentOutcomeSafe(db, {
