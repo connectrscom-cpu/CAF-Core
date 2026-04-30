@@ -1,37 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { submitDecision } from "@/lib/caf-core-client";
+import { decisionMethodNotAllowedJson, readJsonObjectBody } from "@/lib/decision-api";
 import { decodeTaskIdParam } from "@/lib/task-id";
 
 export const dynamic = "force-dynamic";
 
+export function GET() {
+  return decisionMethodNotAllowedJson();
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = (await request.json()) as {
-      task_id?: string;
-      project_slug?: string;
-      decision?: string;
-      notes?: string;
-      rejection_tags?: string[];
-      validator?: string;
-      final_title_override?: string;
-      final_hook_override?: string;
-      final_caption_override?: string;
-      final_hashtags_override?: string;
-      final_slides_json_override?: string;
-      final_spoken_script_override?: string;
-      heygen_avatar_id?: string;
-      heygen_voice_id?: string;
-      heygen_force_rerender?: boolean;
-      rewrite_copy?: boolean;
-      skip_video_regeneration?: boolean;
-      skip_image_regeneration?: boolean;
-      regenerate?: boolean;
-    };
-    const rawTid = (body.task_id ?? "").trim();
+    const parsed = await readJsonObjectBody(request);
+    if (!parsed.ok) return parsed.response;
+    const body = parsed.body;
+    const rawTid = String(body.task_id ?? "").trim();
     if (!rawTid) return NextResponse.json({ error: "task_id required in body" }, { status: 400 });
     const decodedId = decodeTaskIdParam(rawTid);
-    const decision = (body.decision ?? "").trim().toUpperCase();
+    const decision = String(body.decision ?? "").trim().toUpperCase();
     if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
       return NextResponse.json({ error: "decision must be APPROVED, NEEDS_EDIT, or REJECTED" }, { status: 400 });
     }
@@ -41,30 +28,50 @@ export async function POST(request: NextRequest) {
       reviewQueueFallbackSlug();
     const result = await submitDecision(slug, decodedId, {
       decision,
-      notes: body.notes,
-      rejection_tags: body.rejection_tags,
-      validator: body.validator,
-      ...(body.final_title_override !== undefined && { final_title_override: body.final_title_override }),
-      ...(body.final_hook_override !== undefined && { final_hook_override: body.final_hook_override }),
-      ...(body.final_caption_override !== undefined && { final_caption_override: body.final_caption_override }),
-      ...(body.final_hashtags_override !== undefined && { final_hashtags_override: body.final_hashtags_override }),
+      notes: typeof body.notes === "string" ? body.notes : undefined,
+      rejection_tags: Array.isArray(body.rejection_tags) ? body.rejection_tags.map((t) => String(t)) : undefined,
+      validator: typeof body.validator === "string" ? body.validator : undefined,
+      ...(body.final_title_override !== undefined && {
+        final_title_override: typeof body.final_title_override === "string" ? body.final_title_override : String(body.final_title_override),
+      }),
+      ...(body.final_hook_override !== undefined && {
+        final_hook_override: typeof body.final_hook_override === "string" ? body.final_hook_override : String(body.final_hook_override),
+      }),
+      ...(body.final_caption_override !== undefined && {
+        final_caption_override:
+          typeof body.final_caption_override === "string" ? body.final_caption_override : String(body.final_caption_override),
+      }),
+      ...(body.final_hashtags_override !== undefined && {
+        final_hashtags_override:
+          typeof body.final_hashtags_override === "string" ? body.final_hashtags_override : String(body.final_hashtags_override),
+      }),
       ...(body.final_slides_json_override !== undefined && {
-        final_slides_json_override: body.final_slides_json_override,
+        final_slides_json_override:
+          typeof body.final_slides_json_override === "string"
+            ? body.final_slides_json_override
+            : String(body.final_slides_json_override),
       }),
       ...(body.final_spoken_script_override !== undefined && {
-        final_spoken_script_override: body.final_spoken_script_override,
+        final_spoken_script_override:
+          typeof body.final_spoken_script_override === "string"
+            ? body.final_spoken_script_override
+            : String(body.final_spoken_script_override),
       }),
-      ...(body.heygen_avatar_id !== undefined && { heygen_avatar_id: body.heygen_avatar_id }),
-      ...(body.heygen_voice_id !== undefined && { heygen_voice_id: body.heygen_voice_id }),
-      ...(body.heygen_force_rerender !== undefined && { heygen_force_rerender: body.heygen_force_rerender }),
-      ...(body.rewrite_copy !== undefined && { rewrite_copy: body.rewrite_copy }),
-      ...(body.skip_video_regeneration !== undefined && {
+      ...(body.heygen_avatar_id !== undefined && {
+        heygen_avatar_id: typeof body.heygen_avatar_id === "string" ? body.heygen_avatar_id : String(body.heygen_avatar_id),
+      }),
+      ...(body.heygen_voice_id !== undefined && {
+        heygen_voice_id: typeof body.heygen_voice_id === "string" ? body.heygen_voice_id : String(body.heygen_voice_id),
+      }),
+      ...(typeof body.heygen_force_rerender === "boolean" && { heygen_force_rerender: body.heygen_force_rerender }),
+      ...(typeof body.rewrite_copy === "boolean" && { rewrite_copy: body.rewrite_copy }),
+      ...(typeof body.skip_video_regeneration === "boolean" && {
         skip_video_regeneration: body.skip_video_regeneration,
       }),
-      ...(body.skip_image_regeneration !== undefined && {
+      ...(typeof body.skip_image_regeneration === "boolean" && {
         skip_image_regeneration: body.skip_image_regeneration,
       }),
-      ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
+      ...(typeof body.regenerate === "boolean" && { regenerate: body.regenerate }),
     });
     if (!result.ok) {
       const st =
