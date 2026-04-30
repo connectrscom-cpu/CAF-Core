@@ -78,6 +78,8 @@ export const PROMPT_LABS_HEYGEN_INTRO =
  * angle-specific dedicated templates, so they also belong in this bucket.
  */
 export const HEYGEN_FLOW_TYPES: readonly string[] = [
+  "FLOW_VID_SCRIPT",
+  "FLOW_VID_PROMPT",
   "Video_Script_Generator",
   "Video_Prompt_Generator",
   "FLOW_PRODUCT_PROBLEM",

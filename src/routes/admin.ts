@@ -88,9 +88,81 @@ import {
 } from "../services/prompt-labs-meta.js";
 import { VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP } from "../decision_engine/default-plan-caps.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
+import {
+  LEGACY_FLOW_TYPE_TO_CANONICAL,
+  resolveCanonicalFlowType,
+} from "../domain/canonical-flow-types.js";
 import { z } from "zod";
 
 interface Deps { db: Pool; config: AppConfig; }
+
+const LEGACY_SCHEMA_NAME_TO_CANONICAL: Readonly<Record<string, string>> = {
+  Carousel_Insight_Output: "OS_CAROUSEL",
+  Carousel_Angle_Output: "OS_ANGLE",
+  Carousel_Structure_Output: "OS_STRUCTURE",
+  CTA_Output: "OS_CTA",
+  Hook_Variations_Output: "OS_HOOKS",
+  Text_Post_Output: "OS_TEXT",
+  Video_Prompt_Output: "OS_VID_PROMPT",
+  Video_Script_Output: "OS_VID_SCRIPT",
+  Video_Scene_Generator_Output: "OS_VID_SCENES",
+  Viral_Format_Output: "OS_VIRAL",
+};
+
+function shouldHideLegacyFlowType(flowType: string, canonicalPresent: Set<string>): boolean {
+  const t = String(flowType ?? "").trim();
+  if (!t) return false;
+  const mapped = (LEGACY_FLOW_TYPE_TO_CANONICAL as Record<string, string>)[t];
+  if (!mapped) return false;
+  return canonicalPresent.has(mapped);
+}
+
+function stripLegacyFlowEngineRows(args: {
+  flowDefs: any[];
+  promptTpls: any[];
+  schemas: any[];
+  qcChecks: any[];
+}): { flowDefs: any[]; promptTpls: any[]; schemas: any[]; qcChecks: any[] } {
+  const canonicalFlowTypes = new Set(
+    (args.flowDefs ?? []).map((f) => String(f.flow_type ?? "").trim()).filter((x) => x.startsWith("FLOW_"))
+  );
+
+  const flowDefs = (args.flowDefs ?? []).filter((f) => !shouldHideLegacyFlowType(f.flow_type, canonicalFlowTypes));
+
+  const qcChecks = (args.qcChecks ?? []).filter((q) => !shouldHideLegacyFlowType(q.flow_type, canonicalFlowTypes));
+
+  const schemaCanonPresent = new Set(
+    (args.schemas ?? [])
+      .map((s) => String(s.output_schema_name ?? "").trim())
+      .filter((n) => n.startsWith("OS_"))
+  );
+  const schemas = (args.schemas ?? []).filter((s) => {
+    const name = String(s.output_schema_name ?? "").trim();
+    if (!name) return true;
+    const mapped = (LEGACY_SCHEMA_NAME_TO_CANONICAL as Record<string, string>)[name];
+    if (!mapped) return true;
+    return !schemaCanonPresent.has(mapped);
+  });
+
+  const promptTplsRaw = (args.promptTpls ?? []).filter(
+    (p) => !shouldHideLegacyFlowType(p.flow_type, canonicalFlowTypes)
+  );
+  const promptNameSet = new Set(promptTplsRaw.map((p) => `${p.flow_type}::${p.prompt_name}`));
+  const promptTpls = promptTplsRaw.filter((p) => {
+    const ft = String(p.flow_type ?? "").trim();
+    const pn = String(p.prompt_name ?? "").trim();
+    if (!ft || !pn) return true;
+    // Hide non-namespaced prompt rows when a namespaced copy exists for the same flow_type.
+    if (!/^[A-Z0-9_]+__/.test(pn)) {
+      const key = resolveCanonicalFlowType(ft).replace(/^FLOW_/, "");
+      const ns = `${ft}::${key}__${pn}`;
+      if (promptNameSet.has(ns)) return false;
+    }
+    return true;
+  });
+
+  return { flowDefs, promptTpls, schemas, qcChecks };
+}
 
 interface ProjectRow {
   id: string;
@@ -1533,7 +1605,16 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       listFlowDefinitions(db), listPromptTemplates(db), listOutputSchemas(db),
       listCarouselTemplates(db), listQcChecks(db), listRiskPolicies(db),
     ]);
-    return { ok: true, flow_definitions: flowDefs, prompt_templates: promptTpls, output_schemas: schemas, carousel_templates: carouselTpls, qc_checklists: qcChecks, risk_policies: riskPolicies };
+    const cleaned = stripLegacyFlowEngineRows({ flowDefs, promptTpls, schemas, qcChecks });
+    return {
+      ok: true,
+      flow_definitions: cleaned.flowDefs,
+      prompt_templates: cleaned.promptTpls,
+      output_schemas: cleaned.schemas,
+      carousel_templates: carouselTpls,
+      qc_checklists: cleaned.qcChecks,
+      risk_policies: riskPolicies,
+    };
   });
 
   /** Prompt / script / HeyGen assembly reference for operators (templates + runtime addenda). */
@@ -1543,12 +1624,18 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       listFlowDefinitions(db),
       listCarouselTemplates(db),
     ]);
+    const cleaned = stripLegacyFlowEngineRows({
+      flowDefs,
+      promptTpls: promptTemplates,
+      schemas: [],
+      qcChecks: [],
+    });
     const cfg = config;
     const flow_description_by_type: Record<string, string> = {};
-    for (const f of flowDefs) {
+    for (const f of cleaned.flowDefs) {
       if (f.flow_type) flow_description_by_type[f.flow_type] = (f.description ?? "").trim();
     }
-    const prompt_templates_enriched = promptTemplates.map((p) => {
+    const prompt_templates_enriched = cleaned.promptTpls.map((p) => {
       const flowDesc = flow_description_by_type[p.flow_type] ?? "";
       const roleHint = promptTemplateRoleHint(p.prompt_role, p.prompt_name);
       const notes = (p.notes ?? "").trim();
@@ -1595,7 +1682,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Script-led avatar jobs use POST /v3/videos (type avatar) — no duration field; CAF enforces min/max spoken word counts from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE when HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS is true. Silence-voice visual-only jobs still use legacy POST /v2/video/generate (see heygen-renderer).",
       },
       prompt_templates: prompt_templates_enriched,
-      flow_definitions: flowDefs,
+      flow_definitions: cleaned.flowDefs,
       flow_description_by_type,
       heygen_flow_types: [...HEYGEN_FLOW_TYPES],
       carousel_templates: carouselTpls,
@@ -4603,10 +4690,12 @@ loadFE();
     const body = `
 <div class="ph"><div><h2>Prompt labs</h2><span class="ph-sub">Flow Engine DB templates + runtime prompt layers (video duration, publishing fields, HeyGen agent)</span></div></div>
 <div class="tabs" id="pl-tabs">
-  <button type="button" class="tab active" onclick="plTab('pl-env',this)">Env &amp; tuning</button>
-  <button type="button" class="tab" onclick="plTab('pl-tpl',this)">Prompts</button>
+  <button type="button" class="tab active" onclick="plTab('pl-processing',this)">Processing</button>
+  <button type="button" class="tab" onclick="plTab('pl-creation',this)">Creation</button>
+  <button type="button" class="tab" onclick="plTab('pl-validation',this)">Validation</button>
+  <button type="button" class="tab" onclick="plTab('pl-publishing',this)">Publishing</button>
+  <button type="button" class="tab" onclick="plTab('pl-learning',this)">Learning</button>
   <button type="button" class="tab" onclick="plTab('pl-heygen',this)">HeyGen agent</button>
-  <button type="button" class="tab" onclick="plTab('pl-flow',this)">Flow definitions</button>
 </div>
 <div class="content" id="pl-root"><div class="empty">Loading…</div></div>
 <script>
@@ -4714,43 +4803,92 @@ async function loadPL(){
 
   let html='';
 
-  // ── Env & tuning ──────────────────────────────────────────────────────
-  html+='<div id="pl-env" class="tab-panel active"><div class="card"><div class="card-h">Environment-backed knobs (config / .env)</div>';
-  html+='<p style="color:var(--muted);margin-bottom:12px">These knobs drive the runtime prompt addenda (duration band, scene counts). Change values in deployment env or <code>.env</code>, then restart the API.</p>';
+  const pt=d.prompt_templates||[];
+  window.__PL_TEMPLATES=pt;
+
+  function layerForPrompt(p){
+    const ft=String(p.flow_type||'').trim();
+    if((p.labs_is_heygen===true)||heygenFlowSet.has(ft)) return 'heygen';
+    if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS'||ft==='FLOW_TEXT') return 'processing';
+    if(ft==='FLOW_CAROUSEL'||ft==='FLOW_VID_SCENES') return 'creation';
+    // Default bucket: creation (most generator prompts belong here).
+    return 'creation';
+  }
+
+  const layers={processing:[],creation:[],validation:[],publishing:[],learning:[],heygen:[]};
+  for(let i=0;i<pt.length;i++){
+    const p=pt[i];
+    const k=layerForPrompt(p);
+    layers[k].push({p:p,ix:i});
+  }
+
+  // Validation: Env & tuning panel lives here
+  html+='<div id="pl-validation" class="tab-panel"><div class="card"><div class="card-h">Validation — environment knobs</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px">These knobs drive runtime validation-related addenda (duration bands, scene counts). Change values in deployment env or <code>.env</code>, then restart the API.</p>';
   html+='<table><thead><tr><th>Variable</th><th>Value</th><th>What it does</th></tr></thead><tbody>';
   for(const k of Object.keys(e)){
     html+='<tr><td class="mono">'+esc(k)+'</td><td><strong>'+esc(String(e[k]))+'</strong></td><td style="font-size:12px;color:var(--fg2);max-width:360px">'+esc((envHints[k]&&(envHints[k].description||envHints[k]))||'—')+'</td></tr>';
   }
   html+='</tbody></table></div></div>';
 
-  // ── Prompts (merged: all non-HeyGen Flow Engine templates + non-HeyGen addenda) ──
-  const pt=d.prompt_templates||[];
-  window.__PL_TEMPLATES=pt;
-  const generalPrompts=[];
-  const heygenPrompts=[];
-  for(let i=0;i<pt.length;i++){
-    const p=pt[i];
-    const isHey=(p.labs_is_heygen===true)||heygenFlowSet.has(p.flow_type);
-    (isHey?heygenPrompts:generalPrompts).push({p:p,ix:i});
-  }
+  // Processing tab
+  html+='<div id="pl-processing" class="tab-panel active">';
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Processing prompts ('+layers.processing.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Early-stage prompts that prepare structure, hooks, CTAs, or angle scaffolding before the final creative output.</p>';
+  if(layers.processing.length){ for(const row of layers.processing) html+=plRenderPromptCard(row.p,row.ix); }
+  else html+='<div class="empty">No rows</div>';
+  html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
+  html+='</div>';
 
-  html+='<div id="pl-tpl" class="tab-panel">';
-  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Prompt templates ('+generalPrompts.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Every Flow Engine prompt template that is <em>not</em> part of the HeyGen path. Edit saves to <span class="mono">caf_core.prompt_templates</span>. HeyGen-flow prompts live on the <strong>HeyGen agent</strong> tab.</p>';
-  if(generalPrompts.length){
-    for(const row of generalPrompts) html+=plRenderPromptCard(row.p,row.ix);
-  }else html+='<div class="empty">No rows</div>';
-  html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine (all entity types)</a></p></div>';
+  // Creation tab (main generator prompts + non-HeyGen addenda)
+  html+='<div id="pl-creation" class="tab-panel">';
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation prompts ('+layers.creation.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Primary creative generation prompts (carousel copy, multi-scene bundles, etc.).</p>';
+  if(layers.creation.length){ for(const row of layers.creation) html+=plRenderPromptCard(row.p,row.ix); }
+  else html+='<div class="empty">No rows</div>';
+  html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
 
-  if(generalAddendumKeys.length){
-    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Runtime addenda (applied to the generic prompts above)</div>';
-    html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">These are computed at runtime from code + <strong>Env &amp; tuning</strong>. They wrap whatever the Flow Engine template produces.</p>';
-    for(const key of generalAddendumKeys) html+=plRenderAddendumCard(key,meta,c[key]);
+  // Creation-related runtime addenda: scene assembly suffix belongs here.
+  if(generalAddendumKeys.includes('scene_assembly_system_suffix')){
+    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation runtime addenda</div>';
+    html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Computed at runtime and appended to certain creation prompts.</p>';
+    html+=plRenderAddendumCard('scene_assembly_system_suffix',meta,c['scene_assembly_system_suffix']);
     html+='</div>';
   }
   html+='</div>';
 
+  // Publishing tab: publication addendum lives here
+  html+='<div id="pl-publishing" class="tab-panel">';
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Publishing addenda</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Rules appended to prompts so outputs include the publish contract (hashtags, CTA, caption hygiene).</p>';
+  if(generalAddendumKeys.includes('publication_system_addendum')){
+    html+=plRenderAddendumCard('publication_system_addendum',meta,c['publication_system_addendum']);
+  }else{
+    html+='<div class="empty">No publishing addenda found.</div>';
+  }
+  html+='</div></div>';
+
+  // Learning tab: flow definitions + guidance pointers
+  const fd=d.flow_definitions||[];
+  html+='<div id="pl-learning" class="tab-panel">';
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Learning</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Learning rules inject guidance text at generation time (see <span class="mono">/v1/learning</span> endpoints). Prompt Labs shows Flow Engine templates + runtime addenda; learning guidance is managed separately.</p>';
+  html+='<p style="margin:0 0 10px"><a class="btn btn-sm" href="/admin/learning">Learning</a> <a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p>';
+  html+='</div>';
+
+  html+='<div class="card"><div class="card-h">Flow definitions ('+fd.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Operator-facing descriptions per <span class="mono">flow_type</span>.</p>';
+  if(fd.length){
+    html+='<div style="overflow-x:auto"><table><thead><tr><th>Flow type</th><th>Category</th><th>Description</th><th>Schema</th></tr></thead><tbody>';
+    for(const f of fd){
+      html+='<tr><td class="mono" style="font-size:12px">'+esc(f.flow_type)+'</td><td>'+esc(f.category||'—')+'</td><td style="font-size:12px;max-width:320px;color:var(--fg2)">'+esc(trunc(f.description||'—',200))+'</td><td class="mono" style="font-size:10px">'+esc((f.output_schema_name||'')+' '+(f.output_schema_version||''))+'</td></tr>';
+    }
+    html+='</tbody></table></div>';
+  }else html+='<div class="empty">No rows</div>';
+  html+='</div></div>';
+
   // ── HeyGen agent (rubric + HeyGen-flow prompt templates + HeyGen addenda) ──
+  const heygenPrompts=layers.heygen;
   html+='<div id="pl-heygen" class="tab-panel">';
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">HeyGen Video Agent — rubric</div>';
   html+='<p style="font-size:13px;color:var(--fg2);line-height:1.55;margin-bottom:10px">'+esc(h.intro||'')+'</p>';
@@ -4763,7 +4901,7 @@ async function loadPL(){
   html+='</div>';
 
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">HeyGen-flow prompt templates ('+heygenPrompts.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Flow Engine prompt templates whose <span class="mono">flow_type</span> feeds the HeyGen path (canonical: <span class="mono">FLOW_VID_SCRIPT</span> and <span class="mono">FLOW_VID_PROMPT</span>; legacy: <span class="mono">Video_Script_Generator</span> / <span class="mono">Video_Prompt_Generator</span>). All fields editable.</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Flow Engine prompt templates whose <span class="mono">flow_type</span> feeds the HeyGen path (canonical: <span class="mono">FLOW_VID_SCRIPT</span> and <span class="mono">FLOW_VID_PROMPT</span> plus product flows). All fields editable.</p>';
   if(heygenPrompts.length){
     for(const row of heygenPrompts) html+=plRenderPromptCard(row.p,row.ix);
   }else html+='<div class="empty">No HeyGen-flow prompt templates. Seed them from <a href="/admin/flow-engine">Flow Engine</a>.</div>';
@@ -4776,19 +4914,6 @@ async function loadPL(){
     html+='</div>';
   }
   html+='</div>';
-
-  // ── Flow definitions ──────────────────────────────────────────────────
-  const fd=d.flow_definitions||[];
-  html+='<div id="pl-flow" class="tab-panel"><div class="card"><div class="card-h">Flow definitions ('+fd.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Describes each <span class="mono">flow_type</span> for operators. Edit definitions on <a href="/admin/flow-engine">Flow Engine</a> → Flow Definitions.</p>';
-  if(fd.length){
-    html+='<div style="overflow-x:auto"><table><thead><tr><th>Flow type</th><th>Category</th><th>Description</th><th>Schema</th></tr></thead><tbody>';
-    for(const f of fd){
-      html+='<tr><td class="mono" style="font-size:12px">'+esc(f.flow_type)+'</td><td>'+esc(f.category||'—')+'</td><td style="font-size:12px;max-width:320px;color:var(--fg2)">'+esc(trunc(f.description||'—',200))+'</td><td class="mono" style="font-size:10px">'+esc((f.output_schema_name||'')+' '+(f.output_schema_version||''))+'</td></tr>';
-    }
-    html+='</tbody></table></div>';
-  }else html+='<div class="empty">No rows</div>';
-  html+='</div></div>';
 
   root.innerHTML=html;
 }
