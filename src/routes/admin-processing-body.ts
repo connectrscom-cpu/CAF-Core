@@ -779,6 +779,11 @@ async function loadPrellmKindsAndPreview(){
     prellmKinds=platformKindsFromStats(bk);
     if(prellmKinds.length===0){bar.innerHTML='<span class="empty">No rows in this import.</span>';return;}
     if(!prellmKind||prellmKinds.indexOf(prellmKind)<0)prellmKind=prellmKinds[0];
+
+    // Preload per-kind cutoff defaults from the saved profile (or suggested table) so switching
+    // platforms doesn't inherit the previous slider position.
+    await ensurePrellmMinByKindDefaults(prellmKinds);
+
     var h='';
     for(var i=0;i<prellmKinds.length;i++){
       var k=prellmKinds[i];
@@ -788,10 +793,18 @@ async function loadPrellmKindsAndPreview(){
     bar.innerHTML=h;
     bar.querySelectorAll('.prellm-kind').forEach(function(btn){
       btn.addEventListener('click',function(){
-        prellmKind=btn.getAttribute('data-kind')||'';
+        var next=btn.getAttribute('data-kind')||'';
+        if(!next||next===prellmKind)return;
+        prellmKind=next;
+        // Toggle active styles without re-fetching stats (faster experimentation).
+        bar.querySelectorAll('.prellm-kind').forEach(function(b2){
+          var k2=b2.getAttribute('data-kind')||'';
+          b2.className=(k2===prellmKind?'btn btn-sm':'btn-ghost btn-sm')+' prellm-kind';
+        });
         syncPrellmSliderFromKind();
         renderPrellmFormulaEditor();
-        loadPrellmKindsAndPreview();
+        schedulePrellmPreview();
+        scheduleBroadEligibilityEstimate();
       });
     });
     syncPrellmSliderFromKind();
@@ -801,6 +814,31 @@ async function loadPrellmKindsAndPreview(){
   }catch(e){bar.innerHTML='<span style="color:var(--red)">'+esc(e.message||e)+'</span>';}
 }
 
+async function ensurePrellmMinByKindDefaults(kinds){
+  try{
+    if(!Array.isArray(kinds)||kinds.length===0)return;
+    var pc=await loadProfileForPrellm();
+    var criteria=(pc&&pc.criteria)||{};
+    var pre=(criteria.pre_llm&&typeof criteria.pre_llm==='object')?criteria.pre_llm:{};
+    var ck=(pre.kinds&&typeof pre.kinds==='object')?pre.kinds:{};
+    for(var i=0;i<kinds.length;i++){
+      var k=String(kinds[i]||'').trim();
+      if(!k)continue;
+      if(typeof prellmMinByKind[k]==='number')continue;
+      var prof=(ck[k]&&typeof ck[k]==='object')?ck[k]:null;
+      var suggested=PRELLM_SUGGESTED[k]||PRELLM_SUGGESTED._default;
+      var v=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
+      if(v==null||!Number.isFinite(v))v=(suggested&&suggested.min_score);
+      // Final fallback: 0.35 is a pragmatic default for “top performer” exploration.
+      if(v==null||!Number.isFinite(v))v=0.35;
+      v=Math.max(0,Math.min(1,Number(v)));
+      prellmMinByKind[k]=v;
+    }
+  }catch(e){
+    // Non-fatal; UI will fall back to 0.35 in syncPrellmSliderFromKind.
+  }
+}
+
 function syncPrellmSliderFromKind(){
   var minEl=document.getElementById('prellm-min-score');
   var minNum=document.getElementById('prellm-min-score-num');
@@ -808,9 +846,10 @@ function syncPrellmSliderFromKind(){
   if(!minEl||!prellmKind)return;
   var v=prellmMinByKind[prellmKind];
   if(typeof v!=='number'){
-    // Default to 0.35 (useful for top-performer actions) but keep it per-kind once changed.
-    v=parseFloat(minEl.value||'0.35');
-    if(!Number.isFinite(v))v=0.35;
+    // Default to the suggested table (or 0.35) and keep it per-kind once changed.
+    var s=PRELLM_SUGGESTED[prellmKind]||PRELLM_SUGGESTED._default;
+    v=(s&&s.min_score);
+    if(v==null||!Number.isFinite(v))v=0.35;
     prellmMinByKind[prellmKind]=v;
   }
   minEl.value=String(v);
