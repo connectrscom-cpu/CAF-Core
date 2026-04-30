@@ -56,6 +56,13 @@ export function inferReworkMode(review: {
     : [];
   const notes = (review.notes ?? "").toLowerCase();
   /**
+   * Explicit routing: `regenerate=false` means "copy-only" — never call LLM/render/provider.
+   * We treat this as OVERRIDE_ONLY (patch in place) even if reviewer didn't set `rewrite_copy`.
+   */
+  if (ov.regenerate === false) {
+    return "OVERRIDE_ONLY";
+  }
+  /**
    * Reviewer asked to keep the existing video (skip HeyGen / Sora render) — wins over every other
    * route. Only makes sense with rewrite_copy !== false (we do re-run the LLM); if reviewer also
    * unchecked rewrite_copy we fall through to OVERRIDE_ONLY which already skips render.

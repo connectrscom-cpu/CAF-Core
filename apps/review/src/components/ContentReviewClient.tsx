@@ -9,6 +9,7 @@ import type { ReviewQueueRow } from "@/lib/types";
 import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
+import { InspectValidationJson } from "@/components/InspectValidationJson";
 
 interface ContentResponse {
   data: ReviewQueueRow;
@@ -30,6 +31,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [fullJob, setFullJob] = useState<Record<string, unknown> | null>(null);
 
   const { slides: initialSlides } = useMemo(
     () => parseSlidesFromJson(data?.generated_slides_json?.trim() || undefined),
@@ -69,6 +71,14 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
       if (!contentRes.ok) throw new Error(await contentRes.text());
       const contentJson: ContentResponse = await contentRes.json();
       setData(contentJson.data);
+      // Full job (for validation/draft package inspection).
+      fetch(`/api/task/${encodeURIComponent(task_id)}?${qs}&include_job=1`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const job = j && typeof j === "object" ? (j as any).job : null;
+          setFullJob(job && typeof job === "object" ? (job as Record<string, unknown>) : null);
+        })
+        .catch(() => setFullJob(null));
       if (assetsRes.ok) {
         const assetsJson: AssetsResponse = await assetsRes.json();
         const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
@@ -115,6 +125,10 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
             fallbackPreviewUrl={taskAssets[0]?.public_url}
             readOnly
           />
+
+          <div className="mt-4">
+            <InspectValidationJson job={fullJob} />
+          </div>
         </div>
       )}
     </>

@@ -49,6 +49,9 @@ export async function insertEditorialReview(
     rejection_tags?: unknown[];
     notes?: string | null;
     overrides_json?: Record<string, unknown>;
+    /** Structured, versioned validation output payload (optional; callers may omit). */
+    validation_schema_version?: string | null;
+    validation_output_json?: Record<string, unknown> | null;
     validator?: string | null;
     submit?: boolean;
   }
@@ -58,8 +61,9 @@ export async function insertEditorialReview(
   await db.query(
     `INSERT INTO caf_core.editorial_reviews (
        task_id, project_id, candidate_id, run_id, review_status, decision, rejection_tags,
-       notes, overrides_json, validator, submit, submitted_at
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12)`,
+       notes, overrides_json, validation_schema_version, validation_output_json,
+       validator, submit, submitted_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11::jsonb,$12,$13,$14)`,
     [
       row.task_id,
       row.project_id,
@@ -70,6 +74,8 @@ export async function insertEditorialReview(
       JSON.stringify(row.rejection_tags ?? []),
       row.notes ?? null,
       JSON.stringify(row.overrides_json ?? {}),
+      (row.validation_schema_version ?? "v1") || "v1",
+      JSON.stringify(row.validation_output_json ?? {}),
       row.validator ?? null,
       row.submit ?? false,
       submittedAt,

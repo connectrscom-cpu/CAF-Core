@@ -100,6 +100,8 @@ export async function jsonTaskDetailResponse(
       heygen_avatar_id: optionalTrimmedString(latestOv.heygen_avatar_id),
       heygen_voice_id: optionalTrimmedString(latestOv.heygen_voice_id),
       rewrite_copy: latestOv.rewrite_copy === false ? "false" : "true",
+      regenerate:
+        typeof latestOv.regenerate === "boolean" ? (latestOv.regenerate ? "true" : "false") : undefined,
       overrides_from_last_review:
         overrideKeysTouched.length > 0
           ? overrideKeysTouched.map((k) => k.replace(/^final_/, "").replace(/_override$/, "")).join(", ")

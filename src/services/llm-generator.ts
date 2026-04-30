@@ -681,20 +681,22 @@ export async function generateForJob(
 
     // 5A DraftPackage contract: validate + add canonical package_type field.
     // Keep the rollout decoupled from output-schema validation: warn by default, enforce only when configured.
+    // We also persist the normalized draft package snapshot onto the job for inspection/traceability.
     const cfg = loadConfig();
     const contractMode = cfg.CAF_DRAFT_PACKAGE_CONTRACT_MODE;
+    let draftPackageValidation: ReturnType<typeof validateAndNormalizeDraftPackage> | null = null;
     if (contractMode !== "skip") {
-      const v = validateAndNormalizeDraftPackage(job.flow_type, parsed);
-      parsed = v.output;
-      if (v.warnings.length > 0) {
+      draftPackageValidation = validateAndNormalizeDraftPackage(job.flow_type, parsed);
+      parsed = draftPackageValidation.output;
+      if (draftPackageValidation.warnings.length > 0) {
         process.stderr.write(
           `[llm-generator] draft_package_contract_warn task_id=${job.task_id} flow=${job.flow_type} warnings=${JSON.stringify(
-            v.warnings.slice(0, 12)
+            draftPackageValidation.warnings.slice(0, 12)
           )}\n`
         );
       }
-      if (v.errors.length > 0) {
-        const msg = `DraftPackage contract failed: ${v.errors.join("; ")}`;
+      if (draftPackageValidation.errors.length > 0) {
+        const msg = `DraftPackage contract failed: ${draftPackageValidation.errors.join("; ")}`;
         if (contractMode === "enforce") {
           return {
             draft_id: draftId,
@@ -710,7 +712,7 @@ export async function generateForJob(
         } else {
           process.stderr.write(
             `[llm-generator] draft_package_contract_error task_id=${job.task_id} flow=${job.flow_type} errors=${JSON.stringify(
-              v.errors.slice(0, 12)
+              draftPackageValidation.errors.slice(0, 12)
             )}\n`
           );
         }
@@ -745,6 +747,12 @@ export async function generateForJob(
         generated_output: storedOutput,
         draft_id: draftId,
       };
+      if (draftPackageValidation) {
+        merge.draft_package_snapshot = storedOutput;
+        merge.draft_package_type = draftPackageValidation.package_type;
+        merge.draft_package_warnings = draftPackageValidation.warnings;
+        merge.draft_package_errors = draftPackageValidation.errors;
+      }
       // Prompt-template forensic attribution (Flow Engine templates, not prompt versions).
       merge.prompt_template_name = promptTemplate.prompt_name;
       merge.prompt_template_flow_type = promptTemplate.flow_type;

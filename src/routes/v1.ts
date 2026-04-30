@@ -44,6 +44,9 @@ import { z } from "zod";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
 import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
+import { buildValidationOutputV1 } from "../domain/validation-output.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+import { applyEditorialFlatOverridesToGeneratedOutput, partitionEditorialOverrides } from "../services/editorial-copy-apply.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -80,6 +83,11 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
      * no image-gen tool submission is billed when only the copy needs rework.
      */
     skip_image_regeneration: z.boolean().optional(),
+    /**
+     * When set, stored on `overrides_json` and used as the first input to `inferRegenerateFromOverrides`
+     * (overrides slide/script/skip inference). Review UI should send this with every decision.
+     */
+    regenerate: z.boolean().optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -100,6 +108,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("rewrite_copy", "rewrite_copy");
     put("skip_video_regeneration", "skip_video_regeneration");
     put("skip_image_regeneration", "skip_image_regeneration");
+    put("regenerate", "regenerate");
     return out;
   }
 
@@ -111,13 +120,33 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, projectSlug);
     const task_id = taskIdRaw.trim();
 
+    const jobRow = await getContentJobByTaskId(db, project.id, task_id);
+    const flowType = jobRow ? String(jobRow.flow_type ?? "") : "";
+    const gp = jobRow ? ((jobRow.generation_payload ?? {}) as Record<string, unknown>) : {};
+    const submittedAtIso = new Date().toISOString();
+    const overridesMerged = mergeEditorialDecideOverrides(body);
+    const validationOutput = buildValidationOutputV1({
+      submittedAtIso,
+      decision: body.decision,
+      validator: body.validator ?? null,
+      notes: body.notes ?? null,
+      rejection_tags: body.rejection_tags ?? [],
+      overrides_json: overridesMerged,
+      flow_type: flowType || null,
+      generation_payload: gp,
+    });
+    // Make the routing boolean available to legacy rework logic via overrides_json too.
+    overridesMerged.regenerate = validationOutput.rework_hints.regenerate;
+
     await insertEditorialReview(db, {
       task_id,
       project_id: project.id,
       decision: body.decision,
       rejection_tags: body.rejection_tags ?? [],
       notes: body.notes ?? null,
-      overrides_json: mergeEditorialDecideOverrides(body),
+      overrides_json: overridesMerged,
+      validation_schema_version: validationOutput.schema_version,
+      validation_output_json: validationOutput as unknown as Record<string, unknown>,
       validator: body.validator ?? null,
       submit: true,
     });
@@ -142,15 +171,42 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       metadata: {},
     });
 
+    // Mirror the latest structured review output onto the job row for quick downstream access.
+    await db.query(
+      `UPDATE caf_core.content_jobs
+       SET review_snapshot = $1::jsonb, updated_at = now()
+       WHERE project_id = $2 AND task_id = $3`,
+      [JSON.stringify({ validation_output: validationOutput }), project.id, task_id]
+    );
+
+    /**
+     * Copy-only bypass:
+     * - If reviewer is approving AND regenerate=false, patch copy fields into
+     *   generation_payload.generated_output and reuse existing assets (no renderer/HeyGen).
+     */
+    if (body.decision === "APPROVED" && validationOutput.rework_hints.regenerate === false) {
+      const gpNext: Record<string, unknown> = { ...(gp ?? {}) };
+      const genOut = pickGeneratedOutputOrEmpty(gpNext);
+      const { flat } = partitionEditorialOverrides(overridesMerged);
+      const merged = applyEditorialFlatOverridesToGeneratedOutput(genOut, flat);
+      gpNext.generated_output = merged;
+      gpNext.generation_reason = "REVIEW_COPY_ONLY_APPROVAL";
+      await db.query(
+        `UPDATE caf_core.content_jobs
+         SET generation_payload = $1::jsonb, updated_at = now()
+         WHERE project_id = $2 AND task_id = $3`,
+        [JSON.stringify(gpNext), project.id, task_id]
+      );
+    }
+
     if (body.decision === "APPROVED") {
-      const jobRow = await getContentJobByTaskId(db, project.id, task_id);
       const flow = String(jobRow?.flow_type ?? "");
-      const gp = (jobRow?.generation_payload ?? null) as Record<string, unknown> | null;
+      const gp2 = (jobRow?.generation_payload ?? null) as Record<string, unknown> | null;
       if (isCarouselFlow(flow)) {
         const urls = await buildCarouselPublishUrls(db, project.id, task_id);
         await mergePublishUrlsIntoJob(db, project.id, task_id, urls);
       } else if (isVideoFlow(flow)) {
-        const vUrl = await buildVideoPublishUrl(db, project.id, task_id, gp);
+        const vUrl = await buildVideoPublishUrl(db, project.id, task_id, gp2);
         if (vUrl) await mergeVideoPublishUrlIntoJob(db, project.id, task_id, vUrl);
       }
     }

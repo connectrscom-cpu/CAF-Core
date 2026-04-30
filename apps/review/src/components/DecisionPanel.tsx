@@ -57,6 +57,11 @@ export interface DecisionPanelProps {
    * orchestrator skips the image-gen call (credit-safe captions-only pass).
    */
   skipImageRegeneration?: boolean;
+  /**
+   * Prefill from `latest_overrides_json.regenerate` when reopening a task; when omitted, default is
+   * “regenerate assets” on (explicit reviewer choice still wins on submit).
+   */
+  existingRegenerate?: boolean;
 }
 
 export function DecisionPanel({
@@ -82,12 +87,16 @@ export function DecisionPanel({
   notesAddendumLabel = "Prompt analysis",
   skipVideoRegeneration,
   skipImageRegeneration,
+  existingRegenerate,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
   const [tags, setTags] = useState<string[]>([]);
   const [validator, setValidator] = useState("");
   const [rewriteCopy, setRewriteCopy] = useState(existingRewriteCopy !== false);
+  const [regenerateAssets, setRegenerateAssets] = useState(
+    () => existingRegenerate !== undefined ? existingRegenerate : true
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
@@ -95,6 +104,10 @@ export function DecisionPanel({
   useEffect(() => {
     setRewriteCopy(existingRewriteCopy !== false);
   }, [existingRewriteCopy, taskId]);
+
+  useEffect(() => {
+    setRegenerateAssets(existingRegenerate !== undefined ? existingRegenerate : true);
+  }, [existingRegenerate, taskId]);
 
   const submit = useCallback(async () => {
     if (!decision || !["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
@@ -142,6 +155,7 @@ export function DecisionPanel({
           ...(effectiveDecision === "NEEDS_EDIT" && skipImageRegeneration === true
             ? { skip_image_regeneration: true }
             : {}),
+          regenerate: regenerateAssets,
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -180,6 +194,7 @@ export function DecisionPanel({
     notesAddendumLabel,
     skipVideoRegeneration,
     skipImageRegeneration,
+    regenerateAssets,
   ]);
 
   const toggleTag = (tag: string) => {
@@ -219,6 +234,33 @@ export function DecisionPanel({
         >
           Reject
         </button>
+      </div>
+
+      <div
+        style={{
+          marginBottom: 14,
+          padding: 12,
+          background: "var(--bg-secondary)",
+          borderRadius: 8,
+          border: "1px solid var(--border-subtle)",
+        }}
+      >
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={regenerateAssets}
+            onChange={(e) => setRegenerateAssets(e.target.checked)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            <strong>Regenerate rendered assets</strong> on the next pass when the pipeline would otherwise
+            re-run renders or HeyGen.
+            <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
+              Uncheck for copy-only updates you want applied without billing another render or HeyGen run
+              (caption, hashtags, hook, title — no slide/script/visual changes).
+            </span>
+          </span>
+        </label>
       </div>
 
       {hasEdits && (

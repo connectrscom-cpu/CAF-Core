@@ -17,6 +17,7 @@ import { VideoReviewEdits } from "@/components/VideoReviewEdits";
 import { ImageReviewEdits } from "@/components/ImageReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
+import { InspectValidationJson } from "@/components/InspectValidationJson";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -67,6 +68,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     error_message: string | null;
   } | null>(null);
   const [upstreamLineage, setUpstreamLineage] = useState<Record<string, unknown> | null>(null);
+  const [fullJob, setFullJob] = useState<Record<string, unknown> | null>(null);
 
   const execTaskId = (data?.task_id ?? "").trim() || task_id;
 
@@ -105,6 +107,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setSkipImageRegeneration(false);
     setSubmittedHeygenPrompt(null);
     setUpstreamLineage(null);
+    setFullJob(null);
   }, [task_id]);
 
   useEffect(() => {
@@ -162,6 +165,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       if (!taskRes.ok) throw new Error(await taskRes.text());
       const taskJson: TaskDetailResponse = await taskRes.json();
       setData(taskJson.data);
+      // Fetch full Core job detail for JSON inspection (includes reviews + validation_output_json).
+      fetch(`/api/task/${encodeURIComponent(task_id)}?${qs}&include_job=1`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          const job = j && typeof j === "object" ? (j as any).job : null;
+          setFullJob(job && typeof job === "object" ? (job as Record<string, unknown>) : null);
+        })
+        .catch(() => setFullJob(null));
       if (assetsRes.ok) {
         const assetsJson: AssetsResponse = await assetsRes.json();
         const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
@@ -410,6 +421,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 </pre>
               </details>
             </div>
+
+            <div className="mt-4">
+              <InspectValidationJson job={fullJob} />
+            </div>
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -484,6 +499,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               existingDecision={decision}
               existingNotes={notes}
               existingRewriteCopy={data.rewrite_copy !== "false"}
+              existingRegenerate={
+                data.regenerate === "false" ? false : data.regenerate === "true" ? true : undefined
+              }
               finalTitleOverride={videoFlow ? undefined : editedTitle}
               finalHookOverride={editedHook}
               finalCaptionOverride={editedCaption}

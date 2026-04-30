@@ -27,6 +27,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       rewrite_copy?: boolean;
       skip_video_regeneration?: boolean;
       skip_image_regeneration?: boolean;
+      regenerate?: boolean;
     };
     const decision = (body.decision ?? "").trim().toUpperCase();
     if (!["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
@@ -61,6 +62,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(body.skip_image_regeneration !== undefined && {
         skip_image_regeneration: body.skip_image_regeneration,
       }),
+      ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
     });
     if (!result.ok) {
       const st =

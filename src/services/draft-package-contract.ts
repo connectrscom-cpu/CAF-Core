@@ -93,6 +93,64 @@ function normalizeCarouselFieldToObject(out: Record<string, unknown>): void {
   }
 }
 
+function normalizeCarouselPublishMetadata(out: Record<string, unknown>): void {
+  const caption = String(out.caption ?? out.primary_copy ?? "").trim();
+  const tags = uniq(normalizeHashtags(out.hashtags));
+
+  // Prefer a single canonical location for publish metadata: top-level caption + hashtags.
+  // But accept common generator shapes:
+  // - output.carousel.caption / output.carousel.hashtags
+  // - output.metadata.caption / output.metadata.hashtags
+  // - output.variations[0].caption / output.variations[0].hashtags
+  const carousel =
+    out.carousel && typeof out.carousel === "object" && !Array.isArray(out.carousel)
+      ? (out.carousel as Record<string, unknown>)
+      : null;
+  const metadata =
+    out.metadata && typeof out.metadata === "object" && !Array.isArray(out.metadata)
+      ? (out.metadata as Record<string, unknown>)
+      : null;
+  const variations = Array.isArray(out.variations) ? out.variations : null;
+  const v0 =
+    variations?.[0] && typeof variations[0] === "object" && !Array.isArray(variations[0])
+      ? (variations[0] as Record<string, unknown>)
+      : null;
+
+  const fallbackCaption = [
+    caption,
+    String(carousel?.caption ?? "").trim(),
+    String(metadata?.caption ?? "").trim(),
+    String(v0?.caption ?? "").trim(),
+  ].find((s) => s && s.trim());
+  if (fallbackCaption) {
+    ensureStringField(out, "caption", fallbackCaption);
+    ensureStringField(out, "primary_copy", fallbackCaption);
+  }
+
+  const fallbackTags = [
+    ...tags,
+    ...normalizeHashtags(carousel?.hashtags),
+    ...normalizeHashtags(metadata?.hashtags),
+    ...normalizeHashtags(v0?.hashtags),
+    ...(typeof out.caption === "string" ? extractHashtagsFromCaptionText(out.caption) : []),
+  ];
+  const canonTags = uniq(fallbackTags);
+  if (canonTags.length > 0) {
+    out.hashtags = canonTags;
+  }
+
+  // If the generator includes variations but leaves publish fields blank there,
+  // backfill for downstream UIs that read variation-level fields.
+  if (v0) {
+    if (typeof v0.caption !== "string" || !v0.caption.trim()) {
+      v0.caption = String(out.caption ?? "").trim();
+    }
+    if (!Array.isArray(v0.hashtags) || v0.hashtags.length === 0) {
+      v0.hashtags = Array.isArray(out.hashtags) ? out.hashtags : [];
+    }
+  }
+}
+
 function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
   if (isCarouselFlow(flowType ?? "")) return "carousel_package";
   if (isVideoFlow(flowType ?? "")) return "heygen_package";
@@ -189,16 +247,13 @@ export function validateAndNormalizeDraftPackage(
   }
 
   if (package_type === "carousel_package") {
+    normalizeCarouselFieldToObject(output);
+    normalizeCarouselPublishMetadata(output);
+
     const r = validateCarouselPackage(output);
     warnings.push(...r.warnings);
     errors.push(...r.errors);
-    normalizeCarouselFieldToObject(output);
-    // Normalize hashtags into a stable list form when present.
-    if (output.hashtags != null) output.hashtags = uniq(normalizeHashtags(output.hashtags));
-    else if (typeof output.caption === "string") {
-      const fromCap = extractHashtagsFromCaptionText(output.caption);
-      if (fromCap.length > 0) output.hashtags = uniq(fromCap);
-    }
+
     // Canonical fields, additive only.
     ensureStringField(output, "hook_text", String(output.hook_text ?? output.hook ?? output.headline ?? ""));
     ensureStringField(output, "primary_copy", String(output.primary_copy ?? output.caption ?? ""));

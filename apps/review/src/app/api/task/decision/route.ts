@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
       rewrite_copy?: boolean;
       skip_video_regeneration?: boolean;
       skip_image_regeneration?: boolean;
+      regenerate?: boolean;
     };
     const rawTid = (body.task_id ?? "").trim();
     if (!rawTid) return NextResponse.json({ error: "task_id required in body" }, { status: 400 });
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
       ...(body.skip_image_regeneration !== undefined && {
         skip_image_regeneration: body.skip_image_regeneration,
       }),
+      ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
     });
     if (!result.ok) {
       const st =

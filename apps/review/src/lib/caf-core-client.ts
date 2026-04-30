@@ -188,6 +188,8 @@ export interface ReviewQueueJob {
   latest_validator: string | null;
   latest_submitted_at: string | null;
   latest_overrides_json?: Record<string, unknown> | null;
+  /** Latest structured validation output payload from Core (optional). */
+  latest_validation_output_json?: Record<string, unknown> | null;
   /** Present on `/v1/review-queue-all/...` responses. */
   project_slug?: string;
   project_display_name?: string | null;
@@ -218,6 +220,8 @@ export interface ReviewJobDetail extends ReviewQueueJob {
     rejection_tags: unknown[];
     validator: string | null;
     submitted_at: string | null;
+    validation_schema_version?: string | null;
+    validation_output_json?: Record<string, unknown> | null;
     created_at: string;
   }>;
   auto_validation: {
@@ -525,6 +529,7 @@ export async function submitDecision(
     rewrite_copy?: boolean;
     skip_video_regeneration?: boolean;
     skip_image_regeneration?: boolean;
+    regenerate?: boolean;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -560,6 +565,7 @@ export async function submitDecision(
         ...(body.skip_image_regeneration !== undefined && {
           skip_image_regeneration: body.skip_image_regeneration,
         }),
+        ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
       }),
     });
   } catch (e) {
