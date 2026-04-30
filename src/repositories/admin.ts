@@ -41,6 +41,8 @@ export interface JobListRow {
   platform: string | null;
   flow_type: string | null;
   status: string | null;
+  /** Canonical DraftPackage type derived from generation_payload.generated_output.package_type */
+  package_type: string | null;
   recommended_route: string | null;
   pre_gen_score: string | null;
   qc_status: string | null;
@@ -146,6 +148,7 @@ export async function listJobs(
   const rows = await q<JobListRow>(
     db,
     `SELECT c.id, c.task_id, c.run_id, c.platform, c.flow_type, c.status, c.recommended_route,
+            NULLIF(btrim(c.generation_payload->'generated_output'->>'package_type'), '') AS package_type,
             c.pre_gen_score::text, c.qc_status, c.created_at::text, c.updated_at::text,
             c.candidate_id, c.variation_name, c.render_provider, c.render_status,
             COALESCE(NULLIF(trim(c.render_state->>'status'), ''), NULLIF(trim(c.render_state->>'provider'), '')) AS render_phase,
@@ -163,10 +166,10 @@ export async function listJobs(
                 WHEN 'GENERATED' THEN
                   CASE
                     WHEN c.qc_status IS NOT NULL AND btrim(c.qc_status) <> '' THEN
-                      'GENERATED · LLM done · QC ' || trim(c.qc_status) ||
-                      ' · media/render not started (status stays here until RENDERING)'
+                      'GENERATED · Package ready · QC ' || trim(c.qc_status) ||
+                      ' · render is manual (use Runs → Render)'
                     ELSE
-                      'GENERATED · LLM done · QC/diagnostics next — run Process to continue'
+                      'GENERATED · Package ready · QC/diagnostics pending — run Generate to finish package checks'
                   END
                 WHEN 'RENDERING' THEN
                   CASE COALESCE(NULLIF(trim(c.render_state->>'status'), ''), '')

@@ -258,8 +258,9 @@ describe("carousel template shape (body_slides)", () => {
     expect(Array.isArray(ctx.body_slides)).toBe(true);
     expect((ctx.body_slides as unknown[])).toHaveLength(1);
     expect((ctx.body_slides as Array<{ headline?: string }>)[0]?.headline).toBe("H2");
-    expect((ctx.cta_slide as { body?: string; handle?: string }).body).toBe("H3");
-    expect((ctx.cta_slide as { handle?: string }).handle).toBe("B3");
+    // CTA panel body comes from the CTA slide body; "handle line" is only set when it looks like @username.
+    expect((ctx.cta_slide as { body?: string; handle?: string }).body).toBe("B3");
+    expect((ctx.cta_slide as { handle?: string }).handle).toBeUndefined();
   });
 
   it("appends a CTA slide when deck is 2 slides and last slide doesn't look like CTA", () => {
@@ -306,7 +307,7 @@ describe("carousel template shape (body_slides)", () => {
     const flat = slidesFromGeneratedOutput(base);
     const ctx = buildSlideRenderContext(base, flat, 4);
     expect((ctx.body_slides as unknown[])).toHaveLength(2);
-    expect((ctx.cta_slide as { body?: string }).body).toBe("D");
+    expect((ctx.cta_slide as { body?: string }).body).toBe("d");
   });
 
   it("fills default CTA copy and project Instagram when the last slide has no text", () => {

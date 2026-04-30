@@ -527,7 +527,11 @@ function renderStepper(){
   setBadge('step-badge-pack',s.packOk?'completed':(s.ideasOk?'in progress':'not started'),s.packOk?'badge-g':(s.ideasOk?'badge-y':'badge-b'));
   setBadge('step-badge-run',s.packOk?'in progress':'not started',s.packOk?'badge-y':'badge-b');
 
-  var unlock={select:true,evidence:s.hasImport,insights:s.evidenceOk,ideas:s.insightsOk,pack:s.ideasOk,run:s.packOk};
+  /**
+   * Allow opening the Signal Pack inspector without completing prior stages.
+   * Building packs still requires an import / idea list, but inspection should be always available.
+   */
+  var unlock={select:true,evidence:s.hasImport,insights:s.evidenceOk,ideas:s.insightsOk,pack:true,run:s.packOk};
   var buttons=document.querySelectorAll('.step-btn');
   buttons.forEach(function(btn){
     var step=btn.getAttribute('data-step')||'';

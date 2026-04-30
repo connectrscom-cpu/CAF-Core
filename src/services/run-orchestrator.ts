@@ -46,6 +46,7 @@ import {
 } from "./run-context-snapshot.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
+import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
 
 /** Planner source rows written to the run before Start (`POST .../candidates`). */
 function plannerSourceRowsFromRun(run: RunRow): Record<string, unknown>[] {
@@ -280,14 +281,14 @@ export async function startRun(
         status: "PLANNED",
         recommended_route: job.recommended_route,
         pre_gen_score: job.pre_gen_score,
-        generation_payload: {
+        generation_payload: buildPlannedGenerationPayloadBase({
           signal_pack_id: run.signal_pack_id,
           candidate_data: candidateData ?? {},
           prompt_version_id: job.prompt_version_id,
           prompt_id: job.prompt_id,
           prompt_version_label: job.prompt_version_label,
           variation_index: job.variation_index,
-        },
+        }),
       });
 
       createdJobIds.push(result.id);

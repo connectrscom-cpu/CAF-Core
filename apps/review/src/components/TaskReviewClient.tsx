@@ -66,6 +66,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     ok: boolean;
     error_message: string | null;
   } | null>(null);
+  const [upstreamLineage, setUpstreamLineage] = useState<Record<string, unknown> | null>(null);
 
   const execTaskId = (data?.task_id ?? "").trim() || task_id;
 
@@ -103,6 +104,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setImagePromptAnalysis("");
     setSkipImageRegeneration(false);
     setSubmittedHeygenPrompt(null);
+    setUpstreamLineage(null);
   }, [task_id]);
 
   useEffect(() => {
@@ -204,6 +206,31 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     };
     run();
     return () => { cancelled = true; };
+  }, [data, task_id, projectFromUrl]);
+
+  /**
+   * Fetch upstream lineage (run → signal pack → idea → grounding insights/evidence).
+   * Silent on error — the panel stays empty if the task was ingested without idea links.
+   */
+  useEffect(() => {
+    if (!data) return;
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const qs = taskApiQuery(task_id, projectFromUrl);
+        const res = await fetch(`/api/task/lineage?${qs}`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = (await res.json()) as { lineage?: Record<string, unknown> };
+        if (cancelled) return;
+        setUpstreamLineage(json.lineage ?? null);
+      } catch {
+        /* non-fatal */
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
   }, [data, task_id, projectFromUrl]);
 
   const decision = useMemo(() => (data?.decision ?? "").trim(), [data?.decision]);
@@ -367,6 +394,21 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                   </span>
                 </div>
               )}
+            </div>
+
+            <div className="card mt-4">
+              <div className="card-header">Upstream lineage (inspect fields)</div>
+              <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--fg-secondary)" }}>
+                Run → Signal pack → Idea → Grounding insights → Evidence rows.
+              </p>
+              <details style={{ marginTop: 10, fontSize: 13 }}>
+                <summary style={{ cursor: "pointer", color: "var(--fg-secondary)" }}>
+                  {upstreamLineage ? "Show lineage JSON" : "No lineage loaded"}
+                </summary>
+                <pre className="slides-json" style={{ marginTop: 8 }}>
+                  {JSON.stringify(upstreamLineage, null, 2)}
+                </pre>
+              </details>
             </div>
           </div>
 

@@ -113,13 +113,22 @@ function deriveFallbackHashtags(o: Record<string, unknown>): string[] {
 /**
  * Ensures `caption` and `hashtags` are present for downstream review/publish when the LLM omitted them.
  */
-export function ensureVideoScriptPublicationMetadata(parsed: Record<string, unknown>): Record<string, unknown> {
+export function ensureVideoScriptPublicationMetadata(
+  parsed: Record<string, unknown>,
+  opts?: { hashtag_seeds?: string[] | null }
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...parsed };
   let cap = pickCaptionFromVideoScriptJson(out);
   if (!cap) cap = deriveFallbackCaption(out);
   const trimmed = cap.trim();
   if (trimmed) out.caption = trimmed;
-  if (!hasNonEmptyHashtags(out)) out.hashtags = deriveFallbackHashtags(out);
+  if (!hasNonEmptyHashtags(out)) {
+    const seeds = Array.isArray(opts?.hashtag_seeds)
+      ? opts!.hashtag_seeds!.map((x) => String(x ?? "").trim()).filter(Boolean)
+      : [];
+    // Prefer signal pack hashtag seeds (evidence-weighted) when present; fall back to local derivation.
+    out.hashtags = seeds.length > 0 ? seeds.slice(0, 12) : deriveFallbackHashtags(out);
+  }
   return out;
 }
 
@@ -333,6 +342,15 @@ export async function ensureVideoScriptInPayload(
       job.platform,
       job.flow_type
     );
+    const seedsEarly =
+      (packEarly.signal_pack_publication_hints &&
+        typeof packEarly.signal_pack_publication_hints === "object" &&
+        !Array.isArray(packEarly.signal_pack_publication_hints) &&
+        Array.isArray((packEarly.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds))
+        ? ((packEarly.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds as unknown[])
+            .map((x) => String(x ?? "").trim())
+            .filter(Boolean)
+        : [];
     const alignEarly =
       isProductVideoFlow(job.flow_type) || multiSceneEarly ? `\n\n${VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM}` : "";
     const enforcedEarly = await enforceSpokenScriptWordLawOnParsedOutput(
@@ -351,7 +369,7 @@ export async function ensureVideoScriptInPayload(
       }
     );
     if (enforcedEarly.error) return { ok: false, error: enforcedEarly.error };
-    const withMetaEarly = ensureVideoScriptPublicationMetadata(enforcedEarly.parsed);
+    const withMetaEarly = ensureVideoScriptPublicationMetadata(enforcedEarly.parsed, { hashtag_seeds: seedsEarly });
     const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, withMetaEarly, {
       maxHashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
     });
@@ -381,6 +399,15 @@ export async function ensureVideoScriptInPayload(
     job.platform,
     job.flow_type
   );
+  const seeds =
+    (pack.signal_pack_publication_hints &&
+      typeof pack.signal_pack_publication_hints === "object" &&
+      !Array.isArray(pack.signal_pack_publication_hints) &&
+      Array.isArray((pack.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds))
+      ? ((pack.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds as unknown[])
+          .map((x) => String(x ?? "").trim())
+          .filter(Boolean)
+      : [];
 
   /**
    * Many Flow Engine templates expect `{{script_input}}` (candidate + optional existing_output).
@@ -455,7 +482,7 @@ export async function ensureVideoScriptInPayload(
     }
   );
   if (enforced.error) return { ok: false, error: enforced.error };
-  merged = ensureVideoScriptPublicationMetadata(enforced.parsed);
+  merged = ensureVideoScriptPublicationMetadata(enforced.parsed, { hashtag_seeds: seeds });
 
   const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
     maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),

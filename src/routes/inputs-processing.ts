@@ -33,6 +33,7 @@ import {
   previewBroadInsightsPrompt,
   runBroadInsightsForImport,
 } from "../services/inputs-broad-llm-insights.js";
+import { computeHashtagLeaderboardForEvidenceImport } from "../services/hashtag-leaderboard.js";
 import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-insights.js";
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
@@ -132,6 +133,33 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     }
     const stats = await getImportEvidenceStats(db, project.id, params.data.import_id);
     return { ok: true, import: imp, stats };
+  });
+
+  /**
+   * Weighted hashtag leaderboard computed from evidence rows (caption + hashtag fields),
+   * prioritizing rows with higher `rating_score` when available.
+   */
+  app.get("/v1/inputs-processing/:project_slug/import/:import_id/hashtag-leaderboard", async (request, reply) => {
+    const params = z
+      .object({ project_slug: z.string(), import_id: z.string() })
+      .safeParse(request.params);
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(300).default(80),
+        max_rows: z.coerce.number().int().min(1).max(15000).default(5000),
+      })
+      .safeParse(request.query);
+    if (!params.success || !UUID_RE.test(params.data.import_id) || !query.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const imp = await getInputsEvidenceImport(db, project.id, params.data.import_id);
+    if (!imp) return reply.code(404).send({ ok: false, error: "not_found" });
+    const out = await computeHashtagLeaderboardForEvidenceImport(db, project.id, params.data.import_id, {
+      limit: query.data.limit,
+      max_rows: query.data.max_rows,
+    });
+    return { ok: true, import_id: params.data.import_id, ...out };
   });
 
   /**

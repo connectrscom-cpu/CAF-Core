@@ -10,6 +10,13 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 
 export interface JobContentPreview {
   flow_hint: string | null;
+  /** Present when the job is still at candidate handoff and nothing generated yet. */
+  planned?: {
+    stage: "PLANNED";
+    title?: string;
+    summary_excerpt?: string;
+    key_point?: string;
+  };
   carousel?: {
     slide_count: number;
     slides: Array<{ index: number; hook?: string; title?: string; body?: string; raw?: string }>;
@@ -27,6 +34,13 @@ export interface JobContentPreview {
       script_text?: string;
     }>;
   };
+}
+
+function excerpt(text: string, maxChars: number): string {
+  const t = text.trim();
+  if (!t) return "";
+  if (t.length <= maxChars) return t;
+  return `${t.slice(0, maxChars)}…`;
 }
 
 export function buildJobContentPreview(flowType: string | null, generationPayload: unknown): JobContentPreview {
@@ -79,6 +93,23 @@ export function buildJobContentPreview(flowType: string | null, generationPayloa
         };
       }),
     };
+  }
+
+  if (!preview.carousel && !preview.video && !preview.scene_assembly) {
+    const cand = asRecord(pay.candidate_data) ?? {};
+    const title = String(cand.content_idea ?? cand.title ?? "").trim();
+    const summary = String(cand.summary ?? cand.three_liner ?? "").trim();
+    const kp = cand.key_points;
+    const firstPoint =
+      Array.isArray(kp) && kp.length > 0 ? String(kp[0] ?? "").trim() : "";
+    if (title || summary || firstPoint) {
+      preview.planned = {
+        stage: "PLANNED",
+        title: title || undefined,
+        summary_excerpt: summary ? excerpt(summary, 320) : undefined,
+        key_point: firstPoint || undefined,
+      };
+    }
   }
 
   return preview;

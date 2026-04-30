@@ -400,7 +400,7 @@ export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string):
       qc_checklist_version: null,
       prompt_template_id: null,
       priority_weight: p--,
-      notes: "Product marketing video — maps to Video_Prompt_Generator templates; enable when ready.",
+      notes: "Product marketing video — maps to FLOW_VID_PROMPT templates; enable when ready.",
       heygen_mode: defaultProductFlowHeygenMode(ft),
     });
   }

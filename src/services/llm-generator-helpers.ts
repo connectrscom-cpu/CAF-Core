@@ -69,6 +69,7 @@ function uniqStrings(xs: string[], max: number): string[] {
  */
 function signalPackPublicationHints(signalPack: Record<string, unknown>): Record<string, unknown> {
   const derived = asRecord(signalPack.derived_globals_json) ?? {};
+  const leaderboardRaw = asArray(derived.hashtag_leaderboard_v1) ?? [];
 
   const scalarStrings: string[] = [];
   for (const k of [
@@ -86,6 +87,14 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
   const ideaRows = asArray(signalPack.ideas_json) ?? [];
   const hashtagCandidates: string[] = [];
   const keywordCandidates: string[] = [];
+
+  // Highest-signal: ranked tags computed from evidence weighting, if present.
+  for (let i = 0; i < Math.min(60, leaderboardRaw.length); i++) {
+    const row = asRecord(leaderboardRaw[i]);
+    const ht = row ? String(row.hashtag ?? "").trim() : "";
+    if (ht) hashtagCandidates.push(ht);
+  }
+
   for (let i = 0; i < Math.min(24, ideaRows.length); i++) {
     const row = asRecord(ideaRows[i]);
     if (!row) continue;

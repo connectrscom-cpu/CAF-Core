@@ -8,6 +8,48 @@ const { Pool } = require("pg");
 
 const XLSX_PATH = process.argv[2] || "C:\\Users\\migue\\Downloads\\Flow Engine (4).xlsx";
 
+const LEGACY_FLOW_TO_CANONICAL = {
+  Flow_Carousel_Copy: "FLOW_CAROUSEL",
+  Carousel_Angle_Extractor: "FLOW_ANGLE",
+  Carousel_Slide_Architecture: "FLOW_STRUCTURE",
+  CTA_Generator: "FLOW_CTA",
+  Hook_Variations: "FLOW_HOOKS",
+  Text_Post_Generator: "FLOW_TEXT",
+  Video_Prompt_Generator: "FLOW_VID_PROMPT",
+  Video_Script_Generator: "FLOW_VID_SCRIPT",
+  Video_Scene_Generator: "FLOW_VID_SCENES",
+};
+
+const OUTPUT_SCHEMA_TO_CANONICAL = {
+  Carousel_Insight_Output: "OS_CAROUSEL",
+  Carousel_Angle_Output: "OS_ANGLE",
+  Carousel_Structure_Output: "OS_STRUCTURE",
+  CTA_Output: "OS_CTA",
+  Hook_Variations_Output: "OS_HOOKS",
+  Text_Post_Output: "OS_TEXT",
+  Video_Prompt_Output: "OS_VID_PROMPT",
+  Video_Script_Output: "OS_VID_SCRIPT",
+  Video_Scene_Generator_Output: "OS_VID_SCENES",
+  Viral_Format_Output: "OS_VIRAL",
+};
+
+const canonFlow = (ft) => {
+  const t = (ft ?? "").trim();
+  return LEGACY_FLOW_TO_CANONICAL[t] || t;
+};
+const canonSchema = (n) => {
+  const t = (n ?? "").trim();
+  return OUTPUT_SCHEMA_TO_CANONICAL[t] || t || null;
+};
+const namespacedPromptName = (flowType, promptName) => {
+  const ft = canonFlow(flowType);
+  const pn = (promptName ?? "").trim();
+  if (!pn) return pn;
+  if (/^[A-Z0-9_]+__/.test(pn)) return pn;
+  const key = String(ft).replace(/^FLOW_/, "");
+  return `${key}__${pn}`;
+};
+
 async function main() {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -52,11 +94,11 @@ async function main() {
         risk_profile_default=EXCLUDED.risk_profile_default, candidate_row_template=EXCLUDED.candidate_row_template,
         notes=EXCLUDED.notes, updated_at=now()
     `, [
-      str(r.flow_type), str(r.description), str(r.category), str(r.supported_platforms),
+      str(canonFlow(r.flow_type)), str(r.description), str(r.category), str(r.supported_platforms),
       str(r.output_asset_types), bool(r.requires_signal_pack), bool(r.requires_learning_context),
       bool(r.requires_brand_constraints), str(r.required_inputs), str(r.optional_inputs),
       num(r.default_variation_count) || 1,
-      str(r.output_schema_name), str(r.output_schema_version), str(r.qc_checklist_name),
+      str(canonSchema(r.output_schema_name)), str(r.output_schema_version), str(r.qc_checklist_name),
       str(r.qc_checklist_version), str(r.risk_profile_default), toJsonb(r.candidate_row_template),
       str(r.notes),
     ]);
@@ -68,6 +110,7 @@ async function main() {
   console.log(`\nPrompt Templates: ${prompts.length} rows`);
   for (const r of prompts) {
     if (!r.prompt_name || !r.flow_type) continue;
+    const ft = canonFlow(r.flow_type);
     await pool.query(`
       INSERT INTO caf_core.prompt_templates (
         prompt_name, flow_type, prompt_role, system_prompt, user_prompt_template,
@@ -81,9 +124,9 @@ async function main() {
         temperature_default=EXCLUDED.temperature_default, max_tokens_default=EXCLUDED.max_tokens_default,
         stop_sequences=EXCLUDED.stop_sequences, notes=EXCLUDED.notes, updated_at=now()
     `, [
-      str(r.prompt_name), str(r.flow_type), str(r.prompt_role),
+      str(namespacedPromptName(ft, r.prompt_name)), str(ft), str(r.prompt_role),
       str(r.system_prompt), str(r.user_prompt_template), str(r.output_format_rule),
-      str(r.output_schema_name), str(r.output_schema_version),
+      str(canonSchema(r.output_schema_name)), str(r.output_schema_version),
       num(r.temperature_default), num(r.max_tokens_default),
       str(r.stop_sequences), str(r.notes),
     ]);
@@ -111,7 +154,7 @@ async function main() {
         example_output_json=EXCLUDED.example_output_json, parsing_notes=EXCLUDED.parsing_notes,
         updated_at=now()
     `, [
-      str(r.output_schema_name), String(r.output_schema_version || "1"), str(r.flow_type),
+      str(canonSchema(r.output_schema_name)), String(r.output_schema_version || "1"), str(canonFlow(r.flow_type)),
       typeof schemaJson === "string" ? schemaJson : JSON.stringify(schemaJson),
       str(r.required_keys), str(r.field_types),
       exampleJson ? (typeof exampleJson === "string" ? exampleJson : JSON.stringify(exampleJson)) : "{}",
@@ -167,7 +210,7 @@ async function main() {
       str(r.check_id), str(r.check_name), str(r.check_type),
       str(r.field_path), str(r.operator), str(r.threshold_value),
       str(r.severity), bool(r.blocking), str(r.failure_message),
-      str(r.auto_fix_action), str(r.flow_type), str(r.notes),
+      str(r.auto_fix_action), str(canonFlow(r.flow_type)), str(r.notes),
     ]);
     console.log(`  ✓ ${r.check_id}`);
   }

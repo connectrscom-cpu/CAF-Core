@@ -13,6 +13,17 @@ describe("ensureVideoScriptPublicationMetadata", () => {
     expect((out.hashtags as string[]).length).toBeGreaterThanOrEqual(3);
   });
 
+  it("prefers provided hashtag seeds when hashtags missing", () => {
+    const out = ensureVideoScriptPublicationMetadata(
+      {
+        spoken_script: "First sentence here. Second sentence follows with more detail about the dish.",
+        hook: "Stop scrolling — this olive oil trick changes everything.",
+      },
+      { hashtag_seeds: ["#oliveoil", "#mediterranean", "#kitchenhacks"] }
+    );
+    expect(out.hashtags).toEqual(["#oliveoil", "#mediterranean", "#kitchenhacks"]);
+  });
+
   it("preserves existing caption and hashtags", () => {
     const out = ensureVideoScriptPublicationMetadata({
       spoken_script: "x".repeat(50),

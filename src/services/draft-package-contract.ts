@@ -4,11 +4,14 @@ import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fie
 
 export type DraftPackageContractMode = "skip" | "warn" | "enforce";
 
+export type DraftPackageType = "carousel_package" | "heygen_package";
+
 export type DraftPackageValidation = {
   output: Record<string, unknown>;
   warnings: string[];
   errors: string[];
-  package_type: "render_copy" | "heygen_package" | null;
+  /** Canonical package type (legacy `render_copy` is normalized to `carousel_package`). */
+  package_type: DraftPackageType | null;
 };
 
 function normalizeHashtags(val: unknown): string[] {
@@ -33,30 +36,30 @@ function ensureStringField(out: Record<string, unknown>, key: string, v: string)
   out[key] = t;
 }
 
-function inferPackageType(flowType: string | null | undefined): "render_copy" | "heygen_package" | null {
-  if (isCarouselFlow(flowType ?? "")) return "render_copy";
+function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
+  if (isCarouselFlow(flowType ?? "")) return "carousel_package";
   if (isVideoFlow(flowType ?? "")) return "heygen_package";
   return null;
 }
 
-function validateRenderCopy(out: Record<string, unknown>): { warnings: string[]; errors: string[] } {
+function validateCarouselPackage(out: Record<string, unknown>): { warnings: string[]; errors: string[] } {
   const warnings: string[] = [];
   const errors: string[] = [];
 
   const slides = slidesFromGeneratedOutput(out);
   const usable = slides.filter((s) => slideHasRenderableContent(s));
   if (usable.length === 0) {
-    errors.push("render_copy: no renderable slides (headline/body missing across slide decks)");
+    errors.push("carousel_package: no renderable slides (headline/body missing across slide decks)");
   }
 
   // Caption + hashtags are expected by downstream publishing/review even for carousels.
   const caption = String(out.caption ?? out.primary_copy ?? "").trim();
   if (!caption) {
-    warnings.push("render_copy: missing caption/primary_copy (will reduce publish readiness)");
+    warnings.push("carousel_package: missing caption/primary_copy (will reduce publish readiness)");
   }
   const tags = normalizeHashtags(out.hashtags);
   if (tags.length === 0) {
-    warnings.push("render_copy: missing hashtags (discoverability risk)");
+    warnings.push("carousel_package: missing hashtags (discoverability risk)");
   }
   return { warnings, errors };
 }
@@ -104,17 +107,24 @@ export function validateAndNormalizeDraftPackage(
   const errors: string[] = [];
 
   const inferred = inferPackageType(flowType);
-  const package_type =
-    (typeof output.package_type === "string" && (output.package_type === "render_copy" || output.package_type === "heygen_package")
-      ? (output.package_type as "render_copy" | "heygen_package")
-      : inferred);
+  const rawType = typeof output.package_type === "string" ? output.package_type.trim() : "";
+  const normalizedFromOutput: DraftPackageType | null =
+    rawType === "heygen_package"
+      ? "heygen_package"
+      : rawType === "carousel_package"
+        ? "carousel_package"
+        : rawType === "render_copy"
+          ? "carousel_package"
+          : null;
+
+  const package_type = normalizedFromOutput ?? inferred;
 
   if (package_type) {
     output.package_type = package_type;
   }
 
-  if (package_type === "render_copy") {
-    const r = validateRenderCopy(output);
+  if (package_type === "carousel_package") {
+    const r = validateCarouselPackage(output);
     warnings.push(...r.warnings);
     errors.push(...r.errors);
     // Canonical fields, additive only.

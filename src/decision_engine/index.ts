@@ -28,6 +28,36 @@ export type { GenerationPlanRequest, GenerationPlanResult } from "./types.js";
 export { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 export { generationPlanRequestSchema } from "./types.js";
 
+type IdeaFormatBucket = "carousel" | "video" | "post" | "thread" | "other";
+
+function bucketForIdeaFormat(raw: unknown): IdeaFormatBucket | null {
+  const f = String(raw ?? "")
+    .toLowerCase()
+    .trim();
+  if (!f) return null;
+  if (f === "carousel") return "carousel";
+  if (f === "video") return "video";
+  if (f === "post") return "post";
+  if (f === "thread") return "thread";
+  return "other";
+}
+
+function bucketForFlowType(flowType: string): IdeaFormatBucket {
+  if (isCarouselFlow(flowType)) return "carousel";
+  if (isVideoFlow(flowType)) return "video";
+  return "other";
+}
+
+function ideaKeyForDedupe(c: ScoredCandidate): string {
+  const p = (c.payload ?? {}) as Record<string, unknown>;
+  const ideaId =
+    String(p.idea_id ?? p.candidate_id ?? p.id ?? "").trim() ||
+    // fallback: candidate_id in our orchestrator is `${baseIdeaId}_${flow_type}`
+    String(c.candidate_id).trim();
+  const bucket = bucketForIdeaFormat(p.format) ?? bucketForFlowType(c.flow_type);
+  return `${ideaId}|${bucket}`;
+}
+
 export async function decideGenerationPlan(
   db: Pool,
   config: AppConfig,
@@ -172,9 +202,19 @@ export async function decideGenerationPlan(
   let plannedCarousel = 0;
   let plannedVideo = 0;
   const perFlowPlanned: Record<string, number> = {};
+  const usedIdeaFormat = new Set<string>();
 
   for (const c of sorted) {
     if (remainingSlots <= 0) break;
+
+    // Avoid selecting the same underlying idea more than once for the same format bucket.
+    // This prevents double-picking when multiple flow_types map to the same output format.
+    const ideaFormatKey = ideaKeyForDedupe(c);
+    if (usedIdeaFormat.has(ideaFormatKey)) {
+      dropped.push({ candidate_id: c.candidate_id, reason: "duplicate_idea_format", pre_gen_score: c.pre_gen_score });
+      continue;
+    }
+
     const resolvedPrompt = await resolvePromptVersion(db, {
       projectId: project.id,
       cafGlobalProjectId: cafGlobal.id,
@@ -205,6 +245,7 @@ export async function decideGenerationPlan(
       continue;
     }
 
+    usedIdeaFormat.add(ideaFormatKey);
     for (let v = 0; v < varsThisCandidate; v++) {
       selected.push({
         candidate_id: c.candidate_id,

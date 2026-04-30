@@ -28,6 +28,7 @@ import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
+import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
@@ -325,11 +326,17 @@ ${JSON.stringify(synthInput, null, 0)}`;
   }
 
   const stats = await getImportEvidenceStats(db, project.id, importId);
+  const hashtagStats = await computeHashtagLeaderboardForEvidenceImport(db, project.id, importId, {
+    max_rows: 5000,
+    limit: 120,
+  });
   const derived_globals_json: Record<string, unknown> = {
     from_inputs_evidence_import_id: importId,
     inputs_stats: stats,
     total_candidates: normalized.length,
     ideas_count: ideasJson.length,
+    hashtag_leaderboard_v1: hashtagStats.leaderboard,
+    hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
     ideas_from_insights_llm: {
       context_insights_used: ideasLlm.context_insights_used,
       top_performer_rows_in_context: ideasLlm.top_performer_rows_in_context,

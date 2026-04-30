@@ -6,6 +6,7 @@
  * Models often return flat `slides[]`, `carousel[]`, or `variations` as slide rows — wrap here.
  */
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
+import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
 
 function normalizeCaptionField(c: unknown): string {
   if (typeof c === "string") return c;
@@ -186,7 +187,8 @@ export function normalizeLlmParsedForSchemaValidation(
   parsed: Record<string, unknown>
 ): Record<string, unknown> {
   const out = { ...parsed };
-  const carouselish = /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
+  const ft = resolveCanonicalFlowType(flowType);
+  const carouselish = ft === CANONICAL_FLOW_TYPES.CAROUSEL || /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
   if (!carouselish) return out;
 
   hoistOutputSchemaSchemaJsonCopyFields(out);

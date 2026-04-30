@@ -41,6 +41,7 @@ export function isProductImageFlow(flowType: string | null | undefined): boolean
 }
 
 export function isCarouselFlow(flowType: string): boolean {
+  if (flowType === "FLOW_CAROUSEL") return true;
   return /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
 }
 

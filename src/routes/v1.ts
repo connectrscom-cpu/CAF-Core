@@ -42,6 +42,8 @@ import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
+import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -327,6 +329,11 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     }
     const body = parsed.data;
     const project = await ensureProject(db, body.project_slug);
+    const rawGp = body.generation_payload ?? {};
+    const gp =
+      rawGp && typeof rawGp === "object" && !Array.isArray(rawGp)
+        ? coerceIngestedGenerationPayload(rawGp as Record<string, unknown>)
+        : {};
     const row = await upsertContentJob(db, {
       task_id: body.task_id,
       project_id: project.id,
@@ -341,7 +348,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       recommended_route: body.recommended_route ?? null,
       qc_status: body.qc_status ?? null,
       pre_gen_score: body.pre_gen_score ?? null,
-      generation_payload: body.generation_payload ?? {},
+      generation_payload: gp,
     });
     return { ok: true, id: row.id };
   });
@@ -886,6 +893,32 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       ok: true,
       job: { ...signed, assets, project_slug: params.data.project_slug },
     };
+  });
+
+  /**
+   * Upstream lineage inspector for a single task.
+   * Returns run, signal pack, idea, grounding insight rows, and evidence payloads when available.
+   *
+   * This is meant for operator inspection (debug/audit), not high-throughput listing.
+   */
+  app.get("/v1/review-queue/:project_slug/task/:task_id/lineage", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const lineage = await getJobLineageByTaskId(db, project.id, params.data.task_id);
+    if (!lineage) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, lineage };
+  });
+
+  /** Query-string variant for very long task ids (mirrors `/heygen-last-submit`). */
+  app.get("/v1/review-queue/:project_slug/lineage", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const lineage = await getJobLineageByTaskId(db, project.id, query.data.task_id);
+    if (!lineage) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, lineage };
   });
 
   /**

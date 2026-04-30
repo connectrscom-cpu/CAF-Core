@@ -7,6 +7,7 @@ import { materializeRunCandidates } from "./run-candidates-materialize.js";
 import type { AppConfig } from "../config.js";
 import { getInputsIdeaListById, listInputsIdeasForList } from "../repositories/inputs-idea-lists.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
+import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 
 export type IdeaFormatLimitBucket = "carousel" | "video" | "post" | "thread" | "other";
 
@@ -94,6 +95,10 @@ export async function buildSignalPackFromIdeaList(
   }
 
   const runId = `SIG_IDEAS_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
+  const hashtagStats = await computeHashtagLeaderboardForEvidenceImport(db, project.id, list.inputs_import_id, {
+    max_rows: 5000,
+    limit: 120,
+  });
   const pack = await insertSignalPack(db, {
     run_id: runId,
     project_id: project.id,
@@ -107,6 +112,8 @@ export async function buildSignalPackFromIdeaList(
       from_inputs_import_id: list.inputs_import_id,
       ideas_count: ideasJson.length,
       ideas_count_before_format_limits: before,
+      hashtag_leaderboard_v1: hashtagStats.leaderboard,
+      hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
       format_limits: opts?.format_limits && Object.keys(opts.format_limits).length > 0 ? opts.format_limits : undefined,
       created_at: new Date().toISOString(),
     },

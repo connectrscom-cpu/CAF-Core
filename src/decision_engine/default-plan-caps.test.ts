@@ -14,6 +14,9 @@ describe("defaultMaxJobsPerFlowType", () => {
 
   it("includes Flow Engine workbook keys and legacy video aliases", () => {
     const d = defaultMaxJobsPerFlowType();
+    expect(d.FLOW_VID_SCENES).toBe(1);
+    expect(d.FLOW_VID_SCRIPT).toBe(1);
+    expect(d.FLOW_VID_PROMPT).toBe(1);
     expect(d.Video_Scene_Generator).toBe(1);
     expect(d.Video_Script_Generator).toBe(1);
     expect(d.Video_Prompt_Generator).toBe(1);

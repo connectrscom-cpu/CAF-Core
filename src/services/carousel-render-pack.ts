@@ -323,6 +323,24 @@ function slideDeckTextScore(slides: Record<string, unknown>[]): number {
   return t;
 }
 
+/**
+ * Ensure slide roles are present and differ by position:
+ * - first: cover
+ * - middle: body
+ * - last: cta
+ *
+ * Many LLM outputs default everything to "body"; without this, downstream render/review
+ * cannot reliably reason about cover vs CTA slides.
+ */
+function normalizeSlideRoles(slides: Record<string, unknown>[]): Record<string, unknown>[] {
+  if (!Array.isArray(slides) || slides.length === 0) return slides;
+  const n = slides.length;
+  return slides.map((s, i) => {
+    const role = i === 0 ? "cover" : i === n - 1 ? "cta" : "body";
+    return { ...s, slide_role: role };
+  });
+}
+
 type CarouselDeckId =
   | "slides"
   | "slides_json"
@@ -538,8 +556,8 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
 export function slidesFromGeneratedOutput(gen: Record<string, unknown>): Record<string, unknown>[] {
   const candidates = collectRenderableSlideDecks(gen);
   if (candidates.length === 0) return legacyCoverBodyCtaSlides(gen);
-  if (candidates.length === 1) return candidates[0]!.slides;
-  return pickBestSlideDeck(candidates);
+  const picked = candidates.length === 1 ? candidates[0]!.slides : pickBestSlideDeck(candidates);
+  return normalizeSlideRoles(picked);
 }
 
 function looksLikeCarouselCtaSlideText(s: string): boolean {
@@ -639,11 +657,18 @@ export function splitFlatSlidesToTemplateShape(
     const t = textFromSlide(s);
     return { ...s, headline: t.headline || s.headline, body: t.body || s.body };
   });
+  const rawHandle = String((last as Record<string, unknown>).handle ?? "").trim();
+  const handleLooksValid =
+    /^@[a-z0-9_.]{2,}$/i.test(rawHandle) ||
+    // tolerate "instagram.com/name" style in `handle` fields (normalize elsewhere)
+    /instagram\.com\/[a-z0-9_.]{2,}/i.test(rawHandle);
   const cta_slide = {
     ...last,
     headline: tl.headline || last.headline,
-    body: tl.headline,
-    handle: tl.body,
+    // CTA panel copy should come from the slide body (or headline if body missing).
+    body: tl.body || tl.headline || last.body || last.headline,
+    // Only populate the template "handle line" when the source actually looks like a handle.
+    ...(handleLooksValid ? { handle: rawHandle } : {}),
   };
   return { cover_slide, body_slides, cta_slide };
 }

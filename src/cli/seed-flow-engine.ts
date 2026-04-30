@@ -13,6 +13,35 @@ import pg from "pg";
 import * as XLSX from "xlsx";
 import { readFileSync } from "node:fs";
 import "dotenv/config";
+import { resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
+
+const OUTPUT_SCHEMA_NAME_TO_CANONICAL: Record<string, string> = {
+  Carousel_Insight_Output: "OS_CAROUSEL",
+  Carousel_Angle_Output: "OS_ANGLE",
+  Carousel_Structure_Output: "OS_STRUCTURE",
+  CTA_Output: "OS_CTA",
+  Hook_Variations_Output: "OS_HOOKS",
+  Text_Post_Output: "OS_TEXT",
+  Video_Prompt_Output: "OS_VID_PROMPT",
+  Video_Script_Output: "OS_VID_SCRIPT",
+  Video_Scene_Generator_Output: "OS_VID_SCENES",
+  Viral_Format_Output: "OS_VIRAL",
+};
+
+function resolveCanonicalOutputSchemaName(name: string | null): string | null {
+  const t = (name ?? "").trim();
+  if (!t) return null;
+  return OUTPUT_SCHEMA_NAME_TO_CANONICAL[t] ?? t;
+}
+
+function namespacedPromptName(flowType: string, promptName: string): string {
+  const ft = resolveCanonicalFlowType(flowType);
+  const pn = (promptName ?? "").trim();
+  if (!pn) return pn;
+  if (/^[A-Z0-9_]+__/.test(pn)) return pn;
+  const flowKey = String(ft).replace(/^FLOW_/, "");
+  return `${flowKey}__${pn}`;
+}
 
 function parseBool(val: unknown): boolean {
   if (val === true || val === 1) return true;
@@ -89,11 +118,11 @@ async function main() {
           risk_profile_default = EXCLUDED.risk_profile_default, candidate_row_template = EXCLUDED.candidate_row_template,
           notes = EXCLUDED.notes, updated_at = now()
       `, [
-        str(row.flow_type), str(row.description), str(row.category), str(row.supported_platforms),
+        str(resolveCanonicalFlowType(String(row.flow_type))), str(row.description), str(row.category), str(row.supported_platforms),
         str(row.output_asset_types), parseBool(row.requires_signal_pack),
         parseBool(row.requires_learning_context), parseBool(row.requires_brand_constraints),
         str(row.required_inputs), str(row.optional_inputs), parseNum(row.default_variation_count) ?? 1,
-        str(row.output_schema_name), str(row.output_schema_version),
+        resolveCanonicalOutputSchemaName(str(row.output_schema_name)), str(row.output_schema_version),
         str(row.qc_checklist_name), str(row.qc_checklist_version),
         str(row.risk_profile_default), candidateRowJson, str(row.notes),
       ]);
@@ -106,6 +135,7 @@ async function main() {
     let promptCount = 0;
     for (const row of prompts) {
       if (!row.prompt_name || !row.flow_type) continue;
+      const ft = resolveCanonicalFlowType(String(row.flow_type));
       await client.query(`
         INSERT INTO caf_core.prompt_templates (
           prompt_name, flow_type, prompt_role, system_prompt, user_prompt_template,
@@ -119,9 +149,9 @@ async function main() {
           temperature_default = EXCLUDED.temperature_default, max_tokens_default = EXCLUDED.max_tokens_default,
           stop_sequences = EXCLUDED.stop_sequences, notes = EXCLUDED.notes, updated_at = now()
       `, [
-        str(row.prompt_name), str(row.flow_type), str(row.prompt_role) ?? "generator",
+        str(namespacedPromptName(ft, String(row.prompt_name))), str(ft), str(row.prompt_role) ?? "generator",
         str(row.system_prompt), str(row.user_prompt_template), str(row.output_format_rule),
-        str(row.output_schema_name), str(row.output_schema_version),
+        resolveCanonicalOutputSchemaName(str(row.output_schema_name)), str(row.output_schema_version),
         parseNum(row.temperature_default), parseNum(row.max_tokens_default),
         str(row.stop_sequences), str(row.notes),
       ]);
@@ -163,7 +193,7 @@ async function main() {
           example_output_json = EXCLUDED.example_output_json, parsing_notes = EXCLUDED.parsing_notes,
           updated_at = now()
       `, [
-        str(row.output_schema_name), str(row.output_schema_version), str(row.flow_type),
+        resolveCanonicalOutputSchemaName(str(row.output_schema_name)), str(row.output_schema_version), str(resolveCanonicalFlowType(String(row.flow_type))),
         JSON.stringify(schemaJson), str(row.required_keys), str(row.field_types),
         exampleJson ? JSON.stringify(exampleJson) : null, str(row.parsing_notes),
       ]);
@@ -225,7 +255,7 @@ async function main() {
         str(row.check_id), str(row.check_name), str(row.check_type),
         str(row.field_path), str(row.operator), str(row.threshold_value),
         str(row.severity) ?? "MEDIUM", parseBool(row.blocking),
-        str(row.failure_message), str(row.auto_fix_action), str(row.flow_type),
+        str(row.failure_message), str(row.auto_fix_action), str(resolveCanonicalFlowType(String(row.flow_type))),
         str(row.qc_checklist_name), str(row.qc_checklist_version) ?? "1.0", str(row.notes),
       ]);
       qcCount++;

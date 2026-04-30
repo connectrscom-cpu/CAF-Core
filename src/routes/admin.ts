@@ -4707,7 +4707,7 @@ async function loadPL(){
   const c=d.core_addenda||{};
   const meta=d.core_layer_meta||{};
   const h=d.heygen_video_agent||{};
-  const heygenFlowSet=new Set(d.heygen_flow_types||['Video_Script_Generator','Video_Prompt_Generator']);
+  const heygenFlowSet=new Set(d.heygen_flow_types||['FLOW_VID_SCRIPT','FLOW_VID_PROMPT','Video_Script_Generator','Video_Prompt_Generator']);
   const coreOrder=['publication_system_addendum','video_script_system_suffix','video_prompt_system_suffix','scene_assembly_system_suffix','user_footer_script_json','user_footer_video_plan'];
   const heygenAddendumKeys=coreOrder.filter(function(k){return (meta[k]&&meta[k].bucket==='heygen');});
   const generalAddendumKeys=coreOrder.filter(function(k){return k in c && !(meta[k]&&meta[k].bucket==='heygen');});
@@ -4763,7 +4763,7 @@ async function loadPL(){
   html+='</div>';
 
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">HeyGen-flow prompt templates ('+heygenPrompts.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Flow Engine prompt templates whose <span class="mono">flow_type</span> feeds the HeyGen path (script-led <span class="mono">Video_Script_Generator</span> and prompt-led <span class="mono">Video_Prompt_Generator</span>). All fields editable.</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Flow Engine prompt templates whose <span class="mono">flow_type</span> feeds the HeyGen path (canonical: <span class="mono">FLOW_VID_SCRIPT</span> and <span class="mono">FLOW_VID_PROMPT</span>; legacy: <span class="mono">Video_Script_Generator</span> / <span class="mono">Video_Prompt_Generator</span>). All fields editable.</p>';
   if(heygenPrompts.length){
     for(const row of heygenPrompts) html+=plRenderPromptCard(row.p,row.ix);
   }else html+='<div class="empty">No HeyGen-flow prompt templates. Seed them from <a href="/admin/flow-engine">Flow Engine</a>.</div>';
@@ -5581,11 +5581,20 @@ async function loadConfig(){
   // === Allowed Flow Types (grouped by output format) ===
   const ft=d.profile?.flow_types||[];
   const FT_META_STATIC={
+    'FLOW_CAROUSEL':{label:'Carousel',cat:'Carousel',defaultNotes:'Publishable carousel copy JSON (renderer-ready).'},
     'Flow_Carousel_Copy':{label:'Carousel – Copy & Slides',cat:'Carousel',defaultNotes:'Instagram/TikTok carousel (text slides).'},
+    'FLOW_VID_SCENES':{label:'Video – Scenes',cat:'Video (generic)',defaultNotes:'Multi-scene video bundle (scene prompts / clips) for assembly.'},
     'Video_Scene_Generator':{label:'Video – Multi-scene',cat:'Video (generic)',defaultNotes:'Multiple HeyGen scenes stitched together.'},
+    'FLOW_VID_SCRIPT':{label:'Video – Script',cat:'Video (generic)',defaultNotes:'Spoken script JSON for script-led HeyGen (avatar reads verbatim).'},
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
+    'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
+    'FLOW_HOOKS':{label:'Hooks',cat:'Hooks & Scripts',defaultNotes:'Hook variations list + rationale.'},
     'Hook_Variations':{label:'Hook Variations',cat:'Hooks & Scripts',defaultNotes:'Hook text experiments; feeds carousel/reel flows.'},
+    'FLOW_CTA':{label:'CTA',cat:'Hooks & Scripts',defaultNotes:'CTA phrase variants list.'},
+    'FLOW_TEXT':{label:'Text Post',cat:'Hooks & Scripts',defaultNotes:'Text-only post output (caption-like).'},
+    'FLOW_ANGLE':{label:'Angle',cat:'Other',defaultNotes:'Angle fields only (no publishable copy).'},
+    'FLOW_STRUCTURE':{label:'Structure',cat:'Other',defaultNotes:'Slide-purpose plan only.'},
     'Reel_Script':{label:'Reel Script',cat:'Hooks & Scripts',defaultNotes:'Short-form Instagram/TikTok reel script.'}
   };
   const FORMAT_ORDER={'Carousel':1,'Video (generic)':2,'Product Video':3,'Product Image Ad':4,'Hooks & Scripts':5,'Other':9};
@@ -5598,7 +5607,7 @@ async function loadConfig(){
     }
     if(typeof id==='string'&&id.indexOf('FLOW_PRODUCT_')===0){
       var suf2=id.replace('FLOW_PRODUCT_','').replace(/_/g,' ');
-      return {label:'Product Video – '+toTitle(suf2),cat:'Product Video',defaultNotes:'Product marketing video — maps to Video_Prompt_Generator templates.'};
+      return {label:'Product Video – '+toTitle(suf2),cat:'Product Video',defaultNotes:'Product marketing video — maps to FLOW_VID_PROMPT templates.'};
     }
     return {label:(id||'—'),cat:'Other',defaultNotes:''};
   }

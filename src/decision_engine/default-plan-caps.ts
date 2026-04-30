@@ -33,6 +33,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     id: "scene_assembly",
     label: "Scene / assembly (multi-scene)",
     keys: [
+      "FLOW_VID_SCENES",
       "Video_Scene_Generator",
       "Scene_Assembly",
       "FLOW_SCENE_ASSEMBLY",
@@ -45,6 +46,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     id: "script_video",
     label: "Script-led video (HeyGen avatar script)",
     keys: [
+      "FLOW_VID_SCRIPT",
       "Video_Script_Generator",
       "HeyGen_Avatar_Script",
       "FLOW_HEYGEN_AVATAR_SCRIPT",
@@ -57,6 +59,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     id: "prompt_video_avatar",
     label: "Prompt-led video (HeyGen avatar)",
     keys: [
+      "FLOW_VID_PROMPT",
       // Canonical Flow Engine row — avatar mode is the default for Video_Prompt_Generator;
       // the no-avatar split below only catches the explicit *NoAvatar* / *NO_AVATAR* synonyms.
       "Video_Prompt_Generator",

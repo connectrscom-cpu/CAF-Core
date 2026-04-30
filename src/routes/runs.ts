@@ -17,7 +17,12 @@ import {
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import { replanRun, startRun } from "../services/run-orchestrator.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
-import { processRunJobs, processJobByTaskId } from "../services/job-pipeline.js";
+import {
+  generateRunDraftPackages,
+  processJobByTaskId,
+  processRunJobs,
+  renderRunGeneratedJobs,
+} from "../services/job-pipeline.js";
 import { getRunOutputReview, upsertRunOutputReview } from "../repositories/run-output-reviews.js";
 
 export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
@@ -305,15 +310,15 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       const log = request.server.log;
       const runUuid = run.id;
       const runIdText = run.run_id;
-      void processRunJobs(db, config, runUuid)
+      void generateRunDraftPackages(db, config, runUuid)
         .then((processResult) => {
           log.info(
             { run_id: runIdText, processed: processResult.processed, errors: processResult.errors },
-            "start-and-process: pipeline finished"
+            "start-and-process: draft packages finished"
           );
         })
         .catch((err) => {
-          log.error({ err, run_id: runIdText }, "start-and-process: pipeline failed");
+          log.error({ err, run_id: runIdText }, "start-and-process: draft packages failed");
         });
 
       return reply.code(202).send({
@@ -321,7 +326,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
         accepted: true,
         start: startResult,
         message:
-          "Run started; processing continues in the background (LLM + render can take many minutes for large runs). Check Jobs or Fly logs — do not rely on a single long HTTP response.",
+          "Run started; draft package generation continues in the background (LLM → QC → diagnostics). Jobs stop at GENERATED (Package ready). Use Render to start media later.",
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -382,15 +387,15 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     const log = request.server.log;
     const runUuid = run.id;
     const runIdText = run.run_id;
-    void processRunJobs(db, config, runUuid)
+    void generateRunDraftPackages(db, config, runUuid)
       .then((result) => {
         log.info(
           { run_id: runIdText, processed: result.processed, errors: result.errors },
-          "process run: pipeline finished"
+          "process run: draft packages finished"
         );
       })
       .catch((err) => {
-        log.error({ err, run_id: runIdText }, "process run: pipeline failed");
+        log.error({ err, run_id: runIdText }, "process run: draft packages failed");
       });
 
     return reply.code(202).send({
@@ -398,7 +403,44 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       accepted: true,
       run_id: runIdText,
       message:
-        "Processing started in the background. Large runs (many carousels/videos) often exceeded HTTP timeouts when this ran synchronously — refresh the Jobs table to watch progress. See Fly logs for processed count and errors when complete.",
+        "Draft package generation started in the background (LLM → QC → diagnostics). Jobs will stop at GENERATED (Package ready). Use /render to start rendering manually.",
+    });
+  });
+
+  // ── Render generated jobs (manual render step) ───────────────────────
+  app.post("/v1/runs/:project_slug/:run_id/render", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    let run = await getRunByRunId(db, project.id, params.data.run_id);
+    if (!run) run = await getRunById(db, params.data.run_id);
+    if (!run) return reply.code(404).send({ ok: false, error: "run_not_found" });
+
+    const log = request.server.log;
+    const runUuid = run.id;
+    const runIdText = run.run_id;
+
+    // Mark the run as in the render phase for operator visibility.
+    await updateRunStatus(db, runUuid, "RENDERING");
+
+    void renderRunGeneratedJobs(db, config, runUuid)
+      .then((result) => {
+        log.info(
+          { run_id: runIdText, rendered: result.rendered, errors: result.errors },
+          "render run: finished"
+        );
+      })
+      .catch((err) => {
+        log.error({ err, run_id: runIdText }, "render run: failed");
+      });
+
+    return reply.code(202).send({
+      ok: true,
+      accepted: true,
+      run_id: runIdText,
+      message:
+        "Render started in the background for GENERATED jobs. Refresh Jobs to watch assets appear; large runs can take many minutes.",
     });
   });
 

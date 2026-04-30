@@ -75,6 +75,8 @@ type JobRow = {
   generation_payload: Record<string, unknown>;
   /** Optional — only loaded by call sites that need to make resume/retry decisions (processRunJobs). */
   render_state?: Record<string, unknown> | null;
+  /** Optional — used by render-only/manual phase. */
+  recommended_route?: string | null;
 };
 
 /**
@@ -157,7 +159,8 @@ async function processJobUpToRender(
   config: AppConfig,
   job: JobRow,
   run: RunRow | null,
-  _pipeConfig: PipelineConfig
+  _pipeConfig: PipelineConfig,
+  opts?: { stop_before_render?: boolean }
 ): Promise<PreRenderStep> {
   if (isOfflinePipelineFlow(job.flow_type)) {
     return { kind: "terminal" };
@@ -201,6 +204,13 @@ async function processJobUpToRender(
 
   if (!qcResult.qc_passed && qcResult.recommended_route === "BLOCKED") {
     await updateJobStatus(db, job.id, "BLOCKED");
+    return { kind: "terminal" };
+  }
+
+  // Manual-render mode: do not advance to NEEDS_EDIT / IN_REVIEW / REJECTED yet.
+  // GENERATED means "package ready", and render/review are explicitly initiated later.
+  if (opts?.stop_before_render) {
+    await runDiagnosticAudit(db, job.id);
     return { kind: "terminal" };
   }
 
@@ -489,6 +499,160 @@ export async function processRunJobs(
   }
 
   return { processed, errors };
+}
+
+/**
+ * Generate DraftPackages (LLM + QC + diagnostics) for every PLANNED/GENERATING job in the run,
+ * then stop with the job in GENERATED ("package ready"). Rendering is manual.
+ */
+export async function generateRunDraftPackages(
+  db: Pool,
+  config: AppConfig,
+  runUuid: string
+): Promise<{ processed: number; errors: string[] }> {
+  const run = await getRunById(db, runUuid);
+  if (!run) throw new Error(`Run not found: ${runUuid}`);
+
+  const jobs = await q<JobRow>(
+    db,
+    `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload, render_state, recommended_route
+       FROM caf_core.content_jobs
+     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING', 'GENERATED')
+     ORDER BY created_at`,
+    [run.project_id, run.run_id]
+  );
+
+  const pipeConfig = getPipelineConfig(config);
+  let processed = 0;
+  const errors: string[] = [];
+
+  for (const job of jobs) {
+    if (isOfflinePipelineFlow(job.flow_type)) continue;
+    try {
+      await processJobUpToRender(db, config, job, run, pipeConfig, { stop_before_render: true });
+      // In manual-render mode, we intentionally do not increment jobs_completed — the run is not "done".
+      processed++;
+    } catch (err) {
+      if (err instanceof RenderNotReadyError) continue;
+      const msg = err instanceof Error ? err.message : String(err);
+      await markJobFailedPipeline(db, run, job.task_id, job.id, msg, errors);
+    }
+  }
+
+  return { processed, errors };
+}
+
+/**
+ * Render all GENERATED jobs for the run (and safely retry eligible RENDERING jobs).
+ * This is the manual "Render" step after packages are ready.
+ */
+export async function renderRunGeneratedJobs(
+  db: Pool,
+  config: AppConfig,
+  runUuid: string
+): Promise<{ rendered: number; errors: string[] }> {
+  const run = await getRunById(db, runUuid);
+  if (!run) throw new Error(`Run not found: ${runUuid}`);
+
+  const jobs = await q<JobRow>(
+    db,
+    `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload, render_state, recommended_route
+       FROM caf_core.content_jobs
+     WHERE project_id = $1 AND run_id = $2 AND status IN ('GENERATED', 'RENDERING')
+     ORDER BY created_at`,
+    [run.project_id, run.run_id]
+  );
+
+  const eligible = jobs.filter(
+    (j) =>
+      j.status !== "RENDERING" ||
+      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type)) ||
+      isVideoRenderingSafelyRetryable(j)
+  );
+
+  // Render carousels first for UX parity with the existing pipeline.
+  const isCar = (j: JobRow) => isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type);
+  eligible.sort((a, b) => Number(isCar(b)) - Number(isCar(a)));
+
+  const pipeConfig = getPipelineConfig(config);
+  const errors: string[] = [];
+  let rendered = 0;
+
+  const carouselTickets: RenderTicket[] = [];
+  const videoTickets: RenderTicket[] = [];
+
+  for (const job of eligible) {
+    if (isOfflinePipelineFlow(job.flow_type)) continue;
+    if (job.status === "RENDERING") {
+      // Already in progress; let the renderer re-enter safely.
+    }
+    const route = String((job as any).recommended_route ?? "").trim() || "AUTO";
+    if (isCarouselFlow(job.flow_type)) {
+      carouselTickets.push({ jobId: job.id, task_id: job.task_id, kind: "carousel", recommended_route: route });
+    } else if (isVideoFlow(job.flow_type)) {
+      videoTickets.push({ jobId: job.id, task_id: job.task_id, kind: "video", recommended_route: route });
+    }
+  }
+
+  if (carouselTickets.length > 0) {
+    await warmupRenderer(pipeConfig.rendererBaseUrl).catch(() => {});
+  }
+
+  const runOneRender = async (t: RenderTicket) => {
+    const jobRow = await reloadJobRow(db, t.jobId);
+    if (!jobRow) throw new Error(`Job disappeared: ${t.task_id}`);
+    if (t.kind === "carousel") {
+      await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    } else {
+      await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    }
+  };
+
+  async function runWithConcurrency<T>(
+    items: T[],
+    concurrency: number,
+    fn: (item: T) => Promise<void>
+  ): Promise<void> {
+    const limit = Math.max(1, Math.floor(concurrency));
+    let idx = 0;
+    const workers: Promise<void>[] = [];
+    const work = async () => {
+      while (true) {
+        const i = idx++;
+        if (i >= items.length) return;
+        await fn(items[i]!);
+      }
+    };
+    for (let i = 0; i < Math.min(limit, items.length); i++) {
+      workers.push(work());
+    }
+    await Promise.all(workers);
+  }
+
+  const lane = async (tickets: RenderTicket[], conc: number) => {
+    await runWithConcurrency(tickets, conc, async (t) => {
+      try {
+        await runOneRender(t);
+        const refreshed = await qOne<{ status: string }>(
+          db,
+          `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+          [t.jobId]
+        );
+        if (refreshed?.status !== "RENDERING") {
+          rendered++;
+        }
+      } catch (err) {
+        if (err instanceof RenderNotReadyError) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
+      }
+    });
+  };
+
+  await lane(carouselTickets, pipeConfig.carouselRenderConcurrency);
+  await lane(videoTickets, pipeConfig.videoRenderConcurrency);
+
+  return { rendered, errors };
 }
 
 export async function processJobByTaskId(
@@ -942,6 +1106,29 @@ function carouselRenderBaseForPipeline(
   usableSlides: Record<string, unknown>[]
 ): Record<string, unknown> {
   const o: Record<string, unknown> = { ...baseRender, slides: usableSlides };
+  /**
+   * IMPORTANT: The renderer templates have two possible “sources of truth”:
+   * - flat `slides[]` (modern, LLM output)
+   * - explicit template shape: `cover_slide` + `body_slides` + `cta_slide` (+ sometimes `slide_count`)
+   *
+   * When a merge pulls stale `body_slides` / `slide_count` from candidate/router data, the pipeline can
+   * render *more* PNGs than there are real slide rows. The renderer then screenshots out-of-range DOM
+   * indices and repeats images (while our review UI still shows the correct text per `slides[]`).
+   *
+   * To keep slide index ↔ rendered image ↔ slide text aligned, force the render base to be driven by
+   * `slides[]` only. `buildSlideRenderContext` will materialize the explicit template shape from
+   * `slides[]` when needed.
+   */
+  delete o.body_slides;
+  delete o.cover_slide;
+  delete o.cta_slide;
+  delete o.slide_count;
+  if (o.structure_variables && typeof o.structure_variables === "object" && !Array.isArray(o.structure_variables)) {
+    const sv = { ...(o.structure_variables as Record<string, unknown>) };
+    delete sv.slide_count;
+    if (Object.keys(sv).length > 0) o.structure_variables = sv;
+    else delete o.structure_variables;
+  }
   delete o.slide_deck;
   delete o.variation;
   delete o.variations;
@@ -1102,6 +1289,11 @@ async function processCarouselJob(
     ...gen,
     ...renderCoerced,
   };
+  // Defensive: some signal-pack candidates are "thread" format even when the flow is a carousel.
+  // Renderer templates assume carousel semantics; leaking "thread" here causes confusing downstream payloads.
+  if (typeof baseRender.format !== "string" || baseRender.format.trim().toLowerCase() !== "carousel") {
+    baseRender.format = "carousel";
+  }
   baseRender = stripNonRenderableDeckFields(baseRender);
   baseRender = normalizeLlmParsedForSchemaValidation(job.flow_type, baseRender);
   const slides = slidesFromGeneratedOutput(baseRender);
@@ -1645,8 +1837,17 @@ async function processVideoJob(
 }
 
 function extractRenderPayload(genPayload: Record<string, unknown>): Record<string, unknown> {
-  const { signal_pack_id, candidate_data, prompt_version_id, prompt_id, prompt_version_label, variation_index, ...rest } =
-    genPayload;
+  const {
+    signal_pack_id,
+    candidate_data,
+    prompt_version_id,
+    prompt_id,
+    prompt_version_label,
+    variation_index,
+    schema_version,
+    prompt_binding,
+    ...rest
+  } = genPayload;
   return rest;
 }
 

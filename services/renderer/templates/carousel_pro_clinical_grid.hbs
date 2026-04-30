@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=1080, height=1350" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg0:#07121b;
+      --card:#0f2d40;
+      --stroke: rgba(255,255,255,0.14);
+      --muted: rgba(255,255,255,0.78);
+      --text: rgba(255,255,255,0.96);
+      --accent:#34d399;
+      --accent2:#60a5fa;
+      --pad:84px;
+      --r:28px;
+    }
+    *{ box-sizing:border-box; margin:0; padding:0; }
+    body{
+      background: radial-gradient(1100px 900px at 18% 10%, #0e2a3c 0%, var(--bg0) 55%, #050b10 100%);
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .slide{
+      width:1080px; height:1350px; overflow:hidden; position:relative;
+      padding: var(--pad);
+      color: var(--text);
+    }
+    .grid{
+      position:absolute; inset:-40px;
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='84' height='84'%3E%3Cpath d='M84 0H0V84' fill='none' stroke='%23ffffff' stroke-opacity='0.07' stroke-width='1'/%3E%3Ccircle cx='0' cy='0' r='2' fill='%2334d399' fill-opacity='0.08'/%3E%3C/svg%3E");
+      pointer-events:none;
+    }
+    .topbar{
+      display:flex; align-items:center; justify-content:space-between;
+      margin-bottom: 34px;
+    }
+    .pill{
+      display:inline-flex; align-items:center; gap:10px;
+      padding: 10px 14px;
+      border: 1px solid var(--stroke);
+      border-radius: 999px;
+      background: rgba(255,255,255,0.04);
+      color: rgba(255,255,255,0.86);
+      font-size: 18px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .dot{
+      width:10px; height:10px; border-radius: 999px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 0 0 6px rgba(52,211,153,0.08);
+    }
+    .page{
+      display:flex;
+      flex-direction:column;
+      height: calc(1350px - var(--pad)*2);
+      position:relative;
+      z-index: 1;
+    }
+    .headline{
+      font-weight: 800;
+      font-size: 86px;
+      line-height: 1.04;
+      letter-spacing: -0.03em;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      max-width: 860px;
+    }
+    .sub{
+      margin-top: 22px;
+      font-weight: 500;
+      font-size: 34px;
+      line-height: 1.45;
+      color: var(--muted);
+      white-space: pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      max-width: 900px;
+    }
+    .card{
+      margin-top: auto;
+      border-radius: var(--r);
+      border: 1px solid rgba(255,255,255,0.12);
+      background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+      padding: 34px 34px 30px;
+    }
+    .card h2{
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.86);
+      margin-bottom: 10px;
+    }
+    .card p{
+      font-size: 30px;
+      line-height: 1.45;
+      color: rgba(255,255,255,0.86);
+      white-space: pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    .cta .headline{ font-size: 98px; line-height: 1.03; }
+    .cta .sub{ font-size: 38px; color: rgba(255,255,255,0.88); }
+    .handle{
+      margin-top: 18px;
+      font-weight: 800;
+      font-size: 38px;
+      letter-spacing: 0.01em;
+      color: rgba(255,255,255,0.96);
+    }
+  </style>
+</head>
+<body>
+  <!-- Cover -->
+  <div class="slide cover">
+    <div class="grid"></div>
+    <div class="page">
+      <div class="topbar">
+        <div class="pill"><span class="dot"></span> Cover</div>
+        <div class="pill">{{slide_index}} / {{slide_total}}</div>
+      </div>
+      <div class="headline">{{joinEmojiOrphans cover_slide.headline}}</div>
+      {{#if cover_slide.body}}<div class="sub">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
+      <div class="card">
+        <h2>Save this</h2>
+        <p>Bookmark for later. Share with someone who likes clear, grounded explanations.</p>
+      </div>
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide body-slide">
+    <div class="grid"></div>
+    <div class="page">
+      <div class="topbar">
+        <div class="pill"><span class="dot"></span> Body</div>
+        <div class="pill">{{../slide_index}} / {{../slide_total}}</div>
+      </div>
+      <div class="headline" style="font-size:74px">{{joinEmojiOrphans headline}}</div>
+      <div class="sub">{{joinEmojiOrphans body}}</div>
+      <div class="card">
+        <h2>Try this</h2>
+        <p>Re-read and pull 1 sentence you can actually use today.</p>
+      </div>
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide cta">
+    <div class="grid"></div>
+    <div class="page">
+      <div class="topbar">
+        <div class="pill"><span class="dot"></span> CTA</div>
+        <div class="pill">{{slide_index}} / {{slide_total}}</div>
+      </div>
+      <div class="headline">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{joinEmojiOrphans cta_slide.body}}{{/if}}</div>
+      {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
+      {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      <div class="card">
+        <h2>Prompt</h2>
+        <p>Comment the one word you’re working on this week.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+
