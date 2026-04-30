@@ -1073,7 +1073,13 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       return reply.code(400).send({ ok: false, error: "invalid_body", details: merged.error.flatten() });
     }
     const { task_id, ...decideRest } = merged.data;
-    return executeEditorialReviewDecision(params.data.project_slug, task_id, decideRest);
+    try {
+      return await executeEditorialReviewDecision(params.data.project_slug, task_id, decideRest);
+    } catch (err) {
+      request.log.error({ err }, "executeEditorialReviewDecision failed");
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "editorial_decision_failed", message: msg });
+    }
   });
 
   app.post("/v1/review-queue/:project_slug/task/:task_id/decide", async (request, reply) => {
@@ -1081,6 +1087,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const body = reviewDecideBodySchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
-    return executeEditorialReviewDecision(params.data.project_slug, params.data.task_id, body.data);
+    try {
+      return await executeEditorialReviewDecision(params.data.project_slug, params.data.task_id, body.data);
+    } catch (err) {
+      request.log.error({ err }, "executeEditorialReviewDecision failed");
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "editorial_decision_failed", message: msg });
+    }
   });
 }

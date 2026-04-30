@@ -580,11 +580,15 @@ export async function submitDecision(
     /* non-JSON body */
   }
   if (!res.ok) {
-    const err =
-      (typeof parsed.error === "string" && parsed.error) ||
-      (typeof parsed.message === "string" && parsed.message) ||
-      text.slice(0, 400) ||
-      `HTTP ${res.status}`;
+    // Fastify (and others) often send generic `error` + specific `message` — prefer `message` first.
+    const msg =
+      (typeof parsed.message === "string" && parsed.message.trim()) ||
+      (typeof parsed.error === "string" && parsed.error.trim()) ||
+      "";
+    const rec = parsed as Record<string, unknown>;
+    const code = typeof rec.code === "string" ? rec.code : "";
+    const baseErr = msg || text.trim().slice(0, 600) || `HTTP ${res.status}`;
+    const err = code && !baseErr.includes(code) ? `${baseErr} (${code})` : baseErr;
     return { ok: false, error: err, status: res.status };
   }
   if (parsed.ok === false) {

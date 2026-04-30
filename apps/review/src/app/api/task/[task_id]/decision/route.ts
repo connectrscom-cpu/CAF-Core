@@ -83,6 +83,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     return NextResponse.json({ ok: true });
   } catch (err) {
+    console.error("[api/task/.../decision]", err);
     return NextResponse.json({ error: err instanceof Error ? err.message : "Failed" }, { status: 500 });
   }
 }
