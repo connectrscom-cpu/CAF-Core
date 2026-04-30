@@ -4,6 +4,7 @@ import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isVideoUrl } from "@/lib/media-url";
+import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import { taskReviewHref } from "@/lib/task-links";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
@@ -286,8 +287,7 @@ export function TaskTable({
             decision: "APPROVED",
           }),
         });
-        const j = (await res.json().catch(() => ({}))) as { error?: string };
-        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        if (!res.ok) throw new Error(await formatDecisionHttpError(res));
         onAfterDecision?.();
       } catch (e) {
         setApproveError(e instanceof Error ? e.message : "Approve failed");

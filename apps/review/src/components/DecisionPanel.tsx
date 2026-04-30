@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import type { DecisionValue } from "@/lib/types";
 
 const REVIEW_ISSUE_TAGS = [
@@ -158,9 +159,8 @@ export function DecisionPanel({
           regenerate: regenerateAssets,
         }),
       });
-      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(json.error ?? `HTTP ${res.status}`);
+        setError(await formatDecisionHttpError(res));
         return;
       }
       setSubmittedMessage(effectiveDecision === "APPROVED" ? "Approved" : "Decision submitted");
