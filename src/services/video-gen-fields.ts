@@ -31,6 +31,18 @@ function nestedRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
+function spokenScriptFromObject(v: unknown): string {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+  const o = v as Record<string, unknown>;
+  // Common shapes from prompt-led product flows and some script generators.
+  const body = typeof o.body === "string" ? o.body.trim() : "";
+  const hook = typeof o.hook === "string" ? o.hook.trim() : "";
+  const closing = typeof o.closing === "string" ? o.closing.trim() : "";
+  if (body) return body;
+  const stitched = [hook, closing].filter(Boolean).join("\n").trim();
+  return stitched;
+}
+
 function synthesizeSceneBundlePrompt(gen: Record<string, unknown>): string {
   const bundle = nestedRecord(gen.scene_bundle);
   if (!bundle) return "";
@@ -127,7 +139,9 @@ function spokenScriptFromBeats(gen: Record<string, unknown>, minLen: number): st
 export function extractSpokenScriptText(gen: Record<string, unknown>, minLen = 20): string {
   for (const k of SCRIPT_KEYS) {
     const v = gen[k];
-    if (v != null && String(v).trim().length >= minLen) return String(v).trim();
+    if (typeof v === "string" && v.trim().length >= minLen) return v.trim();
+    const fromObj = spokenScriptFromObject(v);
+    if (fromObj.length >= minLen) return fromObj;
   }
   const fromDialogue = spokenScriptFromDialogue(gen, minLen);
   if (fromDialogue) return fromDialogue;
@@ -187,5 +201,24 @@ export function extractVideoPromptText(gen: Record<string, unknown>, minLen = 10
   }
   const synthesized = synthesizeVideoPromptFromPlan(gen);
   if (synthesized.length >= minLen) return synthesized;
+  return "";
+}
+
+/**
+ * Strict version for prompt-led flows: only accepts explicit prompt fields (no synthesis).
+ * Useful to detect "hook + CTA instructions" responses that would otherwise look like a prompt.
+ */
+export function extractExplicitVideoPromptText(gen: Record<string, unknown>, minLen = 10): string {
+  for (const k of PROMPT_KEYS) {
+    const v = gen[k];
+    if (v != null && String(v).trim().length >= minLen) return String(v).trim();
+  }
+  for (const nestKey of ["output", "data", "video", "generated", "result"]) {
+    const nest = gen[nestKey];
+    if (nest && typeof nest === "object" && !Array.isArray(nest)) {
+      const s = extractExplicitVideoPromptText(nest as Record<string, unknown>, minLen);
+      if (s.length >= minLen) return s;
+    }
+  }
   return "";
 }

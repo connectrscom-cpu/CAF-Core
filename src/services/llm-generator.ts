@@ -53,6 +53,7 @@ import { validateAndNormalizeDraftPackage } from "./draft-package-contract.js";
 import { getLearningContextForGeneration } from "./learning-rule-selection.js";
 import { buildLlmApprovalAntiRepetitionBlock } from "./llm-approval-anti-repetition-context.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
+import { getPromptVersionById } from "../repositories/core.js";
 
 async function nextJobDraftSequence(
   db: Pool,
@@ -174,6 +175,7 @@ export async function generateForJob(
   const payload = job.generation_payload;
   const promptId = String(payload.prompt_id ?? "");
   const promptVersionLabel = String(payload.prompt_version_label ?? "");
+  const promptVersionId = typeof payload.prompt_version_id === "string" ? payload.prompt_version_id.trim() : "";
   const signalPackId = (payload.signal_pack_id as string) ?? null;
   const candidateData = (payload.candidate_data as Record<string, unknown>) ?? {};
 
@@ -237,6 +239,34 @@ export async function generateForJob(
       success: false,
       error: `No prompt template found for flow_type=${job.flow_type} (templates keyed as ${templateFlowType}), prompt_id=${promptId}`,
     };
+  }
+
+  // Project-scoped prompt versions can embed full prompt text (system/user/format rules).
+  // If present on the job payload, prefer those fields over the Flow Engine template.
+  if (promptVersionId) {
+    try {
+      const pv = await getPromptVersionById(db, promptVersionId);
+      const pvAllowed =
+        pv &&
+        pv.project_id === job.project_id &&
+        (pv.flow_type === job.flow_type || pv.flow_type === templateFlowType);
+      if (pvAllowed) {
+        const hasOverride =
+          (pv.system_prompt ?? "").trim() ||
+          (pv.user_prompt_template ?? "").trim() ||
+          (pv.output_format_rule ?? "").trim();
+        if (hasOverride) {
+          promptTemplate = {
+            ...promptTemplate,
+            system_prompt: (pv.system_prompt ?? "").trim() || promptTemplate.system_prompt,
+            user_prompt_template: (pv.user_prompt_template ?? "").trim() || promptTemplate.user_prompt_template,
+            output_format_rule: (pv.output_format_rule ?? "").trim() || promptTemplate.output_format_rule,
+          };
+        }
+      }
+    } catch {
+      // best-effort only; fall back to Flow Engine template
+    }
   }
 
   /**
@@ -563,6 +593,37 @@ export async function generateForJob(
     const maxSlides = maxSlidesFromPlatformConstraints(creationPack.platform_constraints);
     parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
 
+    // Publish/readiness stabilization for video flows: some prompt templates return script-only JSON
+    // (strict keys) even though downstream review/publish expects caption + hashtags.
+    if (isVideoFlow(job.flow_type)) {
+      const cap = String(parsed.caption ?? "").trim();
+      if (!cap) {
+        const hook = String(parsed.hook_line ?? parsed.hook ?? "").trim();
+        const cta = String(parsed.cta_line ?? parsed.cta ?? "").trim();
+        const spoken = extractSpokenScriptText(parsed, 1);
+        const firstSentence = spoken ? (spoken.split(/(?<=[.!?])\s+/)[0]?.trim() ?? "") : "";
+        const stitched = [hook || firstSentence, cta].filter(Boolean).join(" ").trim();
+        if (stitched) parsed.caption = stitched;
+      }
+      const tags = Array.isArray(parsed.hashtags)
+        ? (parsed.hashtags as unknown[]).map((t) => String(t ?? "").trim()).filter(Boolean)
+        : [];
+      if (tags.length === 0) {
+        const hints = creationPack.signal_pack_publication_hints;
+        const rec =
+          hints && typeof hints === "object" && !Array.isArray(hints) ? (hints as Record<string, unknown>) : null;
+        const seeds = rec && Array.isArray(rec.hashtag_seeds)
+          ? (rec.hashtag_seeds as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+          : [];
+        const rising = rec && Array.isArray(rec.rising_keywords)
+          ? (rec.rising_keywords as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+          : [];
+        const combined = [...seeds, ...rising].slice(0, 12);
+        if (combined.length > 0) parsed.hashtags = combined;
+      }
+      parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
+    }
+
     let tokensUsed = llmResult.total_tokens;
     let outputForJob: Record<string, unknown> = parsed;
     if (wantSceneBundle) {
@@ -684,6 +745,12 @@ export async function generateForJob(
         generated_output: storedOutput,
         draft_id: draftId,
       };
+      // Prompt-template forensic attribution (Flow Engine templates, not prompt versions).
+      merge.prompt_template_name = promptTemplate.prompt_name;
+      merge.prompt_template_flow_type = promptTemplate.flow_type;
+      merge.prompt_template_role = promptTemplate.prompt_role ?? null;
+      merge.prompt_template_output_schema_name = promptTemplate.output_schema_name ?? null;
+      merge.prompt_template_output_schema_version = promptTemplate.output_schema_version ?? null;
       if (schemaValidationWarnings && schemaValidationWarnings.length > 0) {
         merge.schema_validation_warnings = schemaValidationWarnings;
       }

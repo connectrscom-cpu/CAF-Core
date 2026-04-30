@@ -9,7 +9,7 @@ import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-types.js";
-import { extractVideoPromptText } from "./video-gen-fields.js";
+import { extractExplicitVideoPromptText, extractVideoPromptText } from "./video-gen-fields.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { withVideoPromptDurationPolicy } from "./video-content-policy.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -71,7 +71,7 @@ export async function ensureVideoPromptInPayload(
   if (!job) return { ok: false, error: "job not found" };
 
   const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
-  const resolved = extractVideoPromptText(gen, 10);
+  const resolved = extractExplicitVideoPromptText(gen, 10);
   if (resolved.length > 0) {
     let outGen = gen;
     if (!String(gen.video_prompt ?? "").trim()) {
@@ -147,12 +147,16 @@ export async function ensureVideoPromptInPayload(
   }
 
   const merged = { ...gen, ...parsed };
-  const promptText = extractVideoPromptText(merged, 1);
+  const promptText = extractExplicitVideoPromptText(merged, 1);
   if (promptText.length > 0 && !String(merged.video_prompt ?? "").trim()) {
     merged.video_prompt = promptText;
   }
-  if (extractVideoPromptText(merged, 10).length === 0) {
-    return { ok: false, error: "video prompt LLM returned no usable video_prompt field" };
+  if (extractExplicitVideoPromptText(merged, 10).length === 0) {
+    return {
+      ok: false,
+      error:
+        "video prompt LLM returned no explicit video_prompt field (got hook/CTA-only or a plan without a prompt); tighten prompt template schema to require video_prompt",
+    };
   }
 
   const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {

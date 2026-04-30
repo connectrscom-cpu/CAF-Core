@@ -399,7 +399,24 @@ function runCheck(check: QcChecklistRow, content: Record<string, unknown>): QcCh
       break;
     }
     case "not_empty": {
-      passed = value != null && value !== "" && (typeof value !== "object" || (Array.isArray(value) ? value.length > 0 : Object.keys(value as object).length > 0));
+      if (value == null) {
+        passed = false;
+        break;
+      }
+      if (typeof value === "string") {
+        passed = value.trim().length > 0;
+        break;
+      }
+      if (Array.isArray(value)) {
+        passed = value.length > 0;
+        break;
+      }
+      if (typeof value === "object") {
+        passed = Object.keys(value as object).length > 0;
+        break;
+      }
+      // numbers / booleans: treat as present (caller should use equals/regex for stricter semantics)
+      passed = true;
       if (!passed) details = "Value is empty";
       break;
     }

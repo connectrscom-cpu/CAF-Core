@@ -24,6 +24,48 @@ export function maxSlidesFromPlatformConstraints(platformConstraints: unknown): 
   return Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
 }
 
+function normalizeHashtagToken(raw: unknown): string {
+  let t = String(raw ?? "").trim();
+  if (!t) return "";
+  t = t.replace(/^#+/, "").trim();
+  // Keep only hashtag-safe chars; normalize to lowercase for consistency.
+  t = t.replace(/[^\p{L}\p{N}_]+/gu, "");
+  return t.toLowerCase();
+}
+
+function extractHashtagTokensFromText(s: string): string[] {
+  const re = /#[\w\u00c0-\u024f]+/gu;
+  const matches = [...String(s ?? "").matchAll(re)].map((m) => normalizeHashtagToken(m[0]));
+  return matches.filter(Boolean);
+}
+
+function normalizeHashtagsField(val: unknown): string[] {
+  if (Array.isArray(val)) {
+    return val.map(normalizeHashtagToken).filter(Boolean);
+  }
+  if (typeof val === "string") {
+    const t = val.trim();
+    if (!t) return [];
+    if (t.includes("#")) return extractHashtagTokensFromText(t);
+    const parts = t.includes(",") ? t.split(",") : t.split(/\s+/);
+    return parts.map(normalizeHashtagToken).filter(Boolean);
+  }
+  return [];
+}
+
+function uniqPreserveOrder(xs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of xs) {
+    const t = String(x ?? "").trim();
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
+}
+
 function truncateHashtagsInText(s: string, maxTags: number): string {
   const re = /#[\w\u00c0-\u024f]+/gu;
   const matches = [...s.matchAll(re)];
@@ -79,6 +121,16 @@ export function enrichGeneratedOutputForReview(
   const maxTags = opts?.maxHashtags;
   const maxSlides = opts?.maxSlides;
 
+  // Normalize standalone hashtags to a consistent representation:
+  // `hashtags` is an array of bare tokens (no leading "#"), deduped.
+  const tags0 = normalizeHashtagsField(o.hashtags);
+  if (tags0.length > 0) {
+    o.hashtags = uniqPreserveOrder(tags0);
+  } else if (typeof o.caption === "string") {
+    const fromCap = extractHashtagTokensFromText(o.caption);
+    if (fromCap.length > 0) o.hashtags = uniqPreserveOrder(fromCap);
+  }
+
   // Standalone hashtags field (common in video flows / some schemas)
   if (maxTags != null && maxTags >= 0) {
     if (Array.isArray(o.hashtags)) {
@@ -120,6 +172,12 @@ export function enrichGeneratedOutputForReview(
   if (nested && typeof nested === "object" && !Array.isArray(nested)) {
     const c = { ...(nested as Record<string, unknown>) };
     let changed = false;
+
+    const nt = normalizeHashtagsField(c.hashtags);
+    if (nt.length > 0) {
+      c.hashtags = uniqPreserveOrder(nt);
+      changed = true;
+    }
 
     if (maxTags != null && maxTags >= 0) {
       for (const k of ["caption", "cta"]) {

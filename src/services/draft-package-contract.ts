@@ -1,6 +1,6 @@
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
-import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
+import { extractExplicitVideoPromptText, extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 
 export type DraftPackageContractMode = "skip" | "warn" | "enforce";
 
@@ -16,16 +16,51 @@ export type DraftPackageValidation = {
 
 function normalizeHashtags(val: unknown): string[] {
   if (Array.isArray(val)) {
-    return val.map((x) => String(x ?? "").trim()).filter(Boolean);
+    return val
+      .map((x) => String(x ?? "").trim())
+      .map((t) => t.replace(/^#+/, "").trim())
+      .filter(Boolean)
+      .map((t) => t.replace(/[^\p{L}\p{N}_]+/gu, "").toLowerCase())
+      .filter(Boolean);
   }
   if (typeof val === "string") {
     // accept "a, b, c" or "#a #b" shapes
     const t = val.trim();
     if (!t) return [];
     const parts = t.includes(",") ? t.split(",") : t.split(/\s+/);
-    return parts.map((x) => x.trim()).filter(Boolean);
+    return parts
+      .map((x) => x.trim())
+      .map((x) => x.replace(/^#+/, "").trim())
+      .filter(Boolean)
+      .map((x) => x.replace(/[^\p{L}\p{N}_]+/gu, "").toLowerCase())
+      .filter(Boolean);
   }
   return [];
+}
+
+function extractHashtagsFromCaptionText(caption: string): string[] {
+  const re = /#[\w\u00c0-\u024f]+/gu;
+  const matches = [...String(caption ?? "").matchAll(re)].map((m) =>
+    String(m[0] ?? "")
+      .trim()
+      .replace(/^#+/, "")
+      .replace(/[^\p{L}\p{N}_]+/gu, "")
+      .toLowerCase()
+  );
+  return matches.filter(Boolean);
+}
+
+function uniq(xs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of xs) {
+    const t = String(x ?? "").trim();
+    if (!t) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out;
 }
 
 function ensureStringField(out: Record<string, unknown>, key: string, v: string): void {
@@ -34,6 +69,28 @@ function ensureStringField(out: Record<string, unknown>, key: string, v: string)
   const cur = out[key];
   if (typeof cur === "string" && cur.trim()) return;
   out[key] = t;
+}
+
+function normalizeCarouselFieldToObject(out: Record<string, unknown>): void {
+  const c = out.carousel;
+  if (Array.isArray(c)) {
+    const slides = c
+      .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+      .map((x) => {
+        const r = x as Record<string, unknown>;
+        return {
+          headline: String(r.headline ?? r.title ?? "").trim(),
+          body: String(r.body ?? r.text ?? r.caption ?? "").trim(),
+        };
+      })
+      .filter((s) => s.headline || s.body);
+    out.carousel = { slides };
+    return;
+  }
+  if (c && typeof c === "object" && !Array.isArray(c)) {
+    const rec = c as Record<string, unknown>;
+    if (Array.isArray(rec.slides)) return;
+  }
 }
 
 function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
@@ -64,12 +121,20 @@ function validateCarouselPackage(out: Record<string, unknown>): { warnings: stri
   return { warnings, errors };
 }
 
-function validateHeygenPackage(out: Record<string, unknown>): { warnings: string[]; errors: string[] } {
+function validateHeygenPackage(
+  flowType: string | null | undefined,
+  out: Record<string, unknown>
+): { warnings: string[]; errors: string[] } {
   const warnings: string[] = [];
   const errors: string[] = [];
 
   const spoken = extractSpokenScriptText(out, 1).trim();
-  const prompt = extractVideoPromptText(out, 1).trim();
+  const wantsExplicitPrompt = /VID_PROMPT|video_prompt|prompt_generator|Video_Prompt_Generator/i.test(
+    String(flowType ?? "")
+  );
+  const prompt = wantsExplicitPrompt
+    ? extractExplicitVideoPromptText(out, 1).trim()
+    : extractVideoPromptText(out, 1).trim();
   if (!spoken && !prompt) {
     errors.push("heygen_package: missing spoken_script/script and missing video_prompt (nothing executable for HeyGen)");
   }
@@ -127,12 +192,29 @@ export function validateAndNormalizeDraftPackage(
     const r = validateCarouselPackage(output);
     warnings.push(...r.warnings);
     errors.push(...r.errors);
+    normalizeCarouselFieldToObject(output);
+    // Normalize hashtags into a stable list form when present.
+    if (output.hashtags != null) output.hashtags = uniq(normalizeHashtags(output.hashtags));
+    else if (typeof output.caption === "string") {
+      const fromCap = extractHashtagsFromCaptionText(output.caption);
+      if (fromCap.length > 0) output.hashtags = uniq(fromCap);
+    }
     // Canonical fields, additive only.
     ensureStringField(output, "hook_text", String(output.hook_text ?? output.hook ?? output.headline ?? ""));
     ensureStringField(output, "primary_copy", String(output.primary_copy ?? output.caption ?? ""));
     ensureStringField(output, "cta_text", String(output.cta_text ?? output.cta ?? ""));
   } else if (package_type === "heygen_package") {
-    const r = validateHeygenPackage(output);
+    // Normalize hashtags to bare tokens, and try extracting from caption if present.
+    const ht = uniq(normalizeHashtags(output.hashtags));
+    if (ht.length > 0) output.hashtags = ht;
+    else {
+      const cap = String(output.caption ?? "").trim();
+      if (cap) {
+        const fromCap = extractHashtagsFromCaptionText(cap);
+        if (fromCap.length > 0) output.hashtags = uniq(fromCap);
+      }
+    }
+    const r = validateHeygenPackage(flowType, output);
     warnings.push(...r.warnings);
     errors.push(...r.errors);
   }
