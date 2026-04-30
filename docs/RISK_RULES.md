@@ -21,7 +21,7 @@ CAF uses **three different concepts** that sound similar. This doc separates the
 
 ---
 
-## 2. `caf_core.risk_rules` (project config — **not used by `qc-runtime`**
+## 2. `caf_core.risk_rules` (project config — **not used by `qc-runtime`**)
 
 **Table:** Per-**`project_id`** and **`flow_type`** rows (migration **`002_project_config_and_runs.sql`**): trigger conditions, risk level, manual review flags, sensitive topics, etc.
 
@@ -31,9 +31,9 @@ CAF uses **three different concepts** that sound similar. This doc separates the
 
 **Implication:** Operators may fill **project risk rules** expecting automated enforcement; **today** enforcement comes from **`risk_policies`** + **brand `banned_words`**, not from this table.
 
-**Surfacing in API responses:** `GET/POST/DELETE /v1/projects/:project_slug/risk-rules` and `POST /v1/admin/config/risk-rule` both attach a stable `risk_qc` notice from `riskRulesNotEnforcedNotice()` (`src/services/risk-qc-status.ts`). The CSV import (`POST /v1/projects/:slug/import`, `importProjectFromCsv`) also appends an entry to `warnings[]` whenever risk_rule rows are applied. UIs should render these prominently.
+**Surfacing in API responses:** `GET/POST/DELETE /v1/projects/:project_slug/project-risk-rules` (preferred) and the deprecated aliases `.../risk-rules` both attach a stable `risk_qc` notice from `riskRulesNotEnforcedNotice()` (`src/services/risk-qc-status.ts`). The CSV import (`POST /v1/projects/import-csv`, `importProjectFromCsv`) also appends an entry to `warnings[]` whenever risk_rule rows are applied. UIs should render these prominently.
 
-**Honesty endpoint:** `GET /v1/projects/:project_slug/risk-qc-status` returns the QC sources and a count of the project's `risk_rules`. It is sourced from `src/services/risk-qc-status.ts` → `buildRiskQcStatus`. Shape:
+**Honesty endpoint:** `GET /v1/projects/:project_slug/risk-qc-status` returns the QC sources and a count of the project's configured **project risk rules** (`caf_core.risk_rules`). It is sourced from `src/services/risk-qc-status.ts` → `buildRiskQcStatus`. Shape:
 
 ```json
 {
@@ -64,7 +64,7 @@ CAF uses **three different concepts** that sound similar. This doc separates the
 | Source | Scope | Used in automated QC? |
 |--------|--------|------------------------|
 | **`risk_policies`** | Global CAF catalog | **Yes** — keyword scan on output JSON |
-| **`risk_rules`** | Per project + flow | **No** (in current `qc-runtime`) |
+| **`risk_rules`** (project risk rules) | Per project + flow | **No** (in current `qc-runtime`) |
 | **`brand_constraints.banned_words`** | Per project | **Yes** — merged into policy scan |
 
 ## Route changes vs QC

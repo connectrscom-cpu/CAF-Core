@@ -916,6 +916,9 @@ export async function getFullProjectProfile(db: Pool, projectId: string) {
     strategy,
     brand,
     platforms,
+    // Preferred key: clarifies these are *project-scoped* rules, not CAF-level `risk_policies`.
+    project_risk_rules: riskRules,
+    // Back-compat key (deprecated): kept for older clients.
     risk_rules: riskRules,
     flow_types: flowTypes,
     reference_posts: referencePosts,

@@ -84,7 +84,7 @@ Two more slices follow the same pattern:
 ## QC and risk
 
 - **[QUALITY_CHECKS.md](./QUALITY_CHECKS.md)** — QC checklists, **`runQcForJob`**, **`qc_result`** payload (written via **`mergeGenerationPayloadQc`**).
-- **[RISK_RULES.md](./RISK_RULES.md)** — **`risk_policies`** (now scoped per `flow_type` via migration **`024_risk_policies_scope.sql`** and **`listRiskPoliciesForJob`**) vs project **`risk_rules`** vs brand bans. The **`GET /v1/projects/:slug/risk-qc-status`** endpoint reports what QC actually enforces, courtesy of **`src/services/risk-qc-status.ts`**.
+- **[RISK_RULES.md](./RISK_RULES.md)** — **`risk_policies`** (now scoped per `flow_type` via migration **`024_risk_policies_scope.sql`** and **`listRiskPoliciesForJob`**) vs **project risk rules** (`caf_core.risk_rules`) vs brand bans. The **`GET /v1/projects/:slug/risk-qc-status`** endpoint reports what QC actually enforces, courtesy of **`src/services/risk-qc-status.ts`**.
 - Output-schema validation (separate from QC) is controlled by **`CAF_OUTPUT_SCHEMA_VALIDATION_MODE`** (`skip` / `warn` / `enforce`), resolved in **`src/config.ts`** and honored in **`llm-generator.ts`**.
 
 ## Audit trail — upstream recs & run snapshots

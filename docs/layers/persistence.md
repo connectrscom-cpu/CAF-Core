@@ -18,7 +18,7 @@
 | **`publications.ts`** | Publication placements. |
 | **`review-queue.ts`** | Queue listing for admin/review APIs. |
 | **`transitions.ts`** | **`job_state_transitions`**. |
-| **`project-config.ts`** | Strategy, brand, platform, allowed flows, HeyGen config, **risk_rules** rows. |
+| **`project-config.ts`** | Strategy, brand, platform, allowed flows, HeyGen config, **project risk rules** (`caf_core.risk_rules`). |
 | **`ops.ts`** | Inserts for audits, reviews, metrics, etc. |
 
 ## Queries helper

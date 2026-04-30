@@ -535,12 +535,13 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
   });
 
   // ── Risk Rules ───────────────────────────────────────────────────────
-  app.get("/v1/projects/:project_slug/risk-rules", async (request, reply) => {
+  // Preferred naming: "project risk rules" to avoid confusion with CAF-level `risk_policies`.
+  app.get("/v1/projects/:project_slug/project-risk-rules", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
     const rows = await listRiskRules(db, project.id);
-    return { ok: true, risk_rules: rows, risk_qc: riskRulesNotEnforcedNotice() };
+    return { ok: true, project_risk_rules: rows, risk_qc: riskRulesNotEnforcedNotice() };
   });
 
   const riskRuleSchema = z.object({
@@ -555,6 +556,51 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     rejection_reason_tag: z.string().nullish(),
     rollback_flag: z.boolean().default(false),
     notes: z.string().nullish(),
+  });
+
+  app.post("/v1/projects/:project_slug/project-risk-rules", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = riskRuleSchema.safeParse(request.body);
+    if (!params.success || !body.success) return reply.code(400).send({ ok: false, error: "invalid_request" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const row = await upsertRiskRule(db, project.id, {
+      flow_type: body.data.flow_type,
+      trigger_condition: body.data.trigger_condition ?? null,
+      risk_level: body.data.risk_level ?? null,
+      auto_approve_allowed: body.data.auto_approve_allowed,
+      requires_manual_review: body.data.requires_manual_review,
+      escalation_level: body.data.escalation_level ?? null,
+      sensitive_topics: body.data.sensitive_topics ?? null,
+      claim_restrictions: body.data.claim_restrictions ?? null,
+      rejection_reason_tag: body.data.rejection_reason_tag ?? null,
+      rollback_flag: body.data.rollback_flag,
+      notes: body.data.notes ?? null,
+    });
+    return { ok: true, project_risk_rule: row, risk_qc: riskRulesNotEnforcedNotice() };
+  });
+
+  app.delete("/v1/projects/:project_slug/project-risk-rules", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    await deleteRiskRules(db, project.id);
+    return { ok: true, risk_qc: riskRulesNotEnforcedNotice() };
+  });
+
+  // Back-compat aliases (deprecated): keep old `risk-rules` routes during rollout.
+  app.get("/v1/projects/:project_slug/risk-rules", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const rows = await listRiskRules(db, project.id);
+    return {
+      ok: true,
+      // Old name (deprecated)
+      risk_rules: rows,
+      // New preferred name
+      project_risk_rules: rows,
+      risk_qc: riskRulesNotEnforcedNotice(),
+    };
   });
 
   app.post("/v1/projects/:project_slug/risk-rules", async (request, reply) => {
@@ -575,7 +621,14 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       rollback_flag: body.data.rollback_flag,
       notes: body.data.notes ?? null,
     });
-    return { ok: true, risk_rule: row, risk_qc: riskRulesNotEnforcedNotice() };
+    return {
+      ok: true,
+      // Old name (deprecated)
+      risk_rule: row,
+      // New preferred name
+      project_risk_rule: row,
+      risk_qc: riskRulesNotEnforcedNotice(),
+    };
   });
 
   app.delete("/v1/projects/:project_slug/risk-rules", async (request, reply) => {

@@ -16,7 +16,7 @@ type Section =
   | "constraints"
   | "platforms"
   | "flow-types"
-  | "risk-rules"
+  | "project-risk-rules"
   | "heygen-defaults"
   | "heygen-config";
 
@@ -27,7 +27,7 @@ const TABS: { id: Section; label: string }[] = [
   { id: "constraints", label: "System limits" },
   { id: "platforms", label: "Platforms" },
   { id: "flow-types", label: "Flow Types" },
-  { id: "risk-rules", label: "Risk Rules" },
+  { id: "project-risk-rules", label: "Project risk rules" },
   { id: "heygen-defaults", label: "Video defaults" },
   { id: "heygen-config", label: "HeyGen" },
 ];
@@ -384,7 +384,7 @@ export default function ProjectConfigPage() {
         };
       }
 
-      const method = activeTab === "risk-rules" ? "POST" : "PUT";
+      const method = activeTab === "project-risk-rules" ? "POST" : "PUT";
       const suffix = projectApiSuffix(multiProject, activeProjectSlug);
       const res = await fetch(`/api/project-config/${activeTab}${suffix}`, {
         method,
@@ -689,7 +689,7 @@ function getFieldsForSection(section: Section): FieldDef[] {
     case "constraints": return [...CONSTRAINT_FIELDS];
     case "platforms": return [...PLATFORM_FIELDS];
     case "flow-types": return [...FLOW_TYPE_FIELDS];
-    case "risk-rules": return [...RISK_RULE_FIELDS];
+    case "project-risk-rules": return [...RISK_RULE_FIELDS];
     case "heygen-defaults": return [...HEYGEN_DEFAULTS_FIELDS];
     case "heygen-config": return [...HEYGEN_FIELDS];
   }

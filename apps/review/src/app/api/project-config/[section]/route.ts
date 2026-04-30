@@ -5,7 +5,7 @@ import {
   getProduct, saveProduct,
   getPlatforms, savePlatform,
   getFlowTypes, saveFlowType,
-  getRiskRules, saveRiskRule,
+  getProjectRiskRules, saveProjectRiskRule,
   getHeygenConfig, saveHeygenConfig,
   saveHeygenDefaults,
   getSystemConstraints, saveSystemConstraints,
@@ -23,7 +23,7 @@ const getters: Record<string, (slug: string) => Promise<unknown>> = {
   constraints: getSystemConstraints,
   platforms: getPlatforms,
   "flow-types": getFlowTypes,
-  "risk-rules": getRiskRules,
+  "project-risk-rules": getProjectRiskRules,
   "heygen-config": getHeygenConfig,
 };
 
@@ -34,7 +34,7 @@ const savers: Record<string, (slug: string, data: Record<string, unknown>) => Pr
   constraints: saveSystemConstraints,
   platforms: savePlatform,
   "flow-types": saveFlowType,
-  "risk-rules": saveRiskRule,
+  "project-risk-rules": saveProjectRiskRule,
   "heygen-config": saveHeygenConfig,
   "heygen-defaults": (slug, data) =>
     saveHeygenDefaults(slug, {

@@ -303,9 +303,9 @@ Planning-time routing uses `route_selector.ts` — different phase from QC `reco
 
 ### Risk honesty surfaces
 
-Every write path that touches `risk_rules` now returns (or warns with) the same `risk_qc` notice so operators cannot silently configure unenforced rules:
+Every write path that touches **project risk rules** (`caf_core.risk_rules`) now returns (or warns with) the same `risk_qc` notice so operators cannot silently configure unenforced rules:
 
-- `GET/POST/DELETE /v1/projects/:project_slug/risk-rules` and `POST /v1/admin/config/risk-rule[/delete]` → attach `risk_qc: riskRulesNotEnforcedNotice()` on the response.
+- `GET/POST/DELETE /v1/projects/:project_slug/project-risk-rules` (preferred) and the deprecated alias `.../risk-rules`, plus `POST /v1/admin/config/risk-rule[/delete]` → attach `risk_qc: riskRulesNotEnforcedNotice()` on the response.
 - `importProjectFromCsv` → appends a `warnings[]` entry whenever `applied.risk_rule > 0`.
 - `GET /v1/projects/:project_slug/risk-qc-status` → returns a compact payload for operators and admin UI (shape defined in `src/services/risk-qc-status.ts` via `buildRiskQcStatus`):
 
@@ -393,7 +393,7 @@ Examples: **`docs/API_REFERENCE.md`**. Quick start: **`README.md`**.
 | `flow-engine.ts` | Flow defs, prompts, schemas, QC checks, **listRiskPolicies** |
 | `learning.ts`, `learning-evidence.ts` | Rules + attribution |
 | `assets.ts`, `publications.ts`, `review-queue.ts`, `transitions.ts` | As named |
-| `project-config.ts` | Strategy, brand, platform, allowed flows, HeyGen, **risk_rules** rows |
+| `project-config.ts` | Strategy, brand, platform, allowed flows, HeyGen, **project risk rules** (`caf_core.risk_rules`) |
 | `ops.ts` | Audits, reviews, metrics inserts |
 | `db/queries.ts` | `q`, `qOne` |
 
@@ -425,7 +425,7 @@ CLIs: `package.json` — `process-run`, `start-run:xlsx`, `migrate`, etc.
 1. **`task_id`** + **`project_id`** are the primary keys for joining jobs to drafts, assets, reviews, transitions.
 2. Do not **double-submit HeyGen** when `render_state` already has `video_id` / `session_id`. The canonical check is **`hasActiveProviderSession(renderState)`** in `src/domain/content-job-render-state.ts`; use it instead of re-implementing the check.
 3. **`generation_payload`** changes affect pipeline, Review, admin — coordinate schema drift. Use `mergeGenerationPayloadQc` (`src/domain/generation-payload-qc.ts`) to write QC results; it is the only sanctioned writer for that slice.
-4. **`risk_rules` (project)** is not enforced by QC today; enforcement is **`risk_policies`** (now scoped by `applies_to_flow_type`) + **brand bans**. `GET /v1/projects/:slug/risk-qc-status` is the canonical "what does QC actually run here?" endpoint and must stay consistent with `qc-runtime.ts`.
+4. **Project risk rules** (`caf_core.risk_rules`) are not enforced by QC today; enforcement is **`risk_policies`** (now scoped by `applies_to_flow_type`) + **brand bans**. `GET /v1/projects/:slug/risk-qc-status` is the canonical "what does QC actually run here?" endpoint and must stay consistent with `qc-runtime.ts`.
 5. **Learning lookups** go through `src/services/learning-rule-selection.ts`. Calling `listActiveAppliedLearningRules` or `compileLearningContexts` directly from a new feature is considered drift — extend the facade instead.
 6. **Review app `/v1/` contract** is covered by `src/routes/review-contract.test.ts`. Renaming or removing a listed path requires updating that test deliberately.
 

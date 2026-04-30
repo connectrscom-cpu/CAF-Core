@@ -10,6 +10,7 @@ import {
   type ConstraintsPatch,
 } from "../repositories/core.js";
 import { listRuns, getRunByRunId, updateRunStatus } from "../repositories/runs.js";
+import { validateAndNormalizeDraftPackage } from "../services/draft-package-contract.js";
 import { listLearningRules } from "../repositories/learning.js";
 import {
   getFullProjectProfile, upsertStrategyDefaults, upsertBrandConstraints,
@@ -793,6 +794,15 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const detail = await getJobAdminDetail(db, project.id, taskId);
     if (!detail) return reply.code(404).send({ ok: false, error: "job_not_found" });
     const gp = detail.job.generation_payload;
+    const go = (gp as any)?.generated_output;
+    const goObj =
+      go && typeof go === "object" && !Array.isArray(go) ? (go as Record<string, unknown>) : null;
+    const draft_package_validation = goObj
+      ? validateAndNormalizeDraftPackage(
+          detail.job.flow_type != null ? String(detail.job.flow_type) : null,
+          goObj
+        )
+      : null;
     const content_preview = buildJobContentPreview(
       detail.job.flow_type != null ? String(detail.job.flow_type) : null,
       gp
@@ -806,6 +816,10 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       drafts: detail.drafts,
       editorial_timeline: detail.editorial_timeline,
       content_preview,
+      draft_package: draft_package_validation?.output ?? null,
+      draft_package_warnings: draft_package_validation?.warnings ?? [],
+      draft_package_errors: draft_package_validation?.errors ?? [],
+      draft_package_type: draft_package_validation?.package_type ?? null,
       qc_detail,
       api_audit,
     };
@@ -2938,6 +2952,8 @@ async function loadRuns(p){
     /** Start leaves the run in GENERATING with jobs still PLANNED until the user clicks Process. Also allow retry after a failed start if jobs were planned. */
     const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
       || (run.status==='FAILED' && (run.total_jobs||0) > 0);
+    const canRender=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
+      || (run.status==='FAILED' && (run.total_jobs||0) > 0);
     const canCancel=!['COMPLETED','FAILED','CANCELLED'].includes(run.status);
     const canReplan=!!run.signal_pack_id&&run.status!=='PLANNING'&&!(run.status==='CREATED'&&(!run.total_jobs||run.total_jobs===0));
     h+='<tr><td class="mono" style="color:var(--accent)"><a href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">'+esc(run.run_id)+'</a>';
@@ -2953,7 +2969,8 @@ async function loadRuns(p){
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
-    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title='After Start: runs LLM → QC → render for each PLANNED job (can take several minutes)'>Process</button>";
+    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title='Generate packages: runs LLM → QC → diagnostics for each PLANNED job, then stops at GENERATED (Package ready). Render is manual.'>Generate</button>";
+    if(canRender)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'render')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("render")+")' title='Render GENERATED jobs for this run (manual step).'>Render</button>";
     if(canReplan)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'replan')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("replan")+")' title="+JSON.stringify("Delete all jobs and run the decision engine again")+">Re-plan</button>";
     if(canCancel)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'cancel')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("cancel")+")' style='color:var(--red)'>Cancel</button>";
     h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'delete')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("delete")+")' style='color:var(--red)' title='Remove run row and all jobs'>Delete</button>";
@@ -2992,8 +3009,8 @@ async function runAction(runId,action){
       return {r,d};
     }
     let {r,d}=await doReq(isDelete?base:base+'/'+action,isDelete?{method:'DELETE'}:{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
-    if(action==='process'&&r.status===202&&d.ok){
-      showToast(d.message||'Processing started in the background — open Jobs and refresh to watch all jobs advance (can take many minutes).',true,32000);
+    if((action==='process'||action==='render')&&r.status===202&&d.ok){
+      showToast(d.message||((action==='render')?'Render started in the background — open Jobs and refresh to watch assets appear (can take many minutes).':'Generation started in the background — open Jobs and refresh to watch packages reach GENERATED.'),true,32000);
       loadRuns(runsPage);
       return;
     }
@@ -3022,11 +3039,11 @@ async function runAction(runId,action){
       }
     }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,action+' failed'));
-    const msgs={start:'Run started — '+(d.planned_jobs||0)+' jobs planned',cancel:'Run cancelled',process:'Pipeline processing triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
+    const msgs={start:'Run started — '+(d.planned_jobs||0)+' jobs planned',cancel:'Run cancelled',process:'Generation triggered',render:'Render triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
     showToast(msgs[action]||'Done',true);
     loadRuns(runsPage);
   }catch(err){showToast(err.message,false);}
-  finally{if(btn){btn.disabled=false;btn.textContent=action==='start'?'Start':action==='process'?'Process':action==='replan'?'Re-plan':action==='delete'?'Delete':'Cancel';}}
+  finally{if(btn){btn.disabled=false;btn.textContent=action==='start'?'Start':action==='process'?'Generate':action==='render'?'Render':action==='replan'?'Re-plan':action==='delete'?'Delete':'Cancel';}}
 }
 
 function normalizePerFlowCapsClient(raw){
@@ -4195,6 +4212,13 @@ function renderJobDetailHtml(d){
     lines.push('<div class="job-h">Content preview (carousel slides · video script/prompt · scene assembly)</div>');
     lines.push('<pre class="job-detail-pre">'+esc(prettyJson(d.content_preview))+'</pre>');
   }
+  if(d.draft_package){
+    lines.push('<div class="job-h">Draft package (GENERATED = Package ready)</div>');
+    const meta={package_type:d.draft_package_type||null,warnings:d.draft_package_warnings||[],errors:d.draft_package_errors||[]};
+    lines.push('<p style="font-size:12px;color:var(--muted);margin:0 0 8px">Canonical execution package extracted from <span class="mono">generation_payload.generated_output</span>. Render is manual.</p>');
+    lines.push('<pre class="job-detail-pre">'+esc(prettyJson(meta))+'</pre>');
+    lines.push('<pre class="job-detail-pre" style="max-height:420px">'+esc(prettyJson(d.draft_package))+'</pre>');
+  }
   var crh=compactReworkHistory(j.generation_payload);
   if(crh&&crh.length){
     lines.push('<div class="job-h">Archived generations (rework_history)</div>');
@@ -4292,7 +4316,7 @@ async function loadJobs(p,silent){
   jobLastErrors=d.rows.map(function(j){return j.last_error!=null?String(j.last_error):'';});
   var preserveTask=jobDetailOpenTaskId;
   var scrollY=window.scrollY||document.documentElement.scrollTop||0;
-  var h='<table class="jobs-main-table"><thead><tr><th>Task</th><th>Run</th><th>Platform</th><th>Flow</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
+  var h='<table class="jobs-main-table"><thead><tr><th>Task</th><th>Run</th><th>Platform</th><th>Flow</th><th>Package</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
   for(var i=0;i<d.rows.length;i++){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');
@@ -4315,7 +4339,9 @@ async function loadJobs(p,silent){
     var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress') && (renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
     h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent)" title="'+escAttr(j.task_id)+'"><div class="job-cell-inner">'+esc(trunc(j.task_id,52))+' <span style="opacity:.5">▸</span></div></td>';
     h+='<td class="mono" style="font-size:11px" title="'+escAttr(j.run_id||"")+'"><div class="job-cell-inner">'+esc(j.run_id||'—')+'</div></td>';
-    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td>';
+    var pkg=String(j.package_type||'').trim();
+    if(pkg==='render_copy')pkg='carousel_package';
+    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td><td style="font-size:11px;color:var(--fg2)">'+esc(pkg||'—')+'</td>';
     h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+esc(rph||'—')+'</td>';
@@ -4333,7 +4359,7 @@ async function loadJobs(p,silent){
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — continues missing clips / mux">Resume</button>';
     }
     h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="Clear output/QC/renders/assets and run full pipeline again">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
-    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="13"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
+    h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="14"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
   }
   h+='</tbody></table>';
   document.getElementById('jobs-table').innerHTML=h;
@@ -5607,7 +5633,7 @@ async function loadConfig(){
   h+='</div></div>';
 
   // === Risk Rules (editable table) ===
-  const rr=d.profile?.risk_rules||[];
+  const rr=(d.profile?.project_risk_rules||d.profile?.risk_rules||[]);
   h+='<div id="tab-risk" class="tab-panel"><div class="card"><div class="card-h">Risk Rules ('+rr.length+') <button type="button" class="btn btn-sm" style="float:right;text-transform:none;letter-spacing:0" onclick="cfgBeginInlineAdd(this,\\'risk-rule\\')">+ Add Risk Rule</button></div>';
   if(rr.length){
     h+='<div style="overflow-x:auto"><table><thead><tr><th>Flow Type</th><th>Trigger</th><th>Risk Level</th><th>Auto-approve</th><th>Manual Review</th><th>Notes</th><th></th></tr></thead><tbody>';

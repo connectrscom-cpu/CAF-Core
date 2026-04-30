@@ -437,6 +437,23 @@ export async function getHeygenLastSubmit(
   return data?.submit ?? null;
 }
 
+export interface JobLineageResponse {
+  ok: boolean;
+  lineage: Record<string, unknown>;
+}
+
+export async function getJobLineage(projectSlug: string, taskId: string): Promise<Record<string, unknown> | null> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return null;
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/lineage?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/lineage`;
+  const data = await coreGet<JobLineageResponse>(path);
+  return (data?.lineage as Record<string, unknown>) ?? null;
+}
+
 /** Resolve a task across projects; optional `projectSlug` when the same id could exist in multiple tenants. */
 export async function getJobDetailAll(
   taskId: string,
@@ -573,7 +590,7 @@ export async function submitDecision(
 // ── Project Config ──────────────────────────────────────────────────────
 
 export async function getProjectProfile(projectSlug: string) {
-  return coreGet<{ ok: boolean; project: { id: string; slug: string; display_name: string }; strategy: unknown; brand: unknown; platforms: unknown[]; risk_rules: unknown[]; flow_types: unknown[]; reference_posts: unknown[]; heygen_config: unknown[] }>(
+  return coreGet<{ ok: boolean; project: { id: string; slug: string; display_name: string }; strategy: unknown; brand: unknown; platforms: unknown[]; project_risk_rules?: unknown[]; risk_rules?: unknown[]; flow_types: unknown[]; reference_posts: unknown[]; heygen_config: unknown[] }>(
     `/v1/projects/${encodeURIComponent(projectSlug)}/profile`
   );
 }
@@ -688,15 +705,15 @@ export async function saveFlowType(projectSlug: string, data: Record<string, unk
   );
 }
 
-export async function getRiskRules(projectSlug: string) {
-  return coreGet<{ ok: boolean; risk_rules: Record<string, unknown>[] }>(
-    `/v1/projects/${encodeURIComponent(projectSlug)}/risk-rules`
+export async function getProjectRiskRules(projectSlug: string) {
+  return coreGet<{ ok: boolean; project_risk_rules?: Record<string, unknown>[]; risk_rules?: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/project-risk-rules`
   );
 }
 
-export async function saveRiskRule(projectSlug: string, data: Record<string, unknown>) {
-  return corePost<{ ok: boolean; risk_rule: Record<string, unknown> }>(
-    `/v1/projects/${encodeURIComponent(projectSlug)}/risk-rules`, data
+export async function saveProjectRiskRule(projectSlug: string, data: Record<string, unknown>) {
+  return corePost<{ ok: boolean; project_risk_rule?: Record<string, unknown>; risk_rule?: Record<string, unknown> }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/project-risk-rules`, data
   );
 }
 
