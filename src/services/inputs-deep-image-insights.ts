@@ -25,6 +25,24 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+export const TOP_PERFORMER_IMAGE_SYSTEM_PROMPT = `You analyze a **single static image** from social marketing evidence (no video, no audio).
+Return ONLY valid JSON:
+{
+  "palette": ["#RRGGBB or colour names"],
+  "typography": "fonts / text style if readable",
+  "layout": "composition notes",
+  "on_screen_text": "verbatim short text on image if any",
+  "style_summary": "overall aesthetic in 2-4 sentences",
+  "hook_text": "short hook implied by creative if any",
+  "caption_style": "how caption would pair visually (short)",
+  "risk_flags": ["string"],
+  "why_it_worked": "why this visual might perform (short)"
+}
+Be conservative: if unreadable, use empty strings / empty arrays.`;
+
+export const TOP_PERFORMER_IMAGE_USER_PROMPT_TEMPLATE =
+  "Evidence kind: {{EVIDENCE_KIND}}\nPre-LLM score: {{PRE_LLM_SCORE}}\nContext:\n{{TEXT_BUNDLE}}";
+
 export interface RunDeepImageInsightsOptions {
   max_rows?: number;
   min_pre_llm_score?: number;
@@ -166,20 +184,7 @@ export async function runDeepImageInsightsForImport(
   let analyzed = 0;
   for (const c of top) {
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2500);
-    const system = `You analyze a **single static image** from social marketing evidence (no video, no audio).
-Return ONLY valid JSON:
-{
-  "palette": ["#RRGGBB or colour names"],
-  "typography": "fonts / text style if readable",
-  "layout": "composition notes",
-  "on_screen_text": "verbatim short text on image if any",
-  "style_summary": "overall aesthetic in 2-4 sentences",
-  "hook_text": "short hook implied by creative if any",
-  "caption_style": "how caption would pair visually (short)",
-  "risk_flags": ["string"],
-  "why_it_worked": "why this visual might perform (short)"
-}
-Be conservative: if unreadable, use empty strings / empty arrays.`;
+    const system = TOP_PERFORMER_IMAGE_SYSTEM_PROMPT;
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 

@@ -167,26 +167,35 @@ export async function insertPromptVersion(
     status?: "active" | "test" | "deprecated";
     system_prompt_version?: string | null;
     user_prompt_version?: string | null;
+    system_prompt?: string | null;
+    user_prompt_template?: string | null;
+    output_format_rule?: string | null;
     output_schema_version?: string | null;
     temperature?: number | null;
     max_tokens?: number | null;
     experiment_tag?: string | null;
+    prompt_template_id?: string | null;
     metadata_json?: Record<string, unknown>;
   }
 ): Promise<void> {
   await db.query(
     `INSERT INTO caf_core.prompt_versions (
        project_id, flow_type, prompt_id, version, status, system_prompt_version, user_prompt_version,
-       output_schema_version, temperature, max_tokens, experiment_tag, metadata_json
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb)
+       system_prompt, user_prompt_template, output_format_rule, output_schema_version,
+       temperature, max_tokens, experiment_tag, prompt_template_id, metadata_json
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::uuid,$17::jsonb)
      ON CONFLICT (project_id, flow_type, prompt_id, version) DO UPDATE SET
        status = EXCLUDED.status,
        system_prompt_version = EXCLUDED.system_prompt_version,
        user_prompt_version = EXCLUDED.user_prompt_version,
+       system_prompt = EXCLUDED.system_prompt,
+       user_prompt_template = EXCLUDED.user_prompt_template,
+       output_format_rule = EXCLUDED.output_format_rule,
        output_schema_version = EXCLUDED.output_schema_version,
        temperature = EXCLUDED.temperature,
        max_tokens = EXCLUDED.max_tokens,
        experiment_tag = EXCLUDED.experiment_tag,
+       prompt_template_id = EXCLUDED.prompt_template_id,
        metadata_json = EXCLUDED.metadata_json`,
     [
       row.project_id,
@@ -196,10 +205,14 @@ export async function insertPromptVersion(
       row.status ?? "active",
       row.system_prompt_version ?? null,
       row.user_prompt_version ?? null,
+      row.system_prompt ?? null,
+      row.user_prompt_template ?? null,
+      row.output_format_rule ?? null,
       row.output_schema_version ?? null,
       row.temperature ?? null,
       row.max_tokens ?? null,
       row.experiment_tag ?? null,
+      row.prompt_template_id ?? null,
       JSON.stringify(row.metadata_json ?? {}),
     ]
   );

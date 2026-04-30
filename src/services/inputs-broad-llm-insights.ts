@@ -180,6 +180,24 @@ Rows (JSON):
 ${JSON.stringify(rowsPayload, null, 0)}`;
 }
 
+export function broadInsightsPromptTemplate(): {
+  system_prompt: string;
+  user_prompt_template: string;
+  variables: string[];
+} {
+  return {
+    system_prompt: defaultBroadSystemPrompt(),
+    user_prompt_template: `Custom column label hints (may be empty — still output strings, can be ""):
+- custom_label_1: {{CUSTOM_LABEL_1}}
+- custom_label_2: {{CUSTOM_LABEL_2}}
+- custom_label_3: {{CUSTOM_LABEL_3}}
+
+Rows (JSON):
+{{ROWS_JSON}}`,
+    variables: ["CUSTOM_LABEL_1", "CUSTOM_LABEL_2", "CUSTOM_LABEL_3", "ROWS_JSON"],
+  };
+}
+
 function resolveLabels(
   criteria: Record<string, unknown>,
   overrides?: { l1?: string | null; l2?: string | null; l3?: string | null }

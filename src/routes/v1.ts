@@ -675,10 +675,14 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     status: z.enum(["active", "test", "deprecated"]).optional(),
     system_prompt_version: z.string().optional(),
     user_prompt_version: z.string().optional(),
+    system_prompt: z.string().optional(),
+    user_prompt_template: z.string().optional(),
+    output_format_rule: z.string().optional(),
     output_schema_version: z.string().optional(),
     temperature: z.number().optional(),
     max_tokens: z.number().optional(),
     experiment_tag: z.string().optional(),
+    prompt_template_id: z.string().uuid().optional(),
     metadata_json: z.record(z.unknown()).optional(),
   });
 
@@ -696,10 +700,67 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       status: parsed.data.status,
       system_prompt_version: parsed.data.system_prompt_version ?? null,
       user_prompt_version: parsed.data.user_prompt_version ?? null,
+      system_prompt: parsed.data.system_prompt ?? null,
+      user_prompt_template: parsed.data.user_prompt_template ?? null,
+      output_format_rule: parsed.data.output_format_rule ?? null,
       output_schema_version: parsed.data.output_schema_version ?? null,
       temperature: parsed.data.temperature ?? null,
       max_tokens: parsed.data.max_tokens ?? null,
       experiment_tag: parsed.data.experiment_tag ?? null,
+      prompt_template_id: parsed.data.prompt_template_id ?? null,
+      metadata_json: parsed.data.metadata_json ?? {},
+    });
+    return { ok: true };
+  });
+
+  // ── Project prompt versions (list + upsert) ───────────────────────────
+  app.get("/v1/projects/:project_slug/prompt-versions", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z
+      .object({
+        flow_type: z.string().optional(),
+        prompt_id: z.string().optional(),
+        status: z.string().optional(),
+      })
+      .safeParse(request.query);
+    const project = await ensureProject(db, params.data.project_slug);
+    const { listPromptVersions } = await import("../repositories/core.js");
+    const statuses = query.data?.status ? query.data.status.split(",").map((s) => s.trim()).filter(Boolean) : undefined;
+    const rows = await listPromptVersions(db, project.id, {
+      flow_type: query.data?.flow_type ?? null,
+      prompt_id: query.data?.prompt_id ?? null,
+      statuses,
+    });
+    return { ok: true, prompt_versions: rows };
+  });
+
+  app.post("/v1/projects/:project_slug/prompt-versions", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const parsed = promptVerSchema
+      .omit({ project_slug: true })
+      .extend({ flow_type: z.string(), prompt_id: z.string(), version: z.string() })
+      .safeParse(request.body);
+    if (!params.success || !parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request", details: parsed.success ? undefined : parsed.error.flatten() });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    await insertPromptVersion(db, {
+      project_id: project.id,
+      flow_type: parsed.data.flow_type,
+      prompt_id: parsed.data.prompt_id,
+      version: parsed.data.version,
+      status: parsed.data.status,
+      system_prompt_version: parsed.data.system_prompt_version ?? null,
+      user_prompt_version: parsed.data.user_prompt_version ?? null,
+      system_prompt: parsed.data.system_prompt ?? null,
+      user_prompt_template: parsed.data.user_prompt_template ?? null,
+      output_format_rule: parsed.data.output_format_rule ?? null,
+      output_schema_version: parsed.data.output_schema_version ?? null,
+      temperature: parsed.data.temperature ?? null,
+      max_tokens: parsed.data.max_tokens ?? null,
+      experiment_tag: parsed.data.experiment_tag ?? null,
+      prompt_template_id: parsed.data.prompt_template_id ?? null,
       metadata_json: parsed.data.metadata_json ?? {},
     });
     return { ok: true };

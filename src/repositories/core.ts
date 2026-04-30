@@ -55,6 +55,18 @@ export interface PromptVersionRow {
 
 export interface PromptVersionDetailRow extends PromptVersionRow {
   project_id: string;
+  system_prompt_version: string | null;
+  user_prompt_version: string | null;
+  system_prompt: string | null;
+  user_prompt_template: string | null;
+  output_format_rule: string | null;
+  output_schema_version: string | null;
+  temperature: string | null;
+  max_tokens: number | null;
+  experiment_tag: string | null;
+  prompt_template_id: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
 }
 
 export async function getProjectBySlug(db: Pool, slug: string): Promise<ProjectRow | null> {
@@ -309,11 +321,52 @@ export async function getPromptVersionById(
 ): Promise<PromptVersionDetailRow | null> {
   return qOne<PromptVersionDetailRow>(
     db,
-    `SELECT id, project_id, prompt_id, version, status, flow_type
+    `SELECT id, project_id, prompt_id, version, status, flow_type,
+            system_prompt_version, user_prompt_version,
+            system_prompt, user_prompt_template, output_format_rule,
+            output_schema_version, temperature::text, max_tokens, experiment_tag,
+            prompt_template_id::text, metadata_json, created_at
      FROM caf_core.prompt_versions
      WHERE id = $1
      LIMIT 1`,
     [promptVersionId]
+  );
+}
+
+export async function listPromptVersions(
+  db: Pool,
+  projectId: string,
+  opts?: { flow_type?: string | null; prompt_id?: string | null; statuses?: string[] }
+): Promise<PromptVersionDetailRow[]> {
+  const statuses = (opts?.statuses ?? ["active", "test", "deprecated"]).map((s) => String(s));
+  const flowType = (opts?.flow_type ?? "").trim();
+  const promptId = (opts?.prompt_id ?? "").trim();
+  const where: string[] = ["project_id = $1", "status = ANY($2::text[])"];
+  const vals: unknown[] = [projectId, statuses];
+  let i = 3;
+  if (flowType) {
+    where.push(`flow_type = $${i++}`);
+    vals.push(flowType);
+  }
+  if (promptId) {
+    where.push(`prompt_id = $${i++}`);
+    vals.push(promptId);
+  }
+  return q<PromptVersionDetailRow>(
+    db,
+    `SELECT id, project_id, prompt_id, version, status, flow_type,
+            system_prompt_version, user_prompt_version,
+            system_prompt, user_prompt_template, output_format_rule,
+            output_schema_version, temperature::text, max_tokens, experiment_tag,
+            prompt_template_id::text, metadata_json, created_at
+     FROM caf_core.prompt_versions
+     WHERE ${where.join(" AND ")}
+     ORDER BY flow_type ASC,
+              prompt_id ASC,
+              CASE status WHEN 'active' THEN 0 WHEN 'test' THEN 1 ELSE 2 END,
+              version DESC,
+              created_at DESC`,
+    vals
   );
 }
 

@@ -21,6 +21,52 @@ import { z } from "zod";
 
 export const STEP_IDEAS_FROM_INSIGHTS = "inputs_ideas_from_insights_llm";
 
+export const IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE = `You are a senior social content strategist for an automated content pipeline.
+You receive an INSIGHT CONTEXT array; each item is one evidence row with:
+- "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
+- optional "top_performer_styles" (richer analysis for standout posts)
+- "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
+
+Your job: propose EXACTLY {{TARGET_IDEAS}} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
+
+CRITICAL FORMAT SPLIT (MUST HIT):
+- carousel: {{QUOTA_CAROUSEL}}
+- video: {{QUOTA_VIDEO}}
+- post: {{QUOTA_POST}}
+- thread: {{QUOTA_THREAD}}
+
+Do not output any other format values. Use only: "carousel" | "video" | "post" | "thread".
+
+Return ONLY valid JSON: {"ideas":[...]} — no markdown.
+
+Each idea object MUST match this contract exactly (all fields required unless noted):
+- title: string (<=200)
+- three_liner: string (<=1200)
+- thesis: string (<=800)
+- who_for: string (<=200)
+- format: string (e.g. "carousel" | "video" | "post" | "thread")
+- platform: string (e.g. Instagram, TikTok, Reddit, Facebook, Multi)
+- why_now: string (<=800)
+- key_points: string[] (3–10 items)
+- novelty_angle: string (<=800)
+- cta: string (<=200)
+- grounding_insight_ids: string[] (min 1; ideally 1–3; MUST be chosen from the provided grounding_insight_ids in the context)
+- expected_outcome: string (<=400)
+- risk_flags: string[] (optional; default [])
+- status: "proposed" (always)
+- confidence_score: number 0–1 (optional but recommended)
+
+Rules:
+- Every idea MUST include grounding_insight_ids (no orphan ideas).
+- Be specific (no generic "post about astrology" ideas).
+- The format split above is mandatory even if the dataset is skewed.
+- Keep claims safe; use risk_flags for things like "medical_claim", "financial_claim", "adult_content", "policy_risk", "brand_risk".`;
+
+export const IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE = `Project notes: {{EXTRA_INSTRUCTIONS}}
+
+Insight context ({{CONTEXT_ROW_COUNT}} rows; {{TOP_PERFORMER_IN_CONTEXT}} include top-performer enrichment):
+{{INSIGHT_CONTEXT_JSON}}`;
+
 const TP_TIER_RANK: Record<string, number> = {
   top_performer_deep: 1,
   top_performer_carousel: 2,

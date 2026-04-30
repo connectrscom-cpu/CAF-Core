@@ -24,6 +24,27 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+export const TOP_PERFORMER_VIDEO_SYSTEM_PROMPT = `You analyze **sampled static frames** from a short-form video (no audio, no full video playback).
+Return ONLY valid JSON:
+{
+  "hook_visual": "what the opening frames signal",
+  "message_clarity": "core message from visuals + transcript",
+  "pacing_notes": "inferred from frame sequence only (short)",
+  "palette": ["colours"],
+  "on_screen_text": "text visible across frames",
+  "style_summary": "2-4 sentences on aesthetic / format",
+  "format_pattern": "talking head | b-roll | text-on-screen | mixed | unknown",
+  "risk_flags": ["string"],
+  "why_it_worked": "why this may perform (short)"
+}
+If transcript is empty, rely on frames only. Be conservative when uncertain.`;
+
+export const TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE = `Evidence kind: {{EVIDENCE_KIND}}
+Pre-LLM score: {{PRE_LLM_SCORE}}
+Frame count: {{FRAME_COUNT}}
+Transcript (may be empty):
+{{TRANSCRIPT}}`;
+
 export interface RunDeepVideoInsightsOptions {
   max_rows?: number;
   min_pre_llm_score?: number;
@@ -168,20 +189,7 @@ export async function runDeepVideoInsightsForImport(
 
   let analyzed = 0;
   for (const c of top) {
-    const system = `You analyze **sampled static frames** from a short-form video (no audio, no full video playback).
-Return ONLY valid JSON:
-{
-  "hook_visual": "what the opening frames signal",
-  "message_clarity": "core message from visuals + transcript",
-  "pacing_notes": "inferred from frame sequence only (short)",
-  "palette": ["colours"],
-  "on_screen_text": "text visible across frames",
-  "style_summary": "2-4 sentences on aesthetic / format",
-  "format_pattern": "talking head | b-roll | text-on-screen | mixed | unknown",
-  "risk_flags": ["string"],
-  "why_it_worked": "why this may perform (short)"
-}
-If transcript is empty, rely on frames only. Be conservative when uncertain.`;
+    const system = TOP_PERFORMER_VIDEO_SYSTEM_PROMPT;
 
     const userText = `Evidence kind: ${c.evidence_kind}
 Pre-LLM score: ${c.pre_llm_score}

@@ -849,6 +849,23 @@ export async function savePromptTemplate(data: Record<string, unknown>) {
   return corePut<Record<string, unknown>>("/v1/flow-engine/prompts", data);
 }
 
+export async function getProjectPromptVersions(projectSlug: string, opts?: { flow_type?: string; prompt_id?: string }) {
+  const qs = new URLSearchParams();
+  if (opts?.flow_type) qs.set("flow_type", opts.flow_type);
+  if (opts?.prompt_id) qs.set("prompt_id", opts.prompt_id);
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return coreGet<{ ok: boolean; prompt_versions: Record<string, unknown>[] }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/prompt-versions${suffix}`
+  );
+}
+
+export async function upsertProjectPromptVersion(projectSlug: string, data: Record<string, unknown>) {
+  return corePost<{ ok: boolean }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/prompt-versions`,
+    data
+  );
+}
+
 export async function getQcChecks(flowType?: string) {
   const qs = flowType ? `?flow_type=${encodeURIComponent(flowType)}` : "";
   return coreGet<Record<string, unknown>[]>(`/v1/flow-engine/qc-checks${qs}`);

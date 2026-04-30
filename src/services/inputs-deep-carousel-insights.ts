@@ -29,6 +29,29 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+export const TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT = `You analyze a **multi-slide social carousel** (static images shown in order, left-to-right / slide 1 → N).
+Return ONLY valid JSON:
+{
+  "slide_arc": "how the story progresses across slides (short)",
+  "cover_vs_body": "how slide 1 hooks vs middle/ending slides",
+  "visual_consistency": "palette, fonts, templates across slides",
+  "on_screen_text_summary": "recurring text patterns / hooks on slides",
+  "cta_clarity": "how clear the ask / next step is",
+  "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
+  "risk_flags": ["string"],
+  "why_it_worked": "why this carousel may perform (short)"
+}
+Use every slide image; if order is ambiguous, assume given order. Be conservative when unreadable.`;
+
+export const TOP_PERFORMER_CAROUSEL_USER_PROMPT_TEMPLATE = `Evidence kind: {{EVIDENCE_KIND}}
+Pre-LLM score: {{PRE_LLM_SCORE}}
+Slide count: {{SLIDE_COUNT}}
+Caption / context:
+{{CAPTION_CONTEXT}}
+
+Structured row context:
+{{TEXT_BUNDLE}}`;
+
 export interface RunDeepCarouselInsightsOptions {
   max_rows?: number;
   min_pre_llm_score?: number;
@@ -174,19 +197,7 @@ export async function runDeepCarouselInsightsForImport(
   let analyzed = 0;
   for (const c of top) {
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2200);
-    const system = `You analyze a **multi-slide social carousel** (static images shown in order, left-to-right / slide 1 → N).
-Return ONLY valid JSON:
-{
-  "slide_arc": "how the story progresses across slides (short)",
-  "cover_vs_body": "how slide 1 hooks vs middle/ending slides",
-  "visual_consistency": "palette, fonts, templates across slides",
-  "on_screen_text_summary": "recurring text patterns / hooks on slides",
-  "cta_clarity": "how clear the ask / next step is",
-  "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
-  "risk_flags": ["string"],
-  "why_it_worked": "why this carousel may perform (short)"
-}
-Use every slide image; if order is ambiguous, assume given order. Be conservative when unreadable.`;
+    const system = TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT;
 
     const userText = `Evidence kind: ${c.evidence_kind}
 Pre-LLM score: ${c.pre_llm_score}

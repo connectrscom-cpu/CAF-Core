@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import { ProjectPromptsPanel } from "@/components/ProjectPromptsPanel";
 
 function projectApiSuffix(multiProject: boolean, activeProjectSlug: string): string {
   if (multiProject && activeProjectSlug) return `?project=${encodeURIComponent(activeProjectSlug)}`;
@@ -18,7 +19,9 @@ type Section =
   | "flow-types"
   | "project-risk-rules"
   | "heygen-defaults"
-  | "heygen-config";
+  | "heygen-config"
+  | "project-prompts"
+  | "prompt-versions";
 
 const TABS: { id: Section; label: string }[] = [
   { id: "strategy", label: "Strategy" },
@@ -30,6 +33,8 @@ const TABS: { id: Section; label: string }[] = [
   { id: "project-risk-rules", label: "Project risk rules" },
   { id: "heygen-defaults", label: "Video defaults" },
   { id: "heygen-config", label: "HeyGen" },
+  { id: "project-prompts", label: "Project Prompts" },
+  { id: "prompt-versions", label: "Prompt Versions" },
 ];
 
 const STRATEGY_FIELDS = [
@@ -239,6 +244,13 @@ export default function ProjectConfigPage() {
     setMessage(null);
     try {
       const suffix = projectApiSuffix(multiProject, activeProjectSlug);
+      if (section === "project-prompts" || section === "prompt-versions") {
+        // These tabs manage their own fetching + saving; keep the surrounding page stable.
+        setData(null);
+        setListData(null);
+        setLoading(false);
+        return;
+      }
       if (section === "heygen-defaults") {
         const res = await fetch(`/api/project-config/heygen-config${suffix}`);
         const json = (await res.json()) as { heygen_config?: Record<string, unknown>[] };
@@ -443,7 +455,15 @@ export default function ProjectConfigPage() {
 
         {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
 
-        {!loading && isSingleton && (
+        {!loading && (activeTab === "project-prompts") && (
+          <ProjectPromptsPanel mode="project-prompts" />
+        )}
+
+        {!loading && (activeTab === "prompt-versions") && (
+          <ProjectPromptsPanel mode="prompt-versions" />
+        )}
+
+        {!loading && activeTab !== "project-prompts" && activeTab !== "prompt-versions" && isSingleton && (
           <SingletonForm
             fields={fields}
             data={data ?? {}}
@@ -452,7 +472,7 @@ export default function ProjectConfigPage() {
           />
         )}
 
-        {!loading && !isSingleton && (
+        {!loading && activeTab !== "project-prompts" && activeTab !== "prompt-versions" && !isSingleton && (
           <ListForm
             fields={fields}
             items={listData ?? []}
@@ -692,6 +712,8 @@ function getFieldsForSection(section: Section): FieldDef[] {
     case "project-risk-rules": return [...RISK_RULE_FIELDS];
     case "heygen-defaults": return [...HEYGEN_DEFAULTS_FIELDS];
     case "heygen-config": return [...HEYGEN_FIELDS];
+    case "project-prompts": return [];
+    case "prompt-versions": return [];
   }
 }
 

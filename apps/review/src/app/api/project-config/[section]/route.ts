@@ -9,6 +9,9 @@ import {
   getHeygenConfig, saveHeygenConfig,
   saveHeygenDefaults,
   getSystemConstraints, saveSystemConstraints,
+  getPromptTemplates,
+  getProjectPromptVersions,
+  upsertProjectPromptVersion,
 } from "@/lib/caf-core-client";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 
@@ -25,6 +28,18 @@ const getters: Record<string, (slug: string) => Promise<unknown>> = {
   "flow-types": getFlowTypes,
   "project-risk-rules": getProjectRiskRules,
   "heygen-config": getHeygenConfig,
+  "prompt-versions": (slug) => getProjectPromptVersions(slug),
+  "project-prompts": async (slug) => {
+    const [templates, versions] = await Promise.all([
+      getPromptTemplates(),
+      getProjectPromptVersions(slug),
+    ]);
+    return {
+      ok: true,
+      prompt_templates: Array.isArray(templates) ? templates : [],
+      prompt_versions: (versions as any)?.prompt_versions ?? [],
+    };
+  },
 };
 
 const savers: Record<string, (slug: string, data: Record<string, unknown>) => Promise<unknown>> = {
@@ -45,6 +60,8 @@ const savers: Record<string, (slug: string, data: Record<string, unknown>) => Pr
           ? data.avatar_pool_json
           : (data.avatar_pool_json as string | null | undefined),
     }),
+  "prompt-versions": (slug, data) => upsertProjectPromptVersion(slug, data),
+  "project-prompts": (slug, data) => upsertProjectPromptVersion(slug, data),
 };
 
 function resolveProjectSlug(req: NextRequest, bodyProject?: string): string {

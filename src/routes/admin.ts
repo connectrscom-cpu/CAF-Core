@@ -86,6 +86,23 @@ import {
   PROMPT_LABS_HEYGEN_INTRO,
   promptTemplateRoleHint,
 } from "../services/prompt-labs-meta.js";
+import { broadInsightsPromptTemplate } from "../services/inputs-broad-llm-insights.js";
+import {
+  TOP_PERFORMER_IMAGE_SYSTEM_PROMPT,
+  TOP_PERFORMER_IMAGE_USER_PROMPT_TEMPLATE,
+} from "../services/inputs-deep-image-insights.js";
+import {
+  TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT,
+  TOP_PERFORMER_CAROUSEL_USER_PROMPT_TEMPLATE,
+} from "../services/inputs-deep-carousel-insights.js";
+import {
+  TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
+  TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
+} from "../services/inputs-deep-video-insights.js";
+import {
+  IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
+  IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
+} from "../services/ideas-from-insights-llm.js";
 import { VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP } from "../decision_engine/default-plan-caps.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
@@ -1614,6 +1631,15 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       carousel_templates: carouselTpls,
       qc_checklists: cleaned.qcChecks,
       risk_policies: riskPolicies,
+      env_tuning: {
+        VIDEO_TARGET_DURATION_MIN_SEC: config.VIDEO_TARGET_DURATION_MIN_SEC,
+        VIDEO_TARGET_DURATION_MAX_SEC: config.VIDEO_TARGET_DURATION_MAX_SEC,
+        HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS: config.HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS,
+        SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
+        SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX: config.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
+        SCENE_ASSEMBLY_CLIP_DURATION_SEC: config.SCENE_ASSEMBLY_CLIP_DURATION_SEC,
+      },
+      env_hints: PROMPT_LABS_ENV_HINTS,
     };
   });
 
@@ -1647,6 +1673,123 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         labs_is_heygen: isHeygenFlowType(p.flow_type),
       };
     });
+    const broad = broadInsightsPromptTemplate();
+    const processing_prompts = [
+      {
+        prompt_name: "INSIGHTS__Broad_LLM_v1",
+        flow_type: "PROCESSING_INSIGHTS",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Broad, text-only insights pass over evidence rows (analysis_tier=broad_llm).",
+        labs_flow_description: "Processing: Evidence → broad LLM insights.",
+        system_prompt: broad.system_prompt,
+        user_prompt_template: broad.user_prompt_template,
+      },
+      {
+        prompt_name: "INSIGHTS__Top_Performer_Image_v1",
+        flow_type: "PROCESSING_TOP_PERFORMER",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Vision analysis for single-image top performers (analysis_tier=top_performer_deep).",
+        labs_flow_description: "Processing: Top-performer enrichment — single image.",
+        system_prompt: TOP_PERFORMER_IMAGE_SYSTEM_PROMPT,
+        user_prompt_template: TOP_PERFORMER_IMAGE_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: "INSIGHTS__Top_Performer_Carousel_v1",
+        flow_type: "PROCESSING_TOP_PERFORMER",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Vision analysis for multi-slide carousels (analysis_tier=top_performer_carousel).",
+        labs_flow_description: "Processing: Top-performer enrichment — carousel deck.",
+        system_prompt: TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT,
+        user_prompt_template: TOP_PERFORMER_CAROUSEL_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: "INSIGHTS__Top_Performer_Video_Frames_v1",
+        flow_type: "PROCESSING_TOP_PERFORMER",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Vision analysis for sampled video frames + transcript (analysis_tier=top_performer_video).",
+        labs_flow_description: "Processing: Top-performer enrichment — video frames.",
+        system_prompt: TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
+        user_prompt_template: TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: "IDEAS__From_Insights_v1",
+        flow_type: "PROCESSING_IDEAS",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Synthesize a curated ideas list from broad + top-performer insights into signal_packs.ideas_json.",
+        labs_flow_description: "Processing: Insights → curated ideas (ideas_json).",
+        system_prompt: IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
+        user_prompt_template: IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
+      },
+    ];
+    const learning_prompts = [
+      {
+        prompt_name: "REVIEW__Approved_Content_LLM_v1",
+        flow_type: "LEARNING_LLM_REVIEW",
+        prompt_role: "learning",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "LLM critique of human-approved content; persists llm_approval_reviews + learning_observations and mints pending GENERATION_GUIDANCE rules when thresholds match.",
+        labs_flow_description: "Learning: Post-approval review (vision + text) → rules.",
+        system_prompt: APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT,
+        user_prompt_template:
+          "Chat payload is assembled from approved content bundle + up to N image URLs.\nVariables are computed at runtime from content_jobs + assets.",
+      },
+      {
+        prompt_name: "EDITORIAL__Notes_Synthesis_LLM_v1",
+        flow_type: "LEARNING_EDITORIAL",
+        prompt_role: "learning",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Optional OpenAI synthesis of reviewer notes into themes + recommended actions; also used to mint pending GENERATION_GUIDANCE rules for prompt-level fixes.",
+        labs_flow_description: "Learning: Editorial notes → structured actions + engineering brief.",
+        system_prompt: EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT,
+        user_prompt_template:
+          "User payload is a JSON blob of aggregate stats + reviewer note rows (max rows capped).",
+      },
+      {
+        prompt_name: "EDITORIAL__Engineering_Remediation_Brief_v1",
+        flow_type: "LEARNING_EDITORIAL",
+        prompt_role: "learning",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Deterministic (non-LLM) markdown prompt compiled from editorial insights to hand off to a coding agent (paths + sample task_ids).",
+        labs_flow_description: "Learning: Editorial patterns → engineering handoff prompt (markdown).",
+        system_prompt: "",
+        user_prompt_template:
+          "Compiled by src/services/editorial-engineering-prompt.ts from triggers + samples (no model call).",
+      },
+      {
+        prompt_name: "PERFORMANCE__Market_Analysis_v1",
+        flow_type: "LEARNING_PERFORMANCE",
+        prompt_role: "learning",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Deterministic (non-LLM) performance/market analysis over performance_metrics; mints pending ranking rules (SCORE_BOOST / SCORE_PENALTY).",
+        labs_flow_description: "Learning: Performance metrics → ranking rules (heuristics).",
+        system_prompt: "",
+        user_prompt_template:
+          "Implemented in src/services/market-learning.ts and src/services/performance-learning.ts (no model call).",
+      },
+    ];
     return {
       ok: true,
       env_tuning: {
@@ -1682,6 +1825,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Script-led avatar jobs use POST /v3/videos (type avatar) — no duration field; CAF enforces min/max spoken word counts from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE when HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS is true. Silence-voice visual-only jobs still use legacy POST /v2/video/generate (see heygen-renderer).",
       },
       prompt_templates: prompt_templates_enriched,
+      processing_prompts,
+      learning_prompts,
+      validation_prompts: [],
       flow_definitions: cleaned.flowDefs,
       flow_description_by_type,
       heygen_flow_types: [...HEYGEN_FLOW_TYPES],
@@ -4553,6 +4699,7 @@ loadEngine();
   <button class="tab" onclick="feTab('carousel-tpl',this)">Carousel Templates</button>
   <button class="tab" onclick="feTab('qc',this)">QC Checklists</button>
   <button class="tab" onclick="feTab('risk',this)">Risk Policies</button>
+  <button class="tab" onclick="feTab('env-tuning',this)">Env Variables + Tuning</button>
 </div>
 <div class="content" id="fe-content"><div class="empty">Loading...</div></div>
 <script>
@@ -4628,6 +4775,21 @@ async function loadFE(){
   for(const r of rp){h+='<tr><td>'+esc(r.risk_policy_name)+'</td><td>'+esc(r.risk_policy_version)+'</td><td>'+esc(r.risk_category||'—')+'</td><td>'+esc(r.severity_level||'—')+'</td><td>'+esc(r.default_action||'—')+'</td><td>'+(r.requires_manual_review?'Yes':'No')+'</td><td>'+(r.block_publish?'Yes':'No')+'</td><td><button class="btn-ghost" onclick="feEdit(\\'risk-policy\\','+esc(JSON.stringify(r))+')">Edit</button></td></tr>';}
   h+='</tbody></table></div>';}else h+='<div class="empty">No risk policies yet.</div>';
   h+='</div></div>';
+
+  // Env Variables + Tuning (runtime config surfaced for operators)
+  const e=d.env_tuning||{};
+  const envHints=d.env_hints||{};
+  const keys=Object.keys(e||{}).sort();
+  h+='<div id="env-tuning" class="tab-panel"><div class="card"><div class="card-h">Env Variables + Tuning</div>';
+  h+='<p style="color:var(--muted);margin-bottom:12px">Runtime environment knobs that influence generator/validator policies (duration bands, scene counts). Change values in deployment env or <code>.env</code>, then restart the API.</p>';
+  h+='<div style="overflow-x:auto"><table><thead><tr><th>Variable</th><th>Value</th><th>What it does</th></tr></thead><tbody>';
+  for(const k of keys){
+    const v=e[k];
+    const hint=(envHints&&envHints[k])?envHints[k]:'—';
+    h+='<tr><td class="mono">'+esc(k)+'</td><td><strong>'+esc(String(v))+'</strong></td><td style="font-size:12px;color:var(--fg2);max-width:520px">'+esc(String(hint))+'</td></tr>';
+  }
+  if(keys.length===0){h+='<tr><td colspan="3" class="empty">No env tuning values found.</td></tr>';}
+  h+='</tbody></table></div></div></div>';
 
   document.getElementById('fe-content').innerHTML=h;
 }
@@ -4779,7 +4941,7 @@ function plRenderPromptCard(p,globalIx){
   out+='<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">';
   out+='<div><span class="mono" style="font-weight:600;color:var(--accent)">'+esc(p.prompt_name)+'</span> <span style="color:var(--muted);font-size:12px">· '+esc(p.flow_type)+'</span>';
   out+=' <span class="badge '+(p.active!==false?'badge-g':'badge-r')+'" style="font-size:10px">'+(p.active!==false?'active':'off')+'</span></div>';
-  out+='<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+globalIx+')">Edit</button></div>';
+  out+=(p.labs_readonly?'<span class="badge badge-b" style="font-size:10px">read-only</span>':'<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+globalIx+')">Edit</button>')+'</div>';
   out+='<p style="font-size:12px;color:var(--muted);margin:0 0 6px">Role: <strong>'+esc(p.prompt_role||'—')+'</strong></p>';
   out+='<p style="font-size:13px;line-height:1.5;margin:0 0 8px;color:var(--fg)">'+esc(p.labs_short_description||'')+'</p>';
   if(p.labs_flow_description)out+='<p style="font-size:11px;color:var(--muted);margin:0 0 8px">Flow definition: '+esc(trunc(p.labs_flow_description,280))+'</p>';
@@ -4791,8 +4953,6 @@ async function loadPL(){
   const root=document.getElementById('pl-root');
   const r=await cafFetch('/v1/admin/prompt-labs'); const d=await r.json();
   if(!d.ok){root.innerHTML='<div class="empty">Failed to load prompt labs</div>';return;}
-  const e=d.env_tuning||{};
-  const envHints=d.env_hints||{};
   const c=d.core_addenda||{};
   const meta=d.core_layer_meta||{};
   const h=d.heygen_video_agent||{};
@@ -4805,36 +4965,46 @@ async function loadPL(){
 
   const pt=d.prompt_templates||[];
   window.__PL_TEMPLATES=pt;
+  const pp=d.processing_prompts||[];
+  const lp=d.learning_prompts||[];
 
   function layerForPrompt(p){
     const ft=String(p.flow_type||'').trim();
     if((p.labs_is_heygen===true)||heygenFlowSet.has(ft)) return 'heygen';
-    if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS'||ft==='FLOW_TEXT') return 'processing';
     if(ft==='FLOW_CAROUSEL'||ft==='FLOW_VID_SCENES') return 'creation';
+    if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS'||ft==='FLOW_TEXT') return 'creation';
     // Default bucket: creation (most generator prompts belong here).
     return 'creation';
   }
 
+  const vp=d.validation_prompts||[];
   const layers={processing:[],creation:[],validation:[],publishing:[],learning:[],heygen:[]};
+  for(let i=0;i<pp.length;i++){
+    layers.processing.push({p:pp[i],ix:-1});
+  }
+  for(let i=0;i<vp.length;i++){
+    layers.validation.push({p:vp[i],ix:-1});
+  }
+  for(let i=0;i<lp.length;i++){
+    layers.learning.push({p:lp[i],ix:-1});
+  }
   for(let i=0;i<pt.length;i++){
     const p=pt[i];
     const k=layerForPrompt(p);
     layers[k].push({p:p,ix:i});
   }
 
-  // Validation: Env & tuning panel lives here
-  html+='<div id="pl-validation" class="tab-panel"><div class="card"><div class="card-h">Validation — environment knobs</div>';
-  html+='<p style="color:var(--muted);margin-bottom:12px">These knobs drive runtime validation-related addenda (duration bands, scene counts). Change values in deployment env or <code>.env</code>, then restart the API.</p>';
-  html+='<table><thead><tr><th>Variable</th><th>Value</th><th>What it does</th></tr></thead><tbody>';
-  for(const k of Object.keys(e)){
-    html+='<tr><td class="mono">'+esc(k)+'</td><td><strong>'+esc(String(e[k]))+'</strong></td><td style="font-size:12px;color:var(--fg2);max-width:360px">'+esc((envHints[k]&&(envHints[k].description||envHints[k]))||'—')+'</td></tr>';
-  }
-  html+='</tbody></table></div></div>';
+  // Validation: reserved for validation-layer LLM calls (QC audits, policy checks, etc.)
+  html+='<div id="pl-validation" class="tab-panel"><div class="card" style="margin-bottom:14px"><div class="card-h">Validation prompts ('+layers.validation.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Validation-layer prompts (LLM calls) used for audits, checks, and policy enforcement. Env tuning lives in Flow Engine → Env Variables + Tuning.</p>';
+  if(layers.validation.length){ for(const row of layers.validation) html+=plRenderPromptCard(row.p,row.ix); }
+  else html+='<div class="empty">No validation prompts configured yet.</div>';
+  html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div></div>';
 
   // Processing tab
   html+='<div id="pl-processing" class="tab-panel active">';
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Processing prompts ('+layers.processing.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Early-stage prompts that prepare structure, hooks, CTAs, or angle scaffolding before the final creative output.</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Insights prompts used in Processing (broad LLM, top performers, and ideas-from-insights synthesis).</p>';
   if(layers.processing.length){ for(const row of layers.processing) html+=plRenderPromptCard(row.p,row.ix); }
   else html+='<div class="empty">No rows</div>';
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
@@ -4874,6 +5044,12 @@ async function loadPL(){
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Learning</div>';
   html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Learning rules inject guidance text at generation time (see <span class="mono">/v1/learning</span> endpoints). Prompt Labs shows Flow Engine templates + runtime addenda; learning guidance is managed separately.</p>';
   html+='<p style="margin:0 0 10px"><a class="btn btn-sm" href="/admin/learning">Learning</a> <a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p>';
+  html+='</div>';
+
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Learning prompts ('+layers.learning.length+')</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Editorial analysis, post-approval LLM review, and rule-building surfaces that feed the learning loop.</p>';
+  if(layers.learning.length){ for(const row of layers.learning) html+=plRenderPromptCard(row.p,row.ix); }
+  else html+='<div class="empty">No rows</div>';
   html+='</div>';
 
   html+='<div class="card"><div class="card-h">Flow definitions ('+fd.length+')</div>';
