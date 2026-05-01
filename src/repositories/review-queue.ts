@@ -53,6 +53,9 @@ export interface ReviewQueueJob {
   latest_submitted_at: string | null;
   /** Latest editorial row `overrides_json` (copy overrides, `rewrite_copy`, etc.). */
   latest_overrides_json?: Record<string, unknown> | null;
+  /** Populated on job-detail queries from latest `editorial_reviews` row. */
+  latest_validation_schema_version?: string | null;
+  latest_validation_output_json?: Record<string, unknown> | null;
   /** First asset URL for workbench thumbnails (prefers image-like assets). */
   preview_thumb_url?: string | null;
 }
@@ -365,6 +368,8 @@ export interface ReviewJobDetail extends ReviewQueueJob {
     validator: string | null;
     submitted_at: string | null;
     created_at: string;
+    validation_schema_version?: string | null;
+    validation_output_json?: Record<string, unknown> | null;
   }>;
   auto_validation: {
     format_ok: boolean | null;
@@ -383,7 +388,7 @@ export async function getReviewJobDetail(
 ): Promise<ReviewJobDetail | null> {
   const job = await qOne<ReviewQueueJob>(
     db,
-    `SELECT
+    `     SELECT
        j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
        j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
        j.pre_gen_score::text, j.generation_payload, j.review_snapshot,
@@ -393,10 +398,13 @@ export async function getReviewJobDetail(
        lr.rejection_tags AS latest_rejection_tags,
        lr.validator AS latest_validator,
        lr.submitted_at AS latest_submitted_at,
-       lr.overrides_json AS latest_overrides_json
+       lr.overrides_json AS latest_overrides_json,
+       lr.validation_schema_version AS latest_validation_schema_version,
+       lr.validation_output_json AS latest_validation_output_json
      FROM caf_core.content_jobs j
      LEFT JOIN LATERAL (
-       SELECT decision, notes, rejection_tags, validator, submitted_at, overrides_json
+       SELECT decision, notes, rejection_tags, validator, submitted_at, overrides_json,
+              validation_schema_version, validation_output_json
        FROM caf_core.editorial_reviews
        WHERE task_id = j.task_id AND project_id = j.project_id
        ORDER BY created_at DESC LIMIT 1
@@ -430,9 +438,13 @@ export async function getReviewJobDetail(
     validator: string | null;
     submitted_at: string | null;
     created_at: string;
+    validation_schema_version: string | null;
+    validation_output_json: Record<string, unknown> | null;
   }>(
     db,
-    `SELECT id, decision, notes, rejection_tags, validator, submitted_at, created_at
+    `SELECT id, decision, notes, rejection_tags, validator, submitted_at, created_at,
+            validation_schema_version,
+            validation_output_json
      FROM caf_core.editorial_reviews
      WHERE project_id = $1 AND task_id = $2
      ORDER BY created_at DESC`,

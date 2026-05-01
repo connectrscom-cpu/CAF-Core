@@ -188,6 +188,8 @@ export interface ReviewQueueJob {
   latest_validator: string | null;
   latest_submitted_at: string | null;
   latest_overrides_json?: Record<string, unknown> | null;
+  /** Matches latest editorial row `validation_schema_version` when Core returns it. */
+  latest_validation_schema_version?: string | null;
   /** Latest structured validation output payload from Core (optional). */
   latest_validation_output_json?: Record<string, unknown> | null;
   /** Present on `/v1/review-queue-all/...` responses. */

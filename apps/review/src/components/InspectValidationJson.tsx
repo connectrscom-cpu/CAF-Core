@@ -24,21 +24,30 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
 
   const { latestValidation, history, reviewSnapshot, draftPackage, draftMeta } = useMemo(() => {
     const j = job ?? {};
-    const latest = (j as any).latest_validation_output_json ?? null;
     const reviews = Array.isArray((j as any).reviews) ? ((j as any).reviews as unknown[]) : [];
-    const historyRows = reviews
-      .map((r) => asRec(r))
-      .filter(Boolean)
-      .map((r) => ({
-        id: String(r!.id ?? ""),
-        created_at: String(r!.created_at ?? ""),
-        decision: String(r!.decision ?? ""),
-        schema_version: String(r!.validation_schema_version ?? ""),
-        validation_output_json: r!.validation_output_json ?? null,
-      }))
-      .filter((x) => x.validation_output_json != null || x.schema_version || x.decision || x.created_at);
+    const reviewRecs = reviews.map((r) => asRec(r)).filter(Boolean) as Record<string, unknown>[];
 
     const reviewSnap = asRec((j as any).review_snapshot) ?? null;
+    const snapVo = reviewSnap?.validation_output ?? null;
+
+    const fromJob = (j as any).latest_validation_output_json ?? null;
+    const firstReviewOut =
+      reviewRecs.length > 0 ? (reviewRecs[0]!.validation_output_json as unknown) ?? null : null;
+    const latest =
+      (fromJob && typeof fromJob === "object" ? fromJob : null) ??
+      (firstReviewOut && typeof firstReviewOut === "object" ? firstReviewOut : null) ??
+      (snapVo && typeof snapVo === "object" ? snapVo : null);
+
+    const historyRows = reviewRecs.map((r) => ({
+      id: String(r.id ?? ""),
+      created_at: String(r.created_at ?? ""),
+      decision: String(r.decision ?? ""),
+      validator: String(r.validator ?? ""),
+      submitted_at: r.submitted_at != null ? String(r.submitted_at) : null,
+      schema_version: String(r.validation_schema_version ?? ""),
+      validation_output_json: (r.validation_output_json as unknown) ?? null,
+    }));
+
     const gp = asRec((j as any).generation_payload) ?? {};
     const draft = gp.draft_package_snapshot ?? null;
     const meta = {
@@ -74,8 +83,9 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       </div>
 
       <p style={{ margin: "8px 0 12px", fontSize: 12, color: "var(--fg-secondary)", lineHeight: 1.45 }}>
-        Shows the structured <span className="font-mono">validation_output_json</span> (latest + history) and the stored{" "}
-        <span className="font-mono">draft_package_snapshot</span> for traceability.
+        Structured review output comes from <span className="font-mono">editorial_reviews</span> (API) and is mirrored on{" "}
+        <span className="font-mono">content_jobs.review_snapshot.validation_output</span>.{" "}
+        <span className="font-mono">draft_package_snapshot</span> is optional — only some flows write it during generation.
       </p>
 
       <details open={expanded} style={{ marginTop: 8 }}>
