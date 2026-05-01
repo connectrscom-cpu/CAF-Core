@@ -22,7 +22,7 @@ export interface InspectValidationJsonProps {
 export function InspectValidationJson({ job }: InspectValidationJsonProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const { latestValidation, history, reviewSnapshot, draftPackage, draftMeta } = useMemo(() => {
+  const { latestValidation, history, reviewSnapshot, draftPackage, draftMeta, carouselGenerationSlice } = useMemo(() => {
     const j = job ?? {};
     const reviews = Array.isArray((j as any).reviews) ? ((j as any).reviews as unknown[]) : [];
     const reviewRecs = reviews.map((r) => asRec(r)).filter(Boolean) as Record<string, unknown>[];
@@ -55,12 +55,32 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       draft_package_warnings: gp.draft_package_warnings ?? [],
       draft_package_errors: gp.draft_package_errors ?? [],
     };
+
+    const rsjRaw = (j as any).review_slides_json;
+    let reviewSlidesParsed: unknown = null;
+    if (typeof rsjRaw === "string" && rsjRaw.trim()) {
+      try {
+        reviewSlidesParsed = JSON.parse(rsjRaw) as unknown;
+      } catch {
+        reviewSlidesParsed = rsjRaw;
+      }
+    }
+    const carouselSource: Record<string, unknown> = {};
+    if (reviewSlidesParsed != null) carouselSource.review_slides_json = reviewSlidesParsed;
+    const genOut = gp.generated_output;
+    if (genOut && typeof genOut === "object") carouselSource.generated_output = genOut as Record<string, unknown>;
+    if (gp.slides != null) carouselSource.generation_payload_slides = gp.slides;
+    if (gp.publish_image_urls != null) carouselSource.publish_image_urls = gp.publish_image_urls;
+    if (gp.publish_media_urls != null) carouselSource.publish_media_urls = gp.publish_media_urls;
+    const carouselGenerationSlice = Object.keys(carouselSource).length > 0 ? carouselSource : null;
+
     return {
       latestValidation: latest,
       history: historyRows,
       reviewSnapshot: reviewSnap,
       draftPackage: draft,
       draftMeta: meta,
+      carouselGenerationSlice,
     };
   }, [job]);
 
@@ -83,9 +103,10 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       </div>
 
       <p style={{ margin: "8px 0 12px", fontSize: 12, color: "var(--fg-secondary)", lineHeight: 1.45 }}>
-        Structured review output comes from <span className="font-mono">editorial_reviews</span> (API) and is mirrored on{" "}
-        <span className="font-mono">content_jobs.review_snapshot.validation_output</span>.{" "}
-        <span className="font-mono">draft_package_snapshot</span> is optional — only some flows write it during generation.
+        <span className="font-mono">validation_output.reviewed_content</span> is a compact snapshot at submit time: only fields
+        Core could resolve (caption, title, slides, etc.) are included — missing keys were empty in the job payload then. The LLM
+        “draft package” lives in <span className="font-mono">draft_package_snapshot</span> when the generator persists it;
+        otherwise full carousel copy is under <span className="font-mono">generation_payload</span> (see section below).
       </p>
 
       <details open={expanded} style={{ marginTop: 8 }}>
@@ -103,6 +124,19 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
         </summary>
         <pre className="slides-json" style={{ marginTop: 8, maxHeight: expanded ? 520 : 260 }}>
           {pretty(history)}
+        </pre>
+      </details>
+
+      <details style={{ marginTop: 10 }}>
+        <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13 }}>
+          Carousel / copy source (merged slides + generated_output)
+        </summary>
+        <p style={{ margin: "8px 0 6px", fontSize: 11, color: "var(--muted)", lineHeight: 1.45 }}>
+          Same merge Core uses for review UI: <span className="font-mono">review_slides_json</span> plus raw{" "}
+          <span className="font-mono">generation_payload</span> slices. Rendered slide files are listed under the assets API.
+        </p>
+        <pre className="slides-json" style={{ marginTop: 4, maxHeight: expanded ? 560 : 280 }}>
+          {pretty(carouselGenerationSlice)}
         </pre>
       </details>
 
