@@ -8,6 +8,8 @@ import type { RunOutputReviewRow } from "../repositories/run-output-reviews.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { isVideoFlow } from "../decision_engine/flow-kind.js";
+import type { EditorialValidationCompact } from "../domain/editorial-validation-for-synthesis.js";
+import { validationCompactHasStructuredSignal } from "../domain/editorial-validation-for-synthesis.js";
 
 const NOTE_MAX_CHARS = 480;
 const MAX_NOTE_ROWS = 40;
@@ -24,6 +26,8 @@ export interface EditorialNoteRow {
   rejection_tags: unknown[];
   note: string;
   created_at: string;
+  /** Compact ValidationOutput v1 from `editorial_reviews.validation_output_json` (optional). */
+  validation_compact?: EditorialValidationCompact | null;
 }
 
 export interface LlmNotesTheme {
@@ -102,12 +106,13 @@ export const EDITORIAL_NOTES_LLM_SYNTHESIS_SYSTEM_PROMPT = `You are an analyst f
 
 You receive:
 - Aggregate stats from the review window (tags, overrides, flow approval, deterministic insights). The aggregate may include **run_output_reviews**: holistic operator write-ups on entire **runs** (batch quality, coherence, what worked or failed across jobs).
-- Individual review rows that include reviewer-written **notes** (only rows with non-empty notes are included), plus the carousel template name when available. When the aggregate field run_output_reviews is present, treat it as first-class signal even if per-task notes are sparse.
+- Individual review rows: reviewer **notes** when present, plus **validation_contract** when the validation layer stored structured output (\`editorial_reviews.validation_output_json\` — contract v1). The contract carries **issue_tags**, **findings** (label, location, message, suggestion), **rework_hints** (regenerate, provider skips, HeyGen overrides), **reviewed_content_preview** (finalized copy snapshot), and **notes** mirrored from review. Use findings and tags as primary evidence for what to change in prompts/templates/parameters; merge them with free-text notes (do not ignore structured fields when notes are empty).
+- Only rows with notes and/or structured validation signal are listed under \`reviews_with_evidence\`. When the aggregate field run_output_reviews is present, treat it as first-class signal even if per-task evidence is sparse.
 - Each row carries its 'flow_type' — use it to detect whether the content was a CAROUSEL/IMAGE flow (Flow_Carousel_*, FLOW_IMG_PRODUCT_*) or a VIDEO flow (Video_*, FLOW_PRODUCT_*). Apply the right failure-mode lens accordingly.
 - Notes from VIDEO flows are pre-tagged with \`[video · <flow_type>] …\`. Preserve that leading tag verbatim when you echo the note back inside \`example_quotes\`, and add the matching flow_type(s) to the recommended action's \`example_task_ids\` / \`where_to_change\` so a coding agent can immediately identify which video flow each critique targets (script generator vs prompt generator vs scene assembly vs HeyGen). Do not strip or rewrite the tag.
 
 Your job:
-1. Convert the notes into **guidelines** that improve next generations: what was good/bad about the body/script, what failed structurally, and what should be consistently enforced. Separate carousel issues from video issues in your themes and actions — do not lump them together.
+1. Convert **notes and validation findings/tags** into **guidelines** that improve next generations: what was good/bad about the body/script, what failed structurally, and what should be consistently enforced. Map each recurring finding label or issue_tag to concrete prompt/template/parameter adjustments where possible. Separate carousel issues from video issues in your themes and actions — do not lump them together.
 2. When notes reference visuals (fonts, spacing, caption overlays, slide layout, cropping), treat it as a template-level issue and anchor recommendations to the specific 'carousel_template_name' when possible.
 3. When notes reference video problems — hook timing, voiceover pacing, scene-to-script mismatch, caption/subtitle burn-in, HeyGen avatar/voice choice, silent gaps, overly long scenes, or weak CTAs at the end — point at the HeyGen / scene pipeline paths listed below, not at carousel templates.
 4. Recommend concrete actions. Categories must be one of: learning_rule, generation_prompt, video_generation_prompt, renderer_template, heygen_template, review_ui, pipeline, process, other.
@@ -169,17 +174,22 @@ export async function synthesizeEditorialNotesWithLlm(
     return { skipped: true, reason: "OPENAI_API_KEY not configured" };
   }
 
-  const withNotes = params.noteRows.filter((r) => r.note.trim().length > 0);
+  const withEvidence = params.noteRows.filter((r) => {
+    const hasNote = r.note.trim().length > 0;
+    const vc = r.validation_compact;
+    const hasVal = Boolean(vc && validationCompactHasStructuredSignal(vc));
+    return hasNote || hasVal;
+  });
   const runReviews = params.runOutputReviews ?? [];
-  if (withNotes.length === 0 && runReviews.length === 0) {
-    return { skipped: true, reason: "no_reviewer_notes_in_window" };
+  if (withEvidence.length === 0 && runReviews.length === 0) {
+    return { skipped: true, reason: "no_editorial_evidence_in_window" };
   }
 
   const payload = {
     project_slug: params.projectSlug,
     window_days: params.windowDays,
     aggregate: params.aggregate,
-    reviews_with_notes: withNotes.slice(0, MAX_NOTE_ROWS).map((r) => ({
+    reviews_with_evidence: withEvidence.slice(0, MAX_NOTE_ROWS).map((r) => ({
       task_id: r.task_id,
       decision: r.decision,
       flow_type: r.flow_type,
@@ -188,6 +198,7 @@ export async function synthesizeEditorialNotesWithLlm(
       carousel_template_path_hint: r.carousel_template_path_hint ?? null,
       rejection_tags: Array.isArray(r.rejection_tags) ? r.rejection_tags : [],
       note: trimNote(annotateNoteWithFlowType(r.note, r.flow_type)),
+      validation_contract: r.validation_compact ?? null,
       created_at: r.created_at,
     })),
   };

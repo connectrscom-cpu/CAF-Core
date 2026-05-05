@@ -50,6 +50,7 @@ export async function runEditorialAnalysisForCronProjects(
         {
           slug,
           total_reviews: result.total_reviews,
+          reviews_marked_consumed: result.editorial_reviews_marked_consumed,
           rules_created: result.rules_created,
           engineering_insight_id: result.engineering_insight_id,
           llm_notes: llmReason,

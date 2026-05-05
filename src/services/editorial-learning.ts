@@ -16,7 +16,7 @@ import type { AppConfig } from "../config.js";
 import { randomUUID } from "node:crypto";
 import { triggersForInsight } from "../config/editorial-engineering-triggers.js";
 import { q } from "../db/queries.js";
-import { insertInsight } from "../repositories/learning-evidence.js";
+import { insertInsight, insertObservation } from "../repositories/learning-evidence.js";
 import { insertLearningRule } from "../repositories/learning.js";
 import { listRunOutputReviewsForEditorialWindow, type RunOutputReviewRow } from "../repositories/run-output-reviews.js";
 import { buildEngineeringRemediationPrompt } from "./editorial-engineering-prompt.js";
@@ -26,6 +26,10 @@ import {
   type EditorialNotesLlmResult,
   type EditorialNotesLlmSynthesis,
 } from "./editorial-notes-llm-synthesis.js";
+import {
+  compactValidationOutputForEditorialSynthesis,
+  validationCompactHasStructuredSignal,
+} from "../domain/editorial-validation-for-synthesis.js";
 
 export interface EditorialInsight {
   insight_type: string;
@@ -60,6 +64,13 @@ export interface EditorialAnalysisResult {
   engineering_insight_id: string | null;
   /** OpenAI synthesis from reviewer `notes` (skipped if no key, no notes, or error). */
   llm_notes_synthesis: EditorialNotesLlmResult | null;
+  /** Rows marked `editorial_analysis_consumed_at` after this run (0 when nothing processed or marking disabled). */
+  editorial_reviews_marked_consumed: number;
+}
+
+export interface AnalyzeEditorialPatternsOpts {
+  /** When true (default), sets `editorial_analysis_consumed_at` on included review rows so the next run only picks up new reviews. */
+  markReviewsConsumed?: boolean;
 }
 
 function formatLlmNotesForPrompt(s: EditorialNotesLlmSynthesis): string {
@@ -143,8 +154,10 @@ export async function analyzeEditorialPatterns(
   windowDays: number = 30,
   autoCreateRules: boolean = true,
   persistEngineeringInsight: boolean = true,
-  llmNotesSynthesis?: boolean
+  llmNotesSynthesis?: boolean,
+  analysisOpts?: AnalyzeEditorialPatternsOpts
 ): Promise<EditorialAnalysisResult> {
+  const markReviewsConsumed = analysisOpts?.markReviewsConsumed !== false;
   const runLlmOnNotes =
     llmNotesSynthesis !== undefined ? llmNotesSynthesis : Boolean(config.OPENAI_API_KEY?.trim());
 
@@ -153,6 +166,7 @@ export async function analyzeEditorialPatterns(
   const analysisRunDay = new Date().toISOString().slice(0, 10);
 
   const reviews = await q<{
+    id: string;
     task_id: string;
     decision: string | null;
     rejection_tags: unknown[];
@@ -162,16 +176,22 @@ export async function analyzeEditorialPatterns(
     flow_type: string | null;
     platform: string | null;
     generation_payload: Record<string, unknown>;
+    validation_output_json: Record<string, unknown>;
   }>(
     db,
     `
-    SELECT er.task_id, er.decision, er.rejection_tags, er.notes, er.overrides_json, er.created_at,
+    SELECT er.id, er.task_id, er.decision, er.rejection_tags, er.notes, er.overrides_json, er.created_at,
            j.flow_type, j.platform,
-           COALESCE(j.generation_payload, '{}'::jsonb) AS generation_payload
+           COALESCE(j.generation_payload, '{}'::jsonb) AS generation_payload,
+           COALESCE(er.validation_output_json, '{}'::jsonb) AS validation_output_json
     FROM caf_core.editorial_reviews er
     LEFT JOIN caf_core.content_jobs j
       ON j.task_id = er.task_id AND j.project_id = er.project_id
-    WHERE er.project_id = $1 AND er.created_at >= $2
+    WHERE er.project_id = $1
+      AND er.created_at >= $2
+      AND er.submit = true
+      AND er.decision IS NOT NULL
+      AND er.editorial_analysis_consumed_at IS NULL
     ORDER BY er.created_at DESC
   `,
     [projectId, cutoff.toISOString()]
@@ -195,6 +215,7 @@ export async function analyzeEditorialPatterns(
       engineering_sample_task_ids: [],
       engineering_insight_id: null,
       llm_notes_synthesis: null,
+      editorial_reviews_marked_consumed: 0,
     };
   }
 
@@ -239,7 +260,11 @@ export async function analyzeEditorialPatterns(
     SELECT j.flow_type, er.decision, COUNT(*)::text AS cnt
     FROM caf_core.editorial_reviews er
     JOIN caf_core.content_jobs j ON j.task_id = er.task_id AND j.project_id = er.project_id
-    WHERE er.project_id = $1 AND er.created_at >= $2 AND er.decision IS NOT NULL
+    WHERE er.project_id = $1
+      AND er.created_at >= $2
+      AND er.decision IS NOT NULL
+      AND er.submit = true
+      AND er.editorial_analysis_consumed_at IS NULL
     GROUP BY j.flow_type, er.decision
   `, [projectId, cutoff.toISOString()]);
 
@@ -360,6 +385,11 @@ export async function analyzeEditorialPatterns(
 
   const reviewsWithNotes = reviews.filter((r) => (r.notes ?? "").trim().length > 0);
   const notesCount = reviewsWithNotes.length;
+  const reviewsWithValidationSignal = reviews.filter((r) => {
+    const c = compactValidationOutputForEditorialSynthesis(r.validation_output_json);
+    return Boolean(c && validationCompactHasStructuredSignal(c));
+  });
+  const validationSignalCount = reviewsWithValidationSignal.length;
   if (total > 0 && notesCount >= 3 && notesCount / total >= 0.08) {
     insights.push({
       insight_type: "frequent_reviewer_notes",
@@ -367,6 +397,16 @@ export async function analyzeEditorialPatterns(
       detail: `${notesCount}/${total} reviews include non-empty reviewer notes (${((notesCount / total) * 100).toFixed(0)}%)`,
       confidence: Math.min(0.88, notesCount / total + 0.15),
       sample_size: notesCount,
+      rule_created: false,
+    });
+  }
+  if (total > 0 && validationSignalCount >= 3 && validationSignalCount / total >= 0.08) {
+    insights.push({
+      insight_type: "frequent_validation_findings",
+      scope: "validation_output",
+      detail: `${validationSignalCount}/${total} reviews carry structured validation signal (tags/findings/rework hints) (${((validationSignalCount / total) * 100).toFixed(0)}%)`,
+      confidence: Math.min(0.88, validationSignalCount / total + 0.15),
+      sample_size: validationSignalCount,
       rule_created: false,
     });
   }
@@ -396,8 +436,12 @@ export async function analyzeEditorialPatterns(
       `SELECT er.task_id
        FROM caf_core.editorial_reviews er
        JOIN caf_core.content_jobs j ON j.task_id = er.task_id AND j.project_id = er.project_id
-       WHERE er.project_id = $1 AND er.created_at >= $2 AND j.flow_type = $3
+       WHERE er.project_id = $1
+         AND er.created_at >= $2
+         AND j.flow_type = $3
          AND er.decision IN ('REJECTED', 'NEEDS_EDIT')
+         AND er.submit = true
+         AND er.editorial_analysis_consumed_at IS NULL
        ORDER BY er.created_at DESC
        LIMIT 8`,
       [projectId, cutoff.toISOString(), flowType]
@@ -443,6 +487,7 @@ export async function analyzeEditorialPatterns(
         detail: i.detail,
       })),
       reviews_with_notes_count: notesCount,
+      reviews_with_validation_signal_count: validationSignalCount,
       run_output_reviews: runOutputReviews.map((r) => ({
         run_id: r.run_id,
         body: r.body.length > 4000 ? `${r.body.slice(0, 4000)}…` : r.body,
@@ -456,20 +501,24 @@ export async function analyzeEditorialPatterns(
       windowDays,
       aggregate,
       runOutputReviews,
-      noteRows: reviews.map((r) => ({
-        task_id: r.task_id,
-        decision: r.decision,
-        flow_type: r.flow_type,
-        platform: r.platform,
-        rejection_tags: r.rejection_tags,
-        carousel_template_name: templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim() || null,
-        carousel_template_path_hint: (() => {
-          const base = templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim();
-          return base ? `services/renderer/templates/${base}.hbs` : null;
-        })(),
-        note: (r.notes ?? "").trim(),
-        created_at: r.created_at,
-      })),
+      noteRows: reviews.map((r) => {
+        const compact = compactValidationOutputForEditorialSynthesis(r.validation_output_json);
+        return {
+          task_id: r.task_id,
+          decision: r.decision,
+          flow_type: r.flow_type,
+          platform: r.platform,
+          rejection_tags: r.rejection_tags,
+          carousel_template_name: templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim() || null,
+          carousel_template_path_hint: (() => {
+            const base = templateNameFromPayload(r.generation_payload ?? {}).replace(/\.hbs$/i, "").trim();
+            return base ? `services/renderer/templates/${base}.hbs` : null;
+          })(),
+          note: (r.notes ?? "").trim(),
+          created_at: r.created_at,
+          validation_compact: compact,
+        };
+      }),
     });
 
     // Ensure actions are template-aware even if the model omits fields:
@@ -651,11 +700,79 @@ export async function analyzeEditorialPatterns(
     });
   }
 
+  // Persist the full analysis outcome (structured) for traceability/debugging.
+  // This complements the engineering markdown insight by storing the raw JSON that produced it,
+  // including validation_contract-derived signals and any LLM synthesis output.
+  const analysisObservationId = `ed_analysis_${projectSlug}_${windowDays}d_${analysisRunDay}`;
+  await insertObservation(db, {
+    observation_id: analysisObservationId.length > 120 ? analysisObservationId.slice(0, 120) : analysisObservationId,
+    scope_type: "project",
+    project_id: projectId,
+    source_type: "editorial_analysis",
+    flow_type: null,
+    platform: null,
+    observation_type: "editorial_analysis_run",
+    entity_ref: analysisRunDay,
+    payload_json: {
+      project_slug: projectSlug,
+      window_days: windowDays,
+      cutoff_iso: cutoff.toISOString(),
+      total_reviews: total,
+      approved,
+      rejected,
+      needs_edit: needsEdit,
+      approval_rate: approvalRateWindow,
+      top_rejection_tags: topTags,
+      deterministic_insights: insights,
+      rules_created: rulesCreated,
+      engineering: {
+        triggers_fired: engBrief.triggers_fired,
+        sample_task_ids: mergedSampleIds,
+        engineering_insight_id: engineeringInsightId,
+      },
+      llm_notes_synthesis: llmNotesResult,
+      evidence_counts: {
+        reviews_with_notes_count: notesCount,
+        reviews_with_validation_signal_count: validationSignalCount,
+        run_output_reviews_count: runOutputReviews.length,
+      },
+      run_output_reviews: runOutputReviews.map((r) => ({
+        run_id: r.run_id,
+        validator: r.validator,
+        updated_at: r.updated_at,
+        body: r.body.length > 6000 ? `${r.body.slice(0, 6000)}…` : r.body,
+      })),
+    },
+    confidence:
+      engBrief.triggers_fired.length > 0 || (llmNotesResult && !("skipped" in llmNotesResult)) || runOutputReviews.length > 0
+        ? Math.min(
+            0.92,
+            0.55 +
+              engBrief.triggers_fired.length * 0.05 +
+              (llmNotesResult && !("skipped" in llmNotesResult) ? 0.12 : 0) +
+              (runOutputReviews.length > 0 ? 0.06 : 0)
+          )
+        : null,
+    observed_at: new Date().toISOString(),
+  }).catch(() => {});
+
   const extraSampleIds =
     llmNotesResult && !("skipped" in llmNotesResult)
       ? (llmNotesResult.recommended_actions ?? []).flatMap((a) => a.example_task_ids ?? [])
       : [];
   const mergedSampleIds = [...new Set([...engBrief.sample_task_ids, ...extraSampleIds])].slice(0, 20);
+
+  let editorial_reviews_marked_consumed = 0;
+  if (markReviewsConsumed && reviews.length > 0) {
+    const ids = reviews.map((r) => r.id);
+    const upd = await db.query(
+      `UPDATE caf_core.editorial_reviews
+       SET editorial_analysis_consumed_at = now()
+       WHERE project_id = $1 AND id = ANY($2::uuid[])`,
+      [projectId, ids]
+    );
+    editorial_reviews_marked_consumed = upd.rowCount ?? ids.length;
+  }
 
   return {
     project_slug: projectSlug,
@@ -672,5 +789,6 @@ export async function analyzeEditorialPatterns(
     engineering_sample_task_ids: mergedSampleIds,
     engineering_insight_id: engineeringInsightId,
     llm_notes_synthesis: llmNotesResult,
+    editorial_reviews_marked_consumed,
   };
 }

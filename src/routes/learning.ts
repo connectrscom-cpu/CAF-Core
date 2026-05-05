@@ -128,7 +128,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 
-  app.post<{ Params: { project_slug: string }; Body: { status?: string } }>(
+  app.post<{ Params: { project_slug: string }; Body: { status?: string; scope_type?: string } }>(
     "/v1/learning/:project_slug/rules/erase-all",
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
@@ -142,8 +142,22 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         statusRaw === "rejected"
           ? statusRaw
           : "any";
-      const erased = await eraseLearningRulesForProject(db, project.id, { status });
-      return { ok: true, erased, status };
+      const scopeRaw = String((req.body as any)?.scope_type ?? "project").trim();
+      const scope_type =
+        scopeRaw === "global" || scopeRaw === "both" || scopeRaw === "project" ? scopeRaw : "project";
+
+      const erased_project = scope_type === "project" || scope_type === "both"
+        ? await eraseLearningRulesForProject(db, project.id, { status })
+        : 0;
+
+      let erased_global = 0;
+      if (scope_type === "global" || scope_type === "both") {
+        const gid = await getGlobalLearningProjectId(db);
+        if (!gid) return reply.code(500).send({ ok: false, error: "caf-global project not found (run migration 010)" });
+        erased_global = await eraseLearningRulesForProject(db, gid, { status });
+      }
+
+      return { ok: true, status, scope_type, erased_project, erased_global, erased: erased_project + erased_global };
     }
   );
 
@@ -388,6 +402,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         typeof body.llm_notes_synthesis === "boolean"
           ? body.llm_notes_synthesis
           : undefined;
+      const markReviewsConsumed = body.mark_reviews_consumed !== false;
 
       const result = await analyzeEditorialPatterns(
         db,
@@ -397,7 +412,8 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
         windowDays,
         autoCreate,
         persistEngineering,
-        llmNotes
+        llmNotes,
+        { markReviewsConsumed }
       );
       return { ok: true, ...result };
     }
