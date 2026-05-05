@@ -1263,8 +1263,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const project = await resolveProject(db, query.project);
     if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
     const limit = Math.min(500, Math.max(1, parseInt(query.limit ?? "300", 10)));
-    const outcomes = await listRunContentOutcomes(db, project.id, runIdText, limit);
-    return { ok: true, outcomes };
+    try {
+      const outcomes = await listRunContentOutcomes(db, project.id, runIdText, limit);
+      return { ok: true, outcomes };
+    } catch (err) {
+      /**
+       * Content log is an optional admin feature. If migration 007 wasn't applied yet (or the table
+       * was dropped in a dev DB), return an empty list so the UI can show the friendly hint.
+       */
+      const e = err as { code?: unknown; message?: unknown };
+      if (String(e?.code ?? "") === "42P01") {
+        return { ok: true, outcomes: [] };
+      }
+      request.log.error({ err }, "listRunContentOutcomes failed");
+      return reply.code(500).send({ ok: false, error: "content_outcomes_failed" });
+    }
   });
 
   app.get("/v1/admin/engine", async (request) => {
