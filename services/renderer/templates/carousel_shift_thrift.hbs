@@ -151,21 +151,37 @@
   <div class="slide cover-slide">
     <div class="slide-inner">
       <div class="brand-row">
-        <span class="brand-word">Shift<span class="brand-dot">·</span>Thrift</span>
+        <span class="brand-word">
+          {{#if cover_slide.brand_word}}
+            {{cover_slide.brand_word}}
+          {{else}}
+            {{#if project_display_name}}
+              {{project_display_name}}
+            {{else}}
+              Shift<span class="brand-dot">·</span>Thrift
+            {{/if}}
+          {{/if}}
+        </span>
       </div>
       <div class="cover-hero">
-        <span class="eyebrow">Big savings</span>
+        <span class="eyebrow">{{#if cover_slide.eyebrow}}{{cover_slide.eyebrow}}{{else}}Big savings{{/if}}</span>
         <h1 class="cover-title">{{cover_slide.headline}}</h1>
         {{#if cover_slide.body}}<p class="cover-body">{{cover_slide.body}}</p>{{/if}}
       </div>
-      <div class="site-bar">Your one-stop thrift store — save more, waste less</div>
+      <div class="site-bar">
+        {{#if cover_slide.site_bar}}
+          {{cover_slide.site_bar}}
+        {{else}}
+          Your one-stop thrift store — save more, waste less
+        {{/if}}
+      </div>
     </div>
   </div>
 {{/if}}
 {{#each body_slides}}
   <div class="slide body-slide">
     <div class="slide-inner">
-      <span class="tag-pill">Thrift finds</span>
+      <span class="tag-pill">{{#if tag}}{{tag}}{{else}}Thrift finds{{/if}}</span>
       <h2 class="body-title">{{headline}}</h2>
       {{#if body}}<p class="body-text">{{body}}</p>{{/if}}
     </div>
@@ -176,7 +192,17 @@
     <div class="slide-inner">
       <p class="cta-main">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</p>
       {{#if cta_handle}}<div class="cta-handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
-      <div class="site-bar">www.thrift.com · Save with thrift</div>
+      <div class="site-bar">
+        {{#if cta_slide.site_bar}}
+          {{cta_slide.site_bar}}
+        {{else}}
+          {{#if cover_slide.site_bar_cta}}
+            {{cover_slide.site_bar_cta}}
+          {{else}}
+            www.thrift.com · Save with thrift
+          {{/if}}
+        {{/if}}
+      </div>
     </div>
   </div>
 {{/if}}

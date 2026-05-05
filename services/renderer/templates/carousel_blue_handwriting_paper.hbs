@@ -136,7 +136,7 @@
   <div class="slide">
     <div class="grain"></div>
     <div class="wrap wrap--tight">
-      <div class="kicker">Slide 01 / Cover</div>
+      <div class="kicker">{{#if cover_slide.kicker}}{{cover_slide.kicker}}{{else}}Slide 01 / Cover{{/if}}</div>
       <div class="lines"></div>
       <div class="title">
         {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
@@ -145,7 +145,7 @@
         {{#if cover_subtitle}}{{joinEmojiOrphans cover_subtitle}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.body}}{{/if}}{{/if}}
       </div>
       <div class="cta">
-        <div>{{#if cover_slide.date}}{{cover_slide.date}}{{else}}April 2026{{/if}}</div>
+        <div>{{#if cover_slide.date}}{{cover_slide.date}}{{else}}{{#if cover_slide.date_fallback}}{{cover_slide.date_fallback}}{{else}}April 2026{{/if}}{{/if}}</div>
         <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>
@@ -156,12 +156,12 @@
   <div class="slide">
     <div class="grain"></div>
     <div class="wrap wrap--body">
-      <div class="kicker">Slide / Note</div>
+      <div class="kicker">{{#if kicker}}{{kicker}}{{else}}{{#if note_kicker}}{{note_kicker}}{{else}}Slide / Note{{/if}}{{/if}}</div>
       <div class="lines"></div>
       <div class="title" style="font-size:86px;">{{headline}}</div>
       <div class="body">{{joinEmojiOrphans body}}</div>
       <div class="cta">
-        <div>Swipe</div>
+        <div>{{#if swipe_label}}{{swipe_label}}{{else}}Swipe{{/if}}</div>
         <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>
@@ -172,16 +172,20 @@
   <div class="slide">
     <div class="grain"></div>
     <div class="wrap wrap--tight">
-      <div class="kicker">Slide / CTA</div>
+      <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Slide / CTA{{/if}}</div>
       <div class="lines"></div>
       <div class="title" style="font-size:72px;">
         {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
       </div>
       <div class="body" style="font-size:44px;">
-        {{#if cta_handle}}Follow {{cta_handle}} for more.{{else}}Follow · Save · Share for more content.{{/if}}
+        {{#if cta_slide.follow_line}}
+          {{cta_slide.follow_line}}
+        {{else}}
+          {{#if cta_handle}}Follow {{cta_handle}} for more.{{else}}Follow · Save · Share for more content.{{/if}}
+        {{/if}}
       </div>
       <div class="cta">
-        <div>End</div>
+        <div>{{#if end_label}}{{end_label}}{{else}}End{{/if}}</div>
         <div class="handle">{{#if cta_handle}}{{cta_handle}}{{else}}{{#if cta_slide.handle}}{{cta_slide.handle}}{{/if}}{{/if}}</div>
       </div>
     </div>

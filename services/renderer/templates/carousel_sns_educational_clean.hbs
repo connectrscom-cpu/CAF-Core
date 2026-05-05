@@ -119,7 +119,7 @@
   <div class="slide">
     <div class="inner inner--stack">
       <div class="top-row">
-        <div class="kicker">Slide 01 / Topic</div>
+        <div class="kicker">{{#if cover_slide.kicker}}{{cover_slide.kicker}}{{else}}Slide 01 / Topic{{/if}}</div>
         <div class="title">
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
@@ -149,7 +149,7 @@
   <div class="slide">
     <div class="inner inner--stack">
       <div class="top-row">
-        <div class="kicker">Follow · Save · Share</div>
+        <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Follow · Save · Share{{/if}}</div>
         <div class="cta">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>

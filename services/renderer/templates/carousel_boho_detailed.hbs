@@ -144,11 +144,11 @@
     <div class="sun-arch"></div>
     <div class="boho-frame"></div>
     <div class="slide-inner">
-      <span class="cover-kicker">Detailed · slow living</span>
+      <span class="cover-kicker">{{#if cover_slide.kicker}}{{cover_slide.kicker}}{{else}}Detailed · slow living{{/if}}</span>
       <h1 class="cover-title">{{cover_slide.headline}}</h1>
       <span class="divider"></span>
       {{#if cover_slide.body}}<p class="cover-body">{{cover_slide.body}}</p>{{/if}}
-      <p class="leaf-note">— boho feed —</p>
+      <p class="leaf-note">{{#if cover_slide.note}}{{cover_slide.note}}{{else}}— boho feed —{{/if}}</p>
     </div>
   </div>
 {{/if}}
@@ -169,7 +169,7 @@
       <p class="cta-main">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</p>
       {{#if cta_handle}}<p class="cta-handle">{{cta_handle}}</p>{{else}}{{#if cta_slide.handle}}<p class="cta-handle">{{cta_slide.handle}}</p>{{/if}}{{/if}}
       <span class="divider"></span>
-      <p class="leaf-note">stay inspired</p>
+      <p class="leaf-note">{{#if cta_slide.note}}{{cta_slide.note}}{{else}}stay inspired{{/if}}</p>
     </div>
   </div>
 {{/if}}

@@ -162,7 +162,7 @@
     <div class="outer">
       <div class="frame">
         <div class="final">
-          <div class="kicker">Final slide</div>
+          <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Final slide{{/if}}</div>
           <h1>{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</h1>
           {{#if cta_handle}}<p>{{cta_handle}}</p>{{else}}{{#if cta_slide.handle}}<p>{{cta_slide.handle}}</p>{{/if}}{{/if}}
         </div>

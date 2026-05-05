@@ -190,7 +190,7 @@
     <div class="grain"></div>
     <div class="doodles"></div>
     <div class="wrap cover">
-      <div class="kicker">Slide 01 / Cover</div>
+      <div class="kicker">{{#if cover_slide.kicker}}{{cover_slide.kicker}}{{else}}Slide 01 / Cover{{/if}}</div>
       <div class="cover-title">
         {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
       </div>
@@ -211,7 +211,7 @@
     <div class="doodles"></div>
     <div class="wrap">
       <div class="card">
-        <div class="kicker">{{#if kicker}}{{kicker}}{{else}}Slide / Reading{{/if}}</div>
+        <div class="kicker">{{#if kicker}}{{kicker}}{{else}}{{#if ../cover_slide.body_kicker}}{{../cover_slide.body_kicker}}{{else}}Slide / Reading{{/if}}{{/if}}</div>
         <div class="accent-row">
           <div class="h">{{headline}}</div>
           <div class="glyph" style="width:96px;height:96px;font-size:54px;">{{#if glyph}}{{glyph}}{{else}}☾{{/if}}</div>
@@ -238,7 +238,7 @@
     <div class="doodles"></div>
     <div class="wrap cta">
       <div>
-        <div class="kicker">Slide / CTA</div>
+        <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Slide / CTA{{/if}}</div>
         <div class="cta-big">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</div>
         {{#if cta_handle}}<div class="cta-small" style="margin-top:14px;"><strong>{{cta_handle}}</strong></div>{{else}}{{#if cta_slide.handle}}<div class="cta-small" style="margin-top:14px;"><strong>{{cta_slide.handle}}</strong></div>{{/if}}{{/if}}
       </div>

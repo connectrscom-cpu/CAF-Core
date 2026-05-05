@@ -117,15 +117,15 @@
     <div class="corner"></div>
     <div class="page">
       <div class="meta">
-        <div class="badge">Cover</div>
+        <div class="badge">{{#if cover_slide.badge}}{{cover_slide.badge}}{{else}}Cover{{/if}}</div>
         <div class="progress">{{slide_index}} / {{slide_total}}</div>
       </div>
       <div class="rule"></div>
       <div class="headline">{{joinEmojiOrphans cover_slide.headline}}</div>
       {{#if cover_slide.body}}<div class="body">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
       <div class="panel">
-        <h3>Quick note</h3>
-        <p>Save this. You’ll want it when you’re overthinking later.</p>
+        <h3>{{#if cover_slide.panel_title}}{{cover_slide.panel_title}}{{else}}Quick note{{/if}}</h3>
+        <p>{{#if cover_slide.panel_body}}{{joinEmojiOrphans cover_slide.panel_body}}{{else}}Save this. You’ll want it when you’re overthinking later.{{/if}}</p>
       </div>
     </div>
   </div>
@@ -135,15 +135,15 @@
     <div class="corner"></div>
     <div class="page">
       <div class="meta">
-        <div class="badge">Body</div>
+        <div class="badge">{{#if badge}}{{badge}}{{else}}Body{{/if}}</div>
         <div class="progress">{{../slide_index}} / {{../slide_total}}</div>
       </div>
       <div class="rule"></div>
       <div class="headline" style="font-size:72px">{{joinEmojiOrphans headline}}</div>
       <div class="body">{{joinEmojiOrphans body}}</div>
       <div class="panel">
-        <h3>Micro-action</h3>
-        <p>Underline the one line that felt “too real”. Then name the need underneath it.</p>
+        <h3>{{#if panel_title}}{{panel_title}}{{else}}Micro-action{{/if}}</h3>
+        <p>{{#if panel_body}}{{joinEmojiOrphans panel_body}}{{else}}Underline the one line that felt “too real”. Then name the need underneath it.{{/if}}</p>
       </div>
     </div>
   </div>
@@ -153,7 +153,7 @@
     <div class="corner"></div>
     <div class="page">
       <div class="meta">
-        <div class="badge">CTA</div>
+        <div class="badge">{{#if cta_slide.badge}}{{cta_slide.badge}}{{else}}CTA{{/if}}</div>
         <div class="progress">{{slide_index}} / {{slide_total}}</div>
       </div>
       <div class="rule"></div>
@@ -161,8 +161,8 @@
       {{#if cta_slide.sub}}<div class="body">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
       {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       <div class="panel">
-        <h3>Reply</h3>
-        <p>Comment your sign + the pattern you’re trying to break.</p>
+        <h3>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Reply{{/if}}</h3>
+        <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment your sign + the pattern you’re trying to break.{{/if}}</p>
       </div>
     </div>
   </div>

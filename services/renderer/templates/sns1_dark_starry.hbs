@@ -264,7 +264,7 @@
       <span class="shooting"></span>
       <span class="title-text">{{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}</span>
       {{#if cover_subtitle}}<span class="subtitle">{{cover_subtitle}}</span>{{else}}{{#if cover_slide.body}}<span class="subtitle">{{cover_slide.body}}</span>{{/if}}{{/if}}
-      <span class="swipe">Swipe →</span>
+      <span class="swipe">{{#if cover_slide.swipe_label}}{{cover_slide.swipe_label}}{{else}}Swipe →{{/if}}</span>
       <div class="logo-mark"></div>
     </div>
   </div>
@@ -284,7 +284,7 @@
       <span class="moon"></span>
       <span class="heading">{{headline}}</span>
       <p class="body-text">{{body}}</p>
-      <span class="swipe">Swipe →</span>
+      <span class="swipe">{{#if swipe_label}}{{swipe_label}}{{else}}{{#if ../cover_slide.swipe_label}}{{../cover_slide.swipe_label}}{{else}}Swipe →{{/if}}{{/if}}</span>
       <div class="logo-mark"></div>
     </div>
   </div>
