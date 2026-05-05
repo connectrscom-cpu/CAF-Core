@@ -230,9 +230,10 @@ export async function buildRunContentLogExport(
     const task_id = strVal(job.task_id).trim();
     const stage = pickStageSnapshots(job);
     const gp = stage.generation_payload;
+    const flowForPreview = strVal(job.flow_type).trim() || null;
     const content_preview = (() => {
       try {
-        return buildJobContentPreview(job);
+        return buildJobContentPreview(flowForPreview, job.generation_payload ?? null);
       } catch {
         return null;
       }
