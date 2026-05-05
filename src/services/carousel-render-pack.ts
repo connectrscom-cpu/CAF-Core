@@ -728,6 +728,23 @@ function resolveCarouselCtaFields(
   allSlides: Record<string, unknown>[],
   opts?: CarouselRenderCtaOptions
 ): { cta_text: string; cta_handle: string; cta_slide: Record<string, unknown> } {
+  const coerceText = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") return v.trim();
+    if (typeof v === "number" || typeof v === "boolean") return String(v).trim();
+    if (typeof v === "object" && !Array.isArray(v)) {
+      const rec = v as Record<string, unknown>;
+      // If an LLM returned an object where a string was expected, try to recover readable text.
+      const tf = textFromSlide(rec);
+      const pick = tf.body.trim() || tf.headline.trim();
+      if (pick) return pick;
+      const raw = rec.text ?? rec.content ?? rec.body ?? rec.headline ?? rec.title ?? rec.heading;
+      if (typeof raw === "string") return raw.trim();
+      return "";
+    }
+    return "";
+  };
+
   const defaultCopy = (opts?.defaultCtaCopy ?? DEFAULT_CAROUSEL_CTA_COPY).trim();
   const projectHandle = formatInstagramHandleForCta(opts?.instagramHandle ?? null);
 
@@ -739,9 +756,9 @@ function resolveCarouselCtaFields(
         : null;
   const fromShape = rawShapeCta ? { ...rawShapeCta } : ({} as Record<string, unknown>);
 
-  let ctaText = String(base.cta_text ?? "").trim();
+  let ctaText = coerceText(base.cta_text);
   if (!ctaText) {
-    ctaText = String(fromShape.body ?? textFromSlide(fromShape).headline ?? "").trim();
+    ctaText = coerceText(fromShape.body) || textFromSlide(fromShape).headline.trim();
   }
   // With a single usable row, the DOM is still cover + CTA panel; that row is the cover — do not reuse it as CTA copy.
   if (!ctaText && allSlides.length > 1) {

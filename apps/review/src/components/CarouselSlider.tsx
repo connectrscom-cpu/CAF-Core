@@ -52,10 +52,32 @@ export function CarouselSlider({
   }, [initialSlides]);
 
   const updateSlide = useCallback(
-    (index: number, patch: Partial<Pick<NormalizedSlide, "headline" | "body" | "handle">>) => {
+    (
+      index: number,
+      patch: Partial<Pick<NormalizedSlide, "headline" | "body" | "handle" | "extras">>
+    ) => {
       setSavedAt(null);
       setSlides((prev) => {
         const next = prev.map((s, i) => (i === index ? { ...s, ...patch } : s));
+        onSlidesChange?.(next);
+        return next;
+      });
+    },
+    [onSlidesChange]
+  );
+
+  const updateExtraField = useCallback(
+    (index: number, key: string, value: string) => {
+      setSavedAt(null);
+      setSlides((prev) => {
+        const next = prev.map((s, i) => {
+          if (i !== index) return s;
+          const extras = { ...(s.extras ?? {}) };
+          const t = value.trim();
+          if (t) extras[key] = t;
+          else delete extras[key];
+          return { ...s, extras: Object.keys(extras).length ? extras : undefined };
+        });
         onSlidesChange?.(next);
         return next;
       });
@@ -201,6 +223,48 @@ export function CarouselSlider({
                   style={{ minHeight: slide.type === "cover" ? 60 : 80 }}
                 />
               </div>
+
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+                <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy (optional)</div>
+                <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label className="filter-label">Kicker</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.kicker ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "kicker", e.target.value)}
+                      placeholder="e.g. Slide 01 / Topic"
+                    />
+                  </div>
+                  <div>
+                    <label className="filter-label">Tag</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.tag ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "tag", e.target.value)}
+                      placeholder="e.g. Quick note"
+                    />
+                  </div>
+                  <div>
+                    <label className="filter-label">Note</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.note ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "note", e.target.value)}
+                      placeholder="Short footer line"
+                    />
+                  </div>
+                  <div>
+                    <label className="filter-label">Eyebrow</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.eyebrow ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "eyebrow", e.target.value)}
+                      placeholder="Upper small label"
+                    />
+                  </div>
+                </div>
+              </div>
             </>
           )}
           {slide.type === "cta" && (
@@ -212,6 +276,39 @@ export function CarouselSlider({
               <div style={{ marginBottom: 10 }}>
                 <label className="filter-label">Handle / Link</label>
                 <input type="text" value={slide.handle} onChange={(e) => updateSlide(currentIndex, { handle: e.target.value })} placeholder="e.g. @handle or link" />
+              </div>
+
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+                <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy (optional)</div>
+                <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <div>
+                    <label className="filter-label">Kicker</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.kicker ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "kicker", e.target.value)}
+                      placeholder="e.g. Final / CTA"
+                    />
+                  </div>
+                  <div>
+                    <label className="filter-label">Follow line</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.follow_line ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "follow_line", e.target.value)}
+                      placeholder="e.g. Follow us for more."
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Note</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.note ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "note", e.target.value)}
+                      placeholder="Optional small CTA footer text"
+                    />
+                  </div>
+                </div>
               </div>
             </>
           )}

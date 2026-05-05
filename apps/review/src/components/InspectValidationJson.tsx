@@ -14,6 +14,23 @@ function pretty(v: unknown): string {
   }
 }
 
+function pickCarouselTemplateName(generationPayload: Record<string, unknown>): string {
+  const gp = generationPayload ?? {};
+  const go = asRec((gp as any).generated_output) ?? null;
+  const goRender = go ? asRec((go as any).render) : null;
+  const gpRender = asRec((gp as any).render) ?? null;
+  const v =
+    (goRender?.html_template_name as unknown) ??
+    (goRender?.template_key as unknown) ??
+    (gpRender?.html_template_name as unknown) ??
+    (gpRender?.template_key as unknown) ??
+    ((gp as any).template as unknown) ??
+    ((go as any)?.template as unknown);
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return "";
+  return s.replace(/\.hbs$/i, "");
+}
+
 export interface InspectValidationJsonProps {
   /** Full job detail from Core (`include_job=1`). */
   job: Record<string, unknown> | null;
@@ -49,6 +66,7 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
     }));
 
     const gp = asRec((j as any).generation_payload) ?? {};
+    const templateUsed = pickCarouselTemplateName(gp);
     const draft = gp.draft_package_snapshot ?? null;
     const meta = {
       draft_package_type: gp.draft_package_type ?? null,
@@ -66,6 +84,7 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       }
     }
     const carouselSource: Record<string, unknown> = {};
+    if (templateUsed) carouselSource.carousel_template_used = templateUsed;
     if (reviewSlidesParsed != null) carouselSource.review_slides_json = reviewSlidesParsed;
     const genOut = gp.generated_output;
     if (genOut && typeof genOut === "object") carouselSource.generated_output = genOut as Record<string, unknown>;
