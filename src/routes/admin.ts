@@ -48,6 +48,7 @@ import {
 } from "../repositories/admin.js";
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
 import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
+import { buildRunContentLogExport } from "../repositories/run-content-log-export.js";
 import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
 import { adminInputsBody } from "./admin-inputs-body.js";
 import { adminProcessingBody } from "./admin-processing-body.js";
@@ -1277,6 +1278,57 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       }
       request.log.error({ err }, "listRunContentOutcomes failed");
       return reply.code(500).send({ ok: false, error: "content_outcomes_failed" });
+    }
+  });
+
+  /**
+   * Long-form run export: outcomes + job stage snapshots (generation/QC, render, review),
+   * plus transitions/drafts/editorial timeline and asset rows.
+   */
+  app.get("/v1/admin/runs/content-log-export", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const runIdText = query.run_id?.trim();
+    if (!runIdText) return reply.code(400).send({ ok: false, error: "run_id required" });
+    const project = await resolveProject(db, query.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const limit = Math.min(700, Math.max(1, parseInt(query.limit ?? "500", 10)));
+    try {
+      const exportData = await buildRunContentLogExport(db, project.id, runIdText, limit);
+      return {
+        ok: true,
+        project: project.slug,
+        run_id: runIdText,
+        exported_at: exportData.exported_at,
+        outcome_count: exportData.outcomes.length,
+        export: exportData,
+      };
+    } catch (err) {
+      const e = err as { code?: unknown };
+      if (String(e?.code ?? "") === "42P01") {
+        // Migration 007 not applied: still return run + jobs (but no outcomes table).
+        try {
+          const exportData = await buildRunContentLogExport(db, project.id, runIdText, limit, { include_outcomes: false });
+          return {
+            ok: true,
+            project: project.slug,
+            run_id: runIdText,
+            exported_at: exportData.exported_at,
+            outcome_count: 0,
+            export: exportData,
+          };
+        } catch {
+          return {
+            ok: true,
+            project: project.slug,
+            run_id: runIdText,
+            exported_at: new Date().toISOString(),
+            outcome_count: 0,
+            export: null,
+          };
+        }
+      }
+      request.log.error({ err }, "buildRunContentLogExport failed");
+      return reply.code(500).send({ ok: false, error: "content_log_export_failed" });
     }
   });
 
