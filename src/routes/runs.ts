@@ -24,6 +24,7 @@ import {
   renderRunGeneratedJobs,
 } from "../services/job-pipeline.js";
 import { getRunOutputReview, upsertRunOutputReview } from "../repositories/run-output-reviews.js";
+import { buildRunExportData, renderRunExportMarkdown } from "../services/run-export.js";
 
 export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -112,6 +113,35 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     }
     const review = await getRunOutputReview(db, project.id, run.run_id);
     return { ok: true, review };
+  });
+
+  // ── Run export (human-friendly Markdown or raw JSON) ─────────────────
+  app.get("/v1/runs/:project_slug/:run_id/export", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z
+      .object({
+        format: z.enum(["md", "json"]).optional(),
+      })
+      .safeParse(request.query);
+
+    const format = query.data?.format ?? "md";
+    const project = await ensureProject(db, params.data.project_slug);
+    const runIdText = params.data.run_id.trim();
+    const data = await buildRunExportData(db, { project_id: project.id, project_slug: params.data.project_slug, run_id: runIdText });
+    if (!data) return reply.code(404).send({ ok: false, error: "run_not_found" });
+
+    const filenameBase = `caf_run_${params.data.project_slug}_${runIdText}`.replace(/[^a-zA-Z0-9._-]+/g, "_");
+    if (format === "json") {
+      reply.header("Content-Type", "application/json; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="${filenameBase}.json"`);
+      return { ok: true, export: data };
+    }
+
+    const md = renderRunExportMarkdown(data);
+    reply.header("Content-Type", "text/markdown; charset=utf-8");
+    reply.header("Content-Disposition", `attachment; filename="${filenameBase}.md"`);
+    return reply.send(md);
   });
 
   const outputReviewPutSchema = z.object({
