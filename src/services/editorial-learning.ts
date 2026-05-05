@@ -700,6 +700,12 @@ export async function analyzeEditorialPatterns(
     });
   }
 
+  const extraSampleIds =
+    llmNotesResult && !("skipped" in llmNotesResult)
+      ? (llmNotesResult.recommended_actions ?? []).flatMap((a) => a.example_task_ids ?? [])
+      : [];
+  const mergedSampleIds = [...new Set([...engBrief.sample_task_ids, ...extraSampleIds])].slice(0, 20);
+
   // Persist the full analysis outcome (structured) for traceability/debugging.
   // This complements the engineering markdown insight by storing the raw JSON that produced it,
   // including validation_contract-derived signals and any LLM synthesis output.
@@ -755,12 +761,6 @@ export async function analyzeEditorialPatterns(
         : null,
     observed_at: new Date().toISOString(),
   }).catch(() => {});
-
-  const extraSampleIds =
-    llmNotesResult && !("skipped" in llmNotesResult)
-      ? (llmNotesResult.recommended_actions ?? []).flatMap((a) => a.example_task_ids ?? [])
-      : [];
-  const mergedSampleIds = [...new Set([...engBrief.sample_task_ids, ...extraSampleIds])].slice(0, 20);
 
   let editorial_reviews_marked_consumed = 0;
   if (markReviewsConsumed && reviews.length > 0) {
