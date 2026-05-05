@@ -227,6 +227,17 @@ export function CarouselSlider({
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
                 <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy (optional)</div>
                 <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  {slide.type === "cover" && (
+                    <div>
+                      <label className="filter-label">Brand word</label>
+                      <input
+                        type="text"
+                        value={slide.extras?.brand_word ?? ""}
+                        onChange={(e) => updateExtraField(currentIndex, "brand_word", e.target.value)}
+                        placeholder="e.g. SNS"
+                      />
+                    </div>
+                  )}
                   <div>
                     <label className="filter-label">Kicker</label>
                     <input
@@ -263,6 +274,26 @@ export function CarouselSlider({
                       placeholder="Upper small label"
                     />
                   </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Site bar</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.site_bar ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "site_bar", e.target.value)}
+                      placeholder="Bottom bar text"
+                    />
+                  </div>
+                  {slide.type === "cover" && (
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label className="filter-label">CTA site bar (fallback)</label>
+                      <input
+                        type="text"
+                        value={slide.extras?.site_bar_cta ?? ""}
+                        onChange={(e) => updateExtraField(currentIndex, "site_bar_cta", e.target.value)}
+                        placeholder="Used on CTA slide if CTA Site bar is empty"
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </>
@@ -306,6 +337,15 @@ export function CarouselSlider({
                       value={slide.extras?.note ?? ""}
                       onChange={(e) => updateExtraField(currentIndex, "note", e.target.value)}
                       placeholder="Optional small CTA footer text"
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Site bar</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.site_bar ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "site_bar", e.target.value)}
+                      placeholder="Bottom bar text"
                     />
                   </div>
                 </div>

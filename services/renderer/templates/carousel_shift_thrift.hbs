@@ -164,7 +164,7 @@
         </span>
       </div>
       <div class="cover-hero">
-        <span class="eyebrow">{{#if cover_slide.eyebrow}}{{cover_slide.eyebrow}}{{else}}Big savings{{/if}}</span>
+        {{#if cover_slide.eyebrow}}<span class="eyebrow">{{cover_slide.eyebrow}}</span>{{/if}}
         <h1 class="cover-title">{{cover_slide.headline}}</h1>
         {{#if cover_slide.body}}<p class="cover-body">{{cover_slide.body}}</p>{{/if}}
       </div>
@@ -172,7 +172,11 @@
         {{#if cover_slide.site_bar}}
           {{cover_slide.site_bar}}
         {{else}}
-          Your one-stop thrift store — save more, waste less
+          {{#if project_display_name}}
+            {{project_display_name}}
+          {{else}}
+            &nbsp;
+          {{/if}}
         {{/if}}
       </div>
     </div>
@@ -181,7 +185,7 @@
 {{#each body_slides}}
   <div class="slide body-slide">
     <div class="slide-inner">
-      <span class="tag-pill">{{#if tag}}{{tag}}{{else}}Thrift finds{{/if}}</span>
+      {{#if tag}}<span class="tag-pill">{{tag}}</span>{{/if}}
       <h2 class="body-title">{{headline}}</h2>
       {{#if body}}<p class="body-text">{{body}}</p>{{/if}}
     </div>
@@ -199,7 +203,11 @@
           {{#if cover_slide.site_bar_cta}}
             {{cover_slide.site_bar_cta}}
           {{else}}
-            www.thrift.com · Save with thrift
+            {{#if project_display_name}}
+              {{project_display_name}}
+            {{else}}
+              &nbsp;
+            {{/if}}
           {{/if}}
         {{/if}}
       </div>

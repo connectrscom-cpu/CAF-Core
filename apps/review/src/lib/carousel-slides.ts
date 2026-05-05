@@ -86,6 +86,7 @@ const EXTRA_KEYS = [
   "tag",
   "badge",
   "eyebrow",
+  "brand_word",
   "follow_line",
   "swipe_label",
   "end_label",
@@ -95,6 +96,7 @@ const EXTRA_KEYS = [
   "panel_title",
   "panel_body",
   "site_bar",
+  "site_bar_cta",
 ] as const;
 
 function extrasFromSlideObject(o: Record<string, unknown>): Record<string, string> {
