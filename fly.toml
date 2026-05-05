@@ -31,7 +31,7 @@ primary_region = "ams"
 
   # POST /v1/runs/.../process runs the whole job loop in one request; default proxy idle limits can drop the connection while work continues or mid-render → jobs left RENDERING.
   [http_service.http_options]
-    idle_timeout = 1800
+    idle_timeout = 900
 
   [[http_service.checks]]
     grace_period = "30s"
