@@ -1,7 +1,12 @@
 # CAF Core HTTP API
 
 Base URL: `http://localhost:3847` (or your deploy).  
-Auth: if enabled, send `x-caf-core-token: <CAF_CORE_API_TOKEN>` or `Authorization: Bearer <token>` on every route except `GET /health`.
+Auth: if enabled, send `x-caf-core-token: <CAF_CORE_API_TOKEN>` or `Authorization: Bearer <token>` on all routes **except**:
+- `GET /health`
+- `GET /readyz`
+- `GET /health/rendering`
+- `GET /robots.txt`
+- public renderer-template reads (see `src/routes/renderer-templates.ts` and `src/server.ts`)
 
 ---
 

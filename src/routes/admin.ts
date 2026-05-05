@@ -88,6 +88,11 @@ import {
 } from "../services/prompt-labs-meta.js";
 import { broadInsightsPromptTemplate } from "../services/inputs-broad-llm-insights.js";
 import {
+  deletePromptLabsOverride,
+  listPromptLabsOverrides,
+  upsertPromptLabsOverride,
+} from "../repositories/prompt-labs-overrides.js";
+import {
   TOP_PERFORMER_IMAGE_SYSTEM_PROMPT,
   TOP_PERFORMER_IMAGE_USER_PROMPT_TEMPLATE,
 } from "../services/inputs-deep-image-insights.js";
@@ -362,6 +367,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     { href: `/admin/processing${pq}`, label: "Processing", key: "processing" },
     { href: `/admin/scene-lab${pq}`, label: "Scene lab", key: "scene-lab" },
     { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
+    { href: `/admin/learning${pq}`, label: "Learning", key: "learning" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
   ];
 
@@ -1645,10 +1651,11 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
 
   /** Prompt / script / HeyGen assembly reference for operators (templates + runtime addenda). */
   app.get("/v1/admin/prompt-labs", async () => {
-    const [promptTemplates, flowDefs, carouselTpls] = await Promise.all([
+    const [promptTemplates, flowDefs, carouselTpls, overrides] = await Promise.all([
       listPromptTemplates(db),
       listFlowDefinitions(db),
       listCarouselTemplates(db),
+      listPromptLabsOverrides(db),
     ]);
     const cleaned = stripLegacyFlowEngineRows({
       flowDefs,
@@ -1656,6 +1663,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       schemas: [],
       qcChecks: [],
     });
+    const overrideByName = new Map(overrides.map((o) => [o.prompt_name, o]));
     const cfg = config;
     const flow_description_by_type: Record<string, string> = {};
     for (const f of cleaned.flowDefs) {
@@ -1674,7 +1682,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       };
     });
     const broad = broadInsightsPromptTemplate();
-    const processing_prompts = [
+    const processing_prompts_base = [
       {
         prompt_name: "INSIGHTS__Broad_LLM_v1",
         flow_type: "PROCESSING_INSIGHTS",
@@ -1736,7 +1744,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         user_prompt_template: IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
       },
     ];
-    const learning_prompts = [
+    const learning_prompts_base = [
       {
         prompt_name: "REVIEW__Approved_Content_LLM_v1",
         flow_type: "LEARNING_LLM_REVIEW",
@@ -1790,6 +1798,26 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           "Implemented in src/services/market-learning.ts and src/services/performance-learning.ts (no model call).",
       },
     ];
+
+    function applyOverride<T extends { prompt_name: string; labs_readonly?: boolean }>(p: T): T {
+      const o = overrideByName.get(p.prompt_name);
+      if (!o) return p;
+      return {
+        ...p,
+        flow_type: o.flow_type ?? (p as any).flow_type,
+        prompt_role: o.prompt_role ?? (p as any).prompt_role,
+        system_prompt: o.system_prompt ?? (p as any).system_prompt,
+        user_prompt_template: o.user_prompt_template ?? (p as any).user_prompt_template,
+        output_format_rule: o.output_format_rule ?? (p as any).output_format_rule,
+        notes: o.notes ?? (p as any).notes,
+        labs_short_description: (o.notes ?? "").trim() || (p as any).labs_short_description,
+        labs_readonly: false,
+        labs_override_active: true,
+      } as any;
+    }
+
+    const processing_prompts = processing_prompts_base.map(applyOverride);
+    const learning_prompts = learning_prompts_base.map(applyOverride);
     return {
       ok: true,
       env_tuning: {
@@ -1828,11 +1856,41 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       processing_prompts,
       learning_prompts,
       validation_prompts: [],
+      prompt_labs_overrides: overrides,
       flow_definitions: cleaned.flowDefs,
       flow_description_by_type,
       heygen_flow_types: [...HEYGEN_FLOW_TYPES],
       carousel_templates: carouselTpls,
     };
+  });
+
+  /** Persist overrides for code-defined Prompt Labs prompts (processing + learning + validation). */
+  app.post("/v1/admin/prompt-labs/override", async (request, reply) => {
+    try {
+      const b = (request.body ?? {}) as Record<string, unknown>;
+      const prompt_name = String(b.prompt_name ?? "").trim();
+      if (!prompt_name) return reply.code(400).send({ ok: false, error: "prompt_name is required" });
+      const clear = b.clear === true || b.clear === "true" || b.clear === "1";
+      if (clear) {
+        await deletePromptLabsOverride(db, prompt_name);
+        return { ok: true, cleared: true };
+      }
+      const str = (k: string) => (b[k] != null && String(b[k]).trim() !== "") ? String(b[k]) : null;
+      const saved = await upsertPromptLabsOverride(db, {
+        prompt_name,
+        flow_type: str("flow_type"),
+        prompt_role: str("prompt_role"),
+        system_prompt: str("system_prompt"),
+        user_prompt_template: str("user_prompt_template"),
+        output_format_rule: str("output_format_rule"),
+        notes: str("notes"),
+      });
+      return { ok: true, override: saved };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      request.log.warn({ err: e }, "prompt-labs-override");
+      return reply.code(500).send({ ok: false, error: msg });
+    }
   });
 
   app.post("/v1/admin/flow-engine/flow-def", async (request) => {
@@ -4881,7 +4939,13 @@ function plOpenPromptEdit(ix){
   dlg.id='pl-prompt-dlg';
   dlg.style.maxWidth='min(920px,96vw)';
   dlg.style.width='100%';
-  let h='<h3 style="margin-bottom:12px">Edit prompt template</h3><p style="font-size:12px;color:var(--muted);margin-bottom:14px">Saves to <span class="mono">caf_core.prompt_templates</span>. Use <strong>Description (notes)</strong> for what this prompt does in your team.</p><form id="pl-prompt-form" class="config-form" style="max-width:100%">';
+  const isOverride=!!data.labs_readonly;
+  let h='<h3 style="margin-bottom:12px">'+(isOverride?'Edit prompt (override)':'Edit prompt template')+'</h3>';
+  h+='<p style="font-size:12px;color:var(--muted);margin-bottom:14px">';
+  h+=isOverride
+    ? 'This prompt is defined in code. Saving creates a DB <strong>override</strong> for Prompt Labs (does not modify source code). Use <strong>Description (notes)</strong> for human context.'
+    : 'Saves to <span class="mono">caf_core.prompt_templates</span>. Use <strong>Description (notes)</strong> for what this prompt does in your team.';
+  h+='</p><form id="pl-prompt-form" class="config-form" style="max-width:100%">';
   h+=plFg('pl_prompt_name','Prompt Name',data.prompt_name||'','text');
   h+=plFg('pl_flow_type','Flow Type',data.flow_type||'','text');
   h+=plFg('pl_prompt_role','Prompt Role',data.prompt_role||'','text');
@@ -4894,10 +4958,30 @@ function plOpenPromptEdit(ix){
   h+=plFg('pl_max_tokens_default','Max tokens',data.max_tokens_default!=null?String(data.max_tokens_default):'','number');
   h+=plFg('pl_stop_sequences','Stop sequences',data.stop_sequences||'','text');
   h+=plFgTa('pl_notes','Description (notes)',data.notes||'');
+  if(isOverride){
+    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">';
+    h+='<button type="button" class="btn-ghost btn-sm" id="pl-prompt-clear">Clear override</button>';
+    h+='<span style="font-size:11px;color:var(--muted)">Clearing restores the built-in code prompt.</span>';
+    h+='</div>';
+  }
   h+='<div class="form-actions"><button type="submit" class="btn">Save</button> <button type="button" class="btn-ghost" id="pl-prompt-cancel">Cancel</button><span id="pl-prompt-msg" class="form-msg"></span></div></form>';
   dlg.innerHTML=h;
   document.body.appendChild(dlg);
   document.getElementById('pl-prompt-cancel').onclick=function(){dlg.remove();};
+  if(isOverride){
+    const clearBtn=document.getElementById('pl-prompt-clear');
+    if(clearBtn) clearBtn.onclick=async function(){
+      if(!confirm('Clear override for '+String(data.prompt_name||'')+'?')) return;
+      const msg=document.getElementById('pl-prompt-msg');
+      msg.textContent='Clearing…';msg.style.color='var(--accent)';
+      try{
+        const res=await cafFetch('/v1/admin/prompt-labs/override',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt_name:String(data.prompt_name||'').trim(),clear:true})});
+        const j=await res.json();
+        if(j.ok){msg.textContent='Cleared';msg.style.color='var(--green)';setTimeout(function(){dlg.remove();loadPL();},450);}
+        else{msg.textContent=j.error||'Failed';msg.style.color='var(--red)';}
+      }catch(err){msg.textContent=String(err.message||err);msg.style.color='var(--red)';}
+    };
+  }
   document.getElementById('pl-prompt-form').addEventListener('submit',async function(ev){
     ev.preventDefault();
     const body={
@@ -4918,7 +5002,17 @@ function plOpenPromptEdit(ix){
     const msg=document.getElementById('pl-prompt-msg');
     msg.textContent='Saving…';msg.style.color='var(--accent)';
     try{
-      const res=await cafFetch('/v1/admin/flow-engine/prompt-tpl',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const url=isOverride?'/v1/admin/prompt-labs/override':'/v1/admin/flow-engine/prompt-tpl';
+      const outBody=isOverride?{
+        prompt_name:body.prompt_name,
+        flow_type:body.flow_type||null,
+        prompt_role:body.prompt_role||null,
+        system_prompt:body.system_prompt||null,
+        user_prompt_template:body.user_prompt_template||null,
+        output_format_rule:body.output_format_rule||null,
+        notes:body.notes||null
+      }:body;
+      const res=await cafFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(outBody)});
       const j=await res.json();
       if(j.ok){msg.textContent='Saved';msg.style.color='var(--green)';setTimeout(function(){dlg.remove();loadPL();},600);}
       else{msg.textContent=j.error||'Failed';msg.style.color='var(--red)';}
@@ -4941,7 +5035,8 @@ function plRenderPromptCard(p,globalIx){
   out+='<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">';
   out+='<div><span class="mono" style="font-weight:600;color:var(--accent)">'+esc(p.prompt_name)+'</span> <span style="color:var(--muted);font-size:12px">· '+esc(p.flow_type)+'</span>';
   out+=' <span class="badge '+(p.active!==false?'badge-g':'badge-r')+'" style="font-size:10px">'+(p.active!==false?'active':'off')+'</span></div>';
-  out+=(p.labs_readonly?'<span class="badge badge-b" style="font-size:10px">read-only</span>':'<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+globalIx+')">Edit</button>')+'</div>';
+  const badge=(p.labs_override_active?'<span class="badge badge-y" style="font-size:10px">override</span>':(p.labs_readonly?'<span class="badge badge-b" style="font-size:10px">code</span>':''));
+  out+=(badge?badge+' ':'')+'<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+globalIx+')">'+(p.labs_readonly?'Open':'Edit')+'</button></div>';
   out+='<p style="font-size:12px;color:var(--muted);margin:0 0 6px">Role: <strong>'+esc(p.prompt_role||'—')+'</strong></p>';
   out+='<p style="font-size:13px;line-height:1.5;margin:0 0 8px;color:var(--fg)">'+esc(p.labs_short_description||'')+'</p>';
   if(p.labs_flow_description)out+='<p style="font-size:11px;color:var(--muted);margin:0 0 8px">Flow definition: '+esc(trunc(p.labs_flow_description,280))+'</p>';
@@ -5564,6 +5659,122 @@ function ctOpenEditWithHtml(name){
 ctLoad();
 </script>`;
     reply.type("text/html").send(page("Carousel templates", "carousel-templates", body, projects, "", adminHeadTokenScript(config)));
+  });
+
+  // --- Learning (project-scoped) ---
+  app.get("/admin/learning", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const project = await resolveProject(db, query.project);
+    const currentSlug = project?.slug ?? projects[0]?.slug ?? "";
+    const body = `
+<div class="ph"><div><h2>Learning</h2><span class="ph-sub">Project learning rules (apply / retire / erase)</span></div></div>
+<div class="content">
+  <div class="card">
+    <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <span>Rules</span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn-ghost" type="button" onclick="loadRules()">Refresh</button>
+        <button class="btn-ghost" type="button" style="color:var(--red);border:1px solid var(--border)" onclick="eraseAllPrompt()">Erase ALL</button>
+      </div>
+    </div>
+    <div id="learning-msg" class="form-msg" style="padding:0 20px 12px;color:var(--fg2)"></div>
+    <div id="learning-rules" style="overflow-x:auto;padding:0 20px 18px"><div class="empty">Loading…</div></div>
+    <div style="padding:0 20px 18px;color:var(--muted);font-size:12px">
+      Notes: “Erase” permanently deletes rows from <code>caf_core.learning_rules</code>. “Retire” sets status to expired.
+    </div>
+  </div>
+</div>
+<script>
+const SLUG=${JSON.stringify(currentSlug)};
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function badge(s){const u=String(s||'').toUpperCase();let c='badge-b';if(u==='ACTIVE')c='badge-g';else if(u==='PENDING')c='badge-y';else if(u==='EXPIRED'||u==='REJECTED')c='badge-r';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
+function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch{return String(d)}}
+function setMsg(t,ok){const el=document.getElementById('learning-msg');if(!el)return;el.style.color=ok?'var(--fg2)':'var(--red)';el.textContent=t||'';}
+
+async function loadRules(){
+  if(!SLUG){setMsg('Select a project in the sidebar first.',false);return;}
+  setMsg('',true);
+  const host=document.getElementById('learning-rules');
+  if(host)host.innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const r=await cafFetch('/v1/learning/'+encodeURIComponent(SLUG)+'/rules');
+    const d=await r.json().catch(()=>({}));
+    if(!r.ok||!d.ok)throw new Error(String(d.error||('HTTP '+r.status)));
+    const rows=Array.isArray(d.rules)?d.rules:[];
+    if(rows.length===0){if(host)host.innerHTML='<div class="empty">No learning rules for this project.</div>';return;}
+    let h='<table><thead><tr><th>Rule ID</th><th>Family</th><th>Trigger</th><th>Scope</th><th>Action</th><th>Status</th><th>Applied</th><th>Created</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
+    for(const row of rows){
+      const scope=[row.scope_flow_type,row.scope_platform].filter(Boolean).join(' / ')||'—';
+      const rid=String(row.rule_id||'');
+      const canApply=String(row.status||'')==='pending';
+      const canRetire=String(row.status||'')==='active';
+      h+='<tr>';
+      h+='<td class="mono">'+esc(rid)+'</td>';
+      h+='<td>'+esc(row.rule_family||'—')+'</td>';
+      h+='<td>'+esc(row.trigger_type||'—')+'</td>';
+      h+='<td>'+esc(scope)+'</td>';
+      h+='<td class="mono" style="font-size:11px">'+esc(row.action_type||'—')+'</td>';
+      h+='<td>'+badge(row.status)+'</td>';
+      h+='<td>'+fmtDate(row.applied_at)+'</td>';
+      h+='<td>'+fmtDate(row.created_at)+'</td>';
+      h+='<td style="white-space:nowrap">';
+      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canApply?'':'disabled')+' onclick="applyRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Apply</button> ';
+      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canRetire?'':'disabled')+' onclick="retireRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Retire</button> ';
+      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Erase</button>';
+      h+='</td>';
+      h+='</tr>';
+    }
+    h+='</tbody></table>';
+    if(host)host.innerHTML=h;
+  }catch(e){
+    if(host)host.innerHTML='<div class="empty" style="color:var(--red)">Could not load rules: '+esc(String(e&&e.message||e))+'</div>';
+  }
+}
+
+async function applyRule(storageSlug,ruleId){
+  if(!confirm('Apply rule '+ruleId+'?'))return;
+  setMsg('Applying…',true);
+  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId)+'/apply',{method:'POST'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){setMsg('Apply failed: '+String(d.error||('HTTP '+r.status)),false);return;}
+  setMsg('Applied '+ruleId,true);
+  loadRules();
+}
+async function retireRule(storageSlug,ruleId){
+  if(!confirm('Retire rule '+ruleId+'?'))return;
+  setMsg('Retiring…',true);
+  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId)+'/retire',{method:'POST'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){setMsg('Retire failed: '+String(d.error||('HTTP '+r.status)),false);return;}
+  setMsg('Retired '+ruleId,true);
+  loadRules();
+}
+async function eraseRule(storageSlug,ruleId){
+  if(!confirm('Erase rule '+ruleId+'?\\n\\nThis permanently deletes it.'))return;
+  setMsg('Erasing…',true);
+  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId),{method:'DELETE'});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){setMsg('Erase failed: '+String(d.error||('HTTP '+r.status)),false);return;}
+  setMsg('Erased '+ruleId,true);
+  loadRules();
+}
+async function eraseAllPrompt(){
+  if(!SLUG){setMsg('Select a project in the sidebar first.',false);return;}
+  const status=prompt('Erase which status? Enter: any, pending, active, expired, superseded, rejected','any')||'any';
+  const s=String(status||'any').trim()||'any';
+  if(!confirm('Erase ALL '+s.toUpperCase()+' rules for project '+SLUG+'?\\n\\nThis permanently deletes rows from Core.'))return;
+  setMsg('Erasing '+s+'…',true);
+  const r=await cafFetch('/v1/learning/'+encodeURIComponent(SLUG)+'/rules/erase-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s,scope_type:'project'})});
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok){setMsg('Erase-all failed: '+String(d.error||('HTTP '+r.status)),false);return;}
+  setMsg('Erased '+String(d.erased||'?')+' rule(s).',true);
+  loadRules();
+}
+
+loadRules();
+</script>`;
+    reply.type("text/html").send(page("Learning", "learning", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Project Config (tabbed: constraints, strategy, brand, platforms, flow types, risk rules, prompts, reference posts, heygen) ---

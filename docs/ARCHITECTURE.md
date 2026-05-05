@@ -42,19 +42,24 @@ One page per layer: **[layers/README.md](./layers/README.md)**.
 |-------|---------|------|
 | **Project** | `caf_core.projects` | `slug` is the external key used in URLs |
 | **Run** | `caf_core.runs` | Human-readable **`run_id`** + UUID **`id`**; links **`signal_pack_id`** |
-| **Signal pack** | `caf_core.signal_packs` | **`overall_candidates_json`** drives planning |
+| **Signal pack** | `caf_core.signal_packs` | Source research bundle attached to a run |
 | **Content job** | `caf_core.content_jobs` | Unique **`(project_id, task_id)`**; **`generation_payload`** is the integration hub |
 | **Draft** | `caf_core.job_drafts` | Per LLM call |
 | **Asset** | `caf_core.assets` | Render outputs |
 | **Publication** | `caf_core.publication_placements` | Publish intent + outcome |
 
-The schema also includes **`caf_core.candidates`**; run planning primarily consumes **signal pack JSON** built in memory in **`run-orchestrator.ts`** / decision engine. Do not assume every deployment fully syncs **`candidates`** rows.
+Run planning does **not** consume `signal_packs.*_json` directly at start time. The current run-start path requires materializing planner rows into **`runs.candidates_json`** first:
+- `POST /v1/runs/:project_slug/:run_id/candidates` writes `runs.candidates_json` from the run’s attached signal pack (ideas JSON or legacy overall candidates).
+- `POST /v1/runs/:project_slug/:run_id/start` expects `runs.candidates_json` to exist and will error if it is missing.
+
+The schema also includes **`caf_core.candidates`** historically; do not assume it is the planning source of truth.
 
 ## Lifecycle (abbreviated)
 
 Full detail: **[LIFECYCLE.md](./LIFECYCLE.md)**.
 
-1. **Start run** (`POST /v1/runs/:project_slug/:run_id/start`) → **`startRun`**: loads signal pack, optionally expands candidates, **`decideGenerationPlan`**, **`upsertContentJob`** for each selected row → run **`GENERATING`**.
+0. **Materialize candidates** (`POST /v1/runs/:project_slug/:run_id/candidates`) → **`materializeRunCandidates`**: writes `runs.candidates_json` from the run’s attached signal pack.
+1. **Start run** (`POST /v1/runs/:project_slug/:run_id/start`) → **`startRun`**: reads `runs.candidates_json`, runs **`decideGenerationPlan`**, **`upsertContentJob`** for each selected row → run advances through planning/generating.
 2. **Process run** (`processRunJobs` in **`job-pipeline.ts`**) for each job: **`PLANNED`** → generation → **`runQcForJob`** → routing / diagnostic → carousel or video render → **`IN_REVIEW`** (human gate; QC does not auto-approve by default—see **`CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC`**).
 3. **Review** updates **`content_jobs.status`** and **`editorial_reviews`** via **`v1`** routes.
 4. **Publishing** mutates **`publication_placements`**; executor mode from **`CAF_PUBLISH_EXECUTOR`**.

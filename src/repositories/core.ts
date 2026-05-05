@@ -291,10 +291,7 @@ export async function listActiveAppliedLearningRules(db: Pool, projectId: string
        AND r.valid_from <= now()
        AND (r.rule_family IS NULL OR r.rule_family IN ('ranking', 'suppression'))
        AND r.action_type IN ('BOOST_RANK', 'SCORE_BOOST', 'SCORE_PENALTY')
-       AND (
-         r.project_id = $1
-         OR (r.scope_type = 'global' AND r.project_id = (SELECT id FROM caf_core.projects WHERE slug = 'caf-global' LIMIT 1))
-       )`,
+       AND r.project_id = $1`,
     [projectId]
   );
 }

@@ -60,6 +60,9 @@ export default function FlowEnginePage() {
   const [loading, setLoading] = useState(true);
   const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
   const [filterFlowType, setFilterFlowType] = useState<string>("");
+  const [editRow, setEditRow] = useState<Record<string, unknown> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string>("");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -160,7 +163,14 @@ export default function FlowEnginePage() {
 
       {selectedRow && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3 style={{ marginBottom: 12 }}>Detail View</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h3 style={{ marginBottom: 12 }}>Detail View</h3>
+            {activeTab === "prompts" ? (
+              <button className="btn-primary" onClick={() => { setEditRow({ ...selectedRow }); setMsg(""); }}>
+                Edit
+              </button>
+            ) : null}
+          </div>
           <table style={{ width: "100%", fontSize: 13 }}>
             <tbody>
               {Object.entries(selectedRow).map(([key, value]) => {
@@ -182,6 +192,83 @@ export default function FlowEnginePage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {editRow && activeTab === "prompts" && (
+        <div className="card" style={{ marginTop: 16, padding: 16, border: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 800, marginBottom: 10 }}>Edit prompt template</div>
+          {msg ? <div style={{ fontSize: 12, color: msg.startsWith("Saved") ? "var(--green)" : "var(--red)", marginBottom: 10 }}>{msg}</div> : null}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="filter-group">
+              <label className="filter-label">prompt_name</label>
+              <input className="filter-input" value={String(editRow.prompt_name ?? "")} onChange={(e) => setEditRow({ ...editRow, prompt_name: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">flow_type</label>
+              <input className="filter-input" value={String(editRow.flow_type ?? "")} onChange={(e) => setEditRow({ ...editRow, flow_type: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">prompt_role</label>
+              <input className="filter-input" value={String(editRow.prompt_role ?? "")} onChange={(e) => setEditRow({ ...editRow, prompt_role: e.target.value })} />
+            </div>
+            <div className="filter-group" style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 22 }}>
+              <input
+                type="checkbox"
+                checked={editRow.active !== false}
+                onChange={(e) => setEditRow({ ...editRow, active: e.target.checked })}
+                style={{ width: "auto", accentColor: "var(--accent)" }}
+              />
+              <span style={{ fontSize: 13 }}>active</span>
+            </div>
+          </div>
+
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">notes</label>
+            <textarea className="filter-input" rows={3} value={String(editRow.notes ?? "")} onChange={(e) => setEditRow({ ...editRow, notes: e.target.value })} />
+          </div>
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">system_prompt</label>
+            <textarea className="filter-input" rows={6} value={String(editRow.system_prompt ?? "")} onChange={(e) => setEditRow({ ...editRow, system_prompt: e.target.value })} />
+          </div>
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">user_prompt_template</label>
+            <textarea className="filter-input" rows={8} value={String(editRow.user_prompt_template ?? "")} onChange={(e) => setEditRow({ ...editRow, user_prompt_template: e.target.value })} />
+          </div>
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">output_format_rule</label>
+            <textarea className="filter-input" rows={4} value={String(editRow.output_format_rule ?? "")} onChange={(e) => setEditRow({ ...editRow, output_format_rule: e.target.value })} />
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+            <button className="btn-ghost" onClick={() => { setEditRow(null); setMsg(""); }}>Cancel</button>
+            <button
+              className="btn-primary"
+              disabled={saving}
+              onClick={async () => {
+                setSaving(true);
+                setMsg("");
+                try {
+                  const res = await fetch("/api/flow-engine/prompts", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(editRow),
+                  });
+                  if (!res.ok) throw new Error(await res.text());
+                  setMsg("Saved");
+                  setEditRow(null);
+                  await fetchData();
+                } catch (e) {
+                  const m = e instanceof Error ? e.message : String(e);
+                  setMsg(m || "Failed to save");
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
       )}
     </div>

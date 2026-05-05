@@ -13,11 +13,10 @@ import {
   eraseLearningRule,
   eraseLearningRulesForProject,
   insertLearningRule,
-  listLearningRulesMerged,
+  listLearningRules,
   retireLearningRule,
 } from "../repositories/learning.js";
 import { templateNameFromPayload } from "../services/carousel-render-pack.js";
-import { getGlobalLearningProjectId } from "../repositories/learning-global.js";
 import {
   insertHypothesis,
   insertHypothesisTrial,
@@ -60,9 +59,11 @@ async function resolveStorageProjectId(
   pathProjectId: string
 ): Promise<{ id: string; error?: string }> {
   if (scopeType === "project") return { id: pathProjectId };
-  const gid = await getGlobalLearningProjectId(db);
-  if (!gid) return { id: pathProjectId, error: "caf-global project not found (run migration 010)" };
-  return { id: gid };
+  return {
+    id: pathProjectId,
+    error:
+      "Global learning rules are disabled for now; use project-scoped rules only. (caf-global will be reintroduced with separate criteria.)",
+  };
 }
 
 export function registerLearningRoutes(app: FastifyInstance, { db, config }: Deps) {
@@ -88,9 +89,8 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
-      const globalId = await getGlobalLearningProjectId(db);
-      const rules = await listLearningRulesMerged(db, project.id, globalId);
-      return { ok: true, rules };
+      const rules = await listLearningRules(db, project.id);
+      return { ok: true, rules, merged: false };
     }
   );
 
@@ -146,16 +146,20 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const scope_type =
         scopeRaw === "global" || scopeRaw === "both" || scopeRaw === "project" ? scopeRaw : "project";
 
+      if (scope_type === "global" || scope_type === "both") {
+        return reply.code(400).send({
+          ok: false,
+          error:
+            "Global learning rules are disabled for now; bulk erase supports project scope only.",
+        });
+      }
+
       const erased_project = scope_type === "project" || scope_type === "both"
         ? await eraseLearningRulesForProject(db, project.id, { status })
         : 0;
 
       let erased_global = 0;
-      if (scope_type === "global" || scope_type === "both") {
-        const gid = await getGlobalLearningProjectId(db);
-        if (!gid) return reply.code(500).send({ ok: false, error: "caf-global project not found (run migration 010)" });
-        erased_global = await eraseLearningRulesForProject(db, gid, { status });
-      }
+      // global disabled
 
       return { ok: true, status, scope_type, erased_project, erased_global, erased: erased_project + erased_global };
     }
@@ -202,7 +206,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       }
       const body = parsed.data;
       const storage = await resolveStorageProjectId(db, body.scope_type, project.id);
-      if (storage.error) return reply.code(500).send({ ok: false, error: storage.error });
+      if (storage.error) return reply.code(400).send({ ok: false, error: storage.error });
       await insertObservation(db, {
         observation_id: body.observation_id,
         scope_type: body.scope_type,
@@ -258,7 +262,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       }
       const body = parsed.data;
       const storage = await resolveStorageProjectId(db, body.scope_type, project.id);
-      if (storage.error) return reply.code(500).send({ ok: false, error: storage.error });
+      if (storage.error) return reply.code(400).send({ ok: false, error: storage.error });
       await insertHypothesis(db, {
         hypothesis_id: body.hypothesis_id,
         scope_type: body.scope_type,
@@ -311,7 +315,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       }
       const body = parsed.data;
       const storage = await resolveStorageProjectId(db, body.scope_type, project.id);
-      if (storage.error) return reply.code(500).send({ ok: false, error: storage.error });
+      if (storage.error) return reply.code(400).send({ ok: false, error: storage.error });
       await insertHypothesisTrial(db, {
         trial_id: body.trial_id,
         hypothesis_id: body.hypothesis_id ?? null,
@@ -362,7 +366,7 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       }
       const body = parsed.data;
       const storage = await resolveStorageProjectId(db, body.scope_type, project.id);
-      if (storage.error) return reply.code(500).send({ ok: false, error: storage.error });
+      if (storage.error) return reply.code(400).send({ ok: false, error: storage.error });
       await insertInsight(db, {
         insight_id: body.insight_id,
         scope_type: body.scope_type,

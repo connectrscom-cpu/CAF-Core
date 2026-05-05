@@ -18,7 +18,7 @@ This doc explains how **video jobs** are routed and rendered in CAF Core, with s
 ### Entry points
 
 - `POST /v1/jobs/:project_slug/:task_id/process` → `processJobByTaskId(...)` in `src/routes/runs.ts`
-- `POST /v1/runs/:project_slug/:run_id/process` → `processRunJobs(...)` in `src/routes/runs.ts`
+- `POST /v1/runs/:project_slug/:run_id/process` → starts background **draft package generation** (`generateRunDraftPackages(...)`) in `src/routes/runs.ts` (LLM → QC → diagnostics; jobs stop at `GENERATED`). Rendering is a separate operator step via `POST /v1/runs/:project_slug/:run_id/render`.
 
 ### Video decision point
 

@@ -19,6 +19,10 @@ Allowed values are constrained in SQL (see **`migrations/002_project_config_and_
 
 **Important:** **`startRun`** requires **`signal_pack_id`** on the run. **`CREATED`** runs with no pack will fail start.
 
+**Important (current wiring):** **`startRun`** also expects planner rows to already exist on the run as **`runs.candidates_json`**.
+- Create/materialize them via **`POST /v1/runs/:project_slug/:run_id/candidates`** while the run is still `CREATED`.
+- `start` will error if `candidates_json` is missing/unusable.
+
 ## Content job lifecycle
 
 Jobs are **`caf_core.content_jobs`**, unique on **`(project_id, task_id)`**.

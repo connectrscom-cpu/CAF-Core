@@ -1,6 +1,5 @@
 import type { Pool } from "pg";
 import { listLearningRulesMerged } from "../repositories/learning.js";
-import { getGlobalLearningProjectId } from "../repositories/learning-global.js";
 
 export interface CompiledLearning {
   global_context: string;
@@ -50,8 +49,8 @@ export async function compileLearningContexts(
   platform: string | null,
   opts?: { include_pending_generation_guidance?: boolean }
 ): Promise<CompiledLearning> {
-  const globalId = await getGlobalLearningProjectId(db);
-  const rules = await listLearningRulesMerged(db, projectId, globalId);
+  // Project-level only for now (no caf-global merge).
+  const rules = await listLearningRulesMerged(db, projectId, null);
   const active = rules.filter((r) => String(r.status) === "active" && isGenerationRule(r));
   const pendingForRework =
     opts?.include_pending_generation_guidance
@@ -72,9 +71,7 @@ export async function compileLearningContexts(
     const text = guidanceText(payload);
     if (!text) continue;
     parts.push(text);
-    const slug = String(r.storage_project_slug ?? "");
-    if (slug === "caf-global") globalLines.push(text);
-    else projectLines.push(text);
+    projectLines.push(text);
   }
 
   return {

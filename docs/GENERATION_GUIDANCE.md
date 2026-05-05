@@ -10,7 +10,7 @@
 
 ### Which rules are included
 
-1. Load merged rules: **`listLearningRulesMerged`** (project + **`caf-global`** global rules).
+1. Load rules for the project scope (**project-scoped only**; global learning is currently disabled).
 2. **Active** rules where **`status === 'active'`** and the row is classified as a **generation** rule:
    - **`rule_family === 'generation'`**, or
    - **`action_type`** matches **`/GENERATION|GUIDANCE|HINT/i`**.

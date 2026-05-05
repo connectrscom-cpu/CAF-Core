@@ -1,6 +1,5 @@
 import type { Pool } from "pg";
 import { qOne } from "../db/queries.js";
-import { getGlobalLearningProjectId } from "../repositories/learning-global.js";
 
 /**
  * Operator-facing description of the learning layer: what is automatic, what is not,
@@ -88,7 +87,7 @@ export const LEARNING_TRANSPARENCY_STATIC = {
     {
       id: "ranking",
       name: "Decision engine",
-      evidence_source: "Active applied rules (ranking/suppression families) + global rules from project caf-global",
+      evidence_source: "Active applied rules (ranking/suppression families), project-scoped only",
       analyzer: "decision_engine applyLearningBoosts (numeric only)",
       llm_involved: false,
       llm_role: null,
@@ -111,7 +110,6 @@ export async function learningTransparencySnapshot(db: Pool, projectId: string):
   global_project_configured: boolean;
   observations_last_30d: number;
 }> {
-  const globalId = await getGlobalLearningProjectId(db);
   const pending = await qOne<{ c: string }>(
     db,
     `SELECT COUNT(*)::text AS c FROM caf_core.learning_rules
@@ -139,7 +137,7 @@ export async function learningTransparencySnapshot(db: Pool, projectId: string):
   return {
     pending_rules: pending ? parseInt(pending.c, 10) : 0,
     active_rules: active ? parseInt(active.c, 10) : 0,
-    global_project_configured: Boolean(globalId),
+    global_project_configured: false,
     /** -1 if the observations table is missing (migration not applied). */
     observations_last_30d: observationsLast30d,
   };

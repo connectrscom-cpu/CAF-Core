@@ -109,14 +109,17 @@ Fly (`fly.toml`, `Dockerfile`), Review on Vercel (`apps/review/vercel.json`). Fu
 | Concept | Meaning |
 |---------|---------|
 | **Project** | Tenant (brand); `caf_core.projects`, keyed by `slug` in URLs |
-| **Signal pack** | Research bundle; `overall_candidates_json` feeds planning |
+| **Signal pack** | Research bundle attached to a run; source data for materializing planner rows |
 | **Run** | One cycle; `runs.run_id` (text) + UUID `id`; links `signal_pack_id` |
 | **Content job** | Atomic work unit; unique `(project_id, task_id)`; **`generation_payload`** is the hub |
 | **Draft** | One LLM attempt — `job_drafts` |
 | **Asset** | Render output — `assets` |
 | **Publication placement** | Post intent + outcome — `publication_placements` |
 
-**Note:** `caf_core.candidates` exists in schema; planning primarily uses **signal pack JSON** built in memory in `run-orchestrator.ts`.
+**Note (current wiring):** run start/planning consumes **`runs.candidates_json`** (planner rows) rather than reading `signal_packs.*_json` directly during `start`. Populate it first via:
+- `POST /v1/runs/:project_slug/:run_id/candidates` (materialize from the run’s attached signal pack)
+
+`caf_core.candidates` exists historically; do not assume it is the planning source of truth.
 
 ---
 
@@ -127,6 +130,8 @@ Fly (`fly.toml`, `Dockerfile`), Review on Vercel (`apps/review/vercel.json`). Fu
 Driven by `POST /v1/runs/:project_slug/:run_id/start` → `startRun` in `src/services/run-orchestrator.ts`.
 
 **`startRun` requires `signal_pack_id` on the run.**
+
+**`startRun` also expects `runs.candidates_json`** to already be materialized from the signal pack. Create it first via `POST /v1/runs/:project_slug/:run_id/candidates` while the run is still `CREATED`.
 
 Allowed statuses (SQL check in migration `002`):  
 `CREATED`, `PLANNING`, `PLANNED`, `GENERATING`, `RENDERING`, `REVIEWING`, `COMPLETED`, `FAILED`, `CANCELLED`.
@@ -171,9 +176,11 @@ Statuses: `draft`, `scheduled`, `publishing`, `published`, `failed`, `cancelled`
 
 ## 5. End-to-end pipeline (abbreviated)
 
-1. **Ingest** — XLSX upload or CLI → `signal_packs`; create **run** `CREATED`.
-2. **Start run** — `startRun`: plan → `upsertContentJob` each selected row → `generation_payload` with `signal_pack_id`, `candidate_data`, `prompt_*`.
-3. **Process** — `processRunJobs` / single job: `generateForJob` → `runQcForJob` → `routeJobAfterQc` → `runDiagnosticAudit` → render (carousel / HeyGen / scene) → `IN_REVIEW`.
+1. **Ingest** — XLSX upload or CLI → `signal_packs`; create **run** `CREATED` with `signal_pack_id`.
+2. **Materialize candidates** — `POST /v1/runs/:project_slug/:run_id/candidates` writes planner rows into `runs.candidates_json`.
+3. **Start run** — `startRun`: plan → `upsertContentJob` each selected row.
+4. **Process (draft packages)** — run endpoints `POST /v1/runs/:project_slug/:run_id/process` / `/start-and-process` generate LLM output + QC + diagnostics in background and stop jobs at `GENERATED` (package ready).
+5. **Render** — `POST /v1/runs/:project_slug/:run_id/render` runs rendering for `GENERATED` jobs in background.
 4. **Review** — Human decision; optional rework (`rework-orchestrator.ts`).
 5. **Publish** — `publication_placements`; executor `none` | `dry_run` | `meta`.
 6. **Learn** — Rules APIs, metrics, optional editorial cron.
@@ -232,7 +239,7 @@ Summary table:
 
 ### 7.2 Run orchestration
 
-- **`startRun`:** CREATED run + `signal_pack_id` → delete orphan jobs for run → `PLANNING` → load pack → allowed flows (skip `offline-flow-types`) → optional scene router expansion → `buildCandidatesFromSignalPack` → `decideGenerationPlan` → `upsertContentJob` + transitions → `PLANNED`/`GENERATING`/terminal.
+- **`startRun`:** CREATED run + `signal_pack_id` + **materialized `runs.candidates_json`** → delete orphan jobs for run → `PLANNING` → allowed flows (skip `offline-flow-types`) → optional scene router expansion → build candidates from `runs.candidates_json` → `decideGenerationPlan` → `upsertContentJob` + transitions → `PLANNED`/`GENERATING`/terminal.
 - **`replanRun`:** same file family.
 
 ### 7.3 Decision engine
@@ -270,7 +277,7 @@ Summary table:
 
 - **`learning.ts`** — rules, evidence, ingest.
 - **Cron:** `editorial-analysis-cron.ts` + `EDITORIAL_ANALYSIS_CRON_*`.
-- **Global project:** `caf-global` — `learning-global.ts`.
+- **Global project:** global learning rules are currently **disabled** at the HTTP layer; treat any `caf-global` behavior as not active unless reintroduced by code.
 - **Attribution:** `learning_generation_attribution`.
 - **Post-approval LLM review:** `src/services/approved-content-llm-review.ts` scores approved jobs and emits **`upstream_recommendations`** (schema in `src/domain/upstream-recommendations.ts`). Stored on `caf_core.llm_approval_reviews.upstream_recommendations` (migration `025`) and fanned out per item into `learning_observations` with `source_type = "llm_upstream_recommendation"` for a queryable audit trail.
 - **Run context snapshot:** `src/services/run-context-snapshot.ts` captures prompt versions, project brand/strategy slices, and learning-guidance fingerprints at end-of-planning. Persisted via `setRunContextSnapshot` into `caf_core.runs.context_snapshot_json` (migration `025`). Snapshot failures never abort a run; they are logged via `pipeline-logger.ts`.

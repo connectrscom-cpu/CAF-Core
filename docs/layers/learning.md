@@ -26,6 +26,10 @@
 - **`migrations/010_learning_evidence_and_global.sql`** — **`caf-global`** project, observations, hypotheses, insights, **generation attribution**.
 - **`src/repositories/learning-global.ts`** — **`getGlobalLearningProjectId`**.
 
+Important (current wiring):
+- Global learning rules are currently **disabled at the HTTP layer** (the learning routes reject global scope operations).
+- Treat `caf-global` as a historical/schema concept unless code explicitly reintroduces global rule compilation and application.
+
 ## Post-approval LLM review — upstream recommendations
 
 - **`src/services/approved-content-llm-review.ts`** scores approved jobs (multimodal) and now emits an **`upstream_recommendations`** array alongside scores/bullets.

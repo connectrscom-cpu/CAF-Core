@@ -39,6 +39,7 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
   const [selectedKey, setSelectedKey] = useState<string>("");
 
   const [dlgOpen, setDlgOpen] = useState(false);
+  const [tplDlgOpen, setTplDlgOpen] = useState(false);
   const [edit, setEdit] = useState<{
     flow_type: string;
     prompt_id: string;
@@ -49,6 +50,21 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
     output_format_rule: string;
     prompt_template_id: string | null;
     experiment_tag: string;
+  } | null>(null);
+  const [tplEdit, setTplEdit] = useState<{
+    prompt_name: string;
+    flow_type: string;
+    prompt_role: string;
+    system_prompt: string;
+    user_prompt_template: string;
+    output_format_rule: string;
+    output_schema_name: string;
+    output_schema_version: string;
+    temperature_default: string;
+    max_tokens_default: string;
+    stop_sequences: string;
+    notes: string;
+    active: boolean;
   } | null>(null);
 
   async function load() {
@@ -153,6 +169,25 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
     setDlgOpen(true);
   }
 
+  function openEditTemplate(t: PromptTemplate) {
+    setTplEdit({
+      prompt_name: asStr(t.prompt_name).trim(),
+      flow_type: asStr(t.flow_type).trim(),
+      prompt_role: asStr(t.prompt_role).trim(),
+      system_prompt: asStr(t.system_prompt),
+      user_prompt_template: asStr(t.user_prompt_template),
+      output_format_rule: asStr(t.output_format_rule),
+      output_schema_name: asStr(t.output_schema_name).trim(),
+      output_schema_version: asStr(t.output_schema_version).trim(),
+      temperature_default: asStr(t.temperature_default).trim(),
+      max_tokens_default: asStr(t.max_tokens_default).trim(),
+      stop_sequences: asStr(t.stop_sequences),
+      notes: asStr(t.notes),
+      active: t.active !== false,
+    });
+    setTplDlgOpen(true);
+  }
+
   function openEditVersion(v: PromptVersion) {
     setEdit({
       flow_type: asStr(v.flow_type).trim(),
@@ -197,6 +232,39 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
     await load();
   }
 
+  async function saveTemplate() {
+    if (!tplEdit) return;
+    const body = {
+      prompt_name: tplEdit.prompt_name,
+      flow_type: tplEdit.flow_type,
+      prompt_role: tplEdit.prompt_role || null,
+      system_prompt: tplEdit.system_prompt || null,
+      user_prompt_template: tplEdit.user_prompt_template || null,
+      output_format_rule: tplEdit.output_format_rule || null,
+      output_schema_name: tplEdit.output_schema_name || null,
+      output_schema_version: tplEdit.output_schema_version || null,
+      temperature_default:
+        tplEdit.temperature_default.trim() === "" ? null : Number(tplEdit.temperature_default.trim()),
+      max_tokens_default:
+        tplEdit.max_tokens_default.trim() === "" ? null : Number(tplEdit.max_tokens_default.trim()),
+      stop_sequences: tplEdit.stop_sequences || null,
+      notes: tplEdit.notes || null,
+      active: !!tplEdit.active,
+    };
+    const res = await fetch(`/api/flow-engine/prompts`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error(t || "Failed to save template");
+    }
+    setTplDlgOpen(false);
+    setTplEdit(null);
+    await load();
+  }
+
   if (loading) return <div className="card" style={{ padding: 24, color: "var(--muted)" }}>Loading…</div>;
   if (error) return <div className="card" style={{ padding: 24, color: "var(--red)" }}>{error}</div>;
 
@@ -234,9 +302,14 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
               })}
             </select>
             {currentTemplate && (
-              <button className="btn-primary" onClick={() => openForkFromTemplate(currentTemplate)}>
-                + New version
-              </button>
+              <>
+                <button className="btn-ghost" onClick={() => openEditTemplate(currentTemplate)}>
+                  Open template
+                </button>
+                <button className="btn-primary" onClick={() => openForkFromTemplate(currentTemplate)}>
+                  + New version
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -351,6 +424,87 @@ export function ProjectPromptsPanel({ mode }: { mode: "project-prompts" | "promp
               onClick={() => saveVersion().catch((e) => setError(e instanceof Error ? e.message : String(e)))}
             >
               Save
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tplDlgOpen && tplEdit && (
+        <div className="card" style={{ marginTop: 16, padding: 16, border: "1px solid var(--border)" }}>
+          <div style={{ fontWeight: 800, marginBottom: 10 }}>Edit prompt template</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div className="filter-group">
+              <label className="filter-label">flow_type</label>
+              <input className="filter-input" value={tplEdit.flow_type} onChange={(e) => setTplEdit({ ...tplEdit, flow_type: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">prompt_name</label>
+              <input className="filter-input" value={tplEdit.prompt_name} onChange={(e) => setTplEdit({ ...tplEdit, prompt_name: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">prompt_role</label>
+              <input className="filter-input" value={tplEdit.prompt_role} onChange={(e) => setTplEdit({ ...tplEdit, prompt_role: e.target.value })} />
+            </div>
+            <div className="filter-group" style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 22 }}>
+              <input
+                type="checkbox"
+                checked={tplEdit.active}
+                onChange={(e) => setTplEdit({ ...tplEdit, active: e.target.checked })}
+                style={{ width: "auto", accentColor: "var(--accent)" }}
+              />
+              <span style={{ fontSize: 13 }}>active</span>
+            </div>
+          </div>
+
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">notes</label>
+            <textarea className="filter-input" rows={3} value={tplEdit.notes} onChange={(e) => setTplEdit({ ...tplEdit, notes: e.target.value })} />
+          </div>
+
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">system_prompt</label>
+            <textarea className="filter-input" rows={6} value={tplEdit.system_prompt} onChange={(e) => setTplEdit({ ...tplEdit, system_prompt: e.target.value })} />
+          </div>
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">user_prompt_template</label>
+            <textarea className="filter-input" rows={8} value={tplEdit.user_prompt_template} onChange={(e) => setTplEdit({ ...tplEdit, user_prompt_template: e.target.value })} />
+          </div>
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">output_format_rule</label>
+            <textarea className="filter-input" rows={4} value={tplEdit.output_format_rule} onChange={(e) => setTplEdit({ ...tplEdit, output_format_rule: e.target.value })} />
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 }}>
+            <div className="filter-group">
+              <label className="filter-label">output_schema_name</label>
+              <input className="filter-input" value={tplEdit.output_schema_name} onChange={(e) => setTplEdit({ ...tplEdit, output_schema_name: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">output_schema_version</label>
+              <input className="filter-input" value={tplEdit.output_schema_version} onChange={(e) => setTplEdit({ ...tplEdit, output_schema_version: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">temperature_default</label>
+              <input className="filter-input" value={tplEdit.temperature_default} onChange={(e) => setTplEdit({ ...tplEdit, temperature_default: e.target.value })} />
+            </div>
+            <div className="filter-group">
+              <label className="filter-label">max_tokens_default</label>
+              <input className="filter-input" value={tplEdit.max_tokens_default} onChange={(e) => setTplEdit({ ...tplEdit, max_tokens_default: e.target.value })} />
+            </div>
+          </div>
+
+          <div className="filter-group" style={{ marginTop: 12 }}>
+            <label className="filter-label">stop_sequences</label>
+            <input className="filter-input" value={tplEdit.stop_sequences} onChange={(e) => setTplEdit({ ...tplEdit, stop_sequences: e.target.value })} />
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+            <button className="btn-ghost" onClick={() => { setTplDlgOpen(false); setTplEdit(null); }}>Cancel</button>
+            <button
+              className="btn-primary"
+              onClick={() => saveTemplate().catch((e) => setError(e instanceof Error ? e.message : String(e)))}
+            >
+              Save template
             </button>
           </div>
         </div>
