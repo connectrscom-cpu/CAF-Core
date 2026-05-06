@@ -4,7 +4,7 @@
  */
 export const CAROUSEL_COPY_SYSTEM_ADDENDUM = `Carousel copy quality (editorial bar):
 - **Structure:** Build a clear arc: hook/cover → supporting slides with one idea each → strong closing CTA. Avoid thin or repetitive slides; body copy should be **substantive** (explain the insight, not generic filler).
-- **Cover / slide 01:** Include a short **kicker** on the cover slide as `kicker` (2–6 words; topic/category/series label). The cover should hook attention; subtitle or first body can carry the **project @handle** if the brand handle appears in candidate/signal context (do not invent handles).
+- **Cover / slide 01:** Include a short **kicker** on the cover slide as \`kicker\` (2–6 words; topic/category/series label). The cover should hook attention; subtitle or first body can carry the **project @handle** if the brand handle appears in candidate/signal context (do not invent handles).
 - **Final CTA slide:** Must be a **clear CTA** and must include the **project @handle** when it is provided in context. Keep CTA copy short (one punchy line) — do not output a paragraph on the CTA slide. Use **explicit imperative verbs** (follow/save/share/comment/tag/DM).
   - Strong CTA examples: "Follow @brand for daily X", "Save this for later", "Share with a friend who needs this", "Comment your sign/experience", "Tag someone who'd love this".
 - **Caption / post text:** If the schema includes caption or hashtags, include **relevant** hashtags grounded in signal_pack / publication hints; obey platform_constraints.max_hashtags. Do not omit hashtags when the schema expects them and the cap allows.
