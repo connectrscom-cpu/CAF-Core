@@ -213,6 +213,8 @@ export interface ReviewJobDetail extends ReviewQueueJob {
     id: string;
     asset_type: string | null;
     public_url: string | null;
+    bucket?: string | null;
+    object_path?: string | null;
     position: number;
   }>;
   reviews: Array<{

@@ -358,6 +358,9 @@ export interface ReviewJobDetail extends ReviewQueueJob {
     id: string;
     asset_type: string | null;
     public_url: string | null;
+    /** Storage location when `public_url` is null or needs signing (must flow to `signJobAssets` in v1). */
+    bucket: string | null;
+    object_path: string | null;
     position: number;
   }>;
   reviews: Array<{
@@ -420,10 +423,12 @@ export async function getReviewJobDetail(
     id: string;
     asset_type: string | null;
     public_url: string | null;
+    bucket: string | null;
+    object_path: string | null;
     position: number;
   }>(
     db,
-    `SELECT id, asset_type, public_url, position
+    `SELECT id, asset_type, public_url, bucket, object_path, position
      FROM caf_core.assets
      WHERE project_id = $1 AND task_id = $2
      ORDER BY position ASC`,
