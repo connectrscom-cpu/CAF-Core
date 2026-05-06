@@ -854,6 +854,7 @@ function resolveCarouselCtaFields(
     const clipped = firstSentence.length > max ? `${firstSentence.slice(0, max).trimEnd()}…` : firstSentence;
     return clipped;
   };
+  const originalCtaText = ctaText;
   if (looksTooLongForCtaHeadline(ctaText)) {
     const last = allSlides.length > 0 ? (allSlides[allSlides.length - 1]! as Record<string, unknown>) : null;
     const lastHeadline = last ? textFromSlide(last).headline.trim() : "";
@@ -890,6 +891,14 @@ function resolveCarouselCtaFields(
   const cta_slide = {
     ...fromShape,
     body: ctaText,
+    // If we shortened the CTA for headline templates, preserve the full copy in `sub`
+    // so templates like `carousel_pro_bold_banner` can render it in the smaller body area.
+    ...(originalCtaText !== ctaText &&
+    originalCtaText &&
+    originalCtaText !== defaultCopy &&
+    typeof fromShape.sub !== "string"
+      ? { sub: originalCtaText }
+      : {}),
     ...(ctaHandle ? { handle: ctaHandle } : {}),
   };
 
