@@ -11,6 +11,7 @@ import {
   reviewRequestsCarouselTemplateChange,
   slidesFromGeneratedOutput,
   slideHasRenderableContent,
+  stripAirQuotesFromSlideCopy,
   stripExplicitCarouselTemplateSelection,
   stripHashtagsFromSlideCopy,
   stripNonRenderableDeckFields,
@@ -24,6 +25,12 @@ describe("stripHashtagsFromSlideCopy", () => {
 
   it("does not strip #1 style ordinals (digit after #)", () => {
     expect(stripHashtagsFromSlideCopy("Top #1 tip for you")).toBe("Top #1 tip for you");
+  });
+});
+
+describe("stripAirQuotesFromSlideCopy", () => {
+  it("removes curly and straight double quotes, preserves apostrophes", () => {
+    expect(stripAirQuotesFromSlideCopy("“Try saying” \"hello\" and I'm here")).toBe("Try saying hello and I'm here");
   });
 });
 
@@ -360,6 +367,32 @@ describe("carousel template shape (body_slides)", () => {
     expect(bs).toHaveLength(1);
     expect(bs[0]?.panel_title).toBe("Micro-action");
     expect(String(bs[0]?.panel_body ?? "")).toContain("Pick one question");
+  });
+
+  it("strips double-quote air quotes from slide headline/body", () => {
+    const gen = {
+      slides: [
+        { headline: "\"Cover\"", body: "“Quoted body”" },
+        { headline: "CTA", body: "Follow @brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen) as Array<{ headline?: string; body?: string }>;
+    expect(flat[0]?.headline).toBe("Cover");
+    expect(flat[0]?.body).toBe("Quoted body");
+  });
+
+  it("never renders [object Object] for cta_text when upstream passes objects", () => {
+    const gen = {
+      cta_text: { bogus: true },
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "CTA", body: "" },
+      ],
+    };
+    const flatAll = slidesFromGeneratedOutput(gen);
+    const flat = flatAll.filter((s) => slideHasRenderableContent(s as Record<string, unknown>));
+    const ctx = buildSlideRenderContext(gen, flat, 1, { instagramHandle: "@brand" });
+    expect(String(ctx.cta_text)).not.toBe("[object Object]");
   });
 
   it("formatInstagramHandleForCta accepts URLs and stray @", () => {

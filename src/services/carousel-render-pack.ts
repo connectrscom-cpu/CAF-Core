@@ -98,6 +98,19 @@ export function stripHashtagsFromSlideCopy(s: string): string {
   return t.trim();
 }
 
+/**
+ * Remove “air quotes” from slide copy. We strip double-quote characters only
+ * (straight + curly) and keep apostrophes for contractions.
+ */
+export function stripAirQuotesFromSlideCopy(s: string): string {
+  let t = String(s ?? "");
+  if (!t.trim()) return "";
+  t = t.replace(/[“”"]/g, "");
+  // Collapse accidental double-spaces from quote removal.
+  t = t.replace(/[ \t]{2,}/g, " ");
+  return t.trim();
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
   const headline = HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
   let body = BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
@@ -105,8 +118,8 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     const fromBullets = bulletsToBody(o);
     if (fromBullets) body = fromBullets;
   }
-  const h = stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim()));
-  const b = stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim()));
+  const h = stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim())));
+  const b = stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim())));
   return { headline: h, body: b };
 }
 
@@ -133,12 +146,14 @@ function ensurePanelFields(
   slide: Record<string, unknown>,
   defaults: { title: string; body: string }
 ): Record<string, unknown> {
-  const panelTitle = typeof slide.panel_title === "string" ? String(slide.panel_title).trim() : "";
-  const panelBody = typeof slide.panel_body === "string" ? String(slide.panel_body).trim() : "";
+  const panelTitle =
+    typeof slide.panel_title === "string" ? stripAirQuotesFromSlideCopy(String(slide.panel_title)) : "";
+  const panelBody =
+    typeof slide.panel_body === "string" ? stripAirQuotesFromSlideCopy(String(slide.panel_body)) : "";
   return {
     ...slide,
-    ...(panelTitle ? {} : { panel_title: defaults.title }),
-    ...(panelBody ? {} : { panel_body: defaults.body }),
+    ...(panelTitle ? {} : { panel_title: stripAirQuotesFromSlideCopy(defaults.title) }),
+    ...(panelBody ? {} : { panel_body: stripAirQuotesFromSlideCopy(defaults.body) }),
   };
 }
 
@@ -815,6 +830,9 @@ function resolveCarouselCtaFields(
     ctaText = String(tl.headline || tl.body || "").trim();
   }
   if (!ctaText) ctaText = defaultCopy;
+  ctaText = stripAirQuotesFromSlideCopy(ctaText);
+  // Last-resort guardrail: never let non-text objects stringify into templates.
+  if (ctaText.trim() === "[object Object]") ctaText = defaultCopy;
 
   // CTA slide UX: templates often render `cta_text` as a large headline. If the generator puts a long
   // paragraph in the last slide body, it becomes unreadable. Prefer a short imperative line instead.
@@ -858,6 +876,16 @@ function resolveCarouselCtaFields(
     }
   }
   if (!ctaHandle && projectHandle) ctaHandle = projectHandle;
+
+  // If we know the project handle, ensure the CTA slide includes it somewhere:
+  // - Many templates render `cta_handle` separately (preferred)
+  // - Some exports/screenshots rely on CTA headline only; keep a safe append when missing.
+  // Never append to the default CTA copy; the handle is rendered via `cta_handle`.
+  if (ctaHandle && ctaText !== defaultCopy && !/@[a-z0-9_.]{2,}/i.test(ctaText)) {
+    const appended = `${ctaText} ${ctaHandle}`.trim();
+    // Avoid making CTA headline-style templates overflow; only append when still compact.
+    if (appended.length <= 90) ctaText = appended;
+  }
 
   const cta_slide = {
     ...fromShape,
