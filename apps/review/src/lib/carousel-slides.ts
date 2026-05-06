@@ -209,12 +209,15 @@ export function buildSlidesJson(slides: NormalizedSlide[], raw: CarouselSlidesPa
     );
   }
   if (cta) {
+    const hl = cta.headline?.trim() ?? "";
+    const bd = cta.body?.trim() ?? "";
     out.cta_slide = mergeExtras(
-      { ...(out.cta_slide ?? {}), body: cta.body || undefined, handle: cta.handle || undefined },
+      { ...(out.cta_slide ?? {}), body: bd || undefined, handle: cta.handle?.trim() || undefined },
       cta.extras
     );
-    out.cta_text = cta.body || undefined;
-    out.cta_handle = cta.handle || undefined;
+    // Root `cta_text`: large headline when split from body; else whole CTA line for legacy single-field decks.
+    out.cta_text = hl || bd || undefined;
+    out.cta_handle = cta.handle?.trim() || undefined;
   }
 
   // If the raw payload was already a flat `slides[]` deck, keep those objects in sync so extra

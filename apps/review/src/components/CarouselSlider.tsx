@@ -319,8 +319,24 @@ export function CarouselSlider({
           {slide.type === "cta" && (
             <>
               <div style={{ marginBottom: 10 }}>
-                <label className="filter-label">CTA text</label>
-                <input type="text" value={slide.body} onChange={(e) => updateSlide(currentIndex, { body: e.target.value })} placeholder="Call to action text" />
+                <label className="filter-label">CTA headline</label>
+                <input
+                  type="text"
+                  value={slide.headline}
+                  onChange={(e) => updateSlide(currentIndex, { headline: e.target.value })}
+                  placeholder="Large headline on the CTA slide (e.g. Continue the Journey…)"
+                  style={{ fontWeight: 500 }}
+                />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label className="filter-label">CTA body</label>
+                <textarea
+                  value={slide.body}
+                  onChange={(e) => updateSlide(currentIndex, { body: e.target.value })}
+                  rows={5}
+                  placeholder="Supporting paragraph. Add @yourbrand at the end if you want it on the slide (Core also merges project Instagram when empty)."
+                  style={{ minHeight: 100 }}
+                />
               </div>
               <div style={{ marginBottom: 10 }}>
                 <label className="filter-label">Handle / Link</label>
