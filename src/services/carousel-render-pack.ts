@@ -33,6 +33,8 @@ const BODY_KEYS = [
   "description",
   "supporting_copy",
   "deck",
+  /** Some Flow_Carousel / Sheets adapters put the paragraph here instead of `body`. */
+  "panel_body",
 ];
 
 function bulletsToBody(o: Record<string, unknown>): string {
@@ -144,85 +146,6 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim())))
   );
   return { headline: h, body: b };
-}
-
-function stableMicroActionSeed(parts: string[]): number {
-  // Small deterministic hash (FNV-1a-ish) so micro-actions vary by slide but stay stable.
-  let h = 2166136261;
-  const s = parts.filter(Boolean).join("\n");
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return h >>> 0;
-}
-
-function deriveMicroActionPanelBody(headline: string, body: string, slideIdx0?: number): string {
-  const h = String(headline ?? "").trim();
-  const b = String(body ?? "").trim();
-  const t = `${h}\n${b}`.toLowerCase();
-  const seed = stableMicroActionSeed([String(slideIdx0 ?? ""), h.toLowerCase(), b.toLowerCase()]);
-
-  const pick = (options: string[]): string => {
-    if (options.length === 0) return "";
-    return options[seed % options.length]!;
-  };
-
-  if (/\bquiz\b|\btest\b|\binteractive\b/.test(t)) {
-    return pick([
-      "Pick one question from this slide. Answer it in one sentence, then share it with a friend.",
-      "Choose one prompt from this slide. Write a 2-line answer in Notes, then screenshot it.",
-      "Answer one question from this slide honestly. Save it and revisit in a week.",
-    ]);
-  }
-  if (/\bcompatibil|relationship|romantic|dating|partner|friendship|family\b/.test(t)) {
-    return pick([
-      "Circle one line that feels true. Name the need underneath it, then text it to yourself as a reminder.",
-      "Write one boundary and one request you want to practice. Keep it short and specific.",
-      "Pick the one sentence you wish someone would say to you. Say it to yourself today.",
-    ]);
-  }
-  if (/\bchecklist\b|\bsteps?\b|\bhow to\b|\btry\b|\bpractice\b/.test(t)) {
-    return pick([
-      "Choose one step from this slide. Do it in the next 10 minutes, then save this to repeat tomorrow.",
-      "Turn one line into a tiny checklist. Do step 1 today, nothing more.",
-      "Pick the easiest action here. Schedule it for tomorrow in 5 minutes.",
-    ]);
-  }
-  if (/\bmistake\b|\bavoid\b|\bdon't\b|\bstop\b|\bnever\b/.test(t)) {
-    return pick([
-      "Pick one thing you’ll stop doing this week. Replace it with one tiny action you *will* do instead.",
-      "Spot the pattern you want to quit. Write a 1-sentence replacement plan.",
-      "Choose one 'don’t' from this slide and rewrite it as a clear 'do'.",
-    ]);
-  }
-  // Generic bank to avoid repetition across body slides even when content is similar.
-  return pick([
-    "Underline one line you want to remember. Write the smallest next step you can do today (10 minutes max).",
-    "Highlight one sentence. Turn it into a simple mantra you can repeat this week.",
-    "Pick one idea from this slide. Explain it in your own words in 2 lines.",
-    "Save this slide. Then write: “If I did just one thing, it would be…” and fill it in.",
-    "Choose one word that stands out. Write one action that makes that word true today.",
-  ]);
-}
-
-function ensurePanelFields(
-  slide: Record<string, unknown>,
-  defaults: { title: string; body: string }
-): Record<string, unknown> {
-  const panelTitle =
-    typeof slide.panel_title === "string"
-      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_title)))
-      : "";
-  const panelBody =
-    typeof slide.panel_body === "string"
-      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_body)))
-      : "";
-  return {
-    ...slide,
-    ...(panelTitle ? {} : { panel_title: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.title)) }),
-    ...(panelBody ? {} : { panel_body: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.body)) }),
-  };
 }
 
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
@@ -762,36 +685,18 @@ export function splitFlatSlidesToTemplateShape(
     headline: coverHeadline || tf.headline || first.headline,
     body: coverBody || tf.body || first.body,
   };
-  const cover_slide_with_panel = ensurePanelFields(cover_slide, {
-    title: "Why this matters",
-    body: "Save this. You’ll want it when you’re overthinking later.",
-  });
   if (allSlides.length === 1) {
-    return { cover_slide: cover_slide_with_panel, body_slides: [], cta_slide: {} };
+    return { cover_slide, body_slides: [], cta_slide: {} };
   }
   const last = allSlides[allSlides.length - 1]!;
   const tl = textFromSlide(last);
   const mid = allSlides.slice(1, -1);
   const body_slides = mid.map((s) => {
     const t = textFromSlide(s);
-    const slideIdx0 = Number((s as Record<string, unknown>)?.index);
-    const idx =
-      Number.isFinite(slideIdx0) && slideIdx0 >= 0
-        ? slideIdx0
-        : // fall back to positional index in the body list (cover is 0)
-          1 + mid.indexOf(s);
     return {
       ...s,
       headline: t.headline || s.headline,
       body: t.body || s.body,
-      ...ensurePanelFields(s as Record<string, unknown>, {
-        title: "Micro-action",
-        body: deriveMicroActionPanelBody(
-          t.headline || String(s.headline ?? ""),
-          t.body || String(s.body ?? ""),
-          idx
-        ),
-      }),
     };
   });
   const rawHandle = String((last as Record<string, unknown>).handle ?? "").trim();
@@ -807,11 +712,7 @@ export function splitFlatSlidesToTemplateShape(
     // Only populate the template "handle line" when the source actually looks like a handle.
     ...(handleLooksValid ? { handle: rawHandle } : {}),
   };
-  const cta_slide_with_panel = ensurePanelFields(cta_slide, {
-    title: "Engage",
-    body: "Comment one takeaway you’re keeping — then share this with someone who’d love it.",
-  });
-  return { cover_slide: cover_slide_with_panel, body_slides, cta_slide: cta_slide_with_panel };
+  return { cover_slide, body_slides, cta_slide };
 }
 
 /** Pass merged `{ ...candidate_data, ...generated_output, ...render }` from the job pipeline when available. */
@@ -955,30 +856,44 @@ function resolveCarouselCtaFields(
   }
   if (!ctaHandle && projectHandle) ctaHandle = projectHandle;
 
-  // If we know the project handle, ensure the CTA slide includes it somewhere:
-  // - Many templates render `cta_handle` separately (preferred)
-  // - Some exports/screenshots rely on CTA headline only; keep a safe append when missing.
-  // Never append to the default CTA copy; the handle is rendered via `cta_handle`.
-  if (ctaHandle && ctaText !== defaultCopy && !/@[a-z0-9_.]{2,}/i.test(ctaText)) {
-    const appended = `${ctaText} ${ctaHandle}`.trim();
-    // Avoid making CTA headline-style templates overflow; only append when still compact.
-    if (appended.length <= 90) ctaText = appended;
-  }
-
-  const cta_slide = {
-    ...fromShape,
-    body: ctaText,
-    // If we shortened the CTA for headline templates, preserve the full copy in `sub`
-    // so templates like `carousel_pro_bold_banner` can render it in the smaller body area.
-    ...(originalCtaText !== ctaText &&
-    originalCtaText &&
-    originalCtaText !== defaultCopy &&
-    typeof fromShape.sub !== "string"
-      ? { sub: originalCtaText }
-      : {}),
-    ...(ctaHandle ? { handle: ctaHandle } : {}),
+  const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const stripHandleFromText = (t: string, handle: string): string => {
+    const raw = String(t ?? "").trim();
+    const h = String(handle ?? "").trim();
+    if (!raw || !h) return raw;
+    // Remove the handle token anywhere (common drift: "@brand" appended to CTA headline).
+    const re = new RegExp(`(?:^|\\s)${escapeRegex(h)}(?:\\s|$)`, "gi");
+    return raw.replace(re, " ").replace(/\s{2,}/g, " ").trim();
   };
 
+  // Requirement: CTA headline must NOT include the @handle. Handle belongs in CTA body text.
+  if (ctaHandle) {
+    ctaText = stripHandleFromText(ctaText, ctaHandle);
+    if (!ctaText) ctaText = defaultCopy;
+  }
+
+  // Ensure CTA body text always exists and ends with the @handle when available.
+  // Templates should render `cta_slide.sub` as the CTA body line.
+  let subText = coerceText(fromShape.sub);
+  if (!subText) {
+    // When we shortened the CTA headline, preserve the full copy here; otherwise use the default CTA copy.
+    subText = originalCtaText && originalCtaText !== ctaText ? originalCtaText : defaultCopy;
+  }
+  subText = stripAirQuotesFromSlideCopy(subText);
+  subText = stripHandleFromText(subText, ctaHandle);
+  if (ctaHandle) {
+    subText = `${subText} ${ctaHandle}`.trim();
+  }
+
+  const { handle: _oldHandle, ...fromShapeNoHandle } = fromShape;
+  const cta_slide = {
+    ...fromShapeNoHandle,
+    body: ctaText,
+    sub: subText,
+  };
+
+  // Keep `cta_handle` for backward compatibility, but templates should prefer `cta_slide.sub`
+  // so the handle appears in the CTA body line (not in the headline).
   return { cta_text: ctaText, cta_handle: ctaHandle, cta_slide };
 }
 
@@ -1103,6 +1018,18 @@ function normalizeCarouselTemplateBase(name: string): string {
   return name.replace(/\.hbs$/i, "").trim().toLowerCase();
 }
 
+/** Stable index into a pool of size `n` from a seed string (FNV-1a 32-bit). */
+function stablePoolIndexFromSeed(poolSize: number, seed: string): number {
+  if (!Number.isFinite(poolSize) || poolSize <= 0) return 0;
+  const s = String(seed ?? "");
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) % poolSize;
+}
+
 function normalizeTemplateAllowlistBases(allowlist: string[] | undefined): string[] {
   if (!allowlist || allowlist.length === 0) return [];
   const out: string[] = [];
@@ -1189,6 +1116,11 @@ export async function pickCarouselTemplateForRender(
      * restricted to this allowlist instead of the renderer's full template library.
      */
     allowedTemplates?: string[];
+    /**
+     * When no explicit template is set, pick deterministically from the pool so the same job does not
+     * flip between layouts across re-renders (implicit selection used to be uniformly random).
+     */
+    implicitPickSeed?: string | null;
   }
 ): Promise<string> {
   const explicit = explicitCarouselTemplateBaseName(generationPayload);
@@ -1233,6 +1165,9 @@ export async function pickCarouselTemplateForRender(
     if (filtered.length > 0) pool = filtered;
   }
 
-  const pick = pool[randomInt(pool.length)]!;
+  const seed = typeof opts?.implicitPickSeed === "string" ? opts.implicitPickSeed.trim() : "";
+  const idx =
+    seed.length > 0 ? stablePoolIndexFromSeed(pool.length, seed) : randomInt(pool.length);
+  const pick = pool[idx]!;
   return pick.replace(/\.hbs$/i, "");
 }

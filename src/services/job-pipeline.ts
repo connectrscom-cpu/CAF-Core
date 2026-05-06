@@ -1335,6 +1335,7 @@ async function processCarouselJob(
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
   const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
     allowedTemplates: projectPinnedTemplates,
+    implicitPickSeed: job.task_id,
   });
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectRow = await getProjectById(db, job.project_id);

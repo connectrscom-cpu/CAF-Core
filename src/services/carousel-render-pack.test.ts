@@ -277,6 +277,21 @@ describe("carousel template shape (body_slides)", () => {
     expect((ctx.cta_slide as { handle?: string }).handle).toBeUndefined();
   });
 
+  it("maps panel_body into body_slides when body is empty (adapter drift)", () => {
+    const gen = {
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "Point one", panel_body: "Paragraph that only lived in panel_body." },
+        { headline: "CTA", body: "Follow @brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
+    const bs = ctx.body_slides as Array<{ headline?: string; body?: string }>;
+    expect(bs).toHaveLength(1);
+    expect(String(bs[0]?.body ?? "")).toContain("Paragraph that only lived in panel_body");
+  });
+
   it("appends a CTA slide when deck is 2 slides and last slide doesn't look like CTA", () => {
     const gen = {
       slides: [
@@ -338,7 +353,9 @@ describe("carousel template shape (body_slides)", () => {
     expect(ctx.cta_text).toBe(DEFAULT_CAROUSEL_CTA_COPY);
     expect(ctx.cta_handle).toBe("@mybrand");
     expect((ctx.cta_slide as { body?: string; handle?: string }).body).toBe(DEFAULT_CAROUSEL_CTA_COPY);
-    expect((ctx.cta_slide as { handle?: string }).handle).toBe("@mybrand");
+    // Handle is now appended to CTA body text (`cta_slide.sub`) instead of being rendered as its own line.
+    expect(String((ctx.cta_slide as { sub?: string }).sub ?? "")).toContain("@mybrand");
+    expect(String((ctx.cta_slide as { sub?: string }).sub ?? "")).toMatch(/@mybrand\s*$/);
   });
 
   it("shortens overly long CTA text for headline-style templates", () => {
@@ -360,7 +377,7 @@ describe("carousel template shape (body_slides)", () => {
     expect(ctx.cta_handle).toBe("@brand");
   });
 
-  it("injects per-slide micro-action panel fields when missing", () => {
+  it("does not inject synthetic panel_title/panel_body on body slides when absent", () => {
     const gen = {
       slides: [
         { headline: "Cover", body: "Hook" },
@@ -372,11 +389,11 @@ describe("carousel template shape (body_slides)", () => {
     const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
     const bs = ctx.body_slides as Array<{ panel_title?: string; panel_body?: string; headline?: string }>;
     expect(bs).toHaveLength(1);
-    expect(bs[0]?.panel_title).toBe("Micro-action");
-    expect(String(bs[0]?.panel_body ?? "")).toContain("Pick one question");
+    expect(bs[0]?.panel_title).toBeUndefined();
+    expect(bs[0]?.panel_body).toBeUndefined();
   });
 
-  it("varies default micro-action panel_body across body slides (non-repeating)", () => {
+  it("does not inject synthetic panel fields on multiple body slides when absent", () => {
     const gen = {
       slides: [
         { headline: "Cover", body: "Hook" },
@@ -390,8 +407,7 @@ describe("carousel template shape (body_slides)", () => {
     const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
     const bs = ctx.body_slides as Array<{ panel_body?: string }>;
     expect(bs).toHaveLength(3);
-    const bodies = bs.map((s) => String(s.panel_body ?? "").trim()).filter(Boolean);
-    expect(new Set(bodies).size).toBeGreaterThan(1);
+    expect(bs.every((s) => s.panel_body == null)).toBe(true);
   });
 
   it("strips double-quote air quotes from slide headline/body", () => {
@@ -532,6 +548,21 @@ describe("pickCarouselTemplateForRender", () => {
       carousel_template_exclude_for_next_render: "a",
     });
     expect(p).toBe("b");
+  });
+
+  it("picks the same implicit template when implicitPickSeed matches (stable across calls)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ templates: ["default.hbs", "alt.hbs", "third.hbs"] }),
+      })
+    );
+    const opts = { implicitPickSeed: "RUN001__Instagram__FLOW_CAROUSEL__row0001__v1" };
+    const a = await pickCarouselTemplateForRender("http://renderer:3333", {}, opts);
+    const b = await pickCarouselTemplateForRender("http://renderer:3333", {}, opts);
+    expect(a).toBe(b);
+    expect(["default", "alt", "third"]).toContain(a);
   });
 
   it("falls back to allowedTemplates when renderer template list is unavailable", async () => {

@@ -38,8 +38,17 @@ export interface InspectValidationJsonProps {
 
 export function InspectValidationJson({ job }: InspectValidationJsonProps) {
   const [expanded, setExpanded] = useState(false);
+  const [copyHint, setCopyHint] = useState<string | null>(null);
 
-  const { latestValidation, history, reviewSnapshot, draftPackage, draftMeta, carouselGenerationSlice } = useMemo(() => {
+  const {
+    latestValidation,
+    history,
+    reviewSnapshot,
+    draftPackage,
+    draftMeta,
+    carouselGenerationSlice,
+    carouselInspectMeta,
+  } = useMemo(() => {
     const j = job ?? {};
     const reviews = Array.isArray((j as any).reviews) ? ((j as any).reviews as unknown[]) : [];
     const reviewRecs = reviews.map((r) => asRec(r)).filter(Boolean) as Record<string, unknown>[];
@@ -93,6 +102,22 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
     if (gp.publish_media_urls != null) carouselSource.publish_media_urls = gp.publish_media_urls;
     const carouselGenerationSlice = Object.keys(carouselSource).length > 0 ? carouselSource : null;
 
+    const genOutObj =
+      genOut && typeof genOut === "object" && !Array.isArray(genOut)
+        ? (genOut as Record<string, unknown>)
+        : null;
+    const slidesFromGen = genOutObj && Array.isArray(genOutObj.slides) ? (genOutObj.slides as unknown[]) : null;
+    const slidesTop = Array.isArray(gp.slides) ? (gp.slides as unknown[]) : null;
+    const slideRowCount =
+      slidesFromGen != null ? slidesFromGen.length : slidesTop != null ? slidesTop.length : null;
+
+    const carouselInspectMeta = {
+      task_id: String((j as any).task_id ?? "").trim(),
+      template_used: templateUsed,
+      slide_row_count: slideRowCount,
+      template_path_hint: templateUsed ? `services/renderer/templates/${templateUsed}.hbs` : "",
+    };
+
     return {
       latestValidation: latest,
       history: historyRows,
@@ -100,8 +125,20 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       draftPackage: draft,
       draftMeta: meta,
       carouselGenerationSlice,
+      carouselInspectMeta,
     };
   }, [job]);
+
+  async function copyJsonSnippet(label: string, payload: unknown) {
+    try {
+      await navigator.clipboard.writeText(pretty(payload));
+      setCopyHint(label);
+      window.setTimeout(() => setCopyHint(null), 2200);
+    } catch {
+      setCopyHint("Copy failed");
+      window.setTimeout(() => setCopyHint(null), 2200);
+    }
+  }
 
   if (!job) {
     return (
@@ -127,6 +164,63 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
         “draft package” lives in <span className="font-mono">draft_package_snapshot</span> when the generator persists it;
         otherwise full carousel copy is under <span className="font-mono">generation_payload</span> (see section below).
       </p>
+
+      <details open style={{ marginTop: 10 }}>
+        <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13, fontWeight: 600 }}>
+          Carousel render package (quick facts)
+        </summary>
+        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.55, color: "var(--fg-secondary)" }}>
+          {carouselInspectMeta.task_id ? (
+            <div>
+              <span style={{ color: "var(--muted)" }}>task_id </span>
+              <span className="font-mono">{carouselInspectMeta.task_id}</span>
+            </div>
+          ) : null}
+          <div style={{ marginTop: 6 }}>
+            <span style={{ color: "var(--muted)" }}>template </span>
+            {carouselInspectMeta.template_used ? (
+              <span className="font-mono">{carouselInspectMeta.template_used}</span>
+            ) : (
+              <span style={{ color: "var(--muted)" }}>(unset until Core persists render template / explicit payload)</span>
+            )}
+          </div>
+          {carouselInspectMeta.template_path_hint ? (
+            <div style={{ marginTop: 4, fontSize: 11, wordBreak: "break-all", opacity: 0.9 }}>
+              <span style={{ color: "var(--muted)" }}>repo path </span>
+              <span className="font-mono">{carouselInspectMeta.template_path_hint}</span>
+            </div>
+          ) : null}
+          <div style={{ marginTop: 6 }}>
+            <span style={{ color: "var(--muted)" }}>slide rows in payload </span>
+            {carouselInspectMeta.slide_row_count != null ? (
+              <strong>{carouselInspectMeta.slide_row_count}</strong>
+            ) : (
+              <span style={{ color: "var(--muted)" }}>—</span>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 12 }}>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ fontSize: 12 }}
+              disabled={!carouselGenerationSlice}
+              onClick={() => carouselGenerationSlice && copyJsonSnippet("Carousel slice copied", carouselGenerationSlice)}
+            >
+              Copy carousel / copy source JSON
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              style={{ fontSize: 12 }}
+              disabled={draftPackage == null}
+              onClick={() => draftPackage != null && copyJsonSnippet("Draft package copied", draftPackage)}
+            >
+              Copy draft_package_snapshot
+            </button>
+            {copyHint ? <span style={{ fontSize: 11, color: "var(--muted)" }}>{copyHint}</span> : null}
+          </div>
+        </div>
+      </details>
 
       <details open={expanded} style={{ marginTop: 8 }}>
         <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13 }}>
