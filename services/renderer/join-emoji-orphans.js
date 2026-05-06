@@ -16,7 +16,12 @@ function isEmojiOnlyLine(line) {
 }
 
 function joinEmojiOrphanLines(text) {
-  const lines = String(text ?? "").split(/\r?\n/);
+  // Guardrail: Handlebars helpers sometimes receive objects when upstream payloads drift.
+  // Never stringify objects to "[object Object]" inside slides.
+  if (text == null) text = "";
+  const t = typeof text;
+  if (t === "object") return "";
+  const lines = String(text).split(/\r?\n/);
   if (lines.length === 0) return "";
   const out = [];
   let i = 0;
