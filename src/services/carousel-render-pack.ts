@@ -897,10 +897,9 @@ function resolveCarouselCtaFields(
         : null;
   const fromShape = rawShapeCta ? { ...rawShapeCta } : ({} as Record<string, unknown>);
 
-  let ctaText = coerceText(base.cta_text);
-  if (!ctaText) {
-    ctaText = coerceText(fromShape.body) || textFromSlide(fromShape).headline.trim();
-  }
+  // Prefer CTA copy from the last slide object (review UI edits this), then fall back to legacy `cta_text`.
+  let ctaText = coerceText(fromShape.body) || textFromSlide(fromShape).headline.trim();
+  if (!ctaText) ctaText = coerceText(base.cta_text);
   // With a single usable row, the DOM is still cover + CTA panel; that row is the cover — do not reuse it as CTA copy.
   if (!ctaText && allSlides.length > 1) {
     const last = allSlides[allSlides.length - 1]!;
