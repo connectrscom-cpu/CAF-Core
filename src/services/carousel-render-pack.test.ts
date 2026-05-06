@@ -327,6 +327,41 @@ describe("carousel template shape (body_slides)", () => {
     expect((ctx.cta_slide as { handle?: string }).handle).toBe("@mybrand");
   });
 
+  it("shortens overly long CTA text for headline-style templates", () => {
+    const gen = {
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        {
+          headline: "",
+          body: "Ready to share your sign's unique tale? Submit your stories and visuals with us, and foster a deeper connection with the stars.",
+        },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
+    expect(String(ctx.cta_text).length).toBeLessThanOrEqual(111);
+    expect(String(ctx.cta_text)).toContain("Ready to share your sign");
+    // Ensure the template fallback path still uses the shortened value.
+    expect(String((ctx.cta_slide as { body?: string }).body).length).toBeLessThanOrEqual(111);
+    expect(ctx.cta_handle).toBe("@brand");
+  });
+
+  it("injects per-slide micro-action panel fields when missing", () => {
+    const gen = {
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "Interactive Quiz Time!", body: "Ready to start your compatibility journey? Engage with our interactive zodiac quiz." },
+        { headline: "CTA", body: "Follow @brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
+    const bs = ctx.body_slides as Array<{ panel_title?: string; panel_body?: string; headline?: string }>;
+    expect(bs).toHaveLength(1);
+    expect(bs[0]?.panel_title).toBe("Micro-action");
+    expect(String(bs[0]?.panel_body ?? "")).toContain("Pick one question");
+  });
+
   it("formatInstagramHandleForCta accepts URLs and stray @", () => {
     expect(formatInstagramHandleForCta("https://instagram.com/demo_user/")).toBe("@demo_user");
     expect(formatInstagramHandleForCta("@demo")).toBe("@demo");

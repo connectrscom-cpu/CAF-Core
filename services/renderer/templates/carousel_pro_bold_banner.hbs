@@ -111,8 +111,8 @@
       color: rgba(248,250,252,0.92);
       white-space: pre-wrap;
     }
-    .cta .headline{ font-size: 104px; }
-    .cta .copy{ font-size: 40px; }
+    .cta .headline{ font-size: clamp(78px, 8.2vw, 104px); }
+    .cta .copy{ font-size: clamp(34px, 3.8vw, 40px); }
     .handle{
       margin-top: 16px;
       font-size: 38px;
@@ -131,8 +131,8 @@
       <div class="headline">{{joinEmojiOrphans cover_slide.headline}}</div>
       {{#if cover_slide.body}}<div class="copy">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
       <div class="callout">
-        <h3>Why this matters</h3>
-        <p>It’s not “deep”. It’s actionable. Save it so you can use it mid-conversation.</p>
+        <h3>{{#if cover_slide.panel_title}}{{cover_slide.panel_title}}{{else}}Why this matters{{/if}}</h3>
+        <p>{{#if cover_slide.panel_body}}{{joinEmojiOrphans cover_slide.panel_body}}{{else}}It’s not “deep”. It’s actionable. Save it so you can use it mid-conversation.{{/if}}</p>
       </div>
     </div>
   </div>
@@ -147,8 +147,8 @@
       <div class="headline" style="font-size:78px">{{joinEmojiOrphans headline}}</div>
       <div class="copy">{{joinEmojiOrphans body}}</div>
       <div class="callout">
-        <h3>Try saying</h3>
-        <p>“I’m noticing a pattern. Can we slow down and name what we both need?”</p>
+        <h3>{{#if panel_title}}{{panel_title}}{{else}}Try saying{{/if}}</h3>
+        <p>{{#if panel_body}}{{joinEmojiOrphans panel_body}}{{else}}“I’m noticing a pattern. Can we slow down and name what we both need?”{{/if}}</p>
       </div>
     </div>
   </div>
@@ -164,8 +164,8 @@
       {{#if cta_slide.sub}}<div class="copy">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
       {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       <div class="callout">
-        <h3>Engage</h3>
-        <p>Comment your sign and what you want more of in love: clarity, consistency, or depth.</p>
+        <h3>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Engage{{/if}}</h3>
+        <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment your sign and what you want more of in love: clarity, consistency, or depth.{{/if}}</p>
       </div>
     </div>
   </div>

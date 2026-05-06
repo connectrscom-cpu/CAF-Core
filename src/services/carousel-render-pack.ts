@@ -110,6 +110,38 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
   return { headline: h, body: b };
 }
 
+function deriveMicroActionPanelBody(headline: string, body: string): string {
+  const h = String(headline ?? "").trim();
+  const b = String(body ?? "").trim();
+  const t = `${h}\n${b}`.toLowerCase();
+  if (/\bquiz\b|\btest\b|\binteractive\b/.test(t)) {
+    return "Pick one question from this slide. Answer it in one sentence, then share it with a friend.";
+  }
+  if (/\bcompatibil|relationship|romantic|dating|partner|friendship|family\b/.test(t)) {
+    return "Circle one line that feels true. Name the need underneath it, then text it to yourself as a reminder.";
+  }
+  if (/\bchecklist\b|\bsteps?\b|\bhow to\b|\btry\b|\bpractice\b/.test(t)) {
+    return "Choose one step from this slide. Do it in the next 10 minutes, then save this to repeat tomorrow.";
+  }
+  if (/\bmistake\b|\bavoid\b|\bdon't\b|\bstop\b|\bnever\b/.test(t)) {
+    return "Pick one thing you’ll stop doing this week. Replace it with one tiny action you *will* do instead.";
+  }
+  return "Underline one line you want to remember. Write the smallest next step you can do today (10 minutes max).";
+}
+
+function ensurePanelFields(
+  slide: Record<string, unknown>,
+  defaults: { title: string; body: string }
+): Record<string, unknown> {
+  const panelTitle = typeof slide.panel_title === "string" ? String(slide.panel_title).trim() : "";
+  const panelBody = typeof slide.panel_body === "string" ? String(slide.panel_body).trim() : "";
+  return {
+    ...slide,
+    ...(panelTitle ? {} : { panel_title: defaults.title }),
+    ...(panelBody ? {} : { panel_body: defaults.body }),
+  };
+}
+
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
 export function slideHasRenderableContent(s: Record<string, unknown>): boolean {
   const { headline, body } = textFromSlide(s);
@@ -647,15 +679,27 @@ export function splitFlatSlidesToTemplateShape(
     headline: coverHeadline || tf.headline || first.headline,
     body: coverBody || tf.body || first.body,
   };
+  const cover_slide_with_panel = ensurePanelFields(cover_slide, {
+    title: "Why this matters",
+    body: "Save this. You’ll want it when you’re overthinking later.",
+  });
   if (allSlides.length === 1) {
-    return { cover_slide, body_slides: [], cta_slide: {} };
+    return { cover_slide: cover_slide_with_panel, body_slides: [], cta_slide: {} };
   }
   const last = allSlides[allSlides.length - 1]!;
   const tl = textFromSlide(last);
   const mid = allSlides.slice(1, -1);
   const body_slides = mid.map((s) => {
     const t = textFromSlide(s);
-    return { ...s, headline: t.headline || s.headline, body: t.body || s.body };
+    return {
+      ...s,
+      headline: t.headline || s.headline,
+      body: t.body || s.body,
+      ...ensurePanelFields(s as Record<string, unknown>, {
+        title: "Micro-action",
+        body: deriveMicroActionPanelBody(t.headline || String(s.headline ?? ""), t.body || String(s.body ?? "")),
+      }),
+    };
   });
   const rawHandle = String((last as Record<string, unknown>).handle ?? "").trim();
   const handleLooksValid =
@@ -670,7 +714,11 @@ export function splitFlatSlidesToTemplateShape(
     // Only populate the template "handle line" when the source actually looks like a handle.
     ...(handleLooksValid ? { handle: rawHandle } : {}),
   };
-  return { cover_slide, body_slides, cta_slide };
+  const cta_slide_with_panel = ensurePanelFields(cta_slide, {
+    title: "Engage",
+    body: "Comment one takeaway you’re keeping — then share this with someone who’d love it.",
+  });
+  return { cover_slide: cover_slide_with_panel, body_slides, cta_slide: cta_slide_with_panel };
 }
 
 /** Pass merged `{ ...candidate_data, ...generated_output, ...render }` from the job pipeline when available. */
@@ -767,6 +815,33 @@ function resolveCarouselCtaFields(
     ctaText = String(tl.headline || tl.body || "").trim();
   }
   if (!ctaText) ctaText = defaultCopy;
+
+  // CTA slide UX: templates often render `cta_text` as a large headline. If the generator puts a long
+  // paragraph in the last slide body, it becomes unreadable. Prefer a short imperative line instead.
+  const looksTooLongForCtaHeadline = (t: string): boolean => {
+    const s = String(t ?? "").trim();
+    if (!s) return false;
+    if (s.includes("\n")) return true;
+    // Many templates style CTA as a large headline; keep it punchy.
+    if (s.length > 90) return true;
+    // Multiple sentences tends to read like a paragraph (esp. with periods).
+    const sentenceish = (s.match(/[.!?](?:\s|$)/g) ?? []).length;
+    return sentenceish >= 2;
+  };
+  const shortenCtaHeadline = (t: string): string => {
+    const s = String(t ?? "").trim().replace(/\s+/g, " ");
+    if (!s) return "";
+    const firstSentence = s.split(/(?<=[.!?])\s+/)[0]?.trim() ?? s;
+    const max = 110;
+    const clipped = firstSentence.length > max ? `${firstSentence.slice(0, max).trimEnd()}…` : firstSentence;
+    return clipped;
+  };
+  if (looksTooLongForCtaHeadline(ctaText)) {
+    const last = allSlides.length > 0 ? (allSlides[allSlides.length - 1]! as Record<string, unknown>) : null;
+    const lastHeadline = last ? textFromSlide(last).headline.trim() : "";
+    const candidate = shortenCtaHeadline(lastHeadline || ctaText);
+    ctaText = candidate || defaultCopy;
+  }
 
   let ctaHandle = String(base.cta_handle ?? "").trim();
   if (!ctaHandle) {

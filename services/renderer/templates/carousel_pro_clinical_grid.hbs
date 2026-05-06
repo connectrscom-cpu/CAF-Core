@@ -105,8 +105,8 @@
       overflow-wrap:anywhere;
       word-break:break-word;
     }
-    .cta .headline{ font-size: 98px; line-height: 1.03; }
-    .cta .sub{ font-size: 38px; color: rgba(255,255,255,0.88); }
+    .cta .headline{ font-size: clamp(74px, 7.8vw, 98px); line-height: 1.03; }
+    .cta .sub{ font-size: clamp(32px, 3.6vw, 38px); color: rgba(255,255,255,0.88); }
     .handle{
       margin-top: 18px;
       font-weight: 800;
@@ -128,8 +128,8 @@
       <div class="headline">{{joinEmojiOrphans cover_slide.headline}}</div>
       {{#if cover_slide.body}}<div class="sub">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
       <div class="card">
-        <h2>Save this</h2>
-        <p>Bookmark for later. Share with someone who likes clear, grounded explanations.</p>
+        <h2>{{#if cover_slide.panel_title}}{{cover_slide.panel_title}}{{else}}Save this{{/if}}</h2>
+        <p>{{#if cover_slide.panel_body}}{{joinEmojiOrphans cover_slide.panel_body}}{{else}}Bookmark for later. Share with someone who likes clear, grounded explanations.{{/if}}</p>
       </div>
     </div>
   </div>
@@ -145,8 +145,8 @@
       <div class="headline" style="font-size:74px">{{joinEmojiOrphans headline}}</div>
       <div class="sub">{{joinEmojiOrphans body}}</div>
       <div class="card">
-        <h2>Try this</h2>
-        <p>Re-read and pull 1 sentence you can actually use today.</p>
+        <h2>{{#if panel_title}}{{panel_title}}{{else}}Try this{{/if}}</h2>
+        <p>{{#if panel_body}}{{joinEmojiOrphans panel_body}}{{else}}Re-read and pull 1 sentence you can actually use today.{{/if}}</p>
       </div>
     </div>
   </div>
@@ -164,8 +164,8 @@
       {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
       {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       <div class="card">
-        <h2>Prompt</h2>
-        <p>Comment the one word you’re working on this week.</p>
+        <h2>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Prompt{{/if}}</h2>
+        <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment the one word you’re working on this week.{{/if}}</p>
       </div>
     </div>
   </div>
