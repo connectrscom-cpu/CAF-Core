@@ -1340,13 +1340,32 @@ async function processCarouselJob(
   const projectRow = await getProjectById(db, job.project_id);
   const projectDisplayName =
     (projectRow?.display_name?.trim() || projectRow?.slug?.trim() || "").trim() || null;
-  // Prefer explicit strategy instagram_handle; otherwise fall back to a slug-derived handle only when safe.
+  const payloadIg = (() => {
+    const gp = job.generation_payload as unknown as Record<string, unknown> | null | undefined;
+    if (!gp || typeof gp !== "object") return null;
+    const direct = gp["instagram_handle"];
+    if (typeof direct === "string" && direct.trim()) return direct.trim();
+    const strategy = gp["strategy"];
+    if (strategy && typeof strategy === "object" && !Array.isArray(strategy)) {
+      const v = (strategy as Record<string, unknown>)["instagram_handle"];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    const project = gp["project"];
+    if (project && typeof project === "object" && !Array.isArray(project)) {
+      const v = (project as Record<string, unknown>)["instagram_handle"];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return null;
+  })();
+
+  // Prefer job payload override, then strategy instagram_handle; otherwise fall back to a slug-derived handle only when safe.
   // (Some projects don't set instagram_handle but still expect a CTA handle line.)
   const slugHandle =
     projectRow?.slug && /^[a-z0-9_.]{2,}$/i.test(String(projectRow.slug).trim())
       ? String(projectRow.slug).trim()
       : null;
-  const projectInstagramHandle = strategyRow?.instagram_handle ?? slugHandle ?? null;
+  const strategyIg = strategyRow?.instagram_handle && strategyRow.instagram_handle.trim() ? strategyRow.instagram_handle.trim() : null;
+  const projectInstagramHandle = payloadIg ?? strategyIg ?? slugHandle ?? null;
 
   // Persist chosen carousel template onto the job payload so downstream systems (review UI, editorial learning,
   // engineering prompts) can reliably resolve `carousel_template_name` by task_id. Without this, the resolver

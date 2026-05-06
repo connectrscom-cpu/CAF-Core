@@ -129,6 +129,15 @@
       color: var(--clay);
       margin-top: 16px;
     }
+    .cta-slide .cta-sub {
+      margin-top: 18px;
+      font-size: 30px;
+      line-height: 1.5;
+      max-width: 900px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: rgba(61, 52, 44, 0.92);
+    }
     .leaf-note {
       margin-top: 36px;
       font-size: 26px;
@@ -168,6 +177,7 @@
     <div class="slide-inner">
       <p class="cta-main">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</p>
       {{#if cta_handle}}<p class="cta-handle">{{cta_handle}}</p>{{else}}{{#if cta_slide.handle}}<p class="cta-handle">{{cta_slide.handle}}</p>{{/if}}{{/if}}
+      {{#if cta_slide.sub}}<p class="cta-sub">{{cta_slide.sub}}</p>{{/if}}
       <span class="divider"></span>
       <p class="leaf-note">{{#if cta_slide.note}}{{cta_slide.note}}{{else}}stay inspired{{/if}}</p>
     </div>
