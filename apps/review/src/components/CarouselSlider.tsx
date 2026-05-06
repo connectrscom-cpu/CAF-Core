@@ -108,10 +108,6 @@ export function CarouselSlider({
   );
 
   const slide = slides[currentIndex];
-  const hasExtras = Boolean(
-    slide?.extras &&
-      Object.values(slide.extras).some((v) => typeof v === "string" && v.trim().length > 0)
-  );
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
@@ -228,8 +224,7 @@ export function CarouselSlider({
                 />
               </div>
 
-              {hasExtras && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
                   <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy</div>
                   <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {slide.type === "cover" && (
@@ -319,7 +314,6 @@ export function CarouselSlider({
                   )}
                   </div>
                 </div>
-              )}
             </>
           )}
           {slide.type === "cta" && (
@@ -333,8 +327,7 @@ export function CarouselSlider({
                 <input type="text" value={slide.handle} onChange={(e) => updateSlide(currentIndex, { handle: e.target.value })} placeholder="e.g. @handle or link" />
               </div>
 
-              {hasExtras && (
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
                   <div className="filter-label" style={{ marginBottom: 8 }}>Template microcopy</div>
                   <div className="grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   <div>
@@ -393,7 +386,6 @@ export function CarouselSlider({
                   </div>
                   </div>
                 </div>
-              )}
             </>
           )}
           <button type="button" className="btn-primary" onClick={handleSaveSlide} disabled={savedAt === currentIndex} style={{ fontSize: 12, padding: "6px 14px" }}>

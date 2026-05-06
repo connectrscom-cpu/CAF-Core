@@ -377,7 +377,7 @@ describe("carousel template shape (body_slides)", () => {
     expect(ctx.cta_handle).toBe("@brand");
   });
 
-  it("does not inject synthetic panel_title/panel_body on body slides when absent", () => {
+  it("injects per-slide micro-action panel fields when missing", () => {
     const gen = {
       slides: [
         { headline: "Cover", body: "Hook" },
@@ -389,11 +389,11 @@ describe("carousel template shape (body_slides)", () => {
     const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
     const bs = ctx.body_slides as Array<{ panel_title?: string; panel_body?: string; headline?: string }>;
     expect(bs).toHaveLength(1);
-    expect(bs[0]?.panel_title).toBeUndefined();
-    expect(bs[0]?.panel_body).toBeUndefined();
+    expect(bs[0]?.panel_title).toBe("Micro-action");
+    expect(String(bs[0]?.panel_body ?? "")).toContain("Pick one question");
   });
 
-  it("does not inject synthetic panel fields on multiple body slides when absent", () => {
+  it("varies default micro-action panel_body across body slides (non-repeating)", () => {
     const gen = {
       slides: [
         { headline: "Cover", body: "Hook" },
@@ -407,7 +407,8 @@ describe("carousel template shape (body_slides)", () => {
     const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
     const bs = ctx.body_slides as Array<{ panel_body?: string }>;
     expect(bs).toHaveLength(3);
-    expect(bs.every((s) => s.panel_body == null)).toBe(true);
+    const bodies = bs.map((s) => String(s.panel_body ?? "").trim()).filter(Boolean);
+    expect(new Set(bodies).size).toBeGreaterThan(1);
   });
 
   it("strips double-quote air quotes from slide headline/body", () => {

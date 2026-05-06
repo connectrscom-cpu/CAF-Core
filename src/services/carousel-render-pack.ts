@@ -148,6 +148,88 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
   return { headline: h, body: b };
 }
 
+function stableMicroActionSeed(parts: string[]): number {
+  let h = 2166136261;
+  const s = parts.filter(Boolean).join("\n");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function deriveMicroActionPanelBody(headline: string, body: string, slideIdx0?: number): string {
+  const h = String(headline ?? "").trim();
+  const b = String(body ?? "").trim();
+  const t = `${h}\n${b}`.toLowerCase();
+  const seed = stableMicroActionSeed([String(slideIdx0 ?? ""), h.toLowerCase(), b.toLowerCase()]);
+
+  const pick = (options: string[]): string => {
+    if (options.length === 0) return "";
+    return options[seed % options.length]!;
+  };
+
+  if (/\bquiz\b|\btest\b|\binteractive\b/.test(t)) {
+    return pick([
+      "Pick one question from this slide. Answer it in one sentence, then share it with a friend.",
+      "Choose one prompt from this slide. Write a 2-line answer in Notes, then screenshot it.",
+      "Answer one question from this slide honestly. Save it and revisit in a week.",
+    ]);
+  }
+  if (/\bcompatibil|relationship|romantic|dating|partner|friendship|family\b/.test(t)) {
+    return pick([
+      "Circle one line that feels true. Name the need underneath it, then text it to yourself as a reminder.",
+      "Write one boundary and one request you want to practice. Keep it short and specific.",
+      "Pick the one sentence you wish someone would say to you. Say it to yourself today.",
+    ]);
+  }
+  if (/\bchecklist\b|\bsteps?\b|\bhow to\b|\btry\b|\bpractice\b/.test(t)) {
+    return pick([
+      "Choose one step from this slide. Do it in the next 10 minutes, then save this to repeat tomorrow.",
+      "Turn one line into a tiny checklist. Do step 1 today, nothing more.",
+      "Pick the easiest action here. Schedule it for tomorrow in 5 minutes.",
+    ]);
+  }
+  if (/\bmistake\b|\bavoid\b|\bdon't\b|\bstop\b|\bnever\b/.test(t)) {
+    return pick([
+      "Pick one thing you’ll stop doing this week. Replace it with one tiny action you *will* do instead.",
+      "Spot the pattern you want to quit. Write a 1-sentence replacement plan.",
+      "Choose one 'don’t' from this slide and rewrite it as a clear 'do'.",
+    ]);
+  }
+  return pick([
+    "Underline one line you want to remember. Write the smallest next step you can do today (10 minutes max).",
+    "Highlight one sentence. Turn it into a simple mantra you can repeat this week.",
+    "Pick one idea from this slide. Explain it in your own words in 2 lines.",
+    "Save this slide. Then write: “If I did just one thing, it would be…” and fill it in.",
+    "Choose one word that stands out. Write one action that makes that word true today.",
+  ]);
+}
+
+/**
+ * Default panel callouts for templates that render `panel_title` / `panel_body` (e.g. healthcard).
+ * We intentionally do **not** apply this to the CTA slide — templates supply their own CTA panel fallbacks
+ * and reviewers found synthetic "Engage" confusing.
+ */
+function ensurePanelFields(
+  slide: Record<string, unknown>,
+  defaults: { title: string; body: string }
+): Record<string, unknown> {
+  const panelTitle =
+    typeof slide.panel_title === "string"
+      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_title)))
+      : "";
+  const panelBody =
+    typeof slide.panel_body === "string"
+      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_body)))
+      : "";
+  return {
+    ...slide,
+    ...(panelTitle ? {} : { panel_title: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.title)) }),
+    ...(panelBody ? {} : { panel_body: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.body)) }),
+  };
+}
+
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
 export function slideHasRenderableContent(s: Record<string, unknown>): boolean {
   const { headline, body } = textFromSlide(s);
@@ -685,18 +767,35 @@ export function splitFlatSlidesToTemplateShape(
     headline: coverHeadline || tf.headline || first.headline,
     body: coverBody || tf.body || first.body,
   };
+  const cover_slide_with_panel = ensurePanelFields(cover_slide, {
+    title: "Quick note",
+    body: "Save this. You’ll want it when you’re overthinking later.",
+  });
   if (allSlides.length === 1) {
-    return { cover_slide, body_slides: [], cta_slide: {} };
+    return { cover_slide: cover_slide_with_panel, body_slides: [], cta_slide: {} };
   }
   const last = allSlides[allSlides.length - 1]!;
   const tl = textFromSlide(last);
   const mid = allSlides.slice(1, -1);
   const body_slides = mid.map((s) => {
     const t = textFromSlide(s);
+    const slideIdx0 = Number((s as Record<string, unknown>)?.index);
+    const idx =
+      Number.isFinite(slideIdx0) && slideIdx0 >= 0
+        ? slideIdx0
+        : 1 + mid.indexOf(s);
     return {
       ...s,
       headline: t.headline || s.headline,
       body: t.body || s.body,
+      ...ensurePanelFields(s as Record<string, unknown>, {
+        title: "Micro-action",
+        body: deriveMicroActionPanelBody(
+          t.headline || String(s.headline ?? ""),
+          t.body || String(s.body ?? ""),
+          idx
+        ),
+      }),
     };
   });
   const rawHandle = String((last as Record<string, unknown>).handle ?? "").trim();
@@ -712,7 +811,7 @@ export function splitFlatSlidesToTemplateShape(
     // Only populate the template "handle line" when the source actually looks like a handle.
     ...(handleLooksValid ? { handle: rawHandle } : {}),
   };
-  return { cover_slide, body_slides, cta_slide };
+  return { cover_slide: cover_slide_with_panel, body_slides, cta_slide };
 }
 
 /** Pass merged `{ ...candidate_data, ...generated_output, ...render }` from the job pipeline when available. */
