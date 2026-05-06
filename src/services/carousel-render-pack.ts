@@ -991,9 +991,15 @@ function resolveCarouselCtaFields(
     sub: subText,
   };
 
+  // Templates such as `carousel_sns_bold_text` render `cta_text` and `cta_handle` inline; avoid a second visible handle.
+  let effHandle = ctaHandle;
+  if (effHandle && ctaText.includes(effHandle)) {
+    effHandle = "";
+  }
+
   // Keep `cta_handle` for backward compatibility, but templates should prefer `cta_slide.sub`
   // so the handle appears in the CTA body line (not in the headline).
-  return { cta_text: ctaText, cta_handle: ctaHandle, cta_slide };
+  return { cta_text: ctaText, cta_handle: effHandle, cta_slide };
 }
 
 /**

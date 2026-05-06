@@ -130,7 +130,7 @@
           {{headline}}
         </div>
       </div>
-      <div class="body">{{body}}</div>
+      <div class="body">{{joinEmojiOrphans body}}</div>
     </div>
   </div>
   {{/each}}
@@ -142,9 +142,9 @@
         <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Final / CTA{{/if}}</div>
         <div class="kicker-line"></div>
         <div class="cta cta--single">
-          <span class="accent2">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
+          <span class="accent2">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}</span>
           {{#if cta_handle}}<span class="handle handle--inline">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="handle handle--inline">{{cta_slide.handle}}</span>{{/if}}{{/if}}
-          <span class="cta-follow">{{#if cta_slide.follow_line}}{{cta_slide.follow_line}}{{else}}Follow us for more.{{/if}}</span>
+          <span class="cta-follow">{{#if cta_slide.follow_line}}{{joinEmojiOrphans cta_slide.follow_line}}{{else}}Follow us for more.{{/if}}</span>
         </div>
       </div>
     </div>

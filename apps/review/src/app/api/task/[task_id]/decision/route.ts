@@ -71,6 +71,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         skip_image_regeneration: body.skip_image_regeneration,
       }),
       ...(typeof body.regenerate === "boolean" && { regenerate: body.regenerate }),
+      ...(body.carousel_body_char_scale !== undefined && {
+        carousel_body_char_scale:
+          typeof body.carousel_body_char_scale === "number"
+            ? body.carousel_body_char_scale
+            : String(body.carousel_body_char_scale ?? ""),
+      }),
     });
     if (!result.ok) {
       const st =

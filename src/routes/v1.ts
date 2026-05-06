@@ -88,6 +88,11 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
      * (overrides slide/script/skip inference). Review UI should send this with every decision.
      */
     regenerate: z.boolean().optional(),
+    /**
+     * Carousel rework: multiply `platform_constraints.slide_min_chars` / `slide_max_chars` targets
+     * (e.g. `2`, `"2x"`, `0.5`, `"half"`). Stored in `overrides_json` and merged into generation payload for the next LLM pass.
+     */
+    carousel_body_char_scale: z.union([z.number(), z.string()]).optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -109,6 +114,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("skip_video_regeneration", "skip_video_regeneration");
     put("skip_image_regeneration", "skip_image_regeneration");
     put("regenerate", "regenerate");
+    put("carousel_body_char_scale", "carousel_body_char_scale");
     return out;
   }
 

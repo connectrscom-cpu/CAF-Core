@@ -532,6 +532,8 @@ export async function submitDecision(
     skip_video_regeneration?: boolean;
     skip_image_regeneration?: boolean;
     regenerate?: boolean;
+    /** Multiply carousel body char targets from platform constraints (e.g. `2`, `"2x"`, `0.5`). */
+    carousel_body_char_scale?: number | string;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -568,6 +570,9 @@ export async function submitDecision(
           skip_image_regeneration: body.skip_image_regeneration,
         }),
         ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
+        ...(body.carousel_body_char_scale !== undefined && {
+          carousel_body_char_scale: body.carousel_body_char_scale,
+        }),
       }),
     });
   } catch (e) {

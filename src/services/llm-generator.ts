@@ -44,6 +44,11 @@ import { extractSpokenScriptText, mergeSceneBundleParsedIntoGeneratedOutput } fr
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import { CAROUSEL_COPY_SYSTEM_ADDENDUM } from "./carousel-copy-prompt-policy.js";
 import {
+  buildCarouselBodyLengthSystemBlock,
+  parseCarouselBodyCharScale,
+  resolveCarouselBodyCharTargets,
+} from "./carousel-body-length.js";
+import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
@@ -298,6 +303,21 @@ export async function generateForJob(
     job.flow_type
   );
 
+  const hfEarly = payload.human_feedback as
+    | { editorial_overrides_json?: Record<string, unknown> }
+    | undefined;
+  const eoEarly = hfEarly?.editorial_overrides_json ?? {};
+  const carouselBodyCharScale = isCarouselFlow(job.flow_type)
+    ? parseCarouselBodyCharScale(
+        payload.carousel_body_char_scale ??
+          eoEarly.carousel_body_char_scale ??
+          eoEarly.carousel_body_length_multiplier
+      )
+    : 1;
+  const carouselBodyTargets = isCarouselFlow(job.flow_type)
+    ? resolveCarouselBodyCharTargets(creationPack.platform_constraints, carouselBodyCharScale)
+    : null;
+
   const appCfg = loadConfig();
   const hf = payload.human_feedback as {
     notes?: string | null;
@@ -340,6 +360,7 @@ export async function generateForJob(
     global_learning_context: compiledLearning.global_context,
     project_learning_context: compiledLearning.project_context,
     learning_guidance: compiledLearning.merged_guidance,
+    ...(carouselBodyTargets ? { carousel_body_length: carouselBodyTargets } : {}),
   };
   if (isVideoFlow(job.flow_type)) {
     const genOut = pickGeneratedOutputOrEmpty(payload);
@@ -408,6 +429,9 @@ export async function generateForJob(
 
   if (isCarouselFlow(job.flow_type)) {
     systemPrompt = `${systemPrompt.trim()}\n\n${CAROUSEL_COPY_SYSTEM_ADDENDUM}`.trim();
+    if (carouselBodyTargets) {
+      systemPrompt = `${systemPrompt.trim()}\n\n${buildCarouselBodyLengthSystemBlock(carouselBodyTargets)}`.trim();
+    }
   }
 
   if (compiledLearning.merged_guidance.trim()) {

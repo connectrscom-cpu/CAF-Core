@@ -333,6 +333,9 @@ export async function executeRework(
     [
       JSON.stringify({
         rework_mode: mode,
+        ...(typeof rev.overrides_json?.carousel_body_char_scale !== "undefined"
+          ? { carousel_body_char_scale: rev.overrides_json.carousel_body_char_scale }
+          : {}),
         human_feedback: {
           notes: rev.notes,
           rejection_tags: rev.rejection_tags,
