@@ -99,8 +99,12 @@
       <div class="headline">
         {{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}
       </div>
+      {{!-- Core merges handle into cta_slide.sub; avoid duplicate handle line when sub is present --}}
+      {{#if cta_slide.sub}}
+      <div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>
+      {{else}}
       {{#if cta_handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_slide.handle}}</div>{{/if}}{{/if}}
-      {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
+      {{/if}}
     </div>
   </div>
 </body>

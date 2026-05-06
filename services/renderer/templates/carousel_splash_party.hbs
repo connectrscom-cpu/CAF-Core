@@ -170,8 +170,7 @@
       <span class="splatter p s7"></span>
       <span class="splatter r s8"></span>
       <span class="cta-brush">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span>
-      {{#if cta_slide.sub}}<p class="body-text" style="margin-top: 18px;">{{cta_slide.sub}}</p>{{/if}}
-      {{#if cta_handle}}<span class="cta-script">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-script">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      {{#if cta_slide.sub}}<p class="body-text" style="margin-top: 18px;">{{cta_slide.sub}}</p>{{else}}{{#if cta_handle}}<span class="cta-script">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-script">{{cta_slide.handle}}</span>{{/if}}{{/if}}{{/if}}
     </div>
   </div>
 

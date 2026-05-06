@@ -161,8 +161,7 @@
         <div class="pill">{{slide_index}} / {{slide_total}}</div>
       </div>
       <div class="headline">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{joinEmojiOrphans cta_slide.body}}{{/if}}</div>
-      {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
-      {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       <div class="card">
         <h2>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Prompt{{/if}}</h2>
         <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment the one word you’re working on this week.{{/if}}</p>

@@ -153,8 +153,7 @@
         <div class="cta">
           {{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}
         </div>
-        {{#if cta_slide.sub}}<div class="body" style="margin-top: 12px;">{{cta_slide.sub}}</div>{{/if}}
-        {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+        {{#if cta_slide.sub}}<div class="body" style="margin-top: 12px;">{{cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       </div>
     </div>
   </div>

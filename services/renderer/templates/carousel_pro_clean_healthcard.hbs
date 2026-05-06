@@ -158,8 +158,7 @@
       </div>
       <div class="rule"></div>
       <div class="headline">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{joinEmojiOrphans cta_slide.body}}{{/if}}</div>
-      {{#if cta_slide.sub}}<div class="body">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
-      {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+      {{#if cta_slide.sub}}<div class="body">{{joinEmojiOrphans cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       <div class="panel">
         <h3>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Reply{{/if}}</h3>
         <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment your sign + the pattern you’re trying to break.{{/if}}</p>

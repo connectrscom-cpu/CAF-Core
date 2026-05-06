@@ -250,7 +250,7 @@
       <div class="sticker cta">
         <div>
           <div class="big">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}</div>
-          {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+          {{#unless cta_slide.sub}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/unless}}
         </div>
         <div class="small">{{#if cta_slide.sub}}{{joinEmojiOrphans cta_slide.sub}}{{else}}{{#if cta_slide.note}}{{joinEmojiOrphans cta_slide.note}}{{else}}Save this. Share it. Pick your sign.{{/if}}{{/if}}</div>
       </div>

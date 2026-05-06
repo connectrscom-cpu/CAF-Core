@@ -37,8 +37,7 @@
 {{#if cta_slide}}
 <div class="slide cta-slide">
   <h1>{{#if cta_text}}{{cta_text}}{{else}}{{cta_slide.body}}{{/if}}</h1>
-  {{#if cta_slide.sub}}<p>{{cta_slide.sub}}</p>{{/if}}
-  {{#if cta_handle}}<div class="cta-handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+  {{#if cta_slide.sub}}<p>{{cta_slide.sub}}</p>{{else}}{{#if cta_handle}}<div class="cta-handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
 </div>
 {{/if}}
 </body></html>

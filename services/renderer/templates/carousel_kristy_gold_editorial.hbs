@@ -161,8 +161,7 @@
         <div class="cover-title" style="font-size:126px;">
           {{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}
         </div>
-        {{#if cta_slide.sub}}<div class="cover-sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{/if}}
-        {{#if cta_handle}}<div class="cta-meta">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-meta">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+        {{#if cta_slide.sub}}<div class="cover-sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="cta-meta">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="cta-meta">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       </div>
     </div>
   </div>

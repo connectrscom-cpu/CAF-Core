@@ -149,9 +149,8 @@
       <div>
         <div class="kicker">{{#if cta_slide.kicker}}{{cta_slide.kicker}}{{else}}Final / CTA{{/if}}</div>
         <div class="cta"><span class="accent">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide}}{{cta_slide.body}}{{/if}}{{/if}}</span></div>
-        {{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}
       </div>
-      {{#if cta_slide.sub}}<div class="body" style="margin-top: 14px;">{{cta_slide.sub}}</div>{{/if}}
+      {{#if cta_slide.sub}}<div class="body" style="margin-top: 14px;">{{cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
       <div class="body">{{#if cta_slide.note}}{{cta_slide.note}}{{else}}Visual first. Text second. Leave room to breathe.{{/if}}</div>
     </div>
   </div>

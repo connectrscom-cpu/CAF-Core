@@ -303,8 +303,7 @@
       </div>
       <span class="moon"></span>
       <span class="cta-text">{{#if cta_text}}{{cta_text}}{{else}}{{#if cta_slide.body}}{{cta_slide.body}}{{/if}}{{/if}}</span>
-      {{#if cta_slide.sub}}<p class="body-text" style="margin-top: 16px;">{{joinEmojiOrphans cta_slide.sub}}</p>{{/if}}
-      {{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+      {{#if cta_slide.sub}}<p class="body-text" style="margin-top: 16px;">{{joinEmojiOrphans cta_slide.sub}}</p>{{else}}{{#if cta_handle}}<span class="cta-handle">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="cta-handle">{{cta_slide.handle}}</span>{{/if}}{{/if}}{{/if}}
       <div class="logo-mark"></div>
     </div>
   </div>
