@@ -12,6 +12,7 @@ import {
   slidesFromGeneratedOutput,
   slideHasRenderableContent,
   stripAirQuotesFromSlideCopy,
+  stripLeakedFieldLabelsFromSlideCopy,
   stripExplicitCarouselTemplateSelection,
   stripHashtagsFromSlideCopy,
   stripNonRenderableDeckFields,
@@ -31,6 +32,12 @@ describe("stripHashtagsFromSlideCopy", () => {
 describe("stripAirQuotesFromSlideCopy", () => {
   it("removes curly and straight double quotes, preserves apostrophes", () => {
     expect(stripAirQuotesFromSlideCopy("“Try saying” \"hello\" and I'm here")).toBe("Try saying hello and I'm here");
+  });
+});
+
+describe("stripLeakedFieldLabelsFromSlideCopy", () => {
+  it("removes leading label prefixes like 'Kicker:'", () => {
+    expect(stripLeakedFieldLabelsFromSlideCopy("Kicker: Community Spotlight\nHello")).toBe("Community Spotlight\nHello");
   });
 });
 

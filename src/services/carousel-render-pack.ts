@@ -111,6 +111,25 @@ export function stripAirQuotesFromSlideCopy(s: string): string {
   return t.trim();
 }
 
+/**
+ * Some generations leak "field labels" into slide copy (e.g. "Kicker: X", "CTA text: ...").
+ * Strip those label prefixes (especially on the first line) so templates don't render them verbatim.
+ */
+export function stripLeakedFieldLabelsFromSlideCopy(s: string): string {
+  const raw = String(s ?? "");
+  if (!raw.trim()) return "";
+  const lines = raw.split(/\r?\n/);
+  const stripLine = (line: string): string => {
+    let t = String(line ?? "").trim();
+    if (!t) return "";
+    // Common leaked labels from review/export UI.
+    t = t.replace(/^(kicker|cta\s*text|cta|handle|follow\s*line|panel\s*title|panel\s*body)\s*[:\-]\s*/i, "");
+    return t.trim();
+  };
+  const out = lines.map(stripLine).filter((x) => x.length > 0);
+  return out.join("\n").trim();
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
   const headline = HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
   let body = BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
@@ -118,8 +137,12 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     const fromBullets = bulletsToBody(o);
     if (fromBullets) body = fromBullets;
   }
-  const h = stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim())));
-  const b = stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim())));
+  const h = stripLeakedFieldLabelsFromSlideCopy(
+    stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim())))
+  );
+  const b = stripLeakedFieldLabelsFromSlideCopy(
+    stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim())))
+  );
   return { headline: h, body: b };
 }
 
@@ -147,13 +170,17 @@ function ensurePanelFields(
   defaults: { title: string; body: string }
 ): Record<string, unknown> {
   const panelTitle =
-    typeof slide.panel_title === "string" ? stripAirQuotesFromSlideCopy(String(slide.panel_title)) : "";
+    typeof slide.panel_title === "string"
+      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_title)))
+      : "";
   const panelBody =
-    typeof slide.panel_body === "string" ? stripAirQuotesFromSlideCopy(String(slide.panel_body)) : "";
+    typeof slide.panel_body === "string"
+      ? stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(String(slide.panel_body)))
+      : "";
   return {
     ...slide,
-    ...(panelTitle ? {} : { panel_title: stripAirQuotesFromSlideCopy(defaults.title) }),
-    ...(panelBody ? {} : { panel_body: stripAirQuotesFromSlideCopy(defaults.body) }),
+    ...(panelTitle ? {} : { panel_title: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.title)) }),
+    ...(panelBody ? {} : { panel_body: stripLeakedFieldLabelsFromSlideCopy(stripAirQuotesFromSlideCopy(defaults.body)) }),
   };
 }
 
