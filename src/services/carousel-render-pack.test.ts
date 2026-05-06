@@ -376,6 +376,24 @@ describe("carousel template shape (body_slides)", () => {
     expect(String(bs[0]?.panel_body ?? "")).toContain("Pick one question");
   });
 
+  it("varies default micro-action panel_body across body slides (non-repeating)", () => {
+    const gen = {
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "Body 1", body: "Some helpful idea." },
+        { headline: "Body 2", body: "Some helpful idea." },
+        { headline: "Body 3", body: "Some helpful idea." },
+        { headline: "CTA", body: "Follow @brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 2, { instagramHandle: "@brand" });
+    const bs = ctx.body_slides as Array<{ panel_body?: string }>;
+    expect(bs).toHaveLength(3);
+    const bodies = bs.map((s) => String(s.panel_body ?? "").trim()).filter(Boolean);
+    expect(new Set(bodies).size).toBeGreaterThan(1);
+  });
+
   it("strips double-quote air quotes from slide headline/body", () => {
     const gen = {
       slides: [

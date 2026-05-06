@@ -146,23 +146,64 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
   return { headline: h, body: b };
 }
 
-function deriveMicroActionPanelBody(headline: string, body: string): string {
+function stableMicroActionSeed(parts: string[]): number {
+  // Small deterministic hash (FNV-1a-ish) so micro-actions vary by slide but stay stable.
+  let h = 2166136261;
+  const s = parts.filter(Boolean).join("\n");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function deriveMicroActionPanelBody(headline: string, body: string, slideIdx0?: number): string {
   const h = String(headline ?? "").trim();
   const b = String(body ?? "").trim();
   const t = `${h}\n${b}`.toLowerCase();
+  const seed = stableMicroActionSeed([String(slideIdx0 ?? ""), h.toLowerCase(), b.toLowerCase()]);
+
+  const pick = (options: string[]): string => {
+    if (options.length === 0) return "";
+    return options[seed % options.length]!;
+  };
+
   if (/\bquiz\b|\btest\b|\binteractive\b/.test(t)) {
-    return "Pick one question from this slide. Answer it in one sentence, then share it with a friend.";
+    return pick([
+      "Pick one question from this slide. Answer it in one sentence, then share it with a friend.",
+      "Choose one prompt from this slide. Write a 2-line answer in Notes, then screenshot it.",
+      "Answer one question from this slide honestly. Save it and revisit in a week.",
+    ]);
   }
   if (/\bcompatibil|relationship|romantic|dating|partner|friendship|family\b/.test(t)) {
-    return "Circle one line that feels true. Name the need underneath it, then text it to yourself as a reminder.";
+    return pick([
+      "Circle one line that feels true. Name the need underneath it, then text it to yourself as a reminder.",
+      "Write one boundary and one request you want to practice. Keep it short and specific.",
+      "Pick the one sentence you wish someone would say to you. Say it to yourself today.",
+    ]);
   }
   if (/\bchecklist\b|\bsteps?\b|\bhow to\b|\btry\b|\bpractice\b/.test(t)) {
-    return "Choose one step from this slide. Do it in the next 10 minutes, then save this to repeat tomorrow.";
+    return pick([
+      "Choose one step from this slide. Do it in the next 10 minutes, then save this to repeat tomorrow.",
+      "Turn one line into a tiny checklist. Do step 1 today, nothing more.",
+      "Pick the easiest action here. Schedule it for tomorrow in 5 minutes.",
+    ]);
   }
   if (/\bmistake\b|\bavoid\b|\bdon't\b|\bstop\b|\bnever\b/.test(t)) {
-    return "Pick one thing you’ll stop doing this week. Replace it with one tiny action you *will* do instead.";
+    return pick([
+      "Pick one thing you’ll stop doing this week. Replace it with one tiny action you *will* do instead.",
+      "Spot the pattern you want to quit. Write a 1-sentence replacement plan.",
+      "Choose one 'don’t' from this slide and rewrite it as a clear 'do'.",
+    ]);
   }
-  return "Underline one line you want to remember. Write the smallest next step you can do today (10 minutes max).";
+  // Generic bank to avoid repetition across body slides even when content is similar.
+  return pick([
+    "Underline one line you want to remember. Write the smallest next step you can do today (10 minutes max).",
+    "Highlight one sentence. Turn it into a simple mantra you can repeat this week.",
+    "Pick one idea from this slide. Explain it in your own words in 2 lines.",
+    "Save this slide. Then write: “If I did just one thing, it would be…” and fill it in.",
+    "Choose one word that stands out. Write one action that makes that word true today.",
+  ]);
 }
 
 function ensurePanelFields(
@@ -733,13 +774,23 @@ export function splitFlatSlidesToTemplateShape(
   const mid = allSlides.slice(1, -1);
   const body_slides = mid.map((s) => {
     const t = textFromSlide(s);
+    const slideIdx0 = Number((s as Record<string, unknown>)?.index);
+    const idx =
+      Number.isFinite(slideIdx0) && slideIdx0 >= 0
+        ? slideIdx0
+        : // fall back to positional index in the body list (cover is 0)
+          1 + mid.indexOf(s);
     return {
       ...s,
       headline: t.headline || s.headline,
       body: t.body || s.body,
       ...ensurePanelFields(s as Record<string, unknown>, {
         title: "Micro-action",
-        body: deriveMicroActionPanelBody(t.headline || String(s.headline ?? ""), t.body || String(s.body ?? "")),
+        body: deriveMicroActionPanelBody(
+          t.headline || String(s.headline ?? ""),
+          t.body || String(s.body ?? ""),
+          idx
+        ),
       }),
     };
   });
