@@ -266,6 +266,24 @@ export function CarouselSlider({
                     />
                   </div>
                   <div>
+                    <label className="filter-label">Panel title</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.panel_title ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "panel_title", e.target.value)}
+                      placeholder={slide.type === "cover" ? "e.g. Why this matters" : "e.g. Micro-action"}
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Panel body</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.panel_body ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "panel_body", e.target.value)}
+                      placeholder="Small bottom callout text"
+                    />
+                  </div>
+                  <div>
                     <label className="filter-label">Eyebrow</label>
                     <input
                       type="text"
@@ -275,17 +293,17 @@ export function CarouselSlider({
                     />
                   </div>
                   <div style={{ gridColumn: "1 / -1" }}>
-                    <label className="filter-label">Site bar</label>
+                    <label className="filter-label">Bottom bar text</label>
                     <input
                       type="text"
-                      value={slide.extras?.site_bar ?? ""}
+                      value={slide.extras?.site_bar ?? slide.extras?.bottom_bar_text ?? ""}
                       onChange={(e) => updateExtraField(currentIndex, "site_bar", e.target.value)}
                       placeholder="Bottom bar text"
                     />
                   </div>
                   {slide.type === "cover" && (
                     <div style={{ gridColumn: "1 / -1" }}>
-                      <label className="filter-label">CTA site bar (fallback)</label>
+                      <label className="filter-label">CTA bottom bar (fallback)</label>
                       <input
                         type="text"
                         value={slide.extras?.site_bar_cta ?? ""}
@@ -339,11 +357,29 @@ export function CarouselSlider({
                       placeholder="Optional small CTA footer text"
                     />
                   </div>
-                  <div style={{ gridColumn: "1 / -1" }}>
-                    <label className="filter-label">Site bar</label>
+                  <div>
+                    <label className="filter-label">Panel title</label>
                     <input
                       type="text"
-                      value={slide.extras?.site_bar ?? ""}
+                      value={slide.extras?.panel_title ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "panel_title", e.target.value)}
+                      placeholder="e.g. Engage"
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Panel body</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.panel_body ?? ""}
+                      onChange={(e) => updateExtraField(currentIndex, "panel_body", e.target.value)}
+                      placeholder="Small bottom callout text"
+                    />
+                  </div>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label className="filter-label">Bottom bar text</label>
+                    <input
+                      type="text"
+                      value={slide.extras?.site_bar ?? slide.extras?.bottom_bar_text ?? ""}
                       onChange={(e) => updateExtraField(currentIndex, "site_bar", e.target.value)}
                       placeholder="Bottom bar text"
                     />

@@ -87,6 +87,9 @@ const EXTRA_KEYS = [
   "badge",
   "eyebrow",
   "brand_word",
+  // alternate naming used by some templates/packs
+  "footer",
+  "short_footer_line",
   "follow_line",
   "swipe_label",
   "end_label",
@@ -95,6 +98,8 @@ const EXTRA_KEYS = [
   "label_bottom",
   "panel_title",
   "panel_body",
+  // UI alias some users expect; renderer templates generally use `site_bar`
+  "bottom_bar_text",
   "site_bar",
   "site_bar_cta",
 ] as const;
