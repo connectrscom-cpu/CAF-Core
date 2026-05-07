@@ -9,7 +9,16 @@
  */
 
 import { randomInt } from "node:crypto";
-import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+
+/** Same behavior as `pickGeneratedOutputOrEmpty` in `domain/generation-payload-output.ts` (inlined so Review/Next can bundle this module without resolving `../domain`). */
+function pickGeneratedOutputOrEmptyFromPayload(
+  payload: { generated_output?: unknown; [k: string]: unknown } | null | undefined
+): Record<string, unknown> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const out = payload.generated_output;
+  if (!out || typeof out !== "object" || Array.isArray(out)) return {};
+  return out as Record<string, unknown>;
+}
 
 const HEADLINE_KEYS = [
   "headline",
@@ -1033,6 +1042,73 @@ function resolveCarouselCtaFields(
 }
 
 /**
+ * After we have usable slide rows, drop other deck-shaped fields so `pickBestSlideDeck` / `slide_count`
+ * cannot pick empty stubs or inflate PNG count past real copy. Same shape as job-pipeline carousel render.
+ */
+export function carouselRenderBaseForPipeline(
+  baseRender: Record<string, unknown>,
+  usableSlides: Record<string, unknown>[]
+): Record<string, unknown> {
+  const o: Record<string, unknown> = { ...baseRender, slides: usableSlides };
+  delete o.body_slides;
+  delete o.cover_slide;
+  delete o.cta_slide;
+  delete o.slide_count;
+  if (o.structure_variables && typeof o.structure_variables === "object" && !Array.isArray(o.structure_variables)) {
+    const sv = { ...(o.structure_variables as Record<string, unknown>) };
+    delete sv.slide_count;
+    if (Object.keys(sv).length > 0) o.structure_variables = sv;
+    else delete o.structure_variables;
+  }
+  delete o.slide_deck;
+  delete o.variation;
+  delete o.variations;
+  delete o.carousel;
+  delete o.items;
+  const content = o.content;
+  if (content && typeof content === "object" && !Array.isArray(content) && "carousel" in content) {
+    const c = { ...(content as Record<string, unknown>) };
+    delete c.carousel;
+    if (Object.keys(c).length > 0) o.content = c;
+    else delete o.content;
+  }
+  return o;
+}
+
+/**
+ * Legacy `generated_output.cover` is sometimes an object `{ headline, cover_subtitle, kicker }`.
+ * Templates that do `{{#if cover}}{{cover}}` stringify it as "[object Object]". Sync string fields from `cover_slide`.
+ */
+export function synchronizeCoverRootStringFields(ctx: Record<string, unknown>): void {
+  let headline = "";
+  let subtitle = "";
+
+  const cs = ctx.cover_slide;
+  if (cs && typeof cs === "object" && !Array.isArray(cs)) {
+    const rec = cs as Record<string, unknown>;
+    headline = String(rec.headline ?? rec.title ?? "").trim();
+    subtitle = String(rec.body ?? "").trim();
+  }
+
+  const cov = ctx.cover;
+  if (cov != null && typeof cov === "object" && !Array.isArray(cov)) {
+    const rec = cov as Record<string, unknown>;
+    if (!headline) headline = String(rec.headline ?? rec.title ?? "").trim();
+    if (!subtitle) subtitle = String(rec.cover_subtitle ?? rec.subtitle ?? rec.body ?? "").trim();
+  } else if (typeof cov === "string" && cov.trim()) {
+    if (!headline) headline = cov.trim();
+  }
+
+  const existingSub = ctx.cover_subtitle;
+  if (typeof existingSub === "string" && existingSub.trim() && !subtitle) subtitle = existingSub.trim();
+
+  if (headline) ctx.cover = headline;
+  else if (ctx.cover != null && typeof ctx.cover === "object") delete ctx.cover;
+
+  if (subtitle) ctx.cover_subtitle = subtitle;
+}
+
+/**
  * Merge base render context with one slide highlighted for multi-slide templates.
  * `ctaOptions` fills last-slide CTA copy and @handle from project strategy when the LLM omits them.
  */
@@ -1133,11 +1209,13 @@ export function buildSlideRenderContext(
     ...(projectDisplayName ? { project_display_name: projectDisplayName } : {}),
   };
 
+  synchronizeCoverRootStringFields(out);
+
   return out;
 }
 
 export function templateNameFromPayload(generationPayload: Record<string, unknown>): string {
-  const gen = pickGeneratedOutputOrEmpty(generationPayload);
+  const gen = pickGeneratedOutputOrEmptyFromPayload(generationPayload);
   const render = (gen.render as Record<string, unknown>) ?? (generationPayload.render as Record<string, unknown>) ?? {};
   return String(
     render.html_template_name ?? render.template_key ?? generationPayload.template ?? "default"

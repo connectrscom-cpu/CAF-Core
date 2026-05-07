@@ -344,6 +344,50 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     return () => window.removeEventListener("keydown", handleKey);
   }, [hasEdits]);
 
+  const carouselTemplate = useMemo(() => {
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    if (!gp) return "";
+    const gen = (gp.generated_output as Record<string, unknown>) ?? {};
+    const render = (gen.render as Record<string, unknown>) ?? {};
+    return String(render.html_template_name ?? render.template_key ?? gp.template ?? "")
+      .replace(/\.hbs$/i, "")
+      .trim();
+  }, [fullJob]);
+
+  const instagramHandleForPreview = useMemo(() => {
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    if (!gp) return "";
+    const d = gp.instagram_handle;
+    return typeof d === "string" ? d.trim() : "";
+  }, [fullJob]);
+
+  const carouselLivePreview = useMemo(() => {
+    if (videoFlow || imageFlow || !carouselTemplate || editedSlides.length === 0) return null;
+    return {
+      template: carouselTemplate,
+      taskId: execTaskId,
+      runId: runId || "run",
+      fontScale,
+      instagramHandle: instagramHandleForPreview,
+      getPayload: () => {
+        const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
+        const fs = Number(fontScale);
+        if (Number.isFinite(fs) && fs > 0) (slidesPayload as Record<string, unknown>).font_scale = fs;
+        return { ...slidesPayload, task_id: execTaskId, run_id: runId || undefined };
+      },
+    };
+  }, [
+    videoFlow,
+    imageFlow,
+    carouselTemplate,
+    execTaskId,
+    runId,
+    fontScale,
+    instagramHandleForPreview,
+    editedSlides,
+    rawPayload,
+  ]);
+
   const finalSlidesJsonOverride =
     !videoFlow && !imageFlow && editedSlides.length > 0 && rawPayload !== undefined
       ? (() => {
@@ -391,6 +435,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               fallbackPreviewUrl={taskAssets[0]?.public_url}
               spokenScript={heygenWorkbench ? editedScript : undefined}
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
+              carouselLivePreview={carouselLivePreview}
             />
 
             <div className="card mt-4">

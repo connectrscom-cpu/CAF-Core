@@ -16,8 +16,21 @@ import {
   stripExplicitCarouselTemplateSelection,
   stripHashtagsFromSlideCopy,
   stripNonRenderableDeckFields,
+  synchronizeCoverRootStringFields,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
+
+describe("synchronizeCoverRootStringFields", () => {
+  it("flattens legacy object cover into headline/subtitle strings", () => {
+    const ctx: Record<string, unknown> = {
+      cover: { kicker: "X", headline: "H", cover_subtitle: "Sub text here" },
+      cover_slide: { headline: "From slide", body: "Body line" },
+    };
+    synchronizeCoverRootStringFields(ctx);
+    expect(ctx.cover).toBe("From slide");
+    expect(ctx.cover_subtitle).toBe("Body line");
+  });
+});
 
 describe("stripHashtagsFromSlideCopy", () => {
   it("removes spaced #hashtag tokens from slide copy", () => {

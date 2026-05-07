@@ -113,6 +113,13 @@ function extrasFromSlideObject(o: Record<string, unknown>): Record<string, strin
   return out;
 }
 
+function handleFromSlideFields(body: string, existing: string): string {
+  const h = existing.trim();
+  if (h) return h;
+  const m = body.match(/@([a-z0-9_.]{2,})/i);
+  return m ? `@${m[1]}` : "";
+}
+
 export function parseSlidesFromJson(json: string | undefined): {
   slides: NormalizedSlide[];
   raw: CarouselSlidesPayload | null;
@@ -143,12 +150,13 @@ export function parseSlidesFromJson(json: string | undefined): {
         const { headline, body } = textFrom(s);
         const type = i === 0 ? "cover" : i === slidesArray.length - 1 ? "cta" : "body";
         const ex = extrasFromSlideObject(s);
+        const handleRaw = String(s.handle ?? s.cta_handle ?? "");
         slides.push({
           index: index++,
           type,
           headline,
           body,
-          handle: String(s.handle ?? s.cta_handle ?? ""),
+          handle: type === "cta" ? handleFromSlideFields(body, handleRaw) : handleRaw,
           extras: Object.keys(ex).length ? ex : undefined,
         });
       }
@@ -169,7 +177,17 @@ export function parseSlidesFromJson(json: string | undefined): {
     }
 
     const cta = (raw.cta_slide ?? {}) as Record<string, unknown>;
-    slides.push({ index: index++, type: "cta", headline: "", body: String((raw.cta_text as string) ?? cta.body ?? cta.text ?? ""), handle: String((raw.cta_handle as string) ?? (cta.handle as string) ?? "") });
+    const ctaTf = textFrom(cta);
+    const ctaBody = String((raw.cta_text as string) ?? ctaTf.body ?? cta.body ?? cta.text ?? "");
+    const ctaHl = String(ctaTf.headline ?? "").trim();
+    const ctaHandleRaw = String((raw.cta_handle as string) ?? (cta.handle as string) ?? "");
+    slides.push({
+      index: index++,
+      type: "cta",
+      headline: ctaHl,
+      body: ctaBody,
+      handle: handleFromSlideFields(ctaBody, ctaHandleRaw),
+    });
 
     return { slides, raw };
   } catch {
@@ -212,7 +230,12 @@ export function buildSlidesJson(slides: NormalizedSlide[], raw: CarouselSlidesPa
     const hl = cta.headline?.trim() ?? "";
     const bd = cta.body?.trim() ?? "";
     out.cta_slide = mergeExtras(
-      { ...(out.cta_slide ?? {}), body: bd || undefined, handle: cta.handle?.trim() || undefined },
+      {
+        ...(out.cta_slide ?? {}),
+        headline: hl || undefined,
+        body: bd || undefined,
+        handle: cta.handle?.trim() || undefined,
+      },
       cta.extras
     );
     // Root `cta_text`: large headline when split from body; else whole CTA line for legacy single-field decks.

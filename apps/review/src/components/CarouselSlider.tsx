@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import { isVideoUrl } from "@/lib/media-url";
 
@@ -11,12 +11,24 @@ export interface CarouselMediaItem {
   kind: "image" | "video";
 }
 
+/** Live re-render via review API + remote template (reflects font_scale and edited copy). */
+export interface CarouselLivePreviewOptions {
+  template: string;
+  taskId: string;
+  runId: string;
+  fontScale: string;
+  instagramHandle?: string;
+  getPayload: () => Record<string, unknown>;
+}
+
 export interface CarouselSliderProps {
   slides: NormalizedSlide[];
   /** @deprecated Prefer `mediaItems` for mixed image/video decks. */
   imageUrls?: string[];
   /** Per-slide media aligned by index; falls back to `imageUrls[i]` when missing. */
   mediaItems?: (CarouselMediaItem | null | undefined)[];
+  /** When set (carousel + template known), fetches a fresh PNG for the current slide so font scale and copy edits are visible. */
+  livePreview?: CarouselLivePreviewOptions | null;
   onSlidesChange?: (slides: NormalizedSlide[]) => void;
   className?: string;
   readOnly?: boolean;
@@ -33,6 +45,7 @@ export function CarouselSlider({
   slides: initialSlides,
   imageUrls = [],
   mediaItems,
+  livePreview = null,
   onSlidesChange,
   className,
   readOnly = false,
@@ -43,13 +56,77 @@ export function CarouselSlider({
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  const [liveBusy, setLiveBusy] = useState(false);
+  const [liveErr, setLiveErr] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
+
+  const slidesKey = useMemo(() => JSON.stringify(slides), [slides]);
 
   useEffect(() => {
     setSlides(initialSlides);
     setCurrentIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
     setSavedAt(null);
   }, [initialSlides]);
+
+  useEffect(() => {
+    if (heyGenVideoMode || readOnly || !livePreview?.template) {
+      setLiveUrl((u) => {
+        if (u) URL.revokeObjectURL(u);
+        return null;
+      });
+      setLiveErr(null);
+      setLiveBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    const handle = window.setTimeout(() => {
+      void (async () => {
+        setLiveBusy(true);
+        setLiveErr(null);
+        try {
+          const payload = livePreview.getPayload();
+          const fs = Number(livePreview.fontScale);
+          if (Number.isFinite(fs) && fs > 0) {
+            (payload as Record<string, unknown>).font_scale = fs;
+          }
+          const res = await fetch("/api/renderer/preview-live-slide", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              template: livePreview.template,
+              slide_index: currentIndex + 1,
+              task_id: livePreview.taskId,
+              run_id: livePreview.runId,
+              instagram_handle: livePreview.instagramHandle ?? "",
+              payload,
+            }),
+          });
+          if (!res.ok) {
+            const t = await res.text();
+            throw new Error(t.slice(0, 200) || res.statusText);
+          }
+          const blob = await res.blob();
+          if (cancelled) return;
+          const url = URL.createObjectURL(blob);
+          setLiveUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return url;
+          });
+        } catch (e) {
+          if (!cancelled) setLiveErr(e instanceof Error ? e.message : "Live preview failed");
+        } finally {
+          if (!cancelled) setLiveBusy(false);
+        }
+      })();
+    }, 380);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [heyGenVideoMode, readOnly, livePreview, currentIndex, slidesKey]);
 
   const updateSlide = useCallback(
     (
@@ -113,6 +190,8 @@ export function CarouselSlider({
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
   const mediaKind: "image" | "video" =
     fromMedia?.kind ?? (mediaUrl && isVideoUrl(mediaUrl) ? "video" : "image");
+  const livePngUrl =
+    !heyGenVideoMode && livePreview?.template && liveUrl && mediaKind === "image" ? liveUrl : null;
   const total = slides.length;
   const canPrev = currentIndex > 0;
   const canNext = currentIndex < total - 1;
@@ -162,7 +241,15 @@ export function CarouselSlider({
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
         >
-          {mediaUrl ? (
+          {livePngUrl ? (
+            <img
+              key={livePngUrl}
+              src={livePngUrl}
+              alt={`Slide ${currentIndex + 1} live preview`}
+              style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
+              draggable={false}
+            />
+          ) : mediaUrl ? (
             mediaKind === "video" ? (
               <video
                 key={mediaUrl}
@@ -198,6 +285,17 @@ export function CarouselSlider({
           &#8250;
         </button>
       </div>
+      {!heyGenVideoMode && livePreview?.template && (
+        <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
+          {liveBusy
+            ? "Rendering live preview…"
+            : liveErr
+              ? `Live preview unavailable (${liveErr}). Showing stored asset if available.`
+              : livePngUrl
+                ? "Live preview: font scale + slide copy (matches template). Stored thumbnails are from the last pipeline render."
+                : "Starting live preview…"}
+        </p>
+      )}
 
       {!readOnly && !heyGenVideoMode && (
         <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>

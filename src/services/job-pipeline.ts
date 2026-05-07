@@ -22,6 +22,7 @@ import { getStrategyDefaults, listProjectCarouselTemplates, resolveProductFlowHe
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import {
   carouselSlideCount,
+  carouselRenderBaseForPipeline,
   buildSlideRenderContext,
   slidesFromGeneratedOutput,
   pickCarouselTemplateForRender,
@@ -1095,53 +1096,6 @@ async function recordRunContentOutcomeSafe(
   } catch (e) {
     console.warn("[job-pipeline] run_content_outcomes insert failed", e);
   }
-}
-
-/**
- * After we have usable slide rows, drop other deck-shaped fields so `pickBestSlideDeck` / `slide_count`
- * cannot pick empty stubs or inflate PNG count past real copy.
- */
-function carouselRenderBaseForPipeline(
-  baseRender: Record<string, unknown>,
-  usableSlides: Record<string, unknown>[]
-): Record<string, unknown> {
-  const o: Record<string, unknown> = { ...baseRender, slides: usableSlides };
-  /**
-   * IMPORTANT: The renderer templates have two possible “sources of truth”:
-   * - flat `slides[]` (modern, LLM output)
-   * - explicit template shape: `cover_slide` + `body_slides` + `cta_slide` (+ sometimes `slide_count`)
-   *
-   * When a merge pulls stale `body_slides` / `slide_count` from candidate/router data, the pipeline can
-   * render *more* PNGs than there are real slide rows. The renderer then screenshots out-of-range DOM
-   * indices and repeats images (while our review UI still shows the correct text per `slides[]`).
-   *
-   * To keep slide index ↔ rendered image ↔ slide text aligned, force the render base to be driven by
-   * `slides[]` only. `buildSlideRenderContext` will materialize the explicit template shape from
-   * `slides[]` when needed.
-   */
-  delete o.body_slides;
-  delete o.cover_slide;
-  delete o.cta_slide;
-  delete o.slide_count;
-  if (o.structure_variables && typeof o.structure_variables === "object" && !Array.isArray(o.structure_variables)) {
-    const sv = { ...(o.structure_variables as Record<string, unknown>) };
-    delete sv.slide_count;
-    if (Object.keys(sv).length > 0) o.structure_variables = sv;
-    else delete o.structure_variables;
-  }
-  delete o.slide_deck;
-  delete o.variation;
-  delete o.variations;
-  delete o.carousel;
-  delete o.items;
-  const content = o.content;
-  if (content && typeof content === "object" && !Array.isArray(content) && "carousel" in content) {
-    const c = { ...(content as Record<string, unknown>) };
-    delete c.carousel;
-    if (Object.keys(c).length > 0) o.content = c;
-    else delete o.content;
-  }
-  return o;
 }
 
 function carouselOutcomeSummary(job: JobRow, template: string, usableSlides: Record<string, unknown>[], objectPaths: string[]) {

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { CarouselSlider } from "@/components/CarouselSlider";
-import type { CarouselMediaItem } from "@/components/CarouselSlider";
+import type { CarouselLivePreviewOptions, CarouselMediaItem } from "@/components/CarouselSlider";
 import { createSyntheticSlides } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
@@ -26,6 +26,8 @@ export interface TaskViewerProps {
   /** HeyGen workbench: controlled spoken script under the preview. Omit to use task row script (read-only views). */
   spokenScript?: string;
   onSpokenScriptChange?: (v: string) => void;
+  /** Re-render current slide in review (font scale + copy) when template name is known. */
+  carouselLivePreview?: CarouselLivePreviewOptions | null;
 }
 
 export function TaskViewer({
@@ -38,6 +40,7 @@ export function TaskViewer({
   readOnly = false,
   spokenScript: spokenScriptProp,
   onSpokenScriptChange,
+  carouselLivePreview = null,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -147,6 +150,7 @@ export function TaskViewer({
           slides={sliderSlides}
           mediaItems={mediaItems}
           imageUrls={imageUrlsLegacy}
+          livePreview={carouselLivePreview}
           onSlidesChange={readOnly ? undefined : onSlidesChange}
           readOnly={readOnly}
           heyGenVideoMode={heyGenVideoMode}
