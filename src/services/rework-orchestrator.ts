@@ -285,6 +285,7 @@ export async function executeRework(
       }
     }
 
+    /** `regenerate` (Review “Regenerate rendered assets”) gates billed PNG/video output — not `rewrite_copy` (LLM only). */
     const regenAssetsOff = (overrides as { regenerate?: boolean }).regenerate === false;
     const runCarouselRerenderAfterTypography =
       Boolean(job.flow_type && isCarouselFlow(job.flow_type)) &&
