@@ -573,6 +573,20 @@ function coverHeadlineFallback(headline: string, body: string): string {
   return first.length > max ? `${first.slice(0, max).trimEnd()}…` : first;
 }
 
+function shortenCoverBody(raw: string): string {
+  const s0 = String(raw ?? "").trim();
+  if (!s0) return "";
+  const s = s0.replace(/\s+/g, " ");
+  // Target: 1–2 sentences. Prefer ending on sentence boundaries.
+  const sentences = s.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter(Boolean);
+  const picked = sentences.length <= 2 ? sentences.join(" ") : sentences.slice(0, 2).join(" ");
+  // Hard cap to avoid templates having to clamp large paragraphs on the cover.
+  const maxChars = 220;
+  if (picked.length <= maxChars) return picked;
+  const clipped = picked.slice(0, maxChars).trimEnd();
+  return clipped.endsWith("…") ? clipped : `${clipped}…`;
+}
+
 function rowHasRenderableCopy(s: unknown): boolean {
   return Boolean(s && typeof s === "object" && !Array.isArray(s) && slideHasRenderableContent(s as Record<string, unknown>));
 }
@@ -775,7 +789,8 @@ export function splitFlatSlidesToTemplateShape(
   }
   const first = allSlides[0]!;
   const tf = textFromSlide(first);
-  const coverBody = tf.body || String(first.body ?? "").trim();
+  const coverBodyRaw = tf.body || String(first.body ?? "").trim();
+  const coverBody = shortenCoverBody(coverBodyRaw);
   const coverHeadline = coverHeadlineFallback(tf.headline || String(first.headline ?? "").trim(), coverBody);
   const cover_slide = {
     ...first,
@@ -1091,6 +1106,10 @@ export function buildSlideRenderContext(
       : null;
   const cta = resolveCarouselCtaFields(base, templateShape, slides, ctaOptions);
   const projectDisplayName = String(ctaOptions?.projectDisplayName ?? "").trim();
+  const rawFontScale = (base as Record<string, unknown>)?.font_scale ?? (base as Record<string, unknown>)?.render?.font_scale;
+  const fontScaleNum = Number(rawFontScale);
+  const font_scale =
+    Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
 
   const out: Record<string, unknown> = {
     ...base,
@@ -1099,6 +1118,7 @@ export function buildSlideRenderContext(
     cta_text: cta.cta_text,
     ...(cta.cta_handle ? { cta_handle: cta.cta_handle } : {}),
     cta_slide: cta.cta_slide,
+    font_scale,
     slides,
     slide_index: slideIndex1Based,
     current_slide: current,

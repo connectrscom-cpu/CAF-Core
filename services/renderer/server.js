@@ -154,7 +154,12 @@ async function renderSlide(b, slideIndex) {
 
       const compiled = Handlebars.compile(source);
       const context = b.data?.render ?? b.data ?? b;
-      const html = compiled(context);
+      const fontScaleRaw = context?.font_scale ?? context?.render?.font_scale ?? b?.font_scale ?? b?.data?.font_scale;
+      const fontScaleNum = Number(fontScaleRaw);
+      const fontScale =
+        Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
+      const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
+      const html = zoomStyle + compiled(context);
 
       page = await browser.newPage();
       await hardenPageForFastRendering(page);
@@ -333,7 +338,12 @@ app.post("/render-carousel", async (req, res) => {
     if (!source) return res.status(404).json({ ok: false, error: `Template not found: ${templateName}` });
     const compiled = Handlebars.compile(source);
     const context = b.data?.render ?? b.data ?? b;
-    const html = compiled(context);
+    const fontScaleRaw = context?.font_scale ?? context?.render?.font_scale ?? b?.font_scale ?? b?.data?.font_scale;
+    const fontScaleNum = Number(fontScaleRaw);
+    const fontScale =
+      Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
+    const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
+    const html = zoomStyle + compiled(context);
     const page = await browser.newPage();
     await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 2 });
     await page.setContent(html, { waitUntil: "networkidle0", timeout: RENDER_TIMEOUT_MS });

@@ -9,6 +9,8 @@ export interface CarouselEditsProps {
   runId?: string;
   editedSlides: NormalizedSlide[];
   rawPayload: CarouselSlidesPayload | null;
+  fontScale: string;
+  onFontScaleChange: (value: string) => void;
   finalTitleOverride: string;
   onFinalTitleOverrideChange: (value: string) => void;
   finalHookOverride: string;
@@ -26,6 +28,8 @@ export function CarouselEdits({
   runId,
   editedSlides,
   rawPayload,
+  fontScale,
+  onFontScaleChange,
   finalTitleOverride,
   onFinalTitleOverrideChange,
   finalHookOverride,
@@ -39,6 +43,12 @@ export function CarouselEdits({
 }: CarouselEditsProps) {
   const exportEdited = useCallback(() => {
     const slidesPayload = buildSlidesJson(editedSlides, rawPayload);
+    const fs = Number(fontScale);
+    if (Number.isFinite(fs) && fs > 0) {
+      (slidesPayload as Record<string, unknown>).font_scale = fs;
+    } else {
+      delete (slidesPayload as Record<string, unknown>).font_scale;
+    }
     const payload = {
       task_id: taskId,
       run_id: runId || undefined,
@@ -61,6 +71,28 @@ export function CarouselEdits({
   return (
     <div className="card">
       <div className="card-header">Edits for rework</div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Font scale (renderer) — current: {Number(fontScale || 1).toFixed(2)}×</label>
+        <input
+          type="range"
+          min="0.75"
+          max="1.25"
+          step="0.01"
+          value={fontScale || "1"}
+          onChange={(e) => onFontScaleChange(e.target.value)}
+        />
+        <input
+          type="text"
+          value={fontScale}
+          onChange={(e) => onFontScaleChange(e.target.value)}
+          placeholder="1.00"
+          style={{ marginTop: 6 }}
+        />
+        <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+          Applies across the entire carousel (all templates). Lower if text is cramped; increase if too small.
+        </p>
+      </div>
 
       <div style={{ marginBottom: 12 }}>
         <label className="filter-label">Final title override</label>

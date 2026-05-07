@@ -103,6 +103,7 @@ export function buildCarouselBodyLengthSystemBlock(targets: CarouselBodyCharTarg
     "Carousel body copy length (platform + rework scale):",
     `- **Applied scale:** ${targets.scale === 1 ? "1× (platform defaults as configured)" : `${targets.scale}×`} vs platform \`slide_min_chars\` / \`slide_max_chars\`.`,
     `- **Target body slide length (characters per slide \`body\` field, excluding headline):** aim for **${targets.effective_min_chars}–${targets.effective_max_chars}** chars.`,
+    `- **Cover subtitle length:** cover \`body\` / \`cover_subtitle\` must be **1–2 sentences**, not a paragraph. Rewrite shorter if needed; do not truncate mid-thought.`,
     `- **Slide deck size:** obey \`platform_constraints.slide_min\` / \`slide_max\` when set (merged into your creation_pack as \`platform_constraints\`).`,
     `- **Horoscope / sign lists:** pick a **deliberate structure** (e.g. full wheel order, one sign per slide, or a stated subset); do not randomize signs unless the brief asks for variety.`,
     `- **Campaign fit:** do **not** frame content as an app/product launch unless the candidate or signal_pack explicitly describes that campaign.`,

@@ -93,6 +93,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [skipVideoRegeneration, setSkipVideoRegeneration] = useState(false);
   const [imagePromptAnalysis, setImagePromptAnalysis] = useState("");
   const [skipImageRegeneration, setSkipImageRegeneration] = useState(false);
+  const [fontScale, setFontScale] = useState("1");
 
   useEffect(() => {
     setEditedSlides([]);
@@ -145,6 +146,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setHeygenVoiceId((data.heygen_voice_id ?? "").trim());
     setHeygenForceRerender(false);
   }, [data]);
+
+  useEffect(() => {
+    const raw = rawPayload && typeof rawPayload === "object" ? (rawPayload as Record<string, unknown>).font_scale : undefined;
+    const n = Number(raw);
+    setFontScale(Number.isFinite(n) && n > 0 ? String(n) : "1");
+  }, [rawPayload]);
 
   const fetchTask = useCallback(async () => {
     if (!task_id) return;
@@ -339,7 +346,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const finalSlidesJsonOverride =
     !videoFlow && !imageFlow && editedSlides.length > 0 && rawPayload !== undefined
-      ? JSON.stringify(buildSlidesJson(editedSlides, rawPayload))
+      ? (() => {
+          const slidesPayload = buildSlidesJson(editedSlides, rawPayload);
+          const fs = Number(fontScale);
+          if (Number.isFinite(fs) && fs > 0) {
+            (slidesPayload as Record<string, unknown>).font_scale = fs;
+          } else {
+            delete (slidesPayload as Record<string, unknown>).font_scale;
+          }
+          return JSON.stringify(slidesPayload);
+        })()
       : undefined;
 
   return (
@@ -477,6 +493,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 runId={runId || undefined}
                 editedSlides={editedSlides}
                 rawPayload={rawPayload ?? null}
+                fontScale={fontScale}
+                onFontScaleChange={setFontScale}
                 finalTitleOverride={editedTitle}
                 onFinalTitleOverrideChange={setEditedTitle}
                 finalHookOverride={editedHook}

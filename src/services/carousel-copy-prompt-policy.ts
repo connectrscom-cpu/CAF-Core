@@ -5,6 +5,7 @@
 export const CAROUSEL_COPY_SYSTEM_ADDENDUM = `Carousel copy quality (editorial bar):
 - **Structure:** Build a clear arc: hook/cover → supporting slides with one idea each → strong closing CTA. Avoid thin or repetitive slides; body copy should be **substantive** (explain the insight, not generic filler).
 - **Cover / slide 01:** Include a short **kicker** on the cover slide as \`kicker\` (2–6 words; topic/category/series label). The cover should hook attention; subtitle or first body can carry the **project @handle** if the brand handle appears in candidate/signal context (do not invent handles).
+- **Cover subtitle length:** The cover \`cover_subtitle\` / cover slide \`body\` must be **1–2 sentences max** and must read cleanly when line-wrapped. If your draft is longer, **rewrite it shorter** (do not just truncate mid-thought).
 - **Final CTA slide:** Must be a **clear CTA** and must include the **project @handle** when it is provided in context. Keep the **headline** punchy (one line); longer explanations belong in **cta_slide.sub** / body fields per schema — never repeat the same **@handle** in both the main CTA line and a duplicate handle slot.
   - Strong CTA examples: "Follow @brand for daily X", "Save this for later", "Share with a friend who needs this", "Comment your sign/experience", "Tag someone who'd love this".
 - **No unrequested promotions:** Do **not** promote apps/products/features that are not explicitly present in the candidate, signal pack, strategy, or product context. If no app/product is mentioned in inputs, avoid inventing one.
