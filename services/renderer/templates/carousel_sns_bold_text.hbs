@@ -68,6 +68,15 @@
       word-break:break-word;
       hyphens:auto;
     }
+    /* Editorial: cover body must stay short (1–2 sentences). Clamp visually even if generation drifts. */
+    .cover-body{
+      font-size:46px;
+      line-height:1.28;
+      display:-webkit-box;
+      -webkit-line-clamp:3;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+    }
     .cta{
       font-weight:800;
       font-size:clamp(40px, 7.5vw, 86px);
@@ -102,6 +111,16 @@
       color:var(--muted);
       letter-spacing:0.01em;
     }
+    .cta-body{
+      font-weight:700;
+      font-size:40px;
+      line-height:1.32;
+      color:var(--muted);
+      letter-spacing:0.01em;
+      white-space:pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
   </style>
 </head>
 <body>
@@ -115,7 +134,7 @@
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
       </div>
-      <div class="body">
+      <div class="body cover-body">
         {{#if cover_subtitle}}{{cover_subtitle}}{{else}}{{#if cover_slide}}{{cover_slide.body}}{{/if}}{{/if}}
       </div>
     </div>
@@ -143,7 +162,8 @@
         <div class="kicker-line"></div>
         <div class="cta cta--single">
           <span class="accent2">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}</span>
-          {{#if cta_handle}}<span class="handle handle--inline">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="handle handle--inline">{{cta_slide.handle}}</span>{{/if}}{{/if}}
+          {{!-- Core prefers `cta_slide.sub` as CTA body (and appends @handle there). Avoid duplicating the handle line. --}}
+          {{#if cta_slide.sub}}<span class="cta-body">{{joinEmojiOrphans cta_slide.sub}}</span>{{else}}{{#if cta_handle}}<span class="handle handle--inline">{{cta_handle}}</span>{{else}}{{#if cta_slide.handle}}<span class="handle handle--inline">{{cta_slide.handle}}</span>{{/if}}{{/if}}{{/if}}
           <span class="cta-follow">{{#if cta_slide.follow_line}}{{joinEmojiOrphans cta_slide.follow_line}}{{else}}Follow us for more.{{/if}}</span>
         </div>
       </div>
