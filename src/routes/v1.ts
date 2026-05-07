@@ -47,6 +47,8 @@ import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
 import { buildValidationOutputV1 } from "../domain/validation-output.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { applyEditorialFlatOverridesToGeneratedOutput, partitionEditorialOverrides } from "../services/editorial-copy-apply.js";
+import { insertLearningRule } from "../repositories/learning.js";
+import { buildImmediateNeedsEditGenerationGuidance } from "../services/immediate-needs-edit-guidance.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -156,6 +158,68 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       validator: body.validator ?? null,
       submit: true,
     });
+
+    /**
+     * Immediate generation guidance from NEEDS_EDIT feedback.
+     *
+     * Editorial analysis (cron) is lagged; rework should benefit from human notes/tags immediately.
+     * We mint a *pending* GENERATION_GUIDANCE learning rule that is included in rework prompts via:
+     * `getLearningContextForGeneration(..., { include_pending_generation_guidance: true })`.
+     */
+    if (body.decision === "NEEDS_EDIT") {
+      try {
+        const gpRec = gp && typeof gp === "object" && !Array.isArray(gp) ? (gp as Record<string, unknown>) : {};
+        const templateName = (() => {
+          const direct = gpRec.template;
+          if (typeof direct === "string" && direct.trim()) return direct.trim();
+          const gen = gpRec.generated_output;
+          if (gen && typeof gen === "object" && !Array.isArray(gen)) {
+            const r = (gen as Record<string, unknown>).render;
+            if (r && typeof r === "object" && !Array.isArray(r)) {
+              const tn = (r as Record<string, unknown>).template_key ?? (r as Record<string, unknown>).html_template_name;
+              if (typeof tn === "string" && tn.trim()) return tn.trim().replace(/\.hbs$/i, "");
+            }
+          }
+          return null;
+        })();
+        const built = buildImmediateNeedsEditGenerationGuidance({
+          task_id,
+          flow_type: flowType || null,
+          platform: (jobRow?.platform ?? null) as string | null,
+          carousel_template_name: templateName,
+          notes: body.notes ?? null,
+          rejection_tags: body.rejection_tags ?? [],
+        });
+        if (built) {
+          await insertLearningRule(db, {
+            rule_id: built.rule_id,
+            project_id: project.id,
+            trigger_type: "immediate_needs_edit_review",
+            scope_flow_type: flowType || null,
+            scope_platform: (jobRow?.platform ?? null) as string | null,
+            action_type: "GENERATION_GUIDANCE",
+            action_payload: {
+              guidance: built.guidance,
+              task_id,
+              source: "editorial_review",
+              template: templateName,
+              rejection_tags: body.rejection_tags ?? [],
+            },
+            confidence: 0.55,
+            source_entity_ids: [task_id],
+            scope_type: "project",
+            rule_family: "generation",
+            evidence_refs: [{ type: "task_id", id: task_id }],
+            provenance: "human_review_immediate",
+            created_by: body.validator ?? "review",
+            // Keep guidance short-lived; it is meant to steer near-term rework, not become permanent strategy.
+            expires_at: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+          });
+        }
+      } catch (e) {
+        request.log.warn({ err: e, task_id }, "immediate NEEDS_EDIT generation guidance mint failed");
+      }
+    }
 
     const newStatus =
       body.decision === "APPROVED" ? "APPROVED" : body.decision === "REJECTED" ? "REJECTED" : "NEEDS_EDIT";

@@ -702,6 +702,20 @@ function ensureCarouselHasCtaSlide(
   if (looksLikeCarouselCtaSlideText(lastText)) return slides;
 
   const handle = formatInstagramHandleForCta(ctaOptions?.instagramHandle ?? null);
+  // For multi-slide decks, preserve slide count (tests + renderer expect stable indices).
+  // Instead, coerce the *existing* last slide into a CTA slide by filling in default CTA copy.
+  if (slides.length > 2) {
+    const patchedLast = normalizeItemSlide({
+      ...(last as Record<string, unknown>),
+      slide_role: "cta",
+      headline: tl.headline || "",
+      body: tl.body || DEFAULT_CAROUSEL_CTA_COPY,
+      ...(handle ? { handle } : {}),
+    });
+    return [...slides.slice(0, -1), patchedLast];
+  }
+
+  // For 2-slide decks, add a dedicated CTA slide so the arc is cover → body → CTA.
   const ctaSlide = normalizeItemSlide({
     slide_role: "cta",
     headline: "",
