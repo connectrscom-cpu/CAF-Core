@@ -126,7 +126,7 @@ export function CarouselSlider({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [heyGenVideoMode, readOnly, livePreview, currentIndex, slidesKey]);
+  }, [heyGenVideoMode, readOnly, livePreview, livePreview?.fontScale, currentIndex, slidesKey]);
 
   const updateSlide = useCallback(
     (

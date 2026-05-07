@@ -181,9 +181,12 @@ async function renderSlide(b, slideIndex) {
       const fontScaleNum = Number(fontScaleRaw);
       const fontScale =
         Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
-      const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
+      // Zoom each `.slide` (not `body`): Puppeteer screenshots a `.slide` node; body zoom can fail to
+      // scale the subtree consistently for element captures — cover + inner slides then track the slider.
+      const zoomStyle = `<style id="caf-font-scale">:root{--font_scale:${fontScale};}.slide{zoom:var(--font_scale);}</style>`;
       const typoStyle = cafCarouselTypographyStyleTag(context);
-      const html = zoomStyle + typoStyle + compiled(context);
+      // After compiled HTML so :root defaults in templates do not override Review px overrides.
+      const html = zoomStyle + compiled(context) + typoStyle;
 
       page = await browser.newPage();
       await hardenPageForFastRendering(page);
@@ -366,9 +369,10 @@ app.post("/render-carousel", async (req, res) => {
     const fontScaleNum = Number(fontScaleRaw);
     const fontScale =
       Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
-    const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
+    const zoomStyle = `<style id="caf-font-scale">:root{--font_scale:${fontScale};}.slide{zoom:var(--font_scale);}</style>`;
     const typoStyle = cafCarouselTypographyStyleTag(context);
-    const html = zoomStyle + typoStyle + compiled(context);
+    // After compiled HTML so :root defaults in templates do not override Review px overrides.
+    const html = zoomStyle + compiled(context) + typoStyle;
     const page = await browser.newPage();
     await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 2 });
     await page.setContent(html, { waitUntil: "networkidle0", timeout: RENDER_TIMEOUT_MS });
