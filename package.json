@@ -23,7 +23,8 @@
     "process-run": "node --import tsx src/cli/process-run.ts",
     "replan-run": "node --import tsx src/cli/replan-run.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "deploy:review-vercel": "npx vercel deploy --prod --yes"
   },
   "engines": {
     "node": ">=20"
