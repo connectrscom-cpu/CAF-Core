@@ -7,7 +7,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Special+Elite&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    :root { --safe: 80px; --newsprint: #f5f0e6; --newsprint-dark: #e8e0d0; --ink: #1a1510; --red: #b83c3c; --tape: rgba(255,248,180,0.6); --strip: #2a2520; --muted: #5c5348; }
+    :root {
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 48px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 40px;
+ --safe: 80px; --newsprint: #f5f0e6; --newsprint-dark: #e8e0d0; --ink: #1a1510; --red: #b83c3c; --tape: rgba(255,248,180,0.6); --strip: #2a2520; --muted: #5c5348; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Outfit', sans-serif; background: var(--newsprint); }
     .slide {
@@ -44,6 +50,19 @@
     .cover-intro { font-family: 'Special Elite', cursive; font-size: clamp(32px, 3.2vw, 40px); color: var(--muted); margin-bottom: 20px; z-index: 2; position: relative; max-width: 820px; line-height: 1.35; }
     .slide-inner .cover-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(90px, 10vw, 120px); color: var(--ink); letter-spacing: 0.06em; line-height: 0.95; z-index: 2; position: relative; text-transform: uppercase; max-width: 900px; }
     .slide-inner .cover-subtitle { font-family: 'Special Elite', cursive; font-size: clamp(36px, 3.6vw, 44px); color: var(--red); margin-top: 28px; z-index: 2; position: relative; max-width: 820px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  
+    /* CAF unified typography — optional px overrides from Review → generated_output.render */
+    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
+    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
+    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+      font-size: var(--caf-carousel-headline-size, 72px) !important;
+    }
+    .body, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+      font-size: var(--caf-carousel-body-size, 48px) !important;
+    }
+    .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
+    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
+
   </style>
 </head>
 <body>

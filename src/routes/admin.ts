@@ -1501,6 +1501,12 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       emoji_allowed: bool("emoji_allowed"), link_allowed: bool("link_allowed"), tag_allowed: bool("tag_allowed"),
       formatting_rules: str("formatting_rules"), posting_frequency_limit: str("posting_frequency_limit"),
       best_posting_window: str("best_posting_window"), notes: str("notes"),
+      carousel_headline_font_px: num("carousel_headline_font_px"),
+      carousel_body_font_px: num("carousel_body_font_px"),
+      carousel_kicker_font_px: num("carousel_kicker_font_px"),
+      carousel_cta_font_px: num("carousel_cta_font_px"),
+      carousel_handle_font_px: num("carousel_handle_font_px"),
+      carousel_font_scale: num("carousel_font_scale"),
     });
     return { ok: true };
   });

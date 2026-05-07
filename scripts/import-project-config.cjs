@@ -105,8 +105,10 @@ async function main() {
         project_id, platform, caption_max_chars, hook_must_fit_first_lines, hook_max_chars,
         slide_min_chars, slide_max_chars, slide_min, slide_max, max_hashtags, hashtag_format_rule,
         line_break_policy, emoji_allowed, link_allowed, tag_allowed, formatting_rules,
-        posting_frequency_limit, best_posting_window, notes
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        posting_frequency_limit, best_posting_window, notes,
+        carousel_headline_font_px, carousel_body_font_px, carousel_kicker_font_px,
+        carousel_cta_font_px, carousel_handle_font_px, carousel_font_scale
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       ON CONFLICT (project_id, platform) DO UPDATE SET
         caption_max_chars=EXCLUDED.caption_max_chars, hook_must_fit_first_lines=EXCLUDED.hook_must_fit_first_lines,
         hook_max_chars=EXCLUDED.hook_max_chars, slide_min_chars=EXCLUDED.slide_min_chars,
@@ -115,7 +117,14 @@ async function main() {
         line_break_policy=EXCLUDED.line_break_policy, emoji_allowed=EXCLUDED.emoji_allowed,
         link_allowed=EXCLUDED.link_allowed, tag_allowed=EXCLUDED.tag_allowed,
         formatting_rules=EXCLUDED.formatting_rules, posting_frequency_limit=EXCLUDED.posting_frequency_limit,
-        best_posting_window=EXCLUDED.best_posting_window, notes=EXCLUDED.notes, updated_at=now()
+        best_posting_window=EXCLUDED.best_posting_window, notes=EXCLUDED.notes,
+        carousel_headline_font_px=EXCLUDED.carousel_headline_font_px,
+        carousel_body_font_px=EXCLUDED.carousel_body_font_px,
+        carousel_kicker_font_px=EXCLUDED.carousel_kicker_font_px,
+        carousel_cta_font_px=EXCLUDED.carousel_cta_font_px,
+        carousel_handle_font_px=EXCLUDED.carousel_handle_font_px,
+        carousel_font_scale=EXCLUDED.carousel_font_scale,
+        updated_at=now()
     `, [
       pid, p.platform, p.caption_max_chars || null,
       p.hook_must_fit_first_lines === true || p.hook_must_fit_first_lines === "TRUE",
@@ -126,7 +135,13 @@ async function main() {
       p.link_allowed === true || p.link_allowed === "TRUE",
       p.tag_allowed === true || p.tag_allowed === "TRUE",
       p.formatting_rules || null, p.posting_frequency_limit || null,
-      p.best_posting_window || null, p.notes || null
+      p.best_posting_window || null, p.notes || null,
+      p.carousel_headline_font_px || null,
+      p.carousel_body_font_px || null,
+      p.carousel_kicker_font_px || null,
+      p.carousel_cta_font_px || null,
+      p.carousel_handle_font_px || null,
+      p.carousel_font_scale != null && p.carousel_font_scale !== "" ? Number(p.carousel_font_scale) : null
     ]);
     console.log("Platform constraint:", p.platform, "upserted");
   }

@@ -18,6 +18,11 @@
       --card: rgba(255,255,255,0.78);
       --radius: 42px;
       --shadow: 0 22px 60px rgba(0,0,0,0.14);
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 52px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 40px;
     }
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:Inter,system-ui,Arial,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);}
@@ -40,7 +45,7 @@
     }
     .top-row{display:flex;flex-direction:column;gap:18px;}
     .kicker{
-      font-size:18px;
+      font-size:var(--caf-carousel-kicker-size, 18px);
       letter-spacing:0.18em;
       text-transform:uppercase;
       color:var(--muted);
@@ -48,7 +53,7 @@
     .title{
       font-family:"Playfair Display",serif;
       font-weight:700;
-      font-size:clamp(42px, 8vw, 90px);
+      font-size:var(--caf-carousel-headline-size, clamp(42px, 8vw, 90px));
       line-height:1.06;
       letter-spacing:-0.03em;
       max-width: 920px;
@@ -71,12 +76,12 @@
     }
     .card h3{
       font-family:Inter,sans-serif;
-      font-size:52px;
+      font-size:var(--caf-carousel-headline-size, 52px);
       letter-spacing:-0.02em;
     }
     .card p{
       margin-top:16px;
-      font-size:60px;
+      font-size:var(--caf-carousel-body-size, 52px);
       line-height:1.38;
       color:var(--muted);
       text-align:left;
@@ -85,7 +90,7 @@
       hyphens:auto;
     }
     .body{
-      font-size:42px;
+      font-size:var(--caf-carousel-body-size, 52px);
       line-height:1.4;
       color:var(--muted);
       max-width: 920px;
@@ -96,7 +101,7 @@
     }
     .cta{
       font-family:"Playfair Display",serif;
-      font-size:clamp(38px, 6.8vw, 72px);
+      font-size:var(--caf-carousel-cta-size, clamp(38px, 6.8vw, 72px));
       line-height:1.08;
       letter-spacing:-0.03em;
       max-width: 920px;
@@ -108,7 +113,7 @@
     .handle{
       margin-top:18px;
       font-weight:600;
-      font-size:40px;
+      font-size:var(--caf-carousel-handle-size, 40px);
       color:var(--accent);
       letter-spacing:0.06em;
     }

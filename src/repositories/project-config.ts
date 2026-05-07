@@ -172,6 +172,14 @@ export interface PlatformConstraintsRow {
   posting_frequency_limit: string | null;
   best_posting_window: string | null;
   notes: string | null;
+  /** Default carousel render typography (px); merged into `generated_output.render` when not overridden. */
+  carousel_headline_font_px: number | null;
+  carousel_body_font_px: number | null;
+  carousel_kicker_font_px: number | null;
+  carousel_cta_font_px: number | null;
+  carousel_handle_font_px: number | null;
+  /** Merged as `render.font_scale` when set (clamped at apply time). */
+  carousel_font_scale: number | string | null;
 }
 
 export async function listPlatformConstraints(db: Pool, projectId: string): Promise<PlatformConstraintsRow[]> {
@@ -189,8 +197,10 @@ export async function upsertPlatformConstraints(
       project_id, platform, caption_max_chars, hook_must_fit_first_lines, hook_max_chars,
       slide_min_chars, slide_max_chars, slide_min, slide_max, max_hashtags, hashtag_format_rule,
       line_break_policy, emoji_allowed, link_allowed, tag_allowed, formatting_rules,
-      posting_frequency_limit, best_posting_window, notes
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+      posting_frequency_limit, best_posting_window, notes,
+      carousel_headline_font_px, carousel_body_font_px, carousel_kicker_font_px,
+      carousel_cta_font_px, carousel_handle_font_px, carousel_font_scale
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
     ON CONFLICT (project_id, platform) DO UPDATE SET
       caption_max_chars = EXCLUDED.caption_max_chars, hook_must_fit_first_lines = EXCLUDED.hook_must_fit_first_lines,
       hook_max_chars = EXCLUDED.hook_max_chars, slide_min_chars = EXCLUDED.slide_min_chars,
@@ -199,13 +209,22 @@ export async function upsertPlatformConstraints(
       line_break_policy = EXCLUDED.line_break_policy, emoji_allowed = EXCLUDED.emoji_allowed,
       link_allowed = EXCLUDED.link_allowed, tag_allowed = EXCLUDED.tag_allowed,
       formatting_rules = EXCLUDED.formatting_rules, posting_frequency_limit = EXCLUDED.posting_frequency_limit,
-      best_posting_window = EXCLUDED.best_posting_window, notes = EXCLUDED.notes, updated_at = now()
+      best_posting_window = EXCLUDED.best_posting_window, notes = EXCLUDED.notes,
+      carousel_headline_font_px = EXCLUDED.carousel_headline_font_px,
+      carousel_body_font_px = EXCLUDED.carousel_body_font_px,
+      carousel_kicker_font_px = EXCLUDED.carousel_kicker_font_px,
+      carousel_cta_font_px = EXCLUDED.carousel_cta_font_px,
+      carousel_handle_font_px = EXCLUDED.carousel_handle_font_px,
+      carousel_font_scale = EXCLUDED.carousel_font_scale,
+      updated_at = now()
     RETURNING *`,
     [
       projectId, data.platform, data.caption_max_chars, data.hook_must_fit_first_lines, data.hook_max_chars,
       data.slide_min_chars, data.slide_max_chars, data.slide_min, data.slide_max, data.max_hashtags,
       data.hashtag_format_rule, data.line_break_policy, data.emoji_allowed, data.link_allowed,
       data.tag_allowed, data.formatting_rules, data.posting_frequency_limit, data.best_posting_window, data.notes,
+      data.carousel_headline_font_px, data.carousel_body_font_px, data.carousel_kicker_font_px,
+      data.carousel_cta_font_px, data.carousel_handle_font_px, data.carousel_font_scale,
     ]);
   if (!row) throw new Error("Failed to upsert platform_constraints");
   return row;

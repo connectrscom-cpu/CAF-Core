@@ -10,6 +10,26 @@
 
 import { randomInt } from "node:crypto";
 
+/** Mirrors `pickCarouselTypographyPatch` in `domain/carousel-render-typography.ts` (local copy so Review/Next can bundle this module without resolving `../domain`). */
+function pickCarouselTypographyPatchForRender(source: Record<string, unknown> | null | undefined): Record<string, number> {
+  if (!source || typeof source !== "object") return {};
+  const keys = [
+    "carousel_headline_font_px",
+    "carousel_body_font_px",
+    "carousel_kicker_font_px",
+    "carousel_cta_font_px",
+    "carousel_handle_font_px",
+  ] as const;
+  const out: Record<string, number> = {};
+  for (const k of keys) {
+    const raw = source[k];
+    const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(String(raw).trim()) : NaN;
+    if (!Number.isFinite(n) || n <= 0 || n > 512) continue;
+    out[k] = Math.round(n);
+  }
+  return out;
+}
+
 /** Same behavior as `pickGeneratedOutputOrEmpty` in `domain/generation-payload-output.ts` (inlined so Review/Next can bundle this module without resolving `../domain`). */
 function pickGeneratedOutputOrEmptyFromPayload(
   payload: { generated_output?: unknown; [k: string]: unknown } | null | undefined
@@ -1192,6 +1212,11 @@ export function buildSlideRenderContext(
   const font_scale =
     Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
 
+  const typoPatch = {
+    ...pickCarouselTypographyPatchForRender(baseRec),
+    ...pickCarouselTypographyPatchForRender(renderRec),
+  };
+
   const out: Record<string, unknown> = {
     ...base,
     ...templateShape,
@@ -1200,6 +1225,7 @@ export function buildSlideRenderContext(
     ...(cta.cta_handle ? { cta_handle: cta.cta_handle } : {}),
     cta_slide: cta.cta_slide,
     font_scale,
+    ...typoPatch,
     slides,
     slide_index: slideIndex1Based,
     current_slide: current,

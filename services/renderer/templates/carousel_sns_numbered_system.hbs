@@ -8,6 +8,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&display=swap" rel="stylesheet">
   <style>
     :root{
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 48px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 40px;
+
       --safe: 92px;
       --bg1:#12121a;
       --bg2:#1a1a26;
@@ -110,6 +116,19 @@
       letter-spacing:0.06em;
     }
     .accent{ color: var(--accent); }
+  
+    /* CAF unified typography — optional px overrides from Review → generated_output.render */
+    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
+    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
+    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+      font-size: var(--caf-carousel-headline-size, 72px) !important;
+    }
+    .body, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+      font-size: var(--caf-carousel-body-size, 48px) !important;
+    }
+    .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
+    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
+
   </style>
 </head>
 <body>

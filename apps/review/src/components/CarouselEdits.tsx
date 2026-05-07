@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
-import { buildSlidesJson } from "@/lib/carousel-slides";
+import { buildSlidesJson, mergeCarouselTypographyIntoPayload } from "@/lib/carousel-slides";
 import type { NormalizedSlide, CarouselSlidesPayload } from "@/lib/carousel-slides";
 
 export interface CarouselEditsProps {
@@ -11,6 +11,17 @@ export interface CarouselEditsProps {
   rawPayload: CarouselSlidesPayload | null;
   fontScale: string;
   onFontScaleChange: (value: string) => void;
+  /** Optional px overrides → `generated_output.render` on rework (empty = template default). */
+  carouselHeadlineFontPx: string;
+  onCarouselHeadlineFontPxChange: (value: string) => void;
+  carouselBodyFontPx: string;
+  onCarouselBodyFontPxChange: (value: string) => void;
+  carouselKickerFontPx: string;
+  onCarouselKickerFontPxChange: (value: string) => void;
+  carouselCtaFontPx: string;
+  onCarouselCtaFontPxChange: (value: string) => void;
+  carouselHandleFontPx: string;
+  onCarouselHandleFontPxChange: (value: string) => void;
   finalTitleOverride: string;
   onFinalTitleOverrideChange: (value: string) => void;
   finalHookOverride: string;
@@ -30,6 +41,16 @@ export function CarouselEdits({
   rawPayload,
   fontScale,
   onFontScaleChange,
+  carouselHeadlineFontPx,
+  onCarouselHeadlineFontPxChange,
+  carouselBodyFontPx,
+  onCarouselBodyFontPxChange,
+  carouselKickerFontPx,
+  onCarouselKickerFontPxChange,
+  carouselCtaFontPx,
+  onCarouselCtaFontPxChange,
+  carouselHandleFontPx,
+  onCarouselHandleFontPxChange,
   finalTitleOverride,
   onFinalTitleOverrideChange,
   finalHookOverride,
@@ -49,6 +70,13 @@ export function CarouselEdits({
     } else {
       delete (slidesPayload as Record<string, unknown>).font_scale;
     }
+    mergeCarouselTypographyIntoPayload(slidesPayload, {
+      carousel_headline_font_px: carouselHeadlineFontPx,
+      carousel_body_font_px: carouselBodyFontPx,
+      carousel_kicker_font_px: carouselKickerFontPx,
+      carousel_cta_font_px: carouselCtaFontPx,
+      carousel_handle_font_px: carouselHandleFontPx,
+    });
     const payload = {
       task_id: taskId,
       run_id: runId || undefined,
@@ -66,7 +94,23 @@ export function CarouselEdits({
     a.download = `rework-${taskId}-edited.json`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [taskId, runId, editedSlides, rawPayload, finalTitleOverride, finalHookOverride, generatedCaption, finalHashtagsOverride, extraFields]);
+  }, [
+    taskId,
+    runId,
+    editedSlides,
+    rawPayload,
+    finalTitleOverride,
+    finalHookOverride,
+    generatedCaption,
+    finalHashtagsOverride,
+    extraFields,
+    fontScale,
+    carouselHeadlineFontPx,
+    carouselBodyFontPx,
+    carouselKickerFontPx,
+    carouselCtaFontPx,
+    carouselHandleFontPx,
+  ]);
 
   return (
     <div className="card">
@@ -92,6 +136,70 @@ export function CarouselEdits({
         <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
           Applies across the entire carousel (all templates). Lower if text is cramped; increase if too small.
         </p>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label className="filter-label">Typography (px, optional — saved for next rework)</label>
+        <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
+          Leave blank to use each template’s defaults. Values map to renderer CSS tokens (headline, body, kicker, CTA, handle).
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <label style={{ fontSize: 12 }}>
+            Headline px
+            <input
+              type="text"
+              inputMode="numeric"
+              value={carouselHeadlineFontPx}
+              onChange={(e) => onCarouselHeadlineFontPxChange(e.target.value)}
+              placeholder="e.g. 72"
+              style={{ display: "block", width: "100%", marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12 }}>
+            Body px
+            <input
+              type="text"
+              inputMode="numeric"
+              value={carouselBodyFontPx}
+              onChange={(e) => onCarouselBodyFontPxChange(e.target.value)}
+              placeholder="e.g. 56"
+              style={{ display: "block", width: "100%", marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12 }}>
+            Kicker px
+            <input
+              type="text"
+              inputMode="numeric"
+              value={carouselKickerFontPx}
+              onChange={(e) => onCarouselKickerFontPxChange(e.target.value)}
+              placeholder="e.g. 18"
+              style={{ display: "block", width: "100%", marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12 }}>
+            CTA px
+            <input
+              type="text"
+              inputMode="numeric"
+              value={carouselCtaFontPx}
+              onChange={(e) => onCarouselCtaFontPxChange(e.target.value)}
+              placeholder="e.g. 72"
+              style={{ display: "block", width: "100%", marginTop: 4 }}
+            />
+          </label>
+          <label style={{ fontSize: 12, gridColumn: "1 / -1" }}>
+            Handle px
+            <input
+              type="text"
+              inputMode="numeric"
+              value={carouselHandleFontPx}
+              onChange={(e) => onCarouselHandleFontPxChange(e.target.value)}
+              placeholder="e.g. 42"
+              style={{ display: "block", width: "100%", marginTop: 4 }}
+            />
+          </label>
+        </div>
       </div>
 
       <div style={{ marginBottom: 12 }}>

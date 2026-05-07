@@ -212,6 +212,12 @@ const PLATFORM_FIELDS: Record<string, FieldType> = {
   posting_frequency_limit: "string",
   best_posting_window: "string",
   notes: "string",
+  carousel_headline_font_px: "int",
+  carousel_body_font_px: "int",
+  carousel_kicker_font_px: "int",
+  carousel_cta_font_px: "int",
+  carousel_handle_font_px: "int",
+  carousel_font_scale: "number",
 };
 
 const FLOW_TYPE_FIELDS: Record<string, FieldType> = {
@@ -806,6 +812,12 @@ export async function importProjectFromCsv(
         posting_frequency_limit: merged.posting_frequency_limit ?? null,
         best_posting_window: merged.best_posting_window ?? null,
         notes: merged.notes ?? null,
+        carousel_headline_font_px: merged.carousel_headline_font_px ?? null,
+        carousel_body_font_px: merged.carousel_body_font_px ?? null,
+        carousel_kicker_font_px: merged.carousel_kicker_font_px ?? null,
+        carousel_cta_font_px: merged.carousel_cta_font_px ?? null,
+        carousel_handle_font_px: merged.carousel_handle_font_px ?? null,
+        carousel_font_scale: merged.carousel_font_scale ?? null,
       };
       await upsertPlatformConstraints(db, project.id, payload);
       n++;

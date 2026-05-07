@@ -7,7 +7,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&family=Nunito:wght@600;700&family=Outfit:wght@400;500&display=swap" rel="stylesheet">
   <style>
-    :root { --safe: 80px; --cream: #fff8f5; --pink: #ff6b9d; --pink-soft: rgba(255,107,157,0.25); --cyan: #00d4aa; --cyan-soft: rgba(0,212,170,0.2); --yellow: #ffd93d; --yellow-soft: rgba(255,217,61,0.25); --purple: #b388ff; --purple-soft: rgba(179,136,255,0.2); --ink: #2d2430; --muted: #6b5b75; }
+    :root {
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 48px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 40px;
+ --safe: 80px; --cream: #fff8f5; --pink: #ff6b9d; --pink-soft: rgba(255,107,157,0.25); --cyan: #00d4aa; --cyan-soft: rgba(0,212,170,0.2); --yellow: #ffd93d; --yellow-soft: rgba(255,217,61,0.25); --purple: #b388ff; --purple-soft: rgba(179,136,255,0.2); --ink: #2d2430; --muted: #6b5b75; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Outfit', sans-serif; background: linear-gradient(165deg, #fff8f5 0%, #ffe8f0 40%, #f5f0ff 100%); }
     .slide {
@@ -50,6 +56,19 @@
     .cta-handle { font-family: 'Nunito', sans-serif; font-size: clamp(44px, 4.4vw, 52px); font-weight: 700; color: var(--pink); margin-top: 20px; position: relative; z-index: 2; transform: none !important; }
     .slide-inner .cover-title { font-family: 'Fredoka', sans-serif; font-size: clamp(88px, 9vw, 110px); font-weight: 600; color: var(--ink); line-height: 1.05; position: relative; z-index: 2; text-shadow: 4px 4px 0 var(--pink-soft), 6px 6px 0 var(--purple-soft), 2px 2px 0 rgba(255,255,255,0.9); transform: none !important; }
     .slide-inner .cover-subtitle { font-family: 'Nunito', sans-serif; font-size: clamp(44px, 4.4vw, 54px); font-weight: 700; color: var(--pink); margin-top: 28px; position: relative; z-index: 2; transform: none !important; }
+  
+    /* CAF unified typography — optional px overrides from Review → generated_output.render */
+    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
+    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
+    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+      font-size: var(--caf-carousel-headline-size, 72px) !important;
+    }
+    .body, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+      font-size: var(--caf-carousel-body-size, 48px) !important;
+    }
+    .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
+    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
+
   </style>
 </head>
 <body>

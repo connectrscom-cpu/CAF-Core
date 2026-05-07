@@ -504,6 +504,12 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     posting_frequency_limit: z.string().nullish(),
     best_posting_window: z.string().nullish(),
     notes: z.string().nullish(),
+    carousel_headline_font_px: z.number().int().positive().max(512).nullish(),
+    carousel_body_font_px: z.number().int().positive().max(512).nullish(),
+    carousel_kicker_font_px: z.number().int().positive().max(512).nullish(),
+    carousel_cta_font_px: z.number().int().positive().max(512).nullish(),
+    carousel_handle_font_px: z.number().int().positive().max(512).nullish(),
+    carousel_font_scale: z.number().min(0.75).max(1.25).nullish(),
   });
 
   app.put("/v1/projects/:project_slug/platforms", async (request, reply) => {
@@ -530,6 +536,12 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       posting_frequency_limit: body.data.posting_frequency_limit ?? null,
       best_posting_window: body.data.best_posting_window ?? null,
       notes: body.data.notes ?? null,
+      carousel_headline_font_px: body.data.carousel_headline_font_px ?? null,
+      carousel_body_font_px: body.data.carousel_body_font_px ?? null,
+      carousel_kicker_font_px: body.data.carousel_kicker_font_px ?? null,
+      carousel_cta_font_px: body.data.carousel_cta_font_px ?? null,
+      carousel_handle_font_px: body.data.carousel_handle_font_px ?? null,
+      carousel_font_scale: body.data.carousel_font_scale ?? null,
     });
     return { ok: true, platform: row };
   });

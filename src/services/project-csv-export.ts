@@ -85,6 +85,8 @@ const PLATFORM_FIELDS = [
   "max_hashtags", "hashtag_format_rule", "line_break_policy",
   "emoji_allowed", "link_allowed", "tag_allowed", "formatting_rules",
   "posting_frequency_limit", "best_posting_window", "notes",
+  "carousel_headline_font_px", "carousel_body_font_px", "carousel_kicker_font_px",
+  "carousel_cta_font_px", "carousel_handle_font_px", "carousel_font_scale",
 ] as const;
 
 const FLOW_FIELDS = [

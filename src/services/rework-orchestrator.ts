@@ -27,6 +27,8 @@ import {
   hasEditorialCopyFlatOverrides,
   partitionEditorialOverrides,
 } from "./editorial-copy-apply.js";
+import { listPlatformConstraints } from "../repositories/project-config.js";
+import { resolvePlatformConstraintsForPack } from "./llm-generator-helpers.js";
 import {
   hasNonEmptyHeyGenIdOverrides,
   heygenForceRerenderRequested,
@@ -215,7 +217,12 @@ export async function executeRework(
     mergeHeyGenRequestIntoGenerationPayload(gp, overrides);
     const { structural, flat } = partitionEditorialOverrides(overrides);
     let mergedOutput = { ...gen, ...structural };
-    mergedOutput = applyEditorialFlatOverridesToGeneratedOutput(mergedOutput, flat);
+    const carouselOverride = Boolean(job.flow_type && isCarouselFlow(job.flow_type));
+    const platformRows = carouselOverride ? await listPlatformConstraints(db, projectId) : [];
+    const platformSlice = carouselOverride
+      ? resolvePlatformConstraintsForPack(platformRows, job.platform, job.flow_type)
+      : undefined;
+    mergedOutput = applyEditorialFlatOverridesToGeneratedOutput(mergedOutput, flat, platformSlice);
     const scriptBefore = `${String(gen.spoken_script ?? gen.script ?? "").trim()}`;
     const scriptAfter = `${String(mergedOutput.spoken_script ?? mergedOutput.script ?? "").trim()}`;
     const spokenScriptChanged = scriptBefore !== scriptAfter;

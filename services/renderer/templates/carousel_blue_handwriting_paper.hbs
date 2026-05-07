@@ -6,6 +6,12 @@
   {{!-- No external fonts: Fly/Puppeteer often misbehave on fonts.googleapis.com (stalls, IPv6); OOM risk with heavy SVG filters × many slides. --}}
   <style>
     :root{
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 48px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 40px;
+
       --safe: 96px;
       --paper: #efe9dc;
       --ink: #1a2636;
@@ -129,6 +135,19 @@
       text-align:left;
       font-size: 16px;
     }
+  
+    /* CAF unified typography — optional px overrides from Review → generated_output.render */
+    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
+    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
+    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+      font-size: var(--caf-carousel-headline-size, 72px) !important;
+    }
+    .body, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+      font-size: var(--caf-carousel-body-size, 48px) !important;
+    }
+    .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
+    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
+
   </style>
 </head>
 <body>

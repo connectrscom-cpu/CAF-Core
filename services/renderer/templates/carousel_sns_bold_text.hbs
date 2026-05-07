@@ -17,8 +17,12 @@
       --border: rgba(255,255,255,0.08);
       --shadow: 0 28px 70px rgba(0,0,0,0.45);
       --radius: 40px;
-      /* One size for all supporting/body copy (cover, body slides, CTA sub + follow). `body{zoom}` from renderer still scales the whole slide. */
-      --carousel-body-font-size: 56px;
+      /* Template defaults; reviewer can override px via Core → `generated_output.render` → renderer :root injection. */
+      --caf-carousel-headline-size: 72px;
+      --caf-carousel-body-size: 56px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 72px;
+      --caf-carousel-handle-size: 42px;
       --carousel-body-line-height: 1.32;
     }
     *{box-sizing:border-box;margin:0;padding:0;}
@@ -44,7 +48,7 @@
       box-shadow:var(--shadow);
       pointer-events:none;
     }
-    .kicker{font-size:18px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.9;color:var(--muted);}
+    .kicker{font-size:var(--caf-carousel-kicker-size, 18px);letter-spacing:0.18em;text-transform:uppercase;opacity:0.9;color:var(--muted);}
     .kicker-line{
       width:140px;height:6px;border-radius:999px;margin:28px 0 34px;
       background:linear-gradient(90deg,var(--accent),var(--accent2));
@@ -53,7 +57,7 @@
     h1,h2,h3{letter-spacing:-0.04em;}
     .headline{
       font-weight:800;
-      font-size:clamp(44px, 8.5vw, 96px);
+      font-size:var(--caf-carousel-headline-size, clamp(44px, 8.5vw, 96px));
       line-height:1.02;
       max-width: 920px;
       text-align:left;
@@ -64,7 +68,7 @@
     .accent{color:var(--accent);}
     .accent2{color:var(--accent2);}
     .body{
-      font-size:var(--carousel-body-font-size);
+      font-size:var(--caf-carousel-body-size);
       line-height:var(--carousel-body-line-height);
       color:var(--muted);
       max-width: 920px;
@@ -75,7 +79,7 @@
     }
     /* Cover subtitle: same body size as other slides; clamp lines only as overflow guardrail. */
     .cover-body{
-      font-size:var(--carousel-body-font-size);
+      font-size:var(--caf-carousel-body-size);
       line-height:var(--carousel-body-line-height);
       display:-webkit-box;
       -webkit-line-clamp:8;
@@ -84,7 +88,7 @@
     }
     .cta{
       font-weight:800;
-      font-size:clamp(40px, 7.5vw, 86px);
+      font-size:var(--caf-carousel-cta-size, clamp(40px, 7.5vw, 86px));
       line-height:1.05;
       max-width:920px;
       text-align:left;
@@ -95,7 +99,7 @@
     .handle{
       margin-top:18px;
       font-weight:700;
-      font-size:42px;
+      font-size:var(--caf-carousel-handle-size, 42px);
       letter-spacing:0.06em;
       color:rgba(245,245,247,0.85);
     }
@@ -111,14 +115,14 @@
     }
     .cta-follow{
       font-weight:700;
-      font-size:var(--carousel-body-font-size);
+      font-size:var(--caf-carousel-body-size);
       line-height:var(--carousel-body-line-height);
       color:var(--muted);
       letter-spacing:0.01em;
     }
     .cta-body{
       font-weight:700;
-      font-size:var(--carousel-body-font-size);
+      font-size:var(--caf-carousel-body-size);
       line-height:var(--carousel-body-line-height);
       color:var(--muted);
       letter-spacing:0.01em;

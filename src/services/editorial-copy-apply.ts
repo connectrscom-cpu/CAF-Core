@@ -4,6 +4,12 @@
  * Matches common carousel shapes used by the review UI / roughSlidesJsonFromGenerationPayload.
  */
 
+import {
+  extractCarouselSlidesAndTypographyFromOverrideJson,
+  mergeCarouselTypographyDefaultsFromPlatformConstraints,
+  mergeCarouselTypographyIntoGeneratedOutputRender,
+} from "../domain/carousel-render-typography.js";
+
 function asRec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
@@ -84,9 +90,12 @@ function setCaptionLike(gen: Record<string, unknown>, caption: string): void {
 
 export function applyEditorialFlatOverridesToGeneratedOutput(
   generatedOutput: Record<string, unknown>,
-  overrides: Record<string, unknown>
+  overrides: Record<string, unknown>,
+  /** Merged `platform_constraints` slice (e.g. from `resolvePlatformConstraintsForPack`) for carousel typography defaults. */
+  platformConstraints?: unknown
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...generatedOutput };
+  mergeCarouselTypographyDefaultsFromPlatformConstraints(out, platformConstraints);
   const title = typeof overrides.final_title_override === "string" ? overrides.final_title_override.trim() : "";
   const hook = typeof overrides.final_hook_override === "string" ? overrides.final_hook_override.trim() : "";
   const caption = typeof overrides.final_caption_override === "string" ? overrides.final_caption_override.trim() : "";
@@ -113,10 +122,12 @@ export function applyEditorialFlatOverridesToGeneratedOutput(
     if (typeof out.spoken_script === "string" || out.spoken_script == null) out.spoken_script = spoken;
     if (typeof out.script === "string" || out.script == null) out.script = spoken;
   }
-  const slides = parseSlidesArray(slidesRaw);
+  const { slides: slidesFromObject, renderPatch } = extractCarouselSlidesAndTypographyFromOverrideJson(slidesRaw);
+  const slides = slidesFromObject ?? parseSlidesArray(slidesRaw);
   if (slides && slides.length > 0) {
     if (!setSlidesIfPresent(out, slides) && !out.slides) out.slides = slides;
   }
+  mergeCarouselTypographyIntoGeneratedOutputRender(out, renderPatch);
   return out;
 }
 
@@ -132,7 +143,15 @@ export function hasEditorialCopyFlatOverrides(overrides: Record<string, unknown>
   ] as const;
   for (const k of keys) {
     const v = overrides[k];
-    if (typeof v === "string" && v.trim() !== "") return true;
+    if (typeof v === "string" && v.trim() !== "") {
+      if (k === "final_slides_json_override") {
+        const { slides, renderPatch } = extractCarouselSlidesAndTypographyFromOverrideJson(v);
+        if (Object.keys(renderPatch).length > 0) return true;
+        if (slides && slides.length > 0) return true;
+        continue;
+      }
+      return true;
+    }
   }
   return false;
 }

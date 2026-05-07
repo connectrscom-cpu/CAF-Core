@@ -47,6 +47,8 @@ import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
 import { buildValidationOutputV1 } from "../domain/validation-output.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { applyEditorialFlatOverridesToGeneratedOutput, partitionEditorialOverrides } from "../services/editorial-copy-apply.js";
+import { listPlatformConstraints } from "../repositories/project-config.js";
+import { resolvePlatformConstraintsForPack } from "../services/llm-generator-helpers.js";
 import { buildImmediateNeedsEditGenerationGuidance } from "../services/immediate-needs-edit-guidance.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
@@ -257,7 +259,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       const gpNext: Record<string, unknown> = { ...(gp ?? {}) };
       const genOut = pickGeneratedOutputOrEmpty(gpNext);
       const { flat } = partitionEditorialOverrides(overridesMerged);
-      const merged = applyEditorialFlatOverridesToGeneratedOutput(genOut, flat);
+      let platformSlice: unknown = undefined;
+      if (isCarouselFlow(flowType)) {
+        const platformRows = await listPlatformConstraints(db, project.id);
+        platformSlice = resolvePlatformConstraintsForPack(platformRows, (jobRow?.platform ?? null) as string | null, flowType);
+      }
+      const merged = applyEditorialFlatOverridesToGeneratedOutput(genOut, flat, platformSlice);
       gpNext.generated_output = merged;
       gpNext.generation_reason = "REVIEW_COPY_ONLY_APPROVAL";
       await db.query(

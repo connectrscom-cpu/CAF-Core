@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
         final_slides_json_override:
           typeof body.final_slides_json_override === "string"
             ? body.final_slides_json_override
-            : String(body.final_slides_json_override),
+            : JSON.stringify(body.final_slides_json_override ?? {}),
       }),
       ...(body.final_spoken_script_override !== undefined && {
         final_spoken_script_override:

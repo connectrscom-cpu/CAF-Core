@@ -1,12 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { CarouselEdits, CarouselEditsExport } from "@/components/CarouselEdits";
-import { buildSlidesJson, createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
+import {
+  buildSlidesJson,
+  createSyntheticSlides,
+  mergeCarouselTypographyIntoPayload,
+  parseSlidesFromJson,
+  readCarouselTypographyFromFullJob,
+  type CarouselSlidesPayload,
+} from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
 import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
@@ -94,6 +101,19 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [imagePromptAnalysis, setImagePromptAnalysis] = useState("");
   const [skipImageRegeneration, setSkipImageRegeneration] = useState(false);
   const [fontScale, setFontScale] = useState("1");
+  const [carouselHeadlineFontPx, setCarouselHeadlineFontPx] = useState("");
+  const [carouselBodyFontPx, setCarouselBodyFontPx] = useState("");
+  const [carouselKickerFontPx, setCarouselKickerFontPx] = useState("");
+  const [carouselCtaFontPx, setCarouselCtaFontPx] = useState("");
+  const [carouselHandleFontPx, setCarouselHandleFontPx] = useState("");
+  const [carouselTypoBaseline, setCarouselTypoBaseline] = useState({
+    carousel_headline_font_px: "",
+    carousel_body_font_px: "",
+    carousel_kicker_font_px: "",
+    carousel_cta_font_px: "",
+    carousel_handle_font_px: "",
+  });
+  const carouselTypoSeededForTask = useRef<string | null>(null);
 
   useEffect(() => {
     setEditedSlides([]);
@@ -152,6 +172,35 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     const n = Number(raw);
     setFontScale(Number.isFinite(n) && n > 0 ? String(n) : "1");
   }, [rawPayload]);
+
+  useEffect(() => {
+    carouselTypoSeededForTask.current = null;
+    setCarouselHeadlineFontPx("");
+    setCarouselBodyFontPx("");
+    setCarouselKickerFontPx("");
+    setCarouselCtaFontPx("");
+    setCarouselHandleFontPx("");
+    setCarouselTypoBaseline({
+      carousel_headline_font_px: "",
+      carousel_body_font_px: "",
+      carousel_kicker_font_px: "",
+      carousel_cta_font_px: "",
+      carousel_handle_font_px: "",
+    });
+  }, [task_id]);
+
+  useEffect(() => {
+    const jobTask = typeof fullJob?.task_id === "string" ? fullJob.task_id.trim() : "";
+    if (!fullJob || jobTask !== task_id || carouselTypoSeededForTask.current === task_id) return;
+    const t = readCarouselTypographyFromFullJob(fullJob);
+    setCarouselTypoBaseline(t);
+    setCarouselHeadlineFontPx(t.carousel_headline_font_px);
+    setCarouselBodyFontPx(t.carousel_body_font_px);
+    setCarouselKickerFontPx(t.carousel_kicker_font_px);
+    setCarouselCtaFontPx(t.carousel_cta_font_px);
+    setCarouselHandleFontPx(t.carousel_handle_font_px);
+    carouselTypoSeededForTask.current = task_id;
+  }, [fullJob, task_id]);
 
   const fetchTask = useCallback(async () => {
     if (!task_id) return;
@@ -301,6 +350,17 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     }
     if (videoFlow && skipVideoRegeneration) summary.push("Keep existing video (captions-only rework)");
     if (imageFlow && skipImageRegeneration) summary.push("Keep existing image (captions-only rework)");
+    if (
+      !videoFlow &&
+      !imageFlow &&
+      (carouselHeadlineFontPx.trim() !== carouselTypoBaseline.carousel_headline_font_px.trim() ||
+        carouselBodyFontPx.trim() !== carouselTypoBaseline.carousel_body_font_px.trim() ||
+        carouselKickerFontPx.trim() !== carouselTypoBaseline.carousel_kicker_font_px.trim() ||
+        carouselCtaFontPx.trim() !== carouselTypoBaseline.carousel_cta_font_px.trim() ||
+        carouselHandleFontPx.trim() !== carouselTypoBaseline.carousel_handle_font_px.trim())
+    ) {
+      summary.push("Carousel typography");
+    }
     return { hasEdits: summary.length > 0, editsSummary: summary };
   }, [
     data,
@@ -319,6 +379,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     imageFlow,
     skipVideoRegeneration,
     skipImageRegeneration,
+    carouselHeadlineFontPx,
+    carouselBodyFontPx,
+    carouselKickerFontPx,
+    carouselCtaFontPx,
+    carouselHandleFontPx,
+    carouselTypoBaseline,
   ]);
 
   useEffect(() => {
@@ -361,6 +427,29 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     return typeof d === "string" ? d.trim() : "";
   }, [fullJob]);
 
+  const decorateCarouselSlidesPayload = useCallback(
+    (slidesPayload: CarouselSlidesPayload) => {
+      const fs = Number(fontScale);
+      if (Number.isFinite(fs) && fs > 0) slidesPayload.font_scale = fs;
+      else delete slidesPayload.font_scale;
+      mergeCarouselTypographyIntoPayload(slidesPayload, {
+        carousel_headline_font_px: carouselHeadlineFontPx,
+        carousel_body_font_px: carouselBodyFontPx,
+        carousel_kicker_font_px: carouselKickerFontPx,
+        carousel_cta_font_px: carouselCtaFontPx,
+        carousel_handle_font_px: carouselHandleFontPx,
+      });
+    },
+    [
+      fontScale,
+      carouselHeadlineFontPx,
+      carouselBodyFontPx,
+      carouselKickerFontPx,
+      carouselCtaFontPx,
+      carouselHandleFontPx,
+    ]
+  );
+
   const carouselLivePreview = useMemo(() => {
     if (videoFlow || imageFlow || !carouselTemplate || editedSlides.length === 0) return null;
     return {
@@ -371,8 +460,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       instagramHandle: instagramHandleForPreview,
       getPayload: () => {
         const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
-        const fs = Number(fontScale);
-        if (Number.isFinite(fs) && fs > 0) (slidesPayload as Record<string, unknown>).font_scale = fs;
+        decorateCarouselSlidesPayload(slidesPayload);
         return { ...slidesPayload, task_id: execTaskId, run_id: runId || undefined };
       },
     };
@@ -386,18 +474,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     instagramHandleForPreview,
     editedSlides,
     rawPayload,
+    decorateCarouselSlidesPayload,
   ]);
 
   const finalSlidesJsonOverride =
     !videoFlow && !imageFlow && editedSlides.length > 0 && rawPayload !== undefined
       ? (() => {
           const slidesPayload = buildSlidesJson(editedSlides, rawPayload);
-          const fs = Number(fontScale);
-          if (Number.isFinite(fs) && fs > 0) {
-            (slidesPayload as Record<string, unknown>).font_scale = fs;
-          } else {
-            delete (slidesPayload as Record<string, unknown>).font_scale;
-          }
+          decorateCarouselSlidesPayload(slidesPayload);
           return JSON.stringify(slidesPayload);
         })()
       : undefined;
@@ -540,6 +624,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 rawPayload={rawPayload ?? null}
                 fontScale={fontScale}
                 onFontScaleChange={setFontScale}
+                carouselHeadlineFontPx={carouselHeadlineFontPx}
+                onCarouselHeadlineFontPxChange={setCarouselHeadlineFontPx}
+                carouselBodyFontPx={carouselBodyFontPx}
+                onCarouselBodyFontPxChange={setCarouselBodyFontPx}
+                carouselKickerFontPx={carouselKickerFontPx}
+                onCarouselKickerFontPxChange={setCarouselKickerFontPx}
+                carouselCtaFontPx={carouselCtaFontPx}
+                onCarouselCtaFontPxChange={setCarouselCtaFontPx}
+                carouselHandleFontPx={carouselHandleFontPx}
+                onCarouselHandleFontPxChange={setCarouselHandleFontPx}
                 finalTitleOverride={editedTitle}
                 onFinalTitleOverrideChange={setEditedTitle}
                 finalHookOverride={editedHook}

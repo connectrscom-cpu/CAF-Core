@@ -8,7 +8,75 @@ export interface NormalizedSlide {
   extras?: Record<string, string>;
 }
 
+/** Pixel overrides merged into `generated_output.render` for carousel rework + PNG render. */
+export const CAROUSEL_TYPOGRAPHY_PAYLOAD_KEYS = [
+  "carousel_headline_font_px",
+  "carousel_body_font_px",
+  "carousel_kicker_font_px",
+  "carousel_cta_font_px",
+  "carousel_handle_font_px",
+] as const;
+
+export type CarouselTypographyPayloadKey = (typeof CAROUSEL_TYPOGRAPHY_PAYLOAD_KEYS)[number];
+
+/** Append reviewer typography to the slide JSON blob (alongside `slides` / deck shape). */
+export function mergeCarouselTypographyIntoPayload(
+  payload: CarouselSlidesPayload,
+  fields: Partial<Record<CarouselTypographyPayloadKey, string>>
+): void {
+  for (const k of CAROUSEL_TYPOGRAPHY_PAYLOAD_KEYS) {
+    const raw = fields[k]?.trim() ?? "";
+    if (!raw) {
+      delete (payload as Record<string, unknown>)[k];
+      continue;
+    }
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) (payload as Record<string, unknown>)[k] = Math.round(n);
+    else delete (payload as Record<string, unknown>)[k];
+  }
+}
+
+/** Read reviewer / persisted typography from Core job `generation_payload.generated_output.render`. */
+export function readCarouselTypographyFromFullJob(fullJob: Record<string, unknown> | null | undefined): Record<
+  CarouselTypographyPayloadKey,
+  string
+> {
+  const empty = (): Record<CarouselTypographyPayloadKey, string> => ({
+    carousel_headline_font_px: "",
+    carousel_body_font_px: "",
+    carousel_kicker_font_px: "",
+    carousel_cta_font_px: "",
+    carousel_handle_font_px: "",
+  });
+  if (!fullJob) return empty();
+  const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
+  const gen = (gp?.generated_output as Record<string, unknown>) ?? {};
+  const render = (gen.render as Record<string, unknown>) ?? {};
+  const pick = (k: CarouselTypographyPayloadKey): string => {
+    const v = render[k];
+    if (typeof v === "number" && Number.isFinite(v) && v > 0) return String(Math.round(v));
+    if (typeof v === "string" && v.trim()) {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? String(Math.round(n)) : "";
+    }
+    return "";
+  };
+  return {
+    carousel_headline_font_px: pick("carousel_headline_font_px"),
+    carousel_body_font_px: pick("carousel_body_font_px"),
+    carousel_kicker_font_px: pick("carousel_kicker_font_px"),
+    carousel_cta_font_px: pick("carousel_cta_font_px"),
+    carousel_handle_font_px: pick("carousel_handle_font_px"),
+  };
+}
+
 export interface CarouselSlidesPayload {
+  carousel_headline_font_px?: number;
+  carousel_body_font_px?: number;
+  carousel_kicker_font_px?: number;
+  carousel_cta_font_px?: number;
+  carousel_handle_font_px?: number;
+  font_scale?: number;
   cover_slide?: {
     headline?: string;
     title?: string;

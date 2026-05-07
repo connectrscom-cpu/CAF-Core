@@ -613,7 +613,7 @@ describe("renderer templates guardrails", () => {
 
   it("carousel_sns_bold_text increases body font size and keeps CTA single", () => {
     const src = readTemplateSource("carousel_sns_bold_text");
-    expect(src).toContain("font-size:56px");
+    expect(src).toContain("--caf-carousel-body-size: 56px");
     expect(src).toContain("Follow us for more.");
     expect(src).toContain("cta--single");
     const ctaKicker = src.indexOf("Final / CTA");

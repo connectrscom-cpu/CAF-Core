@@ -15,6 +15,11 @@
       --muted:#b7b7c2;
       --accent:#9b5cff;
       --border: rgba(255,255,255,0.10);
+      --caf-carousel-headline-size: 88px;
+      --caf-carousel-body-size: 44px;
+      --caf-carousel-kicker-size: 18px;
+      --caf-carousel-cta-size: 84px;
+      --caf-carousel-handle-size: 40px;
     }
     *{box-sizing:border-box;margin:0;padding:0;}
     body{font-family:Inter,system-ui,Arial,sans-serif;background:linear-gradient(180deg,var(--bg1),var(--bg2));color:var(--text);}
@@ -34,21 +39,21 @@
       display:flex;flex-direction:column;justify-content:space-between;
     }
     .kicker{
-      font-size:18px;
+      font-size:var(--caf-carousel-kicker-size, 18px);
       letter-spacing:0.18em;
       text-transform:uppercase;
       color:var(--muted);
     }
     .title{
       margin-top: 26px;
-      font-size:88px;
+      font-size:var(--caf-carousel-headline-size, 88px);
       line-height:0.98;
       letter-spacing:-0.04em;
       font-weight:800;
       max-width: 920px;
     }
     .body{
-      font-size:44px;
+      font-size:var(--caf-carousel-body-size, 44px);
       line-height:1.32;
       color:var(--muted);
       max-width: 920px;
@@ -79,7 +84,7 @@
       position:absolute;
       padding:14px 18px;
       border-radius:999px;
-      font-size:18px;
+      font-size:var(--caf-carousel-kicker-size, 18px);
       letter-spacing:0.16em;
       text-transform:uppercase;
       background: rgba(255,255,255,0.06);
@@ -89,7 +94,7 @@
     .accent{ color: var(--accent); }
     .cta{
       font-weight:800;
-      font-size:84px;
+      font-size:var(--caf-carousel-cta-size, 84px);
       line-height:0.98;
       letter-spacing:-0.04em;
       max-width: 920px;
@@ -97,7 +102,7 @@
     .handle{
       margin-top:18px;
       font-weight:700;
-      font-size:40px;
+      font-size:var(--caf-carousel-handle-size, 40px);
       letter-spacing:0.06em;
       color:rgba(245,245,247,0.9);
     }
@@ -113,7 +118,7 @@
       <div class="label" style="bottom:84px;left:50%;transform:translateX(-50%);">{{#if cover_slide.label_bottom}}{{cover_slide.label_bottom}}{{else}}Rising{{/if}}</div>
       <div>
         <div class="kicker">{{#if cover_slide.kicker}}{{cover_slide.kicker}}{{else}}Slide 01 / Identity{{/if}}</div>
-        <div class="title" style="font-size:78px;line-height:1.02;margin-top:22px;max-width:900px;">
+        <div class="title" style="line-height:1.02;margin-top:22px;max-width:900px;">
           {{#if cover}}{{cover}}{{else}}{{#if cover_slide}}{{cover_slide.headline}}{{else}}{{intro_title}}{{/if}}{{/if}}
         </div>
         <div class="body" style="margin-top:18px;max-width:820px;">

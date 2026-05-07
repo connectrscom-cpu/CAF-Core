@@ -49,6 +49,10 @@ import {
   resolveCarouselBodyCharTargets,
 } from "./carousel-body-length.js";
 import {
+  mergeCarouselTypographyDefaultsFromPlatformConstraints,
+  mergeCarouselTypographyFromHumanFeedback,
+} from "../domain/carousel-render-typography.js";
+import {
   PUBLICATION_SYSTEM_ADDENDUM,
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
@@ -766,6 +770,10 @@ export async function generateForJob(
 
     if (parsed) {
       const storedOutput = wantSceneBundle ? outputForJob : parsed;
+      if (isCarouselFlow(job.flow_type)) {
+        mergeCarouselTypographyDefaultsFromPlatformConstraints(storedOutput, creationPack.platform_constraints);
+        mergeCarouselTypographyFromHumanFeedback(storedOutput, payload);
+      }
       parsedOutputForResponse = storedOutput;
       const merge: Record<string, unknown> = {
         generated_output: storedOutput,

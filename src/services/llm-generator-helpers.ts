@@ -150,7 +150,7 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
  * TikTok/Reddit/etc. often have no `platform_constraints` row; carousel prompts still ask for slide_min_chars.
  * Reuse Instagram (or first row with slide limits) so LENGTH RULES are not vacuous.
  */
-function resolvePlatformConstraintsForPack(
+export function resolvePlatformConstraintsForPack(
   platforms: PlatformConstraintsRow[],
   jobPlatform: string | null,
   flowType: string | null | undefined
@@ -163,6 +163,34 @@ function resolvePlatformConstraintsForPack(
     return matched ? { ...matched } : {};
   }
 
+  const carouselTypoDonor =
+    platforms.find((p) => String(p.platform ?? "").toLowerCase() === "instagram") ??
+    platforms.find(
+      (p) =>
+        p.carousel_headline_font_px != null ||
+        p.carousel_body_font_px != null ||
+        p.carousel_kicker_font_px != null ||
+        p.carousel_cta_font_px != null ||
+        p.carousel_handle_font_px != null ||
+        (p.carousel_font_scale != null && String(p.carousel_font_scale).trim() !== "")
+    );
+
+  const augmentCarouselTypography = (
+    base: Record<string, unknown>,
+    m: PlatformConstraintsRow | undefined
+  ): Record<string, unknown> => {
+    if (!m || !carouselTypoDonor || carouselTypoDonor === m) return base;
+    return {
+      ...base,
+      carousel_headline_font_px: m.carousel_headline_font_px ?? carouselTypoDonor.carousel_headline_font_px,
+      carousel_body_font_px: m.carousel_body_font_px ?? carouselTypoDonor.carousel_body_font_px,
+      carousel_kicker_font_px: m.carousel_kicker_font_px ?? carouselTypoDonor.carousel_kicker_font_px,
+      carousel_cta_font_px: m.carousel_cta_font_px ?? carouselTypoDonor.carousel_cta_font_px,
+      carousel_handle_font_px: m.carousel_handle_font_px ?? carouselTypoDonor.carousel_handle_font_px,
+      carousel_font_scale: m.carousel_font_scale ?? carouselTypoDonor.carousel_font_scale,
+    };
+  };
+
   const slideLensMissing = (r: PlatformConstraintsRow | undefined) =>
     !r ||
     (r.slide_min_chars == null &&
@@ -171,7 +199,7 @@ function resolvePlatformConstraintsForPack(
       r.slide_max == null);
 
   if (!slideLensMissing(matched)) {
-    return { ...matched };
+    return augmentCarouselTypography({ ...matched }, matched);
   }
 
   const donor =
@@ -179,7 +207,7 @@ function resolvePlatformConstraintsForPack(
     platforms.find((p) => p.slide_min_chars != null || p.slide_max_chars != null);
 
   if (!donor) {
-    return matched ? { ...matched } : {};
+    return matched ? augmentCarouselTypography({ ...matched }, matched) : {};
   }
 
   const out: Record<string, unknown> = {
@@ -200,9 +228,21 @@ function resolvePlatformConstraintsForPack(
     emoji_allowed: matched?.emoji_allowed ?? donor.emoji_allowed,
     link_allowed: matched?.link_allowed ?? donor.link_allowed,
     tag_allowed: matched?.tag_allowed ?? donor.tag_allowed,
+    carousel_headline_font_px:
+      matched?.carousel_headline_font_px ?? donor.carousel_headline_font_px ?? carouselTypoDonor?.carousel_headline_font_px,
+    carousel_body_font_px:
+      matched?.carousel_body_font_px ?? donor.carousel_body_font_px ?? carouselTypoDonor?.carousel_body_font_px,
+    carousel_kicker_font_px:
+      matched?.carousel_kicker_font_px ?? donor.carousel_kicker_font_px ?? carouselTypoDonor?.carousel_kicker_font_px,
+    carousel_cta_font_px:
+      matched?.carousel_cta_font_px ?? donor.carousel_cta_font_px ?? carouselTypoDonor?.carousel_cta_font_px,
+    carousel_handle_font_px:
+      matched?.carousel_handle_font_px ?? donor.carousel_handle_font_px ?? carouselTypoDonor?.carousel_handle_font_px,
+    carousel_font_scale:
+      matched?.carousel_font_scale ?? donor.carousel_font_scale ?? carouselTypoDonor?.carousel_font_scale,
   };
 
-  return out;
+  return augmentCarouselTypography(out, matched);
 }
 
 /**

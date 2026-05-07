@@ -123,6 +123,29 @@ function pTimeout(promise, ms, label) {
   });
 }
 
+/** Reviewer-tunable sizes from CAF Core `generated_output.render` → CSS variables for templates. */
+const CAROUSEL_TYPO_CONTEXT_TO_CSS = {
+  carousel_headline_font_px: "--caf-carousel-headline-size",
+  carousel_body_font_px: "--caf-carousel-body-size",
+  carousel_kicker_font_px: "--caf-carousel-kicker-size",
+  carousel_cta_font_px: "--caf-carousel-cta-size",
+  carousel_handle_font_px: "--caf-carousel-handle-size",
+};
+
+function cafCarouselTypographyStyleTag(context) {
+  const ctx = context && typeof context === "object" && !Array.isArray(context) ? context : {};
+  const inner = ctx.render && typeof ctx.render === "object" && !Array.isArray(ctx.render) ? ctx.render : {};
+  const parts = [];
+  for (const [key, cssVar] of Object.entries(CAROUSEL_TYPO_CONTEXT_TO_CSS)) {
+    const raw = ctx[key] ?? inner[key];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0 || n > 512) continue;
+    parts.push(`${cssVar}:${Math.round(n)}px`);
+  }
+  if (parts.length === 0) return "";
+  return `<style id="caf-carousel-typography">:root{${parts.join(";")}}</style>`;
+}
+
 async function hardenPageForFastRendering(page) {
   // Many templates are fully self-contained; when they are not, external resources can cause long hangs.
   // Block http(s) requests to keep render time bounded and reduce Chromium flakiness.
@@ -159,7 +182,8 @@ async function renderSlide(b, slideIndex) {
       const fontScale =
         Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
       const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
-      const html = zoomStyle + compiled(context);
+      const typoStyle = cafCarouselTypographyStyleTag(context);
+      const html = zoomStyle + typoStyle + compiled(context);
 
       page = await browser.newPage();
       await hardenPageForFastRendering(page);
@@ -343,7 +367,8 @@ app.post("/render-carousel", async (req, res) => {
     const fontScale =
       Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
     const zoomStyle = `<style>:root{--font_scale:${fontScale};} body{zoom:var(--font_scale);}</style>`;
-    const html = zoomStyle + compiled(context);
+    const typoStyle = cafCarouselTypographyStyleTag(context);
+    const html = zoomStyle + typoStyle + compiled(context);
     const page = await browser.newPage();
     await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 2 });
     await page.setContent(html, { waitUntil: "networkidle0", timeout: RENDER_TIMEOUT_MS });
