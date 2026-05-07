@@ -26,6 +26,7 @@ describe("resolveCarouselBodyCharTargets", () => {
     const b = resolveCarouselBodyCharTargets({}, 1);
     expect(b.effective_min_chars).toBeGreaterThan(0);
     expect(b.effective_max_chars).toBeGreaterThan(b.effective_min_chars);
+    expect(b.effective_min_chars).toBeGreaterThanOrEqual(200);
   });
 });
 

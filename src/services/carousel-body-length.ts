@@ -3,8 +3,9 @@
  * with optional multipliers for editorial rework (e.g. 2× depth or tighter short-form).
  */
 
-export const DEFAULT_CAROUSEL_SLIDE_BODY_MIN_CHARS = 160;
-export const DEFAULT_CAROUSEL_SLIDE_BODY_MAX_CHARS = 520;
+/** When `platform_constraints.slide_*_chars` are unset — ~1.5× prior defaults (editorial depth bar). */
+export const DEFAULT_CAROUSEL_SLIDE_BODY_MIN_CHARS = 240;
+export const DEFAULT_CAROUSEL_SLIDE_BODY_MAX_CHARS = 780;
 
 export type CarouselBodyCharTargets = {
   /** Multiplier applied to base min/max (1 = use platform row as-is). */
@@ -106,7 +107,7 @@ export function buildCarouselBodyLengthSystemBlock(targets: CarouselBodyCharTarg
     `- **Cover subtitle length:** cover \`body\` / \`cover_subtitle\` must be **1–2 sentences**, not a paragraph. Rewrite shorter if needed; do not truncate mid-thought.`,
     `- **Slide deck size:** obey \`platform_constraints.slide_min\` / \`slide_max\` when set (merged into your creation_pack as \`platform_constraints\`).`,
     `- **Horoscope / sign lists:** pick a **deliberate structure** (e.g. full wheel order, one sign per slide, or a stated subset); do not randomize signs unless the brief asks for variety.`,
-    `- **Campaign fit:** do **not** frame content as an app/product launch unless the candidate or signal_pack explicitly describes that campaign.`,
+    `- **Campaign fit:** do **not** frame content as an app/product launch unless the candidate or signal_pack explicitly describes that campaign. Non-product editorial runs must not invent “download the app”, “sign up”, or similar unless real.`,
     `- **Single visible @handle on the CTA slide:** put the project @handle in **one** place only—either the dedicated handle field **or** the final CTA body line—not duplicated.`,
   ];
   return lines.join("\n");
