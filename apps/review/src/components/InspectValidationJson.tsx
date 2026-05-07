@@ -42,6 +42,7 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
 
   const {
     latestValidation,
+    latestReviewedContent,
     history,
     reviewSnapshot,
     draftPackage,
@@ -63,6 +64,11 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
       (fromJob && typeof fromJob === "object" ? fromJob : null) ??
       (firstReviewOut && typeof firstReviewOut === "object" ? firstReviewOut : null) ??
       (snapVo && typeof snapVo === "object" ? snapVo : null);
+
+    const latestReviewedContent =
+      latest && typeof latest === "object" && !Array.isArray(latest)
+        ? ((latest as Record<string, unknown>).reviewed_content ?? null)
+        : null;
 
     const historyRows = reviewRecs.map((r) => ({
       id: String(r.id ?? ""),
@@ -120,6 +126,7 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
 
     return {
       latestValidation: latest,
+      latestReviewedContent,
       history: historyRows,
       reviewSnapshot: reviewSnap,
       draftPackage: draft,
@@ -165,6 +172,37 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
         otherwise full carousel copy is under <span className="font-mono">generation_payload</span> (see section below).
       </p>
 
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", margin: "0 0 12px" }}>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ fontSize: 12 }}
+          disabled={!latestValidation}
+          onClick={() => latestValidation && copyJsonSnippet("Validation output copied", latestValidation)}
+        >
+          Copy latest validation output
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ fontSize: 12 }}
+          disabled={latestReviewedContent == null}
+          onClick={() => latestReviewedContent != null && copyJsonSnippet("reviewed_content copied", latestReviewedContent)}
+        >
+          Copy reviewed_content
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          style={{ fontSize: 12 }}
+          disabled={draftPackage == null}
+          onClick={() => draftPackage != null && copyJsonSnippet("Draft package copied", draftPackage)}
+        >
+          Copy draft_package_snapshot
+        </button>
+        {copyHint ? <span style={{ fontSize: 11, color: "var(--muted)" }}>{copyHint}</span> : null}
+      </div>
+
       <details open style={{ marginTop: 10 }}>
         <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13, fontWeight: 600 }}>
           Carousel render package (quick facts)
@@ -208,16 +246,14 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
             >
               Copy carousel / copy source JSON
             </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ fontSize: 12 }}
-              disabled={draftPackage == null}
-              onClick={() => draftPackage != null && copyJsonSnippet("Draft package copied", draftPackage)}
-            >
-              Copy draft_package_snapshot
-            </button>
-            {copyHint ? <span style={{ fontSize: 11, color: "var(--muted)" }}>{copyHint}</span> : null}
+            <span style={{ fontSize: 11, color: "var(--muted)" }}>
+              draft package:{" "}
+              {draftPackage != null ? (
+                <strong style={{ color: "var(--fg-secondary)" }}>present</strong>
+              ) : (
+                <span style={{ color: "var(--muted)" }}>missing (generator did not persist)</span>
+              )}
+            </span>
           </div>
         </div>
       </details>
@@ -228,6 +264,18 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
         </summary>
         <pre className="slides-json" style={{ marginTop: 8, maxHeight: expanded ? 520 : 260 }}>
           {pretty(latestValidation)}
+        </pre>
+      </details>
+
+      <details style={{ marginTop: 10 }}>
+        <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13 }}>
+          reviewed_content (from latest validation output)
+        </summary>
+        <p style={{ margin: "8px 0 6px", fontSize: 11, color: "var(--muted)", lineHeight: 1.45 }}>
+          This is the compact snapshot stored at submit time (may omit fields not resolvable then).
+        </p>
+        <pre className="slides-json" style={{ marginTop: 4, maxHeight: expanded ? 520 : 260 }}>
+          {pretty(latestReviewedContent)}
         </pre>
       </details>
 
@@ -257,6 +305,12 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
         <summary style={{ cursor: "pointer", color: "var(--fg-secondary)", fontSize: 13 }}>
           Draft package snapshot (generation_payload.draft_package_snapshot)
         </summary>
+        {draftPackage == null ? (
+          <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--muted)", lineHeight: 1.45 }}>
+            Not present on this job. The generator only writes this when it persists a draft package; otherwise inspect the
+            carousel copy under <span className="font-mono">generation_payload</span> (section above).
+          </p>
+        ) : null}
         <pre className="slides-json" style={{ marginTop: 8, maxHeight: expanded ? 520 : 260 }}>
           {pretty(draftPackage)}
         </pre>
