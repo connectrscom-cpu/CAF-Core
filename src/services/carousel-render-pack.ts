@@ -1106,7 +1106,12 @@ export function buildSlideRenderContext(
       : null;
   const cta = resolveCarouselCtaFields(base, templateShape, slides, ctaOptions);
   const projectDisplayName = String(ctaOptions?.projectDisplayName ?? "").trim();
-  const rawFontScale = (base as Record<string, unknown>)?.font_scale ?? (base as Record<string, unknown>)?.render?.font_scale;
+  const baseRec = base as Record<string, unknown>;
+  const renderRec =
+    baseRec.render && typeof baseRec.render === "object" && !Array.isArray(baseRec.render)
+      ? (baseRec.render as Record<string, unknown>)
+      : null;
+  const rawFontScale = baseRec.font_scale ?? renderRec?.font_scale;
   const fontScaleNum = Number(rawFontScale);
   const font_scale =
     Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
