@@ -72,6 +72,9 @@ export async function POST(request: NextRequest) {
         skip_image_regeneration: body.skip_image_regeneration,
       }),
       ...(typeof body.regenerate === "boolean" && { regenerate: body.regenerate }),
+      ...(typeof body.carousel_rework_change_template === "boolean" && {
+        carousel_rework_change_template: body.carousel_rework_change_template,
+      }),
     });
     if (!result.ok) {
       const st =

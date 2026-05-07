@@ -96,6 +96,11 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
      * (e.g. `2`, `"2x"`, `0.5`, `"half"`). Stored in `overrides_json` and merged into generation payload for the next LLM pass.
      */
     carousel_body_char_scale: z.union([z.number(), z.string()]).optional(),
+    /**
+     * Carousel rework: when true, next full pass may pick a different `.hbs`; when false, keep current template.
+     * Review UI sends explicitly so legacy issue tags do not imply a template swap by default.
+     */
+    carousel_rework_change_template: z.boolean().optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -118,6 +123,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("skip_image_regeneration", "skip_image_regeneration");
     put("regenerate", "regenerate");
     put("carousel_body_char_scale", "carousel_body_char_scale");
+    put("carousel_rework_change_template", "carousel_rework_change_template");
     return out;
   }
 

@@ -70,6 +70,15 @@ export async function jsonTaskDetailResponse(
     const rejectionTagsStr = Array.isArray(tags)
       ? tags.map((t) => String(t).trim()).filter(Boolean).join(", ")
       : "";
+    let carouselReworkChangeTemplateStr: string | undefined;
+    if (latestOv.carousel_rework_change_template === true) carouselReworkChangeTemplateStr = "true";
+    else if (latestOv.carousel_rework_change_template === false) carouselReworkChangeTemplateStr = "false";
+    else if (
+      Array.isArray(tags) &&
+      tags.some((t) => String(t).toLowerCase().trim() === "carousel_template_change")
+    ) {
+      carouselReworkChangeTemplateStr = "true";
+    }
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -102,6 +111,7 @@ export async function jsonTaskDetailResponse(
       rewrite_copy: latestOv.rewrite_copy === false ? "false" : "true",
       regenerate:
         typeof latestOv.regenerate === "boolean" ? (latestOv.regenerate ? "true" : "false") : undefined,
+      carousel_rework_change_template: carouselReworkChangeTemplateStr,
       overrides_from_last_review:
         overrideKeysTouched.length > 0
           ? overrideKeysTouched.map((k) => k.replace(/^final_/, "").replace(/_override$/, "")).join(", ")

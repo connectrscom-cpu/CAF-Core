@@ -681,6 +681,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
               skipImageRegeneration={imageFlow ? skipImageRegeneration : undefined}
+              showCarouselTemplateControl={!videoFlow && !imageFlow}
+              existingCarouselReworkChangeTemplate={
+                data.carousel_rework_change_template === "true"
+                  ? true
+                  : data.carousel_rework_change_template === "false"
+                    ? false
+                    : undefined
+              }
             />
             {!videoFlow && !imageFlow && (
               <CarouselEditsExport

@@ -493,6 +493,20 @@ describe("reviewRequestsCarouselTemplateChange / stripExplicitCarouselTemplateSe
       true
     );
     expect(reviewRequestsCarouselTemplateChange({ rejection_tags: ["typo"], notes: "" })).toBe(false);
+    expect(
+      reviewRequestsCarouselTemplateChange({
+        rejection_tags: ["carousel_template_change"],
+        notes: null,
+        overrides_json: { carousel_rework_change_template: false },
+      })
+    ).toBe(false);
+    expect(
+      reviewRequestsCarouselTemplateChange({
+        rejection_tags: [],
+        notes: "",
+        overrides_json: { carousel_rework_change_template: true },
+      })
+    ).toBe(true);
   });
 
   it("strips explicit template keys from payload", () => {

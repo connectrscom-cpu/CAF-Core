@@ -63,6 +63,10 @@ export interface DecisionPanelProps {
    * “regenerate assets” on (explicit reviewer choice still wins on submit).
    */
   existingRegenerate?: boolean;
+  /** Carousel flows only: show layout template control for Needs Edit. */
+  showCarouselTemplateControl?: boolean;
+  /** From last NEEDS_EDIT: true = “different template”; false/undefined = keep current (default). */
+  existingCarouselReworkChangeTemplate?: boolean;
 }
 
 export function DecisionPanel({
@@ -89,12 +93,17 @@ export function DecisionPanel({
   skipVideoRegeneration,
   skipImageRegeneration,
   existingRegenerate,
+  showCarouselTemplateControl = false,
+  existingCarouselReworkChangeTemplate,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
   const [tags, setTags] = useState<string[]>([]);
   const [validator, setValidator] = useState("");
   const [rewriteCopy, setRewriteCopy] = useState(existingRewriteCopy !== false);
+  const [carouselReworkChangeTemplate, setCarouselReworkChangeTemplate] = useState(
+    () => existingCarouselReworkChangeTemplate === true
+  );
   const [regenerateAssets, setRegenerateAssets] = useState(
     () => existingRegenerate !== undefined ? existingRegenerate : true
   );
@@ -110,6 +119,10 @@ export function DecisionPanel({
     setRegenerateAssets(existingRegenerate !== undefined ? existingRegenerate : true);
   }, [existingRegenerate, taskId]);
 
+  useEffect(() => {
+    setCarouselReworkChangeTemplate(existingCarouselReworkChangeTemplate === true);
+  }, [existingCarouselReworkChangeTemplate, taskId]);
+
   const submit = useCallback(async () => {
     if (!decision || !["APPROVED", "NEEDS_EDIT", "REJECTED"].includes(decision)) {
       setError("Select a decision: Approve, Needs Edit, or Reject");
@@ -123,6 +136,13 @@ export function DecisionPanel({
     const combinedNotes = trimmedAddendum
       ? `${notes.trim() ? `${notes.trim()}\n\n` : ""}--- ${notesAddendumLabel} ---\n${trimmedAddendum}`
       : notes.trim();
+    let rejectionTagsSubmit = tags;
+    if (showCarouselTemplateControl && effectiveDecision === "NEEDS_EDIT" && !carouselReworkChangeTemplate) {
+      rejectionTagsSubmit = tags.filter((t) => {
+        const s = String(t).toLowerCase().trim();
+        return s !== "carousel_template_change" && s !== "change_template";
+      });
+    }
     try {
       const res = await fetch("/api/task/decision", {
         method: "POST",
@@ -132,7 +152,7 @@ export function DecisionPanel({
           decision: effectiveDecision,
           ...(projectSlug ? { project_slug: projectSlug } : {}),
           notes: combinedNotes || undefined,
-          rejection_tags: tags,
+          rejection_tags: rejectionTagsSubmit,
           validator: validator.trim() || undefined,
           ...(finalTitleOverride !== undefined && { final_title_override: finalTitleOverride }),
           ...(finalHookOverride !== undefined && { final_hook_override: finalHookOverride }),
@@ -157,6 +177,9 @@ export function DecisionPanel({
             ? { skip_image_regeneration: true }
             : {}),
           regenerate: regenerateAssets,
+          ...(showCarouselTemplateControl && effectiveDecision === "NEEDS_EDIT"
+            ? { carousel_rework_change_template: carouselReworkChangeTemplate }
+            : {}),
         }),
       });
       if (!res.ok) {
@@ -195,6 +218,8 @@ export function DecisionPanel({
     skipVideoRegeneration,
     skipImageRegeneration,
     regenerateAssets,
+    showCarouselTemplateControl,
+    carouselReworkChangeTemplate,
   ]);
 
   const toggleTag = (tag: string) => {
@@ -325,6 +350,51 @@ export function DecisionPanel({
           </div>
         </div>
       </div>
+
+      {showCarouselTemplateControl && (decision === "NEEDS_EDIT" || hasEdits) && (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: 12,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            border: "1px solid var(--border-subtle)",
+          }}
+        >
+          <div className="filter-label" style={{ marginBottom: 8 }}>
+            Carousel layout template (next rework)
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13, marginBottom: 8 }}>
+            <input
+              type="radio"
+              name="carousel-rework-template"
+              checked={!carouselReworkChangeTemplate}
+              onChange={() => setCarouselReworkChangeTemplate(false)}
+            />
+            <span>
+              <strong>Keep current template</strong> — same `.hbs` layout (default)
+            </span>
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="radio"
+              name="carousel-rework-template"
+              checked={carouselReworkChangeTemplate}
+              onChange={() => setCarouselReworkChangeTemplate(true)}
+            />
+            <span>
+              <strong>Use a different template</strong> — next full generation may pick another carousel layout
+            </span>
+          </label>
+          <p style={{ fontSize: 12, color: "var(--muted)", margin: "10px 0 0" }}>
+            Only affects full carousel regen. Copy-only / override-only rework is unchanged. Issue tag{" "}
+            <span className="font-mono" style={{ fontSize: 11 }}>
+              carousel_template_change
+            </span>{" "}
+            is ignored when “Keep current” is selected.
+          </p>
+        </div>
+      )}
 
       {(decision === "NEEDS_EDIT" || hasEdits) && (
         <div style={{ marginBottom: 14 }}>

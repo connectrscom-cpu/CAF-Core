@@ -536,6 +536,8 @@ export async function submitDecision(
     regenerate?: boolean;
     /** Multiply carousel body char targets from platform constraints (e.g. `2`, `"2x"`, `0.5`). */
     carousel_body_char_scale?: number | string;
+    /** Carousel NEEDS_EDIT: true = allow different `.hbs` on rework; false = keep current (default in UI). */
+    carousel_rework_change_template?: boolean;
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -574,6 +576,9 @@ export async function submitDecision(
         ...(body.regenerate !== undefined && { regenerate: body.regenerate }),
         ...(body.carousel_body_char_scale !== undefined && {
           carousel_body_char_scale: body.carousel_body_char_scale,
+        }),
+        ...(typeof body.carousel_rework_change_template === "boolean" && {
+          carousel_rework_change_template: body.carousel_rework_change_template,
         }),
       }),
     });

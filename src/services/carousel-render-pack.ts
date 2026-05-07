@@ -1299,12 +1299,19 @@ function normalizeTemplateAllowlistBases(allowlist: string[] | undefined): strin
 
 /**
  * Reviewer asked for a different carousel layout on the next full generation/render pass.
- * Tag `carousel_template_change` / `change_template`, or notes containing “change template”.
+ * Prefer explicit `overrides_json.carousel_rework_change_template` from Review (default: keep).
+ * Legacy: tag `carousel_template_change` / `change_template`, or notes containing “change template”.
  */
 export function reviewRequestsCarouselTemplateChange(review: {
   rejection_tags?: unknown;
   notes?: string | null;
+  overrides_json?: Record<string, unknown> | null;
 }): boolean {
+  const ov = review.overrides_json;
+  if (ov && typeof ov === "object") {
+    if (ov.carousel_rework_change_template === false) return false;
+    if (ov.carousel_rework_change_template === true) return true;
+  }
   const tags = Array.isArray(review.rejection_tags)
     ? (review.rejection_tags as unknown[]).map((t) => String(t).toLowerCase().trim())
     : [];
