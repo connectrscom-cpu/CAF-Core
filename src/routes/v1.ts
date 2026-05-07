@@ -249,6 +249,28 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
           out.push({ ...a, public_url: signed.signedUrl });
           continue;
         }
+        // Fallback: return a deterministic public URL so UIs have *something* to try even if signed
+        // URL creation fails (misconfig, transient storage errors, or older rows with odd keys).
+        // If the bucket is private, the URL may still 401/400 in the browser — but it helps debug
+        // and supports deployments where the bucket is actually public.
+        const base = (config.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+        if (base) {
+          const objectPath = key.replace(/^\/+/, "");
+          const publicGuess = `${base}/storage/v1/object/public/${encodeURIComponent(b)}/${objectPath
+            .split("/")
+            .map((seg) => encodeURIComponent(seg))
+            .join("/")}`;
+          app.log.warn(
+            { err: signed.error, bucket: b, object_path: key },
+            "createSignedUrlForObjectKey failed; returning guessed public_url"
+          );
+          out.push({ ...a, public_url: publicGuess });
+          continue;
+        }
+        app.log.warn(
+          { err: signed.error, bucket: b, object_path: key },
+          "createSignedUrlForObjectKey failed; returning unsiged asset row"
+        );
       }
       out.push(a);
     }
