@@ -42,8 +42,12 @@
       word-break:break-word;
     }
     .cover .headline{
-      font-size:76px;
-      line-height:1.08;
+      font-size: clamp(58px, 6.2vw, 76px);
+      line-height:1.06;
+      display:-webkit-box;
+      -webkit-line-clamp:3;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
     }
     .sub,
     .body{
@@ -55,6 +59,13 @@
       white-space:pre-wrap;
       overflow-wrap:anywhere;
       word-break:break-word;
+    }
+    .cover .sub{
+      font-size: clamp(32px, 3.6vw, 40px);
+      display:-webkit-box;
+      -webkit-line-clamp:4;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
     }
     .body-slide .headline{
       font-size:64px;
