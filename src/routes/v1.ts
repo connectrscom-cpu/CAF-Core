@@ -47,7 +47,6 @@ import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
 import { buildValidationOutputV1 } from "../domain/validation-output.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { applyEditorialFlatOverridesToGeneratedOutput, partitionEditorialOverrides } from "../services/editorial-copy-apply.js";
-import { insertLearningRule } from "../repositories/learning.js";
 import { buildImmediateNeedsEditGenerationGuidance } from "../services/immediate-needs-edit-guidance.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
@@ -217,7 +216,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
           });
         }
       } catch (e) {
-        request.log.warn({ err: e, task_id }, "immediate NEEDS_EDIT generation guidance mint failed");
+        app.log.warn({ err: e, task_id }, "immediate NEEDS_EDIT generation guidance mint failed");
       }
     }
 
