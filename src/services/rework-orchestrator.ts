@@ -285,12 +285,14 @@ export async function executeRework(
       }
     }
 
-    /** `regenerate` (Review “Regenerate rendered assets”) gates billed PNG/video output — not `rewrite_copy` (LLM only). */
-    const regenAssetsOff = (overrides as { regenerate?: boolean }).regenerate === false;
+    /**
+     * Carousel slide PNGs must reflect typography/font_scale from overrides. Independent of `rewrite_copy`
+     * (LLM) and of `regenerate` (general asset billing flag): a reviewer who sets px or scale is asking for
+     * updated slide images; skipping rerender left stale thumbnails (OVERRIDE_ONLY alone patches JSON only).
+     */
     const runCarouselRerenderAfterTypography =
       Boolean(job.flow_type && isCarouselFlow(job.flow_type)) &&
-      editorialOverrideRequestsCarouselRerender(overrides) &&
-      !regenAssetsOff;
+      editorialOverrideRequestsCarouselRerender(overrides);
 
     if (runCarouselRerenderAfterTypography) {
       try {

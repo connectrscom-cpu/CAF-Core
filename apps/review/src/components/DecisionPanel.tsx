@@ -278,11 +278,13 @@ export function DecisionPanel({
             style={{ marginTop: 3 }}
           />
           <span>
-            <strong>Regenerate rendered assets</strong> — actually run image/video outputs again (carousel slide PNGs,
-            HeyGen, etc.) when the pipeline would bill another render.
+            <strong>Regenerate rendered assets</strong> — run billed media outputs again when the pipeline would
+            charge another render (HeyGen, video tools, etc.).
             <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
-              This is <strong>not</strong> the same as <strong>Rewrite copy (LLM)</strong> below: LLM rewrite controls text
-              generation only. Uncheck here if you want overrides applied without new rendered files (copy-only / patch-only).
+              This is <strong>not</strong> <strong>Rewrite copy (LLM)</strong>. Carousel: if you change{" "}
+              <strong>font sizes or font scale</strong> in Edits for rework, slide PNGs are always regenerated so
+              thumbnails match — that path does not use this checkbox. Uncheck here mainly to skip expensive
+              non-carousel reruns when you only want text patched.
             </span>
           </span>
         </label>
