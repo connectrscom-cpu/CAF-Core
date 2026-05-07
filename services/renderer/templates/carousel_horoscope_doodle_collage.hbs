@@ -45,7 +45,11 @@
       background-size: 5px 5px, 7px 7px;
       pointer-events:none;
     }
-    .wrap{width:100%;height:100%;padding:var(--safe);position:relative;}
+    .wrap{
+      width:100%;height:100%;padding:var(--safe);position:relative;
+      box-sizing:border-box;
+      overflow-x:hidden;
+    }
 
     .kicker{
       font-size:16px;
@@ -64,12 +68,13 @@
     .cover-title{
       font-family:ui-serif,Georgia,"Times New Roman",serif;
       font-weight:400;
-      font-size: 132px;
-      line-height: 0.9;
+      /* Fluid title keeps long tokens inside the safe padding */
+      font-size: clamp(42px, min(11vw, 9.5vh), 132px);
+      line-height: 0.92;
       letter-spacing:-0.02em;
       color: var(--ink);
       text-transform: uppercase;
-      max-width: 980px;
+      max-width: 100%;
       overflow-wrap:anywhere;
       word-break:break-word;
       hyphens:auto;
@@ -208,6 +213,12 @@
     .p, .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
     .cta, .cta-candy, .cta-text, .cta-big { font-size: var(--caf-carousel-cta-size, 72px) !important; }
     .cta-small { font-size: var(--caf-carousel-body-size, 48px) !important; }
+
+    /* Reinforce in-bounds wrapping when headline px override is active */
+    .cover-title{
+      max-width: 100% !important;
+      box-sizing: border-box;
+    }
 
   </style>
 </head>

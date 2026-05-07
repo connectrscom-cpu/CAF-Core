@@ -9,7 +9,8 @@
   <style>
     :root{
       --caf-carousel-headline-size: 72px;
-      --caf-carousel-body-size: 48px;
+      /* Default body px bumped (~1.5× legacy 48) — reviewer px overrides still win via unified block */
+      --caf-carousel-body-size: 72px;
       --caf-carousel-kicker-size: 18px;
       --caf-carousel-cta-size: 72px;
       --caf-carousel-handle-size: 40px;
@@ -33,10 +34,15 @@
     .page{
       width:100%;
       height:100%;
+      max-height:100%;
       padding: var(--pad-y) var(--pad-x);
       display:flex;
       flex-direction:column;
       align-items:stretch;
+      overflow-y:auto;
+      overflow-x:hidden;
+      -webkit-overflow-scrolling:touch;
+      box-sizing:border-box;
     }
     .headline{
       font-weight:700;
@@ -50,10 +56,7 @@
     .cover .headline{
       font-size: clamp(58px, 6.2vw, 76px);
       line-height:1.06;
-      display:-webkit-box;
-      -webkit-line-clamp:3;
-      -webkit-box-orient:vertical;
-      overflow:hidden;
+      /* Do not clamp lines — long hooks must remain readable (scroll .page if needed) */
     }
     .sub,
     .body{
@@ -65,13 +68,12 @@
       white-space:pre-wrap;
       overflow-wrap:anywhere;
       word-break:break-word;
+      min-width:0;
+      max-width:100%;
     }
     .cover .sub{
-      font-size: clamp(32px, 3.6vw, 40px);
-      display:-webkit-box;
-      -webkit-line-clamp:4;
-      -webkit-box-orient:vertical;
-      overflow:hidden;
+      font-size: clamp(32px, 3.6vw, 56px);
+      /* No line-clamp: subtitle must not be truncated on cover */
     }
     .body-slide .headline{
       font-size:64px;
@@ -92,7 +94,7 @@
     .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
       font-size: var(--caf-carousel-headline-size, 72px) !important;
     }
-    .body, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+    .body, .sub, .cover .sub, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
       font-size: var(--caf-carousel-body-size, 48px) !important;
     }
     .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
