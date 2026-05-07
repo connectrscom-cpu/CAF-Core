@@ -468,6 +468,20 @@ describe("carousel template shape (body_slides)", () => {
     expect((ctx.cover_slide as { name?: unknown }).name).toBeUndefined();
     expect((ctx.cover_slide as { status?: unknown }).status).toBe("online.");
   });
+
+  it("buildSlideRenderContext: root carousel_* px overrides nested render (live preview + rework)", () => {
+    const gen = {
+      carousel_body_font_px: 88,
+      render: { carousel_body_font_px: 44 },
+      slides: [
+        { headline: "Cover", body: "Hook" },
+        { headline: "CTA", body: "@brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 1);
+    expect(ctx.carousel_body_font_px).toBe(88);
+  });
 });
 
 describe("reviewRequestsCarouselTemplateChange / stripExplicitCarouselTemplateSelection", () => {

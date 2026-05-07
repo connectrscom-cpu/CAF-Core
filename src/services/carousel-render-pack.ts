@@ -1212,9 +1212,13 @@ export function buildSlideRenderContext(
   const font_scale =
     Number.isFinite(fontScaleNum) && fontScaleNum > 0 ? Math.min(1.25, Math.max(0.75, fontScaleNum)) : 1;
 
+  /**
+   * Persisted `render.carousel_*` must not beat live reviewer overrides: preview payloads put px on the
+   * root object while still carrying nested `render` from the job — merge render first, root last.
+   */
   const typoPatch = {
-    ...pickCarouselTypographyPatchForRender(baseRec),
     ...pickCarouselTypographyPatchForRender(renderRec),
+    ...pickCarouselTypographyPatchForRender(baseRec),
   };
 
   const out: Record<string, unknown> = {
