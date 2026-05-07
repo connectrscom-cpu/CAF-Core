@@ -693,11 +693,12 @@ function ensureCarouselHasCtaSlide(
   ctaOptions?: CarouselRenderCtaOptions
 ): Record<string, unknown>[] {
   if (slides.length < 2) return slides;
-  if (slides.length > 2) return slides; // conservative: don't mutate multi-slide decks
 
   const last = slides[slides.length - 1] ?? {};
   const tl = textFromSlide(last as Record<string, unknown>);
   const lastText = `${tl.headline}\n${tl.body}`.trim();
+  // Many carousel generations end with a non-CTA "sign off" or generic statement. Editorial requires
+  // a closing CTA slide. When the last slide doesn't look like CTA copy, append an explicit CTA slide.
   if (looksLikeCarouselCtaSlideText(lastText)) return slides;
 
   const handle = formatInstagramHandleForCta(ctaOptions?.instagramHandle ?? null);
