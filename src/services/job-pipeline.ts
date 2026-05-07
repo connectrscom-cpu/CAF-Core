@@ -1560,6 +1560,18 @@ async function processCarouselJob(
   }
 }
 
+/**
+ * Re-run carousel PNG renders after OVERRIDE_ONLY editorial merge (typography / font_scale in slides JSON).
+ * Does not invoke the LLM — reads current `generation_payload.generated_output`.
+ */
+export async function rerenderCarouselAfterEditorialOverride(db: Pool, config: AppConfig, jobId: string): Promise<void> {
+  const job = await reloadJobRow(db, jobId);
+  if (!job || !isCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) return;
+  const run = await getRunByRunId(db, job.project_id, job.run_id);
+  const pipeConfig = getPipelineConfig(config);
+  await processCarouselJob(db, config, pipeConfig, job, run, null);
+}
+
 async function processVideoJob(
   db: Pool,
   config: AppConfig,

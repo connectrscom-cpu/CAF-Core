@@ -13,6 +13,7 @@ import {
   prepareContentJobForFullRerun,
   prepareContentJobForCaptionsOnlyRerun,
   processContentJobById,
+  rerenderCarouselAfterEditorialOverride,
   RenderNotReadyError,
 } from "./job-pipeline.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
@@ -24,6 +25,7 @@ import {
 } from "./carousel-render-pack.js";
 import {
   applyEditorialFlatOverridesToGeneratedOutput,
+  editorialOverrideRequestsCarouselRerender,
   hasEditorialCopyFlatOverrides,
   partitionEditorialOverrides,
 } from "./editorial-copy-apply.js";
@@ -282,9 +284,25 @@ export async function executeRework(
         return { ok: false, mode, error: `HeyGen re-render after override failed: ${msg}`, task_id: job.task_id };
       }
     }
-    await db.query(`UPDATE caf_core.content_jobs SET status = 'IN_REVIEW', updated_at = now() WHERE id = $1`, [
-      job.id,
-    ]);
+
+    const regenAssetsOff = (overrides as { regenerate?: boolean }).regenerate === false;
+    const runCarouselRerenderAfterTypography =
+      Boolean(job.flow_type && isCarouselFlow(job.flow_type)) &&
+      editorialOverrideRequestsCarouselRerender(overrides) &&
+      !regenAssetsOff;
+
+    if (runCarouselRerenderAfterTypography) {
+      try {
+        await rerenderCarouselAfterEditorialOverride(db, config, job.id);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, mode, error: `Carousel re-render after override failed: ${msg}`, task_id: job.task_id };
+      }
+    } else {
+      await db.query(`UPDATE caf_core.content_jobs SET status = 'IN_REVIEW', updated_at = now() WHERE id = $1`, [
+        job.id,
+      ]);
+    }
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: projectId,

@@ -8,6 +8,7 @@ import {
   extractCarouselSlidesAndTypographyFromOverrideJson,
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
   mergeCarouselTypographyIntoGeneratedOutputRender,
+  pickCarouselTypographyPatch,
 } from "../domain/carousel-render-typography.js";
 
 function asRec(v: unknown): Record<string, unknown> | null {
@@ -129,6 +130,30 @@ export function applyEditorialFlatOverridesToGeneratedOutput(
   }
   mergeCarouselTypographyIntoGeneratedOutputRender(out, renderPatch);
   return out;
+}
+
+/**
+ * True when NEEDS_EDIT `final_slides_json_override` includes font px and/or `font_scale` (visual re-render, not just copy).
+ * Used to run carousel PNGs after OVERRIDE_ONLY so typography edits are not left on stale images.
+ */
+export function editorialOverrideRequestsCarouselRerender(overrides: Record<string, unknown> | null | undefined): boolean {
+  if (!overrides || typeof overrides !== "object") return false;
+  const raw = overrides.final_slides_json_override;
+  if (raw == null) return false;
+  if (typeof raw === "string") {
+    const { renderPatch } = extractCarouselSlidesAndTypographyFromOverrideJson(raw);
+    return Object.keys(renderPatch).length > 0;
+  }
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    const patch = pickCarouselTypographyPatch(o);
+    if (Object.keys(patch).length > 0) return true;
+    const fs = o.font_scale;
+    if (fs === undefined || fs === null) return false;
+    const n = typeof fs === "number" ? fs : Number(String(fs).trim());
+    return Number.isFinite(n) && n > 0;
+  }
+  return false;
 }
 
 export function hasEditorialCopyFlatOverrides(overrides: Record<string, unknown> | null | undefined): boolean {
