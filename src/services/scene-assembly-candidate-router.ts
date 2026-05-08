@@ -55,7 +55,18 @@ export async function expandOverallCandidatesWithSceneAssemblyRouter(
       platform: row.platform ?? row.target_platform ?? "Instagram",
     }));
 
-    const templates = await listPromptTemplates(db, sceneFlow);
+    const templatesRaw = await listPromptTemplates(db, sceneFlow);
+    const flowKey = String(sceneFlow ?? "").replace(/^FLOW_/, "");
+    const preferPrefix = flowKey ? `${flowKey}__` : "";
+    const templates = templatesRaw
+      .slice()
+      .sort((a, b) => {
+        if (a.active !== b.active) return a.active ? -1 : 1;
+        const ap = preferPrefix && (a.prompt_name ?? "").startsWith(preferPrefix);
+        const bp = preferPrefix && (b.prompt_name ?? "").startsWith(preferPrefix);
+        if (ap !== bp) return ap ? -1 : 1;
+        return String(a.prompt_name ?? "").localeCompare(String(b.prompt_name ?? ""));
+      });
     const tpl =
       templates.find((t) => (t.prompt_role ?? "").toLowerCase() === "scene_candidate_router") ?? null;
 

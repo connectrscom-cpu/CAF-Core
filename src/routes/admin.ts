@@ -5138,7 +5138,9 @@ async function loadPL(){
     const ft=String(p.flow_type||'').trim();
     if((p.labs_is_heygen===true)||heygenFlowSet.has(ft)) return 'heygen';
     if(ft==='FLOW_CAROUSEL'||ft==='FLOW_VID_SCENES') return 'creation';
-    if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS'||ft==='FLOW_TEXT') return 'creation';
+    // Utility prep flows: keep out of the primary "Creation prompts" list (noise reduction).
+    if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS') return 'validation';
+    if(ft==='FLOW_TEXT') return 'creation';
     // Default bucket: creation (most generator prompts belong here).
     return 'creation';
   }

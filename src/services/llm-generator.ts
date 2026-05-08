@@ -212,7 +212,19 @@ export async function generateForJob(
     const fe = await import("../repositories/flow-engine.js");
     const tryTypes = [...new Set(lookupOrder.filter(Boolean))];
     for (const ft of tryTypes) {
-      const templates = await fe.listPromptTemplates(db, ft);
+      const templatesRaw = await fe.listPromptTemplates(db, ft);
+      const flowKey = String(ft ?? "").replace(/^FLOW_/, "");
+      const preferPrefix = flowKey ? `${flowKey}__` : "";
+      const templates = templatesRaw
+        .slice()
+        .sort((a, b) => {
+          // Prefer active rows, then namespaced prompt_name that matches the flow type.
+          if (a.active !== b.active) return a.active ? -1 : 1;
+          const ap = preferPrefix && (a.prompt_name ?? "").startsWith(preferPrefix);
+          const bp = preferPrefix && (b.prompt_name ?? "").startsWith(preferPrefix);
+          if (ap !== bp) return ap ? -1 : 1;
+          return String(a.prompt_name ?? "").localeCompare(String(b.prompt_name ?? ""));
+        });
       if (templates.length === 0) continue;
 
       if (wantSceneBundle) {

@@ -40,7 +40,18 @@ async function pickVideoPromptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
   const chain = [...new Set([flowType, resolved, "Video_Prompt_Generator", "Video_Prompt_HeyGen_Avatar", "FLOW_VIDEO"])];
   for (const ft of chain) {
-    const templates = await listPromptTemplates(db, ft);
+    const templatesRaw = await listPromptTemplates(db, ft);
+    const flowKey = String(ft ?? "").replace(/^FLOW_/, "");
+    const preferPrefix = flowKey ? `${flowKey}__` : "";
+    const templates = templatesRaw
+      .slice()
+      .sort((a, b) => {
+        if (a.active !== b.active) return a.active ? -1 : 1;
+        const ap = preferPrefix && (a.prompt_name ?? "").startsWith(preferPrefix);
+        const bp = preferPrefix && (b.prompt_name ?? "").startsWith(preferPrefix);
+        if (ap !== bp) return ap ? -1 : 1;
+        return String(a.prompt_name ?? "").localeCompare(String(b.prompt_name ?? ""));
+      });
     const tpl =
       templates.find((t) => (t.prompt_role ?? "").toLowerCase() === "video_prompt") ??
       templates.find((t) => (t.prompt_role ?? "").toLowerCase() === "preparation") ??
