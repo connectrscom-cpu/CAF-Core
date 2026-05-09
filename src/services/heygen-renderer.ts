@@ -15,7 +15,9 @@ import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/pro
 import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
-import { buildProductProfilePromptBlock } from "./product-video-agent-product.js";
+import { buildProductProfileVideoAgentPromptBlock } from "./product-video-agent-product.js";
+import { buildHeyGenVideoAgentProductionBrief } from "./heygen-video-agent-prompt.js";
+import { clipForAuditJson } from "../repositories/api-call-audit.js";
 import { insertAsset } from "../repositories/assets.js";
 import {
   uploadBuffer,
@@ -315,6 +317,7 @@ function stripInternalHeygenConfigKeys(body: Record<string, unknown>): void {
 
 export function isScriptLedHeygenFlow(flowType: string | null | undefined): boolean {
   const ft = flowType ?? "";
+  if (/\bFLOW_VID_SCRIPT\b/i.test(ft)) return true;
   return /Video_Script|video_script|script_generator|Script_HeyGen|HEYGEN_AVATAR_SCRIPT|FLOW_HEYGEN_AVATAR_SCRIPT/i.test(
     ft
   );
@@ -323,6 +326,7 @@ export function isScriptLedHeygenFlow(flowType: string | null | undefined): bool
 export function isPromptLedHeygenFlow(flowType: string | null | undefined): boolean {
   const ft = flowType ?? "";
   if (isScriptLedHeygenFlow(ft)) return false;
+  if (/\bFLOW_VID_PROMPT\b/i.test(ft)) return true;
   return (
     /Video_Prompt|video_prompt|prompt_generator|Prompt_HeyGen|HEYGEN_AVATAR_PROMPT|FLOW_HEYGEN_AVATAR_PROMPT|HEYGEN_NO_AVATAR_PROMPT|FLOW_HEYGEN_NO_AVATAR_PROMPT/i.test(
       ft
@@ -553,39 +557,6 @@ export function resolveHeygenAgentDurationSec(raw: unknown, bounds: HeygenAgentD
   return Math.min(bounds.maxSec, n);
 }
 
-function cleanHeygenAgentText(s: string): string {
-  return String(s || "")
-    .replace(/[\r\n\t]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function heygenAgentOnScreenLines(gen: Record<string, unknown>, maxItems: number, maxChars: number): string[] {
-  const ost = gen.on_screen_text;
-  if (!Array.isArray(ost)) return [];
-  const out: string[] = [];
-  for (const x of ost) {
-    if (typeof x !== "string" || !x.trim()) continue;
-    const t = x.trim();
-    out.push(t.length <= maxChars ? t : `${t.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`);
-    if (out.length >= maxItems) break;
-  }
-  return out;
-}
-
-function heygenAgentStringifyField(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return cleanHeygenAgentText(val);
-  if (typeof val === "object" && !Array.isArray(val)) {
-    try {
-      return cleanHeygenAgentText(JSON.stringify(val));
-    } catch {
-      return "";
-    }
-  }
-  return cleanHeygenAgentText(String(val));
-}
-
 export type HeygenVideoAgentMode = "prompt_avatar" | "no_avatar";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -636,19 +607,16 @@ export function buildHeyGenVideoAgentRequestBody(
     flowType?: string | null;
     taskId?: string | null;
     avatarPickSeed?: string | null;
+    /** Job platform (e.g. TikTok, Instagram) — included in the production brief OBJECTIVE. */
+    platform?: string | null;
     agentMode: HeygenVideoAgentMode;
     /** When omitted, uses a safe default (20–300s) suitable for unit tests only; production callers should pass config-derived bounds. */
     durationBounds?: HeygenAgentDurationBounds;
     /**
      * Who writes the voiceover:
-     *  - `"user_provided"` (default, legacy): include our `spoken_script` as "Main spoken content"
-     *    so the agent delivers it roughly verbatim. Use when the job actually has a spoken_script
-     *    we want HeyGen to speak.
-     *  - `"agent_writes"`: omit the "Main spoken content" line. Use for prompt-led product flows
-     *    where we deliberately skip ensureVideoScriptInPayload — the agent authors its own VO
-     *    from the visual / hook / cta context. This prevents HeyGen from paraphrasing a stale
-     *    or uncoordinated spoken_script and instead produces VO grounded in the same brief
-     *    that drives the visuals.
+     *  - `"user_provided"` (default, legacy): embed `spoken_script` in the production brief with
+     *    instructions to follow it closely.
+     *  - `"agent_writes"`: agent-authored VO from hook, visual direction, CTA, brand/product blocks.
      */
     spokenMode?: "user_provided" | "agent_writes";
   }
@@ -680,63 +648,16 @@ export function buildHeyGenVideoAgentRequestBody(
     durationBounds
   );
 
-  const hook = cleanHeygenAgentText(String(genUse.hook ?? "").trim());
-  const spokenScript = cleanHeygenAgentText(extractSpokenScriptText(genUse, 1));
-  const cta = cleanHeygenAgentText(String(genUse.cta ?? "").trim());
-  const caption = cleanHeygenAgentText(String(genUse.caption ?? "").trim());
-  const disclaimer = cleanHeygenAgentText(String(genUse.disclaimer ?? "").trim());
-  const videoPrompt = cleanHeygenAgentText(extractVideoPromptText(genUse, 1));
-  const onScreenText = heygenAgentOnScreenLines(genUse, 12, 60);
-
-  const lines: string[] = [];
-  lines.push("Create a polished short-form social video.");
-  lines.push(`Orientation: ${orientation}.`);
-  lines.push(`Target duration: about ${durationSec} seconds.`);
-  if (opts.agentMode === "prompt_avatar") {
-    lines.push("Use the assigned avatar if supported by the render route.");
-    lines.push("Make it feel native to short-form social media.");
-    lines.push("Keep pacing tight, clear, and engaging.");
-    lines.push("Output should be production-ready.");
-  } else {
-    lines.push("Do not show an avatar, presenter, talking head, spokesperson, or host on screen.");
-    lines.push(
-      "Use narration with scene-driven visuals, motion graphics, text overlays, b-roll, and cuts only."
-    );
-  }
-
   const spokenMode = opts.spokenMode ?? "user_provided";
-  if (hook) lines.push(`Hook: ${hook}`);
-  if (spokenMode === "user_provided" && spokenScript) {
-    lines.push(`Main spoken content: ${spokenScript}`);
-  } else if (spokenMode === "agent_writes") {
-    lines.push(
-      "Voiceover: write a natural, on-brand narration from the hook + visual direction + CTA below. Keep it tight, punchy, and native to short-form — do not read product specs as a list."
-    );
-  }
-  if (videoPrompt && videoPrompt !== spokenScript) lines.push(`Visual / generation prompt: ${videoPrompt}`);
-  if (onScreenText.length) lines.push(`On-screen text cues: ${onScreenText.join(" | ")}`);
-
-  const visual = heygenAgentStringifyField(genUse.visual_direction);
-  if (visual) lines.push(`Visual direction: ${visual}`);
-  const camera = heygenAgentStringifyField(genUse.camera_instructions);
-  if (camera) lines.push(`Camera instructions: ${camera}`);
-  const editing = heygenAgentStringifyField(genUse.editing_notes);
-  if (editing) lines.push(`Editing notes: ${editing}`);
-
-  if (cta) lines.push(`Ending CTA: ${cta}`);
-  if (caption) lines.push(`Caption context: ${caption}`);
-  const tags = genUse.hashtags;
-  if (Array.isArray(tags) && tags.length) {
-    const flat = tags
-      .filter((t): t is string => typeof t === "string" && t.trim() !== "")
-      .map((t) => t.trim());
-    if (flat.length) lines.push(`Hashtag context: ${flat.join(" ")}`);
-  } else if (typeof tags === "string" && tags.trim() !== "") {
-    lines.push(`Hashtag context: ${tags.trim()}`);
-  }
-  if (disclaimer) lines.push(`Required disclaimer: ${disclaimer}`);
-
-  const prompt = lines.join("\n").trim();
+  const prompt = buildHeyGenVideoAgentProductionBrief({
+    gen: genUse,
+    agentMode: opts.agentMode,
+    orientation,
+    durationSec,
+    platform: opts.platform,
+    flowType: opts.flowType,
+    spokenMode,
+  });
   if (!prompt) {
     throw new Error(
       "HeyGen Video Agent: empty prompt. Add spoken_script, video_prompt, hook, or plan fields in generated_output."
@@ -1009,6 +930,15 @@ function pickHeyGenDurationFromStatus(json: Record<string, unknown>): number | n
   return null;
 }
 
+/** JSON body actually stringified for `fetch` (Video Agent strips unsupported keys). */
+export function normalizeHeyGenSubmitPayload(
+  body: Record<string, unknown>,
+  path: HeygenGeneratePath
+): Record<string, unknown> {
+  if (path === "/v3/video-agents") return normalizeHeyGenVideoAgentRequestForV3(body);
+  return body;
+}
+
 export async function submitHeyGenVideo(
   apiKey: string,
   apiBase: string,
@@ -1017,7 +947,7 @@ export async function submitHeyGenVideo(
   progress?: HeygenSubmitProgress
 ): Promise<string> {
   const base = apiBase.replace(/\/$/, "");
-  const payload = path === "/v3/video-agents" ? normalizeHeyGenVideoAgentRequestForV3(body) : body;
+  const payload = normalizeHeyGenSubmitPayload(body, path);
   const res = await fetch(`${base}${path}`, {
     method: "POST",
     headers: {
@@ -1817,6 +1747,9 @@ export async function runHeygenVideoWithBody(
       );
     }
     if (audit) {
+      const request_body_sent = clipForAuditJson(
+        normalizeHeyGenSubmitPayload(body, postPath)
+      ) as Record<string, unknown>;
       await tryInsertApiCallAudit(audit.db, {
         projectId: audit.projectId,
         runId: audit.runId,
@@ -1825,7 +1758,12 @@ export async function runHeygenVideoWithBody(
         provider: "heygen",
         model: null,
         ok: true,
-        requestJson: { endpoint, body, scene_index: audit.scene_index },
+        requestJson: {
+          endpoint,
+          scene_index: audit.scene_index,
+          request_body_pre_normalization: clipForAuditJson(body),
+          request_body_sent,
+        },
         responseJson: {
           video_id: videoId,
           video_url: polled.videoUrl,
@@ -1845,6 +1783,9 @@ export async function runHeygenVideoWithBody(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (audit) {
+      const request_body_sent = clipForAuditJson(
+        normalizeHeyGenSubmitPayload(body, postPath)
+      ) as Record<string, unknown>;
       await tryInsertApiCallAudit(audit.db, {
         projectId: audit.projectId,
         runId: audit.runId,
@@ -1854,7 +1795,12 @@ export async function runHeygenVideoWithBody(
         model: null,
         ok: false,
         errorMessage: msg.slice(0, 4000),
-        requestJson: { endpoint, body, scene_index: audit.scene_index },
+        requestJson: {
+          endpoint,
+          scene_index: audit.scene_index,
+          request_body_pre_normalization: clipForAuditJson(body),
+          request_body_sent,
+        },
         responseJson: {},
       });
     }
@@ -1927,6 +1873,7 @@ export async function runHeygenForContentJob(
     body = buildHeyGenVideoAgentRequestBody(merged, gen, override, {
       flowType: job.flow_type,
       taskId: job.task_id,
+      platform: job.platform,
       agentMode: renderMode === "HEYGEN_NO_AVATAR" ? "no_avatar" : "prompt_avatar",
       durationBounds: {
         minSec: appConfig.HEYGEN_AGENT_MIN_DURATION_SEC,
@@ -1941,15 +1888,8 @@ export async function runHeygenForContentJob(
       spokenMode: productMode === "prompt_led" ? "agent_writes" : "user_provided",
     });
     if (isProductVideoFlow(job.flow_type)) {
-      const suffix = productVideoAgentPromptSuffix(job.flow_type);
-      if (suffix && typeof body.prompt === "string") {
-        const p = body.prompt.trim();
-        body.prompt = p ? `${p}\n\n${suffix}` : suffix;
-      }
       /**
-       * Append project brand_constraints (tone/voice/banned words/disclaimers/etc.)
-       * so HeyGen's agent honours them directly — not just via the upstream LLM output.
-       * Best-effort: a missing row or empty constraints simply skips this block.
+       * Brand before product facts: constraints/disclaimers must frame how product_story is used.
        */
       try {
         const brand = await getBrandConstraints(db, job.project_id);
@@ -1961,14 +1901,17 @@ export async function runHeygenForContentJob(
       } catch {
         /* non-fatal: brand constraints are an enhancement, not a requirement */
       }
+      const suffix = productVideoAgentPromptSuffix(job.flow_type);
+      if (suffix && typeof body.prompt === "string") {
+        const p = body.prompt.trim();
+        body.prompt = p ? `${p}\n\n${suffix}` : suffix;
+      }
       /**
-       * Append project product_profile (value prop / features / audience pain /
-       * differentiators / offer / CTA) so HeyGen's Video Agent uses accurate
-       * product facts rather than inventing generic copy for FLOW_PRODUCT_*.
+       * Append project product_profile (angle-prioritized lines) after brand + flow focus.
        */
       try {
         const product = await getProductProfile(db, job.project_id);
-        const productBlock = buildProductProfilePromptBlock(product);
+        const productBlock = buildProductProfileVideoAgentPromptBlock(product, job.flow_type);
         if (productBlock && typeof body.prompt === "string") {
           const p = body.prompt.trim();
           body.prompt = p ? `${p}\n\n${productBlock}` : productBlock;

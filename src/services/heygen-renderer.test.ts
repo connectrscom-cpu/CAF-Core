@@ -7,7 +7,10 @@ import {
   buildHeyGenVideoAgentRequestBody,
   firstHeyGenVideoInputUsesSilenceVoice,
   inferHeygenRenderModeFromFlowType,
+  isPromptLedHeygenFlow,
+  isScriptLedHeygenFlow,
   mapHeyGenV2StyleBodyToV3CreateVideoAvatar,
+  normalizeHeyGenSubmitPayload,
   normalizeHeyGenVideoAgentRequestForV3,
   mergeHeygenConfig,
   mergeHeygenConfigForJob,
@@ -20,6 +23,7 @@ import {
   sanitizeGenForHeygenNoAvatar,
   stablePickIndex,
 } from "./heygen-renderer.js";
+import { buildHeyGenVideoAgentProductionBrief } from "./heygen-video-agent-prompt.js";
 
 function row(partial: Partial<HeygenConfigRow> & Pick<HeygenConfigRow, "config_id" | "config_key" | "value">): HeygenConfigRow {
   return {
@@ -59,14 +63,28 @@ describe("resolveHeygenGeneratePath", () => {
   it("uses v3 direct video for script-led HEYGEN_AVATAR (n8n SCRIPT_AVATAR)", () => {
     expect(resolveHeygenGeneratePath("Video_Script_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe("/v3/videos");
     expect(resolveHeygenGeneratePath("FLOW_HEYGEN_AVATAR_SCRIPT", "HEYGEN_AVATAR")).toBe("/v3/videos");
+    expect(resolveHeygenGeneratePath("FLOW_VID_SCRIPT", "HEYGEN_AVATAR")).toBe("/v3/videos");
   });
 
   it("uses Video Agent v3 for prompt-led HEYGEN_AVATAR (n8n PROMPT_AVATAR)", () => {
     expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_Avatar", "HEYGEN_AVATAR")).toBe("/v3/video-agents");
+    expect(resolveHeygenGeneratePath("FLOW_VID_PROMPT", "HEYGEN_AVATAR")).toBe("/v3/video-agents");
   });
 
   it("uses Video Agent v3 for HEYGEN_NO_AVATAR (n8n SCRIPT_NO_AVATAR)", () => {
     expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_NoAvatar", "HEYGEN_NO_AVATAR")).toBe("/v3/video-agents");
+  });
+});
+
+describe("isScriptLedHeygenFlow / isPromptLedHeygenFlow (canonical names)", () => {
+  it("treats FLOW_VID_SCRIPT as script-led and not prompt-led", () => {
+    expect(isScriptLedHeygenFlow("FLOW_VID_SCRIPT")).toBe(true);
+    expect(isPromptLedHeygenFlow("FLOW_VID_SCRIPT")).toBe(false);
+  });
+
+  it("treats FLOW_VID_PROMPT as prompt-led", () => {
+    expect(isScriptLedHeygenFlow("FLOW_VID_PROMPT")).toBe(false);
+    expect(isPromptLedHeygenFlow("FLOW_VID_PROMPT")).toBe(true);
   });
 });
 
@@ -187,6 +205,78 @@ describe("normalizeHeyGenVideoAgentRequestForV3", () => {
     expect(v3.prompt).toBeTruthy();
     expect(v3.avatar_id).toBe("av1");
   });
+
+  it("preserves style_id from heygen_style_id and strips unsupported keys", () => {
+    const raw = buildHeyGenVideoAgentRequestBody(
+      { prompt_avatar_id: "av1", heygen_style_id: "style_abc", voice: "v1", heygen_model: "auto" },
+      { spoken_script: "Hello world this is long enough for the test script body here" },
+      undefined,
+      { agentMode: "prompt_avatar", flowType: "Video_Prompt_HeyGen_Avatar", taskId: "t1" }
+    );
+    const v3 = normalizeHeyGenVideoAgentRequestForV3(raw);
+    expect(v3.style_id).toBe("style_abc");
+    expect(v3.voice_id).toBe("v1");
+    expect((v3 as { heygen_model?: string }).heygen_model).toBeUndefined();
+    expect(normalizeHeyGenSubmitPayload(raw, "/v3/video-agents")).toEqual(v3);
+  });
+});
+
+describe("buildHeyGenVideoAgentProductionBrief", () => {
+  it("uses structured headings and embeds target duration in the prompt", () => {
+    const brief = buildHeyGenVideoAgentProductionBrief({
+      gen: { spoken_script: "Line one. Line two for length.", hook: "Hook here" },
+      agentMode: "prompt_avatar",
+      orientation: "portrait",
+      durationSec: 45,
+      platform: "TikTok",
+      flowType: "FLOW_VID_PROMPT",
+      spokenMode: "user_provided",
+    });
+    expect(brief).toContain("CAF VIDEO AGENT PRODUCTION BRIEF");
+    expect(brief).toContain("OBJECTIVE");
+    expect(brief).toContain("SCENE PLAN");
+    expect(brief).toContain("Target duration: about 45 seconds");
+    expect(brief).toMatch(/SCRIPT \(verbatim intent\)/);
+    expect(brief).toContain("POST CONTEXT ONLY");
+    expect(brief).toMatch(/hashtag|Do not show hashtags/i);
+  });
+
+  it("marks caption/hashtags as post context only", () => {
+    const brief = buildHeyGenVideoAgentProductionBrief({
+      gen: {
+        spoken_script: "Enough words here for the extractor to treat as script body content.",
+        caption: "Summer sale",
+        hashtags: ["#foo", "#bar"],
+      },
+      agentMode: "no_avatar",
+      orientation: "portrait",
+      durationSec: 30,
+      platform: "Instagram",
+      flowType: "Video_Prompt_HeyGen_NoAvatar",
+      spokenMode: "user_provided",
+    });
+    expect(brief).toContain("POST CONTEXT ONLY");
+    expect(brief).toContain("Caption context:");
+    expect(brief).toContain("Hashtag context:");
+    expect(brief).toMatch(/Do not show hashtags as on-screen/i);
+  });
+
+  it("includes REQUIRED DISCLAIMER when gen carries disclaimer fields", () => {
+    const brief = buildHeyGenVideoAgentProductionBrief({
+      gen: {
+        spoken_script: "Enough words here for the extractor to treat as script body content.",
+        mandatory_disclaimer: "Results may vary. Not medical advice.",
+      },
+      agentMode: "prompt_avatar",
+      orientation: "portrait",
+      durationSec: 30,
+      platform: null,
+      flowType: "FLOW_VID_PROMPT",
+      spokenMode: "user_provided",
+    });
+    expect(brief).toContain("REQUIRED DISCLAIMER");
+    expect(brief).toContain("Results may vary");
+  });
 });
 
 describe("mapHeyGenV2StyleBodyToV3CreateVideoAvatar", () => {
@@ -302,18 +392,21 @@ describe("resolveHeygenAgentDurationSec", () => {
 });
 
 describe("buildHeyGenVideoAgentRequestBody", () => {
-  it("builds prompt + duration + orientation + avatar_id for prompt_avatar", () => {
+  it("builds production brief prompt + duration + orientation + avatar_id for prompt_avatar", () => {
     const body = buildHeyGenVideoAgentRequestBody(
       { prompt_avatar_id: "av1", default_orientation: "landscape" },
       { spoken_script: "Hello world this is long enough", hook: "Hi" },
       undefined,
-      { agentMode: "prompt_avatar", flowType: "Video_Prompt_HeyGen_Avatar", taskId: "t1" }
+      { agentMode: "prompt_avatar", flowType: "Video_Prompt_HeyGen_Avatar", taskId: "t1", platform: "TikTok" }
     );
     expect(body.avatar_id).toBe("av1");
     expect(body.orientation).toBe("landscape");
     expect(body.duration_sec).toBe(30);
-    expect(String(body.prompt)).toContain("Main spoken content:");
-    expect(String(body.prompt)).toContain("Use the assigned avatar");
+    const p = String(body.prompt);
+    expect(p).toContain("CAF VIDEO AGENT PRODUCTION BRIEF");
+    expect(p).toContain("SCRIPT (verbatim intent)");
+    expect(p).toContain("Use the assigned avatar");
+    expect(p).toContain("Platform: TikTok");
   });
 
   it("omits avatar_id for no_avatar", () => {
@@ -324,7 +417,7 @@ describe("buildHeyGenVideoAgentRequestBody", () => {
       { agentMode: "no_avatar", flowType: "Video_Script_HeyGen_NoAvatar", taskId: "t1" }
     );
     expect(body.avatar_id).toBeUndefined();
-    expect(String(body.prompt)).toContain("Do not show an avatar");
+    expect(String(body.prompt)).toMatch(/No on-screen avatar|no_avatar/i);
   });
 
   it("does not duplicate synthesized plan when video_prompt is already full", () => {

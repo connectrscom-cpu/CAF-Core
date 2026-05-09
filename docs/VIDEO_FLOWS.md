@@ -148,9 +148,9 @@ Depending on the HeyGen path (see [`HEYGEN_API_V3.md`](./HEYGEN_API_V3.md) for u
   - Used for **script-led** avatar jobs (`Video_Script_*` HeyGen flows).
 
 - **HeyGen v3 Video Agent** (`POST /v3/video-agents`):
-  - A single multiline `prompt` is constructed from hook, spoken_script, video_prompt, on-screen cues, etc.
-  - Optional `avatar_id`, `voice_id`, `style_id`, `orientation`, `callback_url` are passed when configured.
-  - Used for **prompt-led** avatar jobs and **no-avatar** agent jobs.
+  - The `prompt` is built by `buildHeyGenVideoAgentProductionBrief` in `src/services/heygen-video-agent-prompt.ts`: a structured **CAF VIDEO AGENT PRODUCTION BRIEF** (objective, delivery mode, script/VO rules, scaled scene plan, visual style bullets, media-type guidance, on-screen text rules, post-only caption/hashtag context). Product jobs append brand constraints (before product facts) from `product-video-agent-brand.ts` / `product-video-agent-product.ts`.
+  - Optional `avatar_id`, `voice_id`, `style_id`, `orientation`, `callback_url` are passed when configured (`style_id` from `heygen_config` keys `style_id` or `heygen_style_id`).
+  - Used for **prompt-led** avatar jobs and **no-avatar** agent jobs. Canonical planners also use **`FLOW_VID_PROMPT`** (Video Agent) vs **`FLOW_VID_SCRIPT`** (direct `/v3/videos` when `HEYGEN_AVATAR`), in addition to legacy `Video_Prompt_*` / `Video_Script_*` names.
 
 - **Legacy v2** (`POST /v2/video/generate`) — **only** when the job uses HeyGen `voice: { type: "silence" }` (visual-only / no spoken script). The v3 create-video schema has no silence-TTS equivalent, so CAF keeps this one legacy call for that edge case.
 
@@ -235,10 +235,17 @@ No-avatar flows skip avatar injection entirely.
 
 Voice resolution order (simplified):
 
-1) If an avatar pool entry includes `voice_id`, use it.\n2) Else use config keys like `voice`, `voice_id`, `default_voice`, `default_voice_id`.\n3) For script-led flows, `script_voice_id` can override.\n4) Else fallback to environment `HEYGEN_DEFAULT_VOICE_ID`.\n5) Else final hard fallback constant in `src/services/heygen-renderer.ts`.
+1) If an avatar pool entry includes `voice_id`, use it.
+2) Else use config keys like `voice`, `voice_id`, `default_voice`, `default_voice_id`.
+3) For script-led flows, `script_voice_id` can override.
+4) Else fallback to environment `HEYGEN_DEFAULT_VOICE_ID`.
+5) Else final hard fallback constant in `src/services/heygen-renderer.ts`.
 
 ---
 
 ## Operational notes / debugging
 
-- Most pipeline steps insert `api_call_audit` rows via `tryInsertApiCallAudit(...)` to capture request/response metadata per `task_id`.\n- For HeyGen, the resulting `assets` row includes `metadata_json.heygen_used_video_url_caption` so you can confirm whether captioned output was used.\n- For scene pipeline, `content_jobs.scene_bundle_state` is updated with a compact report, warnings, and mux details.\n+
+- Most pipeline steps insert `api_call_audit` rows via `tryInsertApiCallAudit(...)` to capture request/response metadata per `task_id`.
+- For HeyGen generate (`step` `heygen_video_generate`), audit `requestJson` includes `request_body_pre_normalization` and `request_body_sent` so you can compare CAF-internal fields (e.g. `duration_sec`) with the normalized JSON actually POSTed to `/v3/video-agents`.
+- For HeyGen, the resulting `assets` row includes `metadata_json.heygen_used_video_url_caption` so you can confirm whether captioned output was used.
+- For scene pipeline, `content_jobs.scene_bundle_state` is updated with a compact report, warnings, and mux details.

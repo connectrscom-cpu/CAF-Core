@@ -991,12 +991,12 @@ async function ensureHeygenPayloadForFlowType(
     if (!r.ok) throw new Error(r.error ?? "video prompt prep failed");
     return;
   }
-  if (/video_script|script_generator/i.test(ft)) {
+  if (ft === "FLOW_VID_SCRIPT" || /video_script|script_generator/i.test(ft)) {
     const r = await ensureVideoScriptInPayload(db, config, jobId);
     if (!r.ok) throw new Error(r.error ?? "video script prep failed");
     return;
   }
-  if (/video_prompt|prompt_generator/i.test(ft)) {
+  if (ft === "FLOW_VID_PROMPT" || /video_prompt|prompt_generator/i.test(ft)) {
     const r = await ensureVideoPromptInPayload(db, config, jobId);
     if (!r.ok) throw new Error(r.error ?? "video prompt prep failed");
     return;

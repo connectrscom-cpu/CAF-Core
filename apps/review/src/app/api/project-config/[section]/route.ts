@@ -28,7 +28,17 @@ const getters: Record<string, (slug: string) => Promise<unknown>> = {
   "flow-types": getFlowTypes,
   "project-risk-rules": getProjectRiskRules,
   "heygen-config": getHeygenConfig,
-  "prompt-versions": (slug) => getProjectPromptVersions(slug),
+  "prompt-versions": async (slug) => {
+    const [templates, versions] = await Promise.all([
+      getPromptTemplates(),
+      getProjectPromptVersions(slug),
+    ]);
+    return {
+      ok: true,
+      prompt_templates: Array.isArray(templates) ? templates : [],
+      prompt_versions: (versions as { prompt_versions?: unknown[] })?.prompt_versions ?? [],
+    };
+  },
   "project-prompts": async (slug) => {
     const [templates, versions] = await Promise.all([
       getPromptTemplates(),

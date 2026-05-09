@@ -99,3 +99,130 @@ export function buildProductProfilePromptBlock(
     ...lines.map((l) => `- ${l}`),
   ].join("\n");
 }
+
+/** Product video angle for HeyGen Video Agent prompt prioritization. */
+export type ProductVideoAngle =
+  | "PROBLEM"
+  | "FEATURE"
+  | "COMPARISON"
+  | "USECASE"
+  | "SOCIAL_PROOF"
+  | "OFFER"
+  | "GENERIC";
+
+const MAX_VIDEO_AGENT_PRODUCT_LINES = 14;
+
+export function productFlowTypeToAngle(flowType: string | null | undefined): ProductVideoAngle {
+  const ft = (flowType ?? "").trim();
+  if (!/^FLOW_PRODUCT_/i.test(ft)) return "GENERIC";
+  const rest = ft.replace(/^FLOW_PRODUCT_/i, "").toUpperCase();
+  if (rest === "PROBLEM") return "PROBLEM";
+  if (rest === "FEATURE") return "FEATURE";
+  if (rest === "COMPARISON") return "COMPARISON";
+  if (rest === "USECASE") return "USECASE";
+  if (rest === "SOCIAL_PROOF") return "SOCIAL_PROOF";
+  if (rest === "OFFER") return "OFFER";
+  return "GENERIC";
+}
+
+function firstSentenceOrLine(s: string | null | undefined, maxLen: number): string {
+  const c = clean(s);
+  if (!c) return "";
+  const cut = c.split(/[.\n]/)[0]?.trim() ?? c;
+  return cut.length > maxLen ? `${cut.slice(0, maxLen - 1)}…` : cut;
+}
+
+/**
+ * Prioritized, bounded product lines for Video Agent (not a full profile dump).
+ */
+export function buildProductProfileVideoAgentLines(
+  product: ProductProfileRow | null | undefined,
+  flowType: string | null | undefined
+): string[] {
+  if (!product) return [];
+  const angle = productFlowTypeToAngle(flowType);
+  const lines: string[] = [];
+  const push = (label: string, val: string | null | undefined) => {
+    const c = clean(val);
+    if (c) lines.push(`${label}: ${c}`);
+  };
+
+  switch (angle) {
+    case "SOCIAL_PROOF":
+      push("Social proof", product.social_proof);
+      push("Proof points", product.proof_points);
+      push("One-liner", product.one_liner);
+      push("Primary audience", product.primary_audience);
+      push("Audience pain (context)", firstSentenceOrLine(product.audience_pain_points, 200));
+      push("Primary CTA", product.primary_cta);
+      push("Guarantee / trust", product.guarantee);
+      break;
+    case "USECASE":
+      push("Use cases", firstSentenceOrLine(product.use_cases, MAX_FIELD_CHARS));
+      push("Primary audience", product.primary_audience);
+      push("Key benefits", firstSentenceOrLine(product.key_benefits, MAX_FIELD_CHARS));
+      push("One-liner", product.one_liner);
+      push("Value proposition", firstSentenceOrLine(product.value_proposition, MAX_FIELD_CHARS));
+      push("Primary CTA", product.primary_cta);
+      break;
+    case "PROBLEM":
+      push("Audience pain points", firstSentenceOrLine(product.audience_pain_points, MAX_FIELD_CHARS));
+      push("Audience desires", firstSentenceOrLine(product.audience_desires, MAX_FIELD_CHARS));
+      push("Value proposition", firstSentenceOrLine(product.value_proposition, MAX_FIELD_CHARS));
+      push("One-liner", product.one_liner);
+      push("Primary CTA", product.primary_cta);
+      break;
+    case "FEATURE": {
+      push("One-liner", product.one_liner);
+      const feat = clean(product.key_features);
+      if (feat) {
+        const oneFeat = firstSentenceOrLine(feat, 220);
+        if (oneFeat) lines.push(`Single feature focus (do not turn into a feature list): ${oneFeat}`);
+      }
+      push("Key benefit", firstSentenceOrLine(product.key_benefits, 220));
+      push("Primary CTA", product.primary_cta);
+      break;
+    }
+    case "COMPARISON":
+      push("Differentiators", firstSentenceOrLine(product.differentiators, MAX_FIELD_CHARS));
+      push("Comparison angles", firstSentenceOrLine(product.comparison_angles, MAX_FIELD_CHARS));
+      push("One-liner", product.one_liner);
+      push("Primary CTA", product.primary_cta);
+      lines.push(
+        "Framing: position factually vs alternatives; do not attack, insult, or defame named competitors."
+      );
+      break;
+    case "OFFER":
+      push("Current offer", product.current_offer);
+      push("Offer urgency", product.offer_urgency);
+      push("Pricing", firstSentenceOrLine(product.pricing_summary, MAX_FIELD_CHARS));
+      push("Primary CTA", product.primary_cta);
+      push("Secondary CTA", product.secondary_cta);
+      break;
+    default:
+      push("Product", [clean(product.product_name), clean(product.product_category)].filter(Boolean).join(" — "));
+      push("One-liner", product.one_liner);
+      push("Value proposition", firstSentenceOrLine(product.value_proposition, MAX_FIELD_CHARS));
+      push("Primary CTA", product.primary_cta);
+  }
+
+  const out = lines
+    .filter((l) => l && !l.endsWith(": "))
+    .slice(0, MAX_VIDEO_AGENT_PRODUCT_LINES);
+  return out;
+}
+
+/**
+ * Compact product block for HeyGen Video Agent — angle-prioritized, not a full dump.
+ */
+export function buildProductProfileVideoAgentPromptBlock(
+  product: ProductProfileRow | null | undefined,
+  flowType: string | null | undefined
+): string | null {
+  const lines = buildProductProfileVideoAgentLines(product, flowType);
+  if (lines.length === 0) return null;
+  return [
+    "PRODUCT FACTS / PRODUCT STORY (use only what appears here; do not invent features or UI):",
+    ...lines.map((l) => (l.startsWith("-") ? l : `- ${l}`)),
+  ].join("\n");
+}

@@ -82,6 +82,8 @@ export const HEYGEN_FLOW_TYPES: readonly string[] = [
   "FLOW_VID_PROMPT",
   "Video_Script_Generator",
   "Video_Prompt_Generator",
+  /** Bootstrap / adapter prompts for HeyGen submit (Prompt-to-Video, Script-to-Video). */
+  "HeyGen_Render_Video",
   "FLOW_PRODUCT_PROBLEM",
   "FLOW_PRODUCT_FEATURE",
   "FLOW_PRODUCT_COMPARISON",

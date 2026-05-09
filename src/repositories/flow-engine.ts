@@ -112,20 +112,80 @@ export async function upsertPromptTemplate(db: Pool, data: Omit<PromptTemplateRo
     INSERT INTO caf_core.prompt_templates (
       prompt_name, flow_type, prompt_role, system_prompt, user_prompt_template,
       output_format_rule, output_schema_name, output_schema_version,
-      temperature_default, max_tokens_default, stop_sequences, notes
-    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+      temperature_default, max_tokens_default, stop_sequences, notes, active
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
     ON CONFLICT (prompt_name, flow_type) DO UPDATE SET
       prompt_role = EXCLUDED.prompt_role, system_prompt = EXCLUDED.system_prompt,
       user_prompt_template = EXCLUDED.user_prompt_template, output_format_rule = EXCLUDED.output_format_rule,
       output_schema_name = EXCLUDED.output_schema_name, output_schema_version = EXCLUDED.output_schema_version,
       temperature_default = EXCLUDED.temperature_default, max_tokens_default = EXCLUDED.max_tokens_default,
-      stop_sequences = EXCLUDED.stop_sequences, notes = EXCLUDED.notes, updated_at = now()
+      stop_sequences = EXCLUDED.stop_sequences, notes = EXCLUDED.notes, active = EXCLUDED.active,
+      updated_at = now()
     RETURNING *`, [
     data.prompt_name, data.flow_type, data.prompt_role, data.system_prompt, data.user_prompt_template,
     data.output_format_rule, data.output_schema_name, data.output_schema_version,
     data.temperature_default, data.max_tokens_default, data.stop_sequences, data.notes,
+    data.active,
   ]);
   return row!;
+}
+
+/**
+ * Update an existing row (by previous natural key) including `prompt_name` / `flow_type` changes.
+ * Preserves row `id` (important for any FK references). Throws if another row already uses the target key.
+ */
+export async function updatePromptTemplateByNaturalKey(
+  db: Pool,
+  from: { prompt_name: string; flow_type: string },
+  data: Omit<PromptTemplateRow, "id">
+): Promise<PromptTemplateRow | null> {
+  const existing = await getPromptTemplate(db, from.prompt_name, from.flow_type);
+  if (!existing) return null;
+  const clash = await qOne<{ id: string }>(
+    db,
+    `SELECT id FROM caf_core.prompt_templates
+     WHERE prompt_name = $1 AND flow_type = $2 AND id <> $3::uuid`,
+    [data.prompt_name, data.flow_type, existing.id]
+  );
+  if (clash) {
+    throw new Error(
+      `A prompt template already exists for prompt_name=${data.prompt_name} flow_type=${data.flow_type}`
+    );
+  }
+  const row = await qOne<PromptTemplateRow>(db, `
+    UPDATE caf_core.prompt_templates SET
+      prompt_name = $1,
+      flow_type = $2,
+      prompt_role = $3,
+      system_prompt = $4,
+      user_prompt_template = $5,
+      output_format_rule = $6,
+      output_schema_name = $7,
+      output_schema_version = $8,
+      temperature_default = $9,
+      max_tokens_default = $10,
+      stop_sequences = $11,
+      notes = $12,
+      active = $13,
+      updated_at = now()
+    WHERE id = $14::uuid
+    RETURNING *`, [
+    data.prompt_name,
+    data.flow_type,
+    data.prompt_role,
+    data.system_prompt,
+    data.user_prompt_template,
+    data.output_format_rule,
+    data.output_schema_name,
+    data.output_schema_version,
+    data.temperature_default,
+    data.max_tokens_default,
+    data.stop_sequences,
+    data.notes,
+    data.active,
+    existing.id,
+  ]);
+  return row ?? null;
 }
 
 // ---------------------------------------------------------------------------

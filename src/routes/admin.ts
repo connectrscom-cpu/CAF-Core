@@ -26,7 +26,7 @@ import {
 } from "../repositories/project-config.js";
 import {
   listFlowDefinitions, upsertFlowDefinition, deleteFlowDefinition,
-  listPromptTemplates, upsertPromptTemplate, deletePromptTemplate,
+  listPromptTemplates, upsertPromptTemplate, updatePromptTemplateByNaturalKey, deletePromptTemplate,
   listOutputSchemas, upsertOutputSchema, deleteOutputSchema,
   listCarouselTemplates, upsertCarouselTemplate, deleteCarouselTemplate,
   listQcChecks, upsertQcCheck, deleteQcChecklist,
@@ -92,6 +92,8 @@ import {
   deletePromptLabsOverride,
   listPromptLabsOverrides,
   upsertPromptLabsOverride,
+  renamePromptLabsOverridePromptName,
+  replacePromptLabsOverrideKey,
 } from "../repositories/prompt-labs-overrides.js";
 import {
   TOP_PERFORMER_IMAGE_SYSTEM_PROMPT,
@@ -1947,7 +1949,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         return { ok: true, cleared: true };
       }
       const str = (k: string) => (b[k] != null && String(b[k]).trim() !== "") ? String(b[k]) : null;
-      const saved = await upsertPromptLabsOverride(db, {
+      const from_pn = String(b.from_prompt_name ?? "").trim();
+      const row = {
         prompt_name,
         flow_type: str("flow_type"),
         prompt_role: str("prompt_role"),
@@ -1955,11 +1958,22 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         user_prompt_template: str("user_prompt_template"),
         output_format_rule: str("output_format_rule"),
         notes: str("notes"),
-      });
+      };
+      const saved =
+        from_pn && from_pn !== prompt_name
+          ? await replacePromptLabsOverrideKey(db, from_pn, row)
+          : await upsertPromptLabsOverride(db, row);
       return { ok: true, override: saved };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       request.log.warn({ err: e }, "prompt-labs-override");
+      const code = e && typeof e === "object" && "code" in e ? String((e as { code?: string }).code) : "";
+      if (code === "23505") {
+        return reply.code(409).send({ ok: false, error: "prompt_name conflict in prompt_labs_overrides." });
+      }
+      if (/already uses prompt_name=/i.test(msg)) {
+        return reply.code(409).send({ ok: false, error: msg });
+      }
       return reply.code(500).send({ ok: false, error: msg });
     }
   });
@@ -1990,22 +2004,63 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     return { ok: true };
   });
 
-  app.post("/v1/admin/flow-engine/prompt-tpl", async (request) => {
+  app.post("/v1/admin/flow-engine/prompt-tpl", async (request, reply) => {
     const b = request.body as Record<string, unknown>;
     const str = (k: string) => (b[k] != null && String(b[k]).trim() !== "") ? String(b[k]) : null;
     const num = (k: string) => (b[k] != null && b[k] !== "") ? Number(b[k]) : null;
-    if (!b.prompt_name || !b.flow_type) return { ok: false, error: "prompt_name and flow_type are required" };
-    await upsertPromptTemplate(db, {
-      prompt_name: String(b.prompt_name), flow_type: String(b.flow_type), prompt_role: str("prompt_role"),
-      system_prompt: str("system_prompt"), user_prompt_template: str("user_prompt_template"),
+    if (!b.prompt_name || !b.flow_type) {
+      return reply.code(400).send({ ok: false, error: "prompt_name and flow_type are required" });
+    }
+    const toPn = String(b.prompt_name).trim();
+    const toFt = String(b.flow_type).trim();
+    const fromPn = str("from_prompt_name")?.trim() ?? "";
+    const fromFt = str("from_flow_type")?.trim() ?? "";
+    const payload = {
+      prompt_name: toPn,
+      flow_type: toFt,
+      prompt_role: str("prompt_role"),
+      system_prompt: str("system_prompt"),
+      user_prompt_template: str("user_prompt_template"),
       output_format_rule: str("output_format_rule"),
       output_schema_name: str("output_schema_name") ?? str("schema_name"),
       output_schema_version: str("output_schema_version") ?? str("schema_version"),
-      temperature_default: num("temperature_default"), max_tokens_default: num("max_tokens_default"),
-      stop_sequences: str("stop_sequences"), notes: str("notes"),
+      temperature_default: num("temperature_default"),
+      max_tokens_default: num("max_tokens_default"),
+      stop_sequences: str("stop_sequences"),
+      notes: str("notes"),
       active: b.active !== false && b.active !== "false",
-    });
-    return { ok: true };
+    };
+    try {
+      if (fromPn && fromFt && (fromPn !== toPn || fromFt !== toFt)) {
+        const updated = await updatePromptTemplateByNaturalKey(
+          db,
+          { prompt_name: fromPn, flow_type: fromFt },
+          payload
+        );
+        if (!updated) {
+          return reply.code(404).send({ ok: false, error: "Original prompt template not found" });
+        }
+        if (fromPn !== toPn) {
+          await renamePromptLabsOverridePromptName(db, fromPn, toPn);
+        }
+      } else {
+        await upsertPromptTemplate(db, payload);
+      }
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      request.log.warn({ err: e }, "prompt-tpl-save");
+      const code = e && typeof e === "object" && "code" in e ? String((e as { code?: string }).code) : "";
+      if (code === "23505") {
+        return reply
+          .code(409)
+          .send({ ok: false, error: "Another row already uses this prompt_name + flow_type combination." });
+      }
+      if (/already exists for prompt_name=/i.test(msg)) {
+        return reply.code(409).send({ ok: false, error: msg });
+      }
+      return reply.code(500).send({ ok: false, error: msg });
+    }
   });
 
   app.post("/v1/admin/flow-engine/prompt-tpl/delete", async (request) => {
@@ -4952,6 +5007,10 @@ function feEdit(type,data){
       if(el.type==='checkbox')body[f.k]=el.checked;
       else body[f.k]=el.value;
     }
+    if(type==='prompt-tpl'&&data&&data.prompt_name&&data.flow_type){
+      body.from_prompt_name=data.prompt_name;
+      body.from_flow_type=data.flow_type;
+    }
     const msg=document.getElementById('fe-msg');
     msg.textContent='Saving...';msg.style.color='var(--accent)';
     try{
@@ -5016,6 +5075,10 @@ function plOpenPromptEdit(ix){
   h+=isOverride
     ? 'This prompt is defined in code. Saving creates a DB <strong>override</strong> for Prompt Labs (does not modify source code). Use <strong>Description (notes)</strong> for human context.'
     : 'Saves to <span class="mono">caf_core.prompt_templates</span>. Use <strong>Description (notes)</strong> for what this prompt does in your team.';
+  h+='</p><p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.45">';
+  h+=isOverride
+    ? 'You may edit <strong>Prompt Name</strong> and the templates below. Renaming changes the override row key — it must still match the <span class="mono">prompt_name</span> Core loads for this built-in prompt or the override will not apply.'
+    : 'You may edit <strong>Prompt Name</strong>, <strong>Flow Type</strong>, and all template fields. Renaming updates the same row (preserves id). Ensure pipeline code and integrations use the new names.';
   h+='</p><form id="pl-prompt-form" class="config-form" style="max-width:100%">';
   h+=plFg('pl_prompt_name','Prompt Name',data.prompt_name||'','text');
   h+=plFg('pl_flow_type','Flow Type',data.flow_type||'','text');
@@ -5056,6 +5119,8 @@ function plOpenPromptEdit(ix){
   document.getElementById('pl-prompt-form').addEventListener('submit',async function(ev){
     ev.preventDefault();
     const body={
+      from_prompt_name:String(data.prompt_name||'').trim(),
+      from_flow_type:isOverride?null:String(data.flow_type||'').trim(),
       prompt_name:plVal('pl_prompt_name'),
       flow_type:plVal('pl_flow_type'),
       prompt_role:plVal('pl_prompt_role')||null,
@@ -5075,6 +5140,7 @@ function plOpenPromptEdit(ix){
     try{
       const url=isOverride?'/v1/admin/prompt-labs/override':'/v1/admin/flow-engine/prompt-tpl';
       const outBody=isOverride?{
+        from_prompt_name:body.from_prompt_name||null,
         prompt_name:body.prompt_name,
         flow_type:body.flow_type||null,
         prompt_role:body.prompt_role||null,
@@ -5134,19 +5200,40 @@ async function loadPL(){
   const pp=d.processing_prompts||[];
   const lp=d.learning_prompts||[];
 
+  /** Align with canonical-flow-types: map legacy Flow Engine keys for tab routing only. */
+  function plCanonicalFlowType(ftRaw){
+    const leg={
+      Flow_Carousel_Copy:'FLOW_CAROUSEL',
+      Text_Post_Generator:'FLOW_TEXT',
+      Video_Scene_Generator:'FLOW_VID_SCENES',
+      Carousel_Angle_Extractor:'FLOW_ANGLE',
+      Carousel_Slide_Architecture:'FLOW_STRUCTURE',
+      CTA_Generator:'FLOW_CTA',
+      Hook_Variations:'FLOW_HOOKS',
+      Video_Prompt_Generator:'FLOW_VID_PROMPT',
+      Video_Script_Generator:'FLOW_VID_SCRIPT',
+      FLOW_SCENE_ASSEMBLY:'FLOW_VID_SCENES',
+      Flow_Scene_Assembly:'FLOW_VID_SCENES',
+      VIDEO_SCENE_ASSEMBLY:'FLOW_VID_SCENES',
+      Scene_Assembly:'FLOW_VID_SCENES'
+    };
+    return leg[ftRaw]||ftRaw;
+  }
   function layerForPrompt(p){
-    const ft=String(p.flow_type||'').trim();
-    if((p.labs_is_heygen===true)||heygenFlowSet.has(ft)) return 'heygen';
-    if(ft==='FLOW_CAROUSEL'||ft==='FLOW_VID_SCENES') return 'creation';
-    // Utility prep flows: keep out of the primary "Creation prompts" list (noise reduction).
+    const ftRaw=String(p.flow_type||'').trim();
+    const ft=plCanonicalFlowType(ftRaw);
+    if((p.labs_is_heygen===true)||heygenFlowSet.has(ftRaw)||heygenFlowSet.has(ft)) return 'heygen';
+    if(/heygen|HeyGen_Render/i.test(ftRaw)) return 'heygen';
     if(ft==='FLOW_ANGLE'||ft==='FLOW_STRUCTURE'||ft==='FLOW_CTA'||ft==='FLOW_HOOKS') return 'validation';
-    if(ft==='FLOW_TEXT') return 'creation';
-    // Default bucket: creation (most generator prompts belong here).
-    return 'creation';
+    if(ft==='FLOW_CAROUSEL'||ft==='FLOW_TEXT'||ft==='FLOW_VID_SCENES'){
+      if(p.active===false) return 'planning';
+      return 'creation';
+    }
+    return 'planning';
   }
 
   const vp=d.validation_prompts||[];
-  const layers={processing:[],creation:[],validation:[],publishing:[],learning:[],heygen:[]};
+  const layers={processing:[],planning:[],creation:[],validation:[],publishing:[],learning:[],heygen:[]};
   for(let i=0;i<pp.length;i++){
     layers.processing.push({p:pp[i],ix:-1});
   }
@@ -5160,6 +5247,7 @@ async function loadPL(){
     const p=pt[i];
     const k=layerForPrompt(p);
     layers[k].push({p:p,ix:i});
+    if(k==='heygen') layers.creation.push({p:p,ix:i});
   }
 
   // Validation: reserved for validation-layer LLM calls (QC audits, policy checks, etc.)
@@ -5176,12 +5264,18 @@ async function loadPL(){
   if(layers.processing.length){ for(const row of layers.processing) html+=plRenderPromptCard(row.p,row.ix); }
   else html+='<div class="empty">No rows</div>';
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
+  if(layers.planning.length){
+    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Planning &amp; other flow templates ('+layers.planning.length+')</div>';
+    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Ideation, viral-format prep, inactive legacy aliases, and other Flow Engine rows outside the active core creation set (carousel / text / scene prompts) and outside HeyGen video flows.</p>';
+    for(const row of layers.planning) html+=plRenderPromptCard(row.p,row.ix);
+    html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
+  }
   html+='</div>';
 
-  // Creation tab (main generator prompts + non-HeyGen addenda)
+  // Creation tab: core generators + HeyGen-flow templates (duplicated under HeyGen agent for rubric/addenda)
   html+='<div id="pl-creation" class="tab-panel">';
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation prompts ('+layers.creation.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Primary creative generation prompts (carousel copy, multi-scene bundles, etc.).</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Full creation layer: carousel, long-form text, scene-prompt generators, plus HeyGen script/prompt/product and render-bootstrap templates. The same HeyGen rows also appear under <strong>HeyGen agent</strong> next to duration addenda and the Video Agent rubric.</p>';
   if(layers.creation.length){ for(const row of layers.creation) html+=plRenderPromptCard(row.p,row.ix); }
   else html+='<div class="empty">No rows</div>';
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
@@ -5245,7 +5339,7 @@ async function loadPL(){
   html+='</div>';
 
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">HeyGen-flow prompt templates ('+heygenPrompts.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Flow Engine prompt templates whose <span class="mono">flow_type</span> feeds the HeyGen path (canonical: <span class="mono">FLOW_VID_SCRIPT</span> and <span class="mono">FLOW_VID_PROMPT</span> plus product flows). All fields editable.</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Same HeyGen-path templates as <strong>Creation</strong> (canonical <span class="mono">FLOW_VID_SCRIPT</span> / <span class="mono">FLOW_VID_PROMPT</span>, product flows, <span class="mono">HeyGen_Render_Video</span>). Listed here with rubric + runtime addenda. All fields editable.</p>';
   if(heygenPrompts.length){
     for(const row of heygenPrompts) html+=plRenderPromptCard(row.p,row.ix);
   }else html+='<div class="empty">No HeyGen-flow prompt templates. Seed them from <a href="/admin/flow-engine">Flow Engine</a>.</div>';
@@ -6242,9 +6336,10 @@ async function loadConfig(){
   }else h+='<div class="empty">No risk rules yet.</div>';
   h+='</div></div>';
 
-  // === Prompt Versions ===
+  // === Prompt Versions (project-scoped forks live in CAF Review) ===
   h+='<div id="tab-prompts" class="tab-panel"><div class="card"><div class="card-h">Prompt Versions</div>';
-  h+='<div class="empty">Prompt versions are managed on the <a href="/admin/engine">Decision Engine</a> page.</div>';
+  h+='<p style="color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 12px">Project-level prompt text overrides are stored in <span class="mono">caf_core.prompt_versions</span> (forks of Flow Engine templates). Operators edit them in <strong>CAF Review</strong> → <em>Project Configuration</em> → <strong>Project prompts &amp; versions</strong> — that UI copies template text into project rows without changing <span class="mono">caf_core.prompt_templates</span>.</p>';
+  h+='<p style="color:var(--muted);font-size:13px;line-height:1.5;margin:0 0 12px">Experiment status, traces, and planner context: <a href="/admin/engine">Decision Engine</a>.</p>';
   h+='</div></div>';
 
   // === Reference Posts (editable table) ===

@@ -79,5 +79,5 @@ export function buildProductVideoAgentBrandPromptBlock(
 ): string | null {
   const lines = buildProductVideoAgentBrandLines(brand);
   if (lines.length === 0) return null;
-  return ["Brand constraints (must be respected):", ...lines.map((l) => `- ${l}`)].join("\n");
+  return ["BRAND / SAFETY CONSTRAINTS (must be respected):", ...lines.map((l) => `- ${l}`)].join("\n");
 }

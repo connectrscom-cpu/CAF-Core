@@ -20,8 +20,7 @@ type Section =
   | "project-risk-rules"
   | "heygen-defaults"
   | "heygen-config"
-  | "project-prompts"
-  | "prompt-versions";
+  | "project-prompts";
 
 const TABS: { id: Section; label: string }[] = [
   { id: "strategy", label: "Strategy" },
@@ -33,8 +32,7 @@ const TABS: { id: Section; label: string }[] = [
   { id: "project-risk-rules", label: "Project risk rules" },
   { id: "heygen-defaults", label: "Video defaults" },
   { id: "heygen-config", label: "HeyGen" },
-  { id: "project-prompts", label: "Project Prompts" },
-  { id: "prompt-versions", label: "Prompt Versions" },
+  { id: "project-prompts", label: "Project prompts & versions" },
 ];
 
 const STRATEGY_FIELDS = [
@@ -254,7 +252,7 @@ export default function ProjectConfigPage() {
     setMessage(null);
     try {
       const suffix = projectApiSuffix(multiProject, activeProjectSlug);
-      if (section === "project-prompts" || section === "prompt-versions") {
+      if (section === "project-prompts") {
         // These tabs manage their own fetching + saving; keep the surrounding page stable.
         setData(null);
         setListData(null);
@@ -465,15 +463,9 @@ export default function ProjectConfigPage() {
 
         {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
 
-        {!loading && (activeTab === "project-prompts") && (
-          <ProjectPromptsPanel mode="project-prompts" />
-        )}
+        {!loading && activeTab === "project-prompts" && <ProjectPromptsPanel />}
 
-        {!loading && (activeTab === "prompt-versions") && (
-          <ProjectPromptsPanel mode="prompt-versions" />
-        )}
-
-        {!loading && activeTab !== "project-prompts" && activeTab !== "prompt-versions" && isSingleton && (
+        {!loading && activeTab !== "project-prompts" && isSingleton && (
           <SingletonForm
             fields={fields}
             data={data ?? {}}
@@ -482,7 +474,7 @@ export default function ProjectConfigPage() {
           />
         )}
 
-        {!loading && activeTab !== "project-prompts" && activeTab !== "prompt-versions" && !isSingleton && (
+        {!loading && activeTab !== "project-prompts" && !isSingleton && (
           <ListForm
             fields={fields}
             items={listData ?? []}
@@ -723,7 +715,6 @@ function getFieldsForSection(section: Section): FieldDef[] {
     case "heygen-defaults": return [...HEYGEN_DEFAULTS_FIELDS];
     case "heygen-config": return [...HEYGEN_FIELDS];
     case "project-prompts": return [];
-    case "prompt-versions": return [];
   }
 }
 
