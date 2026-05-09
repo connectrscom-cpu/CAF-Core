@@ -4,11 +4,13 @@
 -- by `qc_checklists.flow_type` (not by checklist name). Without this, no-avatar
 -- prompt video jobs skip the `video_prompt` requirement and other per-flow checks.
 --
+-- Uses NOT EXISTS (no ON CONFLICT): production DBs may predate UNIQUE(flow_type) on
+-- flow_definitions and the qc_checklists composite unique from 003.
+--
 -- Idempotent: safe to re-run.
 
 BEGIN;
 
--- 1) Register canonical no-avatar prompt video beside FLOW_VID_PROMPT (same QC/schema hooks).
 INSERT INTO caf_core.flow_definitions (
   flow_type, description, category, supported_platforms, output_asset_types,
   requires_signal_pack, requires_learning_context, requires_brand_constraints,
@@ -19,40 +21,58 @@ INSERT INTO caf_core.flow_definitions (
 SELECT
   'FLOW_VID_PROMPT_NO_AVATAR',
   'HeyGen Video Agent — prompt-led video without on-camera avatar (narration + motion/stock/graphics).',
-  category,
-  supported_platforms,
-  output_asset_types,
-  requires_signal_pack,
-  requires_learning_context,
-  requires_brand_constraints,
-  required_inputs,
-  optional_inputs,
-  default_variation_count,
-  output_schema_name,
-  output_schema_version,
-  qc_checklist_name,
-  qc_checklist_version,
-  risk_profile_default,
-  candidate_row_template,
+  base.category,
+  base.supported_platforms,
+  base.output_asset_types,
+  base.requires_signal_pack,
+  base.requires_learning_context,
+  base.requires_brand_constraints,
+  base.required_inputs,
+  base.optional_inputs,
+  base.default_variation_count,
+  base.output_schema_name,
+  base.output_schema_version,
+  base.qc_checklist_name,
+  base.qc_checklist_version,
+  base.risk_profile_default,
+  base.candidate_row_template,
   'Canonical no-avatar prompt video; shares Flow Engine templates with FLOW_VID_PROMPT (resolveFlowEngineTemplateFlowType).'
-FROM caf_core.flow_definitions
-WHERE flow_type = 'FLOW_VID_PROMPT'
-LIMIT 1
-ON CONFLICT (flow_type) DO UPDATE SET
-  description = EXCLUDED.description,
+FROM (
+  SELECT *
+  FROM caf_core.flow_definitions
+  WHERE flow_type IN ('FLOW_VID_PROMPT', 'Video_Prompt_Generator')
+  ORDER BY CASE flow_type WHEN 'FLOW_VID_PROMPT' THEN 0 ELSE 1 END
+  LIMIT 1
+) AS base
+WHERE NOT EXISTS (
+  SELECT 1 FROM caf_core.flow_definitions fd WHERE fd.flow_type = 'FLOW_VID_PROMPT_NO_AVATAR'
+);
+
+UPDATE caf_core.flow_definitions fd
+SET
   qc_checklist_name = COALESCE(
-    NULLIF(btrim(caf_core.flow_definitions.qc_checklist_name), ''),
-    EXCLUDED.qc_checklist_name
+    NULLIF(btrim(fd.qc_checklist_name), ''),
+    (SELECT qc_checklist_name FROM caf_core.flow_definitions WHERE flow_type = 'FLOW_VID_PROMPT' LIMIT 1),
+    (SELECT qc_checklist_name FROM caf_core.flow_definitions WHERE flow_type = 'Video_Prompt_Generator' LIMIT 1)
   ),
   qc_checklist_version = COALESCE(
-    NULLIF(btrim(caf_core.flow_definitions.qc_checklist_version), ''),
-    EXCLUDED.qc_checklist_version
+    NULLIF(btrim(fd.qc_checklist_version), ''),
+    (SELECT qc_checklist_version FROM caf_core.flow_definitions WHERE flow_type = 'FLOW_VID_PROMPT' LIMIT 1),
+    (SELECT qc_checklist_version FROM caf_core.flow_definitions WHERE flow_type = 'Video_Prompt_Generator' LIMIT 1)
   ),
-  output_schema_name = COALESCE(caf_core.flow_definitions.output_schema_name, EXCLUDED.output_schema_name),
-  output_schema_version = COALESCE(caf_core.flow_definitions.output_schema_version, EXCLUDED.output_schema_version),
-  updated_at = now();
+  output_schema_name = COALESCE(
+    fd.output_schema_name,
+    (SELECT output_schema_name FROM caf_core.flow_definitions WHERE flow_type = 'FLOW_VID_PROMPT' LIMIT 1),
+    (SELECT output_schema_name FROM caf_core.flow_definitions WHERE flow_type = 'Video_Prompt_Generator' LIMIT 1)
+  ),
+  output_schema_version = COALESCE(
+    fd.output_schema_version,
+    (SELECT output_schema_version FROM caf_core.flow_definitions WHERE flow_type = 'FLOW_VID_PROMPT' LIMIT 1),
+    (SELECT output_schema_version FROM caf_core.flow_definitions WHERE flow_type = 'Video_Prompt_Generator' LIMIT 1)
+  ),
+  updated_at = now()
+WHERE fd.flow_type = 'FLOW_VID_PROMPT_NO_AVATAR';
 
--- 2) Mirror QC checklist rows (listQcChecks matches flow_type only).
 INSERT INTO caf_core.qc_checklists (
   qc_checklist_name,
   qc_checklist_version,
@@ -86,6 +106,11 @@ SELECT
   q.notes
 FROM caf_core.qc_checklists q
 WHERE q.flow_type = 'FLOW_VID_PROMPT'
-ON CONFLICT (qc_checklist_name, qc_checklist_version, check_id) DO NOTHING;
+  AND NOT EXISTS (
+    SELECT 1
+    FROM caf_core.qc_checklists x
+    WHERE x.flow_type = 'FLOW_VID_PROMPT_NO_AVATAR'
+      AND x.check_id = q.check_id || '__vid_prompt_no_avatar'
+  );
 
 COMMIT;
