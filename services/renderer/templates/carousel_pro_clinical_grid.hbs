@@ -6,10 +6,13 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+
   <style>
     :root{
       --caf-carousel-headline-size: 72px;
       --caf-carousel-body-size: 48px;
+      --caf-carousel-panel-title-size: 22px;
+      --caf-carousel-panel-body-size: 30px;
       --caf-carousel-kicker-size: 18px;
       --caf-carousel-cta-size: 72px;
       --caf-carousel-handle-size: 40px;
@@ -24,29 +27,47 @@
       --pad:84px;
       --r:28px;
     }
-    *{ box-sizing:border-box; margin:0; padding:0; }
+
+    *{
+      box-sizing:border-box;
+      margin:0;
+      padding:0;
+    }
+
     body{
       background: radial-gradient(1100px 900px at 18% 10%, #0e2a3c 0%, var(--bg0) 55%, #050b10 100%);
       font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       -webkit-font-smoothing: antialiased;
     }
+
     .slide{
-      width:1080px; height:1350px; overflow:hidden; position:relative;
+      width:1080px;
+      height:1350px;
+      overflow:hidden;
+      position:relative;
       padding: var(--pad);
       color: var(--text);
     }
+
     .grid{
-      position:absolute; inset:-40px;
+      position:absolute;
+      inset:-40px;
       background-image:
         url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='84' height='84'%3E%3Cpath d='M84 0H0V84' fill='none' stroke='%23ffffff' stroke-opacity='0.07' stroke-width='1'/%3E%3Ccircle cx='0' cy='0' r='2' fill='%2334d399' fill-opacity='0.08'/%3E%3C/svg%3E");
       pointer-events:none;
     }
+
     .topbar{
-      display:flex; align-items:center; justify-content:space-between;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
       margin-bottom: 34px;
     }
+
     .pill{
-      display:inline-flex; align-items:center; gap:10px;
+      display:inline-flex;
+      align-items:center;
+      gap:10px;
       padding: 10px 14px;
       border: 1px solid var(--stroke);
       border-radius: 999px;
@@ -56,11 +77,15 @@
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }
+
     .dot{
-      width:10px; height:10px; border-radius: 999px;
+      width:10px;
+      height:10px;
+      border-radius: 999px;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       box-shadow: 0 0 0 6px rgba(52,211,153,0.08);
     }
+
     .page{
       display:grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
@@ -70,6 +95,7 @@
       position:relative;
       z-index: 1;
     }
+
     .copy-stack{
       min-height: 0;
       overflow-y: auto;
@@ -80,10 +106,12 @@
       padding-right: 6px;
       -webkit-overflow-scrolling: touch;
     }
+
     .copy-stack .headline,
     .copy-stack .sub{
       min-width: 0;
     }
+
     .headline{
       font-weight: 800;
       font-size: 86px;
@@ -93,6 +121,7 @@
       word-break:break-word;
       max-width: 860px;
     }
+
     .sub{
       margin-top: 22px;
       font-weight: 500;
@@ -104,6 +133,7 @@
       word-break:break-word;
       max-width: 900px;
     }
+
     .card{
       flex-shrink: 0;
       border-radius: var(--r);
@@ -111,6 +141,7 @@
       background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
       padding: 34px 34px 30px;
     }
+
     .card h2{
       font-size: 22px;
       font-weight: 700;
@@ -119,6 +150,7 @@
       color: rgba(255,255,255,0.86);
       margin-bottom: 10px;
     }
+
     .card p{
       font-size: 30px;
       line-height: 1.45;
@@ -127,8 +159,17 @@
       overflow-wrap:anywhere;
       word-break:break-word;
     }
-    .cta .headline{ font-size: clamp(74px, 7.8vw, 98px); line-height: 1.03; }
-    .cta .sub{ font-size: clamp(32px, 3.6vw, 38px); color: rgba(255,255,255,0.88); }
+
+    .cta .headline{
+      font-size: clamp(74px, 7.8vw, 98px);
+      line-height: 1.03;
+    }
+
+    .cta .sub{
+      font-size: clamp(32px, 3.6vw, 38px);
+      color: rgba(255,255,255,0.88);
+    }
+
     .handle{
       margin-top: 18px;
       font-weight: 800;
@@ -136,36 +177,88 @@
       letter-spacing: 0.01em;
       color: rgba(255,255,255,0.96);
     }
-  
-    /* CAF unified typography — optional px overrides from Review → generated_output.render */
-    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
-    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
-    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+
+    /*
+      CAF unified typography.
+      Fixed: body text and panel text are now separate semantic targets.
+
+      Review-console intended mappings:
+      - headline size      → --caf-carousel-headline-size
+      - main body size     → --caf-carousel-body-size
+      - panel title size   → --caf-carousel-panel-title-size
+      - panel body size    → --caf-carousel-panel-body-size
+      - kicker/pill size   → --caf-carousel-kicker-size
+      - CTA size           → --caf-carousel-cta-size
+      - handle size        → --caf-carousel-handle-size
+    */
+
+    .kicker,
+    .pill{
+      font-size: var(--caf-carousel-kicker-size, 18px) !important;
+    }
+
+    .main-headline{
       font-size: var(--caf-carousel-headline-size, 72px) !important;
     }
-    .body, .sub, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
+
+    .main-body{
       font-size: var(--caf-carousel-body-size, 48px) !important;
     }
-    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
 
+    .panel-title{
+      font-size: var(--caf-carousel-panel-title-size, 22px) !important;
+    }
+
+    .panel-body{
+      font-size: var(--caf-carousel-panel-body-size, 30px) !important;
+    }
+
+    .cta-text{
+      font-size: var(--caf-carousel-cta-size, 72px) !important;
+    }
+
+    .handle,
+    .cta-handle{
+      font-size: var(--caf-carousel-handle-size, 40px) !important;
+    }
   </style>
 </head>
+
 <body>
   <!-- Cover -->
   <div class="slide cover">
     <div class="grid"></div>
+
     <div class="page">
       <div class="topbar">
         <div class="pill"><span class="dot"></span> Cover</div>
         <div class="pill">{{slide_index}} / {{slide_total}}</div>
       </div>
+
       <div class="copy-stack">
-        <div class="headline">{{joinEmojiOrphans cover_slide.headline}}</div>
-        {{#if cover_slide.body}}<div class="sub">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
+        <div class="headline main-headline">{{joinEmojiOrphans cover_slide.headline}}</div>
+
+        {{#if cover_slide.body}}
+          <div class="sub main-body">{{joinEmojiOrphans cover_slide.body}}</div>
+        {{/if}}
       </div>
+
       <div class="card">
-        <h2>{{#if cover_slide.panel_title}}{{cover_slide.panel_title}}{{else}}Save this{{/if}}</h2>
-        <p>{{#if cover_slide.panel_body}}{{joinEmojiOrphans cover_slide.panel_body}}{{else}}Bookmark for later. Share with someone who likes clear, grounded explanations.{{/if}}</p>
+        <h2 class="panel-title">
+          {{#if cover_slide.panel_title}}
+            {{cover_slide.panel_title}}
+          {{else}}
+            Save this
+          {{/if}}
+        </h2>
+
+        <p class="panel-body">
+          {{#if cover_slide.panel_body}}
+            {{joinEmojiOrphans cover_slide.panel_body}}
+          {{else}}
+            Bookmark for later. Share with someone who likes clear, grounded explanations.
+          {{/if}}
+        </p>
       </div>
     </div>
   </div>
@@ -173,18 +266,34 @@
   {{#each body_slides}}
   <div class="slide body-slide">
     <div class="grid"></div>
+
     <div class="page">
       <div class="topbar">
         <div class="pill"><span class="dot"></span> Body</div>
         <div class="pill">{{../slide_index}} / {{../slide_total}}</div>
       </div>
+
       <div class="copy-stack">
-        <div class="headline">{{joinEmojiOrphans headline}}</div>
-        <div class="sub">{{joinEmojiOrphans body}}</div>
+        <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
+        <div class="sub main-body">{{joinEmojiOrphans body}}</div>
       </div>
+
       <div class="card">
-        <h2>{{#if panel_title}}{{panel_title}}{{else}}Try this{{/if}}</h2>
-        <p>{{#if panel_body}}{{joinEmojiOrphans panel_body}}{{else}}Re-read and pull 1 sentence you can actually use today.{{/if}}</p>
+        <h2 class="panel-title">
+          {{#if panel_title}}
+            {{panel_title}}
+          {{else}}
+            Try this
+          {{/if}}
+        </h2>
+
+        <p class="panel-body">
+          {{#if panel_body}}
+            {{joinEmojiOrphans panel_body}}
+          {{else}}
+            Re-read and pull 1 sentence you can actually use today.
+          {{/if}}
+        </p>
       </div>
     </div>
   </div>
@@ -193,21 +302,53 @@
   <!-- CTA -->
   <div class="slide cta">
     <div class="grid"></div>
+
     <div class="page">
       <div class="topbar">
         <div class="pill"><span class="dot"></span> CTA</div>
         <div class="pill">{{slide_index}} / {{slide_total}}</div>
       </div>
+
       <div class="copy-stack">
-        <div class="headline">{{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{joinEmojiOrphans cta_slide.body}}{{/if}}</div>
-        {{#if cta_slide.sub}}<div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>{{else}}{{#if cta_handle}}<div class="handle">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="handle">{{cta_slide.handle}}</div>{{/if}}{{/if}}{{/if}}
+        <div class="headline cta-text">
+          {{#if cta_text}}
+            {{joinEmojiOrphans cta_text}}
+          {{else}}
+            {{joinEmojiOrphans cta_slide.body}}
+          {{/if}}
+        </div>
+
+        {{#if cta_slide.sub}}
+          <div class="sub main-body">{{joinEmojiOrphans cta_slide.sub}}</div>
+        {{else}}
+          {{#if cta_handle}}
+            <div class="handle cta-handle">{{cta_handle}}</div>
+          {{else}}
+            {{#if cta_slide.handle}}
+              <div class="handle cta-handle">{{cta_slide.handle}}</div>
+            {{/if}}
+          {{/if}}
+        {{/if}}
       </div>
+
       <div class="card">
-        <h2>{{#if cta_slide.panel_title}}{{cta_slide.panel_title}}{{else}}Prompt{{/if}}</h2>
-        <p>{{#if cta_slide.panel_body}}{{joinEmojiOrphans cta_slide.panel_body}}{{else}}Comment the one word you’re working on this week.{{/if}}</p>
+        <h2 class="panel-title">
+          {{#if cta_slide.panel_title}}
+            {{cta_slide.panel_title}}
+          {{else}}
+            Prompt
+          {{/if}}
+        </h2>
+
+        <p class="panel-body">
+          {{#if cta_slide.panel_body}}
+            {{joinEmojiOrphans cta_slide.panel_body}}
+          {{else}}
+            Comment the one word you’re working on this week.
+          {{/if}}
+        </p>
       </div>
     </div>
   </div>
 </body>
 </html>
-
