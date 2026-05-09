@@ -41,6 +41,7 @@ import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { estimateCarouselSlideFlyUsd } from "./render-cost-estimate.js";
 import { insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 import { HeygenPollTimeoutError } from "./heygen-renderer.js";
 import { SoraPollTimeoutError } from "./sora-scene-clips.js";
@@ -996,7 +997,11 @@ async function ensureHeygenPayloadForFlowType(
     if (!r.ok) throw new Error(r.error ?? "video script prep failed");
     return;
   }
-  if (ft === "FLOW_VID_PROMPT" || /video_prompt|prompt_generator/i.test(ft)) {
+  if (
+    ft === "FLOW_VID_PROMPT" ||
+    ft === "FLOW_VID_PROMPT_NO_AVATAR" ||
+    /video_prompt|prompt_generator/i.test(ft)
+  ) {
     const r = await ensureVideoPromptInPayload(db, config, jobId);
     if (!r.ok) throw new Error(r.error ?? "video prompt prep failed");
     return;
@@ -1376,6 +1381,7 @@ async function processCarouselJob(
       };
 
       const renderUrl = `${pipeConfig.rendererBaseUrl.replace(/\/$/, "")}/render-binary`;
+      const slideStarted = Date.now();
       const response = await postCarouselRenderBinary(
         renderUrl,
         body,
@@ -1383,6 +1389,8 @@ async function processCarouselJob(
         i,
         pipeConfig.carouselRendererSlideRetryAttempts
       );
+      const latencyMs = Math.max(0, Date.now() - slideStarted);
+      const slideCostUsd = estimateCarouselSlideFlyUsd(latencyMs, config.CAF_COST_FLY_CAROUSEL_RENDERER_USD_PER_HOUR);
 
       const buf = Buffer.from(
         await readResponseBodyWithTimeout(
@@ -1400,7 +1408,9 @@ async function processCarouselJob(
         model: null,
         ok: true,
         requestJson: { endpoint: renderUrl, body },
-        responseJson: { png_bytes: buf.length },
+        responseJson: { png_bytes: buf.length, latency_ms: latencyMs },
+        latencyMs,
+        estimatedCostUsd: slideCostUsd,
       });
       const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
       const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");

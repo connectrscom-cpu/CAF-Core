@@ -150,7 +150,7 @@ Depending on the HeyGen path (see [`HEYGEN_API_V3.md`](./HEYGEN_API_V3.md) for u
 - **HeyGen v3 Video Agent** (`POST /v3/video-agents`):
   - The `prompt` is built by `buildHeyGenVideoAgentProductionBrief` in `src/services/heygen-video-agent-prompt.ts`: a structured **CAF VIDEO AGENT PRODUCTION BRIEF** (objective, delivery mode, script/VO rules, scaled scene plan, visual style bullets, media-type guidance, on-screen text rules, post-only caption/hashtag context). Product jobs append brand constraints (before product facts) from `product-video-agent-brand.ts` / `product-video-agent-product.ts`.
   - Optional `avatar_id`, `voice_id`, `style_id`, `orientation`, `callback_url` are passed when configured (`style_id` from `heygen_config` keys `style_id` or `heygen_style_id`).
-  - Used for **prompt-led** avatar jobs and **no-avatar** agent jobs. Canonical planners also use **`FLOW_VID_PROMPT`** (Video Agent) vs **`FLOW_VID_SCRIPT`** (direct `/v3/videos` when `HEYGEN_AVATAR`), in addition to legacy `Video_Prompt_*` / `Video_Script_*` names.
+  - Used for **prompt-led** avatar jobs and **no-avatar** agent jobs. Canonical `flow_type` values: **`FLOW_VID_PROMPT`** (Video Agent, avatar from `heygen_config`), **`FLOW_VID_PROMPT_NO_AVATAR`** (Video Agent, no on-camera avatar), **`FLOW_VID_SCRIPT`** (direct `/v3/videos` when `HEYGEN_AVATAR`), plus legacy `Video_Prompt_*` / `Video_Script_*` names.
 
 - **Legacy v2** (`POST /v2/video/generate`) — **only** when the job uses HeyGen `voice: { type: "silence" }` (visual-only / no spoken script). The v3 create-video schema has no silence-TTS equivalent, so CAF keeps this one legacy call for that edge case.
 

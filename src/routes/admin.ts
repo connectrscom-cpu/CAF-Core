@@ -10,6 +10,10 @@ import {
   type ConstraintsPatch,
 } from "../repositories/core.js";
 import { listRuns, getRunByRunId, updateRunStatus } from "../repositories/runs.js";
+import {
+  getProjectObservabilityMetrics,
+  getPlatformObservabilitySummary,
+} from "../repositories/observability-metrics.js";
 import { validateAndNormalizeDraftPackage } from "../services/draft-package-contract.js";
 import { listLearningRules } from "../repositories/learning.js";
 import {
@@ -55,6 +59,7 @@ import { adminProcessingBody } from "./admin-processing-body.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
+import { buildSignalPackIdeasForUi } from "../services/signal-pack-ideas-ui.js";
 import { runSceneAssemblyLabNew, runSceneAssemblyLabRegenerate } from "../services/scene-assembly-lab.js";
 import {
   runSceneAssemblyMergeClipsFromStorage,
@@ -187,6 +192,24 @@ function stripLegacyFlowEngineRows(args: {
   });
 
   return { flowDefs, promptTpls, schemas, qcChecks };
+}
+
+/**
+ * Prompt Labs only: omit inactive templates and rows flagged as deprecated aliases.
+ * Full rows remain in Flow Engine (`/v1/admin/flow-engine`) for edit/reactivation.
+ */
+function shouldOmitFromPromptLabs(p: {
+  active?: boolean;
+  notes?: string | null;
+  prompt_name?: string | null;
+}): boolean {
+  if (p.active === false) return true;
+  const notes = String(p.notes ?? "");
+  const pn = String(p.prompt_name ?? "");
+  if (/\bdeprecated\b/i.test(notes)) return true;
+  if (/\bdeprecated\b/i.test(pn)) return true;
+  if (/alias\s*\([^)]*deprecated/i.test(notes)) return true;
+  return false;
 }
 
 interface ProjectRow {
@@ -376,6 +399,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
 
   type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
   const globalLinks: GlobalLink[] = [
+    { href: "/admin/platform-overview", label: "Platform overview", key: "platform-overview" },
     { href: "/admin/projects", label: "Projects", key: "projects" },
     {
       href: "/admin/global-learning",
@@ -579,6 +603,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     if (!project) return { ok: false, error: "Project not found" };
     const stats = await getJobStats(db, project.id);
     return { ok: true, stats };
+  });
+
+  /** Production KPIs: review RTP, QC/render proxies, publications, learning counts, audit tokens. */
+  app.get("/v1/admin/observability", async (request) => {
+    const query = request.query as Record<string, string>;
+    const project = await resolveProject(db, query.project);
+    if (!project) return { ok: false, error: "Project not found" };
+    const runId = query.run_id?.trim() || undefined;
+    const metrics = await getProjectObservabilityMetrics(db, project.id, { runId });
+    return { ok: true, metrics };
+  });
+
+  app.get("/v1/admin/observability/platform", async () => {
+    const summary = await getPlatformObservabilitySummary(db);
+    return { ok: true, summary };
   });
 
   app.get("/v1/admin/jobs", async (request) => {
@@ -1201,6 +1240,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const meta = (run.metadata_json ?? {}) as Record<string, unknown>;
     const ideasRaw = signalPack?.ideas_json;
     const signal_pack_ideas_count = Array.isArray(ideasRaw) ? ideasRaw.length : 0;
+    const signal_pack_ideas_ui = buildSignalPackIdeasForUi(signalPack);
 
     return {
       ok: true,
@@ -1216,7 +1256,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       },
       notes: {
         stored_signal_pack:
-          "Pack still holds research (`ideas_json`, `overall_candidates_json`). Planner input for Start is `runs.candidates_json` — materialize via POST /v1/runs/.../candidates before Start.",
+          "Pack holds research in `ideas_json`. Planner input for Start is `runs.candidates_json` — materialize via POST /v1/runs/.../candidates before Start.",
         planner:
           "Each planning trace 'candidates' list is runs.candidates_json rows × enabled flow types (after scene-router), with outcome planned/dropped/unknown.",
         jobs:
@@ -1226,6 +1266,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       },
       signal_pack_overall_candidates: signalPack?.overall_candidates_json ?? [],
       signal_pack_ideas_count,
+      signal_pack_ideas_ui,
       signal_pack_meta: signalPack
         ? {
             id: signalPack.id,
@@ -1754,6 +1795,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         labs_is_heygen: isHeygenFlowType(p.flow_type),
       };
     });
+    const prompt_templates_for_labs = prompt_templates_enriched.filter((p) => !shouldOmitFromPromptLabs(p));
     const broad = broadInsightsPromptTemplate();
     const processing_prompts_base = [
       {
@@ -1925,7 +1967,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         note:
           "POST /v3/video-agents: prompt text is rubric lines plus hook, spoken_script, video_prompt, structured fields, CTA/caption/hashtags. Script-led avatar jobs use POST /v3/videos (type avatar) — no duration field; CAF enforces min/max spoken word counts from VIDEO_TARGET_* × SCENE_VO_WORDS_PER_MINUTE when HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS is true. Silence-voice visual-only jobs still use legacy POST /v2/video/generate (see heygen-renderer).",
       },
-      prompt_templates: prompt_templates_enriched,
+      prompt_templates: prompt_templates_for_labs,
       processing_prompts,
       learning_prompts,
       validation_prompts: [],
@@ -2878,7 +2920,54 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     reply.type("text/html").send(page("Learning prompts", "learning-prompts", body, projects, "", adminHeadTokenScript(config)));
   });
 
-  // --- Overview ---
+  // --- Platform overview (all projects) ---
+  app.get("/admin/platform-overview", async (_request, reply) => {
+    const projects = await listProjects(db);
+    const summary = await getPlatformObservabilitySummary(db);
+    const rows = summary.projects
+      .map((r) => {
+        const rtp =
+          r.ready_to_publish_rate != null ? (r.ready_to_publish_rate * 100).toFixed(1) + "%" : "—";
+        const pq = `?project=${encodeURIComponent(r.slug)}`;
+        return `<tr>
+          <td><a href="/admin${pq}">${esc(r.slug)}</a></td>
+          <td>${esc(r.display_name || "—")}</td>
+          <td>${r.active ? '<span class="badge badge-g">yes</span>' : '<span class="badge badge-r">no</span>'}</td>
+          <td>${r.total_jobs}</td>
+          <td>${r.jobs_reviewed}</td>
+          <td>${rtp}</td>
+          <td>${r.qc_gate_failed}</td>
+        </tr>`;
+      })
+      .join("");
+    const body = `
+<div class="ph"><div><h2>Platform overview</h2><span class="ph-sub">CAF Core — projects &amp; production KPIs</span></div></div>
+<div class="content">
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h">Roll-up</div>
+    <div style="padding:12px 16px 16px;display:flex;flex-wrap:wrap;gap:16px;font-size:13px">
+      <div><strong>${summary.totals.projects}</strong> projects · <strong>${summary.totals.jobs}</strong> jobs ·
+      <strong>${summary.totals.jobs_reviewed}</strong> tasks with review rows ·
+      <strong>${summary.totals.ready_to_publish_count}</strong> ready-to-publish approvals (approved, no edits)</div>
+    </div>
+    <p style="padding:0 16px 14px;margin:0;font-size:12px;color:var(--muted);line-height:1.5">
+      <strong>Ready-to-Publish rate</strong> is per project on the project Overview. Denominator = tasks with ≥1 editorial review.
+      QC gate = BLOCKED + QC_FAILED. Dollar cost is not stored; use API audit token sums per project for a usage proxy.
+    </p>
+  </div>
+  <div class="card"><div class="card-h">Projects</div>
+    <div style="overflow-x:auto;padding:0 16px 16px">
+      <table class="sp-modal-table" style="margin:0"><thead><tr>
+        <th>Slug</th><th>Display</th><th>Active</th><th>Jobs</th><th>Reviewed tasks</th><th>RTP rate</th><th>QC gate fails</th>
+      </tr></thead><tbody>${rows || '<tr><td colspan="7" class="empty">No projects</td></tr>'}</tbody></table>
+    </div>
+  </div>
+  <p style="font-size:12px;color:var(--muted);line-height:1.5">Open a project row for the full Overview (runs, review metrics, learning, observability inventory).</p>
+</div>`;
+    reply.type("text/html").send(page("Platform overview", "platform-overview", body, projects, "", adminHeadTokenScript(config)));
+  });
+
+  // --- Overview (project) ---
   app.get("/admin", async (request, reply) => {
     const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
@@ -2901,53 +2990,168 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     }
 
     const currentSlug = project.slug;
-    const constraints = await getConstraints(db, project.id);
+    const runFilter = (query.run_id ?? "").trim();
+    const obs = await getProjectObservabilityMetrics(db, project.id, { runId: runFilter || undefined });
     const stats = await getJobStats(db, project.id);
     const runCount = await getRunCount(db, project.id);
-    const statusCards = Object.entries(stats.by_status).map(([k, v]) => `<div class="card stat-card"><div class="num">${v}</div><div class="lbl">${esc(k)}</div></div>`).join("");
+    const recentRuns = await listRuns(db, project.id, 40, 0);
+
+    const statusCards = Object.entries(stats.by_status)
+      .map(([k, v]) => `<div class="card stat-card"><div class="num">${v}</div><div class="lbl">${esc(k)}</div></div>`)
+      .join("");
+    const rtpPct =
+      obs.review.ready_to_publish_rate != null ? (obs.review.ready_to_publish_rate * 100).toFixed(1) : "—";
+    const apprPct =
+      obs.review.jobs_reviewed > 0
+        ? ((obs.review.approved_count / obs.review.jobs_reviewed) * 100).toFixed(1)
+        : "—";
+    const needsPct =
+      obs.review.jobs_reviewed > 0
+        ? ((obs.review.needs_edit_count / obs.review.jobs_reviewed) * 100).toFixed(1)
+        : "—";
+    const qcRate =
+      obs.jobs.total_jobs > 0 ? ((obs.qc_gate_failed / obs.jobs.total_jobs) * 100).toFixed(1) : "—";
+    const failRate =
+      obs.jobs.total_jobs > 0 ? ((obs.failed_jobs / obs.jobs.total_jobs) * 100).toFixed(1) : "—";
+    const pubDenom = Math.max(1, obs.publications.publish_attempts);
+    const pubOkPct = ((obs.publications.published / pubDenom) * 100).toFixed(1);
+
+    const runOptions =
+      `<option value="">All runs (project-wide)</option>` +
+      recentRuns
+        .map(
+          (r) =>
+            `<option value="${esc(r.run_id)}"${r.run_id === runFilter ? " selected" : ""}>${esc(r.run_id)} · ${esc(
+              r.status
+            )}</option>`
+        )
+        .join("");
+
+    const rejectionRows = obs.rejection_tags.length
+      ? obs.rejection_tags
+          .map((t) => `<tr><td>${esc(t.tag)}</td><td>${t.count}</td></tr>`)
+          .join("")
+      : "";
+    const learningRows = Object.entries(obs.learning.rules_by_status)
+      .map(([st, n]) => `<tr><td>${esc(st)}</td><td>${n}</td></tr>`)
+      .join("");
+    const pubRows = Object.entries(obs.publications.by_status)
+      .map(([st, n]) => `<tr><td>${esc(st)}</td><td>${n}</td></tr>`)
+      .join("");
+
+    const runsRows = recentRuns
+      .map((r) => {
+        const cand = `/admin/run-candidates?project=${encodeURIComponent(currentSlug)}&run_id=${encodeURIComponent(r.run_id)}`;
+        const jobs = `/admin/jobs?project=${encodeURIComponent(currentSlug)}&run_id=${encodeURIComponent(r.run_id)}`;
+        return `<tr>
+          <td class="mono" style="font-size:11px">${esc(r.run_id)}</td>
+          <td>${esc(r.status)}</td>
+          <td>${r.total_jobs}</td>
+          <td>${r.jobs_completed}</td>
+          <td style="white-space:nowrap;font-size:11px"><a href="${cand}">Candidates</a> · <a href="${jobs}">Jobs</a></td>
+        </tr>`;
+      })
+      .join("");
+
+    const scopeNote = runFilter
+      ? `<p style="margin:0 0 12px;font-size:12px;color:var(--muted)">Metrics scoped to run <span class="mono">${esc(
+          runFilter
+        )}</span>. <a href="/admin?project=${encodeURIComponent(currentSlug)}">Clear filter</a>.</p>`
+      : "";
 
     const body = `
-<div class="ph"><div><h2>${esc(project.display_name || project.slug)}</h2><span class="ph-sub">Overview</span></div></div>
+<div class="ph"><div><h2>${esc(project.display_name || project.slug)}</h2><span class="ph-sub">Overview — production &amp; review</span></div></div>
 <div class="content">
+  <form method="get" class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
+    <input type="hidden" name="project" value="${esc(currentSlug)}"/>
+    <div><label style="font-size:12px;color:var(--muted)">Metric scope</label><br/>
+      <select name="run_id" style="min-width:280px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg)">${runOptions}</select>
+    </div>
+    <button type="submit" class="btn btn-sm">Apply</button>
+    <a class="btn-ghost btn-sm" href="/admin/platform-overview" style="text-decoration:none;border:1px solid var(--border);padding:6px 12px;border-radius:8px">Platform overview</a>
+  </form>
+  ${scopeNote}
   <div class="grid2">
     <div class="card"><div class="card-h">System</div>
       <div class="info-row"><span class="info-l">Engine version</span><span class="info-v">${esc(config.DECISION_ENGINE_VERSION)}</span></div>
       <div class="info-row"><span class="info-l">Environment</span><span class="info-v">${esc(config.NODE_ENV)}</span></div>
       <div class="info-row"><span class="info-l">Auth required</span><span class="info-v">${config.CAF_CORE_REQUIRE_AUTH ? "Yes" : "No"}</span></div>
-      <div class="info-row"><span class="info-l">Port</span><span class="info-v">${config.PORT}</span></div>
     </div>
     <div class="card"><div class="card-h">Project</div>
       <div class="info-row"><span class="info-l">Slug</span><span class="info-v mono">${esc(project.slug)}</span></div>
       <div class="info-row"><span class="info-l">Display name</span><span class="info-v">${esc(project.display_name ?? "—")}</span></div>
       <div class="info-row"><span class="info-l">Active</span><span class="info-v">${project.active ? '<span class="badge badge-g">Active</span>' : '<span class="badge badge-r">Inactive</span>'}</span></div>
-      <div class="info-row"><span class="info-l">ID</span><span class="info-v mono" style="font-size:11px">${esc(project.id)}</span></div>
     </div>
   </div>
-  <div class="card"><div class="card-h">Job Stats</div>
+
+  <div class="card"><div class="card-h">Ready-to-Publish &amp; review</div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.5">${esc(obs.definitions.ready_to_publish)}</p>
     <div class="grid3">
-      <div class="stat-card"><div class="num">${stats.total}</div><div class="lbl">Total jobs</div></div>
-      <div class="stat-card"><div class="num">${stats.today}</div><div class="lbl">Created today</div></div>
-      <div class="stat-card"><div class="num">${runCount}</div><div class="lbl">Total runs</div></div>
+      <div class="stat-card"><div class="num">${rtpPct}${obs.review.ready_to_publish_rate != null ? "%" : ""}</div><div class="lbl">Ready-to-publish rate</div></div>
+      <div class="stat-card"><div class="num">${obs.review.ready_to_publish_count}</div><div class="lbl">RTP approvals (no edits)</div></div>
+      <div class="stat-card"><div class="num">${obs.review.jobs_reviewed}</div><div class="lbl">Tasks with review rows</div></div>
+      <div class="stat-card"><div class="num">${apprPct}%</div><div class="lbl">Approval rate (of reviewed)</div></div>
+      <div class="stat-card"><div class="num">${needsPct}%</div><div class="lbl">Needs-edit rate</div></div>
+      <div class="stat-card"><div class="num">${obs.review.rejected_count}</div><div class="lbl">Rejected (latest)</div></div>
     </div>
   </div>
-  <div class="card"><div class="card-h">Jobs by Status</div>
+
+  <div class="card"><div class="card-h">Pipeline &amp; quality (jobs)</div>
+    <div class="grid3">
+      <div class="stat-card"><div class="num">${obs.jobs.total_jobs}</div><div class="lbl">Jobs (in scope)</div></div>
+      <div class="stat-card"><div class="num">${obs.planned_slots_from_runs}</div><div class="lbl">Planned slots (Σ runs.total_jobs)</div></div>
+      <div class="stat-card"><div class="num">${obs.planned_jobs}</div><div class="lbl">Jobs in PLANNED status</div></div>
+      <div class="stat-card"><div class="num">${obs.generated_jobs}</div><div class="lbl">GENERATED</div></div>
+      <div class="stat-card"><div class="num">${obs.in_review_jobs}</div><div class="lbl">IN_REVIEW</div></div>
+      <div class="stat-card"><div class="num">${qcRate}%</div><div class="lbl">QC gate fail share</div></div>
+      <div class="stat-card"><div class="num">${failRate}%</div><div class="lbl">FAILED share</div></div>
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin:12px 0 0">${esc(
+      obs.definitions.schema_fail
+    )}</p>
+  </div>
+
+  <div class="card"><div class="card-h">Jobs by status</div>
     <div class="grid3">${statusCards || '<div class="empty">No jobs yet</div>'}</div>
+    <div class="info-row" style="margin-top:10px"><span class="info-l">Created today</span><span class="info-v">${stats.today}</span></div>
+    <div class="info-row"><span class="info-l">Runs</span><span class="info-v">${runCount}</span></div>
   </div>
-  <div class="card"><div class="card-h">System Constraints</div>
-    <div class="info-row"><span class="info-l">Max daily jobs</span><span class="info-v">${constraints?.max_daily_jobs ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Min score to generate</span><span class="info-v">${constraints?.min_score_to_generate ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Max active prompt versions</span><span class="info-v">${constraints?.max_active_prompt_versions ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Default variation cap</span><span class="info-v">${constraints?.default_variation_cap ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Auto-validation pass threshold</span><span class="info-v">${constraints?.auto_validation_pass_threshold ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Max carousel jobs / run plan</span><span class="info-v">${constraints?.max_carousel_jobs_per_run ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Max video jobs / run plan</span><span class="info-v">${constraints?.max_video_jobs_per_run ?? "—"}</span></div>
-    <div class="info-row"><span class="info-l">Max jobs per flow type (JSON)</span><span class="info-v mono" style="font-size:11px;max-width:360px;word-break:break-all">${esc(JSON.stringify(constraints?.max_jobs_per_flow_type ?? {}))}</span></div>
+
+  ${
+    rejectionRows
+      ? `<div class="card"><div class="card-h">Rejection tags (latest decisions)</div>
+    <table class="sp-modal-table"><thead><tr><th>Tag</th><th>Count</th></tr></thead><tbody>${rejectionRows}</tbody></table></div>`
+      : ""
+  }
+
+  <div class="card"><div class="card-h">Publications</div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Publish success proxy: ${pubOkPct}% of tracked placement rows in scope (${obs.publications.published} published / ${obs.publications.publish_attempts} rows).</p>
+    <table class="sp-modal-table"><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>${pubRows || '<tr><td colspan="2" class="empty">None</td></tr>'}</tbody></table>
   </div>
-  <div class="card"><div class="card-h">Scoring Weights</div>
-    <div class="info-row"><span class="info-l">Confidence</span><span class="info-v">${config.SCORE_WEIGHT_CONFIDENCE}</span></div>
-    <div class="info-row"><span class="info-l">Platform fit</span><span class="info-v">${config.SCORE_WEIGHT_PLATFORM_FIT}</span></div>
-    <div class="info-row"><span class="info-l">Novelty</span><span class="info-v">${config.SCORE_WEIGHT_NOVELTY}</span></div>
-    <div class="info-row"><span class="info-l">Past performance</span><span class="info-v">${config.SCORE_WEIGHT_PAST_PERF}</span></div>
+
+  <div class="card"><div class="card-h">Learning (project-scoped, advisory)</div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.55">
+      Rules apply per project unless you explicitly use the global learning project. Guidance is injected into prompts where configured; QC and routing still enforce elsewhere.
+      Not “self-improving” unless RTP / QC metrics move after controlled rule changes. Effect tracking: compare approval and QC rates before vs after rule activation using this dashboard and Jobs.
+    </p>
+    <div class="info-row"><span class="info-l">Attribution rows (30d)</span><span class="info-v">${obs.learning.attribution_rows_30d} <span style="color:var(--muted);font-size:11px">(caf_core.learning_generation_attribution)</span></span></div>
+    <table class="sp-modal-table" style="margin-top:10px"><thead><tr><th>Rule status</th><th>Count</th></tr></thead><tbody>${learningRows || '<tr><td colspan="2" class="empty">No rules</td></tr>'}</tbody></table>
+    <p style="margin:12px 0 0;font-size:12px"><a href="/admin/learning?project=${encodeURIComponent(currentSlug)}">Open Learning</a> ·
+    <a href="/v1/learning/${encodeURIComponent(currentSlug)}/context-preview?flow_type=FLOW_CAROUSEL_COPY&platform=Instagram" target="_blank" rel="noopener">Sample context preview (API)</a></p>
+  </div>
+
+  <div class="card"><div class="card-h">Observability inventory</div>
+    <div class="info-row"><span class="info-l">job_state_transitions rows</span><span class="info-v">${obs.transitions.transition_rows}</span></div>
+    <div class="info-row"><span class="info-l">api_call_audit rows (scoped)</span><span class="info-v">${obs.api_audit.audited_calls} · ${obs.api_audit.failed_calls} failed · Σ tokens ${Math.round(obs.api_audit.token_usage_sum)} · Σ est. USD ${Number(obs.api_audit.estimated_cost_usd_sum || 0).toFixed(4)}</span></div>
+    <div class="info-row"><span class="info-l">diagnostic_audits</span><span class="info-v">${obs.diagnostic_audits}</span></div>
+    <p style="font-size:11px;color:var(--muted);margin:10px 0 0;line-height:1.45">Structured logs: use <span class="mono">logPipelineEvent</span> (project_id, run_id, task_id). Provider latency lives in api_call_audit timestamps + step. Average stage times: query <span class="mono">job_state_transitions</span> (not rolled up here yet).</p>
+  </div>
+
+  <div class="card"><div class="card-h">Recent runs</div>
+    <div style="overflow-x:auto">
+      <table class="sp-modal-table"><thead><tr><th>Run</th><th>Status</th><th>Planned jobs</th><th>Done</th><th></th></tr></thead><tbody>${runsRows || '<tr><td colspan="5" class="empty">No runs</td></tr>'}</tbody></table>
+    </div>
+    <p style="margin:10px 0 0;font-size:12px"><a href="/admin/runs?project=${encodeURIComponent(currentSlug)}">All runs</a></p>
   </div>
 </div>`;
     reply.type("text/html").send(page(project.slug + " — Overview", "overview", body, projects, currentSlug, adminHeadTokenScript(config)));
@@ -2997,7 +3201,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <button type="button" class="btn" onclick="togglePanel('upload-panel')">Upload signal pack (.xlsx)</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="togglePanel('create-panel')">Create run (pick signal pack)</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
-      <p class="runs-ops-hint"><strong>Create run</strong> picks a <strong>signal pack</strong> (research + <code>ideas_json</code>). Before <strong>Start</strong>, open <strong>Runs → Candidates</strong> and materialize <code>runs.candidates_json</code> from pack ideas (all, LLM subset, manual <code>idea_id</code>s) or legacy <code>overall_candidates_json</code>. <strong>Start</strong> expands that JSON × flows and plans jobs. <strong>Upload .xlsx</strong> is optional legacy ingest. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps <code>candidates_json</code>). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
+      <p class="runs-ops-hint"><strong>Create run</strong> picks a <strong>signal pack</strong> (research + <code>ideas_json</code>). Before <strong>Start</strong>, open <strong>Runs → Candidates</strong> and materialize <code>runs.candidates_json</code> from pack ideas (all, LLM subset, or pick manually in the UI). <strong>Start</strong> expands that JSON × flows and plans jobs. <strong>Upload .xlsx</strong> is optional legacy ingest. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps <code>candidates_json</code>). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
     <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:flex-start">
       <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
@@ -3442,11 +3646,7 @@ async function runAction(runId,action){
         );
         if(ok){
           showToast('Materializing candidates from signal pack…',true,16000);
-          let mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_ideas_all'})});
-          if(!mat.r.ok||!mat.d.ok){
-            // Fallback to legacy overall candidates if ideas_json is empty.
-            mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_overall'})});
-          }
+          const mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_ideas_all'})});
           if(!mat.r.ok||!mat.d.ok)throw new Error(apiErr(mat.d,'Materialize failed'));
           const n=Array.isArray(mat.d.planner_rows)?mat.d.planner_rows.length:0;
           showToast('Candidates materialized ('+n+' planner row(s)). Starting run…',true,20000);
@@ -4103,20 +4303,35 @@ document.getElementById('slab-copy-btn').addEventListener('click',async function
 <div class="content">
 <p class="runs-ops-hint">Open from <strong>Runs</strong> → <strong>Candidates</strong>, or use <span class="mono">?project=SLUG&amp;run_id=RUN_ID</span>. Materialize <span class="mono">candidates_json</span> from pack <strong>ideas</strong> (buttons below) before <strong>Start</strong> on Runs. Per-task prompts: <a href="/admin/jobs?project=${encodeURIComponent(currentSlug)}${runIdQ ? `&run_id=${encodeURIComponent(runIdQ)}` : ""}">Jobs</a> → expand a row.</p>
 <div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize <span class="mono">runs.candidates_json</span></div><div style="padding:12px 16px 16px">
-<p class="runs-ops-hint" style="margin-top:0">Required before Start. Uses the run's signal pack <span class="mono">ideas_json</span> (or legacy overall).</p>
+<p class="runs-ops-hint" style="margin-top:0">Required before Start. Uses the run's signal pack <span class="mono">ideas_json</span>.</p>
 <p style="margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
 <button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack ideas</button>
 <button type="button" class="btn-ghost btn-sm" id="rc-btn-llm">LLM pick subset</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-btn-overall">From pack overall (legacy)</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick by idea_id…</button></p>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick ideas manually</button></p>
 <p id="rc-mat-msg" style="font-size:12px;margin:0;min-height:1.2em;color:var(--muted)"></p>
 </div></div>
+<div id="rc-manual-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:16px;overflow:auto">
+<div class="card" style="max-width:760px;width:100%;margin:24px auto;max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35)">
+<div style="padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0">
+<h3 style="margin:0;font-size:16px">Pick ideas manually</h3>
+<p style="margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.45">Choose which ideas from this signal pack become planner rows on the run. At least one must be selected.</p>
+</div>
+<div id="rc-manual-list" style="overflow:auto;flex:1;min-height:120px;padding:12px 18px"></div>
+<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center;flex-shrink:0">
+<button type="button" class="btn-ghost btn-sm" id="rc-manual-cancel">Cancel</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-manual-all">Select all</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-manual-none">Clear</button>
+<button type="button" class="btn btn-sm" id="rc-manual-apply">Apply selection</button>
+</div>
+</div>
+</div>
 <div id="rc-root"><div class="empty">Loading…</div></div>
 </div>
 <script>
 const SLUG=${JSON.stringify(currentSlug)};
 const RUN_ID=${JSON.stringify(runIdQ)};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function pretty(v){try{return JSON.stringify(v,null,2);}catch(e){return String(v)}}
 function trunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s}
 function outBadge(o){
@@ -4157,23 +4372,6 @@ async function loadRunTransparency(){
         '<pre style="margin:0;font-size:10px;max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word;background:var(--card2);padding:10px;border-radius:8px;border:1px solid var(--border)">'+esc(pretty(snap))+'</pre></details>';
     }else{
       h+='<p style="margin:10px 0 0;font-size:11px;color:var(--muted)">No prompt snapshot yet (empty object, or apply migration <span class="mono">008_run_prompt_versions_snapshot</span> and re-plan).</p>';
-    }
-    h+='</div></div>';
-
-    const oc=Array.isArray(d.signal_pack_overall_candidates)?d.signal_pack_overall_candidates:[];
-    h+='<div class="card" style="margin-bottom:14px"><div class="card-h">Signal pack — overall_candidates_json ('+oc.length+' rows in DB)</div><div style="padding:12px 16px 16px">';
-    if(!oc.length)h+='<p class="empty" style="margin:0">No rows (run may have no pack attached).</p>';
-    else{
-      let tb='<table class="sp-modal-table"><thead><tr><th>#</th><th>Row (preview)</th></tr></thead><tbody>';
-      const n=Math.min(oc.length,80);
-      for(let i=0;i<n;i++){
-        const row=oc[i];
-        const prev=typeof row==='object'&&row?trunc(pretty(row),420):esc(String(row));
-        tb+='<tr><td>'+(i+1)+'</td><td><pre style="margin:0;font-size:10px;white-space:pre-wrap;word-break:break-word">'+esc(prev)+'</pre></td></tr>';
-      }
-      tb+='</tbody></table>';
-      h+=tb;
-      if(oc.length>80)h+='<p style="color:var(--muted);font-size:12px">Showing 80 of '+oc.length+'.</p>';
     }
     h+='</div></div>';
 
@@ -4238,14 +4436,69 @@ async function postRunCandidates(body){
     await loadRunTransparency();
   }catch(e){if(msg){msg.style.color='var(--red)';msg.textContent=String((e&&e.message)||e);}}
 }
+function rcCloseManual(){
+  var ov=document.getElementById('rc-manual-overlay');
+  if(ov)ov.style.display='none';
+}
+function rcRenderManualList(ideas){
+  var box=document.getElementById('rc-manual-list');
+  if(!box)return;
+  if(!ideas.length){box.innerHTML='<p class="empty" style="margin:0">No ideas in this signal pack (<span class="mono">ideas_json</span> is empty).</p>';return;}
+  var h='<div style="display:flex;flex-direction:column;gap:10px">';
+  for(var i=0;i<ideas.length;i++){
+    var it=ideas[i];
+    var id=String(it.idea_id||'');
+    var title=esc(it.title||id);
+    var det=esc(it.detail||'');
+    var plat=esc(it.platform||'');
+    h+='<label style="display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--card2)">';
+    h+='<input type="checkbox" class="rc-manual-cb" value="'+escAttr(id)+'" style="margin-top:3px;flex-shrink:0"/>';
+    h+='<span style="min-width:0;flex:1">';
+    h+='<span style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px">';
+    h+='<strong style="font-size:13px;line-height:1.35">'+title+'</strong>';
+    h+='<span class="badge badge-b" style="font-size:10px">'+plat+'</span>';
+    h+='<span class="mono" style="font-size:10px;color:var(--muted)">'+esc(id)+'</span>';
+    h+='</span>';
+    h+='<span style="font-size:12px;color:var(--fg2);line-height:1.45;display:block">'+det+'</span>';
+    h+='</span></label>';
+  }
+  h+='</div>';
+  box.innerHTML=h;
+}
+async function rcOpenManualPicker(){
+  var msg=document.getElementById('rc-mat-msg');
+  if(!SLUG||!RUN_ID){if(msg)msg.textContent='Missing project or run.';return;}
+  var ov=document.getElementById('rc-manual-overlay');
+  if(!ov)return;
+  if(msg){msg.style.color='var(--muted)';msg.textContent='Loading ideas…';}
+  try{
+    var r=await cafFetch('/v1/admin/run-transparency?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(RUN_ID));
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error((d&&d.error)||'Failed to load pack ideas');
+    var ideas=Array.isArray(d.signal_pack_ideas_ui)?d.signal_pack_ideas_ui:[];
+    rcRenderManualList(ideas);
+    if(msg)msg.textContent='';
+    ov.style.display='flex';
+  }catch(e){
+    if(msg){msg.style.color='var(--red)';msg.textContent=String((e&&e.message)||e);}
+  }
+}
 document.getElementById('rc-btn-all')?.addEventListener('click',function(){postRunCandidates({mode:'from_pack_ideas_all'});});
 document.getElementById('rc-btn-llm')?.addEventListener('click',function(){postRunCandidates({mode:'llm'});});
-document.getElementById('rc-btn-overall')?.addEventListener('click',function(){postRunCandidates({mode:'from_pack_overall'});});
-document.getElementById('rc-btn-manual')?.addEventListener('click',function(){
-  var raw=prompt('Comma-separated idea_id values (from pack ideas_json):','');
-  if(!raw)return;
-  var ids=raw.split(',').map(function(s){return s.trim();}).filter(Boolean);
-  if(!ids.length)return;
+document.getElementById('rc-btn-manual')?.addEventListener('click',function(){rcOpenManualPicker();});
+document.getElementById('rc-manual-cancel')?.addEventListener('click',function(){rcCloseManual();});
+document.getElementById('rc-manual-overlay')?.addEventListener('click',function(ev){if(ev.target===this)rcCloseManual();});
+document.getElementById('rc-manual-all')?.addEventListener('click',function(){
+  document.querySelectorAll('.rc-manual-cb').forEach(function(el){el.checked=true;});
+});
+document.getElementById('rc-manual-none')?.addEventListener('click',function(){
+  document.querySelectorAll('.rc-manual-cb').forEach(function(el){el.checked=false;});
+});
+document.getElementById('rc-manual-apply')?.addEventListener('click',function(){
+  var ids=[];
+  document.querySelectorAll('.rc-manual-cb:checked').forEach(function(el){ids.push(el.value);});
+  if(!ids.length){var m=document.getElementById('rc-mat-msg');if(m){m.style.color='var(--red)';m.textContent='Select at least one idea.';}return;}
+  rcCloseManual();
   postRunCandidates({mode:'manual',idea_ids:ids});
 });
 loadRunTransparency();
@@ -5062,8 +5315,12 @@ function plFg(name,label,value,type,step){return '<div class="form-group"><label
 function plFgTa(name,label,value){return '<div class="form-group"><label for="'+name+'">'+label+'</label><textarea name="'+name+'" id="'+name+'" rows="4">'+esc(value)+'</textarea></div>';}
 function plVal(id){const el=document.getElementById(id);return el?String(el.value).trim():'';}
 function plNum(id){const s=plVal(id);if(s==='')return null;const n=Number(s);return Number.isFinite(n)?n:null;}
-function plOpenPromptEdit(ix){
-  const data=window.__PL_TEMPLATES[ix];
+function plOpenPromptEdit(kind, ix){
+  if(typeof kind==='number'){ ix=kind; kind='template'; }
+  var data=null;
+  if(kind==='template')data=window.__PL_TEMPLATES[ix];
+  else if(kind==='processing')data=window.__PL_PROCESSING[ix];
+  else if(kind==='learning')data=window.__PL_LEARNING[ix];
   if(!data)return;
   const dlg=document.createElement('dialog');
   dlg.id='pl-prompt-dlg';
@@ -5166,20 +5423,47 @@ function plRenderAddendumCard(key,meta,value){
   out+='</div></div>';
   return out;
 }
-function plRenderPromptCard(p,globalIx){
+function plRenderPromptCard(p,kind,ix){
+  kind=kind||'template';
   const prev=(p.user_prompt_template||'').replace(/\\s+/g,' ').slice(0,220);
   let out='<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:var(--card2)">';
   out+='<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">';
   out+='<div><span class="mono" style="font-weight:600;color:var(--accent)">'+esc(p.prompt_name)+'</span> <span style="color:var(--muted);font-size:12px">· '+esc(p.flow_type)+'</span>';
   out+=' <span class="badge '+(p.active!==false?'badge-g':'badge-r')+'" style="font-size:10px">'+(p.active!==false?'active':'off')+'</span></div>';
   const badge=(p.labs_override_active?'<span class="badge badge-y" style="font-size:10px">override</span>':(p.labs_readonly?'<span class="badge badge-b" style="font-size:10px">code</span>':''));
-  out+=(badge?badge+' ':'')+'<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit('+globalIx+')">'+(p.labs_readonly?'Open':'Edit')+'</button></div>';
+  out+=(badge?badge+' ':'')+'<button type="button" class="btn btn-sm" onclick="plOpenPromptEdit(\\''+kind+'\\','+ix+')">'+(p.labs_readonly?'Open':'Edit')+'</button></div>';
   out+='<p style="font-size:12px;color:var(--muted);margin:0 0 6px">Role: <strong>'+esc(p.prompt_role||'—')+'</strong></p>';
   out+='<p style="font-size:13px;line-height:1.5;margin:0 0 8px;color:var(--fg)">'+esc(p.labs_short_description||'')+'</p>';
   if(p.labs_flow_description)out+='<p style="font-size:11px;color:var(--muted);margin:0 0 8px">Flow definition: '+esc(trunc(p.labs_flow_description,280))+'</p>';
   out+='<p style="font-size:11px;color:var(--fg2);margin:0"><span style="color:var(--muted)">User template preview:</span> '+esc(prev)+(p.user_prompt_template&&p.user_prompt_template.length>220?'…':'')+'</p>';
   out+='</div>';
   return out;
+}
+function plDropdownPanel(selId,detailId,label,rows){
+  if(!rows||rows.length===0)return '<div class="empty">No prompts in this list.</div>';
+  var h='<div class="form-group" style="margin-bottom:14px"><label for="'+selId+'">'+esc(label)+'</label>';
+  h+='<select id="'+selId+'" style="width:100%;max-width:560px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--fg)">';
+  for(var ri=0;ri<rows.length;ri++){
+    var pr=rows[ri].p;
+    h+='<option value="'+ri+'">'+esc((pr.prompt_name||'—')+' · '+(pr.flow_type||''))+'</option>';
+  }
+  h+='</select></div><div id="'+detailId+'"></div>';
+  return h;
+}
+function plWireRowDropdown(selId,rows,kind,detailId){
+  var sel=document.getElementById(selId);
+  var detail=document.getElementById(detailId);
+  if(!sel||!detail||!rows||!rows.length)return;
+  function go(){
+    var idx=parseInt(sel.value,10); if(!isFinite(idx))idx=0;
+    var row=rows[idx];
+    if(!row){detail.innerHTML='';return;}
+    if(kind==='processing')detail.innerHTML=plRenderPromptCard(row.p,'processing',idx);
+    else if(kind==='learning')detail.innerHTML=plRenderPromptCard(row.p,'learning',idx);
+    else detail.innerHTML=plRenderPromptCard(row.p,'template',row.ix);
+  }
+  sel.onchange=go;
+  go();
 }
 async function loadPL(){
   const root=document.getElementById('pl-root');
@@ -5198,7 +5482,9 @@ async function loadPL(){
   const pt=d.prompt_templates||[];
   window.__PL_TEMPLATES=pt;
   const pp=d.processing_prompts||[];
+  window.__PL_PROCESSING=pp;
   const lp=d.learning_prompts||[];
+  window.__PL_LEARNING=lp;
 
   /** Align with canonical-flow-types: map legacy Flow Engine keys for tab routing only. */
   function plCanonicalFlowType(ftRaw){
@@ -5235,13 +5521,13 @@ async function loadPL(){
   const vp=d.validation_prompts||[];
   const layers={processing:[],planning:[],creation:[],validation:[],publishing:[],learning:[],heygen:[]};
   for(let i=0;i<pp.length;i++){
-    layers.processing.push({p:pp[i],ix:-1});
+    layers.processing.push({p:pp[i],ix:i});
   }
   for(let i=0;i<vp.length;i++){
-    layers.validation.push({p:vp[i],ix:-1});
+    layers.validation.push({p:vp[i],ix:i});
   }
   for(let i=0;i<lp.length;i++){
-    layers.learning.push({p:lp[i],ix:-1});
+    layers.learning.push({p:lp[i],ix:i});
   }
   for(let i=0;i<pt.length;i++){
     const p=pt[i];
@@ -5253,7 +5539,7 @@ async function loadPL(){
   // Validation: reserved for validation-layer LLM calls (QC audits, policy checks, etc.)
   html+='<div id="pl-validation" class="tab-panel"><div class="card" style="margin-bottom:14px"><div class="card-h">Validation prompts ('+layers.validation.length+')</div>';
   html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Validation-layer prompts (LLM calls) used for audits, checks, and policy enforcement. Env tuning lives in Flow Engine → Env Variables + Tuning.</p>';
-  if(layers.validation.length){ for(const row of layers.validation) html+=plRenderPromptCard(row.p,row.ix); }
+  if(layers.validation.length){ html+=plDropdownPanel('pl-sel-validation','pl-detail-validation','Choose prompt',layers.validation); }
   else html+='<div class="empty">No validation prompts configured yet.</div>';
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div></div>';
 
@@ -5261,13 +5547,12 @@ async function loadPL(){
   html+='<div id="pl-processing" class="tab-panel active">';
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Processing prompts ('+layers.processing.length+')</div>';
   html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Insights prompts used in Processing (broad LLM, top performers, and ideas-from-insights synthesis).</p>';
-  if(layers.processing.length){ for(const row of layers.processing) html+=plRenderPromptCard(row.p,row.ix); }
-  else html+='<div class="empty">No rows</div>';
+  html+=plDropdownPanel('pl-sel-processing','pl-detail-processing','Choose processing prompt',layers.processing);
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
   if(layers.planning.length){
     html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Planning &amp; other flow templates ('+layers.planning.length+')</div>';
-    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Ideation, viral-format prep, inactive legacy aliases, and other Flow Engine rows outside the active core creation set (carousel / text / scene prompts) and outside HeyGen video flows.</p>';
-    for(const row of layers.planning) html+=plRenderPromptCard(row.p,row.ix);
+    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Ideation and viral-format prep. Deprecated inactive aliases are hidden from Prompt Labs (still editable in Flow Engine).</p>';
+    html+=plDropdownPanel('pl-sel-planning','pl-detail-planning','Choose template',layers.planning);
     html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
   }
   html+='</div>';
@@ -5275,18 +5560,18 @@ async function loadPL(){
   // Creation tab: core generators + HeyGen-flow templates (duplicated under HeyGen agent for rubric/addenda)
   html+='<div id="pl-creation" class="tab-panel">';
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation prompts ('+layers.creation.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Full creation layer: carousel, long-form text, scene-prompt generators, plus HeyGen script/prompt/product and render-bootstrap templates. The same HeyGen rows also appear under <strong>HeyGen agent</strong> next to duration addenda and the Video Agent rubric.</p>';
-  if(layers.creation.length){ for(const row of layers.creation) html+=plRenderPromptCard(row.p,row.ix); }
-  else html+='<div class="empty">No rows</div>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Carousel, text, scene, HeyGen script/prompt/product, and render-bootstrap templates. Pick one below. HeyGen rows also appear under <strong>HeyGen agent</strong>.</p>';
+  html+=plDropdownPanel('pl-sel-creation','pl-detail-creation','Choose creation template',layers.creation);
+
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
 
-  // Creation-related runtime addenda: scene assembly suffix belongs here.
-  if(generalAddendumKeys.includes('scene_assembly_system_suffix')){
-    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation runtime addenda</div>';
-    html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Computed at runtime and appended to certain creation prompts.</p>';
-    html+=plRenderAddendumCard('scene_assembly_system_suffix',meta,c['scene_assembly_system_suffix']);
-    html+='</div>';
-  }
+  var CREATION_ADDENDUM_KEYS=['publication_system_addendum','video_script_system_suffix','video_prompt_system_suffix','scene_assembly_system_suffix','user_footer_script_json','user_footer_video_plan'];
+  html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Creation runtime addenda</div>';
+  html+='<p style="color:var(--muted);margin-bottom:12px;font-size:13px">Publication contract (all formats including carousel), video script &amp; prompt system suffixes, scene assembly policy, and user-message footers — from env tuning + code.</p>';
+  var _caAny=false;
+  CREATION_ADDENDUM_KEYS.forEach(function(key){ if(c[key]){ html+=plRenderAddendumCard(key,meta,c[key]); _caAny=true; }});
+  if(!_caAny) html+='<div class="empty">No addenda returned.</div>';
+  html+='</div>';
   html+='</div>';
 
   // Publishing tab: publication addendum lives here
@@ -5310,8 +5595,7 @@ async function loadPL(){
 
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Learning prompts ('+layers.learning.length+')</div>';
   html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Editorial analysis, post-approval LLM review, and rule-building surfaces that feed the learning loop.</p>';
-  if(layers.learning.length){ for(const row of layers.learning) html+=plRenderPromptCard(row.p,row.ix); }
-  else html+='<div class="empty">No rows</div>';
+  html+=plDropdownPanel('pl-sel-learning','pl-detail-learning','Choose learning prompt',layers.learning);
   html+='</div>';
 
   html+='<div class="card"><div class="card-h">Flow definitions ('+fd.length+')</div>';
@@ -5339,9 +5623,9 @@ async function loadPL(){
   html+='</div>';
 
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">HeyGen-flow prompt templates ('+heygenPrompts.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Same HeyGen-path templates as <strong>Creation</strong> (canonical <span class="mono">FLOW_VID_SCRIPT</span> / <span class="mono">FLOW_VID_PROMPT</span>, product flows, <span class="mono">HeyGen_Render_Video</span>). Listed here with rubric + runtime addenda. All fields editable.</p>';
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Same HeyGen-path templates as <strong>Creation</strong> (canonical <span class="mono">FLOW_VID_SCRIPT</span> / <span class="mono">FLOW_VID_PROMPT</span>, product flows, <span class="mono">HeyGen_Render_Video</span>). Rubric + duration addenda below.</p>';
   if(heygenPrompts.length){
-    for(const row of heygenPrompts) html+=plRenderPromptCard(row.p,row.ix);
+    html+=plDropdownPanel('pl-sel-heygen-tpl','pl-detail-heygen-tpl','Choose HeyGen template',heygenPrompts);
   }else html+='<div class="empty">No HeyGen-flow prompt templates. Seed them from <a href="/admin/flow-engine">Flow Engine</a>.</div>';
   html+='</div>';
 
@@ -5354,6 +5638,12 @@ async function loadPL(){
   html+='</div>';
 
   root.innerHTML=html;
+  plWireRowDropdown('pl-sel-validation',layers.validation,'template','pl-detail-validation');
+  plWireRowDropdown('pl-sel-processing',layers.processing,'processing','pl-detail-processing');
+  plWireRowDropdown('pl-sel-planning',layers.planning,'template','pl-detail-planning');
+  plWireRowDropdown('pl-sel-creation',layers.creation,'template','pl-detail-creation');
+  plWireRowDropdown('pl-sel-learning',layers.learning,'learning','pl-detail-learning');
+  plWireRowDropdown('pl-sel-heygen-tpl',heygenPrompts,'template','pl-detail-heygen-tpl');
 }
 loadPL();
 </script>`;
@@ -6267,6 +6557,7 @@ async function loadConfig(){
     'FLOW_VID_SCRIPT':{label:'Video – Script',cat:'Video (generic)',defaultNotes:'Spoken script JSON for script-led HeyGen (avatar reads verbatim).'},
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
     'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
+    'FLOW_VID_PROMPT_NO_AVATAR':{label:'Video prompt — no avatar',cat:'Video (generic)',defaultNotes:'HeyGen Video Agent only (no on-camera avatar): narration + motion/stock/graphics; uses FLOW_VID_PROMPT templates.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
     'FLOW_HOOKS':{label:'Hooks',cat:'Hooks & Scripts',defaultNotes:'Hook variations list + rationale.'},
     'Hook_Variations':{label:'Hook Variations',cat:'Hooks & Scripts',defaultNotes:'Hook text experiments; feeds carousel/reel flows.'},

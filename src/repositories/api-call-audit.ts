@@ -33,6 +33,12 @@ export interface ApiCallAuditInsert {
   requestJson: unknown;
   responseJson: unknown;
   tokenUsage?: number | null;
+  /** Carousel slide: wall ms for POST /render-binary. */
+  latencyMs?: number | null;
+  /** HeyGen (and similar): output duration in seconds when known. */
+  billableVideoSeconds?: number | null;
+  /** Allocated estimate from CAF_COST_* at insert time. */
+  estimatedCostUsd?: number | null;
 }
 
 export async function insertApiCallAudit(db: Pool, row: ApiCallAuditInsert): Promise<void> {
@@ -41,8 +47,9 @@ export async function insertApiCallAudit(db: Pool, row: ApiCallAuditInsert): Pro
   await db.query(
     `INSERT INTO caf_core.api_call_audit (
        project_id, run_id, task_id, signal_pack_id, step, provider, model, ok, error_message,
-       request_json, response_json, token_usage
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12)`,
+       request_json, response_json, token_usage,
+       latency_ms, billable_video_seconds, estimated_cost_usd
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,$13,$14,$15)`,
     [
       row.projectId,
       row.runId ?? null,
@@ -56,6 +63,9 @@ export async function insertApiCallAudit(db: Pool, row: ApiCallAuditInsert): Pro
       JSON.stringify(req ?? {}),
       JSON.stringify(res ?? {}),
       row.tokenUsage ?? null,
+      row.latencyMs ?? null,
+      row.billableVideoSeconds ?? null,
+      row.estimatedCostUsd ?? null,
     ]
   );
 }

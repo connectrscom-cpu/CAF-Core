@@ -18,6 +18,7 @@ export function isVideoFlow(flowType: string): boolean {
   if (isProductVideoFlow(raw)) return true;
   if (
     ft === CANONICAL_FLOW_TYPES.VID_PROMPT ||
+    ft === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR ||
     ft === CANONICAL_FLOW_TYPES.VID_SCRIPT ||
     ft === CANONICAL_FLOW_TYPES.VID_SCENES
   ) {

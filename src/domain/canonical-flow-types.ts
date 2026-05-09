@@ -23,6 +23,8 @@ export const CANONICAL_FLOW_TYPES = {
   HOOKS: "FLOW_HOOKS",
   TEXT: "FLOW_TEXT",
   VID_PROMPT: "FLOW_VID_PROMPT",
+  /** Prompt-led HeyGen Video Agent without avatar (narration + graphics / b-roll / motion). Distinct from FLOW_VID_PROMPT (avatar default). */
+  VID_PROMPT_NO_AVATAR: "FLOW_VID_PROMPT_NO_AVATAR",
   VID_SCRIPT: "FLOW_VID_SCRIPT",
   VID_SCENES: "FLOW_VID_SCENES",
 } as const;
@@ -57,7 +59,12 @@ export const LEGACY_FLOW_TYPE_TO_CANONICAL: Readonly<Record<string, CanonicalFlo
   // HeyGen legacy flow aliases
   Video_Script_HeyGen_Avatar: CANONICAL_FLOW_TYPES.VID_SCRIPT,
   Video_Prompt_HeyGen_Avatar: CANONICAL_FLOW_TYPES.VID_PROMPT,
-  Video_Prompt_HeyGen_NoAvatar: CANONICAL_FLOW_TYPES.VID_PROMPT,
+  Video_Prompt_HeyGen_NoAvatar: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+  HeyGen_NoAvatar_Prompt: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+  FLOW_HEYGEN_NO_AVATAR_PROMPT: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+  HeyGen_No_Avatar_Prompt: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+  Heygen_NoAvatar_Prompt: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+  HEYGEN_NO_AVATAR_PROMPT: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
 };
 
 export function resolveCanonicalFlowType(flowType: string): string {
@@ -66,7 +73,10 @@ export function resolveCanonicalFlowType(flowType: string): string {
 }
 
 export function resolveFlowEngineTemplateFlowType(flowType: string): string {
-  return resolveCanonicalFlowType(flowType);
+  const c = resolveCanonicalFlowType(flowType);
+  /** Share FLOW_VID_PROMPT prompt templates / output schemas — routing differs by job flow_type (avatar vs no avatar). */
+  if (c === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR) return CANONICAL_FLOW_TYPES.VID_PROMPT;
+  return c;
 }
 
 export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] = [
@@ -101,5 +111,14 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
     priority_weight: 7,
     allowed_platforms: null,
     notes: "Single video — prompt JSON → HeyGen (prompt path; avatar via heygen_config)",
+  },
+  {
+    flow_type: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 6,
+    allowed_platforms: null,
+    notes:
+      "Single video — prompt JSON → HeyGen Video Agent (no on-camera avatar; narration + motion/stock/graphics)",
   },
 ] as const;

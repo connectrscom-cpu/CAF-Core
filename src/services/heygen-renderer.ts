@@ -27,6 +27,7 @@ import {
 } from "./supabase-storage.js";
 import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { estimateHeyGenVideoUsd } from "./render-cost-estimate.js";
 import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
 import { buildRoughSrt } from "./caption-generator.js";
 import { parseVideoAssemblyJson, pollVideoAssemblyJob } from "./video-assembly-client.js";
@@ -1750,6 +1751,11 @@ export async function runHeygenVideoWithBody(
       const request_body_sent = clipForAuditJson(
         normalizeHeyGenSubmitPayload(body, postPath)
       ) as Record<string, unknown>;
+      const billableSec =
+        polled.durationSec != null && Number.isFinite(polled.durationSec) && polled.durationSec > 0
+          ? polled.durationSec
+          : null;
+      const heyCostUsd = estimateHeyGenVideoUsd(polled.durationSec, appConfig.CAF_COST_HEYGEN_USD_PER_VIDEO_MINUTE);
       await tryInsertApiCallAudit(audit.db, {
         projectId: audit.projectId,
         runId: audit.runId,
@@ -1771,6 +1777,8 @@ export async function runHeygenVideoWithBody(
           subtitle_url: polled.subtitleUrl,
           duration_sec: polled.durationSec,
         },
+        billableVideoSeconds: billableSec,
+        estimatedCostUsd: heyCostUsd,
       });
     }
     return {

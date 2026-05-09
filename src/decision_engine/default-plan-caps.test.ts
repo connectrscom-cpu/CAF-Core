@@ -17,6 +17,7 @@ describe("defaultMaxJobsPerFlowType", () => {
     expect(d.FLOW_VID_SCENES).toBe(1);
     expect(d.FLOW_VID_SCRIPT).toBe(1);
     expect(d.FLOW_VID_PROMPT).toBe(1);
+    expect(d.FLOW_VID_PROMPT_NO_AVATAR).toBe(1);
     expect(d.Video_Scene_Generator).toBe(1);
     expect(d.Video_Script_Generator).toBe(1);
     expect(d.Video_Prompt_Generator).toBe(1);

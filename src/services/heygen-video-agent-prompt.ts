@@ -109,6 +109,7 @@ function isCanonicalPromptFlow(flowType: string | null | undefined): boolean {
   const ft = (flowType ?? "").trim();
   return (
     ft === CANONICAL_FLOW_TYPES.VID_PROMPT ||
+    ft === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR ||
     /Video_Prompt|video_prompt|prompt_generator|Prompt_HeyGen|HEYGEN_AVATAR_PROMPT|FLOW_HEYGEN_AVATAR_PROMPT|HEYGEN_NO_AVATAR_PROMPT|FLOW_HEYGEN_NO_AVATAR_PROMPT/i.test(
       ft
     ) ||

@@ -80,6 +80,7 @@ export const PROMPT_LABS_HEYGEN_INTRO =
 export const HEYGEN_FLOW_TYPES: readonly string[] = [
   "FLOW_VID_SCRIPT",
   "FLOW_VID_PROMPT",
+  "FLOW_VID_PROMPT_NO_AVATAR",
   "Video_Script_Generator",
   "Video_Prompt_Generator",
   /** Bootstrap / adapter prompts for HeyGen submit (Prompt-to-Video, Script-to-Video). */

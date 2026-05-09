@@ -411,6 +411,17 @@ const envSchema = z.object({
   /** Optional ffmpeg `force_style` for HeyGen burn-in (overrides MUX_BURN_SUBTITLE_FORCE_STYLE for HeyGen jobs only). */
   HEYGEN_BURN_SUBTITLE_FORCE_STYLE: z.string().optional(),
 
+  /**
+   * HeyGen output pricing proxy ($ USD per minute of rendered video). From HeyGen plan / credits.
+   * Stored on api_call_audit.estimated_cost_usd with billable_video_seconds when duration is known. 0 = skip USD.
+   */
+  CAF_COST_HEYGEN_USD_PER_VIDEO_MINUTE: z.coerce.number().min(0).default(0),
+  /**
+   * Carousel Puppeteer host ($ USD per hour of machine time). Fly invoice ÷ hours, or `fly machines list` allocatable rate.
+   * Each slide: `(HTTP_latency_ms / 3_600_000) × this` — assumes one worker busy during the request. 0 = skip USD.
+   */
+  CAF_COST_FLY_CAROUSEL_RENDERER_USD_PER_HOUR: z.coerce.number().min(0).default(0),
+
   /** OpenAI TTS (e.g. tts-1, tts-1-hd) */
   OPENAI_TTS_MODEL: z.string().default("tts-1"),
   OPENAI_TTS_VOICE: z.string().default("nova"),

@@ -60,8 +60,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
     label: "Prompt-led video (HeyGen avatar)",
     keys: [
       "FLOW_VID_PROMPT",
-      // Canonical Flow Engine row — avatar mode is the default for Video_Prompt_Generator;
-      // the no-avatar split below only catches the explicit *NoAvatar* / *NO_AVATAR* synonyms.
+      // Avatar prompt path; no-avatar uses FLOW_VID_PROMPT_NO_AVATAR (see prompt_video_no_avatar group).
       "Video_Prompt_Generator",
       "HeyGen_Avatar_Prompt",
       "FLOW_HEYGEN_AVATAR_PROMPT",
@@ -72,8 +71,9 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
   },
   {
     id: "prompt_video_no_avatar",
-    label: "Prompt-led video (HeyGen no-avatar)",
+    label: "Video prompt — no avatar (HeyGen Video Agent)",
     keys: [
+      "FLOW_VID_PROMPT_NO_AVATAR",
       "Video_Prompt_HeyGen_NoAvatar",
       "HeyGen_NoAvatar_Prompt",
       "FLOW_HEYGEN_NO_AVATAR_PROMPT",

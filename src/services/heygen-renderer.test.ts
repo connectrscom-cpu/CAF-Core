@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import type { HeygenConfigRow } from "../repositories/project-config.js";
 import {
+  resolveCanonicalFlowType,
+  resolveFlowEngineTemplateFlowType,
+} from "../domain/canonical-flow-types.js";
+import {
   applyHeygenEnvAvatarDefaults,
   buildHeyGenRequestBody,
   buildHeyGenVideoAgentRequestBody,
@@ -73,6 +77,23 @@ describe("resolveHeygenGeneratePath", () => {
 
   it("uses Video Agent v3 for HEYGEN_NO_AVATAR (n8n SCRIPT_NO_AVATAR)", () => {
     expect(resolveHeygenGeneratePath("Video_Prompt_HeyGen_NoAvatar", "HEYGEN_NO_AVATAR")).toBe("/v3/video-agents");
+    expect(resolveHeygenGeneratePath("FLOW_VID_PROMPT_NO_AVATAR", "HEYGEN_NO_AVATAR")).toBe("/v3/video-agents");
+  });
+});
+
+describe("FLOW_VID_PROMPT_NO_AVATAR (canonical no-avatar prompt video)", () => {
+  it("maps legacy HeyGen no-avatar flow names off FLOW_VID_PROMPT", () => {
+    expect(resolveCanonicalFlowType("Video_Prompt_HeyGen_NoAvatar")).toBe("FLOW_VID_PROMPT_NO_AVATAR");
+    expect(resolveCanonicalFlowType("FLOW_HEYGEN_NO_AVATAR_PROMPT")).toBe("FLOW_VID_PROMPT_NO_AVATAR");
+  });
+
+  it("uses FLOW_VID_PROMPT templates in Flow Engine", () => {
+    expect(resolveFlowEngineTemplateFlowType("FLOW_VID_PROMPT_NO_AVATAR")).toBe("FLOW_VID_PROMPT");
+  });
+
+  it("infers HEYGEN_NO_AVATAR so HeyGen uses Video Agent without avatar", () => {
+    expect(resolveHeygenRenderMode("FLOW_VID_PROMPT_NO_AVATAR", undefined)).toBe("HEYGEN_NO_AVATAR");
+    expect(inferHeygenRenderModeFromFlowType("FLOW_VID_PROMPT_NO_AVATAR")).toBe("HEYGEN_NO_AVATAR");
   });
 });
 
