@@ -30,6 +30,8 @@ import {
 } from "./publish-metadata-enrich.js";
 import { VIDEO_CAPTION_SYSTEM_ADDENDUM } from "./video-prompt-generator.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { bareHashtagToken } from "../domain/signal-hashtag-sanitize.js";
+import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
 
 /** Reduces script ↔ scene mismatches (product demos, multi-beat layouts). */
 export const VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM = `Scene–script alignment (critical):
@@ -44,6 +46,28 @@ export const VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM = `Scene–script alignment (
 export const VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM = `Video script JSON (mandatory fields):
 - Include a non-empty string field \`caption\`: the on-platform post caption (not the full VO verbatim). Write hook + payoff + CTA for the feed; ground in the signal pack and script beats.
 - Include \`hashtags\` as a non-empty array of strings (or a string that lists tags) when the schema allows; follow the hashtag rules in VIDEO_CAPTION_SYSTEM_ADDENDUM.`;
+
+function publicationHintsSlices(pack: Record<string, unknown>): {
+  seeds: string[];
+  rising: string[];
+  productAllow: string[];
+} {
+  const hints = pack.signal_pack_publication_hints;
+  const rec =
+    hints && typeof hints === "object" && !Array.isArray(hints) ? (hints as Record<string, unknown>) : null;
+  const seeds =
+    rec && Array.isArray(rec.hashtag_seeds)
+      ? (rec.hashtag_seeds as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+      : [];
+  const rising =
+    rec && Array.isArray(rec.rising_keywords)
+      ? (rec.rising_keywords as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+      : [];
+  const productAllow = Array.isArray(pack.product_video_hashtag_allowlist)
+    ? (pack.product_video_hashtag_allowlist as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  return { seeds, rising, productAllow };
+}
 
 function pickCaptionFromVideoScriptJson(o: Record<string, unknown>): string {
   for (const k of ["caption", "post_caption"] as const) {
@@ -83,7 +107,7 @@ function deriveFallbackCaption(o: Record<string, unknown>): string {
   return cap.slice(0, 2200);
 }
 
-function deriveFallbackHashtags(o: Record<string, unknown>): string[] {
+function deriveFallbackHashtags(o: Record<string, unknown>, opts?: { rising?: string[] }): string[] {
   const blob = `${String(o.hook ?? o.hook_line ?? "")} ${extractSpokenScriptText(o, 1)}`.toLowerCase();
   const words = blob
     .replace(/[^a-z0-9\s#]/g, " ")
@@ -93,19 +117,19 @@ function deriveFallbackHashtags(o: Record<string, unknown>): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const w of words) {
-    const tag = `#${w.slice(0, 48)}`;
+    const tag = w.slice(0, 48);
     if (seen.has(tag)) continue;
     seen.add(tag);
     out.push(tag);
     if (out.length >= 6) break;
   }
-  const pad = ["#recipe", "#cooking", "#food"];
-  for (const p of pad) {
-    if (out.length >= 3) break;
-    if (!seen.has(p)) {
-      seen.add(p);
-      out.push(p);
-    }
+  for (const r of opts?.rising ?? []) {
+    const t = bareHashtagToken(r);
+    if (t.length < 4) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= 8) break;
   }
   return out;
 }
@@ -115,19 +139,41 @@ function deriveFallbackHashtags(o: Record<string, unknown>): string[] {
  */
 export function ensureVideoScriptPublicationMetadata(
   parsed: Record<string, unknown>,
-  opts?: { hashtag_seeds?: string[] | null }
+  opts?: {
+    hashtag_seeds?: string[] | null;
+    rising_keywords?: string[] | null;
+    product_hashtag_allowlist?: string[] | null;
+    max_hashtags?: number | null;
+  }
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...parsed };
   let cap = pickCaptionFromVideoScriptJson(out);
   if (!cap) cap = deriveFallbackCaption(out);
   const trimmed = cap.trim();
   if (trimmed) out.caption = trimmed;
+  const maxHt = opts?.max_hashtags != null && opts.max_hashtags >= 0 ? Math.floor(opts.max_hashtags) : null;
+  const capTags = maxHt ?? 12;
+  const allow = Array.isArray(opts?.product_hashtag_allowlist)
+    ? opts!.product_hashtag_allowlist!.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  const rising = Array.isArray(opts?.rising_keywords)
+    ? opts!.rising_keywords!.map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+
   if (!hasNonEmptyHashtags(out)) {
     const seeds = Array.isArray(opts?.hashtag_seeds)
       ? opts!.hashtag_seeds!.map((x) => String(x ?? "").trim()).filter(Boolean)
       : [];
-    // Prefer signal pack hashtag seeds (evidence-weighted) when present; fall back to local derivation.
-    out.hashtags = seeds.length > 0 ? seeds.slice(0, 12) : deriveFallbackHashtags(out);
+    if (allow.length > 0) {
+      out.hashtags = allow.slice(0, capTags);
+    } else if (seeds.length > 0) {
+      out.hashtags = seeds.slice(0, capTags);
+    } else {
+      out.hashtags = deriveFallbackHashtags(out, { rising });
+    }
+  }
+  if (allow.length > 0) {
+    out.hashtags = clampHashtagsToSignalPackAllowlist(out.hashtags, allow, capTags);
   }
   return out;
 }
@@ -353,15 +399,7 @@ export async function ensureVideoScriptInPayload(
       job.platform,
       job.flow_type
     );
-    const seedsEarly =
-      (packEarly.signal_pack_publication_hints &&
-        typeof packEarly.signal_pack_publication_hints === "object" &&
-        !Array.isArray(packEarly.signal_pack_publication_hints) &&
-        Array.isArray((packEarly.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds))
-        ? ((packEarly.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds as unknown[])
-            .map((x) => String(x ?? "").trim())
-            .filter(Boolean)
-        : [];
+    const { seeds: seedsEarly, rising: risingEarly, productAllow: allowEarly } = publicationHintsSlices(packEarly);
     const alignEarly =
       isProductVideoFlow(job.flow_type) || multiSceneEarly ? `\n\n${VIDEO_SCRIPT_SCENE_ALIGNMENT_ADDENDUM}` : "";
     const enforcedEarly = await enforceSpokenScriptWordLawOnParsedOutput(
@@ -380,7 +418,12 @@ export async function ensureVideoScriptInPayload(
       }
     );
     if (enforcedEarly.error) return { ok: false, error: enforcedEarly.error };
-    const withMetaEarly = ensureVideoScriptPublicationMetadata(enforcedEarly.parsed, { hashtag_seeds: seedsEarly });
+    const withMetaEarly = ensureVideoScriptPublicationMetadata(enforcedEarly.parsed, {
+      hashtag_seeds: seedsEarly,
+      rising_keywords: risingEarly,
+      product_hashtag_allowlist: allowEarly.length > 0 ? allowEarly : undefined,
+      max_hashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
+    });
     const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, withMetaEarly, {
       maxHashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
     });
@@ -410,15 +453,7 @@ export async function ensureVideoScriptInPayload(
     job.platform,
     job.flow_type
   );
-  const seeds =
-    (pack.signal_pack_publication_hints &&
-      typeof pack.signal_pack_publication_hints === "object" &&
-      !Array.isArray(pack.signal_pack_publication_hints) &&
-      Array.isArray((pack.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds))
-      ? ((pack.signal_pack_publication_hints as Record<string, unknown>).hashtag_seeds as unknown[])
-          .map((x) => String(x ?? "").trim())
-          .filter(Boolean)
-      : [];
+  const { seeds, rising, productAllow } = publicationHintsSlices(pack);
 
   /**
    * Many Flow Engine templates expect `{{script_input}}` (candidate + optional existing_output).
@@ -493,7 +528,12 @@ export async function ensureVideoScriptInPayload(
     }
   );
   if (enforced.error) return { ok: false, error: enforced.error };
-  merged = ensureVideoScriptPublicationMetadata(enforced.parsed, { hashtag_seeds: seeds });
+  merged = ensureVideoScriptPublicationMetadata(enforced.parsed, {
+    hashtag_seeds: seeds,
+    rising_keywords: rising,
+    product_hashtag_allowlist: productAllow.length > 0 ? productAllow : undefined,
+    max_hashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),
+  });
 
   const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
     maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),

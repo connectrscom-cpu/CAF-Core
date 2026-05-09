@@ -34,13 +34,40 @@ function nestedRecord(v: unknown): Record<string, unknown> | null {
 function spokenScriptFromObject(v: unknown): string {
   if (!v || typeof v !== "object" || Array.isArray(v)) return "";
   const o = v as Record<string, unknown>;
-  // Common shapes from prompt-led product flows and some script generators.
   const body = typeof o.body === "string" ? o.body.trim() : "";
+  if (body) return body;
+
+  const piece = (x: unknown): string =>
+    typeof x === "string" ? x.trim() : spokenScriptFromObject(x);
+
+  const orderedKeys = [
+    "hook",
+    "agitate",
+    "problem",
+    "demonstration",
+    "demo",
+    "walkthrough",
+    "middle",
+    "solution",
+    "benefit",
+    "payoff",
+    "split",
+    "verdict",
+    "closing",
+    "cta_close",
+  ] as const;
+
+  const segments: string[] = [];
+  for (const k of orderedKeys) {
+    const p = piece(o[k]);
+    if (p) segments.push(p);
+  }
+
+  if (segments.length > 0) return segments.join(" ").replace(/\s+/g, " ").trim();
+
   const hook = typeof o.hook === "string" ? o.hook.trim() : "";
   const closing = typeof o.closing === "string" ? o.closing.trim() : "";
-  if (body) return body;
-  const stitched = [hook, closing].filter(Boolean).join("\n").trim();
-  return stitched;
+  return [hook, closing].filter(Boolean).join("\n").trim();
 }
 
 function synthesizeSceneBundlePrompt(gen: Record<string, unknown>): string {
@@ -63,6 +90,48 @@ function synthesizeSceneBundlePrompt(gen: Record<string, unknown>): string {
     lines.push(block);
   }
   return lines.join("\n\n");
+}
+
+function spokenScriptFromDialogue(gen: Record<string, unknown>, minLen: number): string {
+  const dialogue = gen.dialogue;
+  if (!Array.isArray(dialogue)) return "";
+  const lines = dialogue
+    .map((d) => {
+      if (d && typeof d === "object" && "line" in d) return String((d as { line: unknown }).line).trim();
+      return "";
+    })
+    .filter(Boolean);
+  const s = lines.join(" ").trim();
+  return s.length >= minLen ? s : "";
+}
+
+function spokenScriptFromBeats(gen: Record<string, unknown>, minLen: number): string {
+  const beats = gen.beats;
+  if (!Array.isArray(beats)) return "";
+  const parts = beats.filter((b): b is string => typeof b === "string" && b.trim().length > 0);
+  const s = parts.join(" ").trim();
+  return s.length >= minLen ? s : "";
+}
+
+export function extractSpokenScriptText(gen: Record<string, unknown>, minLen = 20): string {
+  for (const k of SCRIPT_KEYS) {
+    const v = gen[k];
+    if (typeof v === "string" && v.trim().length >= minLen) return v.trim();
+    const fromObj = spokenScriptFromObject(v);
+    if (fromObj.length >= minLen) return fromObj;
+  }
+  const fromDialogue = spokenScriptFromDialogue(gen, minLen);
+  if (fromDialogue) return fromDialogue;
+  const fromBeats = spokenScriptFromBeats(gen, minLen);
+  if (fromBeats) return fromBeats;
+  for (const nestKey of ["output", "data", "video", "generated", "result"]) {
+    const nest = gen[nestKey];
+    if (nest && typeof nest === "object" && !Array.isArray(nest)) {
+      const s = extractSpokenScriptText(nest as Record<string, unknown>, minLen);
+      if (s.length >= minLen) return s;
+    }
+  }
+  return "";
 }
 
 /** Build an AI-video prompt string from production-plan JSON when `video_prompt` is omitted. */
@@ -109,52 +178,10 @@ export function synthesizeVideoPromptFromPlan(gen: Record<string, unknown>): str
     if (phrases.length) parts.push(`On-screen text: ${phrases.join("; ")}`);
   }
 
-  const spoken = String(gen.spoken_script ?? gen.script ?? "").trim();
+  const spoken = extractSpokenScriptText(gen, 1).trim();
   if (spoken) parts.push(`Spoken script: ${spoken}`);
 
   return parts.join(". ").trim();
-}
-
-function spokenScriptFromDialogue(gen: Record<string, unknown>, minLen: number): string {
-  const dialogue = gen.dialogue;
-  if (!Array.isArray(dialogue)) return "";
-  const lines = dialogue
-    .map((d) => {
-      if (d && typeof d === "object" && "line" in d) return String((d as { line: unknown }).line).trim();
-      return "";
-    })
-    .filter(Boolean);
-  const s = lines.join(" ").trim();
-  return s.length >= minLen ? s : "";
-}
-
-function spokenScriptFromBeats(gen: Record<string, unknown>, minLen: number): string {
-  const beats = gen.beats;
-  if (!Array.isArray(beats)) return "";
-  const parts = beats.filter((b): b is string => typeof b === "string" && b.trim().length > 0);
-  const s = parts.join(" ").trim();
-  return s.length >= minLen ? s : "";
-}
-
-export function extractSpokenScriptText(gen: Record<string, unknown>, minLen = 20): string {
-  for (const k of SCRIPT_KEYS) {
-    const v = gen[k];
-    if (typeof v === "string" && v.trim().length >= minLen) return v.trim();
-    const fromObj = spokenScriptFromObject(v);
-    if (fromObj.length >= minLen) return fromObj;
-  }
-  const fromDialogue = spokenScriptFromDialogue(gen, minLen);
-  if (fromDialogue) return fromDialogue;
-  const fromBeats = spokenScriptFromBeats(gen, minLen);
-  if (fromBeats) return fromBeats;
-  for (const nestKey of ["output", "data", "video", "generated", "result"]) {
-    const nest = gen[nestKey];
-    if (nest && typeof nest === "object" && !Array.isArray(nest)) {
-      const s = extractSpokenScriptText(nest as Record<string, unknown>, minLen);
-      if (s.length >= minLen) return s;
-    }
-  }
-  return "";
 }
 
 /**

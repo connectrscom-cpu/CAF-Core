@@ -10,6 +10,7 @@ import { openAiMaxTokens } from "./openai-coerce.js";
 import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
 import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-types.js";
 import { extractExplicitVideoPromptText, extractVideoPromptText } from "./video-gen-fields.js";
+import { normalizeVideoLlmParsed } from "./video-output-normalize.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { withVideoPromptDurationPolicy } from "./video-content-policy.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -18,6 +19,8 @@ import {
   enrichGeneratedOutputForReview,
   maxHashtagsFromPlatformConstraints,
 } from "./publish-metadata-enrich.js";
+import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
 
 /**
  * Editorial pattern: reviewers repeatedly flagged videos where captions were "extremely weak"
@@ -84,11 +87,11 @@ export async function ensureVideoPromptInPayload(
   const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
   const resolved = extractExplicitVideoPromptText(gen, 10);
   if (resolved.length > 0) {
-    let outGen = gen;
-    if (!String(gen.video_prompt ?? "").trim()) {
-      const canonical = extractVideoPromptText(gen, 1);
+    let outGen = normalizeVideoLlmParsed(job.flow_type, gen);
+    if (!String(outGen.video_prompt ?? "").trim()) {
+      const canonical = extractVideoPromptText(outGen, 1);
       if (canonical.trim()) {
-        outGen = { ...gen, video_prompt: canonical.trim() };
+        outGen = { ...outGen, video_prompt: canonical.trim() };
       }
     }
     const packEarly = await buildCreationPack(
@@ -99,9 +102,20 @@ export async function ensureVideoPromptInPayload(
       job.platform,
       job.flow_type
     );
-    const enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, outGen, {
-      maxHashtags: maxHashtagsFromPlatformConstraints(packEarly.platform_constraints),
+    const maxHtEarly = maxHashtagsFromPlatformConstraints(packEarly.platform_constraints);
+    let enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, outGen, {
+      maxHashtags: maxHtEarly,
     });
+    const allowEarly = Array.isArray(packEarly.product_video_hashtag_allowlist)
+      ? (packEarly.product_video_hashtag_allowlist as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+      : [];
+    if (isProductVideoFlow(job.flow_type) && allowEarly.length > 0) {
+      enrichedEarly = {
+        ...enrichedEarly,
+        hashtags: clampHashtagsToSignalPackAllowlist(enrichedEarly.hashtags, allowEarly, maxHtEarly ?? 10),
+      };
+      enrichedEarly = enrichGeneratedOutputForReview(job.flow_type, enrichedEarly, { maxHashtags: maxHtEarly });
+    }
     await db.query(
       `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
       [JSON.stringify({ generated_output: enrichedEarly }), job.id]
@@ -134,11 +148,14 @@ export async function ensureVideoPromptInPayload(
   const baseSys =
     tpl.system_prompt ??
     "Include video_prompt (string) suitable for AI video generation; put fields in one JSON object (markdown fence ok).";
+  const productCaptionAddendum = isProductVideoFlow(job.flow_type)
+    ? "\n\nProduct video: hashtags must come only from `product_video_hashtag_allowlist` or signal-pack hashtag lists in the creation pack (`hashtag_seeds`, `signal_pack_filtered_hashtags`)."
+    : "";
   const llm = await openaiChat(
     apiKey,
     {
       model: config.OPENAI_MODEL,
-      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}`.trim(),
+      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}${productCaptionAddendum}`.trim(),
       user_prompt: userPrompt,
       max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2000),
     },
@@ -157,22 +174,38 @@ export async function ensureVideoPromptInPayload(
     return { ok: false, error: "prompt generator: could not extract JSON object from reply" };
   }
 
-  const merged = { ...gen, ...parsed };
+  let merged = normalizeVideoLlmParsed(job.flow_type, { ...gen, ...parsed });
   const promptText = extractExplicitVideoPromptText(merged, 1);
   if (promptText.length > 0 && !String(merged.video_prompt ?? "").trim()) {
     merged.video_prompt = promptText;
   }
-  if (extractExplicitVideoPromptText(merged, 10).length === 0) {
+  const vp = String(merged.video_prompt ?? "").trim();
+  if (vp.length < 10) {
+    const synth = extractVideoPromptText(merged, 10);
+    if (synth) merged = { ...merged, video_prompt: synth };
+  }
+  if (String(merged.video_prompt ?? "").trim().length < 10) {
     return {
       ok: false,
       error:
-        "video prompt LLM returned no explicit video_prompt field (got hook/CTA-only or a plan without a prompt); tighten prompt template schema to require video_prompt",
+        "video prompt LLM returned no usable video_prompt (missing or too short after synthesis); tighten prompt template to require a full agent instruction string",
     };
   }
 
-  const enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
-    maxHashtags: maxHashtagsFromPlatformConstraints(pack.platform_constraints),
+  const maxHt = maxHashtagsFromPlatformConstraints(pack.platform_constraints);
+  let enriched = enrichGeneratedOutputForReview(job.flow_type, merged, {
+    maxHashtags: maxHt,
   });
+  const allow = Array.isArray(pack.product_video_hashtag_allowlist)
+    ? (pack.product_video_hashtag_allowlist as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+  if (isProductVideoFlow(job.flow_type) && allow.length > 0) {
+    enriched = {
+      ...enriched,
+      hashtags: clampHashtagsToSignalPackAllowlist(enriched.hashtags, allow, maxHt ?? 10),
+    };
+    enriched = enrichGeneratedOutputForReview(job.flow_type, enriched, { maxHashtags: maxHt });
+  }
 
   await db.query(
     `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,

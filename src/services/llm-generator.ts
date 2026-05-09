@@ -41,6 +41,8 @@ import {
   shouldEnforceSpokenScriptWordLawOnFlow,
 } from "./video-script-generator.js";
 import { extractSpokenScriptText, mergeSceneBundleParsedIntoGeneratedOutput } from "./video-gen-fields.js";
+import { normalizeVideoLlmParsed } from "./video-output-normalize.js";
+import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
 import { CAROUSEL_COPY_SYSTEM_ADDENDUM } from "./carousel-copy-prompt-policy.js";
 import {
@@ -629,6 +631,8 @@ export async function generateForJob(
       }
     }
 
+    parsed = normalizeVideoLlmParsed(job.flow_type, parsed);
+
     const maxHt = maxHashtagsFromPlatformConstraints(creationPack.platform_constraints);
     const maxSlides = maxSlidesFromPlatformConstraints(creationPack.platform_constraints);
     parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
@@ -648,6 +652,9 @@ export async function generateForJob(
       const tags = Array.isArray(parsed.hashtags)
         ? (parsed.hashtags as unknown[]).map((t) => String(t ?? "").trim()).filter(Boolean)
         : [];
+      const productAllow = Array.isArray(creationPack.product_video_hashtag_allowlist)
+        ? (creationPack.product_video_hashtag_allowlist as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+        : [];
       if (tags.length === 0) {
         const hints = creationPack.signal_pack_publication_hints;
         const rec =
@@ -658,8 +665,16 @@ export async function generateForJob(
         const rising = rec && Array.isArray(rec.rising_keywords)
           ? (rec.rising_keywords as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
           : [];
-        const combined = [...seeds, ...rising].slice(0, 12);
-        if (combined.length > 0) parsed.hashtags = combined;
+        if (isProductVideoFlow(job.flow_type) && productAllow.length > 0) {
+          parsed.hashtags = productAllow.slice(0, maxHt != null && maxHt >= 0 ? maxHt : 10);
+        } else {
+          const combined = [...seeds, ...rising].slice(0, 12);
+          if (combined.length > 0) parsed.hashtags = combined;
+        }
+      }
+      if (isProductVideoFlow(job.flow_type) && productAllow.length > 0) {
+        const cap = maxHt != null && maxHt >= 0 ? maxHt : 10;
+        parsed.hashtags = clampHashtagsToSignalPackAllowlist(parsed.hashtags, productAllow, cap);
       }
       parsed = enrichGeneratedOutputForReview(job.flow_type, parsed, { maxHashtags: maxHt, maxSlides });
     }
@@ -674,6 +689,7 @@ export async function generateForJob(
       );
       const prior = pickGeneratedOutputOrEmpty(fresh?.generation_payload);
       outputForJob = mergeSceneBundleParsedIntoGeneratedOutput(prior, parsed);
+      outputForJob = normalizeVideoLlmParsed(job.flow_type, outputForJob);
       outputForJob = enrichGeneratedOutputForReview(job.flow_type, outputForJob, { maxHashtags: maxHt, maxSlides });
     }
 

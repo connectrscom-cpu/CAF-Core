@@ -8,6 +8,8 @@ import {
 } from "../repositories/project-config.js";
 import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { filterSignalPackHashtagCandidates } from "../domain/signal-hashtag-sanitize.js";
 import { loadConfig } from "../config.js";
 import { budgetSignalPackContextForLlm } from "./llm-creation-pack-budget.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "./publish-metadata-enrich.js";
@@ -139,10 +141,15 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
     }
   }
 
+  const filteredHashtags = filterSignalPackHashtagCandidates(hashtagCandidates, { max: 48 });
+
   return {
     derived_globals: uniqStrings(scalarStrings, 12),
     rising_keywords: uniqStrings(keywordCandidates, 20),
-    hashtag_seeds: uniqStrings(hashtagCandidates, 20),
+    /** Sanitized bare tokens (no #); junk like https/jpeg/preview removed. */
+    hashtag_seeds: filteredHashtags.slice(0, 20),
+    /** Full filtered list for product-video allowlists (same sanitizer as hashtag_seeds). */
+    signal_pack_filtered_hashtags: filteredHashtags,
   };
 }
 
@@ -299,7 +306,15 @@ export async function buildCreationPack(
       ? signalPackPublicationHints(signal_pack as Record<string, unknown>)
       : {};
 
-  return {
+  const hintsRec =
+    signal_pack_publication_hints && typeof signal_pack_publication_hints === "object" && !Array.isArray(signal_pack_publication_hints)
+      ? (signal_pack_publication_hints as Record<string, unknown>)
+      : null;
+  const filteredForProduct = hintsRec && Array.isArray(hintsRec.signal_pack_filtered_hashtags)
+    ? (hintsRec.signal_pack_filtered_hashtags as unknown[]).map((x) => String(x ?? "").trim()).filter(Boolean)
+    : [];
+
+  const pack: Record<string, unknown> = {
     strategy: strategy ?? {},
     brand_constraints: brand ?? {},
     product_profile: product ?? {},
@@ -311,6 +326,12 @@ export async function buildCreationPack(
     signal_pack_publication_hints,
     candidate: candidateData,
   };
+
+  if (isProductVideoFlow(flowType)) {
+    pack.product_video_hashtag_allowlist = filteredForProduct;
+  }
+
+  return pack;
 }
 
 export function interpolateTemplate(template: string, context: Record<string, unknown>): string {
