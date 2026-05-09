@@ -6,31 +6,43 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
   <style>
     :root{
       --caf-carousel-headline-size: 72px;
-      /* Default body px bumped (~1.5× legacy 48) — reviewer px overrides still win via unified block */
       --caf-carousel-body-size: 72px;
       --caf-carousel-kicker-size: 18px;
       --caf-carousel-cta-size: 72px;
-      --caf-carousel-handle-size: 40px;
 
       --pad-x: 78px;
       --pad-y: 88px;
-      /* iOS Notes–like: flat paper, system-adjacent sans */
+
       --paper: #fffef9;
       --ink: #1c1c1e;
       --body: #3a3a3c;
     }
-    *{box-sizing:border-box;margin:0;padding:0;}
-    body{background:var(--paper);}
+
+    *{
+      box-sizing:border-box;
+      margin:0;
+      padding:0;
+    }
+
+    body{
+      background:var(--paper);
+    }
+
     .slide{
-      width:1080px;height:1350px;overflow:hidden;flex-shrink:0;
+      width:1080px;
+      height:1350px;
+      overflow:hidden;
+      flex-shrink:0;
       background:var(--paper);
       font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
       color:var(--ink);
       -webkit-font-smoothing:antialiased;
     }
+
     .page{
       width:100%;
       height:100%;
@@ -44,6 +56,7 @@
       -webkit-overflow-scrolling:touch;
       box-sizing:border-box;
     }
+
     .headline{
       font-weight:700;
       font-size:68px;
@@ -53,13 +66,15 @@
       overflow-wrap:anywhere;
       word-break:break-word;
     }
+
     .cover .headline{
-      font-size: clamp(58px, 6.2vw, 76px);
       line-height:1.06;
-      /* Do not clamp lines — long hooks must remain readable (scroll .page if needed) */
     }
+
+    .body,
     .sub,
-    .body{
+    .handle,
+    .cta-handle{
       margin-top:28px;
       font-weight:400;
       font-size:38px;
@@ -71,48 +86,70 @@
       min-width:0;
       max-width:100%;
     }
-    .cover .sub{
-      font-size: clamp(32px, 3.6vw, 56px);
-      /* No line-clamp: subtitle must not be truncated on cover */
+
+    .handle,
+    .cta-handle{
+      margin-top:12px;
+      font-weight:700;
     }
-    .body-slide .headline{
-      font-size:64px;
-    }
+
     .cta .headline{
-      font-size:90px;
       line-height:1.08;
     }
-    .cta .sub{
-      /* Editorial: CTA body must be more readable */
-      font-size:52px;
-      line-height:1.4;
+
+    /*
+      CAF unified typography.
+
+      One body-size rule controls every body-like text element:
+      --caf-carousel-body-size
+
+      Applies to:
+      - cover subtitle/body
+      - body-slide body text
+      - CTA secondary/sub text
+      - CTA handle fallback text
+    */
+
+    .kicker{
+      font-size: var(--caf-carousel-kicker-size, 18px) !important;
     }
-  
-    /* CAF unified typography — optional px overrides from Review → generated_output.render */
-    .kicker { font-size: var(--caf-carousel-kicker-size, 18px) !important; }
-    .handle, .cta-handle { font-size: var(--caf-carousel-handle-size, 40px) !important; }
-    .headline, .title, .cover-title, .body-title, .title-candy, .card h3 {
+
+    .main-headline{
       font-size: var(--caf-carousel-headline-size, 72px) !important;
     }
-    .body, .sub, .cover .sub, .body-text, .subtitle-text, .cover-body, .cover-subtitle, .copy:not(.headline) {
-      font-size: var(--caf-carousel-body-size, 48px) !important;
-    }
-    .card p { font-size: var(--caf-carousel-body-size, 48px) !important; }
-    .cta, .cta-candy, .cta-text { font-size: var(--caf-carousel-cta-size, 72px) !important; }
 
+    .main-body{
+      font-size: var(--caf-carousel-body-size, 72px) !important;
+    }
+
+    .cta-text{
+      font-size: var(--caf-carousel-cta-size, 72px) !important;
+    }
   </style>
 </head>
+
 <body>
   <!-- Cover -->
   <div class="slide cover">
     <div class="page">
-      <div class="headline">
-        {{#if cover}}{{joinEmojiOrphans cover}}{{else}}{{#if cover_slide}}{{joinEmojiOrphans cover_slide.headline}}{{else}}{{joinEmojiOrphans intro_title}}{{/if}}{{/if}}
+      <div class="headline main-headline">
+        {{#if cover}}
+          {{joinEmojiOrphans cover}}
+        {{else}}
+          {{#if cover_slide}}
+            {{joinEmojiOrphans cover_slide.headline}}
+          {{else}}
+            {{joinEmojiOrphans intro_title}}
+          {{/if}}
+        {{/if}}
       </div>
+
       {{#if cover_subtitle}}
-      <div class="sub">{{joinEmojiOrphans cover_subtitle}}</div>
+        <div class="body main-body">{{joinEmojiOrphans cover_subtitle}}</div>
       {{else}}
-      {{#if cover_slide.body}}<div class="sub">{{joinEmojiOrphans cover_slide.body}}</div>{{/if}}
+        {{#if cover_slide.body}}
+          <div class="body main-body">{{joinEmojiOrphans cover_slide.body}}</div>
+        {{/if}}
       {{/if}}
     </div>
   </div>
@@ -120,8 +157,8 @@
   {{#each body_slides}}
   <div class="slide body-slide">
     <div class="page">
-      <div class="headline">{{joinEmojiOrphans headline}}</div>
-      <div class="body">{{joinEmojiOrphans body}}</div>
+      <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
+      <div class="body main-body">{{joinEmojiOrphans body}}</div>
     </div>
   </div>
   {{/each}}
@@ -129,14 +166,27 @@
   <!-- CTA -->
   <div class="slide cta">
     <div class="page">
-      <div class="headline">
-        {{#if cta_text}}{{joinEmojiOrphans cta_text}}{{else}}{{#if cta_slide}}{{joinEmojiOrphans cta_slide.body}}{{/if}}{{/if}}
+      <div class="headline cta-text">
+        {{#if cta_text}}
+          {{joinEmojiOrphans cta_text}}
+        {{else}}
+          {{#if cta_slide}}
+            {{joinEmojiOrphans cta_slide.body}}
+          {{/if}}
+        {{/if}}
       </div>
+
       {{!-- Core merges handle into cta_slide.sub; avoid duplicate handle line when sub is present --}}
       {{#if cta_slide.sub}}
-      <div class="sub">{{joinEmojiOrphans cta_slide.sub}}</div>
+        <div class="sub main-body">{{joinEmojiOrphans cta_slide.sub}}</div>
       {{else}}
-      {{#if cta_handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_handle}}</div>{{else}}{{#if cta_slide.handle}}<div class="sub" style="margin-top:12px;font-weight:700">{{cta_slide.handle}}</div>{{/if}}{{/if}}
+        {{#if cta_handle}}
+          <div class="handle main-body">{{cta_handle}}</div>
+        {{else}}
+          {{#if cta_slide.handle}}
+            <div class="handle main-body">{{cta_slide.handle}}</div>
+          {{/if}}
+        {{/if}}
       {{/if}}
     </div>
   </div>
