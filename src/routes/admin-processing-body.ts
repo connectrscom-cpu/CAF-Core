@@ -207,6 +207,16 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn btn-sm" id="btn-run-deep-video-insights">Run top-performer (video frames)</button>
             <span id="top-insight-msg" style="font-size:12px;color:var(--muted);max-width:560px"></span>
           </div>
+          <details id="top-perf-debug-details" style="margin:0 0 12px">
+            <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug — top-performer run logs (copy for support / chat)</summary>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 6px;align-items:center">
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-top-log-image">Copy image run</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-top-log-carousel">Copy carousel run</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-top-log-video">Copy video run</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-top-log-all">Copy all three</button>
+            </div>
+            <pre id="top-perf-debug-pre" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;margin:0;white-space:pre-wrap;max-height:300px;overflow:auto;color:var(--muted);border:1px solid var(--border)">{}</pre>
+          </details>
           <h4 style="font-size:13px;margin:16px 0 8px">Image deep rows</h4>
           <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-image">Reload</button>
           <div id="deep-image-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -502,6 +512,43 @@ var stepState={
   last_prellm_preview:null
 };
 
+/** Last top-performer vision run per button (admin /processing → Insights → Top performers). */
+var lastTopPerfLogs={image:null,carousel:null,video:null};
+function refreshTopPerfDebugPre(){
+  var pre=document.getElementById('top-perf-debug-pre');
+  if(!pre)return;
+  pre.textContent=JSON.stringify(
+    {
+      _note:'Re-run a button to refresh that slot. Use copy buttons for one pass or all.',
+      project_slug:SLUG||null,
+      inputs_import_id:selectedImportId||null,
+      runs:{image:lastTopPerfLogs.image,carousel:lastTopPerfLogs.carousel,video:lastTopPerfLogs.video},
+    },
+    null,
+    2
+  );
+}
+function setTopPerfRunLog(kind,entry){
+  if(kind==='image'||kind==='carousel'||kind==='video'){
+    lastTopPerfLogs[kind]=entry;
+    refreshTopPerfDebugPre();
+  }
+}
+async function adminCopyTextToClipboard(text){
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch(_e){
+    try{
+      var ta=document.createElement('textarea');
+      ta.value=text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }catch(_e2){}
+  }
+}
+
 function setBadge(id,text,kind){
   var el=document.getElementById(id);
   if(!el)return;
@@ -558,7 +605,14 @@ function setStep(step){
   document.getElementById('panel-sources').style.display='none';
   document.getElementById('panel-profile').style.display='none';
 
-  if(step==='insights'){initBroadPanel();loadDeepImageTable();loadDeepCarouselTable();loadDeepVideoTable();refreshInsightCounts();}
+  if(step==='insights'){
+    initBroadPanel();
+    loadDeepImageTable();
+    loadDeepCarouselTable();
+    loadDeepVideoTable();
+    refreshInsightCounts();
+    refreshTopPerfDebugPre();
+  }
   if(step==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();loadIdeaListDropdowns();}
   if(step==='ideas'){loadIdeaListTab();}
   if(step==='run'){syncRunPanel();}
@@ -1426,45 +1480,156 @@ document.getElementById('btn-run-deep-image-insights')?.addEventListener('click'
   var msg=document.getElementById('top-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   if(msg){msg.textContent='Running image vision…';msg.style.color='';}
+  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  var body={max_rows:24,min_pre_llm_score:minScore,rescan:false};
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights';
+  var r=null;
+  var d=null;
   try{
-    var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
-    var body={max_rows:24,min_pre_llm_score:minScore,rescan:false};
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var d=await r.json().catch(function(){return {};});
+    r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    setTopPerfRunLog('image',{
+      at:new Date().toISOString(),
+      pass:'top_performer_deep',
+      success:true,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r.status,
+      endpoint:endpoint,
+      request_body:body,
+      response:d,
+    });
     if(msg)msg.textContent='Image deep: analyzed '+String(d.rows_analyzed||0)+' · pool '+String(d.candidates_with_image||0)+' · skipped carousel '+String(d.skipped_carousel||0)+' · skipped video-like '+String(d.skipped_video||0)+' · no image URL '+String(d.skipped_no_image||0)+' · total deep '+String(d.deep_insights_total||0)+'.';
     loadDeepImageTable();
-  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+  }catch(e){
+    setTopPerfRunLog('image',{
+      at:new Date().toISOString(),
+      pass:'top_performer_deep',
+      success:false,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r?r.status:null,
+      endpoint:endpoint,
+      request_body:body,
+      error:String(e.message||e),
+      response_json:d,
+    });
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
 });
 
 document.getElementById('btn-run-deep-carousel-insights')?.addEventListener('click',async function(){
   var msg=document.getElementById('top-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   if(msg){msg.textContent='Running carousel vision (all slides)…';msg.style.color='';}
+  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:false};
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
+  var r=null;
+  var d=null;
   try{
-    var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
-    var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:false};
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var d=await r.json().catch(function(){return {};});
+    r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    setTopPerfRunLog('carousel',{
+      at:new Date().toISOString(),
+      pass:'top_performer_carousel',
+      success:true,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r.status,
+      endpoint:endpoint,
+      request_body:body,
+      response:d,
+    });
     if(msg)msg.textContent='Carousel deep: analyzed '+String(d.rows_analyzed||0)+' · slide pool '+String(d.candidates_with_slides||0)+' · deck-shaped rows '+String(d.carousel_deck_rows||0)+' · total '+String(d.carousel_insights_total||0)+'.';
     loadDeepCarouselTable();
-  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+  }catch(e){
+    setTopPerfRunLog('carousel',{
+      at:new Date().toISOString(),
+      pass:'top_performer_carousel',
+      success:false,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r?r.status:null,
+      endpoint:endpoint,
+      request_body:body,
+      error:String(e.message||e),
+      response_json:d,
+    });
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
 });
 
 document.getElementById('btn-run-deep-video-insights')?.addEventListener('click',async function(){
   var msg=document.getElementById('top-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   if(msg){msg.textContent='Running video frame bundle…';msg.style.color='';}
+  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:false};
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights';
+  var r=null;
+  var d=null;
   try{
-    var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
-    var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:false};
-    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var d=await r.json().catch(function(){return {};});
+    r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    setTopPerfRunLog('video',{
+      at:new Date().toISOString(),
+      pass:'top_performer_video',
+      success:true,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r.status,
+      endpoint:endpoint,
+      request_body:body,
+      response:d,
+    });
     if(msg)msg.textContent='Video deep: analyzed '+String(d.rows_analyzed||0)+' · frame pool '+String(d.candidates_with_frames||0)+' · video rows '+String(d.video_evidence_rows||0)+' · no-frame skips '+String(d.skipped_no_frames||0)+' · total '+String(d.video_insights_total||0)+'.';
     loadDeepVideoTable();
-  }catch(e){if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}}
+  }catch(e){
+    setTopPerfRunLog('video',{
+      at:new Date().toISOString(),
+      pass:'top_performer_video',
+      success:false,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r?r.status:null,
+      endpoint:endpoint,
+      request_body:body,
+      error:String(e.message||e),
+      response_json:d,
+    });
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
+
+document.getElementById('btn-copy-top-log-image')?.addEventListener('click',async function(){
+  if(!lastTopPerfLogs.image)return;
+  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'image',...lastTopPerfLogs.image},null,2));
+});
+document.getElementById('btn-copy-top-log-carousel')?.addEventListener('click',async function(){
+  if(!lastTopPerfLogs.carousel)return;
+  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'carousel',...lastTopPerfLogs.carousel},null,2));
+});
+document.getElementById('btn-copy-top-log-video')?.addEventListener('click',async function(){
+  if(!lastTopPerfLogs.video)return;
+  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'video',...lastTopPerfLogs.video},null,2));
+});
+document.getElementById('btn-copy-top-log-all')?.addEventListener('click',async function(){
+  await adminCopyTextToClipboard(
+    JSON.stringify(
+      {
+        caf_admin_top_performer_logs_all:true,
+        project_slug:SLUG||null,
+        inputs_import_id:selectedImportId||null,
+        runs:{image:lastTopPerfLogs.image,carousel:lastTopPerfLogs.carousel,video:lastTopPerfLogs.video},
+      },
+      null,
+      2
+    )
+  );
 });
 
 async function initBroadPanel(){
