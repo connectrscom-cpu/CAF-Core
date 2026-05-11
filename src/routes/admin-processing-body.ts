@@ -745,8 +745,10 @@ async function loadImports(){
   var wb=document.getElementById('import-workbench');
   if(!SLUG){root.innerHTML='<div class="empty">Select a project in the sidebar.</div>';return;}
   root.innerHTML='Loading…';
+  var ac=new AbortController();
+  var to=setTimeout(function(){try{ac.abort();}catch(e){}},90000);
   try{
-    var r=await cafFetch('/v1/inputs-evidence/'+encodeURIComponent(SLUG));
+    var r=await cafFetch('/v1/inputs-evidence/'+encodeURIComponent(SLUG),{signal:ac.signal});
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var rows=d.imports||[];
@@ -801,7 +803,13 @@ async function loadImports(){
       setStep(currentStep||'evidence');
       loadIdeaListDropdowns();
     }
-  }catch(e){root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||e)+'</div>';}
+  }catch(e){
+    var msg=String(e.message||e);
+    if(msg==='AbortError'||msg.indexOf('aborted')>=0)msg='Request timed out (90s). Check Core is up, network, and auth token.';
+    root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(msg)+'</div>';
+  }finally{
+    clearTimeout(to);
+  }
 }
 
 async function loadImportStats(){
@@ -2645,6 +2653,15 @@ async function loadSourcesEvidence(kind){
 
 readImportFromUrl();
 setStep(selectedImportId?'evidence':'select');
-if(SLUG)loadImports();
+if(SLUG){
+  loadImports();
+}else{
+  var root0=document.getElementById('imports-root');
+  var hint0=document.getElementById('imports-hint');
+  if(root0){
+    root0.innerHTML='<div class="empty">Pick a project in the sidebar, or open <span class="mono">/admin/processing?project=YOUR_SLUG</span>. Imports cannot load until a project is selected.</div>';
+  }
+  if(hint0)hint0.textContent='';
+}
 </script>`;
 }
