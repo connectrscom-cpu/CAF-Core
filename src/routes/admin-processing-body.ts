@@ -37,6 +37,27 @@ export function adminProcessingBody(currentSlug: string): string {
             6. Run <span class="badge badge-b" id="step-badge-run">not started</span>
           </button>
         </div>
+        <details id="inspect-api-details" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600">Inspect — load live API JSON here (same auth as this page)</summary>
+          <p class="runs-ops-hint" style="margin:8px 0 10px">Use this to see raw responses without curl. Server-side logs: <span class="mono">fly logs -a caf-core</span> (or your host); search for <span class="mono">inputs_top_performer</span> / OpenAI step names in <span class="mono">api_call_audit</span>.</p>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center">
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-import-stats">Import stats</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-profile">Processing profile</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-audit">API audit (recent)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-deep">Insights · top_performer_deep</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-carousel">Insights · top_performer_carousel</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-video">Insights · top_performer_video</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-prellm-sample">Pre-LLM sample rows</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-copy-pre">Copy response body</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <label style="font-size:12px;color:var(--muted)">Evidence row id
+              <input id="inspect-row-id" type="text" class="mono" placeholder="caf_core.inputs_evidence.id (uuid)" style="width:min(360px,94vw);font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)" />
+            </label>
+            <button type="button" class="btn btn-sm" id="btn-inspect-evidence-row">Fetch evidence row</button>
+          </div>
+          <pre id="inspect-api-pre" style="font-size:11px;background:var(--card);padding:10px;border-radius:8px;max-height:460px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);margin:0;color:var(--text)">Click a button above.</pre>
+        </details>
         <div id="panel-evidence" style="padding:12px 0 0">
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px">
             <div style="flex:1;min-width:280px">
@@ -552,6 +573,41 @@ async function adminCopyTextToClipboard(text){
       document.execCommand('copy');
       document.body.removeChild(ta);
     }catch(_e2){}
+  }
+}
+
+var lastInspectBody='';
+async function runInspectApi(label,url,needImport){
+  var pre=document.getElementById('inspect-api-pre');
+  if(!pre)return;
+  if(!SLUG){
+    pre.textContent='Add ?project=YOUR_SLUG to the Processing URL.';
+    pre.style.color='var(--red)';
+    lastInspectBody='';
+    return;
+  }
+  if(needImport&&!selectedImportId){
+    pre.textContent='Select an import (step 1) first.';
+    pre.style.color='var(--red)';
+    lastInspectBody='';
+    return;
+  }
+  pre.style.color='';
+  pre.textContent='Loading '+label+'…';
+  try{
+    var r=await cafFetch(url);
+    var txt=await r.text();
+    var pretty=txt;
+    try{
+      pretty=JSON.stringify(JSON.parse(txt),null,2);
+    }catch(_e){}
+    lastInspectBody=pretty;
+    pre.textContent=label+' · HTTP '+r.status+'\n\n'+pretty;
+    if(!r.ok)pre.style.color='var(--red)';
+  }catch(e){
+    lastInspectBody='';
+    pre.textContent=String(e.message||e);
+    pre.style.color='var(--red)';
   }
 }
 
@@ -1663,6 +1719,70 @@ document.getElementById('btn-copy-top-log-all')?.addEventListener('click',async 
       null,
       2
     )
+  );
+});
+
+document.getElementById('btn-inspect-import-stats')?.addEventListener('click',function(){
+  runInspectApi(
+    'GET import/stats',
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats',
+    true
+  );
+});
+document.getElementById('btn-inspect-profile')?.addEventListener('click',function(){
+  runInspectApi('GET profile','/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',false);
+});
+document.getElementById('btn-inspect-audit')?.addEventListener('click',function(){
+  runInspectApi('GET audit','/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/audit?limit=80',false);
+});
+document.getElementById('btn-inspect-tp-deep')?.addEventListener('click',function(){
+  runInspectApi(
+    'GET evidence-insights tier=top_performer_deep',
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_deep&limit=50&offset=0&sort=rating_desc',
+    true
+  );
+});
+document.getElementById('btn-inspect-tp-carousel')?.addEventListener('click',function(){
+  runInspectApi(
+    'GET evidence-insights tier=top_performer_carousel',
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=50&offset=0&sort=rating_desc',
+    true
+  );
+});
+document.getElementById('btn-inspect-tp-video')?.addEventListener('click',function(){
+  runInspectApi(
+    'GET evidence-insights tier=top_performer_video',
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_video&limit=50&offset=0&sort=rating_desc',
+    true
+  );
+});
+document.getElementById('btn-inspect-prellm-sample')?.addEventListener('click',function(){
+  var k=prellmKind||(broadKinds&&broadKinds.length?broadKinds[0]:'')||'instagram_post';
+  var q='evidence_kind='+encodeURIComponent(k)+'&min_score=0&include_below_cutoff=1&sort=score_desc&limit=25&offset=0';
+  runInspectApi(
+    'GET pre-llm-evidence ('+k+')',
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/pre-llm-evidence?'+q,
+    true
+  );
+});
+document.getElementById('btn-inspect-copy-pre')?.addEventListener('click',async function(){
+  if(!lastInspectBody){
+    window.alert('Load something with the buttons above first.');
+    return;
+  }
+  await adminCopyTextToClipboard(lastInspectBody);
+});
+document.getElementById('btn-inspect-evidence-row')?.addEventListener('click',function(){
+  var idEl=document.getElementById('inspect-row-id');
+  var id=idEl&&String(idEl.value||'').trim();
+  if(!id){
+    window.alert('Paste an evidence row UUID (from a table “Row ID” column or the database).');
+    return;
+  }
+  runInspectApi(
+    'GET evidence-row/'+id,
+    '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-row/'+encodeURIComponent(id),
+    true
   );
 });
 
