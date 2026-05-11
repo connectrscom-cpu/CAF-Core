@@ -4,6 +4,8 @@
  * and optionally `transcript` / `analysis_transcript`.
  */
 
+import { parseHttpsImageUrlsFromEvidenceCell } from "./inputs-image-url-for-analysis.js";
+
 function firstStr(payload: Record<string, unknown>, keys: string[]): string {
   for (const k of keys) {
     const v = payload[k];
@@ -14,10 +16,14 @@ function firstStr(payload: Record<string, unknown>, keys: string[]): string {
 
 function parseUrlArray(raw: unknown, maxFrames: number): string[] {
   if (Array.isArray(raw)) {
-    return raw
-      .map((x) => String(x).trim())
-      .filter((u) => /^https:\/\//i.test(u))
-      .slice(0, maxFrames);
+    const out: string[] = [];
+    for (const x of raw) {
+      for (const u of parseHttpsImageUrlsFromEvidenceCell(String(x), maxFrames - out.length)) {
+        if (!out.includes(u)) out.push(u);
+        if (out.length >= maxFrames) return out;
+      }
+    }
+    return out;
   }
   if (typeof raw === "string" && raw.trim().startsWith("[")) {
     try {
@@ -26,6 +32,9 @@ function parseUrlArray(raw: unknown, maxFrames: number): string[] {
     } catch {
       return [];
     }
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return parseHttpsImageUrlsFromEvidenceCell(raw.trim(), maxFrames);
   }
   return [];
 }

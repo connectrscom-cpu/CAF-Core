@@ -115,6 +115,39 @@ const envSchema = z.object({
    * Total tries = 1 + this value.
    */
   CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS: z.coerce.number().int().min(0).max(8).default(3),
+
+  /** Creative intelligence: max bytes when downloading reference images/video for ingest. */
+  CREATIVE_INTEL_MAX_DOWNLOAD_BYTES: z.coerce.number().int().min(64_000).max(500_000_000).default(80_000_000),
+  /** Max images passed to OpenAI vision per analysis. */
+  CREATIVE_INTEL_VISION_MAX_IMAGES: z.coerce.number().int().min(1).max(16).default(12),
+  /** Max ffmpeg-extracted frames per video reference. */
+  CREATIVE_INTEL_VIDEO_MAX_FRAMES: z.coerce.number().int().min(1).max(24).default(10),
+  /** Optional path to ffmpeg binary; default search PATH. */
+  CREATIVE_INTEL_FFMPEG_PATH: z.string().optional(),
+  /** Run vision analysis inline on ingest (when false, analyses stay pending — not implemented for worker). */
+  CREATIVE_INTEL_ANALYZE_INLINE: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  OPENAI_CREATIVE_INTEL_VISION_MODEL: z.string().default("gpt-4o-mini"),
+  /** Inject creative style block from DB / signal pack into generation (see llm-generator). */
+  CREATIVE_INTEL_INJECT_IN_GENERATION: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  LLM_CREATIVE_INTEL_GUIDANCE_MAX_CHARS: z.coerce.number().int().min(0).max(50_000).default(4000),
+  /** Planner: boost past_performance when idea grounding includes ci_* creative insight refs. */
+  CREATIVE_INTEL_PLANNER_PAST_PERFORMANCE_BOOST: z.coerce.number().min(0).max(1).default(0.88),
+
   VIDEO_ASSEMBLY_BASE_URL: z.string().default("http://localhost:3334"),
   /**
    * How long CAF Core polls GET /status/:id after async POST /concat-videos (download scenes + ffmpeg + Supabase upload).

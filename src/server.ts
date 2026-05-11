@@ -16,6 +16,7 @@ import { registerPipelineRoutes } from "./routes/pipeline.js";
 import { registerLearningRoutes } from "./routes/learning.js";
 import { registerPublicationRoutes } from "./routes/publications.js";
 import { registerProjectIntegrationsRoutes } from "./routes/project-integrations.js";
+import { registerCreativeIntelligenceRoutes } from "./routes/creative-intelligence.js";
 import { registerRendererTemplateRoutes, isRendererTemplatesPublicPath } from "./routes/renderer-templates.js";
 import {
   warnIfRendererBaseUrlIsCafCore,
@@ -76,6 +77,7 @@ async function main() {
   registerLearningRoutes(app, { db, config });
   registerPublicationRoutes(app, { db, config });
   registerProjectIntegrationsRoutes(app, { db });
+  registerCreativeIntelligenceRoutes(app, { db, config });
 
   const stopEditorialCron = startEditorialAnalysisCron(app.log, { db, config });
 

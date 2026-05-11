@@ -56,7 +56,10 @@ function selectedIdeaIds(pack: SignalPackRow): string[] {
   return raw.map((x) => String(x).trim()).filter(Boolean);
 }
 
-function mapIdeasV2ToPlannerSourceRows(ideas: Record<string, unknown>[]): Record<string, unknown>[] {
+function mapIdeasV2ToPlannerSourceRows(
+  ideas: Record<string, unknown>[],
+  config?: AppConfig
+): Record<string, unknown>[] {
   return ideas.map((i) => {
     const id = String(i.id ?? "").trim() || String(i.idea_id ?? "").trim();
     const title = String(i.title ?? "").trim();
@@ -74,6 +77,11 @@ function mapIdeasV2ToPlannerSourceRows(ideas: Record<string, unknown>[]): Record
     const grounding = Array.isArray(i.grounding_insight_ids)
       ? i.grounding_insight_ids.map((x) => String(x).trim()).filter(Boolean)
       : [];
+    const hasCreativeIntelGrounding = grounding.some((g) => String(g).startsWith("ci_"));
+    const pastPerformance =
+      hasCreativeIntelGrounding && config
+        ? Math.min(0.99, config.CREATIVE_INTEL_PLANNER_PAST_PERFORMANCE_BOOST)
+        : 0.5;
 
     // Planner expects a loose "overall_candidates_json-like" row shape.
     const contentIdea = title || thesis || three || id || "Selected idea";
@@ -91,7 +99,7 @@ function mapIdeasV2ToPlannerSourceRows(ideas: Record<string, unknown>[]): Record
       confidence: confidence ?? ideaScore ?? 0.8,
       novelty_score: 0.6,
       platform_fit: 0.75,
-      past_performance: 0.5,
+      past_performance: pastPerformance,
       recommended_route: "HUMAN_REVIEW",
       cta,
       why_now: whyNow || undefined,
@@ -99,7 +107,7 @@ function mapIdeasV2ToPlannerSourceRows(ideas: Record<string, unknown>[]): Record
       key_points: keyPoints.length ? keyPoints : undefined,
       risk_flags: riskFlags.length ? riskFlags : undefined,
       grounding_insight_ids: grounding.length ? grounding : undefined,
-      provenance: "signal_pack.ideas_v2_json",
+      provenance: "signal_pack.ideas_json",
     } satisfies Record<string, unknown>;
   });
 }
@@ -111,13 +119,14 @@ function normalizePlannerRows(rows: Record<string, unknown>[], runIdHint: string
 export function plannerRowsFromIdeaSubset(
   pack: SignalPackRow,
   ideaIds: string[],
-  runIdHint: string
+  runIdHint: string,
+  config?: AppConfig
 ): Record<string, unknown>[] {
   const want = new Set(ideaIds.map((x) => String(x).trim()).filter(Boolean));
   // Prefer canonical rich ideas stored in ideas_json (id field), fall back to legacy idea_id shape.
   const rich = ideasJsonAsRich(pack).filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
   if (rich.length > 0) {
-    const mapped = mapIdeasV2ToPlannerSourceRows(rich);
+    const mapped = mapIdeasV2ToPlannerSourceRows(rich, config);
     return normalizePlannerRows(mapped, runIdHint);
   }
   const legacy = ideasArray(pack).filter((i) => want.has(String(i.idea_id ?? "").trim()));
@@ -150,7 +159,7 @@ export async function materializeRunCandidates(
     // Canonical: rich ideas are stored in ideas_json.
     const rich = ideasJsonAsRich(pack);
     if (rich.length > 0) {
-      const mapped = mapIdeasV2ToPlannerSourceRows(rich);
+      const mapped = mapIdeasV2ToPlannerSourceRows(rich, config);
       rows = normalizePlannerRows(mapped, run.run_id);
       provenance = { ...provenance, source: "signal_pack.ideas_json", idea_count: rich.length, row_count: rows.length };
     } else {
@@ -184,7 +193,7 @@ export async function materializeRunCandidates(
       source = "signal_pack.selected_idea_ids_json + ideas_v2_json(deprecated)";
     }
     if (chosen.length === 0) throw new Error("No matching ideas_v2_json rows for selected_idea_ids_json");
-    const mapped = mapIdeasV2ToPlannerSourceRows(chosen);
+    const mapped = mapIdeasV2ToPlannerSourceRows(chosen, config);
     rows = normalizePlannerRows(mapped, run.run_id);
     provenance = {
       ...provenance,
@@ -195,7 +204,7 @@ export async function materializeRunCandidates(
   } else if (body.mode === "manual") {
     const ids = body.idea_ids ?? [];
     if (ids.length === 0) throw new Error("idea_ids required when mode=manual");
-    rows = plannerRowsFromIdeaSubset(pack, ids, run.run_id);
+    rows = plannerRowsFromIdeaSubset(pack, ids, run.run_id, config);
     if (rows.length === 0) throw new Error("No matching ideas for the given idea_ids");
     provenance = { ...provenance, idea_ids: ids, row_count: rows.length };
   } else if (body.mode === "llm") {
@@ -244,7 +253,7 @@ Rules:
     const rawIds = parsed && Array.isArray(parsed.idea_ids) ? parsed.idea_ids : [];
     const picked = rawIds.map((x) => String(x).trim()).filter(Boolean);
     if (picked.length === 0) throw new Error("LLM returned no idea_ids");
-    rows = plannerRowsFromIdeaSubset(pack, picked.slice(0, maxPick), run.run_id);
+    rows = plannerRowsFromIdeaSubset(pack, picked.slice(0, maxPick), run.run_id, config);
     if (rows.length === 0) throw new Error("LLM idea_ids did not match any pack ideas");
     provenance = {
       ...provenance,

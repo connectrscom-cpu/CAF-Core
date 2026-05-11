@@ -17,6 +17,7 @@ import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 import { parseIdeasV2, parseSelectedIdeaIds } from "../domain/signal-pack-ideas-v2.js";
+import { assertGroundingInsightIdsUniqueAcrossIdeas } from "../domain/idea-grounding-uniqueness.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas, replaceSignalPackSelectedIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
@@ -321,19 +322,19 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
 
     const ideas = parseIdeasV2(body.data.ideas);
+    try {
+      assertGroundingInsightIdsUniqueAcrossIdeas(ideas);
+    } catch (e) {
+      return reply.code(400).send({
+        ok: false,
+        error: "grounding_insight_ids_not_unique",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
     const n = await updateSignalPackIdeasJson(db, pack.id, ideas);
 
     // Dual-write: upsert idea rows + pack links (best-effort, non-blocking).
     try {
-      const insightIds = [
-        ...new Set(
-          ideas
-            .flatMap((i) => (Array.isArray(i.grounding_insight_ids) ? i.grounding_insight_ids : []))
-            .map((x) => String(x).trim())
-            .filter(Boolean)
-        ),
-      ];
-      const insightUuidById = await getInsightRowUuidsByInsightsIds(db, project.id, insightIds);
       const ideaRowIdsOrdered: string[] = [];
       for (const idea of ideas) {
         const row = await upsertIdea(db, {
@@ -358,14 +359,20 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         });
         ideaRowIdsOrdered.push(row.id);
         const grounding = Array.isArray(idea.grounding_insight_ids) ? idea.grounding_insight_ids : [];
-        const resolved = grounding
-          .map((gid) => insightUuidById.get(String(gid).trim()) ?? "")
-          .filter(Boolean);
-        await replaceIdeaGroundingInsights(db, {
-          project_id: project.id,
-          idea_row_id: row.id,
-          insight_row_ids: resolved,
-        });
+        const inputsOnly = grounding.map((x) => String(x).trim()).filter((g) => g && !g.startsWith("ci_"));
+        if (inputsOnly.length > 0) {
+          const insightUuidById = await getInsightRowUuidsByInsightsIds(db, project.id, inputsOnly);
+          const resolved = inputsOnly
+            .map((gid) => insightUuidById.get(String(gid).trim()) ?? "")
+            .filter(Boolean);
+          if (resolved.length > 0) {
+            await replaceIdeaGroundingInsights(db, {
+              project_id: project.id,
+              idea_row_id: row.id,
+              insight_row_ids: resolved,
+            });
+          }
+        }
       }
       await replaceSignalPackIdeas(db, {
         project_id: project.id,
@@ -394,6 +401,15 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     if (pack.project_id !== project.id) return reply.code(403).send({ ok: false, error: "wrong_project" });
 
     const ideas = parseIdeasV2(body.data.ideas);
+    try {
+      assertGroundingInsightIdsUniqueAcrossIdeas(ideas);
+    } catch (e) {
+      return reply.code(400).send({
+        ok: false,
+        error: "grounding_insight_ids_not_unique",
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
     const n = await updateSignalPackIdeasJson(db, pack.id, ideas);
     // best-effort: keep the deprecated column in sync for now (non-blocking)
     await updateSignalPackIdeasV2(db, pack.id, ideas);

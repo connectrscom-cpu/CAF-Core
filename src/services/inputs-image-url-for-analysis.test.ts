@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isVideoLikeEvidence, pickPrimaryImageUrlForDeepAnalysis } from "./inputs-image-url-for-analysis.js";
+import {
+  extractHttpsImageUrlsFromLooseString,
+  isVideoLikeEvidence,
+  pickPrimaryImageUrlForDeepAnalysis,
+  sanitizeOneHttpsImageUrl,
+} from "./inputs-image-url-for-analysis.js";
 
 describe("inputs-image-url-for-analysis", () => {
   it("skips TikTok entirely", () => {
@@ -30,5 +35,30 @@ describe("inputs-image-url-for-analysis", () => {
         isVideo: "FALSE",
       })
     ).toBe(true);
+  });
+
+  it("sanitizeOneHttpsImageUrl splits double-pasted URLs (][) for OpenAI", () => {
+    const bad =
+      "https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png][https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png";
+    expect(sanitizeOneHttpsImageUrl(bad)).toBe(
+      "https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png"
+    );
+    expect(extractHttpsImageUrlsFromLooseString(bad, 4)).toHaveLength(1);
+    const twoDistinct =
+      "https://a.example/x.png][https://b.example/y.jpg";
+    expect(extractHttpsImageUrlsFromLooseString(twoDistinct, 4)).toEqual([
+      "https://a.example/x.png",
+      "https://b.example/y.jpg",
+    ]);
+  });
+
+  it("pickPrimaryImageUrlForDeepAnalysis uses sanitized og_image on scraped_page", () => {
+    const bad =
+      "https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png][https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png";
+    expect(
+      pickPrimaryImageUrlForDeepAnalysis("scraped_page", {
+        og_image: bad,
+      })
+    ).toBe("https://cafeastrology.com/wp-content/uploads/2015/06/sqsagittarius3.png");
   });
 });

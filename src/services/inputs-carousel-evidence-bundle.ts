@@ -3,12 +3,18 @@
  * Typical keys: `carousel_slide_urls`, `sidecar_image_urls`, `carousel_media_urls`.
  */
 
+import { parseHttpsImageUrlsFromEvidenceCell } from "./inputs-image-url-for-analysis.js";
+
 function parseUrlArray(raw: unknown, maxSlides: number): string[] {
   if (Array.isArray(raw)) {
-    return raw
-      .map((x) => String(x).trim())
-      .filter((u) => /^https:\/\//i.test(u))
-      .slice(0, maxSlides);
+    const out: string[] = [];
+    for (const x of raw) {
+      for (const u of parseHttpsImageUrlsFromEvidenceCell(String(x), maxSlides - out.length)) {
+        if (!out.includes(u)) out.push(u);
+        if (out.length >= maxSlides) return out;
+      }
+    }
+    return out;
   }
   if (typeof raw === "string" && raw.trim().startsWith("[")) {
     try {
@@ -17,6 +23,9 @@ function parseUrlArray(raw: unknown, maxSlides: number): string[] {
     } catch {
       return [];
     }
+  }
+  if (typeof raw === "string" && raw.trim()) {
+    return parseHttpsImageUrlsFromEvidenceCell(raw.trim(), maxSlides);
   }
   return [];
 }

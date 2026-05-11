@@ -177,6 +177,23 @@ export async function listSignalPacks(db: Pool, projectId: string, limit = 50, o
     [projectId, limit, offset]);
 }
 
+/** Deep-merge keys into `derived_globals_json` (jsonb ||). */
+export async function mergeSignalPackDerivedGlobalsJson(
+  db: Pool,
+  signalPackId: string,
+  patch: Record<string, unknown>
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs
+        SET derived_globals_json = COALESCE(derived_globals_json, '{}'::jsonb) || $2::jsonb
+      WHERE id = $1::uuid
+      RETURNING 1::text AS n`,
+    [signalPackId, JSON.stringify(patch ?? {})]
+  );
+  return row ? 1 : 0;
+}
+
 function j(v: unknown): string | null {
   if (v == null) return null;
   return typeof v === "string" ? v : JSON.stringify(v);

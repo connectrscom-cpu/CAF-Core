@@ -62,6 +62,7 @@ import {
 } from "./publish-metadata-enrich.js";
 import { validateAndNormalizeDraftPackage } from "./draft-package-contract.js";
 import { getLearningContextForGeneration } from "./learning-rule-selection.js";
+import { buildCreativeStyleGuidanceBlock } from "./creative-intelligence-guidance.js";
 import { buildLlmApprovalAntiRepetitionBlock } from "./llm-approval-anti-repetition-context.js";
 import { insertGenerationAttribution } from "../repositories/learning-evidence.js";
 import { getPromptVersionById } from "../repositories/core.js";
@@ -373,11 +374,22 @@ export async function generateForJob(
       "learning_guidance"
     ),
   };
+  const spRec = creationPack.signal_pack as Record<string, unknown> | undefined;
+  const derivedGlobals =
+    spRec && typeof spRec.derived_globals_json === "object" && !Array.isArray(spRec.derived_globals_json)
+      ? (spRec.derived_globals_json as Record<string, unknown>)
+      : null;
+  let creativeStyleGuidance = "";
+  if (appCfg.CREATIVE_INTEL_INJECT_IN_GENERATION) {
+    creativeStyleGuidance = await buildCreativeStyleGuidanceBlock(db, appCfg, job.project_id, derivedGlobals);
+  }
+
   const templateContext: Record<string, unknown> = {
     ...creationPack,
     global_learning_context: compiledLearning.global_context,
     project_learning_context: compiledLearning.project_context,
     learning_guidance: compiledLearning.merged_guidance,
+    creative_style_guidance: creativeStyleGuidance,
     ...(carouselBodyTargets ? { carousel_body_length: carouselBodyTargets } : {}),
   };
   if (isVideoFlow(job.flow_type)) {
@@ -454,6 +466,10 @@ export async function generateForJob(
 
   if (compiledLearning.merged_guidance.trim()) {
     systemPrompt = `${systemPrompt.trim()}\n\nValidated learning context (shape tone, hooks, and structure; do not quote this section verbatim):\n${compiledLearning.merged_guidance}`.trim();
+  }
+
+  if (creativeStyleGuidance.trim()) {
+    systemPrompt = `${systemPrompt.trim()}\n\nCreative style guidance from measured top-performer references (pattern-level inspiration; do not copy protected creative):\n${creativeStyleGuidance}`.trim();
   }
 
   if (

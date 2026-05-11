@@ -143,6 +143,12 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
 
   const filteredHashtags = filterSignalPackHashtagCandidates(hashtagCandidates, { max: 48 });
 
+  const stylingCues = asArray(derived.top_performer_styling_cues_v1) ?? [];
+  const cueStrings = stylingCues
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 16);
+
   return {
     derived_globals: uniqStrings(scalarStrings, 12),
     rising_keywords: uniqStrings(keywordCandidates, 20),
@@ -150,6 +156,8 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
     hashtag_seeds: filteredHashtags.slice(0, 20),
     /** Full filtered list for product-video allowlists (same sanitizer as hashtag_seeds). */
     signal_pack_filtered_hashtags: filteredHashtags,
+    /** Short strings from `derived_globals_json.top_performer_styling_cues_v1` (creative intelligence). */
+    top_performer_styling_cues: cueStrings,
   };
 }
 
@@ -261,6 +269,7 @@ export const LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
   "global_learning_context",
   "project_learning_context",
   "learning_guidance",
+  "creative_style_guidance",
 ] as const;
 
 export function slimContextForCreationPackJson(context: Record<string, unknown>): Record<string, unknown> {
