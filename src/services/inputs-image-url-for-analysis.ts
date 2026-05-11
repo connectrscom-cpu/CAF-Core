@@ -18,6 +18,42 @@ function isHttpsUrl(s: string): boolean {
 }
 
 /**
+ * Strip prose / markdown punctuation accidentally glued after an image URL (e.g. `...jpeg.`
+ * or `...jpg)`). OpenAI treats those as part of the URL and fails download with `invalid_image_url`.
+ */
+export function trimTrailingJunkFromImageUrl(u: string): string {
+  return u.replace(/[\s.,;)'"\]]+$/g, "").trim();
+}
+
+/**
+ * Reddit preview CDNs often block or confuse remote fetchers; the same path usually works on
+ * `i.redd.it` for direct uploads.
+ */
+export function normalizeRedditExternalImageHost(urlStr: string): string {
+  try {
+    const u = new URL(urlStr);
+    const h = u.hostname.toLowerCase();
+    const toHost =
+      h === "external-i.redd.it" || h === "external-preview.redd.it" ? "i.redd.it" : "";
+    if (toHost) {
+      u.hostname = toHost;
+      return u.toString();
+    }
+  } catch {
+    /* keep original */
+  }
+  return urlStr;
+}
+
+/** Last-mile normalization before `image_url` parts are sent to OpenAI vision. */
+export function finalizeHttpsImageUrlForOpenAiVision(raw: string): string {
+  let u = raw.trim().replace(/^http:/i, "https:");
+  u = trimTrailingJunkFromImageUrl(u);
+  u = normalizeRedditExternalImageHost(u);
+  return u;
+}
+
+/**
  * Extract distinct HTTPS image URLs from a loose string (double-pasted URLs, markdown noise, etc.).
  */
 export function extractHttpsImageUrlsFromLooseString(raw: string, max = 24): string[] {
@@ -27,7 +63,7 @@ export function extractHttpsImageUrlsFromLooseString(raw: string, max = 24): str
   const re = new RegExp(HTTPS_IMAGE_URL_SEGMENT.source, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(t)) != null && out.length < max) {
-    const u = m[0].replace(/^http:/i, "https:");
+    const u = finalizeHttpsImageUrlForOpenAiVision(m[0]);
     if (!out.includes(u)) out.push(u);
   }
   return out;

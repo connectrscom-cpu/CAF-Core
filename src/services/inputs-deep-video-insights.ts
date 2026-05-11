@@ -15,7 +15,7 @@ import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../re
 import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
-import { isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
+import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { parseVideoAnalysisFrameUrls, parseVideoAnalysisTranscript } from "./inputs-video-evidence-bundle.js";
 
 const STEP = "inputs_top_performer_video_insight";
@@ -202,7 +202,10 @@ ${c.transcript || "(none)"}`;
       | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
     > = [{ type: "text", text: userText }];
     for (const url of c.frame_urls) {
-      user_content.push({ type: "image_url", image_url: { url, detail: "low" } });
+      user_content.push({
+        type: "image_url",
+        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(url), detail: "low" },
+      });
     }
 
     const out = await openaiChatMultimodal(

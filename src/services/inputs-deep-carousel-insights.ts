@@ -15,7 +15,7 @@ import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../re
 import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
-import { isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
+import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
 import {
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
@@ -214,7 +214,7 @@ ${textBundle}`;
     for (let i = 0; i < c.slide_urls.length; i++) {
       user_content.push({
         type: "image_url",
-        image_url: { url: c.slide_urls[i], detail: "low" },
+        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(c.slide_urls[i]), detail: "low" },
       });
     }
 

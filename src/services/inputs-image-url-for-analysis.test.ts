@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   extractHttpsImageUrlsFromLooseString,
+  finalizeHttpsImageUrlForOpenAiVision,
   isVideoLikeEvidence,
+  normalizeRedditExternalImageHost,
   pickPrimaryImageUrlForDeepAnalysis,
   sanitizeOneHttpsImageUrl,
+  trimTrailingJunkFromImageUrl,
 } from "./inputs-image-url-for-analysis.js";
 
 describe("inputs-image-url-for-analysis", () => {
@@ -17,6 +20,14 @@ describe("inputs-image-url-for-analysis", () => {
         media_url: "https://i.redd.it/abc.jpg",
       })
     ).toMatch(/^https:\/\/i\.redd\.it\//);
+  });
+
+  it("pickPrimaryImageUrlForDeepAnalysis rewrites Reddit external-i host for vision fetch", () => {
+    expect(
+      pickPrimaryImageUrlForDeepAnalysis("reddit_post", {
+        media_url: "https://external-i.redd.it/hL8F2DuvWqpsZ-1seOZDozwRfMZt5MycBCtd2tkh534.jpeg",
+      })
+    ).toBe("https://i.redd.it/hL8F2DuvWqpsZ-1seOZDozwRfMZt5MycBCtd2tkh534.jpeg");
   });
 
   it("skips Instagram video", () => {
@@ -50,6 +61,18 @@ describe("inputs-image-url-for-analysis", () => {
       "https://a.example/x.png",
       "https://b.example/y.jpg",
     ]);
+  });
+
+  it("finalizeHttpsImageUrlForOpenAiVision strips trailing period and normalizes Reddit preview host", () => {
+    const withDot =
+      "https://external-i.redd.it/hL8F2DuvWqpsZ-1seOZDozwRfMZt5MycBCtd2tkh534.jpeg.";
+    expect(finalizeHttpsImageUrlForOpenAiVision(withDot)).toBe(
+      "https://i.redd.it/hL8F2DuvWqpsZ-1seOZDozwRfMZt5MycBCtd2tkh534.jpeg"
+    );
+    expect(trimTrailingJunkFromImageUrl("https://x.com/a.png).")).toBe("https://x.com/a.png");
+    expect(normalizeRedditExternalImageHost("https://external-preview.redd.it/z.jpg")).toBe(
+      "https://i.redd.it/z.jpg"
+    );
   });
 
   it("pickPrimaryImageUrlForDeepAnalysis uses sanitized og_image on scraped_page", () => {

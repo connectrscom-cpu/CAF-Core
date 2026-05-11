@@ -16,7 +16,11 @@ import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
-import { isVideoLikeEvidence, pickPrimaryImageUrlForDeepAnalysis } from "./inputs-image-url-for-analysis.js";
+import {
+  finalizeHttpsImageUrlForOpenAiVision,
+  isVideoLikeEvidence,
+  pickPrimaryImageUrlForDeepAnalysis,
+} from "./inputs-image-url-for-analysis.js";
 import { isCarouselDeepEligible } from "./inputs-carousel-evidence-bundle.js";
 
 const STEP = "inputs_top_performer_image_insight";
@@ -195,7 +199,7 @@ export async function runDeepImageInsightsForImport(
         system_prompt: system,
         user_content: [
           { type: "text", text: userText },
-          { type: "image_url", image_url: { url: c.image_url, detail: "low" } },
+          { type: "image_url", image_url: { url: finalizeHttpsImageUrlForOpenAiVision(c.image_url), detail: "low" } },
         ],
         max_tokens: 4096,
         response_format: "json_object",
