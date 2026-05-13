@@ -60,12 +60,22 @@ describe("extractInstagramCarouselUrlsFromEmbedHtml", () => {
     expect(urls.some((u) => u.includes("meta_only"))).toBe(false);
   });
 
-  it("drops tiny s150x150 CDN paths (embed chrome)", () => {
+  it("strict mode drops tiny s150x150 CDN paths (embed chrome)", () => {
     const html =
       '{"display_url":"https://scontent.cdninstagram.com/v/t51/s150x150/tiny.webp"}' +
       '{"display_url":"https://scontent.cdninstagram.com/v/t51/s1080x1080/real.jpg"}';
-    const urls = extractInstagramCarouselUrlsFromEmbedHtml(html, 4);
+    const urls = extractInstagramCarouselUrlsFromEmbedHtml(html, 4, "strict");
     expect(urls).toEqual(["https://scontent.cdninstagram.com/v/t51/s1080x1080/real.jpg"]);
+  });
+
+  it("permissive mode keeps small CDN paths when needed for ≥2 slide hints", () => {
+    const html =
+      '{"display_url":"https://scontent.cdninstagram.com/v/t51/s150x150/tiny.webp"}' +
+      '{"display_url":"https://scontent.cdninstagram.com/v/t51/s1080x1080/real.jpg"}';
+    const urls = extractInstagramCarouselUrlsFromEmbedHtml(html, 4, "permissive");
+    expect(urls.length).toBe(2);
+    expect(urls[0]).toContain("s1080x1080");
+    expect(urls[1]).toContain("s150x150");
   });
 });
 

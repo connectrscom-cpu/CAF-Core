@@ -5,8 +5,10 @@
  *
  * Instagram may return login walls or empty markup from datacenter IPs — treat as optional enrichment.
  *
- * **Important:** embed HTML often includes `og:image` / `twitter:image` pointing at the Instagram **logo**
- * or a single tiny preview — those must not be preferred over JSON `display_url` rows for multi-slide decks.
+ * **Two modes:** **permissive** (default for **eligibility / vision merge**) keeps CDN URLs that strict
+ * mode drops (e.g. small `/s150x150/` paths) so `/embed/` can still yield ≥2 slide URLs when JSON is thin.
+ * **Strict** uses the full UI-asset filter — useful in tests / diagnostics.
+ * **Storage** still rejects tiny placeholder bodies via `CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE`.
  */
 
 import { finalizeHttpsImageUrlForOpenAiVision } from "./inputs-image-url-for-analysis.js";
@@ -39,14 +41,25 @@ function normalizeExtractedUrl(raw: string): string | null {
   return u;
 }
 
-/** CDN paths that are almost always embed chrome, sprites, or profile glyphs — not carousel slides. */
-export function isLikelyInstagramEmbedUiAssetUrl(u: string): boolean {
+/** Hard reject: static bundles / rsrc sprites — never useful as slide art. */
+export function isHardRejectedInstagramEmbedCdnUrl(u: string): boolean {
   try {
     const x = new URL(u);
     const host = x.hostname.toLowerCase();
     const path = x.pathname;
     if (host.includes("static.cdninstagram")) return true;
     if (/rsrc\.php/i.test(path)) return true;
+  } catch {
+    return true;
+  }
+  return false;
+}
+
+/** Extra strict: small `/s150x150/` style paths (embed chrome) — use only in `strict` extract mode. */
+export function isLikelyInstagramEmbedUiAssetUrl(u: string): boolean {
+  if (isHardRejectedInstagramEmbedCdnUrl(u)) return true;
+  try {
+    const path = new URL(u).pathname;
     const m = path.match(/\/s(\d+)x(\d+)\//i);
     if (m) {
       const w = parseInt(m[1], 10);
@@ -92,12 +105,41 @@ function pushNormalized(out: string[], seen: Set<string>, raw: string): void {
   out.push(u);
 }
 
+function collectOgTwitterMeta(html: string, out: string[], seen: Set<string>, cap: number): void {
+  for (const m of html.matchAll(
+    /<meta[^>]+property=["']og:image["'][^>]*content=["'](https:\/\/[^"']+)["']/gi
+  )) {
+    pushNormalized(out, seen, m[1]);
+    if (out.length >= cap) return;
+  }
+  for (const m of html.matchAll(
+    /<meta[^>]+content=["'](https:\/\/[^"']+)["'][^>]*property=["']og:image["']/gi
+  )) {
+    pushNormalized(out, seen, m[1]);
+    if (out.length >= cap) return;
+  }
+  for (const m of html.matchAll(/<meta[^>]+name=["']twitter:image["'][^>]*content=["'](https:\/\/[^"']+)["']/gi)) {
+    pushNormalized(out, seen, m[1]);
+    if (out.length >= cap) return;
+  }
+}
+
+export type InstagramEmbedCarouselExtractMode = "permissive" | "strict";
+
 /**
  * Pull CDN image URLs from embed HTML / embedded JSON (unit-testable; no network).
- * OpenGraph / Twitter meta are **last-resort only** (often the IG logo on `/embed/` pages).
+ * @param mode **permissive** (default): maximize chance of ≥2 slide URLs for vision merge (keeps small CDN paths).
+ * **strict**: filter small thumbnails; `og:image` only when still &lt; 2 URLs after JSON / src / loose.
  */
-export function extractInstagramCarouselUrlsFromEmbedHtml(html: string, maxSlides: number): string[] {
+export function extractInstagramCarouselUrlsFromEmbedHtml(
+  html: string,
+  maxSlides: number,
+  mode: InstagramEmbedCarouselExtractMode = "permissive"
+): string[] {
   if (maxSlides <= 0) return [];
+  const strict = mode === "strict";
+  const assetFilter = strict ? isLikelyInstagramEmbedUiAssetUrl : isHardRejectedInstagramEmbedCdnUrl;
+
   const primary: string[] = [];
   const seen = new Set<string>();
 
@@ -111,6 +153,7 @@ export function extractInstagramCarouselUrlsFromEmbedHtml(html: string, maxSlide
     pushNormalized(primary, seen, m[2]);
     if (primary.length >= maxSlides * 4) break;
   }
+
   const noOgTwitterMeta = html
     .replace(/<meta[^>]+property=["']og:image["'][^>]*>/gi, "")
     .replace(/<meta[^>]+name=["']twitter:image["'][^>]*>/gi, "")
@@ -133,7 +176,7 @@ export function extractInstagramCarouselUrlsFromEmbedHtml(html: string, maxSlide
     if (primary.length >= maxSlides * 4) break;
   }
 
-  let filtered = primary.filter((u) => !isLikelyInstagramEmbedUiAssetUrl(u));
+  let filtered = primary.filter((u) => !assetFilter(u));
   filtered.sort((a, b) => scoreInstagramCarouselCdnUrl(b) - scoreInstagramCarouselCdnUrl(a));
 
   const out: string[] = [];
@@ -149,20 +192,8 @@ export function extractInstagramCarouselUrlsFromEmbedHtml(html: string, maxSlide
 
   const metaFallback: string[] = [];
   const metaSeen = new Set<string>();
-  for (const m of html.matchAll(
-    /<meta[^>]+property=["']og:image["'][^>]*content=["'](https:\/\/[^"']+)["']/gi
-  )) {
-    pushNormalized(metaFallback, metaSeen, m[1]);
-  }
-  for (const m of html.matchAll(
-    /<meta[^>]+content=["'](https:\/\/[^"']+)["'][^>]*property=["']og:image["']/gi
-  )) {
-    pushNormalized(metaFallback, metaSeen, m[1]);
-  }
-  for (const m of html.matchAll(/<meta[^>]+name=["']twitter:image["'][^>]*content=["'](https:\/\/[^"']+)["']/gi)) {
-    pushNormalized(metaFallback, metaSeen, m[1]);
-  }
-  const metaOk = metaFallback.filter((u) => !isLikelyInstagramEmbedUiAssetUrl(u));
+  collectOgTwitterMeta(html, metaFallback, metaSeen, maxSlides * 4);
+  const metaOk = metaFallback.filter((u) => !assetFilter(u));
   metaOk.sort((a, b) => scoreInstagramCarouselCdnUrl(b) - scoreInstagramCarouselCdnUrl(a));
   for (const u of metaOk) {
     if (outSeen.has(u)) continue;
@@ -215,7 +246,7 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
     const text = await res.text();
     const html = text.length > opts.maxBytes ? text.slice(0, opts.maxBytes) : text;
     const diag = instagramEmbedHtmlDiagnostics(html);
-    const urls = extractInstagramCarouselUrlsFromEmbedHtml(html, opts.maxSlides);
+    const urls = extractInstagramCarouselUrlsFromEmbedHtml(html, opts.maxSlides, "permissive");
     return {
       urls,
       http_ok: true,
