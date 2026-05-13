@@ -18,6 +18,7 @@ import {
 import {
   countEvidenceRowInsightsByImportTier,
   countEvidenceRowInsightsByImportTierAndKind,
+  deleteEvidenceRowInsightsForImportTier,
   listEvidenceRowInsightsEnriched,
 } from "../repositories/inputs-evidence-insights.js";
 import {
@@ -673,6 +674,44 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return reply.code(500).send({ ok: false, error: "deep_carousel_insights_failed", message: msg });
+    }
+  });
+
+  const evidenceInsightTierSchema = z.enum([
+    "broad_llm",
+    "top_performer_deep",
+    "top_performer_video",
+    "top_performer_carousel",
+  ]);
+
+  app.post("/v1/inputs-processing/:project_slug/import/:import_id/delete-evidence-insights", async (request, reply) => {
+    const params = z
+      .object({ project_slug: z.string(), import_id: z.string() })
+      .safeParse(request.params);
+    const body = z
+      .object({
+        analysis_tier: evidenceInsightTierSchema,
+        /** Must be true — prevents accidental deletes from a stray GET/proxy. */
+        confirm: z.literal(true),
+      })
+      .safeParse(request.body ?? {});
+    if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const imp = await getInputsEvidenceImport(db, project.id, params.data.import_id);
+    if (!imp) return reply.code(404).send({ ok: false, error: "import_not_found" });
+    try {
+      const deleted = await deleteEvidenceRowInsightsForImportTier(
+        db,
+        project.id,
+        params.data.import_id,
+        body.data.analysis_tier
+      );
+      return { ok: true, analysis_tier: body.data.analysis_tier, deleted };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(500).send({ ok: false, error: "delete_evidence_insights_failed", message: msg });
     }
   });
 

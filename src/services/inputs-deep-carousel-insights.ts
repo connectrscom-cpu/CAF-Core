@@ -1,10 +1,8 @@
 /**
  * Top-performer **carousel** pass: multimodal on **all slide images** (+ caption context).
  * **Instagram only** (`instagram_post`); other platforms are skipped.
- * Slide URLs come from `parseCarouselSlideUrls(payload)` (merged list + cover fields), then when
- * **embed fetch is on** (default: env on unless `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0`; criteria may
- * force on/off) **and** the row has a structural carousel hint (Sidecar / `img_index`), Core may fetch
- * `instagram.com/p/{shortcode}/embed/` and extract CDN links (best-effort; Instagram may block).
+ * Slide URLs come from `parseCarouselSlideUrls(payload)` (explicit list keys + top-level covers + **nested**
+ * Graph/scraper JSON such as `edge_sidecar_to_children` / stringified blobs), merged with embed fetch when enabled.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";

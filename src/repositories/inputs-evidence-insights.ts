@@ -30,6 +30,8 @@ export interface EvidenceRowInsightRow {
   risk_flags_json: unknown;
   aesthetic_analysis_json: unknown | null;
   raw_llm_json: unknown | null;
+  /** Supabase copies of carousel slides / video frames used for vision (null if never archived). */
+  stored_inspection_media_json: unknown | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +63,8 @@ export interface UpsertEvidenceInsightInput {
   risk_flags_json: unknown[];
   aesthetic_analysis_json: Record<string, unknown> | null;
   raw_llm_json: Record<string, unknown> | null;
+  /** When set (including null), upsert updates this column; omit to preserve existing on conflict. */
+  stored_inspection_media_json?: Record<string, unknown> | null;
 }
 
 export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsightInput): Promise<{ id: string }> {
@@ -72,14 +76,16 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        why_it_worked, primary_emotion, secondary_emotion, hook_type,
        custom_label_1, custom_label_2, custom_label_3,
        cta_type, hashtags, caption_style, hook_text,
-       risk_flags_json, aesthetic_analysis_json, raw_llm_json
+       risk_flags_json, aesthetic_analysis_json, raw_llm_json,
+       stored_inspection_media_json
      ) VALUES (
        $1,$2,$3::bigint,$4,$5,
        $6,$7,
        $8,$9,$10,$11,
        $12,$13,$14,
        $15,$16,$17,$18,
-       $19::jsonb,$20::jsonb,$21::jsonb
+       $19::jsonb,$20::jsonb,$21::jsonb,
+       $22::jsonb
      )
      ON CONFLICT (inputs_import_id, source_evidence_row_id, analysis_tier)
      DO UPDATE SET
@@ -100,6 +106,7 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        risk_flags_json = EXCLUDED.risk_flags_json,
        aesthetic_analysis_json = EXCLUDED.aesthetic_analysis_json,
        raw_llm_json = EXCLUDED.raw_llm_json,
+       stored_inspection_media_json = COALESCE(EXCLUDED.stored_inspection_media_json, caf_core.inputs_evidence_row_insights.stored_inspection_media_json),
        updated_at = now()
      RETURNING id`,
     [
@@ -124,6 +131,11 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
       JSON.stringify(row.risk_flags_json ?? []),
       row.aesthetic_analysis_json ? JSON.stringify(row.aesthetic_analysis_json) : null,
       row.raw_llm_json ? JSON.stringify(row.raw_llm_json) : null,
+      row.stored_inspection_media_json !== undefined
+        ? row.stored_inspection_media_json === null
+          ? null
+          : JSON.stringify(row.stored_inspection_media_json)
+        : null,
     ]
   );
   if (!out) throw new Error("upsertEvidenceRowInsight failed");
@@ -163,7 +175,7 @@ export async function listEvidenceRowInsights(
               why_it_worked, primary_emotion, secondary_emotion, hook_type,
               custom_label_1, custom_label_2, custom_label_3,
               cta_type, hashtags, caption_style, hook_text,
-              risk_flags_json, aesthetic_analysis_json, raw_llm_json,
+              risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
               created_at::text, updated_at::text
          FROM caf_core.inputs_evidence_row_insights
         WHERE project_id = $1 AND inputs_import_id = $2 AND analysis_tier = $3
@@ -179,7 +191,7 @@ export async function listEvidenceRowInsights(
             why_it_worked, primary_emotion, secondary_emotion, hook_type,
             custom_label_1, custom_label_2, custom_label_3,
             cta_type, hashtags, caption_style, hook_text,
-            risk_flags_json, aesthetic_analysis_json, raw_llm_json,
+            risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
             created_at::text, updated_at::text
        FROM caf_core.inputs_evidence_row_insights
       WHERE project_id = $1 AND inputs_import_id = $2
@@ -201,6 +213,21 @@ export async function countEvidenceRowInsightsByImportTier(
     [importId, tier]
   );
   return parseInt(row?.n ?? "0", 10) || 0;
+}
+
+/** Hard-delete all insights of one tier for an import (admin / cleanup). Returns rows removed. */
+export async function deleteEvidenceRowInsightsForImportTier(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  tier: EvidenceInsightTier
+): Promise<number> {
+  const r = await db.query(
+    `DELETE FROM caf_core.inputs_evidence_row_insights
+      WHERE project_id = $1 AND inputs_import_id = $2 AND analysis_tier = $3`,
+    [projectId, importId, tier]
+  );
+  return r.rowCount ?? 0;
 }
 
 /** Count insights for one analysis tier restricted to rows of a single evidence_kind (joins evidence rows). */
@@ -235,7 +262,7 @@ const INSIGHT_SELECT_ENRICHED = `SELECT i.id::text, i.project_id::text, i.inputs
        i.why_it_worked, i.primary_emotion, i.secondary_emotion, i.hook_type,
        i.custom_label_1, i.custom_label_2, i.custom_label_3,
        i.cta_type, i.hashtags, i.caption_style, i.hook_text,
-       i.risk_flags_json, i.aesthetic_analysis_json, i.raw_llm_json,
+       i.risk_flags_json, i.aesthetic_analysis_json, i.raw_llm_json, i.stored_inspection_media_json,
        i.created_at::text, i.updated_at::text,
        r.evidence_kind,
        r.rating_score::text AS evidence_rating_score`;

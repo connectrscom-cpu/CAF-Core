@@ -239,6 +239,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-deep-image-insights">Run top-performer (images)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-carousel-insights">Run top-performer (carousel)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-delete-carousel-insights-import" title="Deletes all top_performer_carousel rows in inputs_evidence_row_insights for the selected import">Delete carousel insights (import)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-video-insights">Run top-performer (video frames)</button>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;max-width:420px;line-height:1.35">
               <input id="tp-vision-rescan" type="checkbox" />
@@ -1858,6 +1859,24 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     setTpStatus('carousel',String(e.message||e),true);
     renderTpQualifyingList('carousel',[]);
     try{pushProcessingActivity(cafTs()+' top-performer (carousel): '+String(e.message||e),true);}catch(_d){}
+  }
+});
+
+bind('btn-delete-carousel-insights-import','click',async function(){
+  if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
+  if(!window.confirm('Delete ALL top_performer_carousel insight rows for this import from Postgres? This cannot be undone.'))return;
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/delete-evidence-insights';
+  var body={analysis_tier:'top_performer_carousel',confirm:true};
+  try{
+    var r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    setTpStatus('carousel','Deleted '+String(d.deleted||0)+' top_performer_carousel insight row(s) for this import.',false);
+    try{pushProcessingActivity(cafTs()+' Deleted '+String(d.deleted||0)+' carousel insight row(s) for import '+selectedImportId,false);}catch(_e){}
+    loadDeepCarouselTable();
+  }catch(e){
+    setTpStatus('carousel',String(e.message||e),true);
+    try{pushProcessingActivity(cafTs()+' delete carousel insights failed: '+String(e.message||e),true);}catch(_e2){}
   }
 });
 
