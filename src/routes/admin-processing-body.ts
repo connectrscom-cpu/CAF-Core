@@ -9,6 +9,20 @@ export function adminProcessingBody(currentSlug: string): string {
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
       <p class="runs-ops-hint">Work through the pipeline steps below. Raw JSON is hidden under Debug panels.</p>
+      <div id="processing-activity-wrap" style="margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:11px;line-height:1.45">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;justify-content:space-between;margin-bottom:6px">
+          <div>
+            <strong style="font-size:12px">Activity</strong>
+            <span style="display:block;margin-top:2px;color:var(--muted);font-size:11px">Last request from this page (method, URL, HTTP status, time). Failures turn red and open the log.</span>
+          </div>
+          <button type="button" class="btn-ghost btn-sm" id="btn-clear-activity-log" title="Clear the in-memory log (does not affect the server)">Clear log</button>
+        </div>
+        <div id="processing-activity-current" style="font-family:ui-monospace,monospace;word-break:break-all;color:var(--text);min-height:1.35em;padding:6px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--border)">Waiting for JavaScript…</div>
+        <details id="processing-activity-details" style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Full request log (newest first)</summary>
+          <pre id="processing-activity-log" style="margin:8px 0 0;max-height:min(40vh,320px);overflow:auto;white-space:pre-wrap;font-size:10px;background:var(--bg);padding:8px;border-radius:6px;border:1px solid var(--border);color:var(--text)"></pre>
+        </details>
+      </div>
       <div id="imports-toolbar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
         <a class="btn-ghost btn-sm" href="/admin/inputs${inputsPq}">Upload on Inputs</a>
@@ -221,7 +235,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>). Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, Instagram only, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>, Instagram / TikTok / Facebook only). After your pre-LLM cutoff, vision defaults to rows that already have <strong><span class="mono">broad_llm</span> insights</strong> (same cohort as broad insights). It can also restrict to the <strong>top fraction of rated performers</strong> (<span class="mono">rating_score</span>), default top 5% via <span class="mono">criteria_json.top_performer.rating_top_fraction</span>. Opt out: <span class="mono">disable_broad_insights_align_gate</span> / <span class="mono">disable_rating_percentile_gate</span>. Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>. <strong>Archive to Storage</strong>: verified <strong>image</strong> slide/frame files (JPEG/PNG/WebP/GIF/AVIF) and, for <span class="mono">top_performer_video</span>, one verified <strong>source video</strong> (MP4/WebM/MKV; <span class="mono">…/source.ext</span>) when <span class="mono">video_url</span> / <span class="mono">source_video_url</span> / … exists on the row — all under <span class="mono">assets/top_performer_inspection/…</span> plus <span class="mono">stored_inspection_media_json</span>. <strong>Default on when</strong> <span class="mono">SUPABASE_URL</span> + <span class="mono">SUPABASE_SERVICE_ROLE_KEY</span> are set. Disable all media archive: <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_MEDIA=off</span> or criteria <span class="mono">inputs_insights.archive_top_performer_media_to_storage: false</span>. Source video only: criteria <span class="mono">inputs_insights.archive_top_performer_source_video: false</span> or <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO=off</span>.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-deep-image-insights">Run top-performer (images)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-carousel-insights">Run top-performer (carousel)</button>
@@ -236,8 +250,16 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <div id="top-perf-status-wrap" style="font-size:12px;margin:0 0 10px;max-width:900px;line-height:1.45">
             <div id="tp-st-image" style="color:var(--muted)"><strong>Image</strong> — not run yet.</div>
-            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs per row (<span class="mono">carousel_slide_urls</span>, etc.).</div>
-            <div id="tp-st-video" style="color:var(--muted)"><strong>Video</strong> — not run yet. Needs <span class="mono">analysis_frame_urls</span> (or frame URL aliases) on video-like rows.</div>
+            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block).</div>
+            <div id="tp-st-video" style="color:var(--muted)"><strong>Video</strong> — not run yet. Needs HTTPS image URLs: <span class="mono">analysis_frame_urls</span> / <span class="mono">frame_urls</span>, or a poster field such as <span class="mono">thumbnail_url</span> / <span class="mono">display_url</span> (http is upgraded to https).</div>
+          </div>
+          <div id="tp-qualify-carousel-wrap" style="display:none;margin:6px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-height:340px;overflow:auto">
+            <div data-tp-qualify-title="1" style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text)">Carousel — rows that qualify for this pass</div>
+            <ul id="tp-qualify-carousel-list" style="margin:0;padding-left:18px;font-size:12px;line-height:1.45"></ul>
+          </div>
+          <div id="tp-qualify-video-wrap" style="display:none;margin:6px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-height:340px;overflow:auto">
+            <div data-tp-qualify-title="1" style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text)">Video — rows that qualify for this pass</div>
+            <ul id="tp-qualify-video-list" style="margin:0;padding-left:18px;font-size:12px;line-height:1.45"></ul>
           </div>
           <p class="runs-ops-hint" style="margin:0 0 12px;font-size:11px;max-width:920px"><strong>Where stored assets live</strong> — <em>Pipeline renders</em> (carousel PNGs, videos, scenes, …): Postgres <span class="mono">caf_core.assets</span> columns <span class="mono">bucket</span>, <span class="mono">object_path</span>, <span class="mono">public_url</span>; files in Supabase Storage (env <span class="mono">SUPABASE_ASSETS_BUCKET</span>, default <span class="mono">assets</span>) under keys like <span class="mono">assets/carousels/…</span>, <span class="mono">assets/videos/…</span>, <span class="mono">assets/scenes/…</span> (see <span class="mono">src/services/supabase-storage.ts</span>). <em>Creative intelligence</em> ingest copies: <span class="mono">caf_core.creative_source_assets</span> with <span class="mono">storage_bucket</span> + <span class="mono">storage_key</span>; keys are built as <span class="mono">assets/creative_intel/{project_slug}/{source_group_id}/file.ext</span> (<span class="mono">uploadCreativeIntelBuffer</span> in <span class="mono">creative-intelligence-media.ts</span>). <em>These top-performer buttons</em> only write LLM insight JSON on evidence rows (URLs remain in import <span class="mono">payload_json</span>); they do not upload image binaries to Core.</p>
           <details id="top-perf-debug-details" style="margin:0 0 12px">
@@ -409,12 +431,96 @@ export function adminProcessingBody(currentSlug: string): string {
   </div>
 </div>
 <script>
+(function(){
+  function showProcErr(msg){
+    var cur=document.getElementById("processing-activity-current");
+    var log=document.getElementById("processing-activity-log");
+    var det=document.getElementById("processing-activity-details");
+    if(cur){
+      cur.textContent=String(msg||"error");
+      cur.style.color="#e85c4a";
+      cur.style.borderColor="#e85c4a";
+    }
+    if(log){log.textContent=(log.textContent?log.textContent+"\\n":"")+String(msg||"");}
+    if(det)det.open=true;
+  }
+  window.addEventListener("error",function(ev){
+    var m=ev&&ev.message?String(ev.message):"error";
+    var loc=ev&&ev.filename?String(ev.filename):"(inline script)";
+    if(ev&&ev.lineno)loc=loc+":"+ev.lineno;
+    if(ev&&ev.colno)loc=loc+":"+ev.colno;
+    showProcErr("JS error: "+m+" @ "+loc);
+  });
+  window.addEventListener("unhandledrejection",function(ev){
+    var r=ev&&ev.reason;
+    showProcErr("Unhandled promise: "+(r&&r.message?String(r.message):String(r)));
+  });
+  var cur=document.getElementById("processing-activity-current");
+  if(cur){cur.textContent="Boot OK - loading Processing script...";cur.style.color="var(--muted)";cur.style.borderColor="var(--border)";}
+})();
+</script>
+<script>
 const SLUG=${SLUG};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
+function bind(id,ev,fn){var e=document.getElementById(id);if(e)e.addEventListener(ev,fn);}
+function val(id){var e=document.getElementById(id);return e?e.value:'';}
+function chk(id){var e=document.getElementById(id);return !!(e&&e.checked);}
+var __cafActBuf=[];
+var __cafActMax=48;
+function cafTs(){
+  try{return new Date().toISOString().replace('T',' ').slice(0,23);}catch(e){return'';}
+}
+function pushProcessingActivity(line,isErr){
+  var s=String(line||'');
+  __cafActBuf.unshift(s);
+  if(__cafActBuf.length>__cafActMax)__cafActBuf.length=__cafActMax;
+  var cur=document.getElementById('processing-activity-current');
+  var log=document.getElementById('processing-activity-log');
+  var det=document.getElementById('processing-activity-details');
+  if(cur){
+    cur.textContent=s;
+    cur.style.color=isErr?'var(--red)':'var(--text)';
+    cur.style.borderColor=isErr?'var(--red)':'var(--border)';
+  }
+  if(log)log.textContent=__cafActBuf.join('\\n');
+  if(det && isErr)det.open=true;
+}
+(function wrapCafFetchForActivity(){
+  var inner=window.cafFetch;
+  if(typeof inner!=='function'){
+    pushProcessingActivity(cafTs()+' [setup] window.cafFetch is missing - admin layout may not have loaded; API calls will fail.',true);
+    return;
+  }
+  window.cafFetch=function(u,o){
+    o=o||{};
+    var t0=Date.now();
+    var method=String(o.method||'GET').toUpperCase();
+    var path=String(u||'');
+    try{if(path.indexOf('http')!==0)path=(window.location.origin||'')+path;}catch(e0){}
+    return inner.call(window,u,o).then(function(r){
+      var ms=Date.now()-t0;
+      var ok=r&&r.ok;
+      pushProcessingActivity(cafTs()+' '+method+' '+path+' -> HTTP '+(r?r.status:'?')+' ('+ms+'ms)',!ok);
+      return r;
+    },function(err){
+      var ms=Date.now()-t0;
+      pushProcessingActivity(cafTs()+' '+method+' '+path+' -> network error ('+ms+'ms): '+String((err&&err.message)||err),true);
+      throw err;
+    });
+  };
+})();
+pushProcessingActivity(cafTs()+' [ready] Processing UI loaded | project='+(SLUG||'(none - pick sidebar or ?project=)')+' | x-caf-core-token: '+(window.__CAF_CORE_FETCH_TOKEN?'set':'not set - API may return 401 without token'),false);
+bind('btn-clear-activity-log','click',function(){
+  __cafActBuf=[];
+  var log=document.getElementById('processing-activity-log');
+  var cur=document.getElementById('processing-activity-current');
+  if(log)log.textContent='';
+  if(cur){cur.textContent='(log cleared)';cur.style.color='var(--muted)';cur.style.borderColor='var(--border)';}
+});
 /** Format numeric scores from insights API (often string); em dash when missing */
 function fmtInsightScore(v){
-  if(v===null||v===undefined||v==='')return '—';
+  if(v===null||v===undefined||v==='')return '-';
   var n=(typeof v==='number')?v:parseFloat(String(v));
   if(Number.isNaN(n))return esc(String(v));
   return esc(String(Math.round(n*10000)/10000));
@@ -496,13 +602,13 @@ function renderFunnel(totals){
   var belowDrop=Number(t.below_profile_min_dropped||0);
   root.innerHTML=
     '<span class="badge badge-b">TOTAL '+esc(fmtN(total))+'</span>'+
-    '<span style="color:var(--muted)">→</span>'+
+    '<span style="color:var(--muted)">-></span>'+
     '<span class="badge badge-p">PROFILE '+esc(fmtN(passing))+'</span>'+
-    '<span style="color:var(--muted)">→</span>'+
+    '<span style="color:var(--muted)">-></span>'+
     '<span class="badge '+(after>0?'badge-g':'badge-y')+'">CUTOFF '+esc(fmtN(after))+'</span>'+
-    '<span style="color:var(--muted)">→</span>'+
+    '<span style="color:var(--muted)">-></span>'+
     '<span class="badge '+(after>0?'badge-g':'badge-y')+'">FINAL '+esc(fmtN(after))+'</span>';
-  hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' · Below profile min dropped: '+fmtN(belowDrop);
+  hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' | Below profile min dropped: '+fmtN(belowDrop);
 }
 
 async function refreshInsightCounts(){
@@ -524,7 +630,7 @@ async function refreshInsightCounts(){
 function syncEvidenceHeader(){
   var el=document.getElementById('evidence-import-label');
   if(!el)return;
-  if(!selectedImportId){el.textContent='—';return;}
+  if(!selectedImportId){el.textContent='-';return;}
   var label=(selectedImportLabel||'').trim();
   el.textContent=label?label:('Import '+selectedImportId.slice(0,8));
 }
@@ -539,7 +645,7 @@ var stepState={
   last_prellm_preview:null
 };
 
-/** Last top-performer vision run per button (admin /processing → Insights → Top performers). */
+/** Last top-performer vision run per button (admin /processing -> Insights -> Top performers). */
 var lastTopPerfLogs={image:null,carousel:null,video:null};
 function refreshTopPerfDebugPre(){
   var pre=document.getElementById('top-perf-debug-pre');
@@ -561,19 +667,76 @@ function setTopPerfRunLog(kind,entry){
     refreshTopPerfDebugPre();
   }
 }
-async function adminCopyTextToClipboard(text){
-  try{
-    await navigator.clipboard.writeText(text);
-  }catch(_e){
-    try{
-      var ta=document.createElement('textarea');
-      ta.value=text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-    }catch(_e2){}
+/** Top-level Storage archive summary for copy-to-clipboard debug JSON (carousel + video passes). */
+function tpMediaArchiveFromResponse(d, passSlug){
+  if(!d||typeof d!=='object')return null;
+  var req=d.top_performer_media_archive_requested;
+  var sup=d.top_performer_media_supabase_configured;
+  var saved=Number(d.top_performer_media_archive_files_saved||0);
+  var errs=Number(d.top_performer_media_archive_errors||0);
+  var summary='';
+  if(req===false) summary='Storage archiving disabled (env or criteria).';
+  else if(!req) summary='Storage archive not requested.';
+  else if(!sup) summary='Supabase not configured; no uploads.';
+  else if(passSlug==='top_performer_carousel'){
+    summary='Carousel: '+String(saved)+' slide image file(s) uploaded to Storage.';
+    if(errs>0) summary+=' '+String(errs)+' error(s) on failed slide(s).';
+  }else if(passSlug==='top_performer_video'){
+    var fr=Number(d.top_performer_media_archive_frame_files_saved||0);
+    var sv=Number(d.top_performer_media_archive_source_video_files_saved||0);
+    summary='Video: '+String(fr)+' frame image(s) + '+String(sv)+' source video file(s) uploaded ('+String(saved)+' total OK).';
+    if(errs>0) summary+=' '+String(errs)+' error(s).';
+  }else{
+    summary=String(saved)+' file(s) uploaded.';
+    if(errs>0) summary+=' '+String(errs)+' error(s).';
   }
+  var out={
+    pass:passSlug,
+    requested:!!req,
+    supabase_configured:!!sup,
+    files_saved:saved,
+    upload_errors:errs,
+    summary:summary
+  };
+  if(passSlug==='top_performer_video'){
+    out.frame_files_saved=Number(d.top_performer_media_archive_frame_files_saved||0);
+    out.source_video_files_saved=Number(d.top_performer_media_archive_source_video_files_saved||0);
+  }
+  return out;
+}
+async function adminCopyTextToClipboard(text){
+  var t=String(text||'');
+  if(!t){
+    window.alert('Nothing to copy.');
+    return false;
+  }
+  try{
+    if(navigator.clipboard&&typeof navigator.clipboard.writeText==='function'){
+      await navigator.clipboard.writeText(t);
+      return true;
+    }
+  }catch(_e){/* fall through */}
+  try{
+    var ta=document.createElement('textarea');
+    ta.value=t;
+    ta.setAttribute('readonly','');
+    ta.style.position='fixed';
+    ta.style.left='-9999px';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    var ok=document.execCommand('copy');
+    document.body.removeChild(ta);
+    if(ok)return true;
+  }catch(_e2){/* fall through */}
+  window.alert(
+    'Clipboard copy failed (browser blocked it or no secure context). Open the debug <pre> below, tap/click inside it, Select All, then Copy — or use desktop Chrome.'
+  );
+  try{
+    var det=document.getElementById('processing-activity-details');
+    if(det)det.open=true;
+  }catch(_o){}
+  return false;
 }
 
 var lastInspectBody='';
@@ -593,7 +756,7 @@ async function runInspectApi(label,url,needImport){
     return;
   }
   pre.style.color='';
-  pre.textContent='Loading '+label+'…';
+  pre.textContent='Loading '+label+'...';
   try{
     var r=await cafFetch(url);
     var txt=await r.text();
@@ -602,12 +765,13 @@ async function runInspectApi(label,url,needImport){
       pretty=JSON.stringify(JSON.parse(txt),null,2);
     }catch(_e){}
     lastInspectBody=pretty;
-    pre.textContent=label+' · HTTP '+r.status+'\n\n'+pretty;
+    pre.textContent=label+' | HTTP '+r.status+'\\n\\n'+pretty;
     if(!r.ok)pre.style.color='var(--red)';
   }catch(e){
     lastInspectBody='';
     pre.textContent=String(e.message||e);
     pre.style.color='var(--red)';
+    try{pushProcessingActivity(cafTs()+' Inspect '+label+': '+String(e.message||e),true);}catch(_b){}
   }
 }
 
@@ -619,6 +783,32 @@ function setTpStatus(which,text,isErr){
     el.textContent=text;
     el.style.color=isErr?'var(--red)':'var(--muted)';
   }
+}
+
+/** After carousel or video top-performer runs: renders API qualifying_carousel_rows / qualifying_video_rows. */
+function renderTpQualifyingList(which,rows){
+  var wrapId=which==='carousel'?'tp-qualify-carousel-wrap':'tp-qualify-video-wrap';
+  var listId=which==='carousel'?'tp-qualify-carousel-list':'tp-qualify-video-list';
+  var wrap=document.getElementById(wrapId);
+  var ul=document.getElementById(listId);
+  if(!wrap||!ul)return;
+  if(!Array.isArray(rows)||!rows.length){
+    wrap.style.display='none';
+    ul.innerHTML='';
+    return;
+  }
+  wrap.style.display='block';
+  var titleEl=wrap.querySelector('[data-tp-qualify-title]');
+  if(titleEl){
+    var kind=which==='carousel'?'Carousel':'Video';
+    titleEl.textContent=kind+' — '+rows.length+' qualifying row'+(rows.length===1?'':'s')+' (max 200 by pre-LLM score; rescan off marks rows that already have insight)';
+  }
+  var unit=which==='carousel'?'slides':'frames';
+  ul.innerHTML=rows.map(function(x){
+    var tag=x.already_has_tier_insight?' <span style="color:var(--muted)">(already has insight)</span>':'';
+    var url=x.post_url?('<div style="margin-top:2px;font-size:11px;word-break:break-all" class="mono">'+esc(x.post_url)+'</div>'):'';
+    return '<li style="margin-bottom:8px"><span class="mono">'+esc(x.row_id)+'</span> · '+esc(x.evidence_kind)+' · pre-LLM '+Number(x.pre_llm_score).toFixed(3)+' · '+unit+' '+String(x.media_count||0)+tag+'<div style="margin-top:2px;color:var(--muted);max-width:860px">'+esc(x.caption_excerpt||'')+'</div>'+url+'</li>';
+  }).join('');
 }
 
 function setBadge(id,text,kind){
@@ -695,9 +885,9 @@ function syncRunPanel(){
   var el=document.getElementById('run-latest-pack');
   if(el){
     if(stepState.pack_id){
-      el.textContent=stepState.pack_id+(stepState.pack_created_at?(' · '+String(stepState.pack_created_at)):'');
+      el.textContent=stepState.pack_id+(stepState.pack_created_at?(' | '+String(stepState.pack_created_at)):'');
     }else{
-      el.textContent='—';
+      el.textContent='-';
     }
   }
   var link=document.getElementById('btn-go-runs');
@@ -726,7 +916,7 @@ document.querySelectorAll('.step-btn').forEach(function(btn){
   });
 });
 
-document.getElementById('btn-open-profile')?.addEventListener('click',function(){
+bind('btn-open-profile','click',function(){
   var p=document.getElementById('panel-profile');
   if(!p)return;
   var isOpen=p.style.display==='block';
@@ -734,7 +924,7 @@ document.getElementById('btn-open-profile')?.addEventListener('click',function()
   if(!isOpen){loadProfile();loadAudit();}
 });
 
-document.getElementById('btn-refresh-evidence')?.addEventListener('click',function(){
+bind('btn-refresh-evidence','click',function(){
   loadImportStats();
   loadPrellmKindsAndPreview();
 });
@@ -743,13 +933,21 @@ async function loadImports(){
   var root=document.getElementById('imports-root');
   var hint=document.getElementById('imports-hint');
   var wb=document.getElementById('import-workbench');
+  if(!root){try{pushProcessingActivity(cafTs()+' loadImports: #imports-root missing from DOM',true);}catch(_r){}return;}
   if(!SLUG){root.innerHTML='<div class="empty">Select a project in the sidebar.</div>';return;}
-  root.innerHTML='Loading…';
+  root.innerHTML='Loading...';
+  if(hint)hint.textContent='GET /v1/inputs-evidence/'+encodeURIComponent(SLUG)+' ...';
+  try{pushProcessingActivity(cafTs()+' loadImports: requesting /v1/inputs-evidence/'+encodeURIComponent(SLUG),false);}catch(_p){}
   var ac=new AbortController();
   var to=setTimeout(function(){try{ac.abort();}catch(e){}},90000);
   try{
     var r=await cafFetch('/v1/inputs-evidence/'+encodeURIComponent(SLUG),{signal:ac.signal});
-    var d=await r.json();
+    var raw=await r.text();
+    var d=null;
+    try{d=raw?JSON.parse(raw):null;}catch(pe){
+      pushProcessingActivity(cafTs()+' loadImports: response was not JSON (HTTP '+r.status+'). First 240 chars: '+String(raw||'').slice(0,240),true);
+      throw new Error('Server returned non-JSON (often HTML login, 502, or CDN). Check Activity log and network tab.');
+    }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var rows=d.imports||[];
     if(selectedImportId){
@@ -762,17 +960,17 @@ async function loadImports(){
         }
       }
     }
-    if(rows.length===0){root.innerHTML='<div class="empty">No evidence imports for this project.</div>';hint.textContent='';wb.style.display='none';return;}
+    if(rows.length===0){root.innerHTML='<div class="empty">No evidence imports for this project.</div>';if(hint)hint.textContent='';wb.style.display='none';return;}
     var tb='<table class="sp-modal-table"><thead><tr><th>Created</th><th>File</th><th>Rows</th><th></th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var sel=x.id===selectedImportId?'btn btn-sm':'btn-ghost btn-sm';
       var trStyle=x.id===selectedImportId?'background:rgba(100,160,255,0.10);outline:1px solid rgba(100,160,255,0.25);':'';
-      tb+='<tr style="'+trStyle+'"><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.upload_filename||'—')+'</td><td>'+esc(x.stored_row_count)+'</td><td><button type="button" class="'+sel+' sel-import" data-id="'+esc(x.id)+'">'+(x.id===selectedImportId?'Selected':'Select')+'</button></td></tr>';
+      tb+='<tr style="'+trStyle+'"><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.upload_filename||'-')+'</td><td>'+esc(x.stored_row_count)+'</td><td><button type="button" class="'+sel+' sel-import" data-id="'+esc(x.id)+'">'+(x.id===selectedImportId?'Selected':'Select')+'</button></td></tr>';
     }
     tb+='</tbody></table>';
     root.innerHTML=tb;
-    hint.textContent=rows.length+' import(s)';
+    if(hint)hint.textContent=rows.length+' import(s) | last fetch succeeded';
     root.querySelectorAll('.sel-import').forEach(function(btn){
       btn.addEventListener('click',function(){
         selectedImportId=btn.getAttribute('data-id')||'';
@@ -806,7 +1004,10 @@ async function loadImports(){
   }catch(e){
     var msg=String(e.message||e);
     if(msg==='AbortError'||msg.indexOf('aborted')>=0)msg='Request timed out (90s). Check Core is up, network, and auth token.';
-    root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(msg)+'</div>';
+    try{pushProcessingActivity(cafTs()+' loadImports failed: '+msg,true);}catch(_a){}
+    if(hint)hint.textContent='Last error: '+msg;
+    root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(msg)+'</div>'+
+      '<p style="margin:10px 0 0;font-size:12px;color:var(--muted)">See <strong>Activity</strong> above for the exact URL, HTTP status, and timing. Expand <strong>Full request log</strong> for history.</p>';
   }finally{
     clearTimeout(to);
   }
@@ -815,7 +1016,7 @@ async function loadImports(){
 async function loadImportStats(){
   var pre=document.getElementById('import-stats');
   if(!SLUG||!selectedImportId||!pre){pre.textContent='';return;}
-  pre.textContent='Loading…';
+  pre.textContent='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats');
     var d=await r.json();
@@ -854,7 +1055,7 @@ async function loadProfileForPrellm(){
   return profileCache;
 }
 
-document.getElementById('profile-form')?.addEventListener('submit',async function(e){
+bind('profile-form','submit',async function(e){
   e.preventDefault();
   if(!SLUG){alert('Select a project');return;}
   var criteria;
@@ -880,7 +1081,7 @@ document.getElementById('profile-form')?.addEventListener('submit',async functio
 async function loadAudit(){
   var root=document.getElementById('audit-root');
   if(!SLUG){root.textContent='Select a project.';return;}
-  root.textContent='Loading…';
+  root.textContent='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/audit?limit=40');
     var d=await r.json();
@@ -890,21 +1091,21 @@ async function loadAudit(){
     var h='';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
-      h+='<div style="border-bottom:1px solid var(--border);padding:6px 0"><strong>'+esc(x.step)+'</strong> · '+esc(x.provider)+' · '+(x.ok?'ok':'fail')+' · '+esc(x.created_at)+' · model '+esc(x.model||'')+'</div>';
+      h+='<div style="border-bottom:1px solid var(--border);padding:6px 0"><strong>'+esc(x.step)+'</strong> | '+esc(x.provider)+' | '+(x.ok?'ok':'fail')+' | '+esc(x.created_at)+' | model '+esc(x.model||'')+'</div>';
       h+='<pre style="margin:4px 0 8px;font-size:10px;white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto">'+esc(JSON.stringify({request:x.request_json,response:x.response_json},null,0).slice(0,12000))+'</pre>';
     }
     root.innerHTML=h;
   }catch(e){root.textContent=String(e);}
 }
 
-document.getElementById('btn-reload-imports')?.addEventListener('click',loadImports);
-document.getElementById('btn-reload-audit')?.addEventListener('click',loadAudit);
+bind('btn-reload-imports','click',loadImports);
+bind('btn-reload-audit','click',loadAudit);
 
 async function loadPrellmKindsAndPreview(){
   if(!SLUG||!selectedImportId)return;
   var bar=document.getElementById('prellm-kind-bar');
   if(!bar)return;
-  bar.innerHTML='Loading kinds…';
+  bar.innerHTML='Loading kinds...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats');
     var d=await r.json();
@@ -963,7 +1164,7 @@ async function ensurePrellmMinByKindDefaults(kinds){
       var suggested=PRELLM_SUGGESTED[k]||PRELLM_SUGGESTED._default;
       var v=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
       if(v==null||!Number.isFinite(v))v=(suggested&&suggested.min_score);
-      // Final fallback: 0.35 is a pragmatic default for “top performer” exploration.
+      // Final fallback: 0.35 is a pragmatic default for "top performer" exploration.
       if(v==null||!Number.isFinite(v))v=0.35;
       v=Math.max(0,Math.min(1,Number(v)));
       prellmMinByKind[k]=v;
@@ -1014,7 +1215,7 @@ async function loadPrellmPreview(){
   prellmMinByKind[prellmKind]=minScore;
   if(minNum)minNum.value=String(minScore);
   if(minVal)minVal.textContent=minScore.toFixed(2);
-  counts.textContent='Loading…';
+  counts.textContent='Loading...';
   wrap.innerHTML='';
   try{
     var q='evidence_kind='+encodeURIComponent(prellmKind)+'&min_score='+encodeURIComponent(String(minScore))+
@@ -1048,7 +1249,7 @@ async function loadPrellmPreview(){
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var inc=!!x.included_by_cutoff;
-      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">—</span>';
+      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">-</span>';
       tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
         '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
         '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
@@ -1058,7 +1259,7 @@ async function loadPrellmPreview(){
     }
     tb+='</tbody></table>';
     wrap.innerHTML=tb;
-    document.getElementById('prellm-th-score')?.addEventListener('click',function(){
+    bind('prellm-th-score','click',function(){
       var cur=document.getElementById('prellm-sort');
       if(!cur)return;
       cur.value=(cur.value==='score_desc')?'score_asc':'score_desc';
@@ -1076,7 +1277,7 @@ async function savePrellmCutoffToProfile(){
     var v=parseFloat(minEl.value||'0');
     if(!Number.isFinite(v))v=0;
     v=Math.max(0,Math.min(1,v));
-    if(msg){msg.textContent='Saving cutoff…';msg.style.color='';}
+    if(msg){msg.textContent='Saving cutoff...';msg.style.color='';}
     var pc=await loadProfileForPrellm();
     if(!pc||!pc.profile)throw new Error('Profile not loaded');
     var criteria=JSON.parse(JSON.stringify(pc.criteria||{}));
@@ -1101,13 +1302,13 @@ function scheduleSavePrellmCutoff(){
   }catch(e){}
 }
 
-document.getElementById('prellm-min-score')?.addEventListener('input',function(){
+bind('prellm-min-score','input',function(){
   var minNum=document.getElementById('prellm-min-score-num');
   if(minNum)minNum.value=String(this.value||'0');
   schedulePrellmPreview();
   scheduleSavePrellmCutoff();
 });
-document.getElementById('prellm-min-score-num')?.addEventListener('input',function(){
+bind('prellm-min-score-num','input',function(){
   var v=parseFloat(this.value||'0');
   if(!Number.isFinite(v))v=0;
   v=Math.max(0,Math.min(1,v));
@@ -1116,16 +1317,16 @@ document.getElementById('prellm-min-score-num')?.addEventListener('input',functi
   schedulePrellmPreview();
   scheduleSavePrellmCutoff();
 });
-document.getElementById('prellm-show-below')?.addEventListener('change',schedulePrellmPreview);
-document.getElementById('prellm-sort')?.addEventListener('change',schedulePrellmPreview);
+bind('prellm-show-below','change',schedulePrellmPreview);
+bind('prellm-sort','change',schedulePrellmPreview);
 
 function readBroadOverrides(){
   return {
-    custom_label_1:(document.getElementById('broad-label-1')?.value||'').trim()||null,
-    custom_label_2:(document.getElementById('broad-label-2')?.value||'').trim()||null,
-    custom_label_3:(document.getElementById('broad-label-3')?.value||'').trim()||null,
-    system_prompt:(document.getElementById('broad-system-prompt')?.value||'').trim()||null,
-    user_prompt:(document.getElementById('broad-user-prompt')?.value||'').trim()||null
+    custom_label_1:(val('broad-label-1')||'').trim()||null,
+    custom_label_2:(val('broad-label-2')||'').trim()||null,
+    custom_label_3:(val('broad-label-3')||'').trim()||null,
+    system_prompt:(val('broad-system-prompt')||'').trim()||null,
+    user_prompt:(val('broad-user-prompt')||'').trim()||null
   };
 }
 
@@ -1147,13 +1348,13 @@ async function loadBroadEligibilityEstimate(){
   if(!SLUG||!selectedImportId||!broadKind||!broadKinds||!broadKinds.length){el.textContent='';return;}
   if(isSourceEvidenceKind(broadKind)){el.textContent='';return;}
   var seq=++broadEligSeq;
-  el.textContent='Eligible evidence after cutoff: computing…';
+  el.textContent='Eligible evidence after cutoff: computing...';
   el.style.color='';
   try{
-    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    var maxRows=parseInt(val('broad-max-rows')||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
-    var rescan=!!document.getElementById('broad-rescan')?.checked;
-    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var rescan=chk('broad-rescan');
+    var useCutoff=chk('broad-use-cutoff');
     var o=readBroadOverrides();
 
     async function dryRunForKind(kind){
@@ -1181,14 +1382,14 @@ async function loadBroadEligibilityEstimate(){
     var nTab=await dryRunForKind(broadKind);
     if(seq!==broadEligSeq)return;
 
-    // Also compute "all platforms" total (usually 3–6 kinds), so user sees it before clicking.
+    // Also compute "all platforms" total (usually 3-6 kinds), so user sees it before clicking.
     var total=0;
     for(var i=0;i<broadKinds.length;i++){
       var k=broadKinds[i];
       total+=await dryRunForKind(k);
       if(seq!==broadEligSeq)return;
     }
-    el.textContent='Eligible evidence after cutoff: this tab '+String(nTab)+' · all platforms '+String(total)+'.';
+    el.textContent='Eligible evidence after cutoff: this tab '+String(nTab)+' | all platforms '+String(total)+'.';
   }catch(e){
     if(seq!==broadEligSeq)return;
     el.textContent='Eligible evidence after cutoff: '+String(e.message||e);
@@ -1201,7 +1402,7 @@ async function loadBroadPromptIntoEditor(){
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   try{
-    if(m){m.textContent='Loading…';m.style.color='';}
+    if(m){m.textContent='Loading...';m.style.color='';}
     var kRaw=broadKind||prellmKind||'';
     var k=isSourceEvidenceKind(kRaw)?(broadKinds[0]||''):kRaw;
     var o=readBroadOverrides();
@@ -1231,13 +1432,13 @@ async function loadBroadPromptIntoEditor(){
       document.getElementById('broad-user-prompt').value=d.user_prompt||'';
       broadPromptLoadedKind=k;
     }
-    if(m){m.textContent='Loaded. Model '+d.model+' · batch '+d.batch_size+'.';m.style.color='var(--muted)';}
+    if(m){m.textContent='Loaded. Model '+d.model+' | batch '+d.batch_size+'.';m.style.color='var(--muted)';}
   }catch(e){
     if(m){m.textContent=String(e.message||e);m.style.color='var(--red)';}
   }
 }
 
-document.getElementById('btn-toggle-broad-prompt')?.addEventListener('click',function(){
+bind('btn-toggle-broad-prompt','click',function(){
   var panel=document.getElementById('broad-prompt-panel');
   if(!panel)return;
   panel.style.display=panel.style.display==='none'?'block':'none';
@@ -1246,8 +1447,8 @@ document.getElementById('btn-toggle-broad-prompt')?.addEventListener('click',fun
     if(!broadPromptDirty)loadBroadPromptIntoEditor();
   }
 });
-document.getElementById('btn-load-broad-prompt')?.addEventListener('click',loadBroadPromptIntoEditor);
-document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',function(){
+bind('btn-load-broad-prompt','click',loadBroadPromptIntoEditor);
+bind('btn-reset-broad-prompt','click',function(){
   document.getElementById('broad-label-1').value='';
   document.getElementById('broad-label-2').value='';
   document.getElementById('broad-label-3').value='';
@@ -1260,18 +1461,18 @@ document.getElementById('btn-reset-broad-prompt')?.addEventListener('click',func
   loadBroadPromptIntoEditor();
 });
 
-document.getElementById('btn-save-broad-labels')?.addEventListener('click',async function(){
+bind('btn-save-broad-labels','click',async function(){
   var m=document.getElementById('broad-prompt-msg');
   if(!SLUG){if(m){m.textContent='Select a project.';m.style.color='var(--red)';}return;}
   try{
-    if(m){m.textContent='Saving labels…';m.style.color='';}
+    if(m){m.textContent='Saving labels...';m.style.color='';}
     var pc=await loadProfileForPrellm();
     if(!pc||!pc.profile)throw new Error('Profile not loaded');
     var criteria=JSON.parse(JSON.stringify(pc.criteria||{}));
     if(!criteria.insight_column_labels||typeof criteria.insight_column_labels!=='object')criteria.insight_column_labels={};
-    criteria.insight_column_labels.custom_label_1=(document.getElementById('broad-label-1')?.value||'').trim();
-    criteria.insight_column_labels.custom_label_2=(document.getElementById('broad-label-2')?.value||'').trim();
-    criteria.insight_column_labels.custom_label_3=(document.getElementById('broad-label-3')?.value||'').trim();
+    criteria.insight_column_labels.custom_label_1=(val('broad-label-1')||'').trim();
+    criteria.insight_column_labels.custom_label_2=(val('broad-label-2')||'').trim();
+    criteria.insight_column_labels.custom_label_3=(val('broad-label-3')||'').trim();
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({criteria_json:criteria})});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
@@ -1289,11 +1490,11 @@ function markBroadPromptDirty(){
   var m=document.getElementById('broad-prompt-msg');
   if(m){m.textContent='Editing overrides (will apply on Run).';m.style.color='var(--muted)';}
 }
-document.getElementById('broad-label-1')?.addEventListener('input',markBroadPromptDirty);
-document.getElementById('broad-label-2')?.addEventListener('input',markBroadPromptDirty);
-document.getElementById('broad-label-3')?.addEventListener('input',markBroadPromptDirty);
-document.getElementById('broad-system-prompt')?.addEventListener('input',markBroadPromptDirty);
-document.getElementById('broad-user-prompt')?.addEventListener('input',markBroadPromptDirty);
+bind('broad-label-1','input',markBroadPromptDirty);
+bind('broad-label-2','input',markBroadPromptDirty);
+bind('broad-label-3','input',markBroadPromptDirty);
+bind('broad-system-prompt','input',markBroadPromptDirty);
+bind('broad-user-prompt','input',markBroadPromptDirty);
 
 function renderWeightsTable(weights){
   var wrap=document.getElementById('prellm-weights-wrap');
@@ -1337,7 +1538,7 @@ async function renderPrellmFormulaEditor(){
   minEl.value=String(Math.max(0,Math.min(1,minScore)));
   var mt=(typeof pre.min_primary_text_chars==='number')?pre.min_primary_text_chars:12;
   minTextEl.value=String(mt);
-  if(hint)hint.textContent='Score = Σ(feature_i × weight_i) / Σ(weights). Features are normalized 0–1 in code. Platform: '+prellmKind+'.';
+  if(hint)hint.textContent='Score = sum(feature_i x weight_i) / sum(weights). Features are normalized 0-1 in code. Platform: '+prellmKind+'.';
   if(saveMsg){
     saveMsg.textContent=hasCustom?'':'Suggested defaults loaded (not saved yet).';
     saveMsg.style.color=hasCustom?'var(--muted)':'var(--muted)';
@@ -1357,7 +1558,7 @@ function readWeightsFromEditor(){
   return weights;
 }
 
-document.getElementById('prellm-weights-wrap')?.addEventListener('click',function(e){
+bind('prellm-weights-wrap','click',function(e){
   var t=e&&e.target;
   if(!t||!t.classList||!t.classList.contains('prellm-del-wt'))return;
   var k=t.getAttribute('data-wkey')||'';
@@ -1367,7 +1568,7 @@ document.getElementById('prellm-weights-wrap')?.addEventListener('click',functio
   if(row)row.remove();
 });
 
-document.getElementById('prellm-add-weight')?.addEventListener('click',function(){
+bind('prellm-add-weight','click',function(){
   var key=prompt('Feature key (e.g. ig_likes, tt_plays, text_signal)');
   if(!key)return;
   key=String(key).trim();
@@ -1381,20 +1582,20 @@ document.getElementById('prellm-add-weight')?.addEventListener('click',function(
   renderWeightsTable(weights);
 });
 
-document.getElementById('prellm-save-formula')?.addEventListener('click',async function(){
+bind('prellm-save-formula','click',async function(){
   var msg=document.getElementById('prellm-save-msg');
   if(!SLUG||!prellmKind){if(msg)msg.textContent='Select a platform first.';return;}
-  if(msg){msg.textContent='Saving…';msg.style.color='';}
+  if(msg){msg.textContent='Saving...';msg.style.color='';}
   try{
     var pc=await loadProfileForPrellm();
     if(!pc||!pc.profile)throw new Error('Profile not loaded');
     var criteria=JSON.parse(JSON.stringify(pc.criteria||{})); // deep-ish clone for safety
     if(!criteria.pre_llm||typeof criteria.pre_llm!=='object')criteria.pre_llm={};
     if(!criteria.pre_llm.kinds||typeof criteria.pre_llm.kinds!=='object')criteria.pre_llm.kinds={};
-    var minScore=parseFloat(document.getElementById('prellm-profile-min')?.value||'0');
+    var minScore=parseFloat(val('prellm-profile-min')||'0');
     if(!Number.isFinite(minScore))minScore=0;
     minScore=Math.max(0,Math.min(1,minScore));
-    var mt=parseInt(document.getElementById('prellm-min-text')?.value||'12',10);
+    var mt=parseInt(val('prellm-min-text')||'12',10);
     if(!Number.isFinite(mt)||mt<0)mt=12;
     criteria.pre_llm.min_primary_text_chars=mt;
     criteria.pre_llm.enabled=true;
@@ -1412,14 +1613,14 @@ document.getElementById('prellm-save-formula')?.addEventListener('click',async f
   }
 });
 
-document.getElementById('btn-run-broad-insights')?.addEventListener('click',async function(){
+bind('btn-run-broad-insights','click',async function(){
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
   try{
-    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    var maxRows=parseInt(val('broad-max-rows')||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
-    var rescan=!!document.getElementById('broad-rescan')?.checked;
-    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var rescan=chk('broad-rescan');
+    var useCutoff=chk('broad-use-cutoff');
     if(rescan){
       var ok=confirm('Rescan is enabled. This will overwrite existing broad insights rows for this platform tab. Continue?');
       if(!ok)return;
@@ -1440,18 +1641,18 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
       system_prompt:o.system_prompt,
       user_prompt:o.user_prompt
     };
-    if(msg){msg.textContent='Checking eligible evidence rows…';msg.style.color='';}
+    if(msg){msg.textContent='Checking eligible evidence rows...';msg.style.color='';}
     var r0=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({},body,{dry_run:true}))});
     var d0=await r0.json().catch(function(){return {};});
     if(!r0.ok||!d0.ok)throw new Error(apiErr(d0,'HTTP '+r0.status));
     var nElig=Number(d0.rows_eligible_new||0);
-    if(msg){msg.textContent='Running broad LLM (this platform tab) — will analyze '+String(nElig)+' evidence rows…';msg.style.color='';}
+    if(msg){msg.textContent='Running broad LLM (this platform tab) - will analyze '+String(nElig)+' evidence rows...';msg.style.color='';}
     scheduleBroadEligibilityEstimate();
     if(nElig<=0){loadBroadTable();return;}
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-broad-insights',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    if(msg)msg.textContent='Broad ('+kindLabel(kind,'insights')+') done: upserted '+String(d.upserted||0)+' · batches '+String(d.batches||0)+' · total '+String(d.broad_insights_total||0)+'.';
+    if(msg)msg.textContent='Broad ('+kindLabel(kind,'insights')+') done: upserted '+String(d.upserted||0)+' | batches '+String(d.batches||0)+' | total '+String(d.broad_insights_total||0)+'.';
     setBroadRunDebug({
       at:new Date().toISOString(),
       mode:'this_tab',
@@ -1468,24 +1669,24 @@ document.getElementById('btn-run-broad-insights')?.addEventListener('click',asyn
 });
 
 var broadAllRunning=false;
-document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',async function(){
+bind('btn-run-broad-insights-all','click',async function(){
   var msg=document.getElementById('prellm-insight-msg');
   if(!SLUG||!selectedImportId){if(msg)msg.textContent='Select an import first.';return;}
-  if(broadAllRunning){if(msg)msg.textContent='Already running ALL platforms…';return;}
+  if(broadAllRunning){if(msg)msg.textContent='Already running ALL platforms...';return;}
   if(!broadKinds||!broadKinds.length){if(msg)msg.textContent='No social platforms found for broad insights in this import.';return;}
   broadAllRunning=true;
   try{
-    var maxRows=parseInt(document.getElementById('broad-max-rows')?.value||'800',10);
+    var maxRows=parseInt(val('broad-max-rows')||'800',10);
     if(!Number.isFinite(maxRows)||maxRows<1)maxRows=800;
-    var rescan=!!document.getElementById('broad-rescan')?.checked;
-    var useCutoff=!!document.getElementById('broad-use-cutoff')?.checked;
+    var rescan=chk('broad-rescan');
+    var useCutoff=chk('broad-use-cutoff');
     var o=readBroadOverrides();
     if(rescan){
       var ok=confirm('Rescan is enabled. This will overwrite existing broad insights rows across ALL platform tabs. Continue?');
       if(!ok){broadAllRunning=false;return;}
     }
 
-    if(msg){msg.textContent='Checking eligible evidence rows (all platforms)…';msg.style.color='';}
+    if(msg){msg.textContent='Checking eligible evidence rows (all platforms)...';msg.style.color='';}
     var totalElig=0;
     for(var j=0;j<broadKinds.length;j++){
       var k0=broadKinds[j];
@@ -1507,7 +1708,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
       if(!rr.ok||!dd.ok)throw new Error(kindLabel(k0,'insights')+': '+apiErr(dd,'HTTP '+rr.status));
       totalElig+=Number(dd.rows_eligible_new||0);
     }
-    if(msg){msg.textContent='Running broad (all platforms) — will analyze '+String(totalElig)+' evidence rows total…';msg.style.color='';}
+    if(msg){msg.textContent='Running broad (all platforms) - will analyze '+String(totalElig)+' evidence rows total...';msg.style.color='';}
     scheduleBroadEligibilityEstimate();
     if(totalElig<=0){loadBroadTable();return;}
 
@@ -1515,7 +1716,7 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
     var perKind=[];
     for(var i=0;i<broadKinds.length;i++){
       var kind=broadKinds[i];
-      if(msg){msg.textContent='Running broad (all platforms): '+kindLabel(kind,'insights')+' ('+(i+1)+'/'+broadKinds.length+')…';msg.style.color='';}
+      if(msg){msg.textContent='Running broad (all platforms): '+kindLabel(kind,'insights')+' ('+(i+1)+'/'+broadKinds.length+')...';msg.style.color='';}
       var cutoff=(useCutoff&&prellmMinByKind[kind]!=null)?Number(prellmMinByKind[kind]):null;
       var body={
         evidence_kind:kind,
@@ -1556,10 +1757,10 @@ document.getElementById('btn-run-broad-insights-all')?.addEventListener('click',
   }
 });
 
-document.getElementById('btn-run-deep-image-insights')?.addEventListener('click',async function(){
+bind('btn-run-deep-image-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('image','Select an import first.',true);return;}
-  setTpStatus('image','Running image vision…',false);
-  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  setTpStatus('image','Running image vision...',false);
+  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
   var body={max_rows:24,min_pre_llm_score:minScore,rescan:false};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights';
   var r=null;
@@ -1581,7 +1782,7 @@ document.getElementById('btn-run-deep-image-insights')?.addEventListener('click'
     });
     setTpStatus(
       'image',
-      'Image — analyzed '+String(d.rows_analyzed||0)+' · pool '+String(d.candidates_with_image||0)+' · skipped carousel '+String(d.skipped_carousel||0)+' · skipped video-like '+String(d.skipped_video||0)+' · no image URL '+String(d.skipped_no_image||0)+' · total deep '+String(d.deep_insights_total||0)+'.',
+      'Image - analyzed '+String(d.rows_analyzed||0)+' | pool '+String(d.candidates_with_image||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | skipped carousel '+String(d.skipped_carousel||0)+' | skipped video-like '+String(d.skipped_video||0)+' | no image URL '+String(d.skipped_no_image||0)+' | total deep '+String(d.deep_insights_total||0)+'.',
       false
     );
     loadDeepImageTable();
@@ -1599,13 +1800,15 @@ document.getElementById('btn-run-deep-image-insights')?.addEventListener('click'
       response_json:d,
     });
     setTpStatus('image',String(e.message||e),true);
+    try{pushProcessingActivity(cafTs()+' top-performer (image): '+String(e.message||e),true);}catch(_c){}
   }
 });
 
-document.getElementById('btn-run-deep-carousel-insights')?.addEventListener('click',async function(){
+bind('btn-run-deep-carousel-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
-  setTpStatus('carousel','Running carousel vision (all slides)…',false);
-  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  renderTpQualifyingList('carousel',[]);
+  setTpStatus('carousel','Running carousel vision (all slides)...',false);
+  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
   var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:false};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
@@ -1614,6 +1817,7 @@ document.getElementById('btn-run-deep-carousel-insights')?.addEventListener('cli
     r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var maCar=tpMediaArchiveFromResponse(d,'top_performer_carousel');
     setTopPerfRunLog('carousel',{
       at:new Date().toISOString(),
       pass:'top_performer_carousel',
@@ -1624,12 +1828,14 @@ document.getElementById('btn-run-deep-carousel-insights')?.addEventListener('cli
       endpoint:endpoint,
       request_body:body,
       response:d,
+      media_archive:maCar,
     });
     setTpStatus(
       'carousel',
-      'Carousel — analyzed '+String(d.rows_analyzed||0)+' · slide pool '+String(d.candidates_with_slides||0)+' · deck-shaped rows '+String(d.carousel_deck_rows||0)+' · total '+String(d.carousel_insights_total||0)+'. If analyzed is 0, no rows had ≥2 HTTPS slide URLs.',
+      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+') | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:''),
       false
     );
+    renderTpQualifyingList('carousel',d.qualifying_carousel_rows||[]);
     loadDeepCarouselTable();
   }catch(e){
     setTopPerfRunLog('carousel',{
@@ -1643,15 +1849,19 @@ document.getElementById('btn-run-deep-carousel-insights')?.addEventListener('cli
       request_body:body,
       error:String(e.message||e),
       response_json:d,
+      media_archive:d&&typeof d==='object'?tpMediaArchiveFromResponse(d,'top_performer_carousel'):null,
     });
     setTpStatus('carousel',String(e.message||e),true);
+    renderTpQualifyingList('carousel',[]);
+    try{pushProcessingActivity(cafTs()+' top-performer (carousel): '+String(e.message||e),true);}catch(_d){}
   }
 });
 
-document.getElementById('btn-run-deep-video-insights')?.addEventListener('click',async function(){
+bind('btn-run-deep-video-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('video','Select an import first.',true);return;}
-  setTpStatus('video','Running video frame bundle…',false);
-  var minScore=parseFloat(document.getElementById('prellm-min-score')?.value||'0.35')||0.35;
+  renderTpQualifyingList('video',[]);
+  setTpStatus('video','Running video frame bundle...',false);
+  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
   var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:false};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights';
   var r=null;
@@ -1660,6 +1870,7 @@ document.getElementById('btn-run-deep-video-insights')?.addEventListener('click'
     r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var maVid=tpMediaArchiveFromResponse(d,'top_performer_video');
     setTopPerfRunLog('video',{
       at:new Date().toISOString(),
       pass:'top_performer_video',
@@ -1670,12 +1881,14 @@ document.getElementById('btn-run-deep-video-insights')?.addEventListener('click'
       endpoint:endpoint,
       request_body:body,
       response:d,
+      media_archive:maVid,
     });
     setTpStatus(
       'video',
-      'Video — analyzed '+String(d.rows_analyzed||0)+' · frame pool '+String(d.candidates_with_frames||0)+' · video rows '+String(d.video_evidence_rows||0)+' · no-frame skips '+String(d.skipped_no_frames||0)+' · total '+String(d.video_insights_total||0)+'. If analyzed is 0, rows lack frame image URLs.',
+      'Video - analyzed '+String(d.rows_analyzed||0)+' | frame pool '+String(d.candidates_with_frames||0)+' | video rows '+String(d.video_evidence_rows||0)+' | skipped platform filter '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | no-frame skips '+String(d.skipped_no_frames||0)+' | total '+String(d.video_insights_total||0)+'. '+(maVid&&maVid.summary?maVid.summary:''),
       false
     );
+    renderTpQualifyingList('video',d.qualifying_video_rows||[]);
     loadDeepVideoTable();
   }catch(e){
     setTopPerfRunLog('video',{
@@ -1689,82 +1902,105 @@ document.getElementById('btn-run-deep-video-insights')?.addEventListener('click'
       request_body:body,
       error:String(e.message||e),
       response_json:d,
+      media_archive:d&&typeof d==='object'?tpMediaArchiveFromResponse(d,'top_performer_video'):null,
     });
     setTpStatus('video',String(e.message||e),true);
+    renderTpQualifyingList('video',[]);
+    try{pushProcessingActivity(cafTs()+' top-performer (video): '+String(e.message||e),true);}catch(_e2){}
   }
 });
 
-document.getElementById('btn-copy-top-log-image')?.addEventListener('click',async function(){
-  if(!lastTopPerfLogs.image){
-    window.alert('No image run logged yet. Click “Run top-performer (images)” first, then copy.');
-    return;
+bind('btn-copy-top-log-image','click',async function(){
+  try{
+    if(!lastTopPerfLogs.image){
+      window.alert('No image run logged yet. Click "Run top-performer (images)" first, then copy.');
+      return;
+    }
+    var ok=await adminCopyTextToClipboard(JSON.stringify(Object.assign({caf_admin_top_performer_log:'image'},lastTopPerfLogs.image||{}),null,2));
+    if(ok)try{pushProcessingActivity(cafTs()+' Copied image top-performer debug JSON to clipboard.',false);}catch(_x){}
+  }catch(err){
+    window.alert('Copy failed: '+String(err&&err.message||err));
   }
-  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'image',...lastTopPerfLogs.image},null,2));
 });
-document.getElementById('btn-copy-top-log-carousel')?.addEventListener('click',async function(){
-  if(!lastTopPerfLogs.carousel){
-    window.alert('No carousel run logged yet. Click “Run top-performer (carousel)” first, then copy.');
-    return;
+bind('btn-copy-top-log-carousel','click',async function(){
+  try{
+    if(!lastTopPerfLogs.carousel){
+      window.alert('No carousel run logged yet. Click "Run top-performer (carousel)" first, then copy.');
+      return;
+    }
+    var ok=await adminCopyTextToClipboard(JSON.stringify(Object.assign({caf_admin_top_performer_log:'carousel'},lastTopPerfLogs.carousel||{}),null,2));
+    if(ok)try{pushProcessingActivity(cafTs()+' Copied carousel top-performer debug JSON to clipboard.',false);}catch(_x){}
+  }catch(err){
+    window.alert('Copy failed: '+String(err&&err.message||err));
   }
-  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'carousel',...lastTopPerfLogs.carousel},null,2));
 });
-document.getElementById('btn-copy-top-log-video')?.addEventListener('click',async function(){
-  if(!lastTopPerfLogs.video){
-    window.alert('No video run logged yet. Click “Run top-performer (video frames)” first, then copy.');
-    return;
+bind('btn-copy-top-log-video','click',async function(){
+  try{
+    if(!lastTopPerfLogs.video){
+      window.alert('No video run logged yet. Click "Run top-performer (video frames)" first, then copy.');
+      return;
+    }
+    var ok=await adminCopyTextToClipboard(JSON.stringify(Object.assign({caf_admin_top_performer_log:'video'},lastTopPerfLogs.video||{}),null,2));
+    if(ok)try{pushProcessingActivity(cafTs()+' Copied video top-performer debug JSON to clipboard.',false);}catch(_x){}
+  }catch(err){
+    window.alert('Copy failed: '+String(err&&err.message||err));
   }
-  await adminCopyTextToClipboard(JSON.stringify({caf_admin_top_performer_log:'video',...lastTopPerfLogs.video},null,2));
 });
-document.getElementById('btn-copy-top-log-all')?.addEventListener('click',async function(){
-  await adminCopyTextToClipboard(
-    JSON.stringify(
-      {
-        caf_admin_top_performer_logs_all:true,
-        project_slug:SLUG||null,
-        inputs_import_id:selectedImportId||null,
-        runs:{image:lastTopPerfLogs.image,carousel:lastTopPerfLogs.carousel,video:lastTopPerfLogs.video},
-      },
-      null,
-      2
-    )
-  );
+bind('btn-copy-top-log-all','click',async function(){
+  try{
+    var ok=await adminCopyTextToClipboard(
+      JSON.stringify(
+        {
+          caf_admin_top_performer_logs_all:true,
+          project_slug:SLUG||null,
+          inputs_import_id:selectedImportId||null,
+          runs:{image:lastTopPerfLogs.image,carousel:lastTopPerfLogs.carousel,video:lastTopPerfLogs.video},
+        },
+        null,
+        2
+      )
+    );
+    if(ok)try{pushProcessingActivity(cafTs()+' Copied combined top-performer debug JSON to clipboard.',false);}catch(_x){}
+  }catch(err){
+    window.alert('Copy failed: '+String(err&&err.message||err));
+  }
 });
 
-document.getElementById('btn-inspect-import-stats')?.addEventListener('click',function(){
+bind('btn-inspect-import-stats','click',function(){
   runInspectApi(
     'GET import/stats',
     '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats',
     true
   );
 });
-document.getElementById('btn-inspect-profile')?.addEventListener('click',function(){
+bind('btn-inspect-profile','click',function(){
   runInspectApi('GET profile','/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',false);
 });
-document.getElementById('btn-inspect-audit')?.addEventListener('click',function(){
+bind('btn-inspect-audit','click',function(){
   runInspectApi('GET audit','/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/audit?limit=80',false);
 });
-document.getElementById('btn-inspect-tp-deep')?.addEventListener('click',function(){
+bind('btn-inspect-tp-deep','click',function(){
   runInspectApi(
     'GET evidence-insights tier=top_performer_deep',
     '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_deep&limit=50&offset=0&sort=rating_desc',
     true
   );
 });
-document.getElementById('btn-inspect-tp-carousel')?.addEventListener('click',function(){
+bind('btn-inspect-tp-carousel','click',function(){
   runInspectApi(
     'GET evidence-insights tier=top_performer_carousel',
     '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=50&offset=0&sort=rating_desc',
     true
   );
 });
-document.getElementById('btn-inspect-tp-video')?.addEventListener('click',function(){
+bind('btn-inspect-tp-video','click',function(){
   runInspectApi(
     'GET evidence-insights tier=top_performer_video',
     '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_video&limit=50&offset=0&sort=rating_desc',
     true
   );
 });
-document.getElementById('btn-inspect-prellm-sample')?.addEventListener('click',function(){
+bind('btn-inspect-prellm-sample','click',function(){
   var k=prellmKind||(broadKinds&&broadKinds.length?broadKinds[0]:'')||'instagram_post';
   var q='evidence_kind='+encodeURIComponent(k)+'&min_score=0&include_below_cutoff=1&sort=score_desc&limit=25&offset=0';
   runInspectApi(
@@ -1773,18 +2009,18 @@ document.getElementById('btn-inspect-prellm-sample')?.addEventListener('click',f
     true
   );
 });
-document.getElementById('btn-inspect-copy-pre')?.addEventListener('click',async function(){
+bind('btn-inspect-copy-pre','click',async function(){
   if(!lastInspectBody){
     window.alert('Load something with the buttons above first.');
     return;
   }
   await adminCopyTextToClipboard(lastInspectBody);
 });
-document.getElementById('btn-inspect-evidence-row')?.addEventListener('click',function(){
+bind('btn-inspect-evidence-row','click',function(){
   var idEl=document.getElementById('inspect-row-id');
   var id=idEl&&String(idEl.value||'').trim();
   if(!id){
-    window.alert('Paste an evidence row UUID (from a table “Row ID” column or the database).');
+    window.alert('Paste an evidence row UUID (from a table "Row ID" column or the database).');
     return;
   }
   runInspectApi(
@@ -1800,7 +2036,7 @@ async function initBroadPanel(){
   var wrap=document.getElementById('broad-table-wrap');
   if(!bar||!SLUG||!selectedImportId)return;
   if(!broadKinds.length){
-    bar.innerHTML='Loading kinds…';
+    bar.innerHTML='Loading kinds...';
     try{
       var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats');
       var d=await r.json();
@@ -1840,8 +2076,8 @@ async function loadBroadTable(){
   var state=document.getElementById('broad-state');
   var wrap=document.getElementById('broad-table-wrap');
   if(!SLUG||!selectedImportId||!broadKind||!meta||!wrap)return;
-  meta.textContent='Loading…';
-  if(state)state.textContent='Loading…';
+  meta.textContent='Loading...';
+  if(state)state.textContent='Loading...';
   wrap.innerHTML='';
   try{
     var sortSel=document.getElementById('broad-insight-sort');
@@ -1860,8 +2096,8 @@ async function loadBroadTable(){
     if(state){
       state.textContent=
         'Rows in DB (this tab): '+String(countsTab.broad_llm||0)+
-        ' · Import total broad: '+String(countsImp.broad_llm||0)+
-        (lastAt?(' · Last updated: '+lastAt):'');
+        ' | Import total broad: '+String(countsImp.broad_llm||0)+
+        (lastAt?(' | Last updated: '+lastAt):'');
     }
     meta.textContent=JSON.stringify({
       project_slug:SLUG,
@@ -1913,15 +2149,15 @@ async function loadBroadTable(){
     refreshInsightCounts();
   }catch(e){meta.textContent=String(e);}
 }
-document.getElementById('btn-reload-broad')?.addEventListener('click',loadBroadTable);
-document.getElementById('broad-insight-sort')?.addEventListener('change',loadBroadTable);
-document.getElementById('broad-insight-limit')?.addEventListener('change',loadBroadTable);
-document.getElementById('broad-max-rows')?.addEventListener('input',scheduleBroadEligibilityEstimate);
-document.getElementById('broad-rescan')?.addEventListener('change',scheduleBroadEligibilityEstimate);
-document.getElementById('broad-use-cutoff')?.addEventListener('change',scheduleBroadEligibilityEstimate);
-document.getElementById('btn-pack-inspect-reload')?.addEventListener('click',loadSignalPacksForInspector);
-document.getElementById('pack-inspect-select')?.addEventListener('change',loadSelectedSignalPack);
-document.getElementById('pack-idea-list-select')?.addEventListener('change',function(){
+bind('btn-reload-broad','click',loadBroadTable);
+bind('broad-insight-sort','change',loadBroadTable);
+bind('broad-insight-limit','change',loadBroadTable);
+bind('broad-max-rows','input',scheduleBroadEligibilityEstimate);
+bind('broad-rescan','change',scheduleBroadEligibilityEstimate);
+bind('broad-use-cutoff','change',scheduleBroadEligibilityEstimate);
+bind('btn-pack-inspect-reload','click',loadSignalPacksForInspector);
+bind('pack-inspect-select','change',loadSelectedSignalPack);
+bind('pack-idea-list-select','change',function(){
   var id=(this.value||'').trim();
   if(id)selectedIdeaListId=id;
   loadIdeaListIdeasTable();
@@ -1997,7 +2233,7 @@ function openIdeaPreview(id){
   pre.textContent=JSON.stringify(row.raw||row,null,2);
 }
 
-document.getElementById('btn-close-idea-preview')?.addEventListener('click',function(){
+bind('btn-close-idea-preview','click',function(){
   var box=document.getElementById('idea-preview');
   if(box)box.style.display='none';
 });
@@ -2048,23 +2284,23 @@ function readFormatLimitsPayload(){
   return Object.keys(o).length?o:null;
 }
 
-document.getElementById('fl-carousel')?.addEventListener('input',updatePackSummary);
-document.getElementById('fl-video')?.addEventListener('input',updatePackSummary);
-document.getElementById('fl-post')?.addEventListener('input',updatePackSummary);
-document.getElementById('fl-thread')?.addEventListener('input',updatePackSummary);
-document.getElementById('fl-other')?.addEventListener('input',updatePackSummary);
+bind('fl-carousel','input',updatePackSummary);
+bind('fl-video','input',updatePackSummary);
+bind('fl-post','input',updatePackSummary);
+bind('fl-thread','input',updatePackSummary);
+bind('fl-other','input',updatePackSummary);
 async function loadIdeaListDropdowns(){
   var s1=document.getElementById('idea-list-select');
   var s2=document.getElementById('pack-idea-list-select');
   if(!SLUG||!selectedImportId){
     if(s1){s1.innerHTML='<option value="">Select an import first</option>';s1.disabled=true;}
-    if(s2){s2.innerHTML='<option value="">—</option>';s2.disabled=true;}
+    if(s2){s2.innerHTML='<option value="">-</option>';s2.disabled=true;}
     return;
   }
   if(s1)s1.disabled=false;
   if(s2)s2.disabled=false;
-  if(s1)s1.innerHTML='<option value="">Loading…</option>';
-  if(s2)s2.innerHTML='<option value="">Loading…</option>';
+  if(s1)s1.innerHTML='<option value="">Loading...</option>';
+  if(s2)s2.innerHTML='<option value="">Loading...</option>';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/idea-lists?limit=50&offset=0');
     var d=await r.json();
@@ -2075,10 +2311,10 @@ async function loadIdeaListDropdowns(){
       var L=lists[i]||{};
       var when=String(L.created_at||'').slice(0,19);
       var title=String(L.title||'Untitled').trim()||'Untitled';
-      body+='<option value="'+esc(String(L.id||''))+'">'+esc(when+' · '+title)+'</option>';
+      body+='<option value="'+esc(String(L.id||''))+'">'+esc(when+' | '+title)+'</option>';
     }
     if(s1){
-      s1.innerHTML=lists.length?('<option value="">Select a list…</option>'+body):'<option value="">No idea lists yet</option>';
+      s1.innerHTML=lists.length?('<option value="">Select a list...</option>'+body):'<option value="">No idea lists yet</option>';
       if(selectedIdeaListId){
         s1.value=selectedIdeaListId;
         if(s1.value!==selectedIdeaListId)selectedIdeaListId='';
@@ -2086,7 +2322,7 @@ async function loadIdeaListDropdowns(){
       s1.value=selectedIdeaListId;
     }
     if(s2){
-      s2.innerHTML=lists.length?('<option value="">—</option>'+body):'<option value="">No idea lists yet</option>';
+      s2.innerHTML=lists.length?('<option value="">-</option>'+body):'<option value="">No idea lists yet</option>';
       s2.value=selectedIdeaListId||'';
     }
   }catch(e){
@@ -2115,9 +2351,9 @@ async function loadIdeaListIdeasTable(){
     try{lastIdeasById={};}catch(e){}
     return;
   }
-  wrap.innerHTML='Loading…';
+  wrap.innerHTML='Loading...';
   if(meta)meta.textContent='';
-  if(state)state.textContent='Loading…';
+  if(state)state.textContent='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/idea-lists/'+encodeURIComponent(listId)+'/ideas?limit=200&offset=0');
     var d=await r.json();
@@ -2151,7 +2387,7 @@ async function loadIdeaListIdeasTable(){
       if(id && sel[id])selectedN++;
     }
     if(state){
-      state.textContent='Ideas: '+String(ideas.length)+' · Selected: '+String(selectedN);
+      state.textContent='Ideas: '+String(ideas.length)+' | Selected: '+String(selectedN);
     }
     wrap.innerHTML=renderIdeasTable(ideas);
     wrap.querySelectorAll('.idea-check').forEach(function(cb){
@@ -2173,7 +2409,7 @@ async function loadIdeaListIdeasTable(){
         openIdeaPreview(id);
       });
     });
-    wrap.querySelector('#ideas-check-all')?.addEventListener('change',function(){
+    (function(q){if(!q)return;q.addEventListener('change',function(){
       var cur={};
       if(this.checked){
         for(var k=0;k<ideas.length;k++){
@@ -2184,6 +2420,7 @@ async function loadIdeaListIdeasTable(){
       saveIdeaSelection(cur);
       loadIdeaListIdeasTable();
     });
+    })(wrap.querySelector('#ideas-check-all'));
   }catch(e){
     wrap.textContent=String(e.message||e);
     if(state)state.textContent='';
@@ -2193,7 +2430,7 @@ async function loadSignalPacksForInspector(){
   var sel=document.getElementById('pack-inspect-select');
   var msg=document.getElementById('pack-inspect-msg');
   if(!sel||!SLUG)return;
-  sel.innerHTML='<option value="">Loading…</option>';
+  sel.innerHTML='<option value="">Loading...</option>';
   if(msg){msg.textContent='';msg.style.color='';}
   try{
     var r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=120&offset=0');
@@ -2205,14 +2442,14 @@ async function loadSignalPacksForInspector(){
       if(msg)msg.textContent='Build one in this tab (Build signal pack).';
       return;
     }
-    var h='<option value="">Select a signal pack…</option>';
+    var h='<option value="">Select a signal pack...</option>';
     for(var i=0;i<rows.length;i++){
       var p=rows[i]||{};
       var when=String(p.created_at||'').slice(0,19);
       var fn=p.upload_filename||p.run_id||p.id;
       var ideasN=Number(p.ideas_count||0);
       var overallN=Number(p.candidate_count||0);
-      h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' · '+String(fn||'')+' (ideas '+ideasN+', overall '+overallN+')')+'</option>';
+      h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' | '+String(fn||'')+' (ideas '+ideasN+', overall '+overallN+')')+'</option>';
     }
     sel.innerHTML=h;
   }catch(e){
@@ -2239,10 +2476,10 @@ async function loadSelectedSignalPack(){
     if(msg){msg.textContent='';msg.style.color='';}
     return;
   }
-  if(msg){msg.textContent='Loading pack…';msg.style.color='';}
-  if(ideasWrap)ideasWrap.innerHTML='Loading…';
-  if(overallWrap)overallWrap.innerHTML='Loading…';
-  if(rawPre)rawPre.textContent='Loading…';
+  if(msg){msg.textContent='Loading pack...';msg.style.color='';}
+  if(ideasWrap)ideasWrap.innerHTML='Loading...';
+  if(overallWrap)overallWrap.innerHTML='Loading...';
+  if(rawPre)rawPre.textContent='Loading...';
   try{
     var r=await cafFetch('/v1/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(id));
     var d=await r.json().catch(function(){return {};});
@@ -2272,13 +2509,13 @@ async function loadSelectedSignalPack(){
       created_at: pack.created_at,
       upload_filename: pack.upload_filename,
       source_window: pack.source_window,
-      source_inputs_import_id: pack.source_inputs_import_id ?? null,
+      source_inputs_import_id: (pack.source_inputs_import_id!=null?pack.source_inputs_import_id:null),
       ideas_count: ideas.length,
       overall_candidates_count: overall.length,
       ideas_json: ideas,
       overall_candidates_json: overall,
-      derived_globals_json: pack.derived_globals_json ?? {},
-      notes: pack.notes ?? null
+      derived_globals_json: (pack.derived_globals_json!=null?pack.derived_globals_json:{}),
+      notes: (pack.notes!=null?pack.notes:null)
     },null,2);
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
@@ -2299,7 +2536,7 @@ function setBroadRunDebug(obj){
   if(pre)pre.textContent=lastBroadRunDebug?JSON.stringify(lastBroadRunDebug,null,2):'';
 }
 
-document.getElementById('btn-copy-broad-debug')?.addEventListener('click',async function(){
+bind('btn-copy-broad-debug','click',async function(){
   if(!lastBroadRunDebug)return;
   var text=JSON.stringify(lastBroadRunDebug,null,2);
   try{
@@ -2324,7 +2561,7 @@ async function showBroadEvidenceRow(rowId){
   if(!SLUG||!selectedImportId)throw new Error('Select an import first.');
   box.style.display='block';
   title.textContent='Evidence row '+String(rowId||'');
-  pre.textContent='Loading…';
+  pre.textContent='Loading...';
   var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-row/'+encodeURIComponent(rowId));
   var d=await r.json().catch(function(){return {};});
   if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
@@ -2342,7 +2579,7 @@ async function showBroadEvidenceRow(rowId){
   },null,2);
 }
 
-document.getElementById('btn-close-broad-evidence')?.addEventListener('click',function(){
+bind('btn-close-broad-evidence','click',function(){
   var box=document.getElementById('broad-evidence-viewer');
   if(box)box.style.display='none';
 });
@@ -2350,7 +2587,7 @@ document.getElementById('btn-close-broad-evidence')?.addEventListener('click',fu
 async function loadDeepImageTable(){
   var el=document.getElementById('deep-image-table');
   if(!SLUG||!selectedImportId||!el)return;
-  el.innerHTML='Loading…';
+  el.innerHTML='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_deep&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
@@ -2385,7 +2622,7 @@ async function loadDeepImageTable(){
 async function loadDeepVideoTable(){
   var el=document.getElementById('deep-video-table');
   if(!SLUG||!selectedImportId||!el)return;
-  el.innerHTML='Loading…';
+  el.innerHTML='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_video&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
@@ -2420,7 +2657,7 @@ async function loadDeepVideoTable(){
 async function loadDeepCarouselTable(){
   var el=document.getElementById('deep-carousel-table');
   if(!SLUG||!selectedImportId||!el)return;
-  el.innerHTML='Loading…';
+  el.innerHTML='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=200&offset=0&sort=rating_desc');
     var d=await r.json();
@@ -2451,33 +2688,33 @@ async function loadDeepCarouselTable(){
     ]);
   }catch(e){el.textContent=String(e);}
 }
-document.getElementById('btn-reload-deep-image')?.addEventListener('click',loadDeepImageTable);
-document.getElementById('btn-reload-deep-carousel')?.addEventListener('click',loadDeepCarouselTable);
-document.getElementById('btn-reload-deep-video')?.addEventListener('click',loadDeepVideoTable);
+bind('btn-reload-deep-image','click',loadDeepImageTable);
+bind('btn-reload-deep-carousel','click',loadDeepCarouselTable);
+bind('btn-reload-deep-video','click',loadDeepVideoTable);
 
-document.getElementById('idea-list-select')?.addEventListener('change',function(){
+bind('idea-list-select','change',function(){
   var s=document.getElementById('idea-list-select');
   selectedIdeaListId=(s&&s.value)?s.value.trim():'';
   var s2=document.getElementById('pack-idea-list-select');
   if(s2)s2.value=selectedIdeaListId;
   loadIdeaListIdeasTable();
 });
-document.getElementById('pack-idea-list-select')?.addEventListener('change',function(){
+bind('pack-idea-list-select','change',function(){
   var s=document.getElementById('pack-idea-list-select');
   selectedIdeaListId=(s&&s.value)?s.value.trim():'';
   var s1=document.getElementById('idea-list-select');
   if(s1)s1.value=selectedIdeaListId;
 });
-document.getElementById('btn-reload-idea-lists')?.addEventListener('click',function(){
+bind('btn-reload-idea-lists','click',function(){
   loadIdeaListTab();
 });
-document.getElementById('btn-generate-idea-list')?.addEventListener('click',async function(){
+bind('btn-generate-idea-list','click',async function(){
   var msg=document.getElementById('idea-list-generate-msg');
   if(!SLUG||!selectedImportId){
     if(msg)msg.textContent='Select an import first.';
     return;
   }
-  if(msg){msg.textContent='Working (LLM)…';msg.style.color='';}
+  if(msg){msg.textContent='Working (LLM)...';msg.style.color='';}
   try{
     var titleEl=document.getElementById('idea-list-title');
     var tgtEl=document.getElementById('idea-list-target');
@@ -2497,7 +2734,7 @@ document.getElementById('btn-generate-idea-list')?.addEventListener('click',asyn
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }
 });
-document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('click',async function(){
+bind('btn-build-pack-from-idea-list','click',async function(){
   var msg=document.getElementById('build-from-ideas-msg');
   if(!SLUG||!selectedImportId){
     if(msg)msg.textContent='Select an import first.';
@@ -2510,7 +2747,7 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
     if(msg)msg.textContent='Select an idea list, or create one in the Ideas tab.';
     return;
   }
-  if(msg){msg.textContent='Building pack…';msg.style.color='';}
+  if(msg){msg.textContent='Building pack...';msg.style.color='';}
   try{
     var sel=loadIdeaSelection();
     var selectedN=Object.keys(sel||{}).length;
@@ -2525,7 +2762,7 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
     var raw=await r.text();
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    if(msg)msg.innerHTML='Done. <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open pack</a> · ideas in pack: '+esc(String(d.ideas_count||0))+'.';
+    if(msg)msg.innerHTML='Done. <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open pack</a> | ideas in pack: '+esc(String(d.ideas_count||0))+'.';
     stepState.pack_id=String(d.signal_pack_id||'');
     stepState.pack_created_at=String(d.created_at||'');
     renderStepper();
@@ -2536,18 +2773,18 @@ document.getElementById('btn-build-pack-from-idea-list')?.addEventListener('clic
   }
 });
 
-document.getElementById('btn-build-pack')?.addEventListener('click',async function(){
+bind('btn-build-pack','click',async function(){
   var msg=document.getElementById('build-msg');
   if(!SLUG||!selectedImportId){msg.textContent='Select an import first.';return;}
   var ok=confirm('This runs the full pipeline (rating + synthesis + ideas LLM) and writes a new signal pack. Continue?');
   if(!ok){msg.textContent='Cancelled.';return;}
-  msg.textContent='Working (OpenAI)…';
+  msg.textContent='Working (OpenAI)...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/build-signal-pack',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     var raw=await r.text();
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> · insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> · ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) · overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' · rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
+    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> | insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> | ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) | overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' | rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
     stepState.pack_id=String(d.signal_pack_id||'');
     stepState.pack_created_at=String(d.created_at||'');
     renderStepper();
@@ -2583,7 +2820,7 @@ function updatePackSummary(){
   var selectedN=Object.keys(sel||{}).length;
   var fl=readFormatLimitsPayload();
   var caps=fl?JSON.stringify(fl):'none';
-  el.textContent='Selected ideas (UI): '+String(selectedN||0)+' · Per-format caps: '+caps;
+  el.textContent='Selected ideas (UI): '+String(selectedN||0)+' | Per-format caps: '+caps;
 }
 
 async function initSourcesPanel(){
@@ -2592,7 +2829,7 @@ async function initSourcesPanel(){
   var meta=document.getElementById('sources-meta');
   var wrap=document.getElementById('sources-table-wrap');
   if(!bar||!meta||!wrap)return;
-  bar.innerHTML='Loading…';
+  bar.innerHTML='Loading...';
   try{
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/stats');
     var d=await r.json();
@@ -2623,7 +2860,7 @@ async function loadSourcesEvidence(kind){
   var meta=document.getElementById('sources-meta');
   var wrap=document.getElementById('sources-table-wrap');
   if(!meta||!wrap||!kind)return;
-  meta.textContent='Loading…';
+  meta.textContent='Loading...';
   wrap.innerHTML='';
   try{
     var minScore=prellmMinByKind[kind]||0;
@@ -2638,7 +2875,7 @@ async function loadSourcesEvidence(kind){
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var inc=!!x.included_by_cutoff;
-      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">—</span>';
+      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">-</span>';
       tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
         '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
         '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
@@ -2651,17 +2888,26 @@ async function loadSourcesEvidence(kind){
   }catch(e){meta.textContent=String(e);}
 }
 
-readImportFromUrl();
-setStep(selectedImportId?'evidence':'select');
-if(SLUG){
-  loadImports();
-}else{
-  var root0=document.getElementById('imports-root');
-  var hint0=document.getElementById('imports-hint');
-  if(root0){
-    root0.innerHTML='<div class="empty">Pick a project in the sidebar, or open <span class="mono">/admin/processing?project=YOUR_SLUG</span>. Imports cannot load until a project is selected.</div>';
+try{
+  readImportFromUrl();
+  setStep(selectedImportId?'evidence':'select');
+  if(SLUG){
+    loadImports();
+  }else{
+    var root0=document.getElementById('imports-root');
+    var hint0=document.getElementById('imports-hint');
+    if(root0){
+      root0.innerHTML='<div class="empty">Pick a project in the sidebar, or open <span class="mono">/admin/processing?project=YOUR_SLUG</span>. Imports cannot load until a project is selected.</div>';
+    }
+    if(hint0)hint0.textContent='';
   }
-  if(hint0)hint0.textContent='';
+}catch(bootErr){
+  try{pushProcessingActivity(cafTs()+' Page startup failed: '+String(bootErr&&bootErr.message||bootErr),true);}catch(_q){}
+  var rootBoot=document.getElementById('imports-root');
+  if(rootBoot){
+    rootBoot.innerHTML='<div class="empty" style="color:var(--red)">'+esc(String(bootErr&&bootErr.message||bootErr))+'</div>'+
+      '<p style="margin:10px 0 0;font-size:12px;color:var(--muted)">Check <strong>Activity</strong> above (or browser console). A tiny boot script should have shown <strong>Boot OK</strong> before this.</p>';
+  }
 }
 </script>`;
 }
