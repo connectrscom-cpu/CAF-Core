@@ -1,6 +1,10 @@
 /**
  * Top-performer **carousel** pass: multimodal on **all slide images** (+ caption context).
- * Rows must have ≥2 HTTPS URLs from `parseCarouselSlideUrls`; excludes video/reel rows.
+ * **Instagram only** (`instagram_post`); other platforms are skipped.
+ * Slide URLs come from `parseCarouselSlideUrls(payload)` (merged list + cover fields), then when
+ * **embed fetch is on** (default: env on unless `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0`; criteria may
+ * force on/off) **and** the row has a structural carousel hint (Sidecar / `img_index`), Core may fetch
+ * `instagram.com/p/{shortcode}/embed/` and extract CDN links (best-effort; Instagram may block).
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -19,14 +23,86 @@ import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inp
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
 import {
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
+  instagramCarouselStructuralHintPresent,
+  instagramPostPermalinkFromPayload,
   parseCarouselCaptionContext,
   parseCarouselSlideUrls,
 } from "./inputs-carousel-evidence-bundle.js";
+import { resolveBroadInsightsSampleGate, resolveTopPerformerRatingGate } from "./inputs-top-performer-rating-gate.js";
+import {
+  archiveTopPerformerVisionMedia,
+  resolveTopPerformerArchiveMedia,
+} from "./inputs-top-performer-media-archive.js";
+import { getSupabaseStorageClient } from "./supabase-storage.js";
+import {
+  capAndSortQualifierPreview,
+  excerptForTopPerformerPreview,
+  postUrlForTopPerformerPreview,
+  type TopPerformerMediaQualifierPreviewRow,
+} from "./inputs-top-performer-qualifying-preview.js";
+import {
+  extractInstagramPermalinkShortcode,
+  fetchInstagramCarouselUrlsFromEmbedDetailed,
+  type InstagramEmbedFetchOutcome,
+} from "./inputs-instagram-embed-carousel-resolver.js";
 
 const STEP = "inputs_top_performer_carousel_insight";
 
+/** Carousel deck vision runs only on Instagram evidence rows. */
+const CAROUSEL_VISION_EVIDENCE_KIND = "instagram_post";
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+
+function mergeUniqueSlideUrls(primary: string[], extra: string[], max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const u of [...primary, ...extra]) {
+    if (seen.has(u)) continue;
+    seen.add(u);
+    out.push(u);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function truthyInsightCarouselEmbedFetch(v: unknown): boolean {
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes";
+}
+
+/** Explicit tenant opt-out of embed fetch (overrides default-on env). */
+function explicitInsightCarouselEmbedDisable(v: unknown): boolean {
+  if (v === false) return true;
+  if (v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === "0" || s === "false" || s === "no" || s === "off";
+}
+
+/** Where embed fetch was turned on (`none` = off — criteria `false`, or `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0`). */
+export type InstagramEmbedCarouselFetchSource = "env" | "criteria" | "none";
+
+function resolveInstagramEmbedCarouselFetch(
+  config: AppConfig,
+  criteria: Record<string, unknown>
+): { enabled: boolean; source: InstagramEmbedCarouselFetchSource } {
+  const ins = criteria.inputs_insights;
+  const insObj = ins && typeof ins === "object" && !Array.isArray(ins) ? (ins as Record<string, unknown>) : null;
+  const criteriaVal = insObj?.instagram_embed_carousel_fetch;
+
+  if (insObj && explicitInsightCarouselEmbedDisable(criteriaVal)) {
+    return { enabled: false, source: "none" };
+  }
+  if (insObj && truthyInsightCarouselEmbedFetch(criteriaVal)) {
+    return { enabled: true, source: "criteria" };
+  }
+  if (!config.CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH) {
+    return { enabled: false, source: "none" };
+  }
+  return { enabled: true, source: "env" };
 }
 
 export const TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT = `You analyze a **multi-slide social carousel** (static images shown in order, left-to-right / slide 1 → N).
@@ -68,6 +144,70 @@ export interface RunDeepCarouselInsightsResult {
   rows_analyzed: number;
   skipped_no_slides: number;
   carousel_insights_total: number;
+  /** Top fraction of rated rows (`rating_score`) that may receive vision; default 5%. */
+  rating_gate_active?: boolean;
+  rating_top_fraction?: number;
+  rated_rows_in_import?: number;
+  rating_gate_cap?: number;
+  skipped_rating_gate?: number;
+  rating_gate_disabled?: string;
+  broad_insights_gate_active?: boolean;
+  broad_llm_rows_in_import?: number;
+  skipped_broad_insights_gate?: number;
+  broad_insights_gate_disabled?: string;
+  /** Rows skipped because `evidence_kind` is not Instagram (carousel vision is IG-only). */
+  skipped_evidence_kind_filter?: number;
+  /** Rows with `evidence_kind === instagram_post` in this scan (after non-IG filter). */
+  instagram_post_rows?: number;
+  /** IG rows excluded: `media_type` / payload says video or reel (`isVideoLikeEvidence`). */
+  skipped_instagram_video_like?: number;
+  /** IG still-image rows without ≥2 parsed slide URLs in `payload_json` (no sidecar / carousel columns Core reads). */
+  skipped_instagram_few_slide_urls?: number;
+  /**
+   * Subset of `skipped_instagram_few_slide_urls`: structural carousel signal (`img_index≥2` on a
+   * permalink, or `media_type` Sidecar/Carousel) but **no** ≥2 child slide URLs in `payload_json` —
+   * enrich ingest so `carousel_slide_urls` / `images` / etc. are populated for vision.
+   */
+  instagram_carousel_url_hint_missing_slide_urls?: number;
+  /** True when embed fetch is enabled (default env on; or criteria `instagram_embed_carousel_fetch`). */
+  instagram_embed_carousel_fetch_enabled?: boolean;
+  /** `env` = default-on / explicit env allow; `criteria` = profile forced on; `none` = off (env `0` or criteria off). */
+  instagram_embed_carousel_fetch_source?: InstagramEmbedCarouselFetchSource;
+  /** HTTP embed fetches attempted (only when hint present and slides were short). */
+  instagram_embed_carousel_fetch_attempts?: number;
+  /** Rows that reached ≥2 slide URLs after an embed fetch (fetch helped). */
+  instagram_embed_carousel_rows_resolved_via_embed?: number;
+  /** Rows that had a carousel hint + permalink but embed fetch was skipped (per-run HTTP cap). */
+  instagram_embed_carousel_fetch_skipped_due_to_cap?: number;
+  /** Max embed HTTP GETs attempted in this run (guardrail). */
+  instagram_embed_carousel_fetch_cap?: number;
+  /** Rows that reused a prior shortcode fetch (no extra HTTP). */
+  instagram_embed_carousel_fetch_cache_hits?: number;
+  /** Of **network** embed GETs with HTTP 200, how many bodies contained the literal `display_url`. */
+  instagram_embed_carousel_fetch_network_html_has_display_url_hits?: number;
+  /** Of **network** embed GETs with HTTP 200, how many bodies looked like a login / challenge wall. */
+  instagram_embed_carousel_fetch_network_login_wall_likely_hits?: number;
+  /** Rows that qualify for carousel vision (≥2 slides, pre-LLM + gates); sorted by pre-LLM desc, capped for UI. */
+  qualifying_carousel_rows?: TopPerformerMediaQualifierPreviewRow[];
+  /** True when `CAF_TOP_PERFORMER_ARCHIVE_MEDIA` / auto+Supabase / criteria requests archiving slide images. */
+  top_performer_media_archive_requested?: boolean;
+  /** True when `SUPABASE_URL` + service role are set (archiving can run). */
+  top_performer_media_supabase_configured?: boolean;
+  /** Count of slide images successfully uploaded this run (carousel only). */
+  top_performer_media_archive_files_saved?: number;
+  /** Count of slide fetch/upload failures this run. */
+  top_performer_media_archive_errors?: number;
+  /** Echo of request option: when false, rows that already have `top_performer_carousel` are excluded from the vision pool. */
+  rescan?: boolean;
+  /**
+   * Rows that had ≥2 slides and passed pre-LLM + gates, but were skipped because they already have
+   * `top_performer_carousel` insights and `rescan` was false.
+   */
+  skipped_existing_carousel_insight?: number;
+  /**
+   * When `rows_analyzed === 0`, a short human explanation (admin / logs). Omitted when work ran.
+   */
+  deep_carousel_zero_work_summary?: string | null;
 }
 
 function carouselModel(profile: { synth_model: string; criteria_json: Record<string, unknown> }): string {
@@ -110,14 +250,43 @@ function makeCarouselInsightsId(importId: string, rowId: string): string {
   return `ins_${importId.replace(/-/g, "").slice(0, 10)}_${rowId}_cdeep`;
 }
 
+function buildDeepCarouselZeroWorkSummary(args: {
+  analyzed: number;
+  carouselDeckRows: number;
+  poolLen: number;
+  rescan: boolean;
+  skippedExisting: number;
+  carouselInsightsTotal: number;
+  embedAttempts: number;
+  displayUrlHits: number;
+}): string | null {
+  if (args.analyzed > 0) return null;
+  if (args.carouselDeckRows === 0) {
+    return (
+      `No Instagram evidence rows reached ≥2 slide image URLs after payload parse + embed merge ` +
+      `(${args.embedAttempts} embed GET(s); ${args.displayUrlHits} response(s) contained the literal "display_url" — often 0 when Instagram serves a login wall to server IPs). ` +
+      `There are still ${args.carouselInsightsTotal} top_performer_carousel insight row(s) in the DB from earlier runs; they are not proof of current slide URLs. ` +
+      `Enrich ingest with per-slide CDN URLs, or improve embed access.`
+    );
+  }
+  if (args.poolLen === 0 && args.skippedExisting > 0 && !args.rescan) {
+    return (
+      `${args.skippedExisting} row(s) had ≥2 slides and passed gates but already have top_performer_carousel insights while rescan was false. ` +
+      `Enable rescan to re-run vision (API body rescan:true, or admin "Rescan" on top performers).`
+    );
+  }
+  if (args.poolLen === 0) {
+    return (
+      `At least one row had ≥2 slide URLs, but none entered the vision pool: check min_pre_llm_score, broad-insights gate, and rating gate. ` +
+      `(${args.carouselInsightsTotal} total carousel insight rows in DB for this import.)`
+    );
+  }
+  return null;
+}
+
 function parseRiskFlags(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
-}
-
-function isCarouselEvidenceRow(kind: string, payload: Record<string, unknown>, maxSlides: number): boolean {
-  if (isVideoLikeEvidence(kind, payload)) return false;
-  return parseCarouselSlideUrls(payload, maxSlides).length >= MIN_CAROUSEL_SLIDES_FOR_DEEP;
 }
 
 export async function runDeepCarouselInsightsForImport(
@@ -143,10 +312,88 @@ export async function runDeepCarouselInsightsForImport(
   const minPre = carouselMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = carouselMaxRows(criteria, opts.max_rows);
   const maxSlides = clamp(opts.max_slides ?? 12, MIN_CAROUSEL_SLIDES_FOR_DEEP, 12);
+  const embedFetch = resolveInstagramEmbedCarouselFetch(config, criteria);
+  const embedCarouselFetchEnabled = embedFetch.enabled;
+
+  const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
+  const mediaSupabaseConfigured = !!getSupabaseStorageClient(config);
+  let mediaArchiveFilesSaved = 0;
+  let mediaArchiveErrors = 0;
+
+  const ratingGate = await resolveTopPerformerRatingGate(db, project.id, importId, criteria);
+  const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
 
   const existing = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_carousel");
 
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
+
+  const maxEmbedNetworkFetches = clamp(config.CAF_INSTAGRAM_EMBED_MAX_FETCHES_PER_IMPORT, 0, 2000);
+  const embedThrottleMs = clamp(config.CAF_INSTAGRAM_EMBED_THROTTLE_MS, 0, 5000);
+
+  /** Row ids where prefetch embed merge reached ≥2 slide URLs. */
+  const embedSlideOverrideByRowId = new Map<string, string[]>();
+  let instagramEmbedFetchAttempts = 0;
+  let instagramEmbedFetchCacheHits = 0;
+  let instagramEmbedFetchSkippedCap = 0;
+  let instagramEmbedNetworkDisplayUrlLiteralHits = 0;
+  let instagramEmbedNetworkLoginWallLikelyHits = 0;
+
+  if (embedCarouselFetchEnabled && maxEmbedNetworkFetches > 0) {
+    type EmbedPre = {
+      id: string;
+      postUrl: string;
+      shortcode: string;
+      baseSlides: string[];
+      pre: number;
+    };
+    const pres: EmbedPre[] = [];
+    for (const r of dbRows) {
+      if (r.evidence_kind !== CAROUSEL_VISION_EVIDENCE_KIND) continue;
+      const payload = (r.payload_json ?? {}) as Record<string, unknown>;
+      if (isVideoLikeEvidence(r.evidence_kind, payload)) continue;
+      const baseSlides = parseCarouselSlideUrls(payload, maxSlides);
+      if (!instagramCarouselStructuralHintPresent(payload)) continue;
+      if (baseSlides.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) continue;
+      const postUrl = instagramPostPermalinkFromPayload(payload);
+      const shortcode = postUrl ? extractInstagramPermalinkShortcode(postUrl) : null;
+      if (!postUrl || !shortcode) continue;
+      const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
+      if (ev.dropped_reason != null) continue;
+      pres.push({ id: r.id, postUrl, shortcode, baseSlides, pre: ev.pre_llm_score });
+    }
+    pres.sort((a, b) => b.pre - a.pre);
+
+    const shortcodeToOutcome = new Map<string, InstagramEmbedFetchOutcome>();
+    for (const p of pres) {
+      let outcome = shortcodeToOutcome.get(p.shortcode);
+      if (!outcome) {
+        if (instagramEmbedFetchAttempts >= maxEmbedNetworkFetches) {
+          instagramEmbedFetchSkippedCap++;
+          continue;
+        }
+        instagramEmbedFetchAttempts++;
+        outcome = await fetchInstagramCarouselUrlsFromEmbedDetailed(p.postUrl, {
+          maxSlides,
+          timeoutMs: config.CAF_INSTAGRAM_EMBED_FETCH_TIMEOUT_MS,
+          maxBytes: config.CAF_INSTAGRAM_EMBED_MAX_BYTES,
+        });
+        shortcodeToOutcome.set(p.shortcode, outcome);
+        if (outcome.http_ok) {
+          if (outcome.html_contains_display_url) instagramEmbedNetworkDisplayUrlLiteralHits++;
+          if (outcome.login_wall_likely) instagramEmbedNetworkLoginWallLikelyHits++;
+        }
+        if (embedThrottleMs > 0) {
+          await new Promise((res) => setTimeout(res, embedThrottleMs));
+        }
+      } else {
+        instagramEmbedFetchCacheHits++;
+      }
+      const merged = mergeUniqueSlideUrls(p.baseSlides, outcome.urls, maxSlides);
+      if (merged.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) {
+        embedSlideOverrideByRowId.set(p.id, merged);
+      }
+    }
+  }
 
   type Cand = {
     id: string;
@@ -157,22 +404,72 @@ export async function runDeepCarouselInsightsForImport(
     caption: string;
   };
   const pool: Cand[] = [];
-  let skippedNoSlides = 0;
+  let skippedExistingCarouselInsight = 0;
+  let skippedRatingGate = 0;
+  let skippedBroadInsightsGate = 0;
+  let skippedEvidenceKindFilter = 0;
+  let instagramPostRows = 0;
+  let skippedInstagramVideoLike = 0;
+  let skippedInstagramFewSlides = 0;
+  let instagramCarouselHintMissingSlideUrls = 0;
+  let instagramEmbedRowsResolvedViaEmbed = 0;
   let carouselDeckRows = 0;
+  const qualifyingCarouselScratch: TopPerformerMediaQualifierPreviewRow[] = [];
 
   for (const r of dbRows) {
+    if (r.evidence_kind !== CAROUSEL_VISION_EVIDENCE_KIND) {
+      skippedEvidenceKindFilter++;
+      continue;
+    }
+    instagramPostRows++;
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
-    if (!isCarouselEvidenceRow(r.evidence_kind, payload, maxSlides)) continue;
+    if (isVideoLikeEvidence(r.evidence_kind, payload)) {
+      skippedInstagramVideoLike++;
+      continue;
+    }
+    let slideUrls = parseCarouselSlideUrls(payload, maxSlides);
+    const preEmbedCount = slideUrls.length;
+    const structuralHint = instagramCarouselStructuralHintPresent(payload);
+    let usedEmbedFetch = false;
+    if (embedSlideOverrideByRowId.has(r.id)) {
+      slideUrls = embedSlideOverrideByRowId.get(r.id)!;
+      usedEmbedFetch = preEmbedCount < MIN_CAROUSEL_SLIDES_FOR_DEEP;
+    }
+    if (slideUrls.length < MIN_CAROUSEL_SLIDES_FOR_DEEP) {
+      skippedInstagramFewSlides++;
+      if (structuralHint) {
+        instagramCarouselHintMissingSlideUrls++;
+      }
+      continue;
+    }
+    if (usedEmbedFetch && preEmbedCount < MIN_CAROUSEL_SLIDES_FOR_DEEP) {
+      instagramEmbedRowsResolvedViaEmbed++;
+    }
     carouselDeckRows++;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
     if (ev.pre_llm_score < minPre) continue;
-    const slideUrls = parseCarouselSlideUrls(payload, maxSlides);
-    if (slideUrls.length < MIN_CAROUSEL_SLIDES_FOR_DEEP) {
-      skippedNoSlides++;
+    if (broadGate.active && !broadGate.idSet.has(r.id)) {
+      skippedBroadInsightsGate++;
       continue;
     }
-    if (existing.has(r.id)) continue;
+    if (ratingGate.active && !ratingGate.idSet.has(r.id)) {
+      skippedRatingGate++;
+      continue;
+    }
+    qualifyingCarouselScratch.push({
+      row_id: r.id,
+      evidence_kind: r.evidence_kind,
+      pre_llm_score: ev.pre_llm_score,
+      media_count: slideUrls.length,
+      caption_excerpt: excerptForTopPerformerPreview(payload),
+      post_url: postUrlForTopPerformerPreview(r.evidence_kind, payload),
+      already_has_tier_insight: existing.has(r.id),
+    });
+    if (existing.has(r.id)) {
+      skippedExistingCarouselInsight++;
+      continue;
+    }
     pool.push({
       id: r.id,
       evidence_kind: r.evidence_kind,
@@ -244,6 +541,35 @@ ${textBundle}`;
 
     const risks = parseRiskFlags(parsed?.risk_flags);
 
+    let storedInspection: Record<string, unknown> | undefined;
+    if (mediaArchiveRequested) {
+      if (mediaSupabaseConfigured) {
+        const arch = await archiveTopPerformerVisionMedia(config, {
+          projectSlug,
+          inputsImportId: importId,
+          sourceEvidenceRowId: c.id,
+          tier: "top_performer_carousel",
+          role: "carousel_slide",
+          urls: c.slide_urls,
+        });
+        for (const it of arch.items) {
+          if (it.ok) mediaArchiveFilesSaved++;
+          else if (it.error) mediaArchiveErrors++;
+        }
+        storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
+      } else {
+        storedInspection = {
+          archived_at: new Date().toISOString(),
+          tier: "top_performer_carousel",
+          project_slug: projectSlug,
+          inputs_import_id: importId,
+          source_evidence_row_id: c.id,
+          skipped_reason: "supabase_not_configured",
+          items: [],
+        };
+      }
+    }
+
     await upsertEvidenceRowInsight(db, {
       project_id: project.id,
       inputs_import_id: importId,
@@ -266,11 +592,23 @@ ${textBundle}`;
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,
+      ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;
   }
 
   const carouselTotal = await countEvidenceRowInsightsByImportTier(db, importId, "top_performer_carousel");
+  const qualifying_carousel_rows = capAndSortQualifierPreview(qualifyingCarouselScratch);
+  const zeroWorkSummary = buildDeepCarouselZeroWorkSummary({
+    analyzed,
+    carouselDeckRows,
+    poolLen: pool.length,
+    rescan: !!opts.rescan,
+    skippedExisting: skippedExistingCarouselInsight,
+    carouselInsightsTotal: carouselTotal,
+    embedAttempts: instagramEmbedFetchAttempts,
+    displayUrlHits: instagramEmbedNetworkDisplayUrlLiteralHits,
+  });
 
   return {
     import_id: importId,
@@ -279,7 +617,40 @@ ${textBundle}`;
     carousel_deck_rows: carouselDeckRows,
     candidates_with_slides: pool.length,
     rows_analyzed: analyzed,
-    skipped_no_slides: skippedNoSlides,
+    /** Same count as `skipped_instagram_few_slide_urls` (IG rows with fewer than two slide URLs after embed). */
+    skipped_no_slides: skippedInstagramFewSlides,
     carousel_insights_total: carouselTotal,
+    rating_gate_active: ratingGate.active,
+    rating_top_fraction: ratingGate.fraction,
+    rated_rows_in_import: ratingGate.rated_row_count,
+    rating_gate_cap: ratingGate.gate_row_cap,
+    skipped_rating_gate: skippedRatingGate,
+    rating_gate_disabled: ratingGate.disabled,
+    broad_insights_gate_active: broadGate.active,
+    broad_llm_rows_in_import: broadGate.broad_llm_row_count,
+    skipped_broad_insights_gate: skippedBroadInsightsGate,
+    broad_insights_gate_disabled: broadGate.disabled,
+    skipped_evidence_kind_filter: skippedEvidenceKindFilter,
+    instagram_post_rows: instagramPostRows,
+    skipped_instagram_video_like: skippedInstagramVideoLike,
+    skipped_instagram_few_slide_urls: skippedInstagramFewSlides,
+    instagram_carousel_url_hint_missing_slide_urls: instagramCarouselHintMissingSlideUrls,
+    instagram_embed_carousel_fetch_enabled: embedCarouselFetchEnabled,
+    instagram_embed_carousel_fetch_source: embedFetch.source,
+    instagram_embed_carousel_fetch_attempts: instagramEmbedFetchAttempts,
+    instagram_embed_carousel_rows_resolved_via_embed: instagramEmbedRowsResolvedViaEmbed,
+    instagram_embed_carousel_fetch_skipped_due_to_cap: instagramEmbedFetchSkippedCap,
+    instagram_embed_carousel_fetch_cap: maxEmbedNetworkFetches,
+    instagram_embed_carousel_fetch_cache_hits: instagramEmbedFetchCacheHits,
+    instagram_embed_carousel_fetch_network_html_has_display_url_hits: instagramEmbedNetworkDisplayUrlLiteralHits,
+    instagram_embed_carousel_fetch_network_login_wall_likely_hits: instagramEmbedNetworkLoginWallLikelyHits,
+    qualifying_carousel_rows,
+    top_performer_media_archive_requested: mediaArchiveRequested,
+    top_performer_media_supabase_configured: mediaSupabaseConfigured,
+    top_performer_media_archive_files_saved: mediaArchiveFilesSaved,
+    top_performer_media_archive_errors: mediaArchiveErrors,
+    rescan: !!opts.rescan,
+    skipped_existing_carousel_insight: skippedExistingCarouselInsight,
+    deep_carousel_zero_work_summary: zeroWorkSummary,
   };
 }

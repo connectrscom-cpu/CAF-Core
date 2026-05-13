@@ -240,6 +240,10 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn btn-sm" id="btn-run-deep-image-insights">Run top-performer (images)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-carousel-insights">Run top-performer (carousel)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-video-insights">Run top-performer (video frames)</button>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;max-width:420px;line-height:1.35">
+              <input id="tp-vision-rescan" type="checkbox" />
+              Rescan (re-run vision for rows that already have this pass’s insight tier)
+            </label>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card)">
             <span style="font-size:11px;color:var(--muted);font-weight:600;margin-right:4px">Copy debug logs</span>
@@ -250,7 +254,7 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <div id="top-perf-status-wrap" style="font-size:12px;margin:0 0 10px;max-width:900px;line-height:1.45">
             <div id="tp-st-image" style="color:var(--muted)"><strong>Image</strong> — not run yet.</div>
-            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block).</div>
+            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block datacenter IPs). If the API reports <span class="mono">carousel_deck_rows: 0</span> but old insight rows exist, those rows were produced when URLs were available—enable <strong>Rescan</strong> only after ingest/embed can supply slide URLs again.</div>
             <div id="tp-st-video" style="color:var(--muted)"><strong>Video</strong> — not run yet. Needs HTTPS image URLs: <span class="mono">analysis_frame_urls</span> / <span class="mono">frame_urls</span>, or a poster field such as <span class="mono">thumbnail_url</span> / <span class="mono">display_url</span> (http is upgraded to https).</div>
           </div>
           <div id="tp-qualify-carousel-wrap" style="display:none;margin:6px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-height:340px;overflow:auto">
@@ -1761,7 +1765,7 @@ bind('btn-run-deep-image-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('image','Select an import first.',true);return;}
   setTpStatus('image','Running image vision...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:24,min_pre_llm_score:minScore,rescan:false};
+  var body={max_rows:24,min_pre_llm_score:minScore,rescan:chk('tp-vision-rescan')};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights';
   var r=null;
   var d=null;
@@ -1809,7 +1813,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
   renderTpQualifyingList('carousel',[]);
   setTpStatus('carousel','Running carousel vision (all slides)...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:false};
+  var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:chk('tp-vision-rescan')};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
   var d=null;
@@ -1832,7 +1836,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     });
     setTpStatus(
       'carousel',
-      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+') | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:''),
+      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | skipped existing (rescan off) '+String(d.skipped_existing_carousel_insight||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+') | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:'')+(d.deep_carousel_zero_work_summary?' | '+String(d.deep_carousel_zero_work_summary):''),
       false
     );
     renderTpQualifyingList('carousel',d.qualifying_carousel_rows||[]);
@@ -1862,7 +1866,7 @@ bind('btn-run-deep-video-insights','click',async function(){
   renderTpQualifyingList('video',[]);
   setTpStatus('video','Running video frame bundle...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:false};
+  var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:chk('tp-vision-rescan')};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights';
   var r=null;
   var d=null;
