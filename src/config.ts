@@ -479,6 +479,87 @@ const envSchema = z.object({
   EDITORIAL_ANALYSIS_CRON_WINDOW_DAYS: z.coerce.number().int().min(1).max(365).default(30),
   /** Wait after process start before the first tick (ms). */
   EDITORIAL_ANALYSIS_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(120_000),
+
+  /**
+   * **Default on:** top-performer carousel may HTTP-fetch `instagram.com/p/{shortcode}/embed/` and
+   * extract CDN image links when `payload_json` lacks child slide URLs but the row looks like a
+   * carousel (`Sidecar`, `img_index`, …). Set `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0` (or `false` /
+   * `no` / `off`) to disable globally. Instagram may block datacenters — prefer `carousel_slide_urls`
+   * in ingest when you need reliability.
+   * Per tenant: `criteria_json.inputs_insights.instagram_embed_carousel_fetch` — explicit `false` /
+   * `"false"` / `"0"` disables even when env default is on; `true` / `"true"` / `"1"` forces on.
+   */
+  CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+      return true;
+    }),
+  /** Max response bytes read from Instagram embed HTML (guard). */
+  CAF_INSTAGRAM_EMBED_MAX_BYTES: z.coerce.number().int().min(50_000).max(10_000_000).default(1_500_000),
+  /** HTTP timeout for Instagram embed fetch (ms). */
+  CAF_INSTAGRAM_EMBED_FETCH_TIMEOUT_MS: z.coerce.number().int().min(3000).max(120_000).default(20_000),
+  /** Max distinct embed HTTP GETs per deep-carousel import pass (shortcodes dedupe across rows). */
+  CAF_INSTAGRAM_EMBED_MAX_FETCHES_PER_IMPORT: z.coerce.number().int().min(0).max(2000).default(400),
+  /** Pause between embed GETs (ms); 0 disables. */
+  CAF_INSTAGRAM_EMBED_THROTTLE_MS: z.coerce.number().int().min(0).max(5000).default(35),
+
+  /**
+   * **auto** (default): archive carousel slides / video frames to Supabase when `SUPABASE_URL` + service role exist,
+   * unless criteria sets `archive_top_performer_media_to_storage` to false.
+   * **on** / **1** / **true**: always attempt (still no-op in DB if Supabase missing).
+   * **off** / **0** / **false**: never archive.
+   */
+  CAF_TOP_PERFORMER_ARCHIVE_MEDIA: z
+    .string()
+    .optional()
+    .transform((v): "auto" | "on" | "off" => {
+      if (v === undefined || v === "") return "auto";
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return "off";
+      if (s === "1" || s === "true" || s === "yes" || s === "on") return "on";
+      if (s === "auto") return "auto";
+      return "auto";
+    }),
+  /** Per-URL HTTP timeout when archiving slide/frame images to Supabase (ms). */
+  CAF_TOP_PERFORMER_ARCHIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().min(3000).max(120_000).default(45_000),
+  /** Max bytes read per remote image when archiving (guard). */
+  CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_PER_FILE: z.coerce.number().int().min(100_000).max(25_000_000).default(12_000_000),
+  /**
+   * When archiving **carousel** slides only: reject downloaded bodies smaller than this (bytes).
+   * Instagram embed/oEmbed often surfaces ~1–3KB logo or chrome webps; real slides are almost always larger.
+   */
+  CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE: z.coerce.number().int().min(512).max(100_000).default(6000),
+
+  /**
+   * **auto** (default): when slide/frame archiving runs for `top_performer_video`, also try to archive one
+   * **source** HTTPS video file from `payload_json` (`video_url`, `source_video_url`, …) unless criteria sets
+   * `archive_top_performer_source_video` to false.
+   * **on** / **off**: force enable / disable source-video download+upload (frames still follow `CAF_TOP_PERFORMER_ARCHIVE_MEDIA`).
+   */
+  CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO: z
+    .string()
+    .optional()
+    .transform((v): "auto" | "on" | "off" => {
+      if (v === undefined || v === "") return "auto";
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return "off";
+      if (s === "1" || s === "true" || s === "yes" || s === "on") return "on";
+      if (s === "auto") return "auto";
+      return "auto";
+    }),
+  /** HTTP timeout when downloading a **full** source video for top-performer archive (ms). */
+  CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(180_000),
+  /** Max bytes read for one archived source video file (guard). */
+  CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO: z.coerce
+    .number()
+    .int()
+    .min(1_000_000)
+    .max(500_000_000)
+    .default(120_000_000),
 });
 
 /** Parse `CAF_META_ACCOUNT_SOURCE_MAP` (e.g. `CUISINA=SNS,OTHER=SNS`). Keys/values normalized to uppercase. */
