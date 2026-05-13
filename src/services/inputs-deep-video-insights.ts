@@ -36,6 +36,7 @@ import {
   postUrlForTopPerformerPreview,
   type TopPerformerMediaQualifierPreviewRow,
 } from "./inputs-top-performer-qualifying-preview.js";
+import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
 
 const STEP = "inputs_top_performer_video_insight";
 
@@ -184,6 +185,7 @@ export async function runDeepVideoInsightsForImport(
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
   const sourceVideoArchiveRequested = mediaArchiveRequested && resolveTopPerformerArchiveSourceVideo(config, criteria);
   const mediaSupabaseConfigured = !!getSupabaseStorageClient(config);
+  const mediaArchiveHttpProxyCfg = resolveInstagramEmbedHttpProxy(config, criteria);
   let mediaArchiveFilesSaved = 0;
   let mediaArchiveErrors = 0;
   let mediaArchiveFrameFilesSaved = 0;
@@ -328,6 +330,7 @@ ${c.transcript || "(none)"}`;
           urls: c.frame_urls,
           archive_source_video: sourceVideoArchiveRequested,
           ...(sourceVideoUrl ? { source_video_url: sourceVideoUrl } : {}),
+          ...(mediaArchiveHttpProxyCfg.url ? { http_proxy_url: mediaArchiveHttpProxyCfg.url } : {}),
         });
         for (const it of arch.items) {
           if (it.ok) {

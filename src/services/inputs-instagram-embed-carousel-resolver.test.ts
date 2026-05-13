@@ -7,6 +7,7 @@ import {
   instagramEmbedHtmlDiagnostics,
   isLikelyInstagramEmbedUiAssetUrl,
   scoreInstagramCarouselCdnUrl,
+  tryCreateInstagramEmbedProxyAgent,
 } from "./inputs-instagram-embed-carousel-resolver.js";
 
 describe("extractInstagramPermalinkShortcode", () => {
@@ -145,5 +146,31 @@ describe("fetchInstagramCarouselUrlsFromEmbed", () => {
     expect(o.urls.length).toBeGreaterThanOrEqual(1);
     expect(o.html_bytes).toBeGreaterThan(0);
     vi.unstubAllGlobals();
+  });
+
+  it("forwards dispatcher to fetch when provided", async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      text: async () => '{"display_url":"https://scontent.cdninstagram.com/z.jpg"}',
+    }));
+    vi.stubGlobal("fetch", mockFetch as unknown as typeof fetch);
+    const dummy = { close: async () => {} } as unknown as import("undici").Dispatcher;
+    await fetchInstagramCarouselUrlsFromEmbedDetailed("https://www.instagram.com/p/ABCde12345/", {
+      maxSlides: 4,
+      timeoutMs: 5000,
+      maxBytes: 100_000,
+      dispatcher: dummy,
+    });
+    expect(mockFetch).toHaveBeenCalled();
+    const init = mockFetch.mock.calls[0][1] as { dispatcher?: import("undici").Dispatcher };
+    expect(init.dispatcher).toBe(dummy);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("tryCreateInstagramEmbedProxyAgent", () => {
+  it("returns undefined for empty proxy URL", () => {
+    expect(tryCreateInstagramEmbedProxyAgent("")).toBeUndefined();
+    expect(tryCreateInstagramEmbedProxyAgent(undefined)).toBeUndefined();
   });
 });

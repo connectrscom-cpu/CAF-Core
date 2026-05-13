@@ -4,6 +4,8 @@
  * `display_url` list in `payload_json`.
  *
  * Instagram may return login walls or empty markup from datacenter IPs — treat as optional enrichment.
+ * Optional **HTTP CONNECT** proxy: `CAF_INSTAGRAM_EMBED_HTTP_PROXY` or `criteria_json.inputs_insights.instagram_embed_http_proxy`
+ * (undici {@link ProxyAgent}; embed HTML fetches and **top-performer slide/frame archive** downloads to Supabase).
  *
  * **Two modes:** **permissive** (default for **eligibility / vision merge**) keeps CDN URLs that strict
  * mode drops (e.g. small `/s150x150/` paths) so `/embed/` can still yield ≥2 slide URLs when JSON is thin.
@@ -11,9 +13,42 @@
  * **Storage** still rejects tiny placeholder bodies via `CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE`.
  */
 
+import type { AppConfig } from "../config.js";
+import type { Dispatcher } from "undici";
+import { ProxyAgent } from "undici";
 import { finalizeHttpsImageUrlForOpenAiVision } from "./inputs-image-url-for-analysis.js";
 
 const PERMALINK_SC = /instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]{5,32})\/?/i;
+
+/**
+ * Build an undici {@link ProxyAgent} for `CAF_INSTAGRAM_EMBED_HTTP_PROXY` / criteria override.
+ * Caller must {@link ProxyAgent.close} after the embed prefetch batch or an archive download batch.
+ */
+export function tryCreateInstagramEmbedProxyAgent(proxyUrl: string | undefined | null): ProxyAgent | undefined {
+  const u = proxyUrl?.trim();
+  if (!u) return undefined;
+  try {
+    return new ProxyAgent(u);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Same proxy URL rules as embed + archive: criteria override, else env. */
+export function resolveInstagramEmbedHttpProxy(
+  config: AppConfig,
+  criteria: Record<string, unknown>
+): { url: string | undefined; source: "criteria" | "env" | "none" } {
+  const ins = criteria.inputs_insights;
+  const insObj = ins && typeof ins === "object" && !Array.isArray(ins) ? (ins as Record<string, unknown>) : null;
+  const fromCriteria = insObj?.instagram_embed_http_proxy;
+  if (typeof fromCriteria === "string" && fromCriteria.trim()) {
+    return { url: fromCriteria.trim(), source: "criteria" };
+  }
+  const fromEnv = config.CAF_INSTAGRAM_EMBED_HTTP_PROXY?.trim();
+  if (fromEnv) return { url: fromEnv, source: "env" };
+  return { url: undefined, source: "none" };
+}
 
 export function extractInstagramPermalinkShortcode(postUrl: string): string | null {
   const m = postUrl.match(PERMALINK_SC);
@@ -214,7 +249,7 @@ export interface InstagramEmbedFetchOutcome {
 
 export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
   postUrl: string,
-  opts: { maxSlides: number; timeoutMs: number; maxBytes: number }
+  opts: { maxSlides: number; timeoutMs: number; maxBytes: number; dispatcher?: Dispatcher }
 ): Promise<InstagramEmbedFetchOutcome> {
   const empty = (http_ok: boolean): InstagramEmbedFetchOutcome => ({
     urls: [],
@@ -230,7 +265,7 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), opts.timeoutMs);
   try {
-    const res = await fetch(embedUrl, {
+    const init: RequestInit & { dispatcher?: Dispatcher } = {
       signal: ac.signal,
       redirect: "follow",
       headers: {
@@ -241,7 +276,9 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
         Referer: "https://www.instagram.com/",
         "Upgrade-Insecure-Requests": "1",
       },
-    });
+    };
+    if (opts.dispatcher) init.dispatcher = opts.dispatcher;
+    const res = await fetch(embedUrl, init);
     if (!res.ok) return empty(false);
     const text = await res.text();
     const html = text.length > opts.maxBytes ? text.slice(0, opts.maxBytes) : text;
@@ -264,7 +301,7 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
 /** Returns {@link fetchInstagramCarouselUrlsFromEmbedDetailed} `.urls` only. */
 export async function fetchInstagramCarouselUrlsFromEmbed(
   postUrl: string,
-  opts: { maxSlides: number; timeoutMs: number; maxBytes: number }
+  opts: { maxSlides: number; timeoutMs: number; maxBytes: number; dispatcher?: Dispatcher }
 ): Promise<string[]> {
   const o = await fetchInstagramCarouselUrlsFromEmbedDetailed(postUrl, opts);
   return o.urls;

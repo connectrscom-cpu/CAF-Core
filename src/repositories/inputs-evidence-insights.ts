@@ -39,6 +39,10 @@ export interface EvidenceRowInsightRow {
 export interface EvidenceRowInsightEnrichedRow extends EvidenceRowInsightRow {
   evidence_kind: string;
   evidence_rating_score?: string | null;
+  /** Set by API layer from `evidence_payload_json` (not stored on insight rows). */
+  evidence_post_url?: string | null;
+  /** Set by API layer: `instagram_carousel` / `instagram_video` vs bare `instagram_post` when payload indicates. */
+  evidence_display_kind?: string;
 }
 
 export interface UpsertEvidenceInsightInput {
@@ -257,7 +261,7 @@ export async function countEvidenceRowInsightsByImportTierAndKind(
   return parseInt(row?.n ?? "0", 10) || 0;
 }
 
-const INSIGHT_SELECT_ENRICHED = `SELECT i.id::text, i.project_id::text, i.inputs_import_id::text, i.source_evidence_row_id::text, i.insights_id, i.analysis_tier,
+const INSIGHT_SELECT_ENRICHED_CORE = `SELECT i.id::text, i.project_id::text, i.inputs_import_id::text, i.source_evidence_row_id::text, i.insights_id, i.analysis_tier,
        i.pre_llm_score::text, i.llm_model,
        i.why_it_worked, i.primary_emotion, i.secondary_emotion, i.hook_type,
        i.custom_label_1, i.custom_label_2, i.custom_label_3,
@@ -266,6 +270,10 @@ const INSIGHT_SELECT_ENRICHED = `SELECT i.id::text, i.project_id::text, i.inputs
        i.created_at::text, i.updated_at::text,
        r.evidence_kind,
        r.rating_score::text AS evidence_rating_score`;
+
+/** Same as CORE plus evidence row payload (admin evidence-insights only — avoid in bulk LLM fetches). */
+const INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD = `${INSIGHT_SELECT_ENRICHED_CORE},
+       r.payload_json AS evidence_payload_json`;
 
 const INSIGHT_JOIN = `FROM caf_core.inputs_evidence_row_insights i
  INNER JOIN caf_core.inputs_evidence_rows r
@@ -287,7 +295,7 @@ export async function listEvidenceRowInsightsEnriched(
   if (tier && kind) {
     return q(
       db,
-      `${INSIGHT_SELECT_ENRICHED}
+      `${INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD}
        ${INSIGHT_JOIN}
        WHERE i.project_id = $1 AND i.inputs_import_id = $2 AND i.analysis_tier = $3 AND r.evidence_kind = $4
        ORDER BY i.updated_at DESC
@@ -298,7 +306,7 @@ export async function listEvidenceRowInsightsEnriched(
   if (tier) {
     return q(
       db,
-      `${INSIGHT_SELECT_ENRICHED}
+      `${INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD}
        ${INSIGHT_JOIN}
        WHERE i.project_id = $1 AND i.inputs_import_id = $2 AND i.analysis_tier = $3
        ORDER BY i.updated_at DESC
@@ -309,7 +317,7 @@ export async function listEvidenceRowInsightsEnriched(
   if (kind) {
     return q(
       db,
-      `${INSIGHT_SELECT_ENRICHED}
+      `${INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD}
        ${INSIGHT_JOIN}
        WHERE i.project_id = $1 AND i.inputs_import_id = $2 AND r.evidence_kind = $3
        ORDER BY i.analysis_tier ASC, i.updated_at DESC
@@ -319,7 +327,7 @@ export async function listEvidenceRowInsightsEnriched(
   }
   return q(
     db,
-    `${INSIGHT_SELECT_ENRICHED}
+    `${INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD}
      ${INSIGHT_JOIN}
      WHERE i.project_id = $1 AND i.inputs_import_id = $2
      ORDER BY i.analysis_tier ASC, i.updated_at DESC
@@ -328,8 +336,7 @@ export async function listEvidenceRowInsightsEnriched(
   );
 }
 
-const BROAD_WITH_RATING_SELECT = `${INSIGHT_SELECT_ENRICHED},
-       r.rating_score::text AS evidence_rating_score`;
+const BROAD_WITH_RATING_SELECT = INSIGHT_SELECT_ENRICHED_CORE;
 
 /** Broad LLM insights joined with evidence row rating (for ideas-from-insights context ordering). */
 export interface BroadInsightWithRating extends EvidenceRowInsightEnrichedRow {
@@ -364,7 +371,7 @@ export async function listTopPerformerInsightsEnriched(
   const lim = Math.min(Math.max(limit, 1), 3000);
   return q(
     db,
-    `${INSIGHT_SELECT_ENRICHED}
+    `${INSIGHT_SELECT_ENRICHED_CORE}
      ${INSIGHT_JOIN}
      WHERE i.project_id = $1 AND i.inputs_import_id = $2
        AND i.analysis_tier IN ('top_performer_deep', 'top_performer_video', 'top_performer_carousel')

@@ -372,6 +372,42 @@ export async function listEvidenceRowsForPreLlmScoring(
   );
 }
 
+/**
+ * Row ids in the top `fraction` of **rated** evidence rows (`rating_score` DESC).
+ * Uses `ceil(rated_count * fraction)` with a minimum of 1 when any rated rows exist.
+ * Used to scope expensive top-performer vision passes to high performers from the insights valuation pass.
+ */
+export async function listTopFractionRatedEvidenceRowIds(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  fraction: number
+): Promise<{ ids: Set<string>; rated_count: number; limit_k: number }> {
+  const f = Math.min(Math.max(fraction, 0.0001), 0.5);
+  const cntRow = await qOne<{ n: string }>(
+    db,
+    `SELECT COUNT(*)::text AS n
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2 AND rating_score IS NOT NULL`,
+    [importId, projectId]
+  );
+  const n = parseInt(cntRow?.n ?? "0", 10);
+  if (n <= 0) {
+    return { ids: new Set(), rated_count: 0, limit_k: 0 };
+  }
+  const k = Math.max(1, Math.ceil(n * f));
+  const rows = await q<{ id: string }>(
+    db,
+    `SELECT id::text AS id
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2 AND rating_score IS NOT NULL
+      ORDER BY rating_score DESC NULLS LAST, id ASC
+      LIMIT $3`,
+    [importId, projectId, k]
+  );
+  return { ids: new Set(rows.map((r) => r.id)), rated_count: n, limit_k: k };
+}
+
 /** All rows of one evidence_kind for an import (pre-LLM preview; bounded). */
 export async function listEvidenceRowsByImportAndKind(
   db: Pool,

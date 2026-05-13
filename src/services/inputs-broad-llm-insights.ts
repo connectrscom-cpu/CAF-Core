@@ -16,6 +16,7 @@ import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
+import { deriveEvidencePostFormat, EVIDENCE_POST_FORMATS, isEvidencePostFormat } from "./inputs-evidence-post-format.js";
 
 const STEP = "inputs_broad_llm_insights_batch";
 
@@ -148,11 +149,14 @@ function stripLegacyRowsJsonBlock(text: string): string {
 }
 
 function defaultBroadSystemPrompt(): string {
+  const formats = EVIDENCE_POST_FORMATS.join(" | ");
   return `You analyze social/scraper evidence for a marketing content pipeline.
+Each input row includes **post_format_hint** (${formats}) — structural format (video vs carousel vs single image vs text-native vs article), derived from the scraper payload. Treat it as ground truth for how the post is consumed; tailor **why_it_worked**, **caption_style**, and **hook_type** to that format (e.g. carousel = slide arc / cover slide; video = hook in first seconds; text_native = title/body tension).
 Return ONLY valid JSON with shape:
 {"insights":[
   {
     "row_db_id":"string (must match input)",
+    "post_format":"string (must equal post_format_hint from input unless hint is clearly wrong — use same token: ${formats})",
     "why_it_worked":"string",
     "primary_emotion":"string",
     "secondary_emotion":"string",
@@ -277,6 +281,7 @@ export async function previewBroadInsightsPrompt(
   const rowsPayload = candidates.map((c) => ({
     row_db_id: c.id,
     evidence_kind: c.evidence_kind,
+    post_format_hint: deriveEvidencePostFormat(c.evidence_kind, c.payload),
     pre_llm_score: c.pre_llm_score,
     bundle: summarizePayloadForLlm(c.evidence_kind, c.payload, 4000),
   }));
@@ -379,6 +384,7 @@ export async function runBroadInsightsForImport(
     const rowsPayload = chunk.map((c) => ({
       row_db_id: c.id,
       evidence_kind: c.evidence_kind,
+      post_format_hint: deriveEvidencePostFormat(c.evidence_kind, c.payload),
       pre_llm_score: c.pre_llm_score,
       bundle: summarizePayloadForLlm(c.evidence_kind, c.payload, 4000),
     }));
@@ -423,6 +429,13 @@ export async function runBroadInsightsForImport(
       const c = byId.get(rid)!;
       matchedIds.add(rid);
       const risks = parseRiskFlags(item.risk_flags);
+      const derivedFormat = deriveEvidencePostFormat(c.evidence_kind, c.payload);
+      const llmFormatRaw = typeof item.post_format === "string" ? item.post_format.trim() : "";
+      const llmFormat = isEvidencePostFormat(llmFormatRaw) ? llmFormatRaw : null;
+      const aesthetic: Record<string, unknown> = { post_format: derivedFormat };
+      if (llmFormat && llmFormat !== derivedFormat) {
+        aesthetic.post_format_llm = llmFormat;
+      }
       await upsertEvidenceRowInsight(db, {
         project_id: project.id,
         inputs_import_id: importId,
@@ -443,7 +456,7 @@ export async function runBroadInsightsForImport(
         caption_style: typeof item.caption_style === "string" ? item.caption_style : null,
         hook_text: typeof item.hook_text === "string" ? item.hook_text : null,
         risk_flags_json: risks,
-        aesthetic_analysis_json: null,
+        aesthetic_analysis_json: aesthetic,
         raw_llm_json: item as Record<string, unknown>,
       });
       upserted++;

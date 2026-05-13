@@ -255,7 +255,7 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <div id="top-perf-status-wrap" style="font-size:12px;margin:0 0 10px;max-width:900px;line-height:1.45">
             <div id="tp-st-image" style="color:var(--muted)"><strong>Image</strong> — not run yet.</div>
-            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block datacenter IPs). If the API reports <span class="mono">carousel_deck_rows: 0</span> but old insight rows exist, those rows were produced when URLs were available—enable <strong>Rescan</strong> only after ingest/embed can supply slide URLs again.</div>
+            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block datacenter IPs). If embed HTML has no <span class="mono">display_url</span>, set Fly secret <span class="mono">CAF_INSTAGRAM_EMBED_HTTP_PROXY</span> to an HTTP CONNECT proxy (or criteria <span class="mono">instagram_embed_http_proxy</span>) so fetches egress elsewhere. If the API reports <span class="mono">carousel_deck_rows: 0</span> but old insight rows exist, those rows were produced when URLs were available—enable <strong>Rescan</strong> only after ingest/embed can supply slide URLs again.</div>
             <div id="tp-st-video" style="color:var(--muted)"><strong>Video</strong> — not run yet. Needs HTTPS image URLs: <span class="mono">analysis_frame_urls</span> / <span class="mono">frame_urls</span>, or a poster field such as <span class="mono">thumbnail_url</span> / <span class="mono">display_url</span> (http is upgraded to https).</div>
           </div>
           <div id="tp-qualify-carousel-wrap" style="display:none;margin:6px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-height:340px;overflow:auto">
@@ -1250,13 +1250,16 @@ async function loadPrellmPreview(){
     if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No rows at or above this cutoff.</div>';return;}
     var tb='<table class="sp-modal-table"><thead><tr>'+
       '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
+      '<th>Kind</th>'+
       '<th>Included</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var inc=!!x.included_by_cutoff;
       var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">-</span>';
+      var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
       tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
         '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
+        '<td class="mono">'+esc(kindCell)+'</td>'+
         '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
         '<td style="max-width:200px;word-break:break-all">'+urlCell+'</td>'+
         '<td style="max-width:360px;white-space:pre-wrap;word-break:break-word">'+esc(x.caption||'')+'</td>'+
@@ -1837,7 +1840,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     });
     setTpStatus(
       'carousel',
-      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | skipped existing (rescan off) '+String(d.skipped_existing_carousel_insight||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+') | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:'')+(d.deep_carousel_zero_work_summary?' | '+String(d.deep_carousel_zero_work_summary):''),
+      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | skipped existing (rescan off) '+String(d.skipped_existing_carousel_insight||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+', embed proxy '+(d.instagram_embed_http_proxy_active?'on':'off')+' ('+String(d.instagram_embed_http_proxy_source||'none')+')) | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:'')+(d.deep_carousel_zero_work_summary?' | '+String(d.deep_carousel_zero_work_summary):''),
       false
     );
     renderTpQualifyingList('carousel',d.qualifying_carousel_rows||[]);
@@ -2136,15 +2139,25 @@ async function loadBroadTable(){
       wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
       return;
     }
-    var tb='<table class="sp-modal-table" style="width:100%;min-width:1180px;table-layout:auto"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Kind</th><th>Pre-LLM score</th><th>Row rating</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
+    var tb='<table class="sp-modal-table" style="width:100%;min-width:1280px;table-layout:auto"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Post URL</th><th>Kind</th><th>Pre-LLM score</th><th>Row rating</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
       var insightId=String(x.insights_id||'');
       var rowId=String(x.source_evidence_row_id||'');
+      var postUrl=String(x.evidence_post_url||'').trim();
+      var urlCell;
+      if(postUrl){
+        var shortU=postUrl.length>52?postUrl.slice(0,49)+'…':postUrl;
+        urlCell='<td style="max-width:240px;word-break:break-all;font-size:12px"><a href="'+esc(postUrl)+'" target="_blank" rel="noopener noreferrer" title="'+esc(postUrl)+'">'+esc(shortU)+'</a></td>';
+      }else{
+        urlCell='<td class="mono" style="color:var(--muted);font-size:12px">—</td>';
+      }
+      var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
       tb+='<tr>'+
         '<td class="mono">'+esc(insightId)+'</td>'+
         '<td class="mono"><a href="#" class="broad-ev-link" data-row-id="'+esc(rowId)+'">'+esc(rowId)+'</a></td>'+
-        '<td class="mono">'+esc(x.evidence_kind)+'</td>'+
+        urlCell+
+        '<td class="mono">'+esc(kindCell)+'</td>'+
         '<td class="mono">'+fmtInsightScore(x.pre_llm_score)+'</td>'+
         '<td class="mono">'+fmtInsightScore(x.evidence_rating_score)+'</td>'+
         '<td style="max-width:380px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td>'+
@@ -2199,7 +2212,15 @@ function renderInsightTable(rows,cols){
       var k=cols[j].key;
       var v=x[k];
       var cell;
-      if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score')cell=fmtInsightScore(v);
+      if(k==='evidence_post_url'){
+        var pu=typeof v==='string'?v.trim():'';
+        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">'+esc(pu.length>56?pu.slice(0,53)+'…':pu)+'</a>';
+        else cell='<span style="color:var(--muted)">—</span>';
+      }else if(k==='evidence_kind'){
+        var dk=typeof x.evidence_display_kind==='string'?x.evidence_display_kind.trim():'';
+        var rawK=typeof v==='string'?v:String(v||'');
+        cell=esc(dk||rawK);
+      }else if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score')cell=fmtInsightScore(v);
       else cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
       tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word"'+(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'?' class="mono"':'')+'>'+cell+'</td>';
     }
@@ -2592,6 +2613,8 @@ async function showBroadEvidenceRow(rowId){
   pre.textContent=JSON.stringify({
     id: row.id,
     evidence_kind: row.evidence_kind,
+    evidence_display_kind: row.evidence_display_kind || null,
+    evidence_post_url: row.evidence_post_url || null,
     sheet_name: row.sheet_name,
     row_index: row.row_index,
     dedupe_key: row.dedupe_key,
@@ -2619,6 +2642,7 @@ async function loadDeepImageTable(){
       {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
       {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'evidence_post_url',label:'Post URL'},
       {key:'insights_id',label:'Insight ID'},
       {key:'llm_model',label:'Model'},
       {key:'updated_at',label:'Updated'},
@@ -2654,6 +2678,7 @@ async function loadDeepVideoTable(){
       {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
       {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'evidence_post_url',label:'Post URL'},
       {key:'insights_id',label:'Insight ID'},
       {key:'llm_model',label:'Model'},
       {key:'updated_at',label:'Updated'},
@@ -2689,6 +2714,7 @@ async function loadDeepCarouselTable(){
       {key:'analysis_tier',label:'Tier'},
       {key:'evidence_kind',label:'Platform'},
       {key:'source_evidence_row_id',label:'Row ID'},
+      {key:'evidence_post_url',label:'Post URL'},
       {key:'insights_id',label:'Insight ID'},
       {key:'llm_model',label:'Model'},
       {key:'updated_at',label:'Updated'},

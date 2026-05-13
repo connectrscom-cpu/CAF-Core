@@ -38,7 +38,10 @@ import { computeHashtagLeaderboardForEvidenceImport } from "../services/hashtag-
 import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-insights.js";
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
+import { deriveEvidenceDisplayKind } from "../services/inputs-evidence-post-format.js";
+import { postUrlForTopPerformerPreview } from "../services/inputs-top-performer-qualifying-preview.js";
 import { getRtpSummaryForProject } from "../services/rtp-metrics.js";
+import type { EvidenceRowInsightEnrichedRow } from "../repositories/inputs-evidence-insights.js";
 import {
   bulkInsertInputsIdeas,
   getInputsIdeaListById,
@@ -48,6 +51,21 @@ import {
 } from "../repositories/inputs-idea-lists.js";
 import { synthesizeIdeasJsonFromInsightsLlm } from "../services/ideas-from-insights-llm.js";
 import { buildSignalPackFromIdeaList, type IdeaFormatLimits } from "../services/idea-list-to-signal-pack.js";
+
+function enrichEvidenceInsightRowsForApi(
+  rows: Array<EvidenceRowInsightEnrichedRow & { evidence_payload_json?: unknown }>
+): EvidenceRowInsightEnrichedRow[] {
+  return rows.map((row) => {
+    const raw = row.evidence_payload_json;
+    const payload =
+      raw != null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    const evidenceKind = String(row.evidence_kind ?? "");
+    const evidence_post_url = postUrlForTopPerformerPreview(evidenceKind, payload);
+    const evidence_display_kind = deriveEvidenceDisplayKind(evidenceKind, payload);
+    const { evidence_payload_json: _omit, ...rest } = row;
+    return { ...rest, evidence_post_url, evidence_display_kind };
+  });
+}
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -253,6 +271,9 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       // updated_desc already from SQL order for most branches; keep stable fallback
       rows.sort((a, b) => String(b.updated_at ?? "").localeCompare(String(a.updated_at ?? "")));
     }
+    const insightsOut = enrichEvidenceInsightRowsForApi(
+      rows as Array<EvidenceRowInsightEnrichedRow & { evidence_payload_json?: unknown }>
+    );
     const broadAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "broad_llm");
     const deepAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_deep");
     const videoAll = await countEvidenceRowInsightsByImportTier(db, params.data.import_id, "top_performer_video");
@@ -303,7 +324,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       sort,
       counts,
       counts_import: countsImport,
-      insights: rows,
+      insights: insightsOut,
     };
   });
 
@@ -498,7 +519,13 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         const rows = await listEvidenceRowsByIds(db, project.id, params.data.import_id, [params.data.row_id]);
         const row = rows[0] ?? null;
         if (!row) return reply.code(404).send({ ok: false, error: "not_found" });
-        return reply.send({ ok: true, row });
+        const pj = row.payload_json;
+        const payload =
+          pj != null && typeof pj === "object" && !Array.isArray(pj) ? (pj as Record<string, unknown>) : {};
+        const evidenceKind = String(row.evidence_kind ?? "");
+        const evidence_post_url = postUrlForTopPerformerPreview(evidenceKind, payload);
+        const evidence_display_kind = deriveEvidenceDisplayKind(evidenceKind, payload);
+        return reply.send({ ok: true, row: { ...row, evidence_post_url, evidence_display_kind } });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return reply.code(500).send({ ok: false, error: "server_error", message: msg });

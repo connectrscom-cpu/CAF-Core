@@ -4,12 +4,28 @@ import {
   finalizeHttpsImageUrlForOpenAiVision,
   isVideoLikeEvidence,
   normalizeRedditExternalImageHost,
+  parseHttpsImageUrlsFromEvidenceCell,
   pickPrimaryImageUrlForDeepAnalysis,
   sanitizeOneHttpsImageUrl,
   trimTrailingJunkFromImageUrl,
+  tryLenientSingleHttpsImageUrlFromSocialCdn,
 } from "./inputs-image-url-for-analysis.js";
 
 describe("inputs-image-url-for-analysis", () => {
+  it("parseHttpsImageUrlsFromEvidenceCell accepts a plain http:// image cell", () => {
+    expect(parseHttpsImageUrlsFromEvidenceCell("http://example.com/w.jpg", 3)).toEqual([
+      "https://example.com/w.jpg",
+    ]);
+  });
+
+  it("parseHttpsImageUrlsFromEvidenceCell falls back to lenient Instagram CDN /v/t… paths", () => {
+    const ig =
+      "https://scontent.cdninstagram.com/v/t51.2885-15/1234567890_9876543210_n?_nc_ht=scontent.cdninstagram.com";
+    expect(sanitizeOneHttpsImageUrl(ig)).toBeNull();
+    expect(tryLenientSingleHttpsImageUrlFromSocialCdn(ig)).toBeTruthy();
+    expect(parseHttpsImageUrlsFromEvidenceCell(ig, 2)).toEqual([ig]);
+  });
+
   it("skips TikTok entirely", () => {
     expect(pickPrimaryImageUrlForDeepAnalysis("tiktok_video", { url: "https://example.com/a.jpg" })).toBeNull();
   });

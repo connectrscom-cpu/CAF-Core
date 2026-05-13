@@ -271,7 +271,7 @@ async function resolveProject(db: Pool, slugParam: string | undefined): Promise<
     const projects = await listProjects(db);
     return projects[0] ?? null;
   }
-  return qOne<ProjectRow>(
+  const bySlug = await qOne<ProjectRow>(
     db,
     `SELECT id, slug, display_name, active, color, is_system
      FROM caf_core.projects
@@ -279,6 +279,19 @@ async function resolveProject(db: Pool, slugParam: string | undefined): Promise<
      LIMIT 1`,
     [slug]
   );
+  if (bySlug) return bySlug;
+  // Some clients bookmark `?project=<uuid>`; slug column never matches that.
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(slug)) {
+    return qOne<ProjectRow>(
+      db,
+      `SELECT id, slug, display_name, active, color, is_system
+       FROM caf_core.projects
+       WHERE id = $1::uuid
+       LIMIT 1`,
+      [slug]
+    );
+  }
+  return null;
 }
 
 // ── Shared HTML helpers ────────────────────────────────────────────────────
@@ -504,6 +517,52 @@ function statusBadge(status: string): string {
 // ── Route registration ─────────────────────────────────────────────────────
 
 export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps): void {
+
+  /**
+   * Legacy path: some browsers / saved pages requested `/static/processing/project-<id>` as a script.
+   * A JSON 404 body was executed as JavaScript and threw `SyntaxError: Invalid or unexpected token`.
+   * Document navigations redirect to `/admin/processing`; other requests get a tiny redirect stub.
+   */
+  app.get("/static/processing/*", async (request, reply) => {
+    const pathOnly = String(request.url || "").split("?")[0];
+    const m = pathOnly.match(/^\/static\/processing\/project-(.+)$/i);
+    if (!m) {
+      return reply.code(404).type("application/json").send({ message: "Not Found", error: "Not Found", statusCode: 404 });
+    }
+    let projectKey = m[1];
+    try {
+      projectKey = decodeURIComponent(projectKey);
+    } catch {
+      /* keep raw segment */
+    }
+    const target = projectKey
+      ? `/admin/processing?project=${encodeURIComponent(projectKey)}`
+      : "/admin/processing";
+
+    const dest = String((request.headers["sec-fetch-dest"] as string | undefined) ?? "");
+    const accept = String(request.headers.accept ?? "");
+    const js = `"use strict";window.location.replace(${JSON.stringify(target)});\n`;
+    // Script tags often send `Sec-Fetch-Dest: script` even when Accept is broad; prefer that over Accept.
+    if (dest === "script") {
+      return reply
+        .code(200)
+        .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        .type("application/javascript; charset=utf-8")
+        .send(js);
+    }
+    if (dest === "document" || dest === "iframe") {
+      return reply.redirect(target, 302);
+    }
+    if (accept.includes("text/html")) {
+      return reply.redirect(target, 302);
+    }
+
+    return reply
+      .code(200)
+      .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+      .type("application/javascript; charset=utf-8")
+      .send(js);
+  });
 
   // ── JSON API endpoints ──────────────────────────────────────────────
 
@@ -1841,7 +1900,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         active: true,
         labs_readonly: true,
         labs_short_description:
-          "Vision analysis for sampled video frames + transcript (analysis_tier=top_performer_video).",
+          "Vision + Storage: sampled video frames + transcript for OpenAI; optional verified source video (MP4/WebM/MKV) to Supabase when `video_url` / `source_video_url` exist (analysis_tier=top_performer_video).",
         labs_flow_description: "Processing: Top-performer enrichment — video frames.",
         system_prompt: TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
         user_prompt_template: TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,

@@ -22,6 +22,7 @@ import {
   pickPrimaryImageUrlForDeepAnalysis,
 } from "./inputs-image-url-for-analysis.js";
 import { isCarouselDeepEligible } from "./inputs-carousel-evidence-bundle.js";
+import { resolveBroadInsightsSampleGate, resolveTopPerformerRatingGate } from "./inputs-top-performer-rating-gate.js";
 
 const STEP = "inputs_top_performer_image_insight";
 
@@ -64,6 +65,16 @@ export interface RunDeepImageInsightsResult {
   /** Multi-slide carousels use `top_performer_carousel` instead of single-image deep. */
   skipped_carousel: number;
   deep_insights_total: number;
+  rating_gate_active?: boolean;
+  rating_top_fraction?: number;
+  rated_rows_in_import?: number;
+  rating_gate_cap?: number;
+  skipped_rating_gate?: number;
+  rating_gate_disabled?: string;
+  broad_insights_gate_active?: boolean;
+  broad_llm_rows_in_import?: number;
+  skipped_broad_insights_gate?: number;
+  broad_insights_gate_disabled?: string;
 }
 
 function deepModel(profile: { synth_model: string; criteria_json: Record<string, unknown> }): string {
@@ -132,6 +143,9 @@ export async function runDeepImageInsightsForImport(
   const minPre = deepMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = deepMaxRows(criteria, opts.max_rows);
 
+  const ratingGate = await resolveTopPerformerRatingGate(db, project.id, importId, criteria);
+  const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
+
   const existingDeep = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_deep");
 
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
@@ -147,6 +161,8 @@ export async function runDeepImageInsightsForImport(
   let skippedVideo = 0;
   let skippedNoImage = 0;
   let skippedCarousel = 0;
+  let skippedRatingGate = 0;
+  let skippedBroadInsightsGate = 0;
 
   for (const r of dbRows) {
     if (r.evidence_kind === "tiktok_video") {
@@ -165,6 +181,14 @@ export async function runDeepImageInsightsForImport(
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
     if (ev.pre_llm_score < minPre) continue;
+    if (broadGate.active && !broadGate.idSet.has(r.id)) {
+      skippedBroadInsightsGate++;
+      continue;
+    }
+    if (ratingGate.active && !ratingGate.idSet.has(r.id)) {
+      skippedRatingGate++;
+      continue;
+    }
     const imageUrl = pickPrimaryImageUrlForDeepAnalysis(r.evidence_kind, payload);
     if (!imageUrl) {
       skippedNoImage++;
@@ -258,5 +282,15 @@ export async function runDeepImageInsightsForImport(
     skipped_video: skippedVideo,
     skipped_carousel: skippedCarousel,
     deep_insights_total: deepTotal,
+    rating_gate_active: ratingGate.active,
+    rating_top_fraction: ratingGate.fraction,
+    rated_rows_in_import: ratingGate.rated_row_count,
+    rating_gate_cap: ratingGate.gate_row_cap,
+    skipped_rating_gate: skippedRatingGate,
+    rating_gate_disabled: ratingGate.disabled,
+    broad_insights_gate_active: broadGate.active,
+    broad_llm_rows_in_import: broadGate.broad_llm_row_count,
+    skipped_broad_insights_gate: skippedBroadInsightsGate,
+    broad_insights_gate_disabled: broadGate.disabled,
   };
 }

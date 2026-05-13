@@ -74,14 +74,48 @@ export function sanitizeOneHttpsImageUrl(raw: string): string | null {
   return extractHttpsImageUrlsFromLooseString(raw, 1)[0] ?? null;
 }
 
+/**
+ * When strict URL regex misses (some CDN paths), still accept obvious IG / FB / TikTok **image** URLs
+ * for vision + frame extraction — mirrors the Instagram `cdninstagram` escape hatch in
+ * `pickPrimaryImageUrlForDeepAnalysis`.
+ */
+export function tryLenientSingleHttpsImageUrlFromSocialCdn(raw: string): string | null {
+  const u0 = finalizeHttpsImageUrlForOpenAiVision(raw);
+  if (!/^https:\/\//i.test(u0)) return null;
+  if (sanitizeOneHttpsImageUrl(u0)) return null;
+  let u: URL;
+  try {
+    u = new URL(u0);
+  } catch {
+    return null;
+  }
+  const h = u.hostname.toLowerCase();
+  const socialCdn =
+    h.includes("cdninstagram") ||
+    h.endsWith(".cdninstagram.com") ||
+    h.includes("fbcdn.net") ||
+    h.includes("tiktokcdn.com") ||
+    h.includes("tiktokcdn-us.com") ||
+    h.includes("tiktokcdn-eu.com");
+  if (!socialCdn) return null;
+  if (/\/instagram\.com\/(p|reel|tv)\//i.test(u0)) return null;
+  const p = u.pathname + u.search;
+  if (IMAGE_EXT.test(p)) return u0;
+  // Instagram CDN media paths without a tidy trailing ext match for the strict segment regex
+  if (/\/v\/t\d+/i.test(u.pathname)) return u0;
+  // TikTok object-store image URLs
+  if (h.includes("tiktokcdn") && /\/obj\//i.test(u.pathname)) return u0;
+  return null;
+}
+
 /** True when `raw` looks like two+ URLs pasted together (e.g. `...png][https://...`). */
 function looksLikeMultipleImageUrlsPasted(raw: string): boolean {
   return /\]\s*\[?\s*https?:\/\//i.test(raw);
 }
 
 /**
- * HTTPS image URLs from one evidence field cell. Matches prior behavior for arrays: plain
- * `http://…` cells are skipped; concatenated / pasted multi-URLs are split and normalized to HTTPS.
+ * HTTPS image URLs from one evidence field cell. Plain `http://…` cells normalize to `https://…`;
+ * concatenated / pasted multi-URLs are split the same way as loose-string extraction.
  */
 export function parseHttpsImageUrlsFromEvidenceCell(raw: string, max: number): string[] {
   const t = raw.trim();
@@ -89,9 +123,12 @@ export function parseHttpsImageUrlsFromEvidenceCell(raw: string, max: number): s
   if (looksLikeMultipleImageUrlsPasted(t)) {
     return extractHttpsImageUrlsFromLooseString(t, max);
   }
-  if (/^https:\/\//i.test(t)) {
+  // Single-cell URLs are often `http://…` from scrapers; normalize like loose-string extraction.
+  if (/^https?:\/\//i.test(t)) {
     const one = sanitizeOneHttpsImageUrl(t);
-    return one ? [one] : [];
+    if (one) return [one];
+    const lenient = tryLenientSingleHttpsImageUrlFromSocialCdn(t);
+    return lenient ? [lenient] : [];
   }
   return [];
 }

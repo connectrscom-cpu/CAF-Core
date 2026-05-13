@@ -3,11 +3,16 @@
  * to Supabase Storage (magic-byte sniff → correct `Content-Type` and extension; bucket keys under
  * `top_performer_inspection/`).
  *
+ * Optional `http_proxy_url` (same as Instagram embed): undici {@link ProxyAgent} so Core can reach
+ * Instagram CDN URLs from datacenter egress when direct `fetch` returns 403 / HTML / tiny placeholders.
+ *
  * For `top_performer_video`, optionally also archives **one** verified source video (MP4 / WebM / Matroska)
  * from `source_video_url` when enabled.
  */
 
+import type { Dispatcher } from "undici";
 import type { AppConfig } from "../config.js";
+import { tryCreateInstagramEmbedProxyAgent } from "./inputs-instagram-embed-carousel-resolver.js";
 import { getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
 
 export interface TopPerformerArchivedMediaItem {
@@ -156,7 +161,8 @@ async function fetchRemoteImageFile(
   url: string,
   timeoutMs: number,
   maxBytes: number,
-  minAcceptBytes?: number
+  minAcceptBytes?: number,
+  dispatcher?: Dispatcher
 ): Promise<{ buf: Buffer; contentType: string; ext: string }> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -164,6 +170,7 @@ async function fetchRemoteImageFile(
     const res = await fetch(url, {
       signal: ac.signal,
       redirect: "follow",
+      ...(dispatcher ? { dispatcher } : {}),
       headers: {
         Accept: "image/*,*/*;q=0.8",
         "User-Agent":
@@ -193,7 +200,8 @@ async function fetchRemoteImageFile(
 async function fetchRemoteVideoFile(
   url: string,
   timeoutMs: number,
-  maxBytes: number
+  maxBytes: number,
+  dispatcher?: Dispatcher
 ): Promise<{ buf: Buffer; contentType: string; ext: string }> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), timeoutMs);
@@ -201,6 +209,7 @@ async function fetchRemoteVideoFile(
     const res = await fetch(url, {
       signal: ac.signal,
       redirect: "follow",
+      ...(dispatcher ? { dispatcher } : {}),
       headers: {
         Accept: "video/*,*/*;q=0.8",
         "User-Agent":
@@ -238,6 +247,8 @@ export async function archiveTopPerformerVisionMedia(
     /** When tier is `top_performer_video` and this flag is true, download + upload this URL after frames. */
     archive_source_video?: boolean;
     source_video_url?: string | null;
+    /** HTTP CONNECT proxy (e.g. `CAF_INSTAGRAM_EMBED_HTTP_PROXY`) for slide/frame/source CDN fetches. */
+    http_proxy_url?: string | null;
   }
 ): Promise<TopPerformerArchiveMediaResult> {
   const base: TopPerformerArchiveMediaResult = {
@@ -267,76 +278,87 @@ export async function archiveTopPerformerVisionMedia(
   const row = String(args.sourceEvidenceRowId).replace(/\D/g, "") || "0";
   const prefix = `top_performer_inspection/${slug}/${imp}/${args.tier}/row_${row}`;
 
-  for (let i = 0; i < args.urls.length; i++) {
-    const source_url = args.urls[i];
-    const item: TopPerformerArchivedMediaItem = {
-      index: i,
-      role: args.role,
-      source_url,
-      bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
-      object_path: "",
-      public_url: null,
-      content_type: "",
-      bytes: 0,
-      ok: false,
-    };
-    try {
-      const minCarouselBytes =
-        args.tier === "top_performer_carousel" ? config.CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE : undefined;
-      const { buf, contentType, ext } = await fetchRemoteImageFile(
+  const archiveProxyAgent = tryCreateInstagramEmbedProxyAgent(args.http_proxy_url);
+  try {
+    for (let i = 0; i < args.urls.length; i++) {
+      const source_url = args.urls[i];
+      const item: TopPerformerArchivedMediaItem = {
+        index: i,
+        role: args.role,
         source_url,
-        config.CAF_TOP_PERFORMER_ARCHIVE_FETCH_TIMEOUT_MS,
-        config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_PER_FILE,
-        minCarouselBytes
-      );
-      const name =
-        args.role === "carousel_slide" ? `slide_${String(i + 1).padStart(2, "0")}` : `frame_${String(i + 1).padStart(2, "0")}`;
-      const objectPathRel = `${prefix}/${name}${ext}`;
-      const up = await uploadBuffer(config, objectPathRel, buf, contentType);
-      item.bucket = up.bucket;
-      item.object_path = up.object_path;
-      item.public_url = up.public_url;
-      item.content_type = contentType;
-      item.bytes = buf.length;
-      item.ok = true;
-    } catch (e) {
-      item.error = e instanceof Error ? e.message : String(e);
+        bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
+        object_path: "",
+        public_url: null,
+        content_type: "",
+        bytes: 0,
+        ok: false,
+      };
+      try {
+        const minCarouselBytes =
+          args.tier === "top_performer_carousel" ? config.CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE : undefined;
+        const { buf, contentType, ext } = await fetchRemoteImageFile(
+          source_url,
+          config.CAF_TOP_PERFORMER_ARCHIVE_FETCH_TIMEOUT_MS,
+          config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_PER_FILE,
+          minCarouselBytes,
+          archiveProxyAgent
+        );
+        const name =
+          args.role === "carousel_slide" ? `slide_${String(i + 1).padStart(2, "0")}` : `frame_${String(i + 1).padStart(2, "0")}`;
+        const objectPathRel = `${prefix}/${name}${ext}`;
+        const up = await uploadBuffer(config, objectPathRel, buf, contentType);
+        item.bucket = up.bucket;
+        item.object_path = up.object_path;
+        item.public_url = up.public_url;
+        item.content_type = contentType;
+        item.bytes = buf.length;
+        item.ok = true;
+      } catch (e) {
+        item.error = e instanceof Error ? e.message : String(e);
+      }
+      base.items.push(item);
     }
-    base.items.push(item);
-  }
 
-  if (wantsSourceVideo) {
-    const idx = args.urls.length;
-    const item: TopPerformerArchivedMediaItem = {
-      index: idx,
-      role: "source_video",
-      source_url: srcUrl,
-      bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
-      object_path: "",
-      public_url: null,
-      content_type: "",
-      bytes: 0,
-      ok: false,
-    };
+    if (wantsSourceVideo) {
+      const idx = args.urls.length;
+      const item: TopPerformerArchivedMediaItem = {
+        index: idx,
+        role: "source_video",
+        source_url: srcUrl,
+        bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
+        object_path: "",
+        public_url: null,
+        content_type: "",
+        bytes: 0,
+        ok: false,
+      };
+      try {
+        const { buf, contentType, ext } = await fetchRemoteVideoFile(
+          srcUrl,
+          config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
+          config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
+          archiveProxyAgent
+        );
+        const objectPathRel = `${prefix}/source${ext}`;
+        const up = await uploadBuffer(config, objectPathRel, buf, contentType);
+        item.bucket = up.bucket;
+        item.object_path = up.object_path;
+        item.public_url = up.public_url;
+        item.content_type = contentType;
+        item.bytes = buf.length;
+        item.ok = true;
+      } catch (e) {
+        item.error = e instanceof Error ? e.message : String(e);
+      }
+      base.items.push(item);
+    }
+
+    return base;
+  } finally {
     try {
-      const { buf, contentType, ext } = await fetchRemoteVideoFile(
-        srcUrl,
-        config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
-        config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO
-      );
-      const objectPathRel = `${prefix}/source${ext}`;
-      const up = await uploadBuffer(config, objectPathRel, buf, contentType);
-      item.bucket = up.bucket;
-      item.object_path = up.object_path;
-      item.public_url = up.public_url;
-      item.content_type = contentType;
-      item.bytes = buf.length;
-      item.ok = true;
-    } catch (e) {
-      item.error = e instanceof Error ? e.message : String(e);
+      await archiveProxyAgent?.close();
+    } catch {
+      /* ignore */
     }
-    base.items.push(item);
   }
-
-  return base;
 }

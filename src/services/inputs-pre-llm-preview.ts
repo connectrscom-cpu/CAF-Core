@@ -4,11 +4,14 @@
 import type { Pool } from "pg";
 import { listEvidenceRowsByImportAndKind } from "../repositories/inputs-evidence.js";
 import { extractEvidenceDisplayFields } from "./inputs-evidence-display.js";
+import { deriveEvidenceDisplayKind } from "./inputs-evidence-post-format.js";
 import { evaluatePreLlmRow, mergePreLlmConfig } from "./inputs-pre-llm-rank.js";
 
 export interface PreLlmEvidencePreviewRow {
   id: string;
   evidence_kind: string;
+  /** Derived from payload (e.g. `instagram_carousel` vs `instagram_post`). */
+  evidence_display_kind: string;
   pre_llm_score: number;
   profile_min_score: number;
   dropped_reason: string | null;
@@ -71,6 +74,7 @@ export async function getPreLlmEvidencePreview(
     return {
       id: r.id,
       evidence_kind: r.evidence_kind,
+      evidence_display_kind: deriveEvidenceDisplayKind(r.evidence_kind, payload),
       pre_llm_score: ev.pre_llm_score,
       profile_min_score: ev.profile_min_score,
       dropped_reason: ev.dropped_reason,

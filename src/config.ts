@@ -506,6 +506,19 @@ const envSchema = z.object({
   CAF_INSTAGRAM_EMBED_MAX_FETCHES_PER_IMPORT: z.coerce.number().int().min(0).max(2000).default(400),
   /** Pause between embed GETs (ms); 0 disables. */
   CAF_INSTAGRAM_EMBED_THROTTLE_MS: z.coerce.number().int().min(0).max(5000).default(35),
+  /**
+   * Optional **HTTP(S) CONNECT** proxy URL for Instagram **embed** fetches only (not general Core egress).
+   * Use when direct datacenter IPs get login-wall HTML with no `display_url`. Example: `http://user:pass@host:8888`.
+   * Per project: `criteria_json.inputs_insights.instagram_embed_http_proxy` (non-empty string overrides env).
+   * Implemented with undici `ProxyAgent` (HTTP proxy to reach `https://www.instagram.com/...`; not SOCKS5 here).
+   */
+  CAF_INSTAGRAM_EMBED_HTTP_PROXY: z
+    .string()
+    .optional()
+    .transform((v) => {
+      const s = v?.trim();
+      return s ? s : undefined;
+    }),
 
   /**
    * **auto** (default): archive carousel slides / video frames to Supabase when `SUPABASE_URL` + service role exist,

@@ -39,6 +39,7 @@ export const SUPABASE_ASSET_TOP_LEVEL_PREFIXES = [
   "subtitles",
   "videos",
   "videos_edit",
+  "top_performer_inspection",
 ] as const;
 
 const PREFIX_INIT_MARKER = "__caf_storage_init.txt";
