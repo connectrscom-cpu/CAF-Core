@@ -19,6 +19,12 @@ describe("parseCarouselSlideUrls", () => {
     expect(urls).toEqual(["https://a/1.jpg", "https://x/b.jpg", "https://a/2.jpg"]);
   });
 
+  it("splits pipe-delimited URLs in a single carousel_slide_urls string cell", () => {
+    const u1 = "https://scontent.cdninstagram.com/v/t51/x1.jpg?_nc_sid=1";
+    const u2 = "https://scontent.cdninstagram.com/v/t51/x2.jpg?_nc_sid=2";
+    expect(parseCarouselSlideUrls({ carousel_slide_urls: `${u1}|${u2}` }, 6)).toEqual([u1, u2]);
+  });
+
   it("falls back to sidecar_image_urls", () => {
     expect(
       parseCarouselSlideUrls({

@@ -3,9 +3,16 @@
  * HTML for a permalink. Used when ingest has `media_type: Sidecar` (or similar) but no child
  * `display_url` list in `payload_json`.
  *
+ * Tries multiple embed URL shapes (`/embed/`, `/embed/captioned/`, `/embed/?omitscript=true`) and
+ * merges extracted CDN URLs — Instagram sometimes serves richer JSON on one variant.
+ *
  * Instagram may return login walls or empty markup from datacenter IPs — treat as optional enrichment.
  * Optional **HTTP CONNECT** proxy: `CAF_INSTAGRAM_EMBED_HTTP_PROXY` or `criteria_json.inputs_insights.instagram_embed_http_proxy`
  * (undici {@link ProxyAgent}; embed HTML fetches and **top-performer slide/frame archive** downloads to Supabase).
+ *
+ * **Meta Graph `instagram_oembed`:** can return `thumbnail_url` / embed HTML for public posts with an app token,
+ * but Meta’s terms restrict using that content for purposes other than **front-end embedding** — do not wire
+ * oEmbed into this **top-performer / analytics** pipeline without legal review ([Instagram oEmbed docs](https://developers.facebook.com/docs/instagram-platform/oembed)).
  *
  * **Two modes:** **permissive** (default for **eligibility / vision merge**) keeps CDN URLs that strict
  * mode drops (e.g. small `/s150x150/` paths) so `/embed/` can still yield ≥2 slide URLs when JSON is thin.
@@ -120,13 +127,37 @@ export function scoreInstagramCarouselCdnUrl(u: string): number {
 
 /** Rough signals on embed HTML (datacenter login walls vs JSON-rich responses). */
 export function instagramEmbedHtmlDiagnostics(html: string): {
+  /** Legacy substring check (Instagram may omit this key while still shipping other JSON). */
   html_contains_display_url: boolean;
+  /** Broader hints that the body may carry extractable media (not proof extraction succeeded). */
+  html_has_embed_media_signals: boolean;
+  /** Body mentions slide-relevant Instagram CDNs (excludes `static.cdninstagram` bundles that often appear on login/minimal pages). */
+  html_has_cdninstagram_host: boolean;
   login_wall_likely: boolean;
 } {
-  const head = html.slice(0, 20_000);
+  const head = html.slice(0, 50_000);
   const low = head.toLowerCase();
+  /** Avoid counting `static.cdninstagram.com` script/sprites as “has CDN slides”. */
+  const cdnHost =
+    /\bscontent[\w.-]*\.cdninstagram\.com\b/i.test(html) ||
+    /\.fbcdn\.net\/[^\s"'<>]+\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]*)?/i.test(html) ||
+    /https:\/\/(?!static\.cdninstagram\.com)[a-z0-9.-]*cdninstagram\.com\/[^\s"'<>]+\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]*)?/i.test(
+      html
+    );
+  const mediaSignals =
+    low.includes("display_url") ||
+    low.includes("thumbnail_url") ||
+    low.includes("thumbnail_src") ||
+    low.includes("edge_sidecar_to_children") ||
+    low.includes("carousel_media") ||
+    low.includes("image_versions2") ||
+    low.includes("displayresources") ||
+    (low.includes("og:image") && cdnHost) ||
+    (low.includes("twitter:image") && cdnHost);
   return {
-    html_contains_display_url: html.includes("display_url"),
+    html_contains_display_url: low.includes("display_url"),
+    html_has_embed_media_signals: mediaSignals,
+    html_has_cdninstagram_host: cdnHost,
     login_wall_likely:
       /\/accounts\/login|\/challenge\//i.test(head) ||
       (/log\s*in/i.test(low) && /instagram/i.test(low)),
@@ -244,11 +275,46 @@ export interface InstagramEmbedFetchOutcome {
   http_ok: boolean;
   html_bytes: number;
   html_contains_display_url: boolean;
+  html_has_embed_media_signals: boolean;
+  html_has_cdninstagram_host: boolean;
   login_wall_likely: boolean;
 }
 
-export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
-  postUrl: string,
+/** `/p|reel|tv/{shortcode}/embed/…` URL variants (standard, captioned, omitscript). */
+export function instagramPermalinkEmbedFetchUrls(postUrl: string, shortcode: string): string[] {
+  const sc = encodeURIComponent(shortcode);
+  const u = postUrl.toLowerCase();
+  const kind = u.includes("/reel/") ? "reel" : u.includes("/tv/") ? "tv" : "p";
+  const base = `https://www.instagram.com/${kind}/${sc}`;
+  return [`${base}/embed/`, `${base}/embed/captioned/`, `${base}/embed/?omitscript=true`];
+}
+
+function mergeInstagramEmbedFetchOutcomes(
+  a: InstagramEmbedFetchOutcome,
+  b: InstagramEmbedFetchOutcome,
+  maxSlides: number
+): InstagramEmbedFetchOutcome {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const raw of [...a.urls, ...b.urls]) {
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    urls.push(raw);
+    if (urls.length >= maxSlides) break;
+  }
+  return {
+    urls,
+    http_ok: a.http_ok || b.http_ok,
+    html_bytes: Math.max(a.html_bytes, b.html_bytes),
+    html_contains_display_url: a.html_contains_display_url || b.html_contains_display_url,
+    html_has_embed_media_signals: a.html_has_embed_media_signals || b.html_has_embed_media_signals,
+    html_has_cdninstagram_host: a.html_has_cdninstagram_host || b.html_has_cdninstagram_host,
+    login_wall_likely: a.login_wall_likely || b.login_wall_likely,
+  };
+}
+
+async function fetchOneInstagramEmbedPage(
+  embedPageUrl: string,
   opts: { maxSlides: number; timeoutMs: number; maxBytes: number; dispatcher?: Dispatcher }
 ): Promise<InstagramEmbedFetchOutcome> {
   const empty = (http_ok: boolean): InstagramEmbedFetchOutcome => ({
@@ -256,12 +322,10 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
     http_ok,
     html_bytes: 0,
     html_contains_display_url: false,
+    html_has_embed_media_signals: false,
+    html_has_cdninstagram_host: false,
     login_wall_likely: false,
   });
-
-  const shortcode = extractInstagramPermalinkShortcode(postUrl);
-  if (!shortcode) return empty(false);
-  const embedUrl = `https://www.instagram.com/p/${encodeURIComponent(shortcode)}/embed/`;
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), opts.timeoutMs);
   try {
@@ -278,7 +342,7 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
       },
     };
     if (opts.dispatcher) init.dispatcher = opts.dispatcher;
-    const res = await fetch(embedUrl, init);
+    const res = await fetch(embedPageUrl, init);
     if (!res.ok) return empty(false);
     const text = await res.text();
     const html = text.length > opts.maxBytes ? text.slice(0, opts.maxBytes) : text;
@@ -289,6 +353,8 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
       http_ok: true,
       html_bytes: html.length,
       html_contains_display_url: diag.html_contains_display_url,
+      html_has_embed_media_signals: diag.html_has_embed_media_signals,
+      html_has_cdninstagram_host: diag.html_has_cdninstagram_host,
       login_wall_likely: diag.login_wall_likely,
     };
   } catch {
@@ -296,6 +362,33 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
   } finally {
     clearTimeout(t);
   }
+}
+
+export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
+  postUrl: string,
+  opts: { maxSlides: number; timeoutMs: number; maxBytes: number; dispatcher?: Dispatcher }
+): Promise<InstagramEmbedFetchOutcome> {
+  const empty = (http_ok: boolean): InstagramEmbedFetchOutcome => ({
+    urls: [],
+    http_ok,
+    html_bytes: 0,
+    html_contains_display_url: false,
+    html_has_embed_media_signals: false,
+    html_has_cdninstagram_host: false,
+    login_wall_likely: false,
+  });
+
+  const shortcode = extractInstagramPermalinkShortcode(postUrl);
+  if (!shortcode) return empty(false);
+
+  const urlsToTry = instagramPermalinkEmbedFetchUrls(postUrl, shortcode);
+  let acc: InstagramEmbedFetchOutcome | null = null;
+  for (const embedPageUrl of urlsToTry) {
+    const one = await fetchOneInstagramEmbedPage(embedPageUrl, opts);
+    acc = acc == null ? one : mergeInstagramEmbedFetchOutcomes(acc, one, opts.maxSlides);
+    if (acc.http_ok && acc.urls.length >= 2) break;
+  }
+  return acc ?? empty(false);
 }
 
 /** Returns {@link fetchInstagramCarouselUrlsFromEmbedDetailed} `.urls` only. */

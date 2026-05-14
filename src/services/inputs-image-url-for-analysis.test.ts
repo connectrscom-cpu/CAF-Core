@@ -26,6 +26,12 @@ describe("inputs-image-url-for-analysis", () => {
     expect(parseHttpsImageUrlsFromEvidenceCell(ig, 2)).toEqual([ig]);
   });
 
+  it("parseHttpsImageUrlsFromEvidenceCell splits pipe-delimited CDN URLs (XLSX / export cells)", () => {
+    const a = "https://scontent.cdninstagram.com/a.jpg?x=1";
+    const b = "https://scontent.cdninstagram.com/b.jpg?y=2";
+    expect(parseHttpsImageUrlsFromEvidenceCell(`${a}|${b}`, 8)).toEqual([a, b]);
+  });
+
   it("skips TikTok entirely", () => {
     expect(pickPrimaryImageUrlForDeepAnalysis("tiktok_video", { url: "https://example.com/a.jpg" })).toBeNull();
   });

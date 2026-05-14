@@ -27,8 +27,9 @@ import { synthesizeIdeasJsonFromInsightsLlm } from "./ideas-from-insights-llm.js
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
-import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
+import { getInsightRowUuidsByInsightsIds, backfillTopPerformerInsightPerformanceReviews } from "../repositories/inputs-evidence-insights.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
+import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
@@ -251,6 +252,8 @@ ${JSON.stringify(payload, null, 0)}`;
     }
   }
 
+  await backfillTopPerformerInsightPerformanceReviews(db, project.id, importId);
+
   let pool = await listTopRatedRowsForSynth(db, project.id, importId, minScore, maxIdeas * 2);
   if (pool.length === 0) {
     pool = await listTopRatedRowsForSynth(db, project.id, importId, 0, Math.min(maxIdeas * 2, 40));
@@ -330,6 +333,10 @@ ${JSON.stringify(synthInput, null, 0)}`;
     max_rows: 5000,
     limit: 120,
   });
+  const visualGuidelinesPack = await buildVisualGuidelinesPackForImport(db, project.id, importId, {
+    max_insights_scan: 2000,
+    max_entries: 48,
+  });
   const derived_globals_json: Record<string, unknown> = {
     from_inputs_evidence_import_id: importId,
     inputs_stats: stats,
@@ -337,6 +344,7 @@ ${JSON.stringify(synthInput, null, 0)}`;
     ideas_count: ideasJson.length,
     hashtag_leaderboard_v1: hashtagStats.leaderboard,
     hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
+    visual_guidelines_pack_v1: visualGuidelinesPack,
     ideas_from_insights_llm: {
       context_insights_used: ideasLlm.context_insights_used,
       top_performer_rows_in_context: ideasLlm.top_performer_rows_in_context,

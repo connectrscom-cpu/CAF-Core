@@ -481,11 +481,12 @@ const envSchema = z.object({
   EDITORIAL_ANALYSIS_CRON_INITIAL_DELAY_MS: z.coerce.number().int().min(0).max(3_600_000).default(120_000),
 
   /**
-   * **Default on:** top-performer carousel may HTTP-fetch `instagram.com/p/{shortcode}/embed/` and
-   * extract CDN image links when `payload_json` lacks child slide URLs but the row looks like a
-   * carousel (`Sidecar`, `img_index`, …). Set `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0` (or `false` /
-   * `no` / `off`) to disable globally. Instagram may block datacenters — prefer `carousel_slide_urls`
-   * in ingest when you need reliability.
+   * **Default on:** top-performer carousel may HTTP-fetch Instagram embed HTML (`/embed/`, then
+   * `/embed/captioned/`, `/embed/?omitscript=true` — merged) and extract CDN image links when
+   * `payload_json` lacks child slide URLs but the row looks like a carousel (`Sidecar`, `img_index`, …).
+   * Set `CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0` (or `false` / `no` / `off`) to disable globally. Instagram may
+   * block datacenters — prefer `carousel_slide_urls` in ingest when you need reliability, or
+   * `CAF_INSTAGRAM_EMBED_HTTP_PROXY` for CONNECT egress.
    * Per tenant: `criteria_json.inputs_insights.instagram_embed_carousel_fetch` — explicit `false` /
    * `"false"` / `"0"` disables even when env default is on; `true` / `"true"` / `"1"` forces on.
    */

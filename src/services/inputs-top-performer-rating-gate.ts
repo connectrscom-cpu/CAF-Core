@@ -9,7 +9,31 @@ import type { Pool } from "pg";
 import { listEvidenceRowInsightIdsByImportTier } from "../repositories/inputs-evidence-insights.js";
 import { listTopFractionRatedEvidenceRowIds } from "../repositories/inputs-evidence.js";
 
-export type TopPerformerRatingGateDisabled = "none" | "criteria" | "no_rated_rows";
+export type TopPerformerRatingGateDisabled = "none" | "criteria" | "no_rated_rows" | "request";
+
+/** Optional per-request overrides for `POST …/run-deep-*-insights` bodies (does not mutate the processing profile). */
+export type TopPerformerRatingGateOverrides = {
+  /** When true, the rating gate is inactive for this run (same effect as `criteria_json.top_performer.disable_rating_percentile_gate`). */
+  disable_rating_percentile_gate?: boolean;
+  /** Fraction of rated rows to keep (e.g. 0.05 = top 5%). Overrides `criteria_json.top_performer.rating_top_fraction` when set. */
+  rating_top_fraction?: number;
+};
+
+/** Maps optional `run-deep-*-insights` POST fields into gate overrides (undefined = use profile only). */
+export function buildTopPerformerRatingGateRequestOverrides(opts: {
+  rating_top_fraction?: number;
+  disable_rating_percentile_gate?: boolean;
+}): TopPerformerRatingGateOverrides | undefined {
+  const o: TopPerformerRatingGateOverrides = {};
+  if (opts.disable_rating_percentile_gate === true) {
+    o.disable_rating_percentile_gate = true;
+  }
+  if (typeof opts.rating_top_fraction === "number" && Number.isFinite(opts.rating_top_fraction)) {
+    o.rating_top_fraction = opts.rating_top_fraction;
+  }
+  if (o.disable_rating_percentile_gate != null || o.rating_top_fraction != null) return o;
+  return undefined;
+}
 
 export type BroadInsightsSampleGateDisabled = "none" | "criteria" | "no_broad_rows";
 
@@ -60,11 +84,22 @@ export async function resolveTopPerformerRatingGate(
   db: Pool,
   projectId: string,
   importId: string,
-  criteria: Record<string, unknown>
+  criteria: Record<string, unknown>,
+  overrides?: TopPerformerRatingGateOverrides | null
 ): Promise<ResolvedTopPerformerRatingGate> {
   const tpRaw = criteria.top_performer;
   const tp =
     tpRaw && typeof tpRaw === "object" && !Array.isArray(tpRaw) ? (tpRaw as Record<string, unknown>) : {};
+  if (overrides?.disable_rating_percentile_gate === true) {
+    return {
+      active: false,
+      fraction: 0,
+      rated_row_count: 0,
+      gate_row_cap: 0,
+      idSet: new Set(),
+      disabled: "request",
+    };
+  }
   if (tp.disable_rating_percentile_gate === true) {
     return {
       active: false,
@@ -75,7 +110,7 @@ export async function resolveTopPerformerRatingGate(
       disabled: "criteria",
     };
   }
-  const rawFrac = tp.rating_top_fraction;
+  const rawFrac = overrides?.rating_top_fraction ?? tp.rating_top_fraction;
   let fraction = 0.05;
   if (typeof rawFrac === "number" && Number.isFinite(rawFrac)) {
     fraction = rawFrac;

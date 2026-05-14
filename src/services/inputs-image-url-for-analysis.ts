@@ -7,9 +7,10 @@
 
 const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i;
 
-/** One https(s) image URL segment; excludes `[` `]` so `...png][https://...` splits cleanly. */
+/** One https(s) image URL segment; excludes `[` `]` so `...png][https://...` splits cleanly.
+ * Query segment excludes `|` and newlines so `...jpg?...|https://...` cannot merge into one fake URL (XLSX exports). */
 const HTTPS_IMAGE_URL_SEGMENT = new RegExp(
-  String.raw`https?:\/\/[^\s"'<>[\]]+\.(?:jpe?g|png|gif|webp|avif)(?:\?[^\s"'<>[\]]*)?`,
+  String.raw`https?:\/\/[^\s"'<>[\]|]+\.(?:jpe?g|png|gif|webp|avif)(?:\?[^|\r\n\s"'<>[\]]*)?`,
   "gi"
 );
 
@@ -121,6 +122,10 @@ export function parseHttpsImageUrlsFromEvidenceCell(raw: string, max: number): s
   const t = raw.trim();
   if (!t || max <= 0) return [];
   if (looksLikeMultipleImageUrlsPasted(t)) {
+    return extractHttpsImageUrlsFromLooseString(t, max);
+  }
+  const httpsCount = (t.match(/https:\/\//gi) ?? []).length;
+  if (httpsCount >= 2 && /\|/.test(t)) {
     return extractHttpsImageUrlsFromLooseString(t, max);
   }
   // Single-cell URLs are often `http://…` from scrapers; normalize like loose-string extraction.

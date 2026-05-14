@@ -72,6 +72,15 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <pre id="inspect-api-pre" style="font-size:11px;background:var(--card);padding:10px;border-radius:8px;max-height:460px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);margin:0;color:var(--text)">Click a button above.</pre>
         </details>
+        <details id="operator-read-lens" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600">Operator lens — readable evidence &amp; insights</summary>
+          <p class="runs-ops-hint" style="margin:8px 0 10px">Uses the normalized read APIs (<span class="mono">GET /v1/evidence/…</span> and <span class="mono">GET /v1/insights/…</span>) — structured fields instead of raw workbook JSON. Select an import first.</p>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
+            <button type="button" class="btn btn-sm" id="btn-op-lens-evidence">Load evidence (readable)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-op-lens-insights">Load insights (readable)</button>
+          </div>
+          <div id="op-lens-out" class="runs-ops-hint" style="min-height:2em">—</div>
+        </details>
         <div id="panel-evidence" style="padding:12px 0 0">
           <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px">
             <div style="flex:1;min-width:280px">
@@ -235,15 +244,25 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, Instagram only, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>, Instagram / TikTok / Facebook only). After your pre-LLM cutoff, vision defaults to rows that already have <strong><span class="mono">broad_llm</span> insights</strong> (same cohort as broad insights). It can also restrict to the <strong>top fraction of rated performers</strong> (<span class="mono">rating_score</span>), default top 5% via <span class="mono">criteria_json.top_performer.rating_top_fraction</span>. Opt out: <span class="mono">disable_broad_insights_align_gate</span> / <span class="mono">disable_rating_percentile_gate</span>. Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>. <strong>Archive to Storage</strong>: verified <strong>image</strong> slide/frame files (JPEG/PNG/WebP/GIF/AVIF) and, for <span class="mono">top_performer_video</span>, one verified <strong>source video</strong> (MP4/WebM/MKV; <span class="mono">…/source.ext</span>) when <span class="mono">video_url</span> / <span class="mono">source_video_url</span> / … exists on the row — all under <span class="mono">assets/top_performer_inspection/…</span> plus <span class="mono">stored_inspection_media_json</span>. <strong>Default on when</strong> <span class="mono">SUPABASE_URL</span> + <span class="mono">SUPABASE_SERVICE_ROLE_KEY</span> are set. Disable all media archive: <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_MEDIA=off</span> or criteria <span class="mono">inputs_insights.archive_top_performer_media_to_storage: false</span>. Source video only: criteria <span class="mono">inputs_insights.archive_top_performer_source_video: false</span> or <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO=off</span>.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, Instagram only, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>, Instagram / TikTok / Facebook only). After your pre-LLM cutoff, vision defaults to rows that already have <strong><span class="mono">broad_llm</span> insights</strong> (same cohort as broad insights). It can also restrict to the <strong>top fraction of rated performers</strong> (<span class="mono">rating_score</span>), default top 5% via <span class="mono">criteria_json.top_performer.rating_top_fraction</span> — or set the <strong>Rated gate</strong> controls below to override for <em>this run only</em> (<span class="mono">rating_top_fraction</span> / <span class="mono">disable_rating_percentile_gate</span> on the POST body). Opt out in profile: <span class="mono">disable_broad_insights_align_gate</span> / <span class="mono">disable_rating_percentile_gate</span>. Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>. <strong>Archive to Storage</strong>: verified <strong>image</strong> slide/frame files (JPEG/PNG/WebP/GIF/AVIF) and, for <span class="mono">top_performer_video</span>, one verified <strong>source video</strong> (MP4/WebM/MKV; <span class="mono">…/source.ext</span>) when <span class="mono">video_url</span> / <span class="mono">source_video_url</span> / … exists on the row — all under <span class="mono">assets/top_performer_inspection/…</span> plus <span class="mono">stored_inspection_media_json</span>. <strong>Default on when</strong> <span class="mono">SUPABASE_URL</span> + <span class="mono">SUPABASE_SERVICE_ROLE_KEY</span> are set. Disable all media archive: <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_MEDIA=off</span> or criteria <span class="mono">inputs_insights.archive_top_performer_media_to_storage: false</span>. Source video only: criteria <span class="mono">inputs_insights.archive_top_performer_source_video: false</span> or <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO=off</span>.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-deep-image-insights">Run top-performer (images)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-carousel-insights">Run top-performer (carousel)</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-delete-carousel-insights-import" title="Deletes all top_performer_carousel rows in inputs_evidence_row_insights for the selected import">Delete carousel insights (import)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-delete-carousel-insights-import" title="Deletes only top_performer_carousel rows for this import">Delete carousel insights only</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-delete-top-performer-insights-import" title="Deletes top_performer_carousel, top_performer_video, and top_performer_deep for this import">Delete all top-performer insights (import)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-video-insights">Run top-performer (video frames)</button>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;max-width:420px;line-height:1.35">
               <input id="tp-vision-rescan" type="checkbox" />
               Rescan (re-run vision for rows that already have this pass’s insight tier)
+            </label>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;color:var(--muted);max-width:920px;line-height:1.45">
+            <span><strong>Rated gate</strong> (this run only): top</span>
+            <input id="tp-rating-top-pct" type="number" min="0.01" max="50" step="any" placeholder="profile" title="Percent of rated rows (rating_score) that may pass the gate. Empty = use processing profile criteria_json.top_performer.rating_top_fraction (default 5%). Sent as rating_top_fraction (0–0.5) on the API body." style="width:88px;font-size:12px" />
+            <span>% of rated rows</span>
+            <label style="display:flex;gap:5px;align-items:center;margin-left:4px">
+              <input id="tp-rating-gate-off" type="checkbox" />
+              <span>Disable rating gate</span>
             </label>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--card)">
@@ -255,7 +274,7 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <div id="top-perf-status-wrap" style="font-size:12px;margin:0 0 10px;max-width:900px;line-height:1.45">
             <div id="tp-st-image" style="color:var(--muted)"><strong>Image</strong> — not run yet.</div>
-            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Needs ≥2 HTTPS slide URLs (<span class="mono">carousel_slide_urls</span>, cover fields, etc.). Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable (best-effort; Instagram may block datacenter IPs). If embed HTML has no <span class="mono">display_url</span>, set Fly secret <span class="mono">CAF_INSTAGRAM_EMBED_HTTP_PROXY</span> to an HTTP CONNECT proxy (or criteria <span class="mono">instagram_embed_http_proxy</span>) so fetches egress elsewhere. If the API reports <span class="mono">carousel_deck_rows: 0</span> but old insight rows exist, those rows were produced when URLs were available—enable <strong>Rescan</strong> only after ingest/embed can supply slide URLs again.</div>
+            <div id="tp-st-carousel" style="color:var(--muted)"><strong>Carousel</strong> — not run yet. Vision needs <strong>≥2 distinct HTTPS slide image URLs</strong> parsed from <span class="mono">payload_json</span> (list keys like <span class="mono">carousel_slide_urls</span> / <span class="mono">images</span>, top-level <span class="mono">display_url</span>, plus nested Graph <span class="mono">edge_sidecar_to_children</span> walks). <strong>Instagram <span class="mono">?img_index=N</span> on a permalink is only a structural hint</strong> (carousel vs single image); Core does <strong>not</strong> derive slide CDN URLs from the index number — embed fetch or ingest must supply real URLs. Embed fetch is <strong>on by default</strong> for Sidecar + permalink; set <span class="mono">CAF_INSTAGRAM_EMBED_CAROUSEL_FETCH=0</span> or criteria <span class="mono">instagram_embed_carousel_fetch: false</span> to disable. If embed HTML has no usable media JSON, set Fly secret <span class="mono">CAF_INSTAGRAM_EMBED_HTTP_PROXY</span> (or criteria <span class="mono">instagram_embed_http_proxy</span>). If the API reports <span class="mono">carousel_deck_rows: 0</span> but old insight rows exist, delete top-performer insights or use <strong>Rescan</strong> after URLs work again.</div>
             <div id="tp-st-video" style="color:var(--muted)"><strong>Video</strong> — not run yet. Needs HTTPS image URLs: <span class="mono">analysis_frame_urls</span> / <span class="mono">frame_urls</span>, or a poster field such as <span class="mono">thumbnail_url</span> / <span class="mono">display_url</span> (http is upgraded to https).</div>
           </div>
           <div id="tp-qualify-carousel-wrap" style="display:none;margin:6px 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);max-height:340px;overflow:auto">
@@ -266,19 +285,31 @@ export function adminProcessingBody(currentSlug: string): string {
             <div data-tp-qualify-title="1" style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text)">Video — rows that qualify for this pass</div>
             <ul id="tp-qualify-video-list" style="margin:0;padding-left:18px;font-size:12px;line-height:1.45"></ul>
           </div>
-          <p class="runs-ops-hint" style="margin:0 0 12px;font-size:11px;max-width:920px"><strong>Where stored assets live</strong> — <em>Pipeline renders</em> (carousel PNGs, videos, scenes, …): Postgres <span class="mono">caf_core.assets</span> columns <span class="mono">bucket</span>, <span class="mono">object_path</span>, <span class="mono">public_url</span>; files in Supabase Storage (env <span class="mono">SUPABASE_ASSETS_BUCKET</span>, default <span class="mono">assets</span>) under keys like <span class="mono">assets/carousels/…</span>, <span class="mono">assets/videos/…</span>, <span class="mono">assets/scenes/…</span> (see <span class="mono">src/services/supabase-storage.ts</span>). <em>Creative intelligence</em> ingest copies: <span class="mono">caf_core.creative_source_assets</span> with <span class="mono">storage_bucket</span> + <span class="mono">storage_key</span>; keys are built as <span class="mono">assets/creative_intel/{project_slug}/{source_group_id}/file.ext</span> (<span class="mono">uploadCreativeIntelBuffer</span> in <span class="mono">creative-intelligence-media.ts</span>). <em>These top-performer buttons</em> only write LLM insight JSON on evidence rows (URLs remain in import <span class="mono">payload_json</span>); they do not upload image binaries to Core.</p>
+          <p class="runs-ops-hint" style="margin:0 0 12px;font-size:11px;max-width:920px"><strong>Where stored assets live</strong> — <em>Pipeline renders</em> (carousel PNGs, videos, scenes, …): Postgres <span class="mono">caf_core.assets</span> columns <span class="mono">bucket</span>, <span class="mono">object_path</span>, <span class="mono">public_url</span>; files in Supabase Storage under keys like <span class="mono">assets/carousels/…</span>, <span class="mono">assets/videos/…</span>. <em>Creative intelligence</em> ingest copies: <span class="mono">caf_core.creative_source_assets</span> with <span class="mono">assets/creative_intel/…</span>. <em>Top-performer passes</em> write LLM insight JSON on <span class="mono">inputs_evidence_row_insights</span>; when archiving is enabled they may also upload verified slide/frame bytes to <span class="mono">assets/top_performer_inspection/…</span> and set <span class="mono">stored_inspection_media_json</span> on those insight rows (URLs in evidence <span class="mono">payload_json</span> are unchanged).</p>
           <details id="top-perf-debug-details" style="margin:0 0 12px">
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Raw JSON (last runs — expand to view)</summary>
             <pre id="top-perf-debug-pre" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;margin:8px 0 0;white-space:pre-wrap;max-height:300px;overflow:auto;color:var(--muted);border:1px solid var(--border)">{}</pre>
           </details>
           <h4 style="font-size:13px;margin:16px 0 8px">Image deep rows</h4>
-          <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-image">Reload</button>
+          <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Top-performer image pass: columns <strong>Aesthetic</strong> / <strong>Raw LLM</strong>, or <strong>Inspect → top_performer_deep</strong> then <strong>Copy response body</strong>.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+            <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-image">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-image-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
+          </div>
           <div id="deep-image-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
           <h4 style="font-size:13px;margin:16px 0 8px">Carousel deck rows</h4>
-          <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-carousel">Reload</button>
+          <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Slide transcripts + deck summary: <strong>Aesthetic</strong> (<span class="mono">aesthetic_analysis_json</span>) and full model output in <strong>Raw LLM</strong> (<span class="mono">raw_llm_json</span>). Or expand <strong>Inspect</strong> above → <strong>Insights · top_performer_carousel</strong> → <strong>Copy response body</strong> (full API response). After a run, <strong>Copy carousel run</strong> logs request/response under debug logs.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+            <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-carousel">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-carousel-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
+          </div>
           <div id="deep-carousel-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
           <h4 style="font-size:13px;margin:16px 0 8px">Video frame rows</h4>
-          <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-video">Reload</button>
+          <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Columns <strong>Aesthetic</strong> / <strong>Raw LLM</strong>, or <strong>Inspect → top_performer_video</strong> then <strong>Copy response body</strong>.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
+            <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-video">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-video-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
+          </div>
           <div id="deep-video-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-profile" style="display:none;padding:12px 0 0">
@@ -471,6 +502,19 @@ function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function bind(id,ev,fn){var e=document.getElementById(id);if(e)e.addEventListener(ev,fn);}
 function val(id){var e=document.getElementById(id);return e?e.value:'';}
 function chk(id){var e=document.getElementById(id);return !!(e&&e.checked);}
+/** Optional fields for POST …/run-deep-{image,carousel,video}-insights (merges into request body). */
+function tpRatingGateRequestFields(){
+  var o={};
+  var el=document.getElementById('tp-rating-top-pct');
+  var pctRaw=el?String(el.value||'').trim():'';
+  if(pctRaw!==''){
+    var pct=parseFloat(pctRaw);
+    if(Number.isFinite(pct)&&pct>0) o.rating_top_fraction=Math.min(0.5,Math.max(0.0001,pct/100));
+  }
+  var offEl=document.getElementById('tp-rating-gate-off');
+  if(offEl&&offEl.checked) o.disable_rating_percentile_gate=true;
+  return o;
+}
 var __cafActBuf=[];
 var __cafActMax=48;
 function cafTs(){
@@ -1769,7 +1813,7 @@ bind('btn-run-deep-image-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('image','Select an import first.',true);return;}
   setTpStatus('image','Running image vision...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:24,min_pre_llm_score:minScore,rescan:chk('tp-vision-rescan')};
+  var body=Object.assign({max_rows:24,min_pre_llm_score:minScore,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights';
   var r=null;
   var d=null;
@@ -1817,7 +1861,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
   renderTpQualifyingList('carousel',[]);
   setTpStatus('carousel','Running carousel vision (all slides)...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:chk('tp-vision-rescan')};
+  var body=Object.assign({max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
   var d=null;
@@ -1840,7 +1884,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     });
     setTpStatus(
       'carousel',
-      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | skipped existing (rescan off) '+String(d.skipped_existing_carousel_insight||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+', embed proxy '+(d.instagram_embed_http_proxy_active?'on':'off')+' ('+String(d.instagram_embed_http_proxy_source||'none')+')) | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:'')+(d.deep_carousel_zero_work_summary?' | '+String(d.deep_carousel_zero_work_summary):''),
+      'Carousel - analyzed '+String(d.rows_analyzed||0)+' | slide pool '+String(d.candidates_with_slides||0)+' | deck rows '+String(d.carousel_deck_rows||0)+' | skipped existing (rescan off) '+String(d.skipped_existing_carousel_insight||0)+' | IG rows '+String(d.instagram_post_rows||0)+' (video-like '+String(d.skipped_instagram_video_like||0)+', <2 slides '+String(d.skipped_instagram_few_slide_urls||0)+', carousel hint no slide URLs '+String(d.instagram_carousel_url_hint_missing_slide_urls||0)+', embed fetch '+(d.instagram_embed_carousel_fetch_enabled?('on ('+String(d.instagram_embed_carousel_fetch_source||'')+')'):('off ('+String(d.instagram_embed_carousel_fetch_source||'none')+')'))+' attempts '+String(d.instagram_embed_carousel_fetch_attempts||0)+' resolved '+String(d.instagram_embed_carousel_rows_resolved_via_embed||0)+', embed proxy '+(d.instagram_embed_http_proxy_active?'on':'off')+' ('+String(d.instagram_embed_http_proxy_source||'none')+'), embed signals display_url '+String(d.instagram_embed_carousel_fetch_network_html_has_display_url_hits||0)+' media-json '+String(d.instagram_embed_carousel_fetch_network_html_has_embed_media_signal_hits||0)+' slide-CDN '+String(d.instagram_embed_carousel_fetch_network_html_has_cdn_host_hits||0)+' login-wall '+String(d.instagram_embed_carousel_fetch_network_login_wall_likely_hits||0)+') | skipped non-IG '+String(d.skipped_evidence_kind_filter||0)+' | broad '+String(d.broad_llm_rows_in_import||0)+' (skipped '+String(d.skipped_broad_insights_gate||0)+', '+String(d.broad_insights_gate_disabled||'')+') | rating '+(d.rating_gate_active?'top '+String(Math.round(10000*(d.rating_top_fraction||0))/100)+'% (skipped '+String(d.skipped_rating_gate||0)+')':'off '+String(d.rating_gate_disabled||''))+(d.rating_gate_note?' — '+String(d.rating_gate_note):'')+' | total '+String(d.carousel_insights_total||0)+'. '+(maCar&&maCar.summary?maCar.summary:'')+(d.deep_carousel_zero_work_summary?' | '+String(d.deep_carousel_zero_work_summary):''),
       false
     );
     renderTpQualifyingList('carousel',d.qualifying_carousel_rows||[]);
@@ -1883,12 +1927,35 @@ bind('btn-delete-carousel-insights-import','click',async function(){
   }
 });
 
+bind('btn-delete-top-performer-insights-import','click',async function(){
+  if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
+  if(!window.confirm('Delete ALL top_performer_carousel, top_performer_video, and top_performer_deep insight rows for this import? This cannot be undone.'))return;
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/delete-evidence-insights';
+  var body={analysis_tiers:['top_performer_carousel','top_performer_video','top_performer_deep'],confirm:true};
+  try{
+    var r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var n=String(d.deleted||0);
+    setTpStatus('carousel','Deleted '+n+' top-performer insight row(s) total (carousel+video+deep).',false);
+    setTpStatus('video','Deleted '+n+' top-performer insight row(s) total (carousel+video+deep).',false);
+    setTpStatus('image','Deleted '+n+' top-performer insight row(s) total (carousel+video+deep).',false);
+    try{pushProcessingActivity(cafTs()+' Deleted '+n+' top-performer insight row(s) (all tiers) for import '+selectedImportId,false);}catch(_e){}
+    loadDeepCarouselTable();
+    loadDeepVideoTable();
+    loadDeepImageTable();
+  }catch(e){
+    setTpStatus('carousel',String(e.message||e),true);
+    try{pushProcessingActivity(cafTs()+' delete top-performer insights failed: '+String(e.message||e),true);}catch(_e2){}
+  }
+});
+
 bind('btn-run-deep-video-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('video','Select an import first.',true);return;}
   renderTpQualifyingList('video',[]);
   setTpStatus('video','Running video frame bundle...',false);
   var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
-  var body={max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:chk('tp-vision-rescan')};
+  var body=Object.assign({max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights';
   var r=null;
   var d=null;
@@ -2054,6 +2121,60 @@ bind('btn-inspect-evidence-row','click',function(){
     '/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-row/'+encodeURIComponent(id),
     true
   );
+});
+
+function renderOpLensEvidence(j){
+  var el=document.getElementById('op-lens-out');
+  if(!el)return;
+  if(!j||!j.ok||!Array.isArray(j.items)){
+    el.innerHTML='<span style="color:var(--red)">Unexpected response</span>';
+    return;
+  }
+  var rows=j.items.map(function(it){
+    var u=it.source_url?String(it.source_url):'';
+    var link=u?'<a target="_blank" rel="noopener noreferrer" href="'+esc(u)+'">open</a>':'—';
+    return '<tr><td class="mono">'+esc(String(it.id||''))+'</td><td>'+esc(String(it.platform||''))+'</td><td>'+esc(String(it.format||''))+'</td><td>'+(it.rating_score!=null&&it.rating_score!==''?esc(String(it.rating_score)):'—')+'</td><td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(String(it.caption||''))+'">'+esc(String(it.hook||it.caption||'—'))+'</td><td>'+link+'</td></tr>';
+  }).join('');
+  el.innerHTML='<p class="runs-ops-hint" style="margin:0 0 8px">Total (SQL filters): '+esc(String(j.total!=null?j.total:'?'))+' · showing '+esc(String(j.items.length))+'</p><div style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="sp-modal-table" style="width:100%;font-size:12px"><thead><tr><th>ID</th><th>Platform</th><th>Format</th><th>Rating</th><th>Hook / caption</th><th>URL</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+}
+function renderOpLensInsights(j){
+  var el=document.getElementById('op-lens-out');
+  if(!el)return;
+  if(!j||!j.ok||!Array.isArray(j.items)){
+    el.innerHTML='<span style="color:var(--red)">Unexpected response</span>';
+    return;
+  }
+  var cards=j.items.map(function(it){
+    var ev=(it.supporting_evidence_ids&&it.supporting_evidence_ids[0])?String(it.supporting_evidence_ids[0]):'';
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--card)"><div style="font-size:11px;color:var(--muted)">'+esc(String(it.type||''))+' · '+esc(String(it.analysis_tier||''))+'</div><div style="font-weight:600;margin:4px 0">'+esc(String(it.title||''))+'</div><div style="font-size:12px;line-height:1.45;color:var(--text)">'+esc(String(it.summary||''))+'</div><div style="margin-top:6px;font-size:11px;color:var(--muted)">Evidence row <span class="mono">'+esc(ev)+'</span></div></div>';
+  }).join('');
+  el.innerHTML=cards||'<span class="empty">No insights in this window.</span>';
+}
+bind('btn-op-lens-evidence','click',async function(){
+  var el=document.getElementById('op-lens-out');
+  if(!SLUG||!selectedImportId){window.alert('Select an import first.');return;}
+  var url='/v1/evidence/'+encodeURIComponent(SLUG)+'?import_id='+encodeURIComponent(selectedImportId)+'&limit=40&offset=0&sort=rating_desc';
+  if(el)el.textContent='Loading…';
+  try{pushProcessingActivity(cafTs()+' GET /v1/evidence (read model)',false);}catch(_e){}
+  try{
+    var r=await cafFetch(url);
+    var j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(apiErr(j,'HTTP '+r.status));
+    renderOpLensEvidence(j);
+  }catch(e){if(el)el.innerHTML='<span style="color:var(--red)">'+esc(e.message||e)+'</span>';}
+});
+bind('btn-op-lens-insights','click',async function(){
+  var el=document.getElementById('op-lens-out');
+  if(!SLUG||!selectedImportId){window.alert('Select an import first.');return;}
+  var url='/v1/insights/'+encodeURIComponent(SLUG)+'?import_id='+encodeURIComponent(selectedImportId)+'&limit=40&offset=0';
+  if(el)el.textContent='Loading…';
+  try{pushProcessingActivity(cafTs()+' GET /v1/insights (read model)',false);}catch(_e){}
+  try{
+    var r=await cafFetch(url);
+    var j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(apiErr(j,'HTTP '+r.status));
+    renderOpLensInsights(j);
+  }catch(e){if(el)el.innerHTML='<span style="color:var(--red)">'+esc(e.message||e)+'</span>';}
 });
 
 async function initBroadPanel(){
@@ -2740,6 +2861,30 @@ async function loadDeepCarouselTable(){
 bind('btn-reload-deep-image','click',loadDeepImageTable);
 bind('btn-reload-deep-carousel','click',loadDeepCarouselTable);
 bind('btn-reload-deep-video','click',loadDeepVideoTable);
+
+async function copyDeepInsightsJson(tier,labelShort){
+  if(!SLUG||!selectedImportId){
+    window.alert('Select a project and import first.');
+    return;
+  }
+  try{
+    var url='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier='+encodeURIComponent(tier)+'&limit=200&offset=0&sort=rating_desc';
+    var r=await cafFetch(url);
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var rows=d.insights||[];
+    var text=JSON.stringify(rows,null,2);
+    var ok=await adminCopyTextToClipboard(text);
+    if(ok){
+      try{pushProcessingActivity(cafTs()+' Copied '+String(rows.length)+' '+labelShort+' insight row(s) as JSON.',false);}catch(_){}
+    }else{
+      window.alert('Clipboard not available in this browser context.');
+    }
+  }catch(e){window.alert(String(e.message||e));}
+}
+bind('btn-copy-deep-image-json','click',function(){copyDeepInsightsJson('top_performer_deep','image');});
+bind('btn-copy-deep-carousel-json','click',function(){copyDeepInsightsJson('top_performer_carousel','carousel');});
+bind('btn-copy-deep-video-json','click',function(){copyDeepInsightsJson('top_performer_video','video');});
 
 bind('idea-list-select','change',function(){
   var s=document.getElementById('idea-list-select');

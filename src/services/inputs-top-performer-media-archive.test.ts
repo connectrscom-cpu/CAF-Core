@@ -8,6 +8,9 @@ vi.mock("./supabase-storage.js", () => ({
     object_path: "assets/top_performer_inspection/SNS/test/top_performer_carousel/row_1/slide_01.jpg",
     public_url: "https://example.test/storage/v1/object/public/assets/x.jpg",
   })),
+  createSignedUrlForObjectKey: vi.fn(async () => ({
+    signedUrl: "https://example.test/storage/v1/object/sign/assets/top_performer/x?token=signed",
+  })),
 }));
 
 import {
@@ -17,7 +20,7 @@ import {
   sniffImageMedia,
   sniffVideoMedia,
 } from "./inputs-top-performer-media-archive.js";
-import { getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
+import { createSignedUrlForObjectKey, getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
 
 beforeEach(() => {
   vi.mocked(getSupabaseStorageClient).mockImplementation((config: AppConfig) => {
@@ -31,6 +34,9 @@ beforeEach(() => {
     object_path: "assets/top_performer_inspection/SNS/test/top_performer_carousel/row_1/slide_01.jpg",
     public_url: "https://example.test/storage/v1/object/public/assets/x.jpg",
   }));
+  vi.mocked(createSignedUrlForObjectKey).mockResolvedValue({
+    signedUrl: "https://example.test/storage/v1/object/sign/assets/top_performer/x?token=signed",
+  });
 });
 
 function miniConfig(over: Partial<AppConfig> = {}): AppConfig {
@@ -166,6 +172,7 @@ describe("resolveTopPerformerArchiveMedia", () => {
 describe("archiveTopPerformerVisionMedia", () => {
   beforeEach(() => {
     vi.mocked(uploadBuffer).mockClear();
+    vi.mocked(createSignedUrlForObjectKey).mockClear();
   });
 
   it("returns skipped when supabase client missing", async () => {
@@ -214,6 +221,7 @@ describe("archiveTopPerformerVisionMedia", () => {
     });
     expect(res.items).toHaveLength(2);
     expect(res.items.every((x) => x.ok)).toBe(true);
+    expect(res.items[0].vision_fetch_url).toContain("object/sign");
     expect(uploadBuffer).toHaveBeenCalledTimes(2);
     const firstCall = vi.mocked(uploadBuffer).mock.calls[0];
     expect(firstCall[2]).toBeInstanceOf(Buffer);

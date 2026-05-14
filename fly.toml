@@ -6,7 +6,11 @@
 # Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
 # On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
 # OPENAI_API_KEY; optional SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
-# Top-performer carousel: optional CAF_INSTAGRAM_EMBED_HTTP_PROXY (HTTP CONNECT) routes Instagram /embed/ fetches when datacenter IPs get login-wall HTML.
+# Inputs XLSX (InstagramPostData): Apify/scraper columns like carousel_slide_urls_json / child_posts_json are normalized on import;
+# evidence rows persist slide CDN URLs in payload_json; caf_core.evidence_media_assets records pending URLs for audit.
+# Top-performer vision: set SUPABASE_* + leave CAF_TOP_PERFORMER_ARCHIVE_MEDIA on or auto so Core uploads slides to Supabase first,
+# then OpenAI uses time-limited signed URLs (private buckets' public URLs often 403 → invalid_image_url).
+# Top-performer carousel: optional CAF_INSTAGRAM_EMBED_HTTP_PROXY (HTTP CONNECT) for embed HTML fallback + archive CDN fetches when datacenter IPs get 403/login-wall.
 # Editorial learning "live" on the API: EDITORIAL_ANALYSIS_CRON_ENABLED=1 (optional EDITORIAL_ANALYSIS_CRON_PROJECT_SLUGS=SNS, EDITORIAL_ANALYSIS_CRON_INTERVAL_MS, WINDOW_DAYS).
 # Or run on a schedule: fly ssh console -C "node /app/dist/cli/run-editorial-analysis.js SNS" / GitHub Actions calling the same image command.
 # Do not set MUX_* / VIDEO_ASSEMBLY_* timeouts on Core unless you wire them in code (those belong on caf-renderer).

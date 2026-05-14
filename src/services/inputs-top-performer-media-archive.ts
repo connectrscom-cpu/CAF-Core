@@ -13,7 +13,10 @@
 import type { Dispatcher } from "undici";
 import type { AppConfig } from "../config.js";
 import { tryCreateInstagramEmbedProxyAgent } from "./inputs-instagram-embed-carousel-resolver.js";
-import { getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
+import { createSignedUrlForObjectKey, getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
+
+/** Long enough for OpenAI multimodal fetch + admin retries (signed URLs work when the bucket is not public). */
+const VISION_ARCHIVE_SIGNED_URL_TTL_SEC = 604800; // 7d
 
 export interface TopPerformerArchivedMediaItem {
   index: number;
@@ -22,6 +25,8 @@ export interface TopPerformerArchivedMediaItem {
   bucket: string;
   object_path: string;
   public_url: string | null;
+  /** Prefer this for remote vision fetchers (OpenAI); service-role signed URL when the bucket is private. */
+  vision_fetch_url: string | null;
   content_type: string;
   bytes: number;
   ok: boolean;
@@ -30,7 +35,7 @@ export interface TopPerformerArchivedMediaItem {
 
 export interface TopPerformerArchiveMediaResult {
   archived_at: string;
-  tier: "top_performer_carousel" | "top_performer_video";
+  tier: "top_performer_carousel" | "top_performer_video" | "top_performer_deep";
   project_slug: string;
   inputs_import_id: string;
   source_evidence_row_id: string;
@@ -98,6 +103,16 @@ export function resolveTopPerformerArchiveSourceVideo(config: AppConfig, criteri
 function slugPathSegment(slug: string): string {
   const s = slug.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 64);
   return s || "project";
+}
+
+/** OpenAI fetches image URLs anonymously; private buckets need a signed URL (public URL may 403). */
+async function setVisionFetchUrlAfterUpload(config: AppConfig, item: TopPerformerArchivedMediaItem): Promise<void> {
+  if (!item.ok || !item.object_path) {
+    item.vision_fetch_url = null;
+    return;
+  }
+  const signed = await createSignedUrlForObjectKey(config, item.bucket, item.object_path, VISION_ARCHIVE_SIGNED_URL_TTL_SEC);
+  item.vision_fetch_url = "signedUrl" in signed ? signed.signedUrl : item.public_url;
 }
 
 /** Detect real image media from file magic bytes (not just HTTP headers). */
@@ -241,7 +256,7 @@ export async function archiveTopPerformerVisionMedia(
     projectSlug: string;
     inputsImportId: string;
     sourceEvidenceRowId: string;
-    tier: "top_performer_carousel" | "top_performer_video";
+    tier: "top_performer_carousel" | "top_performer_video" | "top_performer_deep";
     role: "carousel_slide" | "video_frame";
     urls: string[];
     /** When tier is `top_performer_video` and this flag is true, download + upload this URL after frames. */
@@ -289,13 +304,16 @@ export async function archiveTopPerformerVisionMedia(
         bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
         object_path: "",
         public_url: null,
+        vision_fetch_url: null,
         content_type: "",
         bytes: 0,
         ok: false,
       };
       try {
         const minCarouselBytes =
-          args.tier === "top_performer_carousel" ? config.CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE : undefined;
+          args.tier === "top_performer_carousel" || args.tier === "top_performer_deep"
+            ? config.CAF_TOP_PERFORMER_ARCHIVE_MIN_BYTES_CAROUSEL_IMAGE
+            : undefined;
         const { buf, contentType, ext } = await fetchRemoteImageFile(
           source_url,
           config.CAF_TOP_PERFORMER_ARCHIVE_FETCH_TIMEOUT_MS,
@@ -313,6 +331,7 @@ export async function archiveTopPerformerVisionMedia(
         item.content_type = contentType;
         item.bytes = buf.length;
         item.ok = true;
+        await setVisionFetchUrlAfterUpload(config, item);
       } catch (e) {
         item.error = e instanceof Error ? e.message : String(e);
       }
@@ -328,6 +347,7 @@ export async function archiveTopPerformerVisionMedia(
         bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
         object_path: "",
         public_url: null,
+        vision_fetch_url: null,
         content_type: "",
         bytes: 0,
         ok: false,
@@ -347,6 +367,7 @@ export async function archiveTopPerformerVisionMedia(
         item.content_type = contentType;
         item.bytes = buf.length;
         item.ok = true;
+        await setVisionFetchUrlAfterUpload(config, item);
       } catch (e) {
         item.error = e instanceof Error ? e.message : String(e);
       }

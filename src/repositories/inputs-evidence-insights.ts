@@ -32,6 +32,8 @@ export interface EvidenceRowInsightRow {
   raw_llm_json: unknown | null;
   /** Supabase copies of carousel slides / video frames used for vision (null if never archived). */
   stored_inspection_media_json: unknown | null;
+  /** Denormalized `inputs_evidence_rows` rating snapshot for top_performer_* tiers (null for broad_llm). */
+  evidence_performance_review_json: unknown | null;
   created_at: string;
   updated_at: string;
 }
@@ -69,6 +71,11 @@ export interface UpsertEvidenceInsightInput {
   raw_llm_json: Record<string, unknown> | null;
   /** When set (including null), upsert updates this column; omit to preserve existing on conflict. */
   stored_inspection_media_json?: Record<string, unknown> | null;
+  /**
+   * Evidence-row rating snapshot (performance review). Use null when unrated.
+   * On conflict, null preserves any existing value; non-null overwrites.
+   */
+  evidence_performance_review_json?: Record<string, unknown> | null;
 }
 
 export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsightInput): Promise<{ id: string }> {
@@ -81,7 +88,7 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        custom_label_1, custom_label_2, custom_label_3,
        cta_type, hashtags, caption_style, hook_text,
        risk_flags_json, aesthetic_analysis_json, raw_llm_json,
-       stored_inspection_media_json
+       stored_inspection_media_json, evidence_performance_review_json
      ) VALUES (
        $1,$2,$3::bigint,$4,$5,
        $6,$7,
@@ -89,7 +96,7 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        $12,$13,$14,
        $15,$16,$17,$18,
        $19::jsonb,$20::jsonb,$21::jsonb,
-       $22::jsonb
+       $22::jsonb, $23::jsonb
      )
      ON CONFLICT (inputs_import_id, source_evidence_row_id, analysis_tier)
      DO UPDATE SET
@@ -111,6 +118,10 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        aesthetic_analysis_json = EXCLUDED.aesthetic_analysis_json,
        raw_llm_json = EXCLUDED.raw_llm_json,
        stored_inspection_media_json = COALESCE(EXCLUDED.stored_inspection_media_json, caf_core.inputs_evidence_row_insights.stored_inspection_media_json),
+       evidence_performance_review_json = COALESCE(
+         EXCLUDED.evidence_performance_review_json,
+         caf_core.inputs_evidence_row_insights.evidence_performance_review_json
+       ),
        updated_at = now()
      RETURNING id`,
     [
@@ -139,6 +150,11 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
         ? row.stored_inspection_media_json === null
           ? null
           : JSON.stringify(row.stored_inspection_media_json)
+        : null,
+      row.evidence_performance_review_json !== undefined
+        ? row.evidence_performance_review_json === null
+          ? null
+          : JSON.stringify(row.evidence_performance_review_json)
         : null,
     ]
   );
@@ -180,6 +196,7 @@ export async function listEvidenceRowInsights(
               custom_label_1, custom_label_2, custom_label_3,
               cta_type, hashtags, caption_style, hook_text,
               risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
+              evidence_performance_review_json,
               created_at::text, updated_at::text
          FROM caf_core.inputs_evidence_row_insights
         WHERE project_id = $1 AND inputs_import_id = $2 AND analysis_tier = $3
@@ -196,6 +213,7 @@ export async function listEvidenceRowInsights(
             custom_label_1, custom_label_2, custom_label_3,
             cta_type, hashtags, caption_style, hook_text,
             risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
+            evidence_performance_review_json,
             created_at::text, updated_at::text
        FROM caf_core.inputs_evidence_row_insights
       WHERE project_id = $1 AND inputs_import_id = $2
@@ -234,6 +252,22 @@ export async function deleteEvidenceRowInsightsForImportTier(
   return r.rowCount ?? 0;
 }
 
+/** Hard-delete insights for several tiers in one statement (admin cleanup). Returns total rows removed. */
+export async function deleteEvidenceRowInsightsForImportTiers(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  tiers: EvidenceInsightTier[]
+): Promise<number> {
+  if (tiers.length === 0) return 0;
+  const r = await db.query(
+    `DELETE FROM caf_core.inputs_evidence_row_insights
+      WHERE project_id = $1 AND inputs_import_id = $2 AND analysis_tier = ANY($3::text[])`,
+    [projectId, importId, tiers]
+  );
+  return r.rowCount ?? 0;
+}
+
 /** Count insights for one analysis tier restricted to rows of a single evidence_kind (joins evidence rows). */
 export async function countEvidenceRowInsightsByImportTierAndKind(
   db: Pool,
@@ -267,6 +301,7 @@ const INSIGHT_SELECT_ENRICHED_CORE = `SELECT i.id::text, i.project_id::text, i.i
        i.custom_label_1, i.custom_label_2, i.custom_label_3,
        i.cta_type, i.hashtags, i.caption_style, i.hook_text,
        i.risk_flags_json, i.aesthetic_analysis_json, i.raw_llm_json, i.stored_inspection_media_json,
+       i.evidence_performance_review_json,
        i.created_at::text, i.updated_at::text,
        r.evidence_kind,
        r.rating_score::text AS evidence_rating_score`;
@@ -405,4 +440,82 @@ export async function getInsightRowUuidsByInsightsIds(
     out.set(r.insights_id, r.id);
   }
   return out;
+}
+
+/**
+ * After evidence rows are rated (signal-pack build), copy rating snapshots onto top_performer_* insight rows.
+ */
+export async function backfillTopPerformerInsightPerformanceReviews(
+  db: Pool,
+  projectId: string,
+  importId: string
+): Promise<number> {
+  const r = await db.query(
+    `UPDATE caf_core.inputs_evidence_row_insights i
+        SET evidence_performance_review_json = jsonb_strip_nulls(
+             jsonb_build_object(
+               'version', 1,
+               'rating_score', r.rating_score,
+               'rating_components_json', COALESCE(r.rating_components_json, '{}'::jsonb),
+               'rating_rationale', r.rating_rationale,
+               'rated_at', r.rated_at,
+               'source', 'inputs_evidence_row'
+             )
+           ),
+        updated_at = now()
+       FROM caf_core.inputs_evidence_rows r
+      WHERE r.id = i.source_evidence_row_id
+        AND r.import_id = i.inputs_import_id
+        AND r.project_id = i.project_id
+        AND i.project_id = $1
+        AND i.inputs_import_id = $2
+        AND i.analysis_tier = ANY(ARRAY['top_performer_deep','top_performer_video','top_performer_carousel']::text[])
+        AND r.rating_score IS NOT NULL`,
+    [projectId, importId]
+  );
+  return r.rowCount ?? 0;
+}
+
+export interface InsightRefForEvidence {
+  id: string;
+  insights_id: string;
+  analysis_tier: EvidenceInsightTier;
+  title: string | null;
+}
+
+/** Lightweight links from one evidence row to all insight rows (traceability). */
+export async function listInsightRefsForEvidenceRow(
+  db: Pool,
+  projectId: string,
+  evidenceRowId: string
+): Promise<InsightRefForEvidence[]> {
+  const rid = String(evidenceRowId ?? "").trim();
+  if (!/^\d+$/.test(rid)) return [];
+  return q(
+    db,
+    `SELECT i.id::text,
+            i.insights_id,
+            i.analysis_tier,
+            COALESCE(NULLIF(trim(i.hook_text),''), NULLIF(trim(i.hook_type),''), NULLIF(trim(i.primary_emotion),''), LEFT(COALESCE(i.why_it_worked,''),120)) AS title
+       FROM caf_core.inputs_evidence_row_insights i
+      WHERE i.project_id = $1 AND i.source_evidence_row_id = $2::bigint
+      ORDER BY i.updated_at DESC`,
+    [projectId, rid]
+  );
+}
+
+export async function getEvidenceRowInsightById(
+  db: Pool,
+  projectId: string,
+  insightRowId: string
+): Promise<(EvidenceRowInsightEnrichedRow & { evidence_payload_json?: Record<string, unknown> }) | null> {
+  const id = String(insightRowId ?? "").trim();
+  if (!/^\d+$/.test(id)) return null;
+  return qOne(
+    db,
+    `${INSIGHT_SELECT_ENRICHED_WITH_PAYLOAD}
+     ${INSIGHT_JOIN}
+     WHERE i.project_id = $1 AND i.id = $2::bigint`,
+    [projectId, id]
+  );
 }

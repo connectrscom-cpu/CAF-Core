@@ -8,6 +8,7 @@ import type { AppConfig } from "../config.js";
 import { getInputsIdeaListById, listInputsIdeasForList } from "../repositories/inputs-idea-lists.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
+import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 
 export type IdeaFormatLimitBucket = "carousel" | "video" | "post" | "thread" | "other";
 
@@ -99,6 +100,10 @@ export async function buildSignalPackFromIdeaList(
     max_rows: 5000,
     limit: 120,
   });
+  const visualGuidelinesPack = await buildVisualGuidelinesPackForImport(db, project.id, list.inputs_import_id, {
+    max_insights_scan: 2000,
+    max_entries: 48,
+  });
   const pack = await insertSignalPack(db, {
     run_id: runId,
     project_id: project.id,
@@ -114,6 +119,7 @@ export async function buildSignalPackFromIdeaList(
       ideas_count_before_format_limits: before,
       hashtag_leaderboard_v1: hashtagStats.leaderboard,
       hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
+      visual_guidelines_pack_v1: visualGuidelinesPack,
       format_limits: opts?.format_limits && Object.keys(opts.format_limits).length > 0 ? opts.format_limits : undefined,
       created_at: new Date().toISOString(),
     },

@@ -11,6 +11,8 @@ import {
   listInputsEvidenceRows,
   sheetRowCountsForImport,
 } from "../repositories/inputs-evidence.js";
+import { insertEvidenceMediaAssetsPending } from "../repositories/inputs-evidence-media.js";
+import { normalizeInstagramEvidenceMedia } from "../services/instagram-media-normalizer.js";
 import { parseInputsSnsWorkbookBuffer } from "../services/inputs-sns-workbook-parser.js";
 import { computeInputHealth, flagSparseEvidenceRows, persistImportHealth } from "../services/input-health.js";
 
@@ -84,7 +86,21 @@ export function registerInputsEvidenceRoutes(app: FastifyInstance, deps: { db: P
         dedupe_key: r.dedupe_key,
         payload_json: r.payload_json,
       }));
-      await insertInputsEvidenceRowsBatch(db, project.id, imp.id, slice);
+      const rowIds = await insertInputsEvidenceRowsBatch(db, project.id, imp.id, slice);
+      for (let j = 0; j < slice.length; j++) {
+        if (slice[j].evidence_kind !== "instagram_post") continue;
+        const norm = normalizeInstagramEvidenceMedia(slice[j].payload_json);
+        if (norm.media_assets.length === 0) continue;
+        await insertEvidenceMediaAssetsPending(
+          db,
+          project.id,
+          rowIds[j]!,
+          norm.post_url,
+          norm.post_id,
+          norm.owner_username,
+          norm.media_assets
+        );
+      }
     }
 
     const health = await computeInputHealth(db, project.id, imp.id, sheet_stats_json as Record<string, unknown>);

@@ -63,8 +63,8 @@ export async function insertInputsEvidenceRowsBatch(
     dedupe_key: string | null;
     payload_json: Record<string, unknown>;
   }>
-): Promise<void> {
-  if (batch.length === 0) return;
+): Promise<string[]> {
+  if (batch.length === 0) return [];
   const values: unknown[] = [];
   const ph: string[] = [];
   let p = 1;
@@ -80,12 +80,14 @@ export async function insertInputsEvidenceRowsBatch(
       JSON.stringify(r.payload_json)
     );
   }
-  await db.query(
+  const r = await db.query<{ id: string }>(
     `INSERT INTO caf_core.inputs_evidence_rows
       (import_id, project_id, sheet_name, row_index, evidence_kind, dedupe_key, payload_json)
-     VALUES ${ph.join(", ")}`,
+     VALUES ${ph.join(", ")}
+     RETURNING id::text AS id`,
     values
   );
+  return r.rows.map((row) => row.id);
 }
 
 export async function listInputsEvidenceImports(
@@ -209,6 +211,27 @@ export async function updateEvidenceRowRatingById(
     [rowId, projectId, data.rating_score, JSON.stringify(data.rating_components_json), data.rating_rationale]
   );
   return r.rowCount ?? 0;
+}
+
+/** Rating fields for batching performance-review snapshots onto top-performer insights. */
+export async function listEvidenceRowRatingFieldsByIds(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  rowIds: string[]
+): Promise<EvidenceRowWithRating[]> {
+  const ids = rowIds.map((x) => String(x).trim()).filter(Boolean).slice(0, 2000);
+  if (ids.length === 0) return [];
+  return q(
+    db,
+    `SELECT r.id::text, r.sheet_name, r.row_index, r.evidence_kind, r.dedupe_key, r.payload_json,
+            r.rating_score::text, r.rating_components_json, r.rating_rationale, r.rated_at::text
+       FROM caf_core.inputs_evidence_rows r
+      INNER JOIN unnest($3::text[]) WITH ORDINALITY AS u(id, ord) ON r.id::text = u.id
+      WHERE r.import_id = $1 AND r.project_id = $2
+      ORDER BY u.ord`,
+    [importId, projectId, ids]
+  );
 }
 
 export async function listTopRatedRowsForSynth(
@@ -425,5 +448,134 @@ export async function listEvidenceRowsByImportAndKind(
       ORDER BY id ASC
       LIMIT $4`,
     [importId, projectId, evidenceKind, lim]
+  );
+}
+
+export interface EvidenceRowForReadModel {
+  id: string;
+  import_id: string;
+  evidence_kind: string;
+  payload_json: Record<string, unknown>;
+  created_at: string;
+  rating_score: string | null;
+}
+
+function readModelOrderClause(sort: string): string {
+  switch (sort) {
+    case "rating_asc":
+      return "r.rating_score ASC NULLS LAST, r.id ASC";
+    case "created_asc":
+      return "r.created_at ASC, r.id ASC";
+    case "created_desc":
+      return "r.created_at DESC, r.id DESC";
+    case "rating_desc":
+    default:
+      return "r.rating_score DESC NULLS LAST, r.id DESC";
+  }
+}
+
+/**
+ * Paginated evidence rows for operator read-model APIs (search + optional rating floor + kind filter).
+ */
+export async function listEvidenceRowsForReadModel(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  opts: {
+    evidence_kind: string | null;
+    search: string | null;
+    min_rating: number | null;
+    sort: string;
+    limit: number;
+    offset: number;
+  }
+): Promise<EvidenceRowForReadModel[]> {
+  const lim = Math.min(Math.max(opts.limit, 1), 200);
+  const off = Math.max(opts.offset, 0);
+  const orderSql = readModelOrderClause(opts.sort);
+  const kind = opts.evidence_kind?.trim() || null;
+  const search = opts.search?.trim() || null;
+  const minR = opts.min_rating;
+
+  const params: unknown[] = [importId, projectId];
+  const where: string[] = ["r.import_id = $1", "r.project_id = $2"];
+  let p = 3;
+  if (kind) {
+    where.push(`r.evidence_kind = $${p++}`);
+    params.push(kind);
+  }
+  if (minR != null && Number.isFinite(minR)) {
+    where.push(`r.rating_score IS NOT NULL AND r.rating_score >= $${p++}`);
+    params.push(minR);
+  }
+  if (search) {
+    const pat = `%${search.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+    const sp = p++;
+    where.push(`(r.payload_json::text ILIKE $${sp} OR COALESCE(r.dedupe_key,'') ILIKE $${sp})`);
+    params.push(pat);
+  }
+  params.push(lim, off);
+  const limPh = `$${p++}`;
+  const offPh = `$${p++}`;
+  return q(
+    db,
+    `SELECT r.id::text, r.import_id::text, r.evidence_kind, r.payload_json, r.created_at::text, r.rating_score::text
+       FROM caf_core.inputs_evidence_rows r
+      WHERE ${where.join(" AND ")}
+      ORDER BY ${orderSql}
+      LIMIT ${limPh} OFFSET ${offPh}`,
+    params
+  );
+}
+
+export async function countEvidenceRowsForReadModel(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  opts: { evidence_kind: string | null; search: string | null; min_rating: number | null }
+): Promise<number> {
+  const kind = opts.evidence_kind?.trim() || null;
+  const search = opts.search?.trim() || null;
+  const minR = opts.min_rating;
+  const params: unknown[] = [importId, projectId];
+  const where: string[] = ["r.import_id = $1", "r.project_id = $2"];
+  let p = 3;
+  if (kind) {
+    where.push(`r.evidence_kind = $${p++}`);
+    params.push(kind);
+  }
+  if (minR != null && Number.isFinite(minR)) {
+    where.push(`r.rating_score IS NOT NULL AND r.rating_score >= $${p++}`);
+    params.push(minR);
+  }
+  if (search) {
+    const pat = `%${search.replace(/%/g, "\\%").replace(/_/g, "\\_")}%`;
+    const sp = p++;
+    where.push(`(r.payload_json::text ILIKE $${sp} OR COALESCE(r.dedupe_key,'') ILIKE $${sp})`);
+    params.push(pat);
+  }
+  const row = await qOne<{ n: string }>(
+    db,
+    `SELECT COUNT(*)::text AS n
+       FROM caf_core.inputs_evidence_rows r
+      WHERE ${where.join(" AND ")}`,
+    params
+  );
+  return parseInt(row?.n ?? "0", 10) || 0;
+}
+
+export async function getEvidenceRowByIdForProject(
+  db: Pool,
+  projectId: string,
+  rowId: string
+): Promise<EvidenceRowForReadModel | null> {
+  const rid = String(rowId ?? "").trim();
+  if (!/^\d+$/.test(rid)) return null;
+  return qOne(
+    db,
+    `SELECT r.id::text, r.import_id::text, r.evidence_kind, r.payload_json, r.created_at::text, r.rating_score::text
+       FROM caf_core.inputs_evidence_rows r
+      WHERE r.project_id = $1 AND r.id = $2::bigint`,
+    [projectId, rid]
   );
 }

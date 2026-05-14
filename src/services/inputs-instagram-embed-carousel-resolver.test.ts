@@ -5,6 +5,7 @@ import {
   fetchInstagramCarouselUrlsFromEmbed,
   fetchInstagramCarouselUrlsFromEmbedDetailed,
   instagramEmbedHtmlDiagnostics,
+  instagramPermalinkEmbedFetchUrls,
   isLikelyInstagramEmbedUiAssetUrl,
   scoreInstagramCarouselCdnUrl,
   tryCreateInstagramEmbedProxyAgent,
@@ -17,6 +18,20 @@ describe("extractInstagramPermalinkShortcode", () => {
 
   it("parses /reel/", () => {
     expect(extractInstagramPermalinkShortcode("https://www.instagram.com/reel/AbCd123_/")).toBe("AbCd123_");
+  });
+});
+
+describe("instagramPermalinkEmbedFetchUrls", () => {
+  it("uses /p/ for standard permalinks", () => {
+    const u = instagramPermalinkEmbedFetchUrls("https://www.instagram.com/p/ABC123/", "ABC123");
+    expect(u[0]).toBe("https://www.instagram.com/p/ABC123/embed/");
+    expect(u[1]).toBe("https://www.instagram.com/p/ABC123/embed/captioned/");
+    expect(u[2]).toBe("https://www.instagram.com/p/ABC123/embed/?omitscript=true");
+  });
+
+  it("uses /reel/ when post URL is a reel permalink", () => {
+    const u = instagramPermalinkEmbedFetchUrls("https://www.instagram.com/reel/XYZ99/", "XYZ99");
+    expect(u[0]).toContain("/reel/XYZ99/embed/");
   });
 });
 
@@ -100,11 +115,41 @@ describe("instagramEmbedHtmlDiagnostics", () => {
     const d = instagramEmbedHtmlDiagnostics("<html>Log in to Instagram</html>");
     expect(d.login_wall_likely).toBe(true);
     expect(d.html_contains_display_url).toBe(false);
+    expect(d.html_has_embed_media_signals).toBe(false);
+    expect(d.html_has_cdninstagram_host).toBe(false);
   });
 
   it("detects display_url literal", () => {
     const d = instagramEmbedHtmlDiagnostics('{"display_url":"https://x"}');
     expect(d.html_contains_display_url).toBe(true);
+    expect(d.html_has_embed_media_signals).toBe(true);
+    expect(d.html_has_cdninstagram_host).toBe(false);
+  });
+
+  it("detects CDN host without display_url key", () => {
+    const d = instagramEmbedHtmlDiagnostics(
+      '<script>window.__NUX="https://scontent-ams2-1.cdninstagram.com/v/t51/foo.jpg"</script>'
+    );
+    expect(d.html_contains_display_url).toBe(false);
+    expect(d.html_has_cdninstagram_host).toBe(true);
+    expect(d.html_has_embed_media_signals).toBe(false);
+  });
+
+  it("treats og:image + CDN as media signal", () => {
+    const d = instagramEmbedHtmlDiagnostics(
+      '<meta property="og:image" content="https://scontent.cdninstagram.com/z.jpg" />'
+    );
+    expect(d.html_has_cdninstagram_host).toBe(true);
+    expect(d.html_has_embed_media_signals).toBe(true);
+  });
+
+  it("does not count static.cdninstagram bundles as slide CDN", () => {
+    const d = instagramEmbedHtmlDiagnostics(
+      '<script src="https://static.cdninstagram.com/rsrc.php/v3/foo.js"></script>' +
+        '<link rel="preload" href="https://static.cdninstagram.com/rsrc.php/v4/y_/c.jpg"/>'
+    );
+    expect(d.html_has_cdninstagram_host).toBe(false);
+    expect(d.html_has_embed_media_signals).toBe(false);
   });
 });
 
@@ -145,6 +190,9 @@ describe("fetchInstagramCarouselUrlsFromEmbed", () => {
     expect(o.http_ok).toBe(true);
     expect(o.urls.length).toBeGreaterThanOrEqual(1);
     expect(o.html_bytes).toBeGreaterThan(0);
+    expect(o.html_contains_display_url).toBe(false);
+    expect(o.html_has_cdninstagram_host).toBe(true);
+    expect(o.html_has_embed_media_signals).toBe(true);
     vi.unstubAllGlobals();
   });
 
@@ -164,6 +212,33 @@ describe("fetchInstagramCarouselUrlsFromEmbed", () => {
     expect(mockFetch).toHaveBeenCalled();
     const init = mockFetch.mock.calls[0][1] as { dispatcher?: import("undici").Dispatcher };
     expect(init.dispatcher).toBe(dummy);
+    vi.unstubAllGlobals();
+  });
+
+  it("tries alternate embed paths until ≥2 slide URLs", async () => {
+    const thin = "<html><title>Instagram</title></html>";
+    const rich =
+      '{"display_url":"https://scontent.cdninstagram.com/a.jpg"}' +
+      '{"display_url":"https://scontent.cdninstagram.com/b.jpg"}';
+    let n = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL | Request) => {
+        const s = typeof url === "string" ? url : url instanceof Request ? url.url : url.toString();
+        n++;
+        if (s.includes("/embed/captioned/")) {
+          return { ok: true, text: async () => rich };
+        }
+        return { ok: true, text: async () => thin };
+      }) as unknown as typeof fetch
+    );
+    const o = await fetchInstagramCarouselUrlsFromEmbedDetailed("https://www.instagram.com/p/ZZembed99/", {
+      maxSlides: 6,
+      timeoutMs: 5000,
+      maxBytes: 100_000,
+    });
+    expect(n).toBeGreaterThanOrEqual(2);
+    expect(o.urls.length).toBeGreaterThanOrEqual(2);
     vi.unstubAllGlobals();
   });
 });

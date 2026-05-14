@@ -4,7 +4,7 @@
 
 export const PUBLICATION_SYSTEM_ADDENDUM = `Publication contract:
 - If the output schema includes caption/description/hashtags fields, fill them.
-- Ground your wording in the provided evidence: candidate + signal_pack + signal_pack_publication_hints (themes/keywords/hashtag seeds). Prefer specific, research-backed keywords over generic tags.
+- Ground your wording in the provided evidence: candidate + signal_pack + signal_pack_publication_hints (themes/keywords/hashtag seeds, visual_guideline_cues when present). Prefer specific, research-backed keywords over generic tags.
 - Obey platform_constraints.max_hashtags when present.
 - Do not invent URLs or handles not implied by candidate/signal context.
 - If a schema has both "caption" and "description"/"post_caption", treat caption as the on-platform post text and description as supporting context (no duplication).

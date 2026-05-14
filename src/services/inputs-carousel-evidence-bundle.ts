@@ -9,6 +9,7 @@ import {
   parseHttpsImageUrlsFromEvidenceCell,
   tryLenientSingleHttpsImageUrlFromSocialCdn,
 } from "./inputs-image-url-for-analysis.js";
+import { extractOrderedInstagramCarouselImageUrls } from "./instagram-media-normalizer.js";
 
 /** One level: scrapers often emit `[{ display_url, ... }, ...]` instead of string URLs. */
 function imageUrlsFromScraperMediaObject(o: Record<string, unknown>, max: number): string[] {
@@ -334,6 +335,8 @@ export function parseCarouselSlideUrls(payload: Record<string, unknown>, maxSlid
       if (out.length >= maxSlides) return;
     }
   };
+  /** Apify / ingest-first ordered slide URLs (childPosts, carousel_slide_urls_json, …) before legacy list keys + embed fallback. */
+  pushAll(extractOrderedInstagramCarouselImageUrls(payload, maxSlides));
   for (const k of CAROUSEL_URL_KEYS) {
     const arr = parseUrlArray(payload[k], maxSlides - out.length);
     pushAll(arr);

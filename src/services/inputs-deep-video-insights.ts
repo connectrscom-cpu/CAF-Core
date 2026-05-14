@@ -12,7 +12,12 @@ import {
   listEvidenceRowInsightIdsByImportTier,
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
-import { getInputsEvidenceImport, listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
+import {
+  getInputsEvidenceImport,
+  listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowsForPreLlmScoring,
+} from "../repositories/inputs-evidence.js";
+import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
 import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
@@ -23,7 +28,11 @@ import {
   parseVideoAnalysisTranscript,
   parseVideoSourceUrlForArchive,
 } from "./inputs-video-evidence-bundle.js";
-import { resolveBroadInsightsSampleGate, resolveTopPerformerRatingGate } from "./inputs-top-performer-rating-gate.js";
+import {
+  buildTopPerformerRatingGateRequestOverrides,
+  resolveBroadInsightsSampleGate,
+  resolveTopPerformerRatingGate,
+} from "./inputs-top-performer-rating-gate.js";
 import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
@@ -73,6 +82,8 @@ export interface RunDeepVideoInsightsOptions {
   min_pre_llm_score?: number;
   rescan?: boolean;
   max_frames?: number;
+  rating_top_fraction?: number;
+  disable_rating_percentile_gate?: boolean;
 }
 
 export interface RunDeepVideoInsightsResult {
@@ -191,7 +202,13 @@ export async function runDeepVideoInsightsForImport(
   let mediaArchiveFrameFilesSaved = 0;
   let mediaArchiveSourceVideoFilesSaved = 0;
 
-  const ratingGate = await resolveTopPerformerRatingGate(db, project.id, importId, criteria);
+  const ratingGate = await resolveTopPerformerRatingGate(
+    db,
+    project.id,
+    importId,
+    criteria,
+    buildTopPerformerRatingGateRequestOverrides(opts)
+  );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
 
   const existing = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_video");
@@ -260,6 +277,16 @@ export async function runDeepVideoInsightsForImport(
 
   pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
   const top = pool.slice(0, maxRows);
+  const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
+  const ratingSnapByRow = ratingReviewSnapshotsByRowId(
+    ratingRows.map((row) => ({
+      id: row.id,
+      rating_score: row.rating_score,
+      rating_components_json: row.rating_components_json,
+      rating_rationale: row.rating_rationale,
+      rated_at: row.rated_at,
+    }))
+  );
 
   const auditBase = {
     db,
@@ -279,11 +306,41 @@ Frame count: ${c.frame_urls.length}
 Transcript (may be empty):
 ${c.transcript || "(none)"}`;
 
+    let storedInspection: Record<string, unknown> | undefined;
+    let visionFrameUrls = [...c.frame_urls];
+
+    if (mediaArchiveRequested && mediaSupabaseConfigured) {
+      const arch = await archiveTopPerformerVisionMedia(config, {
+        projectSlug,
+        inputsImportId: importId,
+        sourceEvidenceRowId: c.id,
+        tier: "top_performer_video",
+        role: "video_frame",
+        urls: c.frame_urls,
+        archive_source_video: false,
+        ...(mediaArchiveHttpProxyCfg.url ? { http_proxy_url: mediaArchiveHttpProxyCfg.url } : {}),
+      });
+      for (const it of arch.items) {
+        if (it.ok) {
+          mediaArchiveFilesSaved++;
+          if (it.role !== "source_video") mediaArchiveFrameFilesSaved++;
+        } else if (it.error) {
+          mediaArchiveErrors++;
+        }
+      }
+      storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
+      visionFrameUrls = c.frame_urls.map((src, i) => {
+        const it = arch.items[i];
+        const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
+        return relay || src;
+      });
+    }
+
     const user_content: Array<
       | { type: "text"; text: string }
       | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
     > = [{ type: "text", text: userText }];
-    for (const url of c.frame_urls) {
+    for (const url of visionFrameUrls) {
       user_content.push({
         type: "image_url",
         image_url: { url: finalizeHttpsImageUrlForOpenAiVision(url), detail: "low" },
@@ -317,42 +374,48 @@ ${c.transcript || "(none)"}`;
 
     const risks = parseRiskFlags(parsed?.risk_flags);
 
-    let storedInspection: Record<string, unknown> | undefined;
-    if (mediaArchiveRequested) {
-      if (mediaSupabaseConfigured) {
-        const sourceVideoUrl = sourceVideoArchiveRequested ? parseVideoSourceUrlForArchive(c.payload) : null;
-        const arch = await archiveTopPerformerVisionMedia(config, {
+    if (mediaArchiveRequested && mediaSupabaseConfigured && sourceVideoArchiveRequested) {
+      const sourceVideoUrl = parseVideoSourceUrlForArchive(c.payload);
+      if (sourceVideoUrl) {
+        const arch2 = await archiveTopPerformerVisionMedia(config, {
           projectSlug,
           inputsImportId: importId,
           sourceEvidenceRowId: c.id,
           tier: "top_performer_video",
           role: "video_frame",
-          urls: c.frame_urls,
-          archive_source_video: sourceVideoArchiveRequested,
-          ...(sourceVideoUrl ? { source_video_url: sourceVideoUrl } : {}),
+          urls: [],
+          archive_source_video: true,
+          source_video_url: sourceVideoUrl,
           ...(mediaArchiveHttpProxyCfg.url ? { http_proxy_url: mediaArchiveHttpProxyCfg.url } : {}),
         });
-        for (const it of arch.items) {
+        for (const it of arch2.items) {
           if (it.ok) {
             mediaArchiveFilesSaved++;
             if (it.role === "source_video") mediaArchiveSourceVideoFilesSaved++;
-            else mediaArchiveFrameFilesSaved++;
           } else if (it.error) {
             mediaArchiveErrors++;
           }
         }
-        storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
-      } else {
-        storedInspection = {
-          archived_at: new Date().toISOString(),
-          tier: "top_performer_video",
-          project_slug: projectSlug,
-          inputs_import_id: importId,
-          source_evidence_row_id: c.id,
-          skipped_reason: "supabase_not_configured",
-          items: [],
-        };
+        const base = (storedInspection ?? { archived_at: new Date().toISOString(), tier: "top_performer_video" }) as Record<
+          string,
+          unknown
+        > & { items?: unknown[] };
+        const items1 = Array.isArray(base.items) ? base.items : [];
+        const items2 = arch2.items ?? [];
+        storedInspection = { ...base, items: [...items1, ...items2] };
       }
+    }
+
+    if (mediaArchiveRequested && !mediaSupabaseConfigured) {
+      storedInspection = {
+        archived_at: new Date().toISOString(),
+        tier: "top_performer_video",
+        project_slug: projectSlug,
+        inputs_import_id: importId,
+        source_evidence_row_id: c.id,
+        skipped_reason: "supabase_not_configured",
+        items: [],
+      };
     }
 
     await upsertEvidenceRowInsight(db, {
@@ -377,6 +440,7 @@ ${c.transcript || "(none)"}`;
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,
+      evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
       ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;

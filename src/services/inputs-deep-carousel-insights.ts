@@ -1,8 +1,9 @@
 /**
  * Top-performer **carousel** pass: multimodal on **all slide images** (+ caption context).
  * **Instagram only** (`instagram_post`); other platforms are skipped.
- * Slide URLs come from `parseCarouselSlideUrls(payload)` (explicit list keys + top-level covers + **nested**
- * Graph/scraper JSON such as `edge_sidecar_to_children` / stringified blobs), merged with embed fetch when enabled.
+ * Slide URLs come from `parseCarouselSlideUrls(payload)` (**Apify / ingest-first** ordered URLs from
+ * `carousel_slide_urls_json`, `childPosts`, etc., then explicit list keys + top-level covers + **nested**
+ * Graph/scraper JSON), merged with embed fetch only when enabled and slides are still short.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -12,7 +13,12 @@ import {
   listEvidenceRowInsightIdsByImportTier,
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
-import { getInputsEvidenceImport, listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
+import {
+  getInputsEvidenceImport,
+  listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowsForPreLlmScoring,
+} from "../repositories/inputs-evidence.js";
+import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
 import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
@@ -26,7 +32,11 @@ import {
   parseCarouselCaptionContext,
   parseCarouselSlideUrls,
 } from "./inputs-carousel-evidence-bundle.js";
-import { resolveBroadInsightsSampleGate, resolveTopPerformerRatingGate } from "./inputs-top-performer-rating-gate.js";
+import {
+  buildTopPerformerRatingGateRequestOverrides,
+  resolveBroadInsightsSampleGate,
+  resolveTopPerformerRatingGate,
+} from "./inputs-top-performer-rating-gate.js";
 import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
@@ -105,19 +115,72 @@ function resolveInstagramEmbedCarouselFetch(
   return { enabled: true, source: "env" };
 }
 
-export const TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT = `You analyze a **multi-slide social carousel** (static images shown in order, left-to-right / slide 1 → N).
-Return ONLY valid JSON:
+export const TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT = `You analyze a **multi-slide social carousel** (static images shown in order: the first image attachment after the text block = slide_index 1, then +1 for each following attachment).
+
+Return ONLY valid JSON with **root fields for quick reads** plus **slide-level detail for reproduction**:
+
+— Deck-wide (keep these strings succinct but informative) —
 {
-  "slide_arc": "how the story progresses across slides (short)",
+  "slide_arc": "how the narrative / list progresses across slides (short)",
   "cover_vs_body": "how slide 1 hooks vs middle/ending slides",
-  "visual_consistency": "palette, fonts, templates across slides",
-  "on_screen_text_summary": "recurring text patterns / hooks on slides",
+  "visual_consistency": "one paragraph: palette, repeated template, how unified the deck feels",
+  "on_screen_text_summary": "recurring hook patterns / phrases across the deck (not full transcripts)",
   "cta_clarity": "how clear the ask / next step is",
   "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
-  "risk_flags": ["string"],
-  "why_it_worked": "why this carousel may perform (short)"
+  "risk_flags": ["meaningful risk strings only; use [] when none — never placeholders like \"none\" or \"n/a\""],
+  "why_it_worked": "why this carousel may perform (short)",
+
+  "deck_as_whole_summary": "2–5 sentences: overall story, brand/persona vibe, pacing, what makes the deck cohesive + swipe-worthy",
+  "deck_visual_system": {
+    "overall_aesthetic": "e.g. soft editorial / bold meme grid / luxury minimal",
+    "canvas_aspect": "portrait 4:5 guess | square | unknown",
+    "safe_margins_gutters": "describe outer padding and column rhythm so a designer can match proportions",
+    "repeated_template": "what template repeats on most slides (header strip, footer, card frame, etc.)",
+    "motion_or_energy": "static vs kinetic feel (even though images are still)",
+    "emoji_or_sticker_usage": "none | sparse | dense; where they cluster"
+  },
+  "replication_blueprint": {
+    "steps_to_remake": ["ordered recipe steps a designer could follow without seeing the original"],
+    "asset_sources": ["generic stock / meme archetype / illustration style — never name exact copyrighted photo or scrape target"],
+    "tooling_notes": "e.g. Figma layers, Canva template class, Instagram text tool tiers if inferred",
+    "legal_ethics": "One line: recreate the *pattern*, not copyrighted third-party imagery or logos verbatim."
+  },
+
+  "slides": [
+    {
+      "slide_index": 1,
+      "on_screen_text_transcript": "Every readable word on the slide in visual reading order. Separate lines with JSON escape \\n (backslash then n). Include emojis and hashtags. If partially unreadable, mark [illegible] and continue.",
+      "visual_description": "What is shown beyond text: subjects, framing, background, props, memes (describe meme archetype, not specific IP). Be concrete enough to brief a designer.",
+      "layout_template": "e.g. center stack, split image top / text bottom, grid 2x2, quote card, listicle row — note alignment (left/center/right)",
+      "typography": {
+        "headline_guess": "e.g. heavy geometric sans, ALL CAPS, tight tracking",
+        "body_guess": "e.g. humanist sans sentence case",
+        "accent_guess": "script / serif quote / hand-drawn — or none",
+        "relative_scale": "estimate headline vs body vs fine print as % of slide height OR xs|sm|md|lg|xl vs slide",
+        "text_placement": "top third / center band / bottom caption / full-bleed overlay",
+        "hierarchy": "what is largest → smallest on this slide"
+      },
+      "color_tokens": {
+        "background": "#hex or name",
+        "primary_text": "#hex or name",
+        "accent": ["#hex or names"],
+        "photo_grade": "warm / cool / desaturated / high-contrast / flat illustration — short"
+      },
+      "graphic_elements": "borders, shadows, gradients, stickers, icons, underline bars, swipe chevrons — anything layout-affecting",
+      "image_or_photo_role": "full-bleed photo | inset card | collage | flat illustration | screenshot-like | none — and dominant subject",
+      "text_density": "low | medium | high"
+    }
+  ]
 }
-Use every slide image; if order is ambiguous, assume given order. Be conservative when unreadable.`;
+
+**Rules**
+- slides.length MUST equal the number of slide image attachments you received; slide_index runs 1..N in that order.
+- Transcripts must be **faithful** to visible type; do not invent platform UI that is not visible.
+- Fonts: you rarely know exact family names—give **closest recognizable class** (geometric sans, grotesk, serif editorial, rounded comic, etc.) plus weight/case/tracking notes so a human can pick an equivalent.
+- Aim for **replication detail** (sizes/proportions as guesses, colors when visible); say "unknown" or null when not inferable — do not guess hex if unclear.
+- Be conservative on sensitive claims; use risk_flags when needed.
+
+Use every slide image; if order is ambiguous, assume the attachment order given above.`;
 
 export const TOP_PERFORMER_CAROUSEL_USER_PROMPT_TEMPLATE = `Evidence kind: {{EVIDENCE_KIND}}
 Pre-LLM score: {{PRE_LLM_SCORE}}
@@ -133,6 +196,10 @@ export interface RunDeepCarouselInsightsOptions {
   min_pre_llm_score?: number;
   rescan?: boolean;
   max_slides?: number;
+  /** Overrides `criteria_json.top_performer.rating_top_fraction` for this run only (e.g. 0.05 = top 5%). */
+  rating_top_fraction?: number;
+  /** When true, rating percentile gate is off for this run only (same as profile `disable_rating_percentile_gate`). */
+  disable_rating_percentile_gate?: boolean;
 }
 
 export interface RunDeepCarouselInsightsResult {
@@ -185,6 +252,10 @@ export interface RunDeepCarouselInsightsResult {
   instagram_embed_carousel_fetch_cache_hits?: number;
   /** Of **network** embed GETs with HTTP 200, how many bodies contained the literal `display_url`. */
   instagram_embed_carousel_fetch_network_html_has_display_url_hits?: number;
+  /** Of **network** embed GETs with HTTP 200, how many bodies contained broader media-JSON / meta hints (see `instagramEmbedHtmlDiagnostics`). */
+  instagram_embed_carousel_fetch_network_html_has_embed_media_signal_hits?: number;
+  /** Of **network** embed GETs with HTTP 200, how many bodies mentioned slide-relevant CDN hosts (`scontent*.cdninstagram`, non-static `*.cdninstagram` image paths, `fbcdn` images — not `static.cdninstagram` bundles alone). */
+  instagram_embed_carousel_fetch_network_html_has_cdn_host_hits?: number;
   /** Of **network** embed GETs with HTTP 200, how many bodies looked like a login / challenge wall. */
   instagram_embed_carousel_fetch_network_login_wall_likely_hits?: number;
   /** True when an HTTP CONNECT proxy dispatcher was used for embed GETs (`CAF_INSTAGRAM_EMBED_HTTP_PROXY` or criteria). */
@@ -212,6 +283,11 @@ export interface RunDeepCarouselInsightsResult {
    * When `rows_analyzed === 0`, a short human explanation (admin / logs). Omitted when work ran.
    */
   deep_carousel_zero_work_summary?: string | null;
+  /**
+   * When `rating_gate_disabled === "no_rated_rows"`, explains that `rating_top_fraction` / profile gate
+   * could not filter because no `inputs_evidence_rows.rating_score` values exist for this import.
+   */
+  rating_gate_note?: string | null;
 }
 
 function carouselModel(profile: { synth_model: string; criteria_json: Record<string, unknown> }): string {
@@ -263,6 +339,8 @@ function buildDeepCarouselZeroWorkSummary(args: {
   carouselInsightsTotal: number;
   embedAttempts: number;
   displayUrlHits: number;
+  cdnHostHits: number;
+  mediaSignalHits: number;
   embedHttpProxyActive: boolean;
   embedHttpProxySource: "criteria" | "env" | "none";
 }): string | null {
@@ -270,13 +348,12 @@ function buildDeepCarouselZeroWorkSummary(args: {
   if (args.carouselDeckRows === 0) {
     let msg =
       `No Instagram evidence rows reached ≥2 slide image URLs after payload parse + embed merge ` +
-      `(${args.embedAttempts} embed GET(s); ${args.displayUrlHits} response(s) contained the literal "display_url" — often 0 when Instagram serves a login wall to server IPs). ` +
+      `(${args.embedAttempts} embed GET(s); ${args.displayUrlHits} with literal "display_url"; ${args.cdnHostHits} with slide-relevant CDN (not only \`static.cdninstagram\` bundles); ${args.mediaSignalHits} with broader media/meta JSON hints — often all low when Instagram serves a login wall or minimal HTML to server IPs). ` +
       `There are still ${args.carouselInsightsTotal} top_performer_carousel insight row(s) in the DB from earlier runs; they are not proof of current slide URLs. ` +
       `Enrich ingest with per-slide CDN URLs, or improve embed access.`;
-    if (args.embedAttempts > 0 && args.displayUrlHits === 0 && !args.embedHttpProxyActive) {
+    if (args.embedAttempts > 0 && !args.embedHttpProxyActive) {
       msg +=
-        ` For embed HTML, set Fly secret **CAF_INSTAGRAM_EMBED_HTTP_PROXY** to an HTTP CONNECT proxy URL ` +
-        `(or \`criteria_json.inputs_insights.instagram_embed_http_proxy\` per project) so Core can fetch embeds off the default egress IP.`;
+        ` **CAF_INSTAGRAM_EMBED_HTTP_PROXY** (Fly secret) or \`criteria_json.inputs_insights.instagram_embed_http_proxy\` enables an HTTP CONNECT proxy for **embed** and **slide archive** fetches so Core is not stuck on datacenter egress.`;
     }
     return msg;
   }
@@ -295,9 +372,43 @@ function buildDeepCarouselZeroWorkSummary(args: {
   return null;
 }
 
+/** LLMs sometimes emit placeholder "risks"; strip those before persisting `risk_flags_json`. */
+const CAROUSEL_RISK_FLAG_NOISE = new Set([
+  "none",
+  "n/a",
+  "na",
+  "-",
+  "no risk",
+  "no risks",
+  "unknown",
+]);
+
 function parseRiskFlags(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
-  return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
+  return v
+    .map((x) => String(x).trim())
+    .filter((s) => {
+      if (!s) return false;
+      return !CAROUSEL_RISK_FLAG_NOISE.has(s.toLowerCase());
+    })
+    .slice(0, 40);
+}
+
+function buildCarouselAestheticAnalysisJson(parsed: Record<string, unknown> | null): Record<string, unknown> {
+  if (!parsed) return {};
+  const out: Record<string, unknown> = {
+    slide_arc: parsed.slide_arc,
+    cover_vs_body: parsed.cover_vs_body,
+    visual_consistency: parsed.visual_consistency,
+    on_screen_text_summary: parsed.on_screen_text_summary,
+    cta_clarity: parsed.cta_clarity,
+    format_pattern: parsed.format_pattern,
+  };
+  if (Array.isArray(parsed.slides)) out.slides = parsed.slides;
+  if (parsed.deck_as_whole_summary != null) out.deck_as_whole_summary = parsed.deck_as_whole_summary;
+  if (parsed.deck_visual_system != null) out.deck_visual_system = parsed.deck_visual_system;
+  if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
+  return out;
 }
 
 export async function runDeepCarouselInsightsForImport(
@@ -331,7 +442,13 @@ export async function runDeepCarouselInsightsForImport(
   let mediaArchiveFilesSaved = 0;
   let mediaArchiveErrors = 0;
 
-  const ratingGate = await resolveTopPerformerRatingGate(db, project.id, importId, criteria);
+  const ratingGate = await resolveTopPerformerRatingGate(
+    db,
+    project.id,
+    importId,
+    criteria,
+    buildTopPerformerRatingGateRequestOverrides(opts)
+  );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
 
   const existing = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_carousel");
@@ -347,6 +464,8 @@ export async function runDeepCarouselInsightsForImport(
   let instagramEmbedFetchCacheHits = 0;
   let instagramEmbedFetchSkippedCap = 0;
   let instagramEmbedNetworkDisplayUrlLiteralHits = 0;
+  let instagramEmbedNetworkCdnHostHits = 0;
+  let instagramEmbedNetworkMediaSignalHits = 0;
   let instagramEmbedNetworkLoginWallLikelyHits = 0;
 
   const embedHttpProxyCfg = resolveInstagramEmbedHttpProxy(config, criteria);
@@ -398,6 +517,8 @@ export async function runDeepCarouselInsightsForImport(
           shortcodeToOutcome.set(p.shortcode, outcome);
           if (outcome.http_ok) {
             if (outcome.html_contains_display_url) instagramEmbedNetworkDisplayUrlLiteralHits++;
+            if (outcome.html_has_cdninstagram_host) instagramEmbedNetworkCdnHostHits++;
+            if (outcome.html_has_embed_media_signals) instagramEmbedNetworkMediaSignalHits++;
             if (outcome.login_wall_likely) instagramEmbedNetworkLoginWallLikelyHits++;
           }
           if (embedThrottleMs > 0) {
@@ -507,6 +628,16 @@ export async function runDeepCarouselInsightsForImport(
 
   pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
   const top = pool.slice(0, maxRows);
+  const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
+  const ratingSnapByRow = ratingReviewSnapshotsByRowId(
+    ratingRows.map((row) => ({
+      id: row.id,
+      rating_score: row.rating_score,
+      rating_components_json: row.rating_components_json,
+      rating_rationale: row.rating_rationale,
+      rated_at: row.rated_at,
+    }))
+  );
 
   const auditBase = {
     db,
@@ -530,13 +661,38 @@ ${c.caption || "(none)"}
 Structured row context:
 ${textBundle}`;
 
+    let storedInspection: Record<string, unknown> | undefined;
+    let visionSlideUrls = [...c.slide_urls];
+
+    if (mediaArchiveRequested && mediaSupabaseConfigured) {
+      const arch = await archiveTopPerformerVisionMedia(config, {
+        projectSlug,
+        inputsImportId: importId,
+        sourceEvidenceRowId: c.id,
+        tier: "top_performer_carousel",
+        role: "carousel_slide",
+        urls: c.slide_urls,
+        ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
+      });
+      for (const it of arch.items) {
+        if (it.ok) mediaArchiveFilesSaved++;
+        else if (it.error) mediaArchiveErrors++;
+      }
+      storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
+      visionSlideUrls = c.slide_urls.map((src, i) => {
+        const it = arch.items[i];
+        const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
+        return relay || src;
+      });
+    }
+
     const user_content: Array<
       { type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
     > = [{ type: "text", text: userText }];
-    for (let i = 0; i < c.slide_urls.length; i++) {
+    for (let i = 0; i < visionSlideUrls.length; i++) {
       user_content.push({
         type: "image_url",
-        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(c.slide_urls[i]), detail: "low" },
+        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(visionSlideUrls[i]), detail: "low" },
       });
     }
 
@@ -546,54 +702,27 @@ ${textBundle}`;
         model,
         system_prompt: system,
         user_content,
-        max_tokens: 4096,
+        max_tokens: 8192,
         response_format: "json_object",
       },
       { ...auditBase, step: STEP }
     );
 
     const parsed = parseJsonObjectFromLlmText(out.content) as Record<string, unknown> | null;
-    const aesthetic: Record<string, unknown> = parsed
-      ? {
-          slide_arc: parsed.slide_arc,
-          cover_vs_body: parsed.cover_vs_body,
-          visual_consistency: parsed.visual_consistency,
-          on_screen_text_summary: parsed.on_screen_text_summary,
-          cta_clarity: parsed.cta_clarity,
-          format_pattern: parsed.format_pattern,
-        }
-      : {};
+    const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
 
     const risks = parseRiskFlags(parsed?.risk_flags);
 
-    let storedInspection: Record<string, unknown> | undefined;
-    if (mediaArchiveRequested) {
-      if (mediaSupabaseConfigured) {
-        const arch = await archiveTopPerformerVisionMedia(config, {
-          projectSlug,
-          inputsImportId: importId,
-          sourceEvidenceRowId: c.id,
-          tier: "top_performer_carousel",
-          role: "carousel_slide",
-          urls: c.slide_urls,
-          ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
-        });
-        for (const it of arch.items) {
-          if (it.ok) mediaArchiveFilesSaved++;
-          else if (it.error) mediaArchiveErrors++;
-        }
-        storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
-      } else {
-        storedInspection = {
-          archived_at: new Date().toISOString(),
-          tier: "top_performer_carousel",
-          project_slug: projectSlug,
-          inputs_import_id: importId,
-          source_evidence_row_id: c.id,
-          skipped_reason: "supabase_not_configured",
-          items: [],
-        };
-      }
+    if (mediaArchiveRequested && !mediaSupabaseConfigured) {
+      storedInspection = {
+        archived_at: new Date().toISOString(),
+        tier: "top_performer_carousel",
+        project_slug: projectSlug,
+        inputs_import_id: importId,
+        source_evidence_row_id: c.id,
+        skipped_reason: "supabase_not_configured",
+        items: [],
+      };
     }
 
     await upsertEvidenceRowInsight(db, {
@@ -618,6 +747,7 @@ ${textBundle}`;
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,
+      evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
       ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;
@@ -634,9 +764,16 @@ ${textBundle}`;
     carouselInsightsTotal: carouselTotal,
     embedAttempts: instagramEmbedFetchAttempts,
     displayUrlHits: instagramEmbedNetworkDisplayUrlLiteralHits,
+    cdnHostHits: instagramEmbedNetworkCdnHostHits,
+    mediaSignalHits: instagramEmbedNetworkMediaSignalHits,
     embedHttpProxyActive: instagramEmbedHttpProxyActive,
     embedHttpProxySource: embedHttpProxyCfg.source,
   });
+
+  const ratingGateNote =
+    ratingGate.disabled === "no_rated_rows"
+      ? "No evidence rows in this import have rating_score; the top-fraction rating gate was skipped. Populate ratings on evidence rows before rating_top_fraction can narrow the carousel pool."
+      : null;
 
   return {
     import_id: importId,
@@ -671,6 +808,8 @@ ${textBundle}`;
     instagram_embed_carousel_fetch_cap: maxEmbedNetworkFetches,
     instagram_embed_carousel_fetch_cache_hits: instagramEmbedFetchCacheHits,
     instagram_embed_carousel_fetch_network_html_has_display_url_hits: instagramEmbedNetworkDisplayUrlLiteralHits,
+    instagram_embed_carousel_fetch_network_html_has_embed_media_signal_hits: instagramEmbedNetworkMediaSignalHits,
+    instagram_embed_carousel_fetch_network_html_has_cdn_host_hits: instagramEmbedNetworkCdnHostHits,
     instagram_embed_carousel_fetch_network_login_wall_likely_hits: instagramEmbedNetworkLoginWallLikelyHits,
     instagram_embed_http_proxy_active: instagramEmbedHttpProxyActive,
     instagram_embed_http_proxy_source: embedHttpProxyCfg.source,
@@ -682,5 +821,6 @@ ${textBundle}`;
     rescan: !!opts.rescan,
     skipped_existing_carousel_insight: skippedExistingCarouselInsight,
     deep_carousel_zero_work_summary: zeroWorkSummary,
+    ...(ratingGateNote != null ? { rating_gate_note: ratingGateNote } : {}),
   };
 }

@@ -4,6 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import * as XLSX from "xlsx";
+import { enrichInstagramApifyPayloadInPlace } from "./instagram-media-normalizer.js";
 
 export const MAX_ROWS_PER_SHEET = 50_000;
 
@@ -200,6 +201,9 @@ export function parseInputsSnsWorkbookBuffer(buffer: Buffer): ParsedInputsEviden
       if (isEmpty) continue;
 
       const payload_json = zipRow(headers, vals);
+      if (evidenceKind === "instagram_post") {
+        enrichInstagramApifyPayloadInPlace(payload_json);
+      }
       const dedupe_key = computeDedupeKey(sheetName, evidenceKind, payload_json);
       rows.push({
         sheet_name: sheetName,

@@ -25,6 +25,7 @@ export const IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE = `You are a senior soci
 You receive an INSIGHT CONTEXT array; each item is one evidence row with:
 - "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
 - optional "top_performer_styles" (richer analysis for standout posts)
+- optional "evidence_performance_review_json" inside top_performer_styles when the evidence row was rated (LLM components + rationale snapshot)
 - "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
 Your job: propose EXACTLY {{TARGET_IDEAS}} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
@@ -197,11 +198,20 @@ function dedupeIdeas<T extends { title: string; thesis: string; key_points: stri
 
 function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, unknown> | null {
   if (!tops.length) return null;
-  let best = tops[0];
+  let best = tops[0]!;
   for (const t of tops) {
     const tr = TP_TIER_RANK[t.analysis_tier] ?? 0;
     const br = TP_TIER_RANK[best.analysis_tier] ?? 0;
     if (tr >= br) best = t;
+  }
+  let perf = best.evidence_performance_review_json;
+  if (perf == null) {
+    for (const t of tops) {
+      if (t.evidence_performance_review_json != null) {
+        perf = t.evidence_performance_review_json;
+        break;
+      }
+    }
   }
   return {
     analysis_tier: best.analysis_tier,
@@ -213,6 +223,7 @@ function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, un
     caption_style: best.caption_style,
     primary_emotion: best.primary_emotion,
     secondary_emotion: best.secondary_emotion,
+    evidence_performance_review_json: perf ?? null,
   };
 }
 
@@ -381,6 +392,7 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
 You receive an INSIGHT CONTEXT array; each item is one evidence row with:
 - "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
 - optional "top_performer_styles" (richer analysis for standout posts)
+- optional "evidence_performance_review_json" inside top_performer_styles when the evidence row was rated (LLM components + rationale snapshot)
 - "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
 Your job: propose EXACTLY ${target} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.

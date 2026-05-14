@@ -129,6 +129,7 @@ export async function getJobLineageByTaskId(
          i.hook_text,
          i.risk_flags_json,
          i.aesthetic_analysis_json,
+         i.evidence_performance_review_json,
          i.raw_llm_json,
          i.created_at::text,
          i.updated_at::text,

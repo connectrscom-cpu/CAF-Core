@@ -9,8 +9,12 @@ import {
   listEvidenceRowInsightIdsByImportTier,
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
-import { getInputsEvidenceImport } from "../repositories/inputs-evidence.js";
-import { listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
+import {
+  getInputsEvidenceImport,
+  listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowsForPreLlmScoring,
+} from "../repositories/inputs-evidence.js";
+import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
 import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
@@ -22,7 +26,17 @@ import {
   pickPrimaryImageUrlForDeepAnalysis,
 } from "./inputs-image-url-for-analysis.js";
 import { isCarouselDeepEligible } from "./inputs-carousel-evidence-bundle.js";
-import { resolveBroadInsightsSampleGate, resolveTopPerformerRatingGate } from "./inputs-top-performer-rating-gate.js";
+import {
+  buildTopPerformerRatingGateRequestOverrides,
+  resolveBroadInsightsSampleGate,
+  resolveTopPerformerRatingGate,
+} from "./inputs-top-performer-rating-gate.js";
+import {
+  archiveTopPerformerVisionMedia,
+  resolveTopPerformerArchiveMedia,
+} from "./inputs-top-performer-media-archive.js";
+import { getSupabaseStorageClient } from "./supabase-storage.js";
+import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
 
 const STEP = "inputs_top_performer_image_insight";
 
@@ -52,6 +66,8 @@ export interface RunDeepImageInsightsOptions {
   max_rows?: number;
   min_pre_llm_score?: number;
   rescan?: boolean;
+  rating_top_fraction?: number;
+  disable_rating_percentile_gate?: boolean;
 }
 
 export interface RunDeepImageInsightsResult {
@@ -143,8 +159,18 @@ export async function runDeepImageInsightsForImport(
   const minPre = deepMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = deepMaxRows(criteria, opts.max_rows);
 
-  const ratingGate = await resolveTopPerformerRatingGate(db, project.id, importId, criteria);
+  const ratingGate = await resolveTopPerformerRatingGate(
+    db,
+    project.id,
+    importId,
+    criteria,
+    buildTopPerformerRatingGateRequestOverrides(opts)
+  );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
+
+  const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
+  const mediaSupabaseConfigured = !!getSupabaseStorageClient(config);
+  const embedHttpProxyCfg = resolveInstagramEmbedHttpProxy(config, criteria);
 
   const existingDeep = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_deep");
 
@@ -200,6 +226,16 @@ export async function runDeepImageInsightsForImport(
 
   pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
   const top = pool.slice(0, maxRows);
+  const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
+  const ratingSnapByRow = ratingReviewSnapshotsByRowId(
+    ratingRows.map((row) => ({
+      id: row.id,
+      rating_score: row.rating_score,
+      rating_components_json: row.rating_components_json,
+      rating_rationale: row.rating_rationale,
+      rated_at: row.rated_at,
+    }))
+  );
 
   const auditBase = {
     db,
@@ -214,6 +250,26 @@ export async function runDeepImageInsightsForImport(
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2500);
     const system = TOP_PERFORMER_IMAGE_SYSTEM_PROMPT;
 
+    let visionUrl = c.image_url;
+    let storedInspection: Record<string, unknown> | undefined;
+    if (mediaArchiveRequested && mediaSupabaseConfigured) {
+      const arch = await archiveTopPerformerVisionMedia(config, {
+        projectSlug,
+        inputsImportId: importId,
+        sourceEvidenceRowId: c.id,
+        tier: "top_performer_deep",
+        role: "carousel_slide",
+        urls: [c.image_url],
+        ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
+      });
+      const it0 = arch.items[0];
+      if (it0?.ok) {
+        const relay = it0.vision_fetch_url || it0.public_url;
+        if (relay) visionUrl = relay;
+      }
+      storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
+    }
+
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 
     const out = await openaiChatMultimodal(
@@ -223,7 +279,7 @@ export async function runDeepImageInsightsForImport(
         system_prompt: system,
         user_content: [
           { type: "text", text: userText },
-          { type: "image_url", image_url: { url: finalizeHttpsImageUrlForOpenAiVision(c.image_url), detail: "low" } },
+          { type: "image_url", image_url: { url: finalizeHttpsImageUrlForOpenAiVision(visionUrl), detail: "low" } },
         ],
         max_tokens: 4096,
         response_format: "json_object",
@@ -243,6 +299,18 @@ export async function runDeepImageInsightsForImport(
       : {};
 
     const risks = parseRiskFlags(parsed?.risk_flags);
+
+    if (mediaArchiveRequested && !mediaSupabaseConfigured) {
+      storedInspection = {
+        archived_at: new Date().toISOString(),
+        tier: "top_performer_deep",
+        project_slug: projectSlug,
+        inputs_import_id: importId,
+        source_evidence_row_id: c.id,
+        skipped_reason: "supabase_not_configured",
+        items: [],
+      };
+    }
 
     await upsertEvidenceRowInsight(db, {
       project_id: project.id,
@@ -266,6 +334,8 @@ export async function runDeepImageInsightsForImport(
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,
+      evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
+      ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;
   }

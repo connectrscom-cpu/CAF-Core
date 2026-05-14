@@ -19,6 +19,7 @@ import {
   countEvidenceRowInsightsByImportTier,
   countEvidenceRowInsightsByImportTierAndKind,
   deleteEvidenceRowInsightsForImportTier,
+  deleteEvidenceRowInsightsForImportTiers,
   listEvidenceRowInsightsEnriched,
 } from "../repositories/inputs-evidence-insights.js";
 import {
@@ -628,6 +629,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         max_rows: z.number().int().min(1).max(80).optional(),
         min_pre_llm_score: z.number().min(0).max(1).optional(),
         rescan: z.boolean().optional(),
+        rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
+        disable_rating_percentile_gate: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -638,6 +641,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         max_rows: body.data.max_rows,
         min_pre_llm_score: body.data.min_pre_llm_score,
         rescan: body.data.rescan,
+        rating_top_fraction: body.data.rating_top_fraction,
+        disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
       });
       return { ok: true, ...result };
     } catch (e) {
@@ -656,6 +661,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         min_pre_llm_score: z.number().min(0).max(1).optional(),
         max_frames: z.number().int().min(1).max(12).optional(),
         rescan: z.boolean().optional(),
+        rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
+        disable_rating_percentile_gate: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -667,6 +674,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         min_pre_llm_score: body.data.min_pre_llm_score,
         max_frames: body.data.max_frames,
         rescan: body.data.rescan,
+        rating_top_fraction: body.data.rating_top_fraction,
+        disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
       });
       return { ok: true, ...result };
     } catch (e) {
@@ -685,6 +694,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         min_pre_llm_score: z.number().min(0).max(1).optional(),
         max_slides: z.number().int().min(2).max(12).optional(),
         rescan: z.boolean().optional(),
+        rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
+        disable_rating_percentile_gate: z.boolean().optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -696,6 +707,8 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         min_pre_llm_score: body.data.min_pre_llm_score,
         max_slides: body.data.max_slides,
         rescan: body.data.rescan,
+        rating_top_fraction: body.data.rating_top_fraction,
+        disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
       });
       return { ok: true, ...result };
     } catch (e) {
@@ -717,9 +730,21 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .safeParse(request.params);
     const body = z
       .object({
-        analysis_tier: evidenceInsightTierSchema,
+        analysis_tier: evidenceInsightTierSchema.optional(),
+        analysis_tiers: z.array(evidenceInsightTierSchema).min(1).max(10).optional(),
         /** Must be true — prevents accidental deletes from a stray GET/proxy. */
         confirm: z.literal(true),
+      })
+      .superRefine((val, ctx) => {
+        const one = val.analysis_tier != null;
+        const many = val.analysis_tiers != null && val.analysis_tiers.length > 0;
+        if (one === many) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Provide exactly one of analysis_tier or analysis_tiers",
+            path: ["analysis_tier"],
+          });
+        }
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -729,11 +754,20 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     const imp = await getInputsEvidenceImport(db, project.id, params.data.import_id);
     if (!imp) return reply.code(404).send({ ok: false, error: "import_not_found" });
     try {
+      if (body.data.analysis_tiers) {
+        const deleted = await deleteEvidenceRowInsightsForImportTiers(
+          db,
+          project.id,
+          params.data.import_id,
+          body.data.analysis_tiers
+        );
+        return { ok: true, analysis_tiers: body.data.analysis_tiers, deleted };
+      }
       const deleted = await deleteEvidenceRowInsightsForImportTier(
         db,
         project.id,
         params.data.import_id,
-        body.data.analysis_tier
+        body.data.analysis_tier!
       );
       return { ok: true, analysis_tier: body.data.analysis_tier, deleted };
     } catch (e) {

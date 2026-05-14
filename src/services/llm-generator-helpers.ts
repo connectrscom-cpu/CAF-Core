@@ -149,6 +149,23 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
     .filter(Boolean)
     .slice(0, 16);
 
+  const vgp = asRecord(derived.visual_guidelines_pack_v1);
+  const vgpCueRaw = asArray(vgp?.visual_guideline_cues) ?? [];
+  const visualGuidelineCues = vgpCueRaw
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .slice(0, 24);
+  const visualGuidelinesPackSlim =
+    vgp != null
+      ? {
+          version: vgp.version ?? null,
+          generated_at: typeof vgp.generated_at === "string" ? vgp.generated_at : null,
+          insights_scanned: vgp.insights_scanned ?? null,
+          visual_guideline_cues: visualGuidelineCues,
+          entries_sample: Array.isArray(vgp.entries) ? (vgp.entries as unknown[]).slice(0, 8) : [],
+        }
+      : null;
+
   return {
     derived_globals: uniqStrings(scalarStrings, 12),
     rising_keywords: uniqStrings(keywordCandidates, 20),
@@ -158,6 +175,10 @@ function signalPackPublicationHints(signalPack: Record<string, unknown>): Record
     signal_pack_filtered_hashtags: filteredHashtags,
     /** Short strings from `derived_globals_json.top_performer_styling_cues_v1` (creative intelligence). */
     top_performer_styling_cues: cueStrings,
+    /** Short aesthetic / replication cues from `derived_globals_json.visual_guidelines_pack_v1` (top-performer vision tiers). */
+    visual_guideline_cues: visualGuidelineCues,
+    /** Compact pack for templates that want structured entries without loading full signal_pack JSON. */
+    visual_guidelines_pack: visualGuidelinesPackSlim,
   };
 }
 
