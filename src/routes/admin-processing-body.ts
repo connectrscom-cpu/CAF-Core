@@ -51,33 +51,105 @@ export function adminProcessingBody(currentSlug: string): string {
             6. Run <span class="badge badge-b" id="step-badge-run">not started</span>
           </button>
         </div>
-        <details id="inspect-api-details" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
-          <summary style="cursor:pointer;font-size:13px;font-weight:600">Inspect — load live API JSON here (same auth as this page)</summary>
-          <p class="runs-ops-hint" style="margin:8px 0 10px">Use this to see raw responses without curl. Server-side logs: <span class="mono">fly logs -a caf-core</span> (or your host); search for <span class="mono">inputs_top_performer</span> / OpenAI step names in <span class="mono">api_call_audit</span>.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center">
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-import-stats">Import stats</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-profile">Processing profile</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-audit">API audit (recent)</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-deep">Insights · top_performer_deep</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-carousel">Insights · top_performer_carousel</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-video">Insights · top_performer_video</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-prellm-sample">Pre-LLM sample rows</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-inspect-copy-pre">Copy response body</button>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-            <label style="font-size:12px;color:var(--muted)">Evidence row id
-              <input id="inspect-row-id" type="text" class="mono" placeholder="caf_core.inputs_evidence.id (uuid)" style="width:min(360px,94vw);font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)" />
-            </label>
-            <button type="button" class="btn btn-sm" id="btn-inspect-evidence-row">Fetch evidence row</button>
-          </div>
-          <pre id="inspect-api-pre" style="font-size:11px;background:var(--card);padding:10px;border-radius:8px;max-height:460px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);margin:0;color:var(--text)">Click a button above.</pre>
-        </details>
-        <details id="operator-read-lens" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+        <details id="operator-read-lens" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:none">
           <summary style="cursor:pointer;font-size:13px;font-weight:600">Operator lens — readable evidence &amp; insights</summary>
-          <p class="runs-ops-hint" style="margin:8px 0 10px">Uses the normalized read APIs (<span class="mono">GET /v1/evidence/…</span> and <span class="mono">GET /v1/insights/…</span>) — structured fields instead of raw workbook JSON. Select an import first.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-op-lens-evidence">Load evidence (readable)</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-op-lens-insights">Load insights (readable)</button>
+          <p class="runs-ops-hint" style="margin:8px 0 10px">Uses <span class="mono">GET /v1/evidence/…</span> and <span class="mono">GET /v1/insights/…</span>. Pick platform, filters, and sort; open a row for every field. Select an import first.</p>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--card)">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Evidence</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:8px">
+              <label style="font-size:11px;color:var(--muted)">Platform<br />
+                <select id="op-lens-ev-platform" style="font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">All platforms</option>
+                  <option value="facebook">Facebook</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="reddit">Reddit</option>
+                  <option value="web">Web (scraped)</option>
+                  <option value="source_registry">Sources (registry)</option>
+                  <option value="reference_pool">Reference pool</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Format<br />
+                <select id="op-lens-ev-format" style="font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any format</option>
+                  <option value="video">video</option>
+                  <option value="carousel">carousel</option>
+                  <option value="single_image">single_image</option>
+                  <option value="text_native">text_native</option>
+                  <option value="article_or_page">article_or_page</option>
+                  <option value="unknown">unknown</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Sort<br />
+                <select id="op-lens-ev-sort" style="font-size:12px;min-width:130px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="rating_desc">Rating ↓</option>
+                  <option value="rating_asc">Rating ↑</option>
+                  <option value="created_desc">Created ↓</option>
+                  <option value="created_asc">Created ↑</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Min rating<br /><input id="op-lens-ev-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" style="width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Uses evidence row rating_score when present" /></label>
+              <label style="font-size:11px;color:var(--muted)">Search<br /><input id="op-lens-ev-search" type="search" placeholder="Caption, payload…" style="width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <label style="font-size:11px;color:var(--muted)">Limit<br /><input id="op-lens-ev-limit" type="number" min="1" max="200" value="50" style="width:64px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <label style="font-size:11px;color:var(--muted)">Offset<br /><input id="op-lens-ev-offset" type="number" min="0" value="0" style="width:64px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <label style="font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center;align-self:center;margin-top:14px">
+                <input type="checkbox" id="op-lens-ev-all-cols" checked /> Wide table
+              </label>
+              <button type="button" class="btn-ghost btn-sm" id="btn-op-lens-ev-sync-tab" title="Set Platform from the Filter evidence tab (FB / IG / …)">Sync platform tab</button>
+              <button type="button" class="btn btn-sm" id="btn-op-lens-evidence">Load evidence</button>
+            </div>
+          </div>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;background:var(--card)">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Insights</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:8px">
+              <label style="font-size:11px;color:var(--muted)">Platform<br />
+                <select id="op-lens-in-platform" style="font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">All</option>
+                  <option value="facebook">Facebook</option>
+                  <option value="instagram">Instagram</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="reddit">Reddit</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Analysis tier<br />
+                <select id="op-lens-in-tier" style="font-size:12px;min-width:160px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">All tiers</option>
+                  <option value="broad_llm">broad_llm</option>
+                  <option value="top_performer_deep">top_performer_deep</option>
+                  <option value="top_performer_carousel">top_performer_carousel</option>
+                  <option value="top_performer_video">top_performer_video</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Insight type<br />
+                <select id="op-lens-in-type" style="font-size:12px;min-width:160px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any type</option>
+                  <option value="top_performer">top_performer</option>
+                  <option value="hook_pattern">hook_pattern</option>
+                  <option value="emotional_pattern">emotional_pattern</option>
+                  <option value="visual_pattern">visual_pattern</option>
+                  <option value="hashtag_cluster">hashtag_cluster</option>
+                  <option value="strategic_opportunity">strategic_opportunity</option>
+                  <option value="risk_or_warning">risk_or_warning</option>
+                  <option value="market_row_analysis">market_row_analysis</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Min confidence<br /><input id="op-lens-in-conf" type="number" min="0" max="1" step="0.05" placeholder="any" style="width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="From pre-LLM score when present" /></label>
+              <label style="font-size:11px;color:var(--muted)">Search<br /><input id="op-lens-in-search" type="search" placeholder="Title, summary…" style="width:min(200px,36vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <label style="font-size:11px;color:var(--muted)">Sort (loaded page)<br />
+                <select id="op-lens-in-sort" style="font-size:12px;min-width:150px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="created_desc">Created ↓</option>
+                  <option value="created_asc">Created ↑</option>
+                  <option value="confidence_desc">Confidence ↓</option>
+                  <option value="confidence_asc">Confidence ↑</option>
+                  <option value="title_asc">Title A→Z</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Limit<br /><input id="op-lens-in-limit" type="number" min="1" max="200" value="50" style="width:64px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <label style="font-size:11px;color:var(--muted)">Offset<br /><input id="op-lens-in-offset" type="number" min="0" value="0" style="width:64px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" /></label>
+              <button type="button" class="btn-ghost btn-sm" id="btn-op-lens-insights">Load insights</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-op-lens-tsv" title="Tab-separated values from the table below">Copy table</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-op-lens-json" title="JSON for the last load">Copy JSON</button>
+            </div>
           </div>
           <div id="op-lens-out" class="runs-ops-hint" style="min-height:2em">—</div>
         </details>
@@ -108,56 +180,91 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <div id="prellm-root">
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px">
-              <div style="flex:1;min-width:280px">
-                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                  <label style="font-size:13px">Cutoff for this platform <span id="prellm-min-val" class="mono">0.00</span></label>
-                  <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="width:min(420px,100%)" />
-                <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:92px;font-size:12px" title="Set cutoff value (0–1)" />
+            <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--card);margin-bottom:12px">
+              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+                <strong style="font-size:14px">Score formula for this platform</strong>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="btn btn-sm" id="prellm-save-formula">Save formula</button>
+                  <button type="button" class="btn-ghost btn-sm" id="prellm-save-cutoff-snapshot" title="Writes cutoff + funnel counts to this import (selection_snapshot_json.operator_cutoff_ui)">Save cutoff &amp; pass counts</button>
                 </div>
-                <div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              </div>
+              <div id="prellm-formula-hint" class="runs-ops-hint" style="margin-bottom:8px;font-size:12px"></div>
+              <div id="prellm-active-weights-strip" style="font-size:11px;color:var(--muted);margin-bottom:10px;min-height:1.2em;line-height:1.45"></div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+                <label style="font-size:12px">Profile min score <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:92px;font-size:12px" /></label>
+                <label style="font-size:12px">Min primary text chars <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:92px;font-size:12px" /></label>
+              </div>
+              <div id="prellm-weights-wrap" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)"></div>
+              <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
+                  <span id="prellm-save-msg" style="font-size:11px;color:var(--muted)"></span>
+                </div>
+                <span id="prellm-cutoff-snapshot-msg" style="font-size:11px;color:var(--muted);text-align:right;max-width:min(420px,46vw)"></span>
+              </div>
+              <p class="runs-ops-hint" style="margin:10px 0 0;font-size:11px"><span class="mono">text_signal</span> is text-length (0–1). <strong>Profile min</strong> drops weak rows before the blend. <strong>Cutoff</strong> (below) filters which scored rows stay in the table.</p>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px">
+              <div style="flex:1;min-width:280px;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg)">
+                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Cutoff &amp; sort</div>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <label style="font-size:13px;white-space:nowrap">Cutoff <span id="prellm-min-val" class="mono">0.00</span></label>
+                  <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="flex:1;min-width:160px;max-width:420px" />
+                  <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:88px;font-size:12px" title="0–1" />
+                </div>
+                <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
                   <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
                     <input type="checkbox" id="prellm-show-below" /> Show rows below cutoff (still passing profile min)
                   </label>
                   <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
                     Sort
-                    <select id="prellm-sort" style="font-size:12px">
+                    <select id="prellm-sort" style="font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
                       <option value="score_desc">Score ↓</option>
                       <option value="score_asc">Score ↑</option>
                     </select>
                   </label>
                 </div>
               </div>
-              <div style="flex:1;min-width:320px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
-                <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px">
-                  <strong style="font-size:12px">Formula for this platform</strong>
-                  <button type="button" class="btn-ghost btn-sm" id="prellm-save-formula">Save formula</button>
-                </div>
-                <div id="prellm-formula-hint" style="font-size:11px;color:var(--muted);margin-bottom:8px">
-                  Score is a weighted average of normalized features (0–1). Change weights/min score per platform.
-                </div>
-                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-                  <label style="font-size:12px">Profile min score <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:92px;font-size:12px" /></label>
-                  <label style="font-size:12px">Min primary text chars <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:92px;font-size:12px" /></label>
-                </div>
-                <div id="prellm-weights-wrap" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
-                <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
-                  <span id="prellm-save-msg" style="font-size:11px;color:var(--muted)"></span>
-                </div>
-                <div style="margin-top:8px;font-size:11px;color:var(--muted)">
-                  <span class="mono">text_signal</span> is a text-length signal (normalized 0–1) derived from title/body/caption fields. It helps favor rows with enough context for analysis.
-                </div>
+              <div style="flex:1;min-width:260px;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)">
+                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Live funnel</div>
+                <div id="prellm-live-totals" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-variant-numeric:tabular-nums"></div>
+                <p class="runs-ops-hint" style="margin:10px 0 0;font-size:11px">Updates with the cutoff. The table adds <strong>Norm</strong> (raw 0–1 features) and <strong>Blend</strong> (each feature’s contribution to the score).</p>
               </div>
             </div>
             <details id="prellm-debug" style="margin:10px 0">
               <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (pre-LLM preview JSON)</summary>
               <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
             </details>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-prellm-tsv" title="Tab-separated values from the scored evidence table">Copy table</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-prellm-json" title="JSON rows from the last preview load">Copy JSON</button>
+              <span id="prellm-copy-msg" style="font-size:11px;color:var(--muted)"></span>
+            </div>
             <div id="prellm-table-wrap" style="font-size:12px;max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
+          <details id="inspect-api-details" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
+            <summary style="cursor:pointer;font-size:13px;font-weight:600">Inspect — load live API JSON here (same auth as this page)</summary>
+            <p class="runs-ops-hint" style="margin:8px 0 10px">Use this to see raw responses without curl. Server-side logs: <span class="mono">fly logs -a caf-core</span> (or your host); search for <span class="mono">inputs_top_performer</span> / OpenAI step names in <span class="mono">api_call_audit</span>.</p>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center">
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-import-stats">Import stats</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-profile">Processing profile</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-audit">API audit (recent)</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-deep">Insights · top_performer_deep</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-carousel">Insights · top_performer_carousel</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-tp-video">Insights · top_performer_video</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-prellm-sample">Pre-LLM sample rows</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-inspect-copy-pre">Copy response body</button>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <label style="font-size:12px;color:var(--muted)">Evidence row id
+                <input id="inspect-row-id" type="text" class="mono" placeholder="caf_core.inputs_evidence.id (uuid)" style="width:min(360px,94vw);font-size:12px;padding:4px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)" />
+              </label>
+              <button type="button" class="btn btn-sm" id="btn-inspect-evidence-row">Fetch evidence row</button>
+            </div>
+            <pre id="inspect-api-pre" style="font-size:11px;background:var(--card);padding:10px;border-radius:8px;max-height:460px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);margin:0;color:var(--text)">Click a button above.</pre>
+          </details>
           <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) per <strong>social platform</strong> evidence row. Source kinds (<span class="mono">source_registry</span>, <span class="mono">scraped_page</span>) stay under <strong>Sources</strong> — they are not run here.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all" title="Analyzes filtered evidence across all platform tabs, writing broad insights rows to the database. May overwrite if Rescan is enabled.">Analyze all selected evidence</button>
@@ -217,6 +324,8 @@ export function adminProcessingBody(currentSlug: string): string {
                 <option value="200" selected>200</option>
               </select>
             </label>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy table</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the last reload">Copy JSON</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
             <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
           </div>
@@ -294,6 +403,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Top-performer image pass: columns <strong>Aesthetic</strong> / <strong>Raw LLM</strong>, or <strong>Inspect → top_performer_deep</strong> then <strong>Copy response body</strong>.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-image">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-image-tsv" title="Tab-separated values from the table below">Copy table</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-image-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
           </div>
           <div id="deep-image-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -301,6 +411,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Slide transcripts + deck summary: <strong>Aesthetic</strong> (<span class="mono">aesthetic_analysis_json</span>) and full model output in <strong>Raw LLM</strong> (<span class="mono">raw_llm_json</span>). Or expand <strong>Inspect</strong> above → <strong>Insights · top_performer_carousel</strong> → <strong>Copy response body</strong> (full API response). After a run, <strong>Copy carousel run</strong> logs request/response under debug logs.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-carousel">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-carousel-tsv" title="Tab-separated values from the table below">Copy table</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-carousel-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
           </div>
           <div id="deep-carousel-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -308,6 +419,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px">Columns <strong>Aesthetic</strong> / <strong>Raw LLM</strong>, or <strong>Inspect → top_performer_video</strong> then <strong>Copy response body</strong>.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px">
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-video">Reload</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-video-tsv" title="Tab-separated values from the table below">Copy table</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-video-json" title="Fetches up to 200 rows; copies the insights array JSON">Copy all (JSON)</button>
           </div>
           <div id="deep-video-table" style="margin-top:8px;font-size:12px;width:100%;max-height:360px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -359,6 +471,45 @@ export function adminProcessingBody(currentSlug: string): string {
             </label>
             <button type="button" class="btn-ghost btn-sm" id="btn-reload-idea-lists">Reload</button>
             <span id="ideas-state" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <div id="ideas-toolbar" style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Review &amp; filter ideas</div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end">
+              <label style="font-size:11px;color:var(--muted)">Search<br />
+                <input id="ideas-filter-search" type="search" placeholder="Title, hook, 3-liner…" style="width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Format<br />
+                <select id="ideas-filter-format" style="font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                  <option value="carousel">carousel</option>
+                  <option value="video">video</option>
+                  <option value="post">post</option>
+                  <option value="thread">thread</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Platform<br />
+                <select id="ideas-filter-platform" style="font-size:12px;min-width:130px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center;align-self:center;margin-top:14px">
+                <input type="checkbox" id="ideas-filter-selected" /> Selected only
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Sort<br />
+                <select id="ideas-sort" style="font-size:12px;min-width:150px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="confidence_desc">Confidence ↓</option>
+                  <option value="confidence_asc">Confidence ↑</option>
+                  <option value="title_asc">Title A→Z</option>
+                  <option value="title_desc">Title Z→A</option>
+                  <option value="format_asc">Format</option>
+                  <option value="platform_asc">Platform</option>
+                </select>
+              </label>
+              <button type="button" class="btn-ghost btn-sm" id="btn-ideas-clear-filters" title="Reset search and filters">Clear filters</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-ideas-tsv" title="Tab-separated values from the visible table">Copy table</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-ideas-json" title="JSON for ideas currently shown (after filters)">Copy JSON</button>
+            </div>
+            <p id="ideas-filter-summary" class="runs-ops-hint" style="margin:8px 0 0;font-size:11px">Load or generate an idea list to review rows here.</p>
           </div>
           <details id="idea-list-debug" style="margin:0 0 8px">
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (idea list JSON)</summary>
@@ -788,6 +939,41 @@ async function adminCopyTextToClipboard(text){
   return false;
 }
 
+function tableElementToTsv(table){
+  if(!table)return '';
+  var trs=table.querySelectorAll('tr');
+  var lines=[];
+  for(var i=0;i<trs.length;i++){
+    var cells=trs[i].querySelectorAll('th,td');
+    var parts=[];
+    for(var j=0;j<cells.length;j++){
+      var t=(cells[j].innerText||cells[j].textContent||'').replace(/\s+/g,' ').trim();
+      if(t.indexOf('\t')>=0||t.indexOf('\n')>=0||t.indexOf('"')>=0)t='"'+t.replace(/"/g,'""')+'"';
+      parts.push(t);
+    }
+    if(parts.length)lines.push(parts.join('\t'));
+  }
+  return lines.join('\n');
+}
+async function adminCopyTableFromWrap(wrapId){
+  var wrap=document.getElementById(wrapId);
+  if(!wrap){window.alert('Nothing to copy.');return false;}
+  var table=wrap.tagName==='TABLE'?wrap:wrap.querySelector('table');
+  if(!table){window.alert('Load the table first.');return false;}
+  var tsv=tableElementToTsv(table);
+  if(!tsv){window.alert('Table is empty.');return false;}
+  return adminCopyTextToClipboard(tsv);
+}
+function flashAdminCopyMsg(elId,ok){
+  var el=document.getElementById(elId);
+  if(!el||!ok)return;
+  el.textContent='Copied.';
+  el.style.color='var(--muted)';
+  setTimeout(function(){if(el.textContent==='Copied.')el.textContent='';},2200);
+}
+
+var lastBroadInsightsRows=null;
+var lastOpLensPayload=null;
 var lastInspectBody='';
 async function runInspectApi(label,url,needImport){
   var pre=document.getElementById('inspect-api-pre');
@@ -915,6 +1101,8 @@ function setStep(step){
   // keep these as auxiliary panels opened via the toolbar button
   document.getElementById('panel-sources').style.display='none';
   document.getElementById('panel-profile').style.display='none';
+  var lens=document.getElementById('operator-read-lens');
+  if(lens)lens.style.display=showInsights?'block':'none';
 
   if(step==='insights'){
     initBroadPanel();
@@ -1246,6 +1434,57 @@ function syncBroadKindsFromStats(bk){
   if(!broadKind||broadKinds.indexOf(broadKind)<0)broadKind=broadKinds[0]||'';
 }
 
+function renderPrellmLiveTotals(totals){
+  var el=document.getElementById('prellm-live-totals');
+  if(!el)return;
+  var t=totals||{};
+  if(!t||typeof t.rows_in_kind!=='number'){
+    el.innerHTML='<span style="color:var(--muted);font-size:12px">—</span>';
+    return;
+  }
+  el.innerHTML=
+    '<span class="badge badge-b" style="font-size:13px">TOTAL '+esc(fmtN(t.rows_in_kind))+'</span>'+
+    '<span style="color:var(--muted)">→</span>'+
+    '<span class="badge badge-p" style="font-size:13px">PROFILE '+esc(fmtN(t.passing_profile_min))+'</span>'+
+    '<span style="color:var(--muted)">→</span>'+
+    '<span class="badge badge-g" style="font-size:13px">PASS CUTOFF '+esc(fmtN(t.after_user_cutoff))+'</span>';
+}
+function renderActiveWeightsStrip(d){
+  var el=document.getElementById('prellm-active-weights-strip');
+  if(!el)return;
+  var w=d&&d.active_weights&&typeof d.active_weights==='object'?d.active_weights:null;
+  if(!w||!Object.keys(w).length){el.textContent='';return;}
+  var parts=[];
+  var keys=Object.keys(w).sort();
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i];
+    parts.push('<span class="mono">'+esc(k)+'</span>=<strong>'+esc(String(w[k]))+'</strong>');
+  }
+  el.innerHTML='Active weights · '+parts.join(' <span style="color:var(--muted)">·</span> ');
+}
+function fmtPrellmNormBreakdown(b){
+  if(!b||typeof b!=='object')return '—';
+  var keys=Object.keys(b).sort();
+  if(!keys.length)return '—';
+  var out=[];
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i];
+    out.push('<span class="mono">'+esc(k)+'</span> '+esc(Number(b[k]).toFixed(3)));
+  }
+  return out.join('<br/>');
+}
+function fmtPrellmContrib(c){
+  if(!c||typeof c!=='object')return '—';
+  var keys=Object.keys(c).sort();
+  if(!keys.length)return '—';
+  var out=[];
+  for(var i=0;i<keys.length;i++){
+    var k=keys[i];
+    out.push('<span class="mono">'+esc(k)+'</span> '+esc(Number(c[k]).toFixed(3)));
+  }
+  return out.join('<br/>');
+}
+
 function schedulePrellmPreview(){
   if(prellmTimer)clearTimeout(prellmTimer);
   prellmTimer=setTimeout(loadPrellmPreview,220);
@@ -1278,6 +1517,8 @@ async function loadPrellmPreview(){
     var t=d.totals||{};
     stepState.evidence_valid=!!t.after_user_cutoff && Number(t.after_user_cutoff)>0;
     renderFunnel(t);
+    renderPrellmLiveTotals(t);
+    renderActiveWeightsStrip(d);
     renderStepper();
     counts.textContent=JSON.stringify({
       evidence_kind:d.evidence_kind,
@@ -1294,6 +1535,8 @@ async function loadPrellmPreview(){
     if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No rows at or above this cutoff.</div>';return;}
     var tb='<table class="sp-modal-table"><thead><tr>'+
       '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
+      '<th style="min-width:100px;font-size:11px">Norm<br/><span style="font-weight:400;color:var(--muted)">0–1 feats</span></th>'+
+      '<th style="min-width:100px;font-size:11px">Blend<br/><span style="font-weight:400;color:var(--muted)">contrib.</span></th>'+
       '<th>Kind</th>'+
       '<th>Included</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
@@ -1301,8 +1544,12 @@ async function loadPrellmPreview(){
       var inc=!!x.included_by_cutoff;
       var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">-</span>';
       var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
+      var bd=x.pre_llm_breakdown&&typeof x.pre_llm_breakdown==='object'?x.pre_llm_breakdown:{};
+      var ct=x.pre_llm_contributions&&typeof x.pre_llm_contributions==='object'?x.pre_llm_contributions:{};
       tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
         '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
+        '<td style="font-size:11px;line-height:1.35;vertical-align:top;max-width:140px">'+fmtPrellmNormBreakdown(bd)+'</td>'+
+        '<td style="font-size:11px;line-height:1.35;vertical-align:top;max-width:140px">'+fmtPrellmContrib(ct)+'</td>'+
         '<td class="mono">'+esc(kindCell)+'</td>'+
         '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
         '<td style="max-width:200px;word-break:break-all">'+urlCell+'</td>'+
@@ -1317,7 +1564,11 @@ async function loadPrellmPreview(){
       cur.value=(cur.value==='score_desc')?'score_asc':'score_desc';
       schedulePrellmPreview();
     });
-  }catch(e){counts.textContent=String(e);}
+  }catch(e){
+    counts.textContent=String(e);
+    renderPrellmLiveTotals({});
+    renderActiveWeightsStrip(null);
+  }
 }
 var prellmCutoffSaveTimer=null;
 async function savePrellmCutoffToProfile(){
@@ -1662,6 +1913,46 @@ bind('prellm-save-formula','click',async function(){
     schedulePrellmPreview();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
+
+bind('prellm-save-cutoff-snapshot','click',async function(){
+  var m=document.getElementById('prellm-cutoff-snapshot-msg');
+  var d=stepState.last_prellm_preview;
+  if(!SLUG||!selectedImportId||!prellmKind){
+    if(m){m.textContent='Load evidence first.';m.style.color='var(--red)';}
+    return;
+  }
+  if(!d||!d.ok){
+    if(m){m.textContent='No preview loaded. Wait for the table to finish loading.';m.style.color='var(--red)';}
+    return;
+  }
+  try{
+    if(m){m.textContent='Saving...';m.style.color='';}
+    var t=d.totals||{};
+    var body={
+      evidence_kind:prellmKind,
+      min_score_cutoff:Number(d.min_score_cutoff),
+      profile_min_score:Number(d.profile_min_score),
+      totals:{
+        rows_in_kind:Number(t.rows_in_kind)||0,
+        sparse_text_dropped:Number(t.sparse_text_dropped)||0,
+        below_profile_min_dropped:Number(t.below_profile_min_dropped)||0,
+        passing_profile_min:Number(t.passing_profile_min)||0,
+        after_user_cutoff:Number(t.after_user_cutoff)||0
+      },
+      active_weights:d.active_weights&&typeof d.active_weights==='object'?d.active_weights:null
+    };
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/operator-cutoff-snapshot',{
+      method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    var j=await r.json().catch(function(){return {};});
+    if(!r.ok||!j.ok)throw new Error(apiErr(j,'HTTP '+r.status));
+    if(m){m.textContent='Saved cutoff & pass counts on this import.';m.style.color='var(--muted)';}
+  }catch(e){
+    if(m){m.textContent=String(e.message||e);m.style.color='var(--red)';}
   }
 });
 
@@ -2102,6 +2393,30 @@ bind('btn-inspect-prellm-sample','click',function(){
     true
   );
 });
+bind('btn-copy-prellm-tsv','click',async function(){
+  var ok=await adminCopyTableFromWrap('prellm-table-wrap');
+  flashAdminCopyMsg('prellm-copy-msg',ok);
+});
+bind('btn-copy-prellm-json','click',async function(){
+  var d=stepState.last_prellm_preview;
+  var rows=d&&Array.isArray(d.rows)?d.rows:null;
+  if(!rows||!rows.length){window.alert('Load the evidence table first.');return;}
+  var ok=await adminCopyTextToClipboard(JSON.stringify(rows,null,2));
+  flashAdminCopyMsg('prellm-copy-msg',ok);
+});
+bind('btn-copy-broad-tsv','click',function(){adminCopyTableFromWrap('broad-table-wrap');});
+bind('btn-copy-broad-json','click',async function(){
+  if(!lastBroadInsightsRows||!lastBroadInsightsRows.length){window.alert('Reload broad insights first.');return;}
+  await adminCopyTextToClipboard(JSON.stringify(lastBroadInsightsRows,null,2));
+});
+bind('btn-copy-op-lens-tsv','click',function(){adminCopyTableFromWrap('op-lens-out');});
+bind('btn-copy-op-lens-json','click',async function(){
+  if(!lastOpLensPayload){window.alert('Load evidence or insights in Operator lens first.');return;}
+  await adminCopyTextToClipboard(JSON.stringify(lastOpLensPayload,null,2));
+});
+bind('btn-copy-deep-image-tsv','click',function(){adminCopyTableFromWrap('deep-image-table');});
+bind('btn-copy-deep-carousel-tsv','click',function(){adminCopyTableFromWrap('deep-carousel-table');});
+bind('btn-copy-deep-video-tsv','click',function(){adminCopyTableFromWrap('deep-video-table');});
 bind('btn-inspect-copy-pre','click',async function(){
   if(!lastInspectBody){
     window.alert('Load something with the buttons above first.');
@@ -2123,6 +2438,69 @@ bind('btn-inspect-evidence-row','click',function(){
   );
 });
 
+function prellmKindToOpLensPlatform(k){
+  if(!k)return '';
+  var m={instagram_post:'instagram',facebook_post:'facebook',tiktok_video:'tiktok',reddit_post:'reddit',scraped_page:'web',html_summary:'web',source_registry:'source_registry',reference_pool:'reference_pool'};
+  return m[k]||'';
+}
+function buildOpLensEvidenceUrl(){
+  var qs=['import_id='+encodeURIComponent(selectedImportId)];
+  var p=(document.getElementById('op-lens-ev-platform')||{}).value||'';
+  if(p==='source_registry'||p==='reference_pool')qs.push('source_type='+encodeURIComponent(p));
+  else if(p)qs.push('platform='+encodeURIComponent(p));
+  var fmt=(document.getElementById('op-lens-ev-format')||{}).value||'';
+  if(fmt)qs.push('format='+encodeURIComponent(fmt));
+  var sort=(document.getElementById('op-lens-ev-sort')||{}).value||'rating_desc';
+  qs.push('sort='+encodeURIComponent(sort));
+  var mr=(document.getElementById('op-lens-ev-min-rating')||{}).value;
+  if(mr!==''&&mr!=null&&String(mr).trim()!==''&&!isNaN(parseFloat(mr)))qs.push('min_engagement='+encodeURIComponent(String(mr).trim()));
+  var s=(document.getElementById('op-lens-ev-search')||{}).value||'';
+  if(String(s).trim())qs.push('search='+encodeURIComponent(String(s).trim()));
+  var lim=parseInt(String((document.getElementById('op-lens-ev-limit')||{}).value||'50'),10);
+  var off=parseInt(String((document.getElementById('op-lens-ev-offset')||{}).value||'0'),10);
+  if(!isNaN(lim)&&lim>=1)qs.push('limit='+encodeURIComponent(String(Math.min(200,lim))));
+  if(!isNaN(off)&&off>=0)qs.push('offset='+encodeURIComponent(String(off)));
+  return '/v1/evidence/'+encodeURIComponent(SLUG)+'?'+qs.join('&');
+}
+function buildOpLensInsightsUrl(){
+  var qs=['import_id='+encodeURIComponent(selectedImportId)];
+  var p=(document.getElementById('op-lens-in-platform')||{}).value||'';
+  if(p)qs.push('platform='+encodeURIComponent(p));
+  var tier=(document.getElementById('op-lens-in-tier')||{}).value||'';
+  if(tier)qs.push('analysis_tier='+encodeURIComponent(tier));
+  var typ=(document.getElementById('op-lens-in-type')||{}).value||'';
+  if(typ)qs.push('type='+encodeURIComponent(typ));
+  var cf=(document.getElementById('op-lens-in-conf')||{}).value||'';
+  if(cf!==''&&cf!=null&&String(cf).trim()!==''&&!isNaN(parseFloat(cf)))qs.push('confidence_min='+encodeURIComponent(String(cf).trim()));
+  var s=(document.getElementById('op-lens-in-search')||{}).value||'';
+  if(String(s).trim())qs.push('search='+encodeURIComponent(String(s).trim()));
+  var lim=parseInt(String((document.getElementById('op-lens-in-limit')||{}).value||'50'),10);
+  var off=parseInt(String((document.getElementById('op-lens-in-offset')||{}).value||'0'),10);
+  if(!isNaN(lim)&&lim>=1)qs.push('limit='+encodeURIComponent(String(Math.min(200,lim))));
+  if(!isNaN(off)&&off>=0)qs.push('offset='+encodeURIComponent(String(off)));
+  return '/v1/insights/'+encodeURIComponent(SLUG)+'?'+qs.join('&');
+}
+function opLensFmtMetrics(m){
+  if(!m||typeof m!=='object')return '—';
+  var parts=[];
+  if(m.likes!=null)parts.push('L'+m.likes);
+  if(m.comments!=null)parts.push('C'+m.comments);
+  if(m.shares!=null)parts.push('Sh'+m.shares);
+  if(m.saves!=null)parts.push('Sv'+m.saves);
+  if(m.views!=null)parts.push('V'+m.views);
+  if(m.engagement_rate!=null)parts.push('ER'+m.engagement_rate);
+  return parts.length?parts.join(' '):'—';
+}
+function opLensEvidenceFieldTable(it){
+  var keys=Object.keys(it).sort();
+  var rows=keys.map(function(k){
+    var v=it[k];
+    var s=v!=null&&typeof v==='object'?JSON.stringify(v):String(v);
+    if(s.length>2400)s=s.slice(0,2400)+'…';
+    return '<tr><td class="mono" style="vertical-align:top;white-space:nowrap">'+esc(k)+'</td><td style="word-break:break-word;font-size:11px">'+esc(s)+'</td></tr>';
+  }).join('');
+  return '<table class="sp-modal-table" style="width:100%;font-size:11px;margin-top:6px">'+rows+'</table>';
+}
 function renderOpLensEvidence(j){
   var el=document.getElementById('op-lens-out');
   if(!el)return;
@@ -2130,12 +2508,37 @@ function renderOpLensEvidence(j){
     el.innerHTML='<span style="color:var(--red)">Unexpected response</span>';
     return;
   }
+  var wide=document.getElementById('op-lens-ev-all-cols')&&document.getElementById('op-lens-ev-all-cols').checked;
+  var note=j.note?'<p class="runs-ops-hint" style="margin:0 0 6px;color:var(--muted)">'+esc(String(j.note))+'</p>':'';
+  var head='<p class="runs-ops-hint" style="margin:0 0 8px">Total (SQL filters): '+esc(String(j.total!=null?j.total:'?'))+' · showing '+esc(String(j.items.length))+'</p>'+note;
   var rows=j.items.map(function(it){
     var u=it.source_url?String(it.source_url):'';
     var link=u?'<a target="_blank" rel="noopener noreferrer" href="'+esc(u)+'">open</a>':'—';
-    return '<tr><td class="mono">'+esc(String(it.id||''))+'</td><td>'+esc(String(it.platform||''))+'</td><td>'+esc(String(it.format||''))+'</td><td>'+(it.rating_score!=null&&it.rating_score!==''?esc(String(it.rating_score)):'—')+'</td><td style="max-width:300px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(String(it.caption||''))+'">'+esc(String(it.hook||it.caption||'—'))+'</td><td>'+link+'</td></tr>';
+    var thumb=it.thumbnail_url?'<img src="'+esc(String(it.thumbnail_url))+'" alt="" style="max-width:48px;max-height:48px;border-radius:6px;object-fit:cover" loading="lazy" />':'—';
+    var tags=Array.isArray(it.hashtags)?it.hashtags.slice(0,24).map(function(t){return '#'+esc(String(t));}).join(' '):'—';
+    var cap=it.caption?String(it.caption):'';
+    var det='<details style="margin-top:6px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">All fields</summary>'+opLensEvidenceFieldTable(it)+'</details>';
+    if(!wide){
+      return '<tr><td class="mono">'+esc(String(it.id||''))+'</td><td>'+esc(String(it.platform||''))+'</td><td class="mono" style="font-size:10px">'+esc(String(it.source_type||''))+'</td><td>'+esc(String(it.format||''))+'</td><td>'+(it.rating_score!=null&&it.rating_score!==''?esc(String(it.rating_score)):'—')+'</td><td style="max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(cap)+'">'+esc(String(it.hook||it.caption||'—'))+'</td><td>'+link+'</td><td style="vertical-align:top">'+det+'</td></tr>';
+    }
+    return '<tr><td class="mono">'+esc(String(it.id||''))+'</td><td>'+thumb+'</td><td>'+esc(String(it.platform||''))+'</td><td class="mono" style="font-size:10px">'+esc(String(it.source_type||''))+'</td><td>'+esc(String(it.format||''))+'</td><td>'+(it.rating_score!=null&&it.rating_score!==''?esc(String(it.rating_score)):'—')+'</td><td style="max-width:100px;overflow:hidden;font-size:10px" title="'+esc(String(it.creator||''))+'">'+esc(String(it.creator||'—'))+'</td><td style="font-size:10px">'+esc(opLensFmtMetrics(it.metrics))+'</td><td style="max-width:120px;font-size:10px;word-break:break-word">'+tags+'</td><td style="max-width:140px;font-size:10px;white-space:nowrap;overflow:hidden" title="'+esc(cap)+'">'+esc(String(it.hook||'—'))+'</td><td style="max-width:160px;font-size:10px;word-break:break-word" title="'+esc(cap)+'">'+esc(cap.slice(0,180)+(cap.length>180?'…':''))+'</td><td style="font-size:10px">'+esc(String(it.scraped_at||'—'))+'</td><td style="font-size:10px">'+esc(String(it.created_at||'').slice(0,19))+'</td><td>'+link+'</td><td style="vertical-align:top;font-size:10px">'+esc(String((it.media_urls&&it.media_urls.length)||0))+' urls</td><td style="vertical-align:top">'+det+'</td></tr>';
   }).join('');
-  el.innerHTML='<p class="runs-ops-hint" style="margin:0 0 8px">Total (SQL filters): '+esc(String(j.total!=null?j.total:'?'))+' · showing '+esc(String(j.items.length))+'</p><div style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="sp-modal-table" style="width:100%;font-size:12px"><thead><tr><th>ID</th><th>Platform</th><th>Format</th><th>Rating</th><th>Hook / caption</th><th>URL</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
+  var th=wide
+    ?'<thead><tr><th>ID</th><th>Thumb</th><th>Plat</th><th>Source type</th><th>Format</th><th>Rating</th><th>Creator</th><th>Metrics</th><th>Tags</th><th>Hook</th><th>Caption</th><th>Scraped</th><th>Created</th><th>URL</th><th>Media</th><th>Fields</th></tr></thead>'
+    :'<thead><tr><th>ID</th><th>Plat</th><th>Source type</th><th>Format</th><th>Rating</th><th>Hook / caption</th><th>URL</th><th>Fields</th></tr></thead>';
+  el.innerHTML=head+'<div style="max-height:min(70vh,520px);overflow:auto;border:1px solid var(--border);border-radius:8px"><table class="sp-modal-table" style="width:100%;font-size:12px">'+th+'<tbody>'+rows+'</tbody></table></div>';
+  lastOpLensPayload=j;
+}
+function opLensSortInsights(items,mode){
+  var out=items.slice();
+  function conf(x){return x.confidence!=null&&!isNaN(Number(x.confidence))?Number(x.confidence):-1;}
+  function ts(x){return String(x.created_at||'');}
+  if(mode==='confidence_desc')out.sort(function(a,b){return conf(b)-conf(a);});
+  else if(mode==='confidence_asc')out.sort(function(a,b){return conf(a)-conf(b);});
+  else if(mode==='created_asc')out.sort(function(a,b){return ts(a).localeCompare(ts(b));});
+  else if(mode==='title_asc')out.sort(function(a,b){return String(a.title||'').localeCompare(String(b.title||''));});
+  else out.sort(function(a,b){return ts(b).localeCompare(ts(a));});
+  return out;
 }
 function renderOpLensInsights(j){
   var el=document.getElementById('op-lens-out');
@@ -2144,16 +2547,27 @@ function renderOpLensInsights(j){
     el.innerHTML='<span style="color:var(--red)">Unexpected response</span>';
     return;
   }
-  var cards=j.items.map(function(it){
+  var sortMode=(document.getElementById('op-lens-in-sort')||{}).value||'created_desc';
+  var items=opLensSortInsights(j.items,sortMode);
+  var note=(j.note?'<p class="runs-ops-hint" style="margin:0 0 6px;color:var(--muted)">'+esc(String(j.note))+'</p>':'')+'<p class="runs-ops-hint" style="margin:0 0 8px;font-size:11px;color:var(--muted)">Sorted on this page: '+esc(sortMode)+'</p>';
+  var cards=items.map(function(it){
     var ev=(it.supporting_evidence_ids&&it.supporting_evidence_ids[0])?String(it.supporting_evidence_ids[0]):'';
-    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--card)"><div style="font-size:11px;color:var(--muted)">'+esc(String(it.type||''))+' · '+esc(String(it.analysis_tier||''))+'</div><div style="font-weight:600;margin:4px 0">'+esc(String(it.title||''))+'</div><div style="font-size:12px;line-height:1.45;color:var(--text)">'+esc(String(it.summary||''))+'</div><div style="margin-top:6px;font-size:11px;color:var(--muted)">Evidence row <span class="mono">'+esc(ev)+'</span></div></div>';
+    var cf=it.confidence!=null?esc(String(it.confidence)):'—';
+    var det='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:var(--muted)">All fields (JSON)</summary><pre style="font-size:10px;white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;margin:6px 0 0;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">'+esc(JSON.stringify(it,null,2))+'</pre></details>';
+    return '<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:var(--card)"><div style="font-size:11px;color:var(--muted)">'+esc(String(it.type||''))+' · '+esc(String(it.analysis_tier||''))+' · confidence '+cf+'</div><div style="font-weight:600;margin:4px 0">'+esc(String(it.title||''))+'</div><div style="font-size:12px;line-height:1.45;color:var(--text)">'+esc(String(it.summary||''))+'</div><div style="margin-top:6px;font-size:11px;color:var(--muted)">Evidence row <span class="mono">'+esc(ev)+'</span> · formats '+esc(JSON.stringify(it.formats||[]))+' · platforms '+esc(JSON.stringify(it.platforms||[]))+'</div>'+det+'</div>';
   }).join('');
-  el.innerHTML=cards||'<span class="empty">No insights in this window.</span>';
+  el.innerHTML=note+(cards||'<span class="empty">No insights in this window.</span>');
+  lastOpLensPayload=j;
 }
+bind('btn-op-lens-ev-sync-tab','click',function(){
+  var sel=document.getElementById('op-lens-ev-platform');
+  if(!sel)return;
+  sel.value=prellmKindToOpLensPlatform(prellmKind);
+});
 bind('btn-op-lens-evidence','click',async function(){
   var el=document.getElementById('op-lens-out');
   if(!SLUG||!selectedImportId){window.alert('Select an import first.');return;}
-  var url='/v1/evidence/'+encodeURIComponent(SLUG)+'?import_id='+encodeURIComponent(selectedImportId)+'&limit=40&offset=0&sort=rating_desc';
+  var url=buildOpLensEvidenceUrl();
   if(el)el.textContent='Loading…';
   try{pushProcessingActivity(cafTs()+' GET /v1/evidence (read model)',false);}catch(_e){}
   try{
@@ -2166,7 +2580,7 @@ bind('btn-op-lens-evidence','click',async function(){
 bind('btn-op-lens-insights','click',async function(){
   var el=document.getElementById('op-lens-out');
   if(!SLUG||!selectedImportId){window.alert('Select an import first.');return;}
-  var url='/v1/insights/'+encodeURIComponent(SLUG)+'?import_id='+encodeURIComponent(selectedImportId)+'&limit=40&offset=0';
+  var url=buildOpLensInsightsUrl();
   if(el)el.textContent='Loading…';
   try{pushProcessingActivity(cafTs()+' GET /v1/insights (read model)',false);}catch(_e){}
   try{
@@ -2239,6 +2653,7 @@ async function loadBroadTable(){
     var countsTab=d.counts||{};
     var countsImp=d.counts_import||d.counts||{};
     var rows=d.insights||[];
+    lastBroadInsightsRows=rows;
     var lastAt=rows.length?String(rows[0].updated_at||rows[0].created_at||''):'';
     if(state){
       state.textContent=
@@ -2371,6 +2786,179 @@ function saveIdeaSelection(sel){
 }
 
 var lastIdeasById={};
+var lastIdeasAllRows=null;
+var lastIdeasDisplayRows=null;
+var ideasFilterTimer=null;
+
+function readIdeasFilters(){
+  var searchEl=document.getElementById('ideas-filter-search');
+  var fmtEl=document.getElementById('ideas-filter-format');
+  var platEl=document.getElementById('ideas-filter-platform');
+  var selEl=document.getElementById('ideas-filter-selected');
+  var sortEl=document.getElementById('ideas-sort');
+  return {
+    search:searchEl?String(searchEl.value||'').trim().toLowerCase():'',
+    format:fmtEl?String(fmtEl.value||'').trim().toLowerCase():'',
+    platform:platEl?String(platEl.value||'').trim().toLowerCase():'',
+    selectedOnly:!!(selEl&&selEl.checked),
+    sort:sortEl?String(sortEl.value||'confidence_desc'):'confidence_desc'
+  };
+}
+function ideaConfNum(x){
+  var v=x&&x.confidence_score;
+  if(v==null||v==='')return -1;
+  var n=Number(v);
+  return Number.isFinite(n)?n:-1;
+}
+function sortIdeasRows(rows,mode){
+  var out=rows.slice();
+  if(mode==='confidence_asc'){
+    out.sort(function(a,b){return ideaConfNum(a)-ideaConfNum(b);});
+  }else if(mode==='title_asc'){
+    out.sort(function(a,b){return String(a.title||'').localeCompare(String(b.title||''));});
+  }else if(mode==='title_desc'){
+    out.sort(function(a,b){return String(b.title||'').localeCompare(String(a.title||''));});
+  }else if(mode==='format_asc'){
+    out.sort(function(a,b){
+      var c=String(a.format||'').localeCompare(String(b.format||''));
+      return c!==0?c:String(a.title||'').localeCompare(String(b.title||''));
+    });
+  }else if(mode==='platform_asc'){
+    out.sort(function(a,b){
+      var c=String(a.platform||'').localeCompare(String(b.platform||''));
+      return c!==0?c:String(a.title||'').localeCompare(String(b.title||''));
+    });
+  }else{
+    out.sort(function(a,b){return ideaConfNum(b)-ideaConfNum(a);});
+  }
+  return out;
+}
+function applyIdeasFiltersAndSort(ideas){
+  var f=readIdeasFilters();
+  var sel=loadIdeaSelection();
+  var out=[];
+  for(var i=0;i<ideas.length;i++){
+    var x=ideas[i];
+    var id=String(x.id||'');
+    if(f.selectedOnly&&(!id||!sel[id]))continue;
+    if(f.format&&String(x.format||'').toLowerCase()!==f.format)continue;
+    if(f.platform&&String(x.platform||'').toLowerCase()!==f.platform)continue;
+    if(f.search){
+      var blob=(String(x.title||'')+' '+String(x.hook||'')+' '+String(x.three_liner||'')).toLowerCase();
+      if(blob.indexOf(f.search)<0)continue;
+    }
+    out.push(x);
+  }
+  return sortIdeasRows(out,f.sort);
+}
+function populateIdeasPlatformFilter(ideas){
+  var sel=document.getElementById('ideas-filter-platform');
+  if(!sel)return;
+  var cur=String(sel.value||'');
+  var set={};
+  for(var i=0;i<ideas.length;i++){
+    var p=String(ideas[i].platform||'').trim();
+    if(p)set[p.toLowerCase()]=p;
+  }
+  var keys=Object.keys(set).sort();
+  var html='<option value="">Any</option>';
+  for(var j=0;j<keys.length;j++){
+    var k=keys[j];
+    var label=set[k];
+    html+='<option value="'+esc(k)+'">'+esc(label)+'</option>';
+  }
+  sel.innerHTML=html;
+  if(cur&&set[cur])sel.value=cur;
+}
+function countIdeasByFormat(ideas){
+  var c={};
+  for(var i=0;i<ideas.length;i++){
+    var f=String(ideas[i].format||'other').toLowerCase()||'other';
+    c[f]=(c[f]||0)+1;
+  }
+  return c;
+}
+function updateIdeasFilterSummary(total,filtered,allIdeas){
+  var el=document.getElementById('ideas-filter-summary');
+  if(!el)return;
+  if(!total){
+    el.textContent='Load or generate an idea list to review rows here.';
+    return;
+  }
+  var sel=loadIdeaSelection();
+  var selectedN=0;
+  for(var i=0;i<allIdeas.length;i++){
+    var id=String(allIdeas[i].id||'');
+    if(id&&sel[id])selectedN++;
+  }
+  var byFmt=countIdeasByFormat(allIdeas);
+  var fmtParts=[];
+  var fk=Object.keys(byFmt).sort();
+  for(var j=0;j<fk.length;j++)fmtParts.push(fk[j]+' '+byFmt[fk[j]]);
+  el.textContent=
+    'Showing '+String(filtered.length)+' of '+String(total)+' ideas'+
+    (selectedN?' · '+String(selectedN)+' selected':'')+
+    (fmtParts.length?' · '+fmtParts.join(' · '):'');
+}
+function bindIdeasTableInteractions(ideasForSelectAll){
+  var wrap=document.getElementById('idea-list-table-wrap');
+  if(!wrap)return;
+  wrap.querySelectorAll('.idea-check').forEach(function(cb){
+    cb.addEventListener('change',function(){
+      var id=this.getAttribute('data-id')||'';
+      var cur=loadIdeaSelection();
+      if(this.checked)cur[id]=true;else delete cur[id];
+      saveIdeaSelection(cur);
+      rerenderIdeasTableFromCache();
+    });
+  });
+  wrap.querySelectorAll('.idea-row').forEach(function(tr){
+    tr.addEventListener('click',function(ev){
+      var t=ev&&ev.target;
+      if(t&&t.tagName&&String(t.tagName).toLowerCase()==='input')return;
+      var id=this.getAttribute('data-id')||'';
+      if(!id)return;
+      openIdeaPreview(id);
+    });
+  });
+  var q=wrap.querySelector('#ideas-check-all');
+  if(q){
+    q.addEventListener('change',function(){
+      var cur={};
+      if(this.checked){
+        for(var k=0;k<ideasForSelectAll.length;k++){
+          var id=String(ideasForSelectAll[k].id||'');
+          if(id)cur[id]=true;
+        }
+      }
+      saveIdeaSelection(cur);
+      rerenderIdeasTableFromCache();
+    });
+  }
+}
+function rerenderIdeasTableFromCache(){
+  var wrap=document.getElementById('idea-list-table-wrap');
+  var state=document.getElementById('ideas-state');
+  if(!wrap||!lastIdeasAllRows)return;
+  var filtered=applyIdeasFiltersAndSort(lastIdeasAllRows);
+  lastIdeasDisplayRows=filtered;
+  updateIdeasFilterSummary(lastIdeasAllRows.length,filtered.length,lastIdeasAllRows);
+  var sel=loadIdeaSelection();
+  var selectedN=0;
+  for(var i=0;i<lastIdeasAllRows.length;i++){
+    var id=String(lastIdeasAllRows[i].id||'');
+    if(id&&sel[id])selectedN++;
+  }
+  if(state){
+    state.textContent='Ideas: '+String(lastIdeasAllRows.length)+' | Selected: '+String(selectedN)+' | Showing: '+String(filtered.length);
+  }
+  wrap.innerHTML=renderIdeasTable(filtered,{filteredFromTotal:!!(lastIdeasAllRows.length&&filtered.length===0)});
+  bindIdeasTableInteractions(filtered);
+}
+function scheduleIdeasFilterRerender(){
+  if(ideasFilterTimer)clearTimeout(ideasFilterTimer);
+  ideasFilterTimer=setTimeout(rerenderIdeasTableFromCache,180);
+}
 function pickIdeaText(j){
   if(!j||typeof j!=='object')return '';
   var lines=[];
@@ -2403,8 +2991,13 @@ bind('btn-close-idea-preview','click',function(){
   if(box)box.style.display='none';
 });
 
-function renderIdeasTable(rows){
-  if(!rows.length)return '<div class="empty" style="padding:12px">No rows in this list.</div>';
+function renderIdeasTable(rows,opts){
+  if(!rows.length){
+    if(opts&&opts.filteredFromTotal){
+      return '<div class="empty" style="padding:12px">No ideas match the current filters. Try clearing filters or broadening search.</div>';
+    }
+    return '<div class="empty" style="padding:12px">No rows in this list.</div>';
+  }
   var sel=loadIdeaSelection();
   var checkedAll=true;
   for(var i=0;i<rows.length;i++){
@@ -2511,6 +3104,9 @@ async function loadIdeaListIdeasTable(){
     wrap.innerHTML='';
     if(meta)meta.textContent='';
     if(state)state.textContent='';
+    lastIdeasAllRows=null;
+    lastIdeasDisplayRows=null;
+    updateIdeasFilterSummary(0,0,[]);
     stepState.ideas_present=false;
     renderStepper();
     try{lastIdeasById={};}catch(e){}
@@ -2543,49 +3139,11 @@ async function loadIdeaListIdeasTable(){
       if(idX)lastIdeasById[idX]=ideas[ii];
     }
     if(meta)meta.textContent=JSON.stringify({list_id:list.id,title:list.title,created_at:list.created_at,params_json:list.params_json,derived_globals_json:list.derived_globals_json},null,2);
+    lastIdeasAllRows=ideas;
+    populateIdeasPlatformFilter(ideas);
     stepState.ideas_present=ideas.length>0;
     renderStepper();
-    var sel=loadIdeaSelection();
-    var selectedN=0;
-    for(var i=0;i<ideas.length;i++){
-      var id=String(ideas[i].id||'');
-      if(id && sel[id])selectedN++;
-    }
-    if(state){
-      state.textContent='Ideas: '+String(ideas.length)+' | Selected: '+String(selectedN);
-    }
-    wrap.innerHTML=renderIdeasTable(ideas);
-    wrap.querySelectorAll('.idea-check').forEach(function(cb){
-      cb.addEventListener('change',function(){
-        var id=this.getAttribute('data-id')||'';
-        var cur=loadIdeaSelection();
-        if(this.checked)cur[id]=true;else delete cur[id];
-        saveIdeaSelection(cur);
-        loadIdeaListIdeasTable();
-      });
-    });
-    wrap.querySelectorAll('.idea-row').forEach(function(tr){
-      tr.addEventListener('click',function(ev){
-        // ignore clicks on checkbox itself
-        var t=ev && ev.target;
-        if(t && t.tagName && String(t.tagName).toLowerCase()==='input')return;
-        var id=this.getAttribute('data-id')||'';
-        if(!id)return;
-        openIdeaPreview(id);
-      });
-    });
-    (function(q){if(!q)return;q.addEventListener('change',function(){
-      var cur={};
-      if(this.checked){
-        for(var k=0;k<ideas.length;k++){
-          var id=String(ideas[k].id||'');
-          if(id)cur[id]=true;
-        }
-      }
-      saveIdeaSelection(cur);
-      loadIdeaListIdeasTable();
-    });
-    })(wrap.querySelector('#ideas-check-all'));
+    rerenderIdeasTableFromCache();
   }catch(e){
     wrap.textContent=String(e.message||e);
     if(state)state.textContent='';
@@ -2901,6 +3459,33 @@ bind('pack-idea-list-select','change',function(){
 });
 bind('btn-reload-idea-lists','click',function(){
   loadIdeaListTab();
+});
+bind('ideas-filter-search','input',scheduleIdeasFilterRerender);
+bind('ideas-filter-format','change',rerenderIdeasTableFromCache);
+bind('ideas-filter-platform','change',rerenderIdeasTableFromCache);
+bind('ideas-filter-selected','change',rerenderIdeasTableFromCache);
+bind('ideas-sort','change',rerenderIdeasTableFromCache);
+bind('btn-ideas-clear-filters','click',function(){
+  var s=document.getElementById('ideas-filter-search');
+  var f=document.getElementById('ideas-filter-format');
+  var p=document.getElementById('ideas-filter-platform');
+  var sel=document.getElementById('ideas-filter-selected');
+  var sort=document.getElementById('ideas-sort');
+  if(s)s.value='';
+  if(f)f.value='';
+  if(p)p.value='';
+  if(sel)sel.checked=false;
+  if(sort)sort.value='confidence_desc';
+  rerenderIdeasTableFromCache();
+});
+bind('btn-copy-ideas-tsv','click',function(){adminCopyTableFromWrap('idea-list-table-wrap');});
+bind('btn-copy-ideas-json','click',async function(){
+  if(!lastIdeasDisplayRows||!lastIdeasDisplayRows.length){
+    window.alert('Load an idea list and ensure rows are visible (check filters).');
+    return;
+  }
+  var payload=lastIdeasDisplayRows.map(function(x){return x.raw||x;});
+  await adminCopyTextToClipboard(JSON.stringify(payload,null,2));
 });
 bind('btn-generate-idea-list','click',async function(){
   var msg=document.getElementById('idea-list-generate-msg');

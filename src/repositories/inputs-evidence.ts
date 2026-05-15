@@ -579,3 +579,49 @@ export async function getEvidenceRowByIdForProject(
     [projectId, rid]
   );
 }
+
+/** Operator-saved cutoff + funnel counts (merged into `selection_snapshot_json.operator_cutoff_ui`). */
+export async function mergeOperatorCutoffUiIntoImportSnapshot(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  evidenceKind: string,
+  snapshot: {
+    min_score_cutoff: number;
+    profile_min_score: number;
+    totals: Record<string, number>;
+    active_weights?: Record<string, number> | null;
+  }
+): Promise<void> {
+  const row = await getInputsEvidenceImport(db, projectId, importId);
+  if (!row) throw new Error("import not found");
+  const cur =
+    row.selection_snapshot_json != null && typeof row.selection_snapshot_json === "object" && !Array.isArray(row.selection_snapshot_json)
+      ? ({ ...row.selection_snapshot_json } as Record<string, unknown>)
+      : {};
+  const prevUi =
+    cur.operator_cutoff_ui != null && typeof cur.operator_cutoff_ui === "object" && !Array.isArray(cur.operator_cutoff_ui)
+      ? ({ ...cur.operator_cutoff_ui } as Record<string, unknown>)
+      : {};
+  const perKindRaw =
+    prevUi.per_kind != null && typeof prevUi.per_kind === "object" && !Array.isArray(prevUi.per_kind)
+      ? ({ ...prevUi.per_kind } as Record<string, unknown>)
+      : {};
+  const kind = String(evidenceKind ?? "").trim();
+  if (!kind) throw new Error("evidence_kind required");
+  perKindRaw[kind] = {
+    saved_at: new Date().toISOString(),
+    min_score_cutoff: snapshot.min_score_cutoff,
+    profile_min_score: snapshot.profile_min_score,
+    totals: snapshot.totals,
+    active_weights: snapshot.active_weights ?? null,
+  };
+  prevUi.per_kind = perKindRaw;
+  cur.operator_cutoff_ui = prevUi;
+  await db.query(
+    `UPDATE caf_core.inputs_evidence_imports
+        SET selection_snapshot_json = $3::jsonb
+      WHERE id = $1::uuid AND project_id = $2`,
+    [importId, projectId, JSON.stringify(cur)]
+  );
+}

@@ -14,6 +14,7 @@ import {
   getImportEvidenceStats,
   getInputsEvidenceImport,
   listEvidenceRowsByIds,
+  mergeOperatorCutoffUiIntoImportSnapshot,
 } from "../repositories/inputs-evidence.js";
 import {
   countEvidenceRowInsightsByImportTier,
@@ -230,6 +231,52 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     );
     return { ok: true, ...preview };
   });
+
+  const operatorCutoffSnapshotBody = z.object({
+    evidence_kind: z.string().min(1).max(80),
+    min_score_cutoff: z.number().min(0).max(1),
+    profile_min_score: z.number().min(0).max(1),
+    totals: z.object({
+      rows_in_kind: z.number().int().nonnegative(),
+      sparse_text_dropped: z.number().int().nonnegative(),
+      below_profile_min_dropped: z.number().int().nonnegative(),
+      passing_profile_min: z.number().int().nonnegative(),
+      after_user_cutoff: z.number().int().nonnegative(),
+    }),
+    active_weights: z.record(z.number()).optional().nullable(),
+  });
+
+  /**
+   * PUT /v1/inputs-processing/:project_slug/import/:import_id/operator-cutoff-snapshot
+   * Persists operator-visible cutoff + funnel counts on the import (does not replace full selection snapshots).
+   */
+  app.put(
+    "/v1/inputs-processing/:project_slug/import/:import_id/operator-cutoff-snapshot",
+    async (request, reply) => {
+      const params = z
+        .object({ project_slug: z.string(), import_id: z.string() })
+        .safeParse(request.params);
+      const body = operatorCutoffSnapshotBody.safeParse(request.body);
+      if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
+        return reply.code(400).send({ ok: false, error: "bad_params" });
+      }
+      const project = await ensureProject(db, params.data.project_slug);
+      const imp = await getInputsEvidenceImport(db, project.id, params.data.import_id);
+      if (!imp) return reply.code(404).send({ ok: false, error: "not_found" });
+      try {
+        await mergeOperatorCutoffUiIntoImportSnapshot(db, project.id, params.data.import_id, body.data.evidence_kind, {
+          min_score_cutoff: body.data.min_score_cutoff,
+          profile_min_score: body.data.profile_min_score,
+          totals: body.data.totals as Record<string, number>,
+          active_weights: body.data.active_weights ?? null,
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(500).send({ ok: false, error: "save_failed", message: msg });
+      }
+      return { ok: true, import_id: params.data.import_id };
+    }
+  );
 
   app.get("/v1/inputs-processing/:project_slug/import/:import_id/evidence-insights", async (request, reply) => {
     const params = z

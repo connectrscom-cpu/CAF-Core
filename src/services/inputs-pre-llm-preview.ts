@@ -14,6 +14,10 @@ export interface PreLlmEvidencePreviewRow {
   evidence_display_kind: string;
   pre_llm_score: number;
   profile_min_score: number;
+  /** Normalized 0–1 feature values before weighting. */
+  pre_llm_breakdown: Record<string, number>;
+  /** Per-feature contribution to the weighted score: `(f_i * w_i) / sum(w)`. */
+  pre_llm_contributions: Record<string, number>;
   dropped_reason: string | null;
   passes_text_gate: boolean;
   included_by_cutoff: boolean;
@@ -26,6 +30,8 @@ export interface PreLlmEvidencePreviewResult {
   evidence_kind: string;
   min_score_cutoff: number;
   profile_min_score: number;
+  /** Effective weights used for this `evidence_kind` (merged profile). */
+  active_weights: Record<string, number>;
   totals: {
     rows_in_kind: number;
     sparse_text_dropped: number;
@@ -40,6 +46,21 @@ export interface PreLlmEvidencePreviewResult {
 }
 
 export type PreLlmEvidencePreviewSort = "score_desc" | "score_asc";
+
+function contributionBreakdown(features: Record<string, number>, weights: Record<string, number>): Record<string, number> {
+  let wsum = 0;
+  for (const [, wt] of Object.entries(weights)) {
+    if (wt > 0) wsum += wt;
+  }
+  const out: Record<string, number> = {};
+  if (wsum <= 0) return out;
+  for (const [k, wt] of Object.entries(weights)) {
+    if (wt <= 0) continue;
+    const f = Math.min(1, Math.max(0, features[k] ?? 0));
+    out[k] = Math.round(((f * wt) / wsum) * 10000) / 10000;
+  }
+  return out;
+}
 
 export async function getPreLlmEvidencePreview(
   db: Pool,
@@ -59,6 +80,7 @@ export async function getPreLlmEvidencePreview(
   const cfg = mergePreLlmConfig(criteria);
   const prof = cfg.kinds?.[evidenceKind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
   const profileMinScore = prof.min_score;
+  const activeWeights = { ...prof.weights };
 
   const dbRows = await listEvidenceRowsByImportAndKind(db, projectId, importId, evidenceKind, 15_000);
 
@@ -71,12 +93,15 @@ export async function getPreLlmEvidencePreview(
     if (ev.dropped_reason === "sparse_primary_text") sparseTextDropped++;
     else if (ev.dropped_reason === "below_min_pre_llm_score") belowProfileMinDropped++;
     const disp = extractEvidenceDisplayFields(evidenceKind, payload);
+    const contrib = contributionBreakdown(ev.pre_llm_breakdown, prof.weights);
     return {
       id: r.id,
       evidence_kind: r.evidence_kind,
       evidence_display_kind: deriveEvidenceDisplayKind(r.evidence_kind, payload),
       pre_llm_score: ev.pre_llm_score,
       profile_min_score: ev.profile_min_score,
+      pre_llm_breakdown: ev.pre_llm_breakdown,
+      pre_llm_contributions: contrib,
       dropped_reason: ev.dropped_reason,
       passes_text_gate: ev.passes_text_gate,
       included_by_cutoff: ev.dropped_reason == null && ev.pre_llm_score >= userMinScore,
@@ -113,6 +138,7 @@ export async function getPreLlmEvidencePreview(
     evidence_kind: evidenceKind,
     min_score_cutoff: userMinScore,
     profile_min_score: profileMinScore,
+    active_weights: activeWeights,
     totals: {
       rows_in_kind: dbRows.length,
       sparse_text_dropped: sparseTextDropped,
