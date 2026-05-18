@@ -32,6 +32,31 @@ const envSchema = z.object({
     .transform((v) => v === "1" || v === "true"),
 
   /**
+   * Embed the CAF Review Next.js workbench on the same host as Core (default on).
+   * Unmatched HTTP paths proxy to the internal Review server; Core API paths stay on Fastify.
+   */
+  CAF_REVIEW_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
+  /** Loopback port for the internal Review Next.js process. */
+  CAF_REVIEW_PORT: z.coerce.number().default(3000),
+  /** Use `next dev` instead of the standalone build (default in development when standalone is missing). */
+  CAF_REVIEW_DEV: z
+    .string()
+    .optional()
+    .transform((v) => v === "1" || v === "true"),
+  /** Directory containing Review `server.js` from `next build` (standalone output). */
+  CAF_REVIEW_STANDALONE_DIR: z.string().optional(),
+  /** Public URL operators use in the browser (sets Review `NEXT_PUBLIC_APP_URL`). */
+  CAF_PUBLIC_URL: z.string().optional(),
+
+  /**
    * Publishing executor mode for the publications "start" endpoint.
    * - "none": claim placement + return n8n payload; external worker posts and calls /complete
    * - "dry_run": Core completes with a fake platform_post_id (plumbing tests)

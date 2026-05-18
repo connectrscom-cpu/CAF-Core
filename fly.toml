@@ -46,6 +46,7 @@ primary_region = "ams"
     timeout = "5s"
 
 [[vm]]
-  memory = "512mb"
+  # Core API + embedded Review Next.js (standalone)
+  memory = "1024mb"
   cpu_kind = "shared"
   cpus = 1

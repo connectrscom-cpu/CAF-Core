@@ -401,11 +401,10 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
 
   const projectLinks = [
     { href: `/admin${pq}`, label: "Overview", key: "overview" },
-    { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
-    { href: `/admin/inputs${pq}`, label: "Inputs", key: "inputs" },
-    { href: `/admin/processing${pq}`, label: "Processing", key: "processing" },
-    { href: `/admin/scene-lab${pq}`, label: "Scene lab", key: "scene-lab" },
-    { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
+    { href: `/admin/inputs${pq}`, label: "1 — inputs", key: "inputs" },
+    { href: `/admin/processing${pq}`, label: "2 — processing", key: "processing" },
+    { href: `/admin/runs${pq}`, label: "3 — runs", key: "runs" },
+    { href: `/admin/jobs${pq}`, label: "3 — jobs", key: "jobs" },
     { href: `/admin/learning${pq}`, label: "Learning", key: "learning" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
   ];

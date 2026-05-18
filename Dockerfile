@@ -1,3 +1,13 @@
+FROM node:20-slim AS review-builder
+WORKDIR /app
+COPY apps/review/package.json apps/review/package-lock.json ./apps/review/
+RUN cd apps/review && npm ci
+COPY apps/review ./apps/review
+COPY src ./src
+COPY tsconfig.json ./
+RUN cd apps/review && npm run build
+RUN cp -r apps/review/.next/static apps/review/.next/standalone/.next/static
+
 FROM node:20-slim AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
@@ -14,6 +24,11 @@ COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/migrations ./migrations
+
+# Embedded CAF Review (Next.js standalone)
+COPY --from=review-builder /app/apps/review/.next/standalone /app/review-standalone
+ENV CAF_REVIEW_STANDALONE_DIR=/app/review-standalone
+ENV CAF_REVIEW_ENABLED=1
 
 # Carousel .hbs for GET /api/templates/* (renderer CAF_TEMPLATE_API_URL → caf-core)
 COPY services/renderer/templates /app/carousel-templates

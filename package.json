@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:review": "npm run build --prefix apps/review",
+    "build:all": "npm run build && npm run build:review",
     "start": "node dist/server.js",
     "dev": "node --watch --import tsx src/server.ts",
     "migrate": "node --import tsx src/cli/migrate.ts",
@@ -32,6 +34,7 @@
   "dependencies": {
     "@fastify/cors": "^10.0.2",
     "@fastify/multipart": "^9.4.0",
+    "@fastify/reply-from": "^12.6.2",
     "@supabase/supabase-js": "^2.49.1",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.1",

@@ -401,12 +401,14 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return { ...detail, generation_payload: gp };
   }
 
-  app.get("/", async () => ({
-    ok: true,
-    service: "caf-core",
-    version: config.DECISION_ENGINE_VERSION,
-    docs: "/health, /health/rendering (carousel/video deps), /v1/* for API",
-  }));
+  if (!config.CAF_REVIEW_ENABLED) {
+    app.get("/", async () => ({
+      ok: true,
+      service: "caf-core",
+      version: config.DECISION_ENGINE_VERSION,
+      docs: "/health, /health/rendering (carousel/video deps), /v1/* for API",
+    }));
+  }
 
   app.get("/health", async () => ({
     ok: true,

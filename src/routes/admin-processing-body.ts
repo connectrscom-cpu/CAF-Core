@@ -179,6 +179,17 @@ export function adminProcessingBody(currentSlug: string): string {
             </div>
           </div>
           <div id="prellm-root">
+            <style>
+              .prellm-evidence-table{width:100%;border-collapse:separate;border-spacing:0}
+              .prellm-evidence-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:8px 10px;font-size:11px;white-space:nowrap;vertical-align:bottom}
+              .prellm-evidence-table td{padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border)}
+              .prellm-evidence-table tr.prellm-row-dim{opacity:0.55}
+              .prellm-cell-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;max-width:min(320px,36vw);line-height:1.4;word-break:break-word;white-space:pre-wrap}
+              .prellm-cell-hashtags{max-width:min(180px,22vw);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+              .prellm-cell-norm{font-size:10px;line-height:1.35;max-width:min(120px,14vw)}
+              .prellm-cell-url{max-width:min(120px,14vw);word-break:break-all;font-size:11px}
+              .prellm-score-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
+            </style>
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
             <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--card);margin-bottom:12px">
               <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
@@ -235,12 +246,37 @@ export function adminProcessingBody(currentSlug: string): string {
               <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (pre-LLM preview JSON)</summary>
               <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
             </details>
+            <div id="prellm-table-toolbar" style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+              <div style="font-size:12px;font-weight:600;margin-bottom:8px">Table filters</div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                <label style="font-size:12px;color:var(--muted)">Search
+                  <input id="prellm-filter-search" type="search" placeholder="Caption, hashtags, URL..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+                </label>
+                <label style="font-size:12px;color:var(--muted)">Display kind
+                  <select id="prellm-filter-kind" style="display:block;margin-top:4px;font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                    <option value="">Any</option>
+                  </select>
+                </label>
+                <label style="font-size:12px;color:var(--muted)">Included
+                  <select id="prellm-filter-included" style="display:block;margin-top:4px;font-size:12px;min-width:100px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                    <option value="any">Any</option>
+                    <option value="yes">yes</option>
+                    <option value="no">no</option>
+                  </select>
+                </label>
+                <label style="font-size:12px;color:var(--muted)">Min score
+                  <input id="prellm-filter-min-score" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+                </label>
+                <button type="button" class="btn-ghost btn-sm" id="prellm-filter-clear" style="align-self:flex-end">Clear filters</button>
+              </div>
+              <p id="prellm-filter-summary" class="runs-ops-hint" style="margin:8px 0 0;font-size:11px">Load evidence to filter rows in the table below.</p>
+            </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 8px">
               <button type="button" class="btn-ghost btn-sm" id="btn-copy-prellm-tsv" title="Tab-separated values from the scored evidence table">Copy table</button>
-              <button type="button" class="btn-ghost btn-sm" id="btn-copy-prellm-json" title="JSON rows from the last preview load">Copy JSON</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-copy-prellm-json" title="JSON rows from the filtered evidence table">Copy JSON</button>
               <span id="prellm-copy-msg" style="font-size:11px;color:var(--muted)"></span>
             </div>
-            <div id="prellm-table-wrap" style="font-size:12px;max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+            <div id="prellm-table-wrap" style="font-size:12px;max-height:560px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
@@ -325,7 +361,7 @@ export function adminProcessingBody(currentSlug: string): string {
               </select>
             </label>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy table</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the last reload">Copy JSON</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the filtered insights table">Copy JSON</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
             <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
           </div>
@@ -350,7 +386,53 @@ export function adminProcessingBody(currentSlug: string): string {
             </div>
             <pre id="broad-evidence-pre" style="margin:0;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto"></pre>
           </div>
-          <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
+          <style>
+            .broad-insights-table{width:100%;border-collapse:separate;border-spacing:0}
+            .broad-insights-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:8px 10px;font-size:11px;white-space:nowrap;vertical-align:bottom}
+            .broad-insights-table td{padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border);font-size:12px}
+            .broad-insights-table .insight-cell-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;max-width:min(280px,28vw);line-height:1.4;word-break:break-word;white-space:pre-wrap}
+            .broad-insights-table .insight-cell-mono{white-space:nowrap;font-variant-numeric:tabular-nums}
+          </style>
+          <div id="broad-table-toolbar" style="margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Table filters</div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              <label style="font-size:12px;color:var(--muted)">Search
+                <input id="broad-filter-search" type="search" placeholder="Why, hook, hashtags, ID..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+              </label>
+              <label style="font-size:12px;color:var(--muted)">Display kind
+                <select id="broad-filter-kind" style="display:block;margin-top:4px;font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label style="font-size:12px;color:var(--muted)">Emotion
+                <select id="broad-filter-emotion" style="display:block;margin-top:4px;font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label style="font-size:12px;color:var(--muted)">Hook type
+                <select id="broad-filter-hook-type" style="display:block;margin-top:4px;font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label style="font-size:12px;color:var(--muted)">Min pre-LLM
+                <input id="broad-filter-min-prellm" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+              </label>
+              <label style="font-size:12px;color:var(--muted)">Min rating
+                <input id="broad-filter-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+              </label>
+              <button type="button" class="btn-ghost btn-sm" id="broad-filter-clear" style="align-self:flex-end">Clear filters</button>
+            </div>
+            <p id="broad-filter-summary" class="runs-ops-hint" style="margin:8px 0 0;font-size:11px">Reload broad insights to filter rows in the table below.</p>
+          </div>
+          <div id="broad-hscroll-bar" style="display:none;margin:0 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+              <label style="font-size:12px;color:var(--muted);flex:1;min-width:240px">Scroll table horizontally
+                <input type="range" id="broad-table-hscroll" min="0" max="100" value="0" style="display:block;margin-top:6px;width:min(480px,72vw)" />
+              </label>
+              <span class="runs-ops-hint" style="font-size:11px;margin:0">Drag the slider, or Shift+mousewheel on the table. All insight columns are shown.</span>
+            </div>
+          </div>
+          <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px;-webkit-overflow-scrolling:touch"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
           <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, Instagram only, ≥2 <span class="mono">carousel_slide_urls</span>), video frames (<span class="mono">top_performer_video</span>, Instagram / TikTok / Facebook only). After your pre-LLM cutoff, vision defaults to rows that already have <strong><span class="mono">broad_llm</span> insights</strong> (same cohort as broad insights). It can also restrict to the <strong>top fraction of rated performers</strong> (<span class="mono">rating_score</span>), default top 5% via <span class="mono">criteria_json.top_performer.rating_top_fraction</span> — or set the <strong>Rated gate</strong> controls below to override for <em>this run only</em> (<span class="mono">rating_top_fraction</span> / <span class="mono">disable_rating_percentile_gate</span> on the POST body). Opt out in profile: <span class="mono">disable_broad_insights_align_gate</span> / <span class="mono">disable_rating_percentile_gate</span>. Tune caps in <span class="mono">criteria_json.top_performer</span> and <span class="mono">inputs_insights</span>. <strong>Archive to Storage</strong>: verified <strong>image</strong> slide/frame files (JPEG/PNG/WebP/GIF/AVIF) and, for <span class="mono">top_performer_video</span>, one verified <strong>source video</strong> (MP4/WebM/MKV; <span class="mono">…/source.ext</span>) when <span class="mono">video_url</span> / <span class="mono">source_video_url</span> / … exists on the row — all under <span class="mono">assets/top_performer_inspection/…</span> plus <span class="mono">stored_inspection_media_json</span>. <strong>Default on when</strong> <span class="mono">SUPABASE_URL</span> + <span class="mono">SUPABASE_SERVICE_ROLE_KEY</span> are set. Disable all media archive: <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_MEDIA=off</span> or criteria <span class="mono">inputs_insights.archive_top_performer_media_to_storage: false</span>. Source video only: criteria <span class="mono">inputs_insights.archive_top_performer_source_video: false</span> or <span class="mono">CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO=off</span>.</p>
@@ -739,6 +821,9 @@ function platformKindsFromStats(bk){
   return Object.keys(bk||{}).filter(function(k){return (bk[k]||0)>0&&!isSourceEvidenceKind(k);}).sort();
 }
 var prellmTimer=null;
+var lastPrellmAllRows=null;
+var lastPrellmDisplayRows=null;
+var prellmTableFilterTimer=null;
 var currentStep='select';
 var prellmMinByKind={};
 var profileCache=null; // { profile, criteria }
@@ -973,6 +1058,32 @@ function flashAdminCopyMsg(elId,ok){
 }
 
 var lastBroadInsightsRows=null;
+var lastBroadInsightsAllRows=null;
+var lastBroadInsightsDisplayRows=null;
+var broadTableFilterTimer=null;
+var broadHscrollSyncing=false;
+var BROAD_INSIGHT_TABLE_COLS=[
+  {key:'insights_id',label:'Insight ID'},
+  {key:'source_evidence_row_id',label:'Evidence row'},
+  {key:'evidence_post_url',label:'Post URL'},
+  {key:'evidence_kind',label:'Kind'},
+  {key:'pre_llm_score',label:'Pre-LLM score'},
+  {key:'evidence_rating_score',label:'Row rating'},
+  {key:'llm_model',label:'Model'},
+  {key:'updated_at',label:'Updated'},
+  {key:'hook_type',label:'Hook type'},
+  {key:'cta_type',label:'CTA type'},
+  {key:'caption_style',label:'Caption style'},
+  {key:'hashtags',label:'Hashtags'},
+  {key:'why_it_worked',label:'Why it worked'},
+  {key:'hook_text',label:'Hook'},
+  {key:'primary_emotion',label:'Emotion'},
+  {key:'secondary_emotion',label:'Emotion (2)'},
+  {key:'custom_label_1',label:'Label 1'},
+  {key:'custom_label_2',label:'Label 2'},
+  {key:'custom_label_3',label:'Label 3'},
+  {key:'risk_flags_json',label:'Risk flags'}
+];
 var lastOpLensPayload=null;
 var lastInspectBody='';
 async function runInspectApi(label,url,needImport){
@@ -1485,6 +1596,173 @@ function fmtPrellmContrib(c){
   return out.join('<br/>');
 }
 
+function escAttr(s){
+  return esc(s).replace(/"/g,'&quot;');
+}
+function truncPrellmText(s,max){
+  var t=String(s||'').trim();
+  if(t.length<=max)return t;
+  return t.slice(0,max)+'...';
+}
+function prellmUrlLabel(url){
+  if(!url)return '';
+  try{
+    var u=new URL(String(url));
+    var h=u.hostname;
+    if(h.indexOf('www.')===0)h=h.slice(4);
+    return h.length>28?h.slice(0,28)+'...':h;
+  }catch(e){
+    return truncPrellmText(url,28);
+  }
+}
+function readPrellmTableFilters(){
+  var searchEl=document.getElementById('prellm-filter-search');
+  var kindEl=document.getElementById('prellm-filter-kind');
+  var incEl=document.getElementById('prellm-filter-included');
+  var minEl=document.getElementById('prellm-filter-min-score');
+  var minScore=null;
+  if(minEl){
+    var raw=String(minEl.value||'').trim();
+    if(raw!==''){
+      var n=parseFloat(raw);
+      if(Number.isFinite(n))minScore=n;
+    }
+  }
+  return {
+    search:searchEl?String(searchEl.value||'').trim().toLowerCase():'',
+    kind:kindEl?String(kindEl.value||'').trim().toLowerCase():'',
+    included:incEl?String(incEl.value||'any'):'any',
+    minScore:minScore
+  };
+}
+function applyPrellmTableFilters(rows){
+  var f=readPrellmTableFilters();
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var x=rows[i];
+    if(f.kind){
+      var k=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
+      if(k.toLowerCase()!==f.kind)continue;
+    }
+    if(f.included==='yes'&&!x.included_by_cutoff)continue;
+    if(f.included==='no'&&x.included_by_cutoff)continue;
+    if(f.minScore!=null&&Number(x.pre_llm_score)<f.minScore)continue;
+    if(f.search){
+      var blob=(String(x.caption||'')+' '+String(x.hashtags||'')+' '+String(x.url||'')).toLowerCase();
+      if(blob.indexOf(f.search)<0)continue;
+    }
+    out.push(x);
+  }
+  return out;
+}
+function populatePrellmKindFilter(rows){
+  var sel=document.getElementById('prellm-filter-kind');
+  if(!sel)return;
+  var cur=String(sel.value||'');
+  var set={};
+  for(var i=0;i<rows.length;i++){
+    var k=String(rows[i].evidence_display_kind||'').trim()||String(rows[i].evidence_kind||'');
+    if(k)set[k.toLowerCase()]=k;
+  }
+  var keys=Object.keys(set).sort();
+  var html='<option value="">Any</option>';
+  for(var j=0;j<keys.length;j++){
+    var lk=keys[j];
+    var label=set[lk];
+    html+='<option value="'+esc(lk)+'">'+esc(label)+'</option>';
+  }
+  sel.innerHTML=html;
+  if(cur&&set[cur])sel.value=cur;
+}
+function updatePrellmFilterSummary(total,filtered){
+  var el=document.getElementById('prellm-filter-summary');
+  if(!el)return;
+  if(!total){
+    el.textContent='Load evidence to filter rows in the table below.';
+    return;
+  }
+  if(filtered===total){
+    el.textContent='Showing all '+String(total)+' loaded row'+(total===1?'':'s')+'.';
+    return;
+  }
+  el.textContent='Showing '+String(filtered)+' of '+String(total)+' loaded rows.';
+}
+function renderPrellmTable(rows){
+  var wrap=document.getElementById('prellm-table-wrap');
+  if(!wrap)return;
+  if(!rows.length){
+    var msg=lastPrellmAllRows&&lastPrellmAllRows.length?'No rows match the current table filters.':'No rows at or above this cutoff.';
+    wrap.innerHTML='<div class="empty" style="padding:12px">'+esc(msg)+'</div>';
+    return;
+  }
+  var tb='<table class="sp-modal-table prellm-evidence-table"><thead><tr>'+
+    '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
+    '<th style="font-size:11px">Norm<br/><span style="font-weight:400;color:var(--muted)">0-1 feats</span></th>'+
+    '<th style="font-size:11px">Blend<br/><span style="font-weight:400;color:var(--muted)">contrib.</span></th>'+
+    '<th>Kind</th><th>Inc.</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
+  for(var i=0;i<rows.length;i++){
+    var x=rows[i];
+    var inc=!!x.included_by_cutoff;
+    var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
+    var bd=x.pre_llm_breakdown&&typeof x.pre_llm_breakdown==='object'?x.pre_llm_breakdown:{};
+    var ct=x.pre_llm_contributions&&typeof x.pre_llm_contributions==='object'?x.pre_llm_contributions:{};
+    var cap=String(x.caption||'');
+    var tags=String(x.hashtags||'');
+    var url=x.url?String(x.url):'';
+    var urlCell=url?('<a class="prellm-cell-url" href="'+esc(url)+'" target="_blank" rel="noopener" title="'+escAttr(url)+'">'+esc(prellmUrlLabel(url))+'</a>'):'<span style="color:var(--muted)">-</span>';
+    var capCell='<div class="prellm-cell-clamp" title="'+escAttr(cap)+'">'+esc(cap)+'</div>';
+    if(cap.length>220){
+      capCell='<details><summary class="mono" style="font-size:11px;cursor:pointer;color:var(--muted)">'+esc(truncPrellmText(cap,72))+'</summary>'+
+        '<div class="prellm-cell-clamp" style="-webkit-line-clamp:unset;max-height:200px;overflow:auto;margin-top:6px">'+esc(cap)+'</div></details>';
+    }
+    var tagsCell=tags?('<span class="prellm-cell-hashtags" title="'+escAttr(tags)+'">'+esc(tags)+'</span>'):'<span style="color:var(--muted)">-</span>';
+    tb+='<tr class="'+(inc?'':'prellm-row-dim')+'">'+
+      '<td class="mono prellm-score-cell">'+esc(String(x.pre_llm_score))+'</td>'+
+      '<td class="prellm-cell-norm">'+fmtPrellmNormBreakdown(bd)+'</td>'+
+      '<td class="prellm-cell-norm">'+fmtPrellmContrib(ct)+'</td>'+
+      '<td class="mono" style="font-size:11px;white-space:nowrap">'+esc(kindCell)+'</td>'+
+      '<td class="mono" style="font-size:11px;color:'+(inc?'var(--green)':'var(--muted)')+';white-space:nowrap">'+(inc?'yes':'no')+'</td>'+
+      '<td>'+urlCell+'</td>'+
+      '<td>'+capCell+'</td>'+
+      '<td>'+tagsCell+'</td></tr>';
+  }
+  tb+='</tbody></table>';
+  wrap.innerHTML=tb;
+  bind('prellm-th-score','click',function(){
+    var cur=document.getElementById('prellm-sort');
+    if(!cur)return;
+    cur.value=(cur.value==='score_desc')?'score_asc':'score_desc';
+    schedulePrellmPreview();
+  });
+}
+function rerenderPrellmTableFromCache(){
+  if(!lastPrellmAllRows)return;
+  var filtered=applyPrellmTableFilters(lastPrellmAllRows);
+  lastPrellmDisplayRows=filtered;
+  updatePrellmFilterSummary(lastPrellmAllRows.length,filtered.length);
+  renderPrellmTable(filtered);
+}
+function storeAndRenderPrellmRows(rows){
+  lastPrellmAllRows=rows||[];
+  populatePrellmKindFilter(lastPrellmAllRows);
+  rerenderPrellmTableFromCache();
+}
+function schedulePrellmFilterRerender(){
+  if(prellmTableFilterTimer)clearTimeout(prellmTableFilterTimer);
+  prellmTableFilterTimer=setTimeout(rerenderPrellmTableFromCache,180);
+}
+function clearPrellmTableFilters(){
+  var searchEl=document.getElementById('prellm-filter-search');
+  var kindEl=document.getElementById('prellm-filter-kind');
+  var incEl=document.getElementById('prellm-filter-included');
+  var minEl=document.getElementById('prellm-filter-min-score');
+  if(searchEl)searchEl.value='';
+  if(kindEl)kindEl.value='';
+  if(incEl)incEl.value='any';
+  if(minEl)minEl.value='';
+  rerenderPrellmTableFromCache();
+}
+
 function schedulePrellmPreview(){
   if(prellmTimer)clearTimeout(prellmTimer);
   prellmTimer=setTimeout(loadPrellmPreview,220);
@@ -1532,38 +1810,14 @@ async function loadPrellmPreview(){
       showing_page:d.rows?d.rows.length:0
     },null,2);
     var rows=d.rows||[];
-    if(rows.length===0){wrap.innerHTML='<div class="empty" style="padding:12px">No rows at or above this cutoff.</div>';return;}
-    var tb='<table class="sp-modal-table"><thead><tr>'+
-      '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
-      '<th style="min-width:100px;font-size:11px">Norm<br/><span style="font-weight:400;color:var(--muted)">0-1 feats</span></th>'+
-      '<th style="min-width:100px;font-size:11px">Blend<br/><span style="font-weight:400;color:var(--muted)">contrib.</span></th>'+
-      '<th>Kind</th>'+
-      '<th>Included</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
-    for(var i=0;i<rows.length;i++){
-      var x=rows[i];
-      var inc=!!x.included_by_cutoff;
-      var urlCell=x.url?('<a href="'+esc(x.url)+'" target="_blank" rel="noopener">'+esc(x.url.slice(0,140))+'</a>'):'<span style="color:var(--muted)">-</span>';
-      var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
-      var bd=x.pre_llm_breakdown&&typeof x.pre_llm_breakdown==='object'?x.pre_llm_breakdown:{};
-      var ct=x.pre_llm_contributions&&typeof x.pre_llm_contributions==='object'?x.pre_llm_contributions:{};
-      tb+='<tr style="'+(inc?'':'opacity:0.55')+'">'+
-        '<td class="mono">'+esc(String(x.pre_llm_score))+'</td>'+
-        '<td style="font-size:11px;line-height:1.35;vertical-align:top;max-width:140px">'+fmtPrellmNormBreakdown(bd)+'</td>'+
-        '<td style="font-size:11px;line-height:1.35;vertical-align:top;max-width:140px">'+fmtPrellmContrib(ct)+'</td>'+
-        '<td class="mono">'+esc(kindCell)+'</td>'+
-        '<td class="mono" style="color:'+(inc?'var(--green)':'var(--muted)')+'">'+(inc?'yes':'no')+'</td>'+
-        '<td style="max-width:200px;word-break:break-all">'+urlCell+'</td>'+
-        '<td style="max-width:360px;white-space:pre-wrap;word-break:break-word">'+esc(x.caption||'')+'</td>'+
-        '<td style="max-width:200px;word-break:break-word">'+esc(x.hashtags||'')+'</td></tr>';
+    lastPrellmDisplayRows=null;
+    if(!rows.length){
+      lastPrellmAllRows=[];
+      updatePrellmFilterSummary(0,0);
+      wrap.innerHTML='<div class="empty" style="padding:12px">No rows at or above this cutoff.</div>';
+      return;
     }
-    tb+='</tbody></table>';
-    wrap.innerHTML=tb;
-    bind('prellm-th-score','click',function(){
-      var cur=document.getElementById('prellm-sort');
-      if(!cur)return;
-      cur.value=(cur.value==='score_desc')?'score_asc':'score_desc';
-      schedulePrellmPreview();
-    });
+    storeAndRenderPrellmRows(rows);
   }catch(e){
     counts.textContent=String(e);
     renderPrellmLiveTotals({});
@@ -1622,6 +1876,11 @@ bind('prellm-min-score-num','input',function(){
 });
 bind('prellm-show-below','change',schedulePrellmPreview);
 bind('prellm-sort','change',schedulePrellmPreview);
+bind('prellm-filter-search','input',schedulePrellmFilterRerender);
+bind('prellm-filter-kind','change',rerenderPrellmTableFromCache);
+bind('prellm-filter-included','change',rerenderPrellmTableFromCache);
+bind('prellm-filter-min-score','input',schedulePrellmFilterRerender);
+bind('prellm-filter-clear','click',clearPrellmTableFilters);
 
 function readBroadOverrides(){
   return {
@@ -2398,16 +2657,16 @@ bind('btn-copy-prellm-tsv','click',async function(){
   flashAdminCopyMsg('prellm-copy-msg',ok);
 });
 bind('btn-copy-prellm-json','click',async function(){
-  var d=stepState.last_prellm_preview;
-  var rows=d&&Array.isArray(d.rows)?d.rows:null;
+  var rows=lastPrellmDisplayRows&&lastPrellmDisplayRows.length?lastPrellmDisplayRows:(lastPrellmAllRows||null);
   if(!rows||!rows.length){window.alert('Load the evidence table first.');return;}
   var ok=await adminCopyTextToClipboard(JSON.stringify(rows,null,2));
   flashAdminCopyMsg('prellm-copy-msg',ok);
 });
 bind('btn-copy-broad-tsv','click',function(){adminCopyTableFromWrap('broad-table-wrap');});
 bind('btn-copy-broad-json','click',async function(){
-  if(!lastBroadInsightsRows||!lastBroadInsightsRows.length){window.alert('Reload broad insights first.');return;}
-  await adminCopyTextToClipboard(JSON.stringify(lastBroadInsightsRows,null,2));
+  var rows=lastBroadInsightsDisplayRows&&lastBroadInsightsDisplayRows.length?lastBroadInsightsDisplayRows:(lastBroadInsightsAllRows||null);
+  if(!rows||!rows.length){window.alert('Reload broad insights first.');return;}
+  await adminCopyTextToClipboard(JSON.stringify(rows,null,2));
 });
 bind('btn-copy-op-lens-tsv','click',function(){adminCopyTableFromWrap('op-lens-out');});
 bind('btn-copy-op-lens-json','click',async function(){
@@ -2632,6 +2891,189 @@ async function initBroadPanel(){
   scheduleBroadEligibilityEstimate();
 }
 
+function readBroadTableFilters(){
+  var searchEl=document.getElementById('broad-filter-search');
+  var kindEl=document.getElementById('broad-filter-kind');
+  var emoEl=document.getElementById('broad-filter-emotion');
+  var hookEl=document.getElementById('broad-filter-hook-type');
+  var minPreEl=document.getElementById('broad-filter-min-prellm');
+  var minRatEl=document.getElementById('broad-filter-min-rating');
+  function readMin(el){
+    if(!el)return null;
+    var raw=String(el.value||'').trim();
+    if(raw==='')return null;
+    var n=parseFloat(raw);
+    return Number.isFinite(n)?n:null;
+  }
+  return {
+    search:searchEl?String(searchEl.value||'').trim().toLowerCase():'',
+    kind:kindEl?String(kindEl.value||'').trim().toLowerCase():'',
+    emotion:emoEl?String(emoEl.value||'').trim().toLowerCase():'',
+    hookType:hookEl?String(hookEl.value||'').trim().toLowerCase():'',
+    minPrellm:readMin(minPreEl),
+    minRating:readMin(minRatEl)
+  };
+}
+function broadDisplayKind(x){
+  return String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
+}
+function applyBroadTableFilters(rows){
+  var f=readBroadTableFilters();
+  var out=[];
+  for(var i=0;i<rows.length;i++){
+    var x=rows[i];
+    if(f.kind&&broadDisplayKind(x).toLowerCase()!==f.kind)continue;
+    if(f.emotion&&String(x.primary_emotion||'').trim().toLowerCase()!==f.emotion)continue;
+    if(f.hookType&&String(x.hook_type||'').trim().toLowerCase()!==f.hookType)continue;
+    if(f.minPrellm!=null){
+      var ps=parseFloat(String(x.pre_llm_score));
+      if(!Number.isFinite(ps)||ps<f.minPrellm)continue;
+    }
+    if(f.minRating!=null){
+      var rs=parseFloat(String(x.evidence_rating_score));
+      if(!Number.isFinite(rs)||rs<f.minRating)continue;
+    }
+    if(f.search){
+      var blob=(
+        String(x.insights_id||'')+' '+String(x.source_evidence_row_id||'')+' '+
+        String(x.why_it_worked||'')+' '+String(x.hook_text||'')+' '+String(x.hashtags||'')+' '+
+        String(x.primary_emotion||'')+' '+String(x.secondary_emotion||'')+' '+String(x.hook_type||'')+' '+
+        String(x.cta_type||'')+' '+String(x.caption_style||'')+' '+String(x.custom_label_1||'')+' '+
+        String(x.custom_label_2||'')+' '+String(x.custom_label_3||'')+' '+String(x.evidence_post_url||'')
+      ).toLowerCase();
+      if(blob.indexOf(f.search)<0)continue;
+    }
+    out.push(x);
+  }
+  return out;
+}
+function populateBroadFilterSelect(selId,rows,getter){
+  var sel=document.getElementById(selId);
+  if(!sel)return;
+  var cur=String(sel.value||'');
+  var set={};
+  for(var i=0;i<rows.length;i++){
+    var v=String(getter(rows[i])||'').trim();
+    if(v)set[v.toLowerCase()]=v;
+  }
+  var keys=Object.keys(set).sort();
+  var html='<option value="">Any</option>';
+  for(var j=0;j<keys.length;j++){
+    var lk=keys[j];
+    html+='<option value="'+esc(lk)+'">'+esc(set[lk])+'</option>';
+  }
+  sel.innerHTML=html;
+  if(cur&&set[cur])sel.value=cur;
+}
+function populateBroadFilterSelects(rows){
+  populateBroadFilterSelect('broad-filter-kind',rows,broadDisplayKind);
+  populateBroadFilterSelect('broad-filter-emotion',rows,function(x){return x.primary_emotion;});
+  populateBroadFilterSelect('broad-filter-hook-type',rows,function(x){return x.hook_type;});
+}
+function updateBroadFilterSummary(total,filtered){
+  var el=document.getElementById('broad-filter-summary');
+  if(!el)return;
+  if(!total){
+    el.textContent='Reload broad insights to filter rows in the table below.';
+    return;
+  }
+  if(filtered===total){
+    el.textContent='Showing all '+String(total)+' loaded row'+(total===1?'':'s')+'.';
+    return;
+  }
+  el.textContent='Showing '+String(filtered)+' of '+String(total)+' loaded rows.';
+}
+function bindBroadEvidenceRowLinks(wrap){
+  if(!wrap)return;
+  wrap.querySelectorAll('.broad-ev-link').forEach(function(a){
+    a.addEventListener('click',async function(ev){
+      ev.preventDefault();
+      try{
+        var id=this.getAttribute('data-row-id');
+        if(!id)return;
+        await showBroadEvidenceRow(id);
+      }catch(e){
+        var pre=document.getElementById('broad-evidence-pre');
+        var box=document.getElementById('broad-evidence-viewer');
+        if(box)box.style.display='block';
+        if(pre)pre.textContent=String(e.message||e);
+      }
+    });
+  });
+}
+function updateBroadHscrollBar(){
+  var wrap=document.getElementById('broad-table-wrap');
+  var bar=document.getElementById('broad-hscroll-bar');
+  var rng=document.getElementById('broad-table-hscroll');
+  if(!wrap||!bar||!rng)return;
+  var maxScroll=Math.max(0,wrap.scrollWidth-wrap.clientWidth);
+  if(maxScroll<8){
+    bar.style.display='none';
+    rng.value='0';
+    return;
+  }
+  bar.style.display='block';
+  var pct=Math.round((wrap.scrollLeft/maxScroll)*100);
+  broadHscrollSyncing=true;
+  rng.value=String(pct);
+  broadHscrollSyncing=false;
+}
+function syncBroadWrapFromHscroll(){
+  if(broadHscrollSyncing)return;
+  var wrap=document.getElementById('broad-table-wrap');
+  var rng=document.getElementById('broad-table-hscroll');
+  if(!wrap||!rng)return;
+  var maxScroll=Math.max(0,wrap.scrollWidth-wrap.clientWidth);
+  if(maxScroll<1)return;
+  wrap.scrollLeft=Math.round((parseInt(rng.value,10)||0)/100*maxScroll);
+}
+function rerenderBroadTableFromCache(){
+  var wrap=document.getElementById('broad-table-wrap');
+  if(!wrap||!lastBroadInsightsAllRows)return;
+  var filtered=applyBroadTableFilters(lastBroadInsightsAllRows);
+  lastBroadInsightsDisplayRows=filtered;
+  lastBroadInsightsRows=filtered;
+  updateBroadFilterSummary(lastBroadInsightsAllRows.length,filtered.length);
+  if(!filtered.length){
+    wrap.innerHTML='<div class="empty" style="padding:12px">'+(lastBroadInsightsAllRows.length?'No rows match the current table filters.':'No rows.')+'</div>';
+    updateBroadHscrollBar();
+    return;
+  }
+  wrap.innerHTML=renderInsightTable(filtered,BROAD_INSIGHT_TABLE_COLS,{
+    tableClass:'broad-insights-table',
+    minWidth:2800,
+    rowEvidenceLink:true,
+    emptyMsg:'No rows.'
+  });
+  bindBroadEvidenceRowLinks(wrap);
+  wrap.scrollLeft=0;
+  updateBroadHscrollBar();
+}
+function storeAndRenderBroadRows(rows){
+  lastBroadInsightsAllRows=rows||[];
+  populateBroadFilterSelects(lastBroadInsightsAllRows);
+  rerenderBroadTableFromCache();
+}
+function scheduleBroadFilterRerender(){
+  if(broadTableFilterTimer)clearTimeout(broadTableFilterTimer);
+  broadTableFilterTimer=setTimeout(rerenderBroadTableFromCache,180);
+}
+function clearBroadTableFilters(){
+  var searchEl=document.getElementById('broad-filter-search');
+  var kindEl=document.getElementById('broad-filter-kind');
+  var emoEl=document.getElementById('broad-filter-emotion');
+  var hookEl=document.getElementById('broad-filter-hook-type');
+  var minPreEl=document.getElementById('broad-filter-min-prellm');
+  var minRatEl=document.getElementById('broad-filter-min-rating');
+  if(searchEl)searchEl.value='';
+  if(kindEl)kindEl.value='';
+  if(emoEl)emoEl.value='';
+  if(hookEl)hookEl.value='';
+  if(minPreEl)minPreEl.value='';
+  if(minRatEl)minRatEl.value='';
+  rerenderBroadTableFromCache();
+}
+
 async function loadBroadTable(){
   var meta=document.getElementById('broad-meta');
   var state=document.getElementById('broad-state');
@@ -2653,7 +3095,7 @@ async function loadBroadTable(){
     var countsTab=d.counts||{};
     var countsImp=d.counts_import||d.counts||{};
     var rows=d.insights||[];
-    lastBroadInsightsRows=rows;
+    lastBroadInsightsDisplayRows=null;
     var lastAt=rows.length?String(rows[0].updated_at||rows[0].created_at||''):'';
     if(state){
       state.textContent=
@@ -2672,58 +3114,32 @@ async function loadBroadTable(){
     },null,2);
     var nTab=(d.counts&&typeof d.counts.broad_llm==='number')?d.counts.broad_llm:0;
     if(rows.length===0){
+      lastBroadInsightsAllRows=[];
+      lastBroadInsightsRows=[];
+      updateBroadFilterSummary(0,0);
       wrap.innerHTML='<div class="empty" style="padding:12px">No broad insights for <span class="mono">'+esc(broadKind)+'</span> yet ('+String(nTab)+' in DB for this kind on this import). If other tabs have rows but this one does not, run broad for this tab with <strong>Rescan</strong> and/or turn off <strong>Use cutoff</strong> so enough rows qualify. Import-wide total (all kinds) is in the JSON as <span class="mono">counts_whole_import.broad_llm</span>.</div>';
+      updateBroadHscrollBar();
       return;
     }
-    var tb='<table class="sp-modal-table" style="width:100%;min-width:1280px;table-layout:auto"><thead><tr><th>Insight ID</th><th>Evidence row</th><th>Post URL</th><th>Kind</th><th>Pre-LLM score</th><th>Row rating</th><th>Why it worked</th><th>Hook</th><th>Emotion</th></tr></thead><tbody>';
-    for(var i=0;i<rows.length;i++){
-      var x=rows[i];
-      var insightId=String(x.insights_id||'');
-      var rowId=String(x.source_evidence_row_id||'');
-      var postUrl=String(x.evidence_post_url||'').trim();
-      var urlCell;
-      if(postUrl){
-        var shortU=postUrl.length>52?postUrl.slice(0,49)+'...':postUrl;
-        urlCell='<td style="max-width:240px;word-break:break-all;font-size:12px"><a href="'+esc(postUrl)+'" target="_blank" rel="noopener noreferrer" title="'+esc(postUrl)+'">'+esc(shortU)+'</a></td>';
-      }else{
-        urlCell='<td class="mono" style="color:var(--muted);font-size:12px">-</td>';
-      }
-      var kindCell=String(x.evidence_display_kind||'').trim()||String(x.evidence_kind||'');
-      tb+='<tr>'+
-        '<td class="mono">'+esc(insightId)+'</td>'+
-        '<td class="mono"><a href="#" class="broad-ev-link" data-row-id="'+esc(rowId)+'">'+esc(rowId)+'</a></td>'+
-        urlCell+
-        '<td class="mono">'+esc(kindCell)+'</td>'+
-        '<td class="mono">'+fmtInsightScore(x.pre_llm_score)+'</td>'+
-        '<td class="mono">'+fmtInsightScore(x.evidence_rating_score)+'</td>'+
-        '<td style="max-width:380px;white-space:pre-wrap">'+esc(x.why_it_worked||'')+'</td>'+
-        '<td>'+esc(x.hook_text||'')+'</td>'+
-        '<td>'+esc(x.primary_emotion||'')+'</td>'+
-      '</tr>';
+    storeAndRenderBroadRows(rows);
+    if(!wrap._broadScrollBound){
+      wrap._broadScrollBound=true;
+      wrap.addEventListener('scroll',updateBroadHscrollBar);
     }
-    tb+='</tbody></table>';
-    wrap.innerHTML=tb;
-    wrap.querySelectorAll('.broad-ev-link').forEach(function(a){
-      a.addEventListener('click',async function(ev){
-        ev.preventDefault();
-        try{
-          var id=this.getAttribute('data-row-id');
-          if(!id)return;
-          await showBroadEvidenceRow(id);
-        }catch(e){
-          var pre=document.getElementById('broad-evidence-pre');
-          var box=document.getElementById('broad-evidence-viewer');
-          if(box)box.style.display='block';
-          if(pre)pre.textContent=String(e.message||e);
-        }
-      });
-    });
     refreshInsightCounts();
   }catch(e){meta.textContent=String(e);}
 }
 bind('btn-reload-broad','click',loadBroadTable);
 bind('broad-insight-sort','change',loadBroadTable);
 bind('broad-insight-limit','change',loadBroadTable);
+bind('broad-filter-search','input',scheduleBroadFilterRerender);
+bind('broad-filter-kind','change',rerenderBroadTableFromCache);
+bind('broad-filter-emotion','change',rerenderBroadTableFromCache);
+bind('broad-filter-hook-type','change',rerenderBroadTableFromCache);
+bind('broad-filter-min-prellm','input',scheduleBroadFilterRerender);
+bind('broad-filter-min-rating','input',scheduleBroadFilterRerender);
+bind('broad-filter-clear','click',clearBroadTableFilters);
+bind('broad-table-hscroll','input',syncBroadWrapFromHscroll);
 bind('broad-max-rows','input',scheduleBroadEligibilityEstimate);
 bind('broad-rescan','change',scheduleBroadEligibilityEstimate);
 bind('broad-use-cutoff','change',scheduleBroadEligibilityEstimate);
@@ -2736,9 +3152,14 @@ bind('pack-idea-list-select','change',function(){
   updatePackSummary();
 });
 
-function renderInsightTable(rows,cols){
-  if(!rows.length)return '<div class="empty" style="padding:12px">No rows.</div>';
-  var tb='<table class="sp-modal-table" style="width:100%;min-width:980px;table-layout:auto"><thead><tr>';
+function renderInsightTable(rows,cols,opts){
+  opts=opts||{};
+  if(!rows.length)return '<div class="empty" style="padding:12px">'+(opts.emptyMsg||'No rows.')+'</div>';
+  var minW=opts.minWidth||980;
+  var tblCls='sp-modal-table'+(opts.tableClass?(' '+opts.tableClass):'');
+  var longKeys={why_it_worked:1,hook_text:1,hashtags:1,caption_style:1,custom_label_1:1,custom_label_2:1,custom_label_3:1};
+  var jsonKeys={risk_flags_json:1,aesthetic_analysis_json:1,raw_llm_json:1};
+  var tb='<table class="'+tblCls+'" style="width:100%;min-width:'+minW+'px;table-layout:auto"><thead><tr>';
   for(var c=0;c<cols.length;c++)tb+='<th>'+esc(cols[c].label)+'</th>';
   tb+='</tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
@@ -2748,17 +3169,36 @@ function renderInsightTable(rows,cols){
       var k=cols[j].key;
       var v=x[k];
       var cell;
-      if(k==='evidence_post_url'){
+      var tdExtra='';
+      if(k==='source_evidence_row_id'&&opts.rowEvidenceLink){
+        cell='<a href="#" class="broad-ev-link" data-row-id="'+esc(String(v||''))+'">'+esc(String(v||''))+'</a>';
+        tdExtra=' class="mono insight-cell-mono"';
+      }else if(k==='evidence_post_url'){
         var pu=typeof v==='string'?v.trim():'';
-        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px">'+esc(pu.length>56?pu.slice(0,53)+'...':pu)+'</a>';
+        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px" title="'+escAttr(pu)+'">'+esc(pu.length>56?pu.slice(0,53)+'...':pu)+'</a>';
         else cell='<span style="color:var(--muted)">-</span>';
       }else if(k==='evidence_kind'){
         var dk=typeof x.evidence_display_kind==='string'?x.evidence_display_kind.trim():'';
         var rawK=typeof v==='string'?v:String(v||'');
         cell=esc(dk||rawK);
-      }else if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score')cell=fmtInsightScore(v);
-      else cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
-      tb+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word"'+(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'?' class="mono"':'')+'>'+cell+'</td>';
+        tdExtra=' class="mono insight-cell-mono"';
+      }else if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'){
+        cell=fmtInsightScore(v);
+        tdExtra=' class="mono insight-cell-mono"';
+      }else if(k==='insights_id'||k==='llm_model'||k==='updated_at'||k==='created_at'||k==='hook_type'||k==='cta_type'||k==='primary_emotion'||k==='secondary_emotion'){
+        cell=esc(typeof v==='string'?v:String(v!=null?v:''));
+        if(k==='insights_id'||k==='updated_at'||k==='created_at')tdExtra=' class="mono insight-cell-mono"';
+      }else if(jsonKeys[k]){
+        var js=v!==undefined&&v!==null?JSON.stringify(v):'';
+        var full=js;
+        if(js.length>96)js=js.slice(0,93)+'...';
+        cell='<span class="mono" style="font-size:10px" title="'+escAttr(full)+'">'+esc(js||'-')+'</span>';
+      }else if(longKeys[k]&&typeof v==='string'&&v.length){
+        cell='<div class="insight-cell-clamp" title="'+escAttr(v)+'">'+esc(v)+'</div>';
+      }else{
+        cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
+      }
+      tb+='<td'+tdExtra+' style="max-width:420px;word-break:break-word">'+cell+'</td>';
     }
     tb+='</tr>';
   }

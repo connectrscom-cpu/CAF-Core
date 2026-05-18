@@ -25,10 +25,14 @@ import {
 } from "./services/renderer-url-guard.js";
 import { ensureSupabaseAssetFolderPrefixes } from "./services/supabase-storage.js";
 import { startEditorialAnalysisCron } from "./services/editorial-analysis-cron.js";
+import { registerReviewProxyRoutes } from "./routes/review-proxy.js";
+import { startReviewNextServer, type ReviewServerHandle } from "./services/review-next-server.js";
+import { isCoreHttpPath } from "./domain/core-http-paths.js";
 
 async function main() {
   const config = loadConfig();
   const db = createPool(config);
+  let reviewServer: ReviewServerHandle | null = null;
 
   if (config.CAF_RUN_MIGRATIONS_ON_START) {
     await runPendingMigrations(db, {
@@ -53,8 +57,10 @@ async function main() {
     app.addHook("preHandler", async (request, reply) => {
       const pathNoQuery = request.url.split("?")[0] ?? request.url;
       if (pathNoQuery === "/health" || pathNoQuery === "/health/rendering") return;
+      if (pathNoQuery === "/readyz") return;
       if (request.url === "/robots.txt" || request.url.startsWith("/robots.txt?")) return;
       if (request.method === "GET" && isRendererTemplatesPublicPath(request.url)) return;
+      if (config.CAF_REVIEW_ENABLED && !isCoreHttpPath(pathNoQuery)) return;
       const token =
         (request.headers["x-caf-core-token"] as string | undefined) ||
         (request.headers.authorization?.startsWith("Bearer ")
@@ -81,10 +87,17 @@ async function main() {
   registerProjectIntegrationsRoutes(app, { db });
   registerCreativeIntelligenceRoutes(app, { db, config });
 
+  if (config.CAF_REVIEW_ENABLED) {
+    const logLine = (msg: string) => app.log.info(msg);
+    reviewServer = await startReviewNextServer(config, logLine);
+    await registerReviewProxyRoutes(app, { config, reviewUpstream: reviewServer.upstream });
+  }
+
   const stopEditorialCron = startEditorialAnalysisCron(app.log, { db, config });
 
   app.addHook("onClose", async () => {
     stopEditorialCron?.();
+    await reviewServer?.stop();
     await db.end();
   });
 
