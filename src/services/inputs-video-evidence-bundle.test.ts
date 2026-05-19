@@ -101,4 +101,12 @@ describe("parseVideoSourceUrlForArchive", () => {
       "https://cdn.example/file.mov"
     );
   });
+
+  it("reads videoUrl and video_urls_json after Apify enrich", () => {
+    expect(
+      parseVideoSourceUrlForArchive({
+        video_urls_json: '["https://cdn.example/apify-reel.mp4"]',
+      })
+    ).toBe("https://cdn.example/apify-reel.mp4");
+  });
 });

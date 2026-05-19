@@ -422,6 +422,28 @@ export function normalizeInstagramEvidenceMedia(payload: Record<string, unknown>
   };
 }
 
+const VIDEO_FILE_EXT_IN_PATH = /\.(mp4|m4v|webm|mov|mkv)(\?|#|$)/i;
+
+/** Best HTTPS direct(ish) video URL from normalized Instagram media (Apify / XLSX). */
+export function extractInstagramVideoSourceUrl(payload: Record<string, unknown>): string | null {
+  const n = normalizeInstagramEvidenceMedia(payload);
+  for (const a of n.media_assets) {
+    if (a.media_type !== "video" && a.asset_role !== "video") continue;
+    let u = a.source_url.trim().replace(/^http:/i, "https:");
+    if (!/^https:\/\//i.test(u)) continue;
+    const rej = isRejectedInstagramMediaUrl(u);
+    if (!rej.ok) continue;
+    if (VIDEO_FILE_EXT_IN_PATH.test(u)) return u;
+    try {
+      const host = new URL(u).hostname.toLowerCase();
+      if (host.includes("cdninstagram") || host.includes("fbcdn.net") || host.includes("tiktok")) return u;
+    } catch {
+      /* skip */
+    }
+  }
+  return null;
+}
+
 /** Ordered HTTPS image URLs for carousel deck vision (non-video), deduped, ingest priority baked into `media_assets` order. */
 export function extractOrderedInstagramCarouselImageUrls(payload: Record<string, unknown>, maxSlides: number): string[] {
   const n = normalizeInstagramEvidenceMedia(payload);

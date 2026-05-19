@@ -1,3 +1,8 @@
+import {
+  enrichInstagramApifyPayloadInPlace,
+  extractInstagramVideoSourceUrl,
+} from "./instagram-media-normalizer.js";
+
 /**
  * Video deep analysis uses **pre-extracted frames + transcript** for vision; ingestion may also set
  * `video_url` / `source_video_url` / … so Core can **optionally archive** one HTTPS source video to Supabase.
@@ -34,6 +39,38 @@ function firstStr(payload: Record<string, unknown>, keys: string[]): string {
     if (v != null && String(v).trim()) return String(v).trim();
   }
   return "";
+}
+
+function parseVideoUrlArray(raw: unknown, max = 4): string[] {
+  const fromImageCell = parseUrlArray(raw, max);
+  if (fromImageCell.length > 0) return fromImageCell;
+  const out: string[] = [];
+  const push = (u: string) => {
+    const n = normalizeHttpsArchiveUrl(u);
+    if (!n || out.includes(n)) return;
+    if (VIDEO_FILE_EXT_IN_PATH.test(n)) out.push(n);
+  };
+  if (Array.isArray(raw)) {
+    for (const x of raw) {
+      if (x != null && typeof x === "object" && !Array.isArray(x)) {
+        for (const k of ["url", "video_url", "videoUrl", "playback_url", "download_url"] as const) {
+          const v = (x as Record<string, unknown>)[k];
+          if (v != null) push(String(v));
+        }
+      } else push(String(x));
+      if (out.length >= max) return out;
+    }
+    return out;
+  }
+  if (typeof raw === "string" && raw.trim().startsWith("[")) {
+    try {
+      return parseVideoUrlArray(JSON.parse(raw) as unknown, max);
+    } catch {
+      return [];
+    }
+  }
+  if (typeof raw === "string" && raw.trim()) push(raw.trim());
+  return out;
 }
 
 function parseUrlArray(raw: unknown, maxFrames: number): string[] {
@@ -130,13 +167,19 @@ function normalizeHttpsArchiveUrl(raw: string): string | null {
  */
 export function parseVideoSourceUrlForArchive(payload: Record<string, unknown>): string | null {
   const str = (v: unknown) => (v != null ? String(v).trim() : "");
+  const layers: Record<string, unknown> = { ...payload };
+  enrichInstagramApifyPayloadInPlace(layers);
+
   const priorityKeys = [
     "source_video_url",
     "raw_video_url",
     "analysis_video_url",
     "source_media_video_url",
     "video_url",
+    "videoUrl",
+    "video_play_url",
     "video_playback_url",
+    "videoPlayUrl",
     "playback_url",
     "download_url",
     "mp4_url",
@@ -148,12 +191,20 @@ export function parseVideoSourceUrlForArchive(payload: Record<string, unknown>):
     "heygen_video_url",
   ];
   for (const k of priorityKeys) {
-    const u = normalizeHttpsArchiveUrl(str(payload[k]));
+    const u = normalizeHttpsArchiveUrl(str(layers[k]));
     if (u) return u;
   }
+  for (const k of ["video_urls", "video_urls_json", "videoUrls", "videoUrlsJson"]) {
+    const raw = layers[k];
+    const arr = parseVideoUrlArray(raw, 4);
+    for (const u of arr) {
+      const n = normalizeHttpsArchiveUrl(u);
+      if (n) return n;
+    }
+  }
   for (const k of ["media_url", "url"]) {
-    const u = normalizeHttpsArchiveUrl(str(payload[k]));
+    const u = normalizeHttpsArchiveUrl(str(layers[k]));
     if (u && VIDEO_FILE_EXT_IN_PATH.test(u)) return u;
   }
-  return null;
+  return extractInstagramVideoSourceUrl(layers);
 }

@@ -111,6 +111,9 @@ export interface RunDeepVideoInsightsResult {
   /** Successful Storage uploads counted from `role === "source_video"` archive items. */
   top_performer_media_archive_source_video_files_saved?: number;
   rows_whisper_transcribed?: number;
+  skipped_pre_llm_below_cutoff?: number;
+  min_pre_llm_score_applied?: number;
+  deep_video_zero_work_summary?: string | null;
 }
 
 function videoModel(profile: { synth_model: string; criteria_json: Record<string, unknown> }): string {
@@ -216,6 +219,7 @@ export async function runDeepVideoInsightsForImport(
   const pool: Cand[] = [];
   let skippedNoFrames = 0;
   let skippedNoVideoSource = 0;
+  let skippedPreLlmBelowCutoff = 0;
   let skippedRatingGate = 0;
   let skippedBroadInsightsGate = 0;
   let skippedEvidenceKindFilter = 0;
@@ -232,7 +236,10 @@ export async function runDeepVideoInsightsForImport(
     videoEvidenceRows++;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
-    if (ev.pre_llm_score < minPre) continue;
+    if (ev.pre_llm_score < minPre) {
+      skippedPreLlmBelowCutoff++;
+      continue;
+    }
     if (broadGate.active && !broadGate.idSet.has(r.id)) {
       skippedBroadInsightsGate++;
       continue;
@@ -516,6 +523,19 @@ export async function runDeepVideoInsightsForImport(
   const videoTotal = await countEvidenceRowInsightsByImportTier(db, importId, "top_performer_video");
   const qualifying_video_rows = capAndSortQualifierPreview(qualifyingVideoScratch);
 
+  let deepVideoZeroWorkSummary: string | null = null;
+  if (analyzed === 0 && pool.length === 0) {
+    if (skippedPreLlmBelowCutoff > 0) {
+      deepVideoZeroWorkSummary =
+        `${skippedPreLlmBelowCutoff} video row(s) failed min_pre_llm_score=${minPre} (your evidence cutoff 0.62 is usually too high for top-performer — try TP vision min ≈0.35–0.4). ` +
+        `${skippedNoFrames} passed pre-LLM but had no frame URLs and no downloadable video_url in payload.`;
+    } else if (skippedNoFrames > 0) {
+      deepVideoZeroWorkSummary =
+        `${skippedNoFrames} video row(s) passed pre-LLM/gates but lack analysis_frame_urls and a direct HTTPS video_url (Apify video_url / video_urls_json / Instagram normalizer). ` +
+        `Re-scrape with MP4 CDN URLs or run after enriching payload.`;
+    }
+  }
+
   return {
     import_id: importId,
     model,
@@ -547,5 +567,8 @@ export async function runDeepVideoInsightsForImport(
     top_performer_media_archive_frame_files_saved: mediaArchiveFrameFilesSaved,
     top_performer_media_archive_source_video_files_saved: mediaArchiveSourceVideoFilesSaved,
     rows_whisper_transcribed: rowsWhisperTranscribed,
+    skipped_pre_llm_below_cutoff: skippedPreLlmBelowCutoff,
+    min_pre_llm_score_applied: minPre,
+    deep_video_zero_work_summary: deepVideoZeroWorkSummary,
   };
 }

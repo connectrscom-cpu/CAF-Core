@@ -443,6 +443,10 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn-ghost btn-sm" id="btn-delete-top-performer-insights-import" title="Deletes top_performer_carousel, top_performer_video, and top_performer_deep for this import">Delete all top-performer insights (import)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-video-insights">Run top-performer (video frames)</button>
             <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center;max-width:420px;line-height:1.35">
+              <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center" title="Separate from Evidence tab cutoff (often 0.6+). Top-performer vision defaults to ~0.35 carousel / 0.4 video.">
+                TP vision min pre-LLM
+                <input id="tp-vision-min-pre-llm" type="number" min="0" max="1" step="0.01" value="0.35" style="width:72px;font-size:12px" />
+              </label>
               <input id="tp-vision-rescan" type="checkbox" />
               Rescan (re-run vision for rows that already have this pass’s insight tier)
             </label>
@@ -747,6 +751,13 @@ function tpRatingGateRequestFields(){
   var offEl=document.getElementById('tp-rating-gate-off');
   if(offEl&&offEl.checked) o.disable_rating_percentile_gate=true;
   return o;
+}
+/** Top-performer vision min pre-LLM (not the Evidence tab cutoff slider). */
+function tpVisionMinPreLlmScore(){
+  var el=document.getElementById('tp-vision-min-pre-llm');
+  var v=el?parseFloat(String(el.value||'')):NaN;
+  if(Number.isFinite(v)) return Math.max(0,Math.min(1,v));
+  return 0.35;
 }
 var __cafActBuf=[];
 var __cafActMax=48;
@@ -2362,7 +2373,7 @@ bind('btn-run-broad-insights-all','click',async function(){
 bind('btn-run-deep-image-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('image','Select an import first.',true);return;}
   setTpStatus('image','Running image vision...',false);
-  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
+  var minScore=tpVisionMinPreLlmScore();
   var body=Object.assign({max_rows:24,min_pre_llm_score:minScore,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-image-insights';
   var r=null;
@@ -2410,7 +2421,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
   renderTpQualifyingList('carousel',[]);
   setTpStatus('carousel','Running carousel vision (all slides)...',false);
-  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
+  var minScore=tpVisionMinPreLlmScore();
   var body=Object.assign({max_rows:12,min_pre_llm_score:minScore,max_slides:12,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
@@ -2504,7 +2515,7 @@ bind('btn-run-deep-video-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('video','Select an import first.',true);return;}
   renderTpQualifyingList('video',[]);
   setTpStatus('video','Running video frame bundle...',false);
-  var minScore=parseFloat(val('prellm-min-score')||'0.35')||0.35;
+  var minScore=tpVisionMinPreLlmScore();
   var body=Object.assign({max_rows:16,min_pre_llm_score:minScore,max_frames:10,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-video-insights';
   var r=null;

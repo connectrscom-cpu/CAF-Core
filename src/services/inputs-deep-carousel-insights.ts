@@ -279,6 +279,9 @@ export interface RunDeepCarouselInsightsResult {
    * `top_performer_carousel` insights and `rescan` was false.
    */
   skipped_existing_carousel_insight?: number;
+  /** Rows with ≥2 slides that failed `min_pre_llm_score` (request or profile). */
+  skipped_pre_llm_below_cutoff?: number;
+  min_pre_llm_score_applied?: number;
   /**
    * When `rows_analyzed === 0`, a short human explanation (admin / logs). Omitted when work ran.
    */
@@ -336,6 +339,8 @@ function buildDeepCarouselZeroWorkSummary(args: {
   poolLen: number;
   rescan: boolean;
   skippedExisting: number;
+  skippedPreLlmBelowCutoff: number;
+  minPreLlmApplied: number;
   carouselInsightsTotal: number;
   embedAttempts: number;
   displayUrlHits: number;
@@ -364,6 +369,13 @@ function buildDeepCarouselZeroWorkSummary(args: {
     );
   }
   if (args.poolLen === 0) {
+    if (args.skippedPreLlmBelowCutoff > 0) {
+      return (
+        `${args.skippedPreLlmBelowCutoff} Instagram carousel row(s) had ≥2 slide URLs but pre_llm_score was below min_pre_llm_score=${args.minPreLlmApplied} ` +
+        `(evidence-tab cutoff is often 0.6+ — use Admin "TP vision min pre-LLM" ≈0.35 for top-performer runs). ` +
+        `Broad-insights gate skipped ${args.skippedPreLlmBelowCutoff > 0 ? "some" : "0"}; rating gate may also apply when rows are rated.`
+      );
+    }
     return (
       `At least one row had ≥2 slide URLs, but none entered the vision pool: check min_pre_llm_score, broad-insights gate, and rating gate. ` +
       `(${args.carouselInsightsTotal} total carousel insight rows in DB for this import.)`
@@ -560,6 +572,7 @@ export async function runDeepCarouselInsightsForImport(
   let instagramCarouselHintMissingSlideUrls = 0;
   let instagramEmbedRowsResolvedViaEmbed = 0;
   let carouselDeckRows = 0;
+  let skippedPreLlmBelowCutoff = 0;
   const qualifyingCarouselScratch: TopPerformerMediaQualifierPreviewRow[] = [];
 
   for (const r of dbRows) {
@@ -594,7 +607,10 @@ export async function runDeepCarouselInsightsForImport(
     carouselDeckRows++;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
-    if (ev.pre_llm_score < minPre) continue;
+    if (ev.pre_llm_score < minPre) {
+      skippedPreLlmBelowCutoff++;
+      continue;
+    }
     if (broadGate.active && !broadGate.idSet.has(r.id)) {
       skippedBroadInsightsGate++;
       continue;
@@ -761,6 +777,8 @@ ${textBundle}`;
     poolLen: pool.length,
     rescan: !!opts.rescan,
     skippedExisting: skippedExistingCarouselInsight,
+    skippedPreLlmBelowCutoff,
+    minPreLlmApplied: minPre,
     carouselInsightsTotal: carouselTotal,
     embedAttempts: instagramEmbedFetchAttempts,
     displayUrlHits: instagramEmbedNetworkDisplayUrlLiteralHits,
@@ -820,6 +838,8 @@ ${textBundle}`;
     top_performer_media_archive_errors: mediaArchiveErrors,
     rescan: !!opts.rescan,
     skipped_existing_carousel_insight: skippedExistingCarouselInsight,
+    skipped_pre_llm_below_cutoff: skippedPreLlmBelowCutoff,
+    min_pre_llm_score_applied: minPre,
     deep_carousel_zero_work_summary: zeroWorkSummary,
     ...(ratingGateNote != null ? { rating_gate_note: ratingGateNote } : {}),
   };
