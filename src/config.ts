@@ -637,7 +637,7 @@ const envSchema = z.object({
   OPENAI_WHISPER_MODEL: z.string().default("whisper-1"),
 
   /**
-   * **auto** (default): run Whisper when extracting/downloading source video and ingest transcript is empty/short.
+   * **auto** (default): run Whisper for every row with a downloadable video URL (caption length does not skip unless configured).
    * **on** / **off**: force enable / disable. Criteria `top_performer.transcribe_video_audio` overrides in auto.
    */
   CAF_TOP_PERFORMER_VIDEO_WHISPER: z
@@ -651,6 +651,12 @@ const envSchema = z.object({
       if (s === "auto") return "auto";
       return "auto";
     }),
+
+  /**
+   * Skip Whisper when ingest caption length ≥ this (0 = never skip — transcribe every row with a video URL).
+   * Legacy behavior was ~80 chars; criteria `top_performer.whisper_skip_when_caption_chars` overrides.
+   */
+  CAF_TOP_PERFORMER_WHISPER_SKIP_CAPTION_CHARS: z.coerce.number().int().min(0).max(50_000).default(0),
 });
 
 /** Parse `CAF_META_ACCOUNT_SOURCE_MAP` (e.g. `CUISINA=SNS,OTHER=SNS`). Keys/values normalized to uppercase. */

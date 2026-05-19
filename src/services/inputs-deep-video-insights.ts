@@ -532,12 +532,13 @@ export async function runDeepVideoInsightsForImport(
       cta_type: null,
       hashtags: null,
       caption_style: null,
-      hook_text:
-        typeof parsed?.spoken_hook === "string"
-          ? parsed.spoken_hook
-          : typeof parsed?.hook_visual === "string"
-            ? parsed.hook_visual
-            : null,
+      hook_text: (() => {
+        const whisper = prep.whisper_transcript?.trim();
+        if (whisper) return whisper.length > 4000 ? `${whisper.slice(0, 4000)}…` : whisper;
+        if (typeof parsed?.spoken_hook === "string" && parsed.spoken_hook.trim()) return parsed.spoken_hook;
+        if (typeof parsed?.hook_visual === "string" && parsed.hook_visual.trim()) return parsed.hook_visual;
+        return null;
+      })(),
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,

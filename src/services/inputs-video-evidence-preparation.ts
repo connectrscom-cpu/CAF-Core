@@ -47,8 +47,6 @@ export interface VideoFramePreparationResult {
   extraction_error?: string;
 }
 
-const CAPTION_CHARS_SKIP_WHISPER = 80;
-
 function slugPathSegment(slug: string): string {
   const s = slug.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 64);
   return s || "project";
@@ -117,10 +115,58 @@ export function resolveTranscribeVideoAudio(config: AppConfig, criteria: Record<
   return true;
 }
 
-function shouldRunWhisper(captionTranscript: string, config: AppConfig, criteria: Record<string, unknown>): boolean {
+/** 0 = always run Whisper when a video URL is available (transcribe all). Set to 80+ to restore caption-length skip. */
+export function resolveWhisperSkipWhenCaptionChars(
+  config: AppConfig,
+  criteria: Record<string, unknown>
+): number {
+  const tp = criteria.top_performer;
+  if (tp && typeof tp === "object" && !Array.isArray(tp)) {
+    const raw = (tp as Record<string, unknown>).whisper_skip_when_caption_chars;
+    if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+    if (raw != null && String(raw).trim() !== "") {
+      const n = parseInt(String(raw), 10);
+      if (!Number.isNaN(n) && n >= 0) return n;
+    }
+  }
+  return config.CAF_TOP_PERFORMER_WHISPER_SKIP_CAPTION_CHARS;
+}
+
+export function shouldRunWhisper(
+  captionTranscript: string,
+  config: AppConfig,
+  criteria: Record<string, unknown>
+): boolean {
   if (!resolveTranscribeVideoAudio(config, criteria)) return false;
-  if (captionTranscript.trim().length >= CAPTION_CHARS_SKIP_WHISPER) return false;
+  const skipAt = resolveWhisperSkipWhenCaptionChars(config, criteria);
+  if (skipAt > 0 && captionTranscript.trim().length >= skipAt) return false;
   return true;
+}
+
+async function tryWhisperFromVideoUrl(
+  config: AppConfig,
+  args: EnsureVideoFramesArgs,
+  videoUrl: string,
+  captionTranscript: string
+): Promise<string | null> {
+  if (!videoUrl.trim() || !args.openAiApiKey?.trim()) return null;
+  if (!shouldRunWhisper(captionTranscript, config, args.criteria)) return null;
+  try {
+    const proxyAgent = tryCreateInstagramEmbedProxyAgent(args.httpProxyUrl);
+    try {
+      const dl = await fetchRemoteVideoFile(
+        videoUrl,
+        config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
+        config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
+        proxyAgent ?? undefined
+      );
+      return await whisperFromVideoBuffer(config, args.openAiApiKey.trim(), dl.buf, dl.ext, args.audit);
+    } finally {
+      await proxyAgent?.close().catch(() => {});
+    }
+  } catch {
+    return null;
+  }
 }
 
 async function whisperFromVideoBuffer(
@@ -213,6 +259,9 @@ export async function ensureVideoFramesForEvidenceRow(
   if (!args.forceReextract && !preferSourceDownload) {
     const fromDb = await listEvidenceMediaVisionFrameUrls(db, args.projectId, args.evidenceRowId, maxFrames);
     if (fromDb.length > 0) {
+      const whisper = videoUrl
+        ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript)
+        : null;
       return {
         frame_urls: fromDb,
         frame_timestamps_sec: videoSampleTimestamps(null, fromDb.length),
@@ -221,7 +270,7 @@ export async function ensureVideoFramesForEvidenceRow(
         frames_extracted: 0,
         source_video_archived: false,
         caption_transcript: captionTranscript,
-        whisper_transcript: null,
+        whisper_transcript: whisper,
       };
     }
   }
@@ -245,25 +294,7 @@ export async function ensureVideoFramesForEvidenceRow(
 
   const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
   if (fromPayload.length > 0) {
-    let whisper: string | null = null;
-    if (videoUrl && args.openAiApiKey?.trim() && shouldRunWhisper(captionTranscript, config, args.criteria)) {
-      try {
-        const proxyAgent = tryCreateInstagramEmbedProxyAgent(args.httpProxyUrl);
-        try {
-          const dl = await fetchRemoteVideoFile(
-            videoUrl,
-            config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
-            config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
-            proxyAgent ?? undefined
-          );
-          whisper = await whisperFromVideoBuffer(config, args.openAiApiKey.trim(), dl.buf, dl.ext, args.audit);
-        } finally {
-          await proxyAgent?.close().catch(() => {});
-        }
-      } catch {
-        /* whisper optional */
-      }
-    }
+    const whisper = videoUrl ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript) : null;
     return {
       frame_urls: fromPayload,
       frame_timestamps_sec: videoSampleTimestamps(null, fromPayload.length),
@@ -279,6 +310,9 @@ export async function ensureVideoFramesForEvidenceRow(
   if (!args.forceReextract) {
     const fromDb = await listEvidenceMediaVisionFrameUrls(db, args.projectId, args.evidenceRowId, maxFrames);
     if (fromDb.length > 0) {
+      const whisper = videoUrl
+        ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript)
+        : null;
       return {
         frame_urls: fromDb,
         frame_timestamps_sec: videoSampleTimestamps(null, fromDb.length),
@@ -287,7 +321,7 @@ export async function ensureVideoFramesForEvidenceRow(
         frames_extracted: 0,
         source_video_archived: false,
         caption_transcript: captionTranscript,
-        whisper_transcript: null,
+        whisper_transcript: whisper,
       };
     }
   }
