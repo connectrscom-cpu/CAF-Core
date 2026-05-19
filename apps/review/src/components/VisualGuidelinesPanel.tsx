@@ -3,6 +3,17 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
+const MAX_CUES_PER_FORMAT = 10;
+
+const FORMAT_HINTS: Record<string, string> = {
+  listicle:
+    "Listicle = swipeable carousel where each slide is one list item (e.g. one zodiac sign, one tip).",
+  educational: "Educational = teaches something step-by-step across slides.",
+  text_on_screen: "Text on screen = the hook is mostly written text on the image/video.",
+  talking_head: "Talking head = creator speaks to camera; face is the main visual.",
+  mixed: "Mixed = combination of talking head, B-roll, and text overlays.",
+};
+
 type InspectionMedia = {
   storage_bucket?: string | null;
   folder_prefix?: string | null;
@@ -115,6 +126,59 @@ function buildCueGroupsFromEntries(entries: VisualGuidelineEntry[]): VisualGuide
   return [...byKey.values()].sort((a, b) => b.cues.length - a.cues.length);
 }
 
+function cueFingerprint(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isNearDuplicateCue(candidate: string, existing: string[]): boolean {
+  const fc = cueFingerprint(candidate);
+  if (fc.length < 10) return false;
+  for (const e of existing) {
+    const fe = cueFingerprint(e);
+    if (fc === fe) return true;
+    const shorter = fc.length <= fe.length ? fc : fe;
+    const longer = fc.length > fe.length ? fc : fe;
+    if (shorter.length >= 36 && longer.includes(shorter)) return true;
+    const sw = shorter.split(" ").filter((w) => w.length > 3);
+    const lw = new Set(longer.split(" ").filter((w) => w.length > 3));
+    let hit = 0;
+    for (const w of sw) if (lw.has(w)) hit++;
+    if (sw.length >= 4 && hit / sw.length >= 0.72) return true;
+    const perf = /\b(humor|relat|engag|audience|resonat)\b/;
+    if (perf.test(fc) && perf.test(fe) && hit / Math.max(sw.length, 1) >= 0.4) return true;
+  }
+  return false;
+}
+
+function compactCuesForDisplay(cues: string[], max: number): string[] {
+  const unique: string[] = [];
+  for (const raw of cues) {
+    const t = raw.trim();
+    if (t.length < 4) continue;
+    const line = t.length > 220 ? `${t.slice(0, 220)}…` : t;
+    if (isNearDuplicateCue(line, unique)) continue;
+    unique.push(line);
+  }
+  const score = (s: string) => {
+    if (/^(create|use|choose|select|ensure|add|design|craft)\b/i.test(s)) return 4;
+    if (s.length <= 90) return 3;
+    if (/^(the deck|the carousel|this instagram)\b/i.test(s)) return 0;
+    return 1;
+  };
+  unique.sort((a, b) => score(b) - score(a));
+  const out: string[] = [];
+  for (const c of unique) {
+    if (isNearDuplicateCue(c, out)) continue;
+    out.push(c);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
 function entryIdsForGroup(group: VisualGuidelineCueGroup, entries: VisualGuidelineEntry[]): VisualGuidelineEntry[] {
   const ids = new Set(group.example_insights_ids);
   return entries.filter((e) => {
@@ -135,15 +199,20 @@ export function VisualGuidelinesPanel(props: {
   const [expandedFormat, setExpandedFormat] = useState<string | null>(null);
 
   const cueGroups = useMemo(() => {
-    if (visualPack.visual_guideline_cues_by_format?.length) {
-      return visualPack.visual_guideline_cues_by_format;
-    }
-    const fromEntries = buildCueGroupsFromEntries(entries);
-    const flat = visualPack.visual_guideline_cues ?? [];
-    if (flat.length > 0 && fromEntries.every((g) => g.cues.length === 0)) {
-      return [{ format_pattern: "mixed", format_key: "all", cues: flat, example_insights_ids: [] }];
-    }
-    return fromEntries;
+    const raw =
+      visualPack.visual_guideline_cues_by_format?.length
+        ? visualPack.visual_guideline_cues_by_format
+        : buildCueGroupsFromEntries(entries);
+    const groups =
+      raw.length > 0
+        ? raw
+        : visualPack.visual_guideline_cues?.length
+          ? [{ format_pattern: "mixed", format_key: "all", cues: visualPack.visual_guideline_cues, example_insights_ids: [] }]
+          : [];
+    return groups.map((g) => ({
+      ...g,
+      cues: compactCuesForDisplay(g.cues, MAX_CUES_PER_FORMAT),
+    }));
   }, [visualPack.visual_guideline_cues_by_format, visualPack.visual_guideline_cues, entries]);
 
   const flatCueCount =
@@ -211,11 +280,19 @@ export function VisualGuidelinesPanel(props: {
               </button>
               {open && (
                 <div style={{ padding: "12px 14px" }}>
+                  {FORMAT_HINTS[group.format_key] ? (
+                    <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
+                      {FORMAT_HINTS[group.format_key]}
+                    </p>
+                  ) : null}
                   {group.format_pattern !== group.format_key && (
                     <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
                       Full pattern: <code>{group.format_pattern}</code>
                     </p>
                   )}
+                  <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 8px" }}>
+                    Showing up to {MAX_CUES_PER_FORMAT} non-redundant cues. Per-post JSON and assets are under Examples.
+                  </p>
                   <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13 }}>
                     {group.cues.map((c, i) => (
                       <li key={i} style={{ marginBottom: 6 }}>

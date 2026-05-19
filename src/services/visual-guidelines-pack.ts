@@ -15,6 +15,9 @@ import {
   primaryFormatKey,
   type VisualGuidelineInspectionMedia,
 } from "./visual-guidelines-media.js";
+import { compactCueList } from "./visual-guidelines-cues.js";
+
+const MAX_CUES_PER_FORMAT = 10;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -62,21 +65,27 @@ export function extractCueStringsFromEntry(entry: Record<string, unknown>): stri
     if (t.length < 4) return;
     cues.push(t.length > 220 ? `${t.slice(0, 220)}…` : t);
   };
-  push(stringish(entry.why_it_worked, 400));
-  push(stringish(entry.visual_consistency, 400));
-  push(stringish(entry.deck_as_whole_summary, 400));
-  push(stringish(entry.video_as_whole_summary, 400));
-  const rb = asRecord(entry.replication_blueprint);
-  if (rb) {
-    for (const s of stringArray(rb.steps_to_remake, 6, 280)) push(s);
-    push(stringish(rb.tooling_notes, 200));
-  }
+  const why = stringish(entry.why_it_worked, 220);
+  const summary =
+    stringish(entry.deck_as_whole_summary, 220) ?? stringish(entry.video_as_whole_summary, 220);
+  push(why ?? summary);
+  push(stringish(entry.visual_consistency, 200));
   const dvs = asRecord(entry.deck_visual_system) ?? asRecord(entry.video_visual_system);
   if (dvs) {
-    push(stringish(dvs.overall_aesthetic, 200));
-    push(stringish(dvs.repeated_template, 200));
+    push(stringish(dvs.overall_aesthetic, 140));
+    const tmpl = stringish(dvs.repeated_template, 140);
+    if (tmpl && !isRedundantText(tmpl, cues)) push(tmpl);
   }
-  return cues;
+  const rb = asRecord(entry.replication_blueprint);
+  if (rb) {
+    for (const s of stringArray(rb.steps_to_remake, 3, 200)) push(s);
+  }
+  return compactCueList(cues, 6);
+}
+
+function isRedundantText(candidate: string, existing: string[]): boolean {
+  const c = candidate.toLowerCase();
+  return existing.some((e) => e.toLowerCase().includes(c) || c.includes(e.toLowerCase()));
 }
 
 function buildCueGroups(entries: Record<string, unknown>[]): VisualGuidelineCueGroup[] {
@@ -93,13 +102,12 @@ function buildCueGroups(entries: Record<string, unknown>[]): VisualGuidelineCueG
     if (insId && g.example_insights_ids.length < 12 && !g.example_insights_ids.includes(insId)) {
       g.example_insights_ids.push(insId);
     }
-    const cueSeen = new Set(g.cues.map((c) => c.toLowerCase()));
     for (const c of extractCueStringsFromEntry(entry)) {
-      const k = c.toLowerCase();
-      if (cueSeen.has(k)) continue;
-      cueSeen.add(k);
       g.cues.push(c);
     }
+  }
+  for (const g of byKey.values()) {
+    g.cues = compactCueList(g.cues, MAX_CUES_PER_FORMAT);
   }
   return [...byKey.values()].sort((a, b) => b.cues.length - a.cues.length);
 }
