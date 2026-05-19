@@ -4073,12 +4073,55 @@ async function loadPackView(){
     }
     ib+='</tbody></table>';
     if(idz.length>150)ib+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+idz.length+' ideas.</p>';
+    const dg=(p.derived_globals_json&&typeof p.derived_globals_json==='object'&&!Array.isArray(p.derived_globals_json))?p.derived_globals_json:{};
+    const tags=Array.isArray(dg.hashtag_leaderboard_v1)?dg.hashtag_leaderboard_v1:[];
+    const vgp=(dg.visual_guidelines_pack_v1&&typeof dg.visual_guidelines_pack_v1==='object')?dg.visual_guidelines_pack_v1:null;
+    let hb='';
+    if(tags.length){
+      hb='<table class="sp-modal-table"><thead><tr><th>#</th><th>Hashtag</th><th>Count</th><th>Weight</th><th>Avg rating</th></tr></thead><tbody>';
+      const nh=Math.min(tags.length,120);
+      for(let i=0;i<nh;i++){
+        const t=tags[i]||{};
+        hb+='<tr><td>'+(i+1)+'</td><td class="mono">'+esc(String(t.hashtag||''))+'</td><td>'+esc(String(t.count??''))+'</td><td>'+esc(String(t.weight??''))+'</td><td>'+esc(t.avg_rating_score==null||t.avg_rating_score===''?'—':String(t.avg_rating_score))+'</td></tr>';
+      }
+      hb+='</tbody></table>';
+      if(tags.length>120)hb+='<p style="color:var(--muted);font-size:12px">Showing 120 of '+tags.length+' hashtags.</p>';
+      hb+='<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Raw hashtag_leaderboard_v1 JSON</summary><pre style="font-size:10px;max-height:320px;overflow:auto;margin:8px 0 0">'+esc(pretty(tags))+'</pre></details>';
+    }else{
+      hb='<p class="runs-ops-hint" style="margin:0">No <span class="mono">hashtag_leaderboard_v1</span> — rebuild pack from Processing (full import).</p>';
+    }
+    let vb='';
+    if(vgp){
+      const cues=Array.isArray(vgp.visual_guideline_cues)?vgp.visual_guideline_cues:[];
+      const ents=Array.isArray(vgp.entries)?vgp.entries:[];
+      vb='<p class="runs-ops-hint" style="margin:0 0 10px">version '+esc(String(vgp.version??'—'))+' · insights scanned '+esc(String(vgp.insights_scanned??'—'))+' · '+ents.length+' entries · '+cues.length+' cues</p>';
+      if(cues.length){
+        vb+='<p style="font-size:12px;font-weight:600;margin:8px 0 4px">visual_guideline_cues</p><ul style="margin:0 0 12px 18px;font-size:12px">';
+        const nc=Math.min(cues.length,48);
+        for(let i=0;i<nc;i++)vb+='<li>'+esc(String(cues[i]||''))+'</li>';
+        vb+='</ul>';
+        if(cues.length>48)vb+='<p style="color:var(--muted);font-size:12px">+'+(cues.length-48)+' more cues in raw JSON.</p>';
+      }
+      if(ents.length){
+        vb+='<p style="font-size:12px;font-weight:600;margin:8px 0 4px">entries (expand)</p>';
+        const ne=Math.min(ents.length,24);
+        for(let i=0;i<ne;i++){
+          vb+='<details style="margin:0 0 6px"><summary style="cursor:pointer;font-size:12px">'+esc(String((ents[i]&&ents[i].format_pattern)||(ents[i]&&ents[i].analysis_tier)||('entry '+(i+1))))+'</summary><pre style="font-size:10px;max-height:240px;overflow:auto;margin:6px 0 0">'+esc(pretty(ents[i]))+'</pre></details>';
+        }
+        if(ents.length>24)vb+='<p style="color:var(--muted);font-size:12px">+'+(ents.length-24)+' more entries in raw JSON.</p>';
+      }
+      vb+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Full visual_guidelines_pack_v1 JSON</summary><pre style="font-size:10px;max-height:400px;overflow:auto;margin:8px 0 0">'+esc(pretty(vgp))+'</pre></details>';
+    }else{
+      vb='<p class="runs-ops-hint" style="margin:0">No <span class="mono">visual_guidelines_pack_v1</span> — run top-performer insights, then rebuild the pack.</p>';
+    }
     const rest={...p};
     delete rest.overall_candidates_json;
     delete rest.ideas_json;
     root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="card-h">ideas_json ('+idz.length+' — materialize into <span class="mono">runs.candidates_json</span> before Start)</div><div style="padding:12px 16px 16px">'+(idz.length?ib:'<p class="runs-ops-hint" style="margin:0">Empty — use legacy <strong>overall_candidates_json</strong> when building <span class="mono">candidates_json</span> on the run, or rebuild the pack in Processing.</p>')+'</div></div>'+
       '<div class="card" style="margin-bottom:16px"><div class="card-h">overall_candidates_json ('+oc.length+' rows)</div><div style="padding:12px 16px 16px">'+tb+'</div></div>'+
-      '<div class="card"><div class="card-h">Other pack fields (IG / TikTok / Reddit / HTML summaries, globals, …)</div><div style="padding:12px 16px 16px"><pre style="font-size:10px;line-height:1.45;max-height:480px;overflow:auto;margin:0">'+esc(pretty(rest))+'</pre></div></div>';
+      '<div class="card" style="margin-bottom:16px"><div class="card-h">hashtag_leaderboard_v1 ('+tags.length+')</div><div style="padding:12px 16px 16px">'+hb+'</div></div>'+
+      '<div class="card" style="margin-bottom:16px"><div class="card-h">visual_guidelines_pack_v1</div><div style="padding:12px 16px 16px">'+vb+'</div></div>'+
+      '<div class="card"><div class="card-h">Other pack fields (IG / TikTok / Reddit / HTML summaries, remaining derived_globals, …)</div><div style="padding:12px 16px 16px"><pre style="font-size:10px;line-height:1.45;max-height:480px;overflow:auto;margin:0">'+esc(pretty(rest))+'</pre></div></div>';
   }catch(e){
     root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||String(e))+'</div>';
   }

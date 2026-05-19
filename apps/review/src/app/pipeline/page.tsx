@@ -214,9 +214,10 @@ export default function PipelinePage() {
           <section>
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>Signal packs in Core</h3>
             <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 720 }}>
-              Each pack holds <code style={{ fontSize: 12 }}>overall_candidates_json</code> — the idea rows the
-              planner multiplies by enabled flow types. Open a pack to review or search candidates when that helps
-              editorial judgment.
+              Each pack holds <code style={{ fontSize: 12 }}>ideas_json</code> /{" "}
+              <code style={{ fontSize: 12 }}>overall_candidates_json</code> plus{" "}
+              <code style={{ fontSize: 12 }}>derived_globals_json</code> (hashtag leaderboard, visual guidelines from
+              top-performer insights). Open a pack to inspect ideas, hashtags, and visual guideline JSON.
             </p>
             <button className="button" type="button" onClick={() => void loadPacks()} disabled={loading}>
               {loading ? "Refreshing…" : "Refresh"}
@@ -256,7 +257,7 @@ export default function PipelinePage() {
                           <Td>{fmt(p.created_at)}</Td>
                           <Td>
                             <Link href={navHref(`/pipeline/pack/${p.id}`)} className="detail-back">
-                              Inspect ideas
+                              Inspect pack
                             </Link>
                           </Td>
                         </tr>
