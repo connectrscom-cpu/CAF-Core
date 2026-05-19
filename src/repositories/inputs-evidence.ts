@@ -400,6 +400,42 @@ export async function listEvidenceRowsForPreLlmScoring(
  * Uses `ceil(rated_count * fraction)` with a minimum of 1 when any rated rows exist.
  * Used to scope expensive top-performer vision passes to high performers from the insights valuation pass.
  */
+/** All `rating_score` values for an import (for top-percentile selection). */
+export async function listEvidenceRowRatingScoreMap(
+  db: Pool,
+  projectId: string,
+  importId: string
+): Promise<Map<string, number>> {
+  const rows = await q<{ id: string; rating_score: string }>(
+    db,
+    `SELECT id::text AS id, rating_score::text AS rating_score
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2 AND rating_score IS NOT NULL`,
+    [importId, projectId]
+  );
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const n = parseFloat(r.rating_score);
+    if (Number.isFinite(n)) map.set(r.id, n);
+  }
+  return map;
+}
+
+export async function countRatedEvidenceRows(
+  db: Pool,
+  projectId: string,
+  importId: string
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `SELECT COUNT(*)::text AS n
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2 AND rating_score IS NOT NULL`,
+    [importId, projectId]
+  );
+  return parseInt(row?.n ?? "0", 10) || 0;
+}
+
 export async function listTopFractionRatedEvidenceRowIds(
   db: Pool,
   projectId: string,

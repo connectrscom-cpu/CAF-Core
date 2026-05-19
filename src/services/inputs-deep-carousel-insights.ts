@@ -14,8 +14,10 @@ import {
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
 import {
+  countRatedEvidenceRows,
   getInputsEvidenceImport,
   listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowRatingScoreMap,
   listEvidenceRowsForPreLlmScoring,
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
@@ -35,8 +37,13 @@ import {
 import {
   buildTopPerformerRatingGateRequestOverrides,
   resolveBroadInsightsSampleGate,
-  resolveTopPerformerRatingGate,
 } from "./inputs-top-performer-rating-gate.js";
+import {
+  applyTopPerformerPercentileSelection,
+  resolveTopPerformerPercentileConfig,
+  scoreRowForTopPerformer,
+  type ScoredTopPerformerRow,
+} from "./inputs-top-performer-percentile-pool.js";
 import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
@@ -48,6 +55,7 @@ import {
   postUrlForTopPerformerPreview,
   type TopPerformerMediaQualifierPreviewRow,
 } from "./inputs-top-performer-qualifying-preview.js";
+import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
 import {
   extractInstagramPermalinkShortcode,
   fetchInstagramCarouselUrlsFromEmbedDetailed,
@@ -211,7 +219,14 @@ export interface RunDeepCarouselInsightsResult {
   rows_analyzed: number;
   skipped_no_slides: number;
   carousel_insights_total: number;
-  /** Top fraction of rated rows (`rating_score`) that may receive vision; default 5%. */
+  percentile_gate_active?: boolean;
+  percentile_top_fraction?: number;
+  percentile_universe_count?: number;
+  percentile_cap?: number;
+  percentile_score_basis?: string;
+  skipped_percentile_selection?: number;
+  percentile_gate_disabled?: string;
+  /** Top fraction of media-eligible rows that may receive vision; default 5%. */
   rating_gate_active?: boolean;
   rating_top_fraction?: number;
   rated_rows_in_import?: number;
@@ -339,8 +354,10 @@ function buildDeepCarouselZeroWorkSummary(args: {
   poolLen: number;
   rescan: boolean;
   skippedExisting: number;
-  skippedPreLlmBelowCutoff: number;
-  minPreLlmApplied: number;
+  skippedPercentileSelection: number;
+  percentileActive: boolean;
+  percentileFraction: number;
+  percentileUniverse: number;
   carouselInsightsTotal: number;
   embedAttempts: number;
   displayUrlHits: number;
@@ -369,15 +386,16 @@ function buildDeepCarouselZeroWorkSummary(args: {
     );
   }
   if (args.poolLen === 0) {
-    if (args.skippedPreLlmBelowCutoff > 0) {
+    if (args.percentileActive && args.skippedPercentileSelection > 0 && args.percentileUniverse > 0) {
+      const pct = Math.round(args.percentileFraction * 10000) / 100;
       return (
-        `${args.skippedPreLlmBelowCutoff} Instagram carousel row(s) had ≥2 slide URLs but pre_llm_score was below min_pre_llm_score=${args.minPreLlmApplied} ` +
-        `(evidence-tab cutoff is often 0.6+ — use Admin "TP vision min pre-LLM" ≈0.35 for top-performer runs). ` +
-        `Broad-insights gate skipped ${args.skippedPreLlmBelowCutoff > 0 ? "some" : "0"}; rating gate may also apply when rows are rated.`
+        `${args.carouselDeckRows} carousel deck row(s) were media-eligible; top ${pct}% selection kept ${args.poolLen} for vision ` +
+        `(${args.skippedPercentileSelection} below the top fraction in universe of ${args.percentileUniverse}). ` +
+        `Raise the Top % control or disable broad-insights align if the universe is too small.`
       );
     }
     return (
-      `At least one row had ≥2 slide URLs, but none entered the vision pool: check min_pre_llm_score, broad-insights gate, and rating gate. ` +
+      `At least one row had ≥2 slide URLs, but none entered the vision pool: check top-% selection, broad-insights gate, and rescan. ` +
       `(${args.carouselInsightsTotal} total carousel insight rows in DB for this import.)`
     );
   }
@@ -443,8 +461,12 @@ export async function runDeepCarouselInsightsForImport(
   }
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
   const model = carouselModel(profile);
-  const minPre = carouselMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = carouselMaxRows(criteria, opts.max_rows);
+  const percentileConfig = resolveTopPerformerPercentileConfig(
+    criteria,
+    buildTopPerformerRatingGateRequestOverrides(opts),
+    opts.min_pre_llm_score
+  );
   const maxSlides = clamp(opts.max_slides ?? 12, MIN_CAROUSEL_SLIDES_FOR_DEEP, 12);
   const embedFetch = resolveInstagramEmbedCarouselFetch(config, criteria);
   const embedCarouselFetchEnabled = embedFetch.enabled;
@@ -454,14 +476,9 @@ export async function runDeepCarouselInsightsForImport(
   let mediaArchiveFilesSaved = 0;
   let mediaArchiveErrors = 0;
 
-  const ratingGate = await resolveTopPerformerRatingGate(
-    db,
-    project.id,
-    importId,
-    criteria,
-    buildTopPerformerRatingGateRequestOverrides(opts)
-  );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
+  const ratingScores = await listEvidenceRowRatingScoreMap(db, project.id, importId);
+  const ratedRowsInImport = await countRatedEvidenceRows(db, project.id, importId);
 
   const existing = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_carousel");
 
@@ -553,17 +570,15 @@ export async function runDeepCarouselInsightsForImport(
     }
   }
 
-  type Cand = {
-    id: string;
+  type Cand = ScoredTopPerformerRow & {
+    pre_llm_score: number;
     evidence_kind: string;
     payload: Record<string, unknown>;
-    pre_llm_score: number;
     slide_urls: string[];
     caption: string;
   };
-  const pool: Cand[] = [];
+  const eligible: Cand[] = [];
   let skippedExistingCarouselInsight = 0;
-  let skippedRatingGate = 0;
   let skippedBroadInsightsGate = 0;
   let skippedEvidenceKindFilter = 0;
   let instagramPostRows = 0;
@@ -572,7 +587,6 @@ export async function runDeepCarouselInsightsForImport(
   let instagramCarouselHintMissingSlideUrls = 0;
   let instagramEmbedRowsResolvedViaEmbed = 0;
   let carouselDeckRows = 0;
-  let skippedPreLlmBelowCutoff = 0;
   const qualifyingCarouselScratch: TopPerformerMediaQualifierPreviewRow[] = [];
 
   for (const r of dbRows) {
@@ -607,43 +621,50 @@ export async function runDeepCarouselInsightsForImport(
     carouselDeckRows++;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
-    if (ev.pre_llm_score < minPre) {
-      skippedPreLlmBelowCutoff++;
-      continue;
-    }
-    if (broadGate.active && !broadGate.idSet.has(r.id)) {
-      skippedBroadInsightsGate++;
-      continue;
-    }
-    if (ratingGate.active && !ratingGate.idSet.has(r.id)) {
-      skippedRatingGate++;
-      continue;
-    }
-    qualifyingCarouselScratch.push({
-      row_id: r.id,
-      evidence_kind: r.evidence_kind,
+    const scored = scoreRowForTopPerformer(r.id, ev.pre_llm_score, ratingScores);
+    eligible.push({
+      ...scored,
       pre_llm_score: ev.pre_llm_score,
-      media_count: slideUrls.length,
-      caption_excerpt: excerptForTopPerformerPreview(payload),
-      post_url: postUrlForTopPerformerPreview(r.evidence_kind, payload),
-      already_has_tier_insight: existing.has(r.id),
-    });
-    if (existing.has(r.id)) {
-      skippedExistingCarouselInsight++;
-      continue;
-    }
-    pool.push({
-      id: r.id,
       evidence_kind: r.evidence_kind,
       payload,
-      pre_llm_score: ev.pre_llm_score,
       slide_urls: slideUrls,
       caption: parseCarouselCaptionContext(payload),
     });
   }
 
-  pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
-  const top = pool.slice(0, maxRows);
+  skippedBroadInsightsGate = broadGate.active ? eligible.filter((e) => !broadGate.idSet.has(e.id)).length : 0;
+
+  const { selected: percentileSelected, stats: percentileStats } = applyTopPerformerPercentileSelection(
+    eligible,
+    percentileConfig,
+    {
+      broadIdSet: broadGate.active ? broadGate.idSet : null,
+      maxRows,
+      ratedRowsInImport,
+    }
+  );
+
+  const skippedPercentileSelection = Math.max(
+    0,
+    percentileStats.universe_count - percentileStats.selected_by_percentile
+  );
+  const selectedIdSet = new Set(percentileSelected.map((c) => c.id));
+  for (const e of eligible) {
+    if (broadGate.active && !broadGate.idSet.has(e.id)) continue;
+    if (!selectedIdSet.has(e.id)) continue;
+    qualifyingCarouselScratch.push({
+      row_id: e.id,
+      evidence_kind: e.evidence_kind,
+      pre_llm_score: e.score,
+      media_count: e.slide_urls.length,
+      caption_excerpt: excerptForTopPerformerPreview(e.payload),
+      post_url: postUrlForTopPerformerPreview(e.evidence_kind, e.payload),
+      already_has_tier_insight: existing.has(e.id),
+    });
+  }
+
+  const top = percentileSelected.filter((c) => !existing.has(c.id));
+  skippedExistingCarouselInsight = percentileSelected.filter((c) => existing.has(c.id)).length;
   const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
   const ratingSnapByRow = ratingReviewSnapshotsByRowId(
     ratingRows.map((row) => ({
@@ -700,6 +721,14 @@ ${textBundle}`;
         const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
         return relay || src;
       });
+    }
+
+    const slideRelay = await relayImageUrlsForOpenAiVision(config, visionSlideUrls, {
+      http_proxy_url: embedHttpProxyCfg.url,
+    });
+    visionSlideUrls = slideRelay.urls;
+    if (slideRelay.errors.length > 0) {
+      mediaArchiveErrors += slideRelay.errors.length;
     }
 
     const user_content: Array<
@@ -774,11 +803,13 @@ ${textBundle}`;
   const zeroWorkSummary = buildDeepCarouselZeroWorkSummary({
     analyzed,
     carouselDeckRows,
-    poolLen: pool.length,
+    poolLen: top.length,
     rescan: !!opts.rescan,
     skippedExisting: skippedExistingCarouselInsight,
-    skippedPreLlmBelowCutoff,
-    minPreLlmApplied: minPre,
+    skippedPercentileSelection,
+    percentileActive: percentileConfig.active,
+    percentileFraction: percentileConfig.fraction,
+    percentileUniverse: percentileStats.universe_count,
     carouselInsightsTotal: carouselTotal,
     embedAttempts: instagramEmbedFetchAttempts,
     displayUrlHits: instagramEmbedNetworkDisplayUrlLiteralHits,
@@ -789,8 +820,8 @@ ${textBundle}`;
   });
 
   const ratingGateNote =
-    ratingGate.disabled === "no_rated_rows"
-      ? "No evidence rows in this import have rating_score; the top-fraction rating gate was skipped. Populate ratings on evidence rows before rating_top_fraction can narrow the carousel pool."
+    percentileStats.score_basis === "pre_llm_score" && ratedRowsInImport === 0
+      ? "No rating_score on this import; top-% uses pre_llm_score. Run Rate import to rank by performance metrics instead."
       : null;
 
   return {
@@ -798,17 +829,24 @@ ${textBundle}`;
     model,
     rows_scanned: dbRows.length,
     carousel_deck_rows: carouselDeckRows,
-    candidates_with_slides: pool.length,
+    candidates_with_slides: top.length,
     rows_analyzed: analyzed,
     /** Same count as `skipped_instagram_few_slide_urls` (IG rows with fewer than two slide URLs after embed). */
     skipped_no_slides: skippedInstagramFewSlides,
     carousel_insights_total: carouselTotal,
-    rating_gate_active: ratingGate.active,
-    rating_top_fraction: ratingGate.fraction,
-    rated_rows_in_import: ratingGate.rated_row_count,
-    rating_gate_cap: ratingGate.gate_row_cap,
-    skipped_rating_gate: skippedRatingGate,
-    rating_gate_disabled: ratingGate.disabled,
+    percentile_gate_active: percentileConfig.active,
+    percentile_top_fraction: percentileConfig.fraction,
+    percentile_universe_count: percentileStats.universe_count,
+    percentile_cap: percentileStats.percentile_cap,
+    percentile_score_basis: percentileStats.score_basis,
+    skipped_percentile_selection: skippedPercentileSelection,
+    percentile_gate_disabled: percentileConfig.disabled,
+    rating_gate_active: percentileConfig.active,
+    rating_top_fraction: percentileConfig.fraction,
+    rated_rows_in_import: ratedRowsInImport,
+    rating_gate_cap: percentileStats.percentile_cap,
+    skipped_rating_gate: skippedPercentileSelection,
+    rating_gate_disabled: percentileConfig.disabled,
     broad_insights_gate_active: broadGate.active,
     broad_llm_rows_in_import: broadGate.broad_llm_row_count,
     skipped_broad_insights_gate: skippedBroadInsightsGate,
@@ -838,8 +876,6 @@ ${textBundle}`;
     top_performer_media_archive_errors: mediaArchiveErrors,
     rescan: !!opts.rescan,
     skipped_existing_carousel_insight: skippedExistingCarouselInsight,
-    skipped_pre_llm_below_cutoff: skippedPreLlmBelowCutoff,
-    min_pre_llm_score_applied: minPre,
     deep_carousel_zero_work_summary: zeroWorkSummary,
     ...(ratingGateNote != null ? { rating_gate_note: ratingGateNote } : {}),
   };

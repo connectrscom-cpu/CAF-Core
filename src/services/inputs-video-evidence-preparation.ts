@@ -83,6 +83,25 @@ export function resolveExtractVideoFramesFromSource(config: AppConfig, criteria:
   return true;
 }
 
+/**
+ * When true (default in **auto**), top-performer video downloads `video_url` and uploads source + frames
+ * to Supabase instead of using scrape thumbnails only.
+ */
+export function resolvePreferSourceVideoDownload(config: AppConfig, criteria: Record<string, unknown>): boolean {
+  const mode = config.CAF_TOP_PERFORMER_DOWNLOAD_SOURCE_VIDEO;
+  if (mode === "off") return false;
+  if (mode === "on") return true;
+
+  const tp = criteria.top_performer;
+  if (tp && typeof tp === "object" && !Array.isArray(tp)) {
+    const raw = (tp as Record<string, unknown>).download_source_video;
+    if (explicitExtractDisable(raw)) return false;
+    if (truthyExtract(raw)) return true;
+  }
+
+  return true;
+}
+
 export function resolveTranscribeVideoAudio(config: AppConfig, criteria: Record<string, unknown>): boolean {
   const mode = config.CAF_TOP_PERFORMER_VIDEO_WHISPER;
   if (mode === "off") return false;
@@ -187,10 +206,46 @@ export async function ensureVideoFramesForEvidenceRow(
     ...partial,
   });
 
+  const videoUrl = parseVideoSourceUrlForArchive(args.payload);
+  const canExtract = resolveExtractVideoFramesFromSource(config, args.criteria);
+  const preferSourceDownload = resolvePreferSourceVideoDownload(config, args.criteria);
+
+  if (!args.forceReextract && !preferSourceDownload) {
+    const fromDb = await listEvidenceMediaVisionFrameUrls(db, args.projectId, args.evidenceRowId, maxFrames);
+    if (fromDb.length > 0) {
+      return {
+        frame_urls: fromDb,
+        frame_timestamps_sec: videoSampleTimestamps(null, fromDb.length),
+        source: "evidence_media_db",
+        evidence_media_rows_written: 0,
+        frames_extracted: 0,
+        source_video_archived: false,
+        caption_transcript: captionTranscript,
+        whisper_transcript: null,
+      };
+    }
+  }
+
+  if (videoUrl && canExtract && preferSourceDownload) {
+    const extracted = await downloadExtractAndArchiveSourceVideo(
+      db,
+      config,
+      args,
+      videoUrl,
+      maxFrames,
+      captionTranscript
+    );
+    if (extracted.frame_urls.length > 0) {
+      return extracted;
+    }
+    if (args.forceReextract) {
+      return extracted;
+    }
+  }
+
   const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
   if (fromPayload.length > 0) {
     let whisper: string | null = null;
-    const videoUrl = parseVideoSourceUrlForArchive(args.payload);
     if (videoUrl && args.openAiApiKey?.trim() && shouldRunWhisper(captionTranscript, config, args.criteria)) {
       try {
         const proxyAgent = tryCreateInstagramEmbedProxyAgent(args.httpProxyUrl);
@@ -237,14 +292,36 @@ export async function ensureVideoFramesForEvidenceRow(
     }
   }
 
-  if (!resolveExtractVideoFramesFromSource(config, args.criteria)) {
+  if (!canExtract) {
     return emptyResult({ extraction_error: "extract_frames_from_video_disabled" });
   }
 
-  const videoUrl = parseVideoSourceUrlForArchive(args.payload);
   if (!videoUrl) {
     return emptyResult({ extraction_error: "no_downloadable_video_url" });
   }
+
+  return downloadExtractAndArchiveSourceVideo(db, config, args, videoUrl, maxFrames, captionTranscript);
+}
+
+async function downloadExtractAndArchiveSourceVideo(
+  db: Pool,
+  config: AppConfig,
+  args: EnsureVideoFramesArgs,
+  videoUrl: string,
+  maxFrames: number,
+  captionTranscript: string
+): Promise<VideoFramePreparationResult> {
+  const emptyResult = (partial: Partial<VideoFramePreparationResult>): VideoFramePreparationResult => ({
+    frame_urls: [],
+    frame_timestamps_sec: [],
+    source: "none",
+    evidence_media_rows_written: 0,
+    frames_extracted: 0,
+    source_video_archived: false,
+    caption_transcript: captionTranscript,
+    whisper_transcript: null,
+    ...partial,
+  });
 
   const proxyAgent = tryCreateInstagramEmbedProxyAgent(args.httpProxyUrl);
   let rowsWritten = 0;

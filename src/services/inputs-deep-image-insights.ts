@@ -10,8 +10,10 @@ import {
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
 import {
+  countRatedEvidenceRows,
   getInputsEvidenceImport,
   listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowRatingScoreMap,
   listEvidenceRowsForPreLlmScoring,
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
@@ -29,14 +31,20 @@ import { isCarouselDeepEligible } from "./inputs-carousel-evidence-bundle.js";
 import {
   buildTopPerformerRatingGateRequestOverrides,
   resolveBroadInsightsSampleGate,
-  resolveTopPerformerRatingGate,
 } from "./inputs-top-performer-rating-gate.js";
+import {
+  applyTopPerformerPercentileSelection,
+  resolveTopPerformerPercentileConfig,
+  scoreRowForTopPerformer,
+  type ScoredTopPerformerRow,
+} from "./inputs-top-performer-percentile-pool.js";
 import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
 } from "./inputs-top-performer-media-archive.js";
 import { getSupabaseStorageClient } from "./supabase-storage.js";
 import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
+import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
 
 const STEP = "inputs_top_performer_image_insight";
 
@@ -81,6 +89,13 @@ export interface RunDeepImageInsightsResult {
   /** Multi-slide carousels use `top_performer_carousel` instead of single-image deep. */
   skipped_carousel: number;
   deep_insights_total: number;
+  percentile_gate_active?: boolean;
+  percentile_top_fraction?: number;
+  percentile_universe_count?: number;
+  percentile_cap?: number;
+  percentile_score_basis?: string;
+  skipped_percentile_selection?: number;
+  percentile_gate_disabled?: string;
   rating_gate_active?: boolean;
   rating_top_fraction?: number;
   rated_rows_in_import?: number;
@@ -156,17 +171,15 @@ export async function runDeepImageInsightsForImport(
   }
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
   const model = deepModel(profile);
-  const minPre = deepMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = deepMaxRows(criteria, opts.max_rows);
-
-  const ratingGate = await resolveTopPerformerRatingGate(
-    db,
-    project.id,
-    importId,
+  const percentileConfig = resolveTopPerformerPercentileConfig(
     criteria,
-    buildTopPerformerRatingGateRequestOverrides(opts)
+    buildTopPerformerRatingGateRequestOverrides(opts),
+    opts.min_pre_llm_score
   );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
+  const ratingScores = await listEvidenceRowRatingScoreMap(db, project.id, importId);
+  const ratedRowsInImport = await countRatedEvidenceRows(db, project.id, importId);
 
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
   const mediaSupabaseConfigured = !!getSupabaseStorageClient(config);
@@ -176,18 +189,16 @@ export async function runDeepImageInsightsForImport(
 
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
 
-  type Cand = {
-    id: string;
+  type Cand = ScoredTopPerformerRow & {
+    pre_llm_score: number;
     evidence_kind: string;
     payload: Record<string, unknown>;
-    pre_llm_score: number;
     image_url: string;
   };
-  const pool: Cand[] = [];
+  const eligible: Cand[] = [];
   let skippedVideo = 0;
   let skippedNoImage = 0;
   let skippedCarousel = 0;
-  let skippedRatingGate = 0;
   let skippedBroadInsightsGate = 0;
 
   for (const r of dbRows) {
@@ -206,26 +217,39 @@ export async function runDeepImageInsightsForImport(
     }
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
-    if (ev.pre_llm_score < minPre) continue;
-    if (broadGate.active && !broadGate.idSet.has(r.id)) {
-      skippedBroadInsightsGate++;
-      continue;
-    }
-    if (ratingGate.active && !ratingGate.idSet.has(r.id)) {
-      skippedRatingGate++;
-      continue;
-    }
     const imageUrl = pickPrimaryImageUrlForDeepAnalysis(r.evidence_kind, payload);
     if (!imageUrl) {
       skippedNoImage++;
       continue;
     }
-    if (existingDeep.has(r.id)) continue;
-    pool.push({ id: r.id, evidence_kind: r.evidence_kind, payload, pre_llm_score: ev.pre_llm_score, image_url: imageUrl });
+    const scored = scoreRowForTopPerformer(r.id, ev.pre_llm_score, ratingScores);
+    eligible.push({
+      ...scored,
+      pre_llm_score: ev.pre_llm_score,
+      evidence_kind: r.evidence_kind,
+      payload,
+      image_url: imageUrl,
+    });
   }
 
-  pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
-  const top = pool.slice(0, maxRows);
+  skippedBroadInsightsGate = broadGate.active ? eligible.filter((e) => !broadGate.idSet.has(e.id)).length : 0;
+
+  const { selected: percentileSelected, stats: percentileStats } = applyTopPerformerPercentileSelection(
+    eligible,
+    percentileConfig,
+    {
+      broadIdSet: broadGate.active ? broadGate.idSet : null,
+      maxRows,
+      ratedRowsInImport,
+    }
+  );
+
+  const skippedPercentileSelection = Math.max(
+    0,
+    percentileStats.universe_count - percentileStats.selected_by_percentile
+  );
+
+  const top = percentileSelected.filter((c) => !existingDeep.has(c.id));
   const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
   const ratingSnapByRow = ratingReviewSnapshotsByRowId(
     ratingRows.map((row) => ({
@@ -269,6 +293,11 @@ export async function runDeepImageInsightsForImport(
       }
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
     }
+
+    const imgRelay = await relayImageUrlsForOpenAiVision(config, [visionUrl], {
+      http_proxy_url: embedHttpProxyCfg.url,
+    });
+    visionUrl = imgRelay.urls[0] ?? visionUrl;
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 
@@ -346,18 +375,25 @@ export async function runDeepImageInsightsForImport(
     import_id: importId,
     model,
     rows_scanned: dbRows.length,
-    candidates_with_image: pool.length,
+    candidates_with_image: top.length,
     rows_analyzed: analyzed,
     skipped_no_image: skippedNoImage,
     skipped_video: skippedVideo,
     skipped_carousel: skippedCarousel,
     deep_insights_total: deepTotal,
-    rating_gate_active: ratingGate.active,
-    rating_top_fraction: ratingGate.fraction,
-    rated_rows_in_import: ratingGate.rated_row_count,
-    rating_gate_cap: ratingGate.gate_row_cap,
-    skipped_rating_gate: skippedRatingGate,
-    rating_gate_disabled: ratingGate.disabled,
+    percentile_gate_active: percentileConfig.active,
+    percentile_top_fraction: percentileConfig.fraction,
+    percentile_universe_count: percentileStats.universe_count,
+    percentile_cap: percentileStats.percentile_cap,
+    percentile_score_basis: percentileStats.score_basis,
+    skipped_percentile_selection: skippedPercentileSelection,
+    percentile_gate_disabled: percentileConfig.disabled,
+    rating_gate_active: percentileConfig.active,
+    rating_top_fraction: percentileConfig.fraction,
+    rated_rows_in_import: ratedRowsInImport,
+    rating_gate_cap: percentileStats.percentile_cap,
+    skipped_rating_gate: skippedPercentileSelection,
+    rating_gate_disabled: percentileConfig.disabled,
     broad_insights_gate_active: broadGate.active,
     broad_llm_rows_in_import: broadGate.broad_llm_row_count,
     skipped_broad_insights_gate: skippedBroadInsightsGate,

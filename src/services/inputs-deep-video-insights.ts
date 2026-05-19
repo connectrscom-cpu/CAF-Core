@@ -14,8 +14,10 @@ import {
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
 import {
+  countRatedEvidenceRows,
   getInputsEvidenceImport,
   listEvidenceRowRatingFieldsByIds,
+  listEvidenceRowRatingScoreMap,
   listEvidenceRowsForPreLlmScoring,
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
@@ -35,8 +37,13 @@ import {
 import {
   buildTopPerformerRatingGateRequestOverrides,
   resolveBroadInsightsSampleGate,
-  resolveTopPerformerRatingGate,
 } from "./inputs-top-performer-rating-gate.js";
+import {
+  applyTopPerformerPercentileSelection,
+  resolveTopPerformerPercentileConfig,
+  scoreRowForTopPerformer,
+  type ScoredTopPerformerRow,
+} from "./inputs-top-performer-percentile-pool.js";
 import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
@@ -50,6 +57,7 @@ import {
   type TopPerformerMediaQualifierPreviewRow,
 } from "./inputs-top-performer-qualifying-preview.js";
 import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
+import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
 
 const STEP = "inputs_top_performer_video_insight";
 
@@ -88,6 +96,13 @@ export interface RunDeepVideoInsightsResult {
   rows_frames_extracted_from_video: number;
   evidence_media_rows_written: number;
   video_insights_total: number;
+  percentile_gate_active?: boolean;
+  percentile_top_fraction?: number;
+  percentile_universe_count?: number;
+  percentile_cap?: number;
+  percentile_score_basis?: string;
+  skipped_percentile_selection?: number;
+  percentile_gate_disabled?: string;
   rating_gate_active?: boolean;
   rating_top_fraction?: number;
   rated_rows_in_import?: number;
@@ -111,8 +126,8 @@ export interface RunDeepVideoInsightsResult {
   /** Successful Storage uploads counted from `role === "source_video"` archive items. */
   top_performer_media_archive_source_video_files_saved?: number;
   rows_whisper_transcribed?: number;
-  skipped_pre_llm_below_cutoff?: number;
-  min_pre_llm_score_applied?: number;
+  /** Rows where source MP4 was uploaded to Supabase (`evidence_media/…/source.mp4`). */
+  rows_source_video_archived?: number;
   deep_video_zero_work_summary?: string | null;
 }
 
@@ -181,8 +196,12 @@ export async function runDeepVideoInsightsForImport(
   }
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
   const model = videoModel(profile);
-  const minPre = videoMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = videoMaxRows(criteria, opts.max_rows);
+  const percentileConfig = resolveTopPerformerPercentileConfig(
+    criteria,
+    buildTopPerformerRatingGateRequestOverrides(opts),
+    opts.min_pre_llm_score
+  );
   const maxFrames = clamp(opts.max_frames ?? 12, 1, 16);
 
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
@@ -194,33 +213,25 @@ export async function runDeepVideoInsightsForImport(
   let mediaArchiveFrameFilesSaved = 0;
   let mediaArchiveSourceVideoFilesSaved = 0;
 
-  const ratingGate = await resolveTopPerformerRatingGate(
-    db,
-    project.id,
-    importId,
-    criteria,
-    buildTopPerformerRatingGateRequestOverrides(opts)
-  );
   const broadGate = await resolveBroadInsightsSampleGate(db, importId, criteria);
+  const ratingScores = await listEvidenceRowRatingScoreMap(db, project.id, importId);
+  const ratedRowsInImport = await countRatedEvidenceRows(db, project.id, importId);
 
   const existing = opts.rescan ? new Set<string>() : await listEvidenceRowInsightIdsByImportTier(db, importId, "top_performer_video");
 
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, project.id, importId, 12_000);
 
-  type Cand = {
-    id: string;
+  type Cand = ScoredTopPerformerRow & {
+    pre_llm_score: number;
     evidence_kind: string;
     payload: Record<string, unknown>;
-    pre_llm_score: number;
     frame_urls: string[];
     transcript: string;
     caption_transcript: string;
   };
-  const pool: Cand[] = [];
+  const eligible: Cand[] = [];
   let skippedNoFrames = 0;
   let skippedNoVideoSource = 0;
-  let skippedPreLlmBelowCutoff = 0;
-  let skippedRatingGate = 0;
   let skippedBroadInsightsGate = 0;
   let skippedEvidenceKindFilter = 0;
   let videoEvidenceRows = 0;
@@ -236,18 +247,6 @@ export async function runDeepVideoInsightsForImport(
     videoEvidenceRows++;
     const ev = evaluatePreLlmRow(r.evidence_kind, payload, criteria);
     if (ev.dropped_reason != null) continue;
-    if (ev.pre_llm_score < minPre) {
-      skippedPreLlmBelowCutoff++;
-      continue;
-    }
-    if (broadGate.active && !broadGate.idSet.has(r.id)) {
-      skippedBroadInsightsGate++;
-      continue;
-    }
-    if (ratingGate.active && !ratingGate.idSet.has(r.id)) {
-      skippedRatingGate++;
-      continue;
-    }
     const frameUrls = parseVideoAnalysisFrameUrls(payload, maxFrames);
     const videoSourceUrl = parseVideoSourceUrlForArchive(payload);
     if (frameUrls.length === 0 && !videoSourceUrl) {
@@ -255,29 +254,50 @@ export async function runDeepVideoInsightsForImport(
       skippedNoVideoSource++;
       continue;
     }
-    qualifyingVideoScratch.push({
-      row_id: r.id,
-      evidence_kind: r.evidence_kind,
+    const scored = scoreRowForTopPerformer(r.id, ev.pre_llm_score, ratingScores);
+    eligible.push({
+      ...scored,
       pre_llm_score: ev.pre_llm_score,
-      media_count: frameUrls.length > 0 ? frameUrls.length : videoSourceUrl ? 1 : 0,
-      caption_excerpt: excerptForTopPerformerPreview(payload),
-      post_url: postUrlForTopPerformerPreview(r.evidence_kind, payload),
-      already_has_tier_insight: existing.has(r.id),
-    });
-    if (existing.has(r.id)) continue;
-    pool.push({
-      id: r.id,
       evidence_kind: r.evidence_kind,
       payload,
-      pre_llm_score: ev.pre_llm_score,
       frame_urls: frameUrls.length > 0 ? frameUrls : [],
       transcript: "",
       caption_transcript: "",
     });
   }
 
-  pool.sort((a, b) => b.pre_llm_score - a.pre_llm_score);
-  const top = pool.slice(0, maxRows);
+  skippedBroadInsightsGate = broadGate.active ? eligible.filter((e) => !broadGate.idSet.has(e.id)).length : 0;
+
+  const { selected: percentileSelected, stats: percentileStats } = applyTopPerformerPercentileSelection(
+    eligible,
+    percentileConfig,
+    {
+      broadIdSet: broadGate.active ? broadGate.idSet : null,
+      maxRows,
+      ratedRowsInImport,
+    }
+  );
+
+  const skippedPercentileSelection = Math.max(
+    0,
+    percentileStats.universe_count - percentileStats.selected_by_percentile
+  );
+  const selectedIdSet = new Set(percentileSelected.map((c) => c.id));
+  for (const e of eligible) {
+    if (broadGate.active && !broadGate.idSet.has(e.id)) continue;
+    if (!selectedIdSet.has(e.id)) continue;
+    qualifyingVideoScratch.push({
+      row_id: e.id,
+      evidence_kind: e.evidence_kind,
+      pre_llm_score: e.score,
+      media_count: e.frame_urls.length > 0 ? e.frame_urls.length : parseVideoSourceUrlForArchive(e.payload) ? 1 : 0,
+      caption_excerpt: excerptForTopPerformerPreview(e.payload),
+      post_url: postUrlForTopPerformerPreview(e.evidence_kind, e.payload),
+      already_has_tier_insight: existing.has(e.id),
+    });
+  }
+
+  const top = percentileSelected.filter((c) => !existing.has(c.id));
   const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
   const ratingSnapByRow = ratingReviewSnapshotsByRowId(
     ratingRows.map((row) => ({
@@ -299,6 +319,7 @@ export async function runDeepVideoInsightsForImport(
 
   let analyzed = 0;
   let rowsFramesExtracted = 0;
+  let rowsSourceVideoArchived = 0;
   let rowsWhisperTranscribed = 0;
   let evidenceMediaRowsWritten = 0;
 
@@ -330,6 +351,7 @@ export async function runDeepVideoInsightsForImport(
     });
     evidenceMediaRowsWritten += prep.evidence_media_rows_written;
     if (prep.frames_extracted > 0) rowsFramesExtracted++;
+    if (prep.source_video_archived) rowsSourceVideoArchived++;
     if (prep.whisper_transcript?.trim()) rowsWhisperTranscribed++;
 
     const frameUrls = prep.frame_urls.length > 0 ? prep.frame_urls : c.frame_urls;
@@ -404,6 +426,11 @@ export async function runDeepVideoInsightsForImport(
         items: [],
       };
     }
+
+    const frameRelay = await relayImageUrlsForOpenAiVision(config, visionFrameUrls, {
+      http_proxy_url: mediaArchiveHttpProxyCfg.url,
+    });
+    visionFrameUrls = frameRelay.urls;
 
     const user_content: Array<
       | { type: "text"; text: string }
@@ -524,11 +551,12 @@ export async function runDeepVideoInsightsForImport(
   const qualifying_video_rows = capAndSortQualifierPreview(qualifyingVideoScratch);
 
   let deepVideoZeroWorkSummary: string | null = null;
-  if (analyzed === 0 && pool.length === 0) {
-    if (skippedPreLlmBelowCutoff > 0) {
+  if (analyzed === 0 && top.length === 0) {
+    if (percentileConfig.active && skippedPercentileSelection > 0 && percentileStats.universe_count > 0) {
+      const pct = Math.round(percentileConfig.fraction * 10000) / 100;
       deepVideoZeroWorkSummary =
-        `${skippedPreLlmBelowCutoff} video row(s) failed min_pre_llm_score=${minPre} (your evidence cutoff 0.62 is usually too high for top-performer — try TP vision min ≈0.35–0.4). ` +
-        `${skippedNoFrames} passed pre-LLM but had no frame URLs and no downloadable video_url in payload.`;
+        `${videoEvidenceRows} video row(s) were media-eligible; top ${pct}% kept none for vision ` +
+        `(${skippedPercentileSelection} below top fraction in universe ${percentileStats.universe_count}). Raise Top % or relax broad-insights gate.`;
     } else if (skippedNoFrames > 0) {
       deepVideoZeroWorkSummary =
         `${skippedNoFrames} video row(s) passed pre-LLM/gates but lack analysis_frame_urls and a direct HTTPS video_url (Apify video_url / video_urls_json / Instagram normalizer). ` +
@@ -541,19 +569,27 @@ export async function runDeepVideoInsightsForImport(
     model,
     rows_scanned: dbRows.length,
     video_evidence_rows: videoEvidenceRows,
-    candidates_with_frames: pool.length,
+    candidates_with_frames: top.length,
     rows_analyzed: analyzed,
     skipped_no_frames: skippedNoFrames,
     skipped_no_video_source: skippedNoVideoSource,
     rows_frames_extracted_from_video: rowsFramesExtracted,
+    rows_source_video_archived: rowsSourceVideoArchived,
     evidence_media_rows_written: evidenceMediaRowsWritten,
     video_insights_total: videoTotal,
-    rating_gate_active: ratingGate.active,
-    rating_top_fraction: ratingGate.fraction,
-    rated_rows_in_import: ratingGate.rated_row_count,
-    rating_gate_cap: ratingGate.gate_row_cap,
-    skipped_rating_gate: skippedRatingGate,
-    rating_gate_disabled: ratingGate.disabled,
+    percentile_gate_active: percentileConfig.active,
+    percentile_top_fraction: percentileConfig.fraction,
+    percentile_universe_count: percentileStats.universe_count,
+    percentile_cap: percentileStats.percentile_cap,
+    percentile_score_basis: percentileStats.score_basis,
+    skipped_percentile_selection: skippedPercentileSelection,
+    percentile_gate_disabled: percentileConfig.disabled,
+    rating_gate_active: percentileConfig.active,
+    rating_top_fraction: percentileConfig.fraction,
+    rated_rows_in_import: ratedRowsInImport,
+    rating_gate_cap: percentileStats.percentile_cap,
+    skipped_rating_gate: skippedPercentileSelection,
+    rating_gate_disabled: percentileConfig.disabled,
     broad_insights_gate_active: broadGate.active,
     broad_llm_rows_in_import: broadGate.broad_llm_row_count,
     skipped_broad_insights_gate: skippedBroadInsightsGate,
@@ -567,8 +603,6 @@ export async function runDeepVideoInsightsForImport(
     top_performer_media_archive_frame_files_saved: mediaArchiveFrameFilesSaved,
     top_performer_media_archive_source_video_files_saved: mediaArchiveSourceVideoFilesSaved,
     rows_whisper_transcribed: rowsWhisperTranscribed,
-    skipped_pre_llm_below_cutoff: skippedPreLlmBelowCutoff,
-    min_pre_llm_score_applied: minPre,
     deep_video_zero_work_summary: deepVideoZeroWorkSummary,
   };
 }

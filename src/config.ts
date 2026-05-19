@@ -617,6 +617,22 @@ const envSchema = z.object({
       return "auto";
     }),
 
+  /**
+   * **auto** (default): when `video_url` exists, download source MP4 and archive to Supabase (+ ffmpeg frames)
+   * even if payload already has `thumbnail_url` / `display_url`. **off** keeps thumbnail-only vision.
+   */
+  CAF_TOP_PERFORMER_DOWNLOAD_SOURCE_VIDEO: z
+    .string()
+    .optional()
+    .transform((v): "auto" | "on" | "off" => {
+      if (v === undefined || v === "") return "auto";
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return "off";
+      if (s === "1" || s === "true" || s === "yes" || s === "on") return "on";
+      if (s === "auto") return "auto";
+      return "auto";
+    }),
+
   /** Whisper model for optional video speech-to-text (`/v1/audio/transcriptions`). */
   OPENAI_WHISPER_MODEL: z.string().default("whisper-1"),
 

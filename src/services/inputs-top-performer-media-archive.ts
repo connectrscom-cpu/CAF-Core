@@ -172,7 +172,7 @@ export function sniffVideoMedia(buf: Buffer): { contentType: string; ext: string
   return null;
 }
 
-async function fetchRemoteImageFile(
+export async function fetchRemoteImageFile(
   url: string,
   timeoutMs: number,
   maxBytes: number,
