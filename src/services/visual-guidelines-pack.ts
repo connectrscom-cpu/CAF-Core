@@ -3,8 +3,18 @@
  * `visual_guidelines_pack_v1` object stored on `signal_packs.derived_globals_json` (alongside hashtag leaderboard).
  */
 import type { Pool } from "pg";
+import type { AppConfig } from "../config.js";
 import type { EvidenceRowInsightEnrichedRow } from "../repositories/inputs-evidence-insights.js";
 import { listTopPerformerInsightsEnriched } from "../repositories/inputs-evidence-insights.js";
+import { listEvidenceMediaStorageByRowIds } from "../repositories/inputs-evidence-media.js";
+import {
+  compactEvidenceMediaRows,
+  compactStoredInspectionMedia,
+  mergeInspectionMedia,
+  normalizeFormatPattern,
+  primaryFormatKey,
+  type VisualGuidelineInspectionMedia,
+} from "./visual-guidelines-media.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -37,7 +47,14 @@ function perfRating(ins: EvidenceRowInsightEnrichedRow): number | null {
   return Number.isNaN(n) ? null : n;
 }
 
-function extractCueStringsFromEntry(entry: Record<string, unknown>): string[] {
+export interface VisualGuidelineCueGroup {
+  format_pattern: string;
+  format_key: string;
+  cues: string[];
+  example_insights_ids: string[];
+}
+
+export function extractCueStringsFromEntry(entry: Record<string, unknown>): string[] {
   const cues: string[] = [];
   const push = (s: string | null) => {
     if (!s) return;
@@ -46,13 +63,15 @@ function extractCueStringsFromEntry(entry: Record<string, unknown>): string[] {
     cues.push(t.length > 220 ? `${t.slice(0, 220)}…` : t);
   };
   push(stringish(entry.why_it_worked, 400));
-  push(stringish(entry.format_pattern, 120));
   push(stringish(entry.visual_consistency, 400));
+  push(stringish(entry.deck_as_whole_summary, 400));
+  push(stringish(entry.video_as_whole_summary, 400));
   const rb = asRecord(entry.replication_blueprint);
   if (rb) {
-    for (const s of stringArray(rb.steps_to_remake, 3, 280)) push(s);
+    for (const s of stringArray(rb.steps_to_remake, 6, 280)) push(s);
+    push(stringish(rb.tooling_notes, 200));
   }
-  const dvs = asRecord(entry.deck_visual_system);
+  const dvs = asRecord(entry.deck_visual_system) ?? asRecord(entry.video_visual_system);
   if (dvs) {
     push(stringish(dvs.overall_aesthetic, 200));
     push(stringish(dvs.repeated_template, 200));
@@ -60,13 +79,58 @@ function extractCueStringsFromEntry(entry: Record<string, unknown>): string[] {
   return cues;
 }
 
+function buildCueGroups(entries: Record<string, unknown>[]): VisualGuidelineCueGroup[] {
+  const byKey = new Map<string, VisualGuidelineCueGroup>();
+  for (const entry of entries) {
+    const formatPattern = normalizeFormatPattern(entry.format_pattern);
+    const key = primaryFormatKey(formatPattern);
+    const insId = String(entry.insights_id ?? "").trim();
+    let g = byKey.get(key);
+    if (!g) {
+      g = { format_pattern: formatPattern, format_key: key, cues: [], example_insights_ids: [] };
+      byKey.set(key, g);
+    }
+    if (insId && g.example_insights_ids.length < 12 && !g.example_insights_ids.includes(insId)) {
+      g.example_insights_ids.push(insId);
+    }
+    const cueSeen = new Set(g.cues.map((c) => c.toLowerCase()));
+    for (const c of extractCueStringsFromEntry(entry)) {
+      const k = c.toLowerCase();
+      if (cueSeen.has(k)) continue;
+      cueSeen.add(k);
+      g.cues.push(c);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.cues.length - a.cues.length);
+}
+
+function flatCueStrings(groups: VisualGuidelineCueGroup[], cap = 64): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const g of groups) {
+    for (const c of g.cues) {
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(c);
+      if (out.length >= cap) return out;
+    }
+  }
+  return out;
+}
+
+export type VisualGuidelineBuildOpts = {
+  max_entries?: number;
+  evidenceMediaByRowId?: Map<string, ReturnType<typeof compactEvidenceMediaRows>>;
+};
+
 /**
  * One condensed guideline row per top-performer insight (capped), ordered by evidence rating then pre_llm.
  */
 export function buildVisualGuidelineEntriesFromInsights(
   rows: EvidenceRowInsightEnrichedRow[],
-  opts?: { max_entries?: number }
-): { entries: Record<string, unknown>[]; cue_strings: string[] } {
+  opts?: VisualGuidelineBuildOpts
+): { entries: Record<string, unknown>[]; cue_strings: string[]; cues_by_format: VisualGuidelineCueGroup[] } {
   const maxEntries = Math.min(Math.max(opts?.max_entries ?? 48, 1), 120);
   const sorted = [...rows].sort((a, b) => {
     const ra = perfRating(a) ?? -1;
@@ -78,8 +142,6 @@ export function buildVisualGuidelineEntriesFromInsights(
   });
 
   const entries: Record<string, unknown>[] = [];
-  const cueSeen = new Set<string>();
-  const cue_strings: string[] = [];
 
   for (const r of sorted) {
     if (entries.length >= maxEntries) break;
@@ -88,6 +150,13 @@ export function buildVisualGuidelineEntriesFromInsights(
 
     const blueprint = asRecord(aes?.replication_blueprint);
     const deckVs = asRecord(aes?.deck_visual_system);
+    const videoVs = asRecord(aes?.video_visual_system);
+    const formatPattern = normalizeFormatPattern(aes?.format_pattern ?? r.hook_type);
+
+    const fromInsight = compactStoredInspectionMedia(r.stored_inspection_media_json);
+    const fromEvidence = opts?.evidenceMediaByRowId?.get(r.source_evidence_row_id) ?? null;
+    const inspection_media = mergeInspectionMedia(fromInsight, fromEvidence);
+
     const entry: Record<string, unknown> = {
       insights_id: r.insights_id,
       analysis_tier: r.analysis_tier,
@@ -95,10 +164,13 @@ export function buildVisualGuidelineEntriesFromInsights(
       evidence_kind: r.evidence_kind,
       evidence_rating_score: r.evidence_rating_score ?? null,
       evidence_performance_review: r.evidence_performance_review_json ?? null,
-      format_pattern: stringish(aes?.format_pattern, 120) ?? r.hook_type,
+      format_pattern: formatPattern,
+      format_key: primaryFormatKey(formatPattern),
+      hook_text_preview: stringish(r.hook_text, 280),
       why_it_worked: stringish(r.why_it_worked, 500),
       visual_consistency: stringish(aes?.visual_consistency, 500),
       deck_visual_system: deckVs,
+      video_visual_system: videoVs,
       replication_blueprint: blueprint
         ? {
             steps_to_remake: stringArray(blueprint.steps_to_remake, 8, 320),
@@ -107,18 +179,16 @@ export function buildVisualGuidelineEntriesFromInsights(
           }
         : null,
       deck_as_whole_summary: stringish(aes?.deck_as_whole_summary, 600),
+      video_as_whole_summary: stringish(aes?.video_as_whole_summary ?? aes?.style_summary, 600),
+      inspection_media: inspection_media as unknown as Record<string, unknown>,
     };
     entries.push(entry);
-    for (const c of extractCueStringsFromEntry(entry)) {
-      const k = c.toLowerCase();
-      if (cueSeen.has(k)) continue;
-      cueSeen.add(k);
-      cue_strings.push(c);
-      if (cue_strings.length >= 64) break;
-    }
   }
 
-  return { entries, cue_strings };
+  const cues_by_format = buildCueGroups(entries);
+  const cue_strings = flatCueStrings(cues_by_format, 64);
+
+  return { entries, cue_strings, cues_by_format };
 }
 
 export interface VisualGuidelinesPackV1 {
@@ -127,8 +197,9 @@ export interface VisualGuidelinesPackV1 {
   inputs_import_id: string;
   insights_scanned: number;
   entries: Record<string, unknown>[];
-  /** Short lines for `signal_pack_publication_hints` (carousel / video styling). */
+  /** Flat list (legacy / generation). Prefer `visual_guideline_cues_by_format` in UI. */
   visual_guideline_cues: string[];
+  visual_guideline_cues_by_format: VisualGuidelineCueGroup[];
 }
 
 export async function buildVisualGuidelinesPackForImport(
@@ -139,7 +210,24 @@ export async function buildVisualGuidelinesPackForImport(
 ): Promise<VisualGuidelinesPackV1> {
   const scanCap = Math.min(Math.max(opts?.max_insights_scan ?? 2000, 50), 5000);
   const rows = await listTopPerformerInsightsEnriched(db, projectId, importId, scanCap);
-  const built = buildVisualGuidelineEntriesFromInsights(rows, { max_entries: opts?.max_entries });
+
+  const rowIds = [...new Set(rows.map((r) => r.source_evidence_row_id).filter(Boolean))];
+  const mediaRows = await listEvidenceMediaStorageByRowIds(db, projectId, rowIds);
+  const evidenceMediaByRowId = new Map<string, ReturnType<typeof compactEvidenceMediaRows>>();
+  const byRow = new Map<string, typeof mediaRows>();
+  for (const m of mediaRows) {
+    const arr = byRow.get(m.evidence_row_id) ?? [];
+    arr.push(m);
+    byRow.set(m.evidence_row_id, arr);
+  }
+  for (const [rid, arr] of byRow) {
+    evidenceMediaByRowId.set(rid, compactEvidenceMediaRows(arr));
+  }
+
+  const built = buildVisualGuidelineEntriesFromInsights(rows, {
+    max_entries: opts?.max_entries,
+    evidenceMediaByRowId,
+  });
   return {
     version: 1,
     generated_at: new Date().toISOString(),
@@ -147,5 +235,77 @@ export async function buildVisualGuidelinesPackForImport(
     insights_scanned: rows.length,
     entries: built.entries,
     visual_guideline_cues: built.cue_strings,
+    visual_guideline_cues_by_format: built.cues_by_format,
+  };
+}
+
+/**
+ * Re-attach inspection media from current insight rows (for packs saved before media fields existed).
+ */
+export async function hydrateVisualGuidelinesPackMedia(
+  db: Pool,
+  projectId: string,
+  pack: VisualGuidelinesPackV1
+): Promise<VisualGuidelinesPackV1> {
+  const importId = pack.inputs_import_id;
+  if (!importId || !Array.isArray(pack.entries) || pack.entries.length === 0) return pack;
+
+  const rowIds = [
+    ...new Set(
+      pack.entries
+        .map((e) => String(e.source_evidence_row_id ?? "").trim())
+        .filter((x) => /^\d+$/.test(x))
+    ),
+  ];
+  if (rowIds.length === 0) return pack;
+
+  const insights = await listTopPerformerInsightsEnriched(db, projectId, importId, 3000);
+  const insightByRow = new Map<string, EvidenceRowInsightEnrichedRow[]>();
+  for (const ins of insights) {
+    const id = ins.source_evidence_row_id;
+    if (!id) continue;
+    const arr = insightByRow.get(id) ?? [];
+    arr.push(ins);
+    insightByRow.set(id, arr);
+  }
+
+  const mediaRows = await listEvidenceMediaStorageByRowIds(db, projectId, rowIds);
+  const evidenceMediaByRowId = new Map<string, ReturnType<typeof compactEvidenceMediaRows>>();
+  const byRow = new Map<string, typeof mediaRows>();
+  for (const m of mediaRows) {
+    const arr = byRow.get(m.evidence_row_id) ?? [];
+    arr.push(m);
+    byRow.set(m.evidence_row_id, arr);
+  }
+  for (const [rid, arr] of byRow) {
+    evidenceMediaByRowId.set(rid, compactEvidenceMediaRows(arr));
+  }
+
+  const entries = pack.entries.map((entry) => {
+    const rowId = String(entry.source_evidence_row_id ?? "").trim();
+    const tier = String(entry.analysis_tier ?? "");
+    const candidates = insightByRow.get(rowId) ?? [];
+    const ins =
+      candidates.find((c) => c.analysis_tier === tier) ??
+      candidates.find((c) => c.insights_id === entry.insights_id) ??
+      candidates[0];
+    const fromInsight = ins ? compactStoredInspectionMedia(ins.stored_inspection_media_json) : null;
+    const fromEvidence = evidenceMediaByRowId.get(rowId) ?? null;
+    const inspection_media = mergeInspectionMedia(fromInsight, fromEvidence);
+    if (!inspection_media?.items.length && !asRecord(entry.inspection_media)?.items) {
+      return entry;
+    }
+    return {
+      ...entry,
+      inspection_media: inspection_media as unknown as Record<string, unknown>,
+    };
+  });
+
+  const cues_by_format = buildCueGroups(entries);
+  return {
+    ...pack,
+    entries,
+    visual_guideline_cues: flatCueStrings(cues_by_format, 64),
+    visual_guideline_cues_by_format: cues_by_format,
   };
 }

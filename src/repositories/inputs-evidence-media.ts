@@ -223,6 +223,45 @@ export async function listEvidenceMediaPreviewForRows(
   );
 }
 
+export interface EvidenceMediaStorageRow {
+  evidence_row_id: string;
+  asset_role: string;
+  storage_bucket: string | null;
+  storage_path: string | null;
+  public_url: string | null;
+  source_url: string;
+  slide_index: number | null;
+  media_type: string | null;
+}
+
+/** Archived storage paths for evidence rows (video frames, source video, thumbnails). */
+export async function listEvidenceMediaStorageByRowIds(
+  db: Pool,
+  projectId: string,
+  rowIds: string[]
+): Promise<EvidenceMediaStorageRow[]> {
+  const ids = [...new Set(rowIds.map((x) => String(x).trim()).filter((x) => /^\d+$/.test(x)))].slice(0, 500);
+  if (ids.length === 0) return [];
+  return q(
+    db,
+    `SELECT m.evidence_row_id::text AS evidence_row_id,
+            m.asset_role,
+            m.storage_bucket,
+            m.storage_path,
+            m.public_url,
+            m.source_url,
+            m.slide_index,
+            m.media_type
+       FROM caf_core.evidence_media_assets m
+      WHERE m.project_id = $1
+        AND m.evidence_row_id = ANY($2::bigint[])
+        AND m.archive_status = 'archived'
+        AND (m.storage_path IS NOT NULL OR m.public_url IS NOT NULL OR m.source_url LIKE 'https://%')
+      ORDER BY m.evidence_row_id ASC, m.slide_index ASC NULLS FIRST, m.created_at ASC`,
+    [projectId, ids]
+  );
+}
+
 /** First thumbnail + deduped URL list per evidence row id. */
 export function foldMediaPreviews(rows: EvidenceMediaPreviewRow[]): Map<string, { thumbnail: string | null; urls: string[] }> {
   const map = new Map<string, { thumbnail: string | null; urls: string[] }>();

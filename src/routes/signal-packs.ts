@@ -21,6 +21,10 @@ import { assertGroundingInsightIdsUniqueAcrossIdeas } from "../domain/idea-groun
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas, replaceSignalPackSelectedIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds } from "../repositories/inputs-evidence-insights.js";
+import {
+  hydrateVisualGuidelinesPackMedia,
+  type VisualGuidelinesPackV1,
+} from "../services/visual-guidelines-pack.js";
 
 export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -300,8 +304,32 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
   app.get("/v1/signal-packs/:project_slug/:id", async (request, reply) => {
     const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z
+      .object({
+        /** Re-merge top-performer inspection / evidence_media URLs into visual_guidelines_pack_v1 entries. */
+        hydrate_visual_media: z.enum(["1", "true"]).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const pack = await getSignalPackById(db, params.data.id);
     if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    const project = await ensureProject(db, params.data.project_slug);
+    if (pack.project_id !== project.id) {
+      return reply.code(404).send({ ok: false, error: "not_found" });
+    }
+    const shouldHydrate = query.data.hydrate_visual_media === "1" || query.data.hydrate_visual_media === "true";
+    if (shouldHydrate) {
+      const dg = pack.derived_globals_json ?? {};
+      const raw = dg.visual_guidelines_pack_v1;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const hydrated = await hydrateVisualGuidelinesPackMedia(
+          db,
+          project.id,
+          raw as VisualGuidelinesPackV1
+        );
+        pack.derived_globals_json = { ...dg, visual_guidelines_pack_v1: hydrated };
+      }
+    }
     return { ok: true, signal_pack: pack };
   });
 

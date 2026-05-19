@@ -1251,9 +1251,16 @@ export async function listSignalPacksForProject(
   );
 }
 
-export async function getSignalPackForProject(projectSlug: string, packId: string) {
+export async function getSignalPackForProject(
+  projectSlug: string,
+  packId: string,
+  opts?: { hydrate_visual_media?: boolean }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.hydrate_visual_media) qs.set("hydrate_visual_media", "1");
+  const q = qs.toString();
   return coreGetRequired<{ ok: boolean; signal_pack: Record<string, unknown> }>(
-    `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}`
+    `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}${q ? `?${q}` : ""}`
   );
 }
 

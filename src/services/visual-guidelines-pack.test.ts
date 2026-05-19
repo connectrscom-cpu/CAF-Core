@@ -38,7 +38,7 @@ function row(p: Partial<EvidenceRowInsightEnrichedRow>): EvidenceRowInsightEnric
 
 describe("buildVisualGuidelineEntriesFromInsights", () => {
   it("extracts replication steps and cues from carousel aesthetic JSON", () => {
-    const { entries, cue_strings } = buildVisualGuidelineEntriesFromInsights(
+    const { entries, cue_strings, cues_by_format } = buildVisualGuidelineEntriesFromInsights(
       [
         row({
           insights_id: "ins_a",
@@ -67,6 +67,30 @@ describe("buildVisualGuidelineEntriesFromInsights", () => {
     const rb = entries[0]!.replication_blueprint as { steps_to_remake: string[] };
     expect(rb.steps_to_remake.length).toBeGreaterThanOrEqual(1);
     expect(cue_strings.length).toBeGreaterThan(0);
+    expect(cues_by_format.length).toBeGreaterThan(0);
+    expect(cues_by_format[0]?.format_key).toBe("listicle");
+  });
+
+  it("includes inspection_media from stored_inspection_media_json", () => {
+    const { entries } = buildVisualGuidelineEntriesFromInsights([
+      row({
+        stored_inspection_media_json: {
+          tier: "top_performer_carousel",
+          items: [
+            {
+              role: "carousel_slide",
+              bucket: "assets",
+              object_path: "assets/top_performer_inspection/SNS/imp/row_1/slide_01.jpg",
+              public_url: "https://example.com/slide.jpg",
+            },
+          ],
+        },
+        aesthetic_analysis_json: { format_pattern: "listicle", why_it_worked: "works" },
+      }),
+    ]);
+    const media = entries[0]?.inspection_media as { folder_prefix?: string; items?: unknown[] };
+    expect(media?.items?.length).toBe(1);
+    expect(String(media?.folder_prefix ?? "")).toContain("top_performer_inspection");
   });
 
   it("skips rows with no aesthetic and no why_it_worked", () => {

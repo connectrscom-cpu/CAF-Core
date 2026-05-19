@@ -1,0 +1,457 @@
+"use client";
+
+import Link from "next/link";
+import { useMemo, useState } from "react";
+
+type InspectionMedia = {
+  storage_bucket?: string | null;
+  folder_prefix?: string | null;
+  storage_folder_label?: string | null;
+  skipped_reason?: string | null;
+  items?: Array<{
+    role?: string;
+    object_path?: string | null;
+    bucket?: string | null;
+    public_url?: string | null;
+    vision_fetch_url?: string | null;
+    index?: number | null;
+  }>;
+};
+
+export type VisualGuidelineEntry = Record<string, unknown> & {
+  insights_id?: string;
+  format_pattern?: string;
+  format_key?: string;
+  source_evidence_row_id?: string;
+  evidence_kind?: string;
+  why_it_worked?: string;
+  inspection_media?: InspectionMedia;
+};
+
+export type VisualGuidelineCueGroup = {
+  format_pattern: string;
+  format_key: string;
+  cues: string[];
+  example_insights_ids: string[];
+};
+
+export type VisualGuidelinesPackView = {
+  version?: number;
+  generated_at?: string;
+  inputs_import_id?: string;
+  insights_scanned?: number;
+  entries: VisualGuidelineEntry[];
+  visual_guideline_cues?: string[];
+  visual_guideline_cues_by_format?: VisualGuidelineCueGroup[];
+};
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+function parseInspectionMedia(v: unknown): InspectionMedia | null {
+  const r = asRecord(v);
+  if (!r) return null;
+  const items = Array.isArray(r.items)
+    ? r.items.map((it) => {
+        const o = asRecord(it);
+        if (!o) return null;
+        return {
+          role: String(o.role ?? ""),
+          object_path: typeof o.object_path === "string" ? o.object_path : null,
+          bucket: typeof o.bucket === "string" ? o.bucket : null,
+          public_url: typeof o.public_url === "string" ? o.public_url : null,
+          vision_fetch_url: typeof o.vision_fetch_url === "string" ? o.vision_fetch_url : null,
+          index: typeof o.index === "number" ? o.index : null,
+        };
+      }).filter((x): x is NonNullable<typeof x> => x != null)
+    : [];
+  return {
+    storage_bucket: typeof r.storage_bucket === "string" ? r.storage_bucket : null,
+    folder_prefix: typeof r.folder_prefix === "string" ? r.folder_prefix : null,
+    storage_folder_label: typeof r.storage_folder_label === "string" ? r.storage_folder_label : null,
+    skipped_reason: typeof r.skipped_reason === "string" ? r.skipped_reason : null,
+    items,
+  };
+}
+
+function cueStringsFromEntry(e: VisualGuidelineEntry): string[] {
+  const out: string[] = [];
+  const push = (s: string | null | undefined) => {
+    const t = (s ?? "").trim();
+    if (t.length >= 4) out.push(t.length > 220 ? `${t.slice(0, 220)}…` : t);
+  };
+  push(typeof e.why_it_worked === "string" ? e.why_it_worked : null);
+  push(typeof e.visual_consistency === "string" ? e.visual_consistency : null);
+  const rb = asRecord(e.replication_blueprint);
+  if (rb && Array.isArray(rb.steps_to_remake)) {
+    for (const step of rb.steps_to_remake) push(String(step));
+  }
+  return out;
+}
+
+function buildCueGroupsFromEntries(entries: VisualGuidelineEntry[]): VisualGuidelineCueGroup[] {
+  const byKey = new Map<string, VisualGuidelineCueGroup>();
+  for (const e of entries) {
+    const fp = String(e.format_pattern ?? "unknown");
+    const key = String(e.format_key ?? fp.split("|")[0]?.trim() ?? "unknown");
+    let g = byKey.get(key);
+    if (!g) {
+      g = { format_pattern: fp, format_key: key, cues: [], example_insights_ids: [] };
+      byKey.set(key, g);
+    }
+    const id = String(e.insights_id ?? "").trim();
+    if (id && !g.example_insights_ids.includes(id) && g.example_insights_ids.length < 12) {
+      g.example_insights_ids.push(id);
+    }
+    const seen = new Set(g.cues.map((c) => c.toLowerCase()));
+    for (const c of cueStringsFromEntry(e)) {
+      const k = c.toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      g.cues.push(c);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => b.cues.length - a.cues.length);
+}
+
+function entryIdsForGroup(group: VisualGuidelineCueGroup, entries: VisualGuidelineEntry[]): VisualGuidelineEntry[] {
+  const ids = new Set(group.example_insights_ids);
+  return entries.filter((e) => {
+    const ins = String(e.insights_id ?? "");
+    const key = String(e.format_key ?? String(e.format_pattern ?? "").split("|")[0]?.trim());
+    return ids.has(ins) || key === group.format_key;
+  });
+}
+
+export function VisualGuidelinesPanel(props: {
+  visualPack: VisualGuidelinesPackView;
+  ideasFromInsightsMeta: Record<string, unknown> | null;
+  importId: string | null;
+  navHref: (path: string) => string;
+}) {
+  const { visualPack, ideasFromInsightsMeta, importId, navHref } = props;
+  const entries = visualPack.entries ?? [];
+  const [expandedFormat, setExpandedFormat] = useState<string | null>(null);
+
+  const cueGroups = useMemo(() => {
+    if (visualPack.visual_guideline_cues_by_format?.length) {
+      return visualPack.visual_guideline_cues_by_format;
+    }
+    const fromEntries = buildCueGroupsFromEntries(entries);
+    const flat = visualPack.visual_guideline_cues ?? [];
+    if (flat.length > 0 && fromEntries.every((g) => g.cues.length === 0)) {
+      return [{ format_pattern: "mixed", format_key: "all", cues: flat, example_insights_ids: [] }];
+    }
+    return fromEntries;
+  }, [visualPack.visual_guideline_cues_by_format, visualPack.visual_guideline_cues, entries]);
+
+  const flatCueCount =
+    visualPack.visual_guideline_cues?.length ??
+    cueGroups.reduce((n, g) => n + g.cues.length, 0);
+
+  return (
+    <section>
+      <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 820 }}>
+        Top-performer vision distilled into cues and per-post entries. Open{" "}
+        <strong>Storage folder</strong> links to inspect archived slides/frames in Supabase (
+        <code style={{ fontSize: 12 }}>top_performer_inspection/</code> or{" "}
+        <code style={{ fontSize: 12 }}>evidence_media/</code>).
+      </p>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
+          gap: 10,
+          marginBottom: 16,
+          fontSize: 13,
+        }}
+      >
+        <MetaChip label="Version" value={String(visualPack.version ?? "—")} />
+        <MetaChip label="Insights scanned" value={String(visualPack.insights_scanned ?? "—")} />
+        <MetaChip label="Entries" value={String(entries.length)} />
+        <MetaChip label="Format groups" value={String(cueGroups.length)} />
+        <MetaChip label="Cues" value={String(flatCueCount)} />
+        {visualPack.generated_at ? <MetaChip label="Generated" value={fmt(visualPack.generated_at)} /> : null}
+        {ideasFromInsightsMeta?.top_performer_rows_in_context != null ? (
+          <MetaChip label="TP in ideas LLM" value={String(ideasFromInsightsMeta.top_performer_rows_in_context)} />
+        ) : null}
+      </div>
+
+      <h3 style={{ fontSize: 14, margin: "8px 0 10px" }}>Cues by format</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
+        {cueGroups.map((group) => {
+          const open = expandedFormat === group.format_key;
+          const examples = entryIdsForGroup(group, entries).slice(0, 6);
+          return (
+            <div
+              key={group.format_key}
+              style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}
+            >
+              <button
+                type="button"
+                onClick={() => setExpandedFormat(open ? null : group.format_key)}
+                style={{
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "10px 12px",
+                  background: "var(--surface-2, #151515)",
+                  border: "none",
+                  color: "inherit",
+                  cursor: "pointer",
+                  fontSize: 13,
+                }}
+              >
+                <strong>{group.format_key}</strong>
+                <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+                  {group.cues.length} cues · {examples.length} example{examples.length === 1 ? "" : "s"}
+                </span>
+                <span style={{ float: "right", color: "var(--muted)" }}>{open ? "▾" : "▸"}</span>
+              </button>
+              {open && (
+                <div style={{ padding: "12px 14px" }}>
+                  {group.format_pattern !== group.format_key && (
+                    <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
+                      Full pattern: <code>{group.format_pattern}</code>
+                    </p>
+                  )}
+                  <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13 }}>
+                    {group.cues.map((c, i) => (
+                      <li key={i} style={{ marginBottom: 6 }}>
+                        {c}
+                      </li>
+                    ))}
+                  </ul>
+                  {examples.length > 0 && (
+                    <>
+                      <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px" }}>Examples</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {examples.map((ex) => (
+                          <EntryMediaCard
+                            key={String(ex.insights_id)}
+                            entry={ex}
+                            importId={importId}
+                            navHref={navHref}
+                            compact
+                          />
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <h3 style={{ fontSize: 14, margin: "8px 0 10px" }}>All entries ({entries.length})</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {entries.map((entry, i) => (
+          <EntryMediaCard
+            key={String(entry.insights_id ?? i)}
+            entry={entry}
+            importId={importId}
+            navHref={navHref}
+          />
+        ))}
+      </div>
+
+      <details style={{ marginTop: 16 }}>
+        <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--muted)" }}>
+          Full visual_guidelines_pack_v1 JSON
+        </summary>
+        <JsonPre value={visualPack} />
+      </details>
+    </section>
+  );
+}
+
+function EntryMediaCard(props: {
+  entry: VisualGuidelineEntry;
+  importId: string | null;
+  navHref: (path: string) => string;
+  compact?: boolean;
+}) {
+  const { entry, importId, navHref, compact } = props;
+  const media = parseInspectionMedia(entry.inspection_media);
+  const previewUrl =
+    media?.items?.find((it) => it.public_url || it.vision_fetch_url)?.public_url ??
+    media?.items?.find((it) => it.vision_fetch_url)?.vision_fetch_url ??
+    null;
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        padding: compact ? "8px 10px" : "10px 12px",
+        fontSize: 13,
+        display: "flex",
+        gap: 12,
+        alignItems: "flex-start",
+      }}
+    >
+      {previewUrl && !compact && (
+        <a href={previewUrl} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt=""
+            style={{
+              width: 72,
+              height: 72,
+              objectFit: "cover",
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+            }}
+          />
+        </a>
+      )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ marginBottom: 4 }}>
+          <strong>{String(entry.format_pattern ?? entry.analysis_tier ?? "entry")}</strong>
+          {entry.evidence_kind ? (
+            <span style={{ color: "var(--muted)", marginLeft: 8 }}>{String(entry.evidence_kind)}</span>
+          ) : null}
+        </div>
+        {entry.why_it_worked ? (
+          <p style={{ margin: "0 0 6px", color: "var(--muted)", fontSize: 12 }}>
+            {String(entry.why_it_worked).slice(0, compact ? 120 : 280)}
+            {String(entry.why_it_worked).length > (compact ? 120 : 280) ? "…" : ""}
+          </p>
+        ) : null}
+        <MediaLinks media={media} />
+        {importId && entry.source_evidence_row_id ? (
+          <p style={{ margin: "6px 0 0", fontSize: 11 }}>
+            <Link
+              href={navHref(`/pipeline/evidence/${importId}`)}
+              className="detail-back"
+              style={{ fontSize: 11 }}
+            >
+              Evidence import
+            </Link>
+            <span style={{ color: "var(--muted)" }}> · row {String(entry.source_evidence_row_id)}</span>
+          </p>
+        ) : null}
+        {!compact && (
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ cursor: "pointer", fontSize: 11, color: "var(--muted)" }}>Entry JSON</summary>
+            <JsonPre value={entry} maxHeight={280} />
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MediaLinks({ media }: { media: InspectionMedia | null }) {
+  if (!media) {
+    return (
+      <p style={{ margin: 0, fontSize: 11, color: "var(--yellow)" }}>
+        No archived media on this entry — re-run top-performer with archive enabled, then refresh.
+      </p>
+    );
+  }
+  if (media.skipped_reason) {
+    return (
+      <p style={{ margin: 0, fontSize: 11, color: "var(--yellow)" }}>
+        Archive skipped: {media.skipped_reason}
+      </p>
+    );
+  }
+
+  const folder = media.storage_folder_label ?? media.folder_prefix;
+  const firstOpen =
+    media.items?.find((it) => it.vision_fetch_url)?.vision_fetch_url ??
+    media.items?.find((it) => it.public_url)?.public_url ??
+    null;
+
+  return (
+    <div style={{ fontSize: 11 }}>
+      {folder ? (
+        <p style={{ margin: "0 0 4px" }}>
+          <span style={{ color: "var(--muted)" }}>Storage folder: </span>
+          <code style={{ wordBreak: "break-all" }}>{folder}</code>
+        </p>
+      ) : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+        {firstOpen && (
+          <a href={firstOpen} target="_blank" rel="noreferrer" className="detail-back" style={{ fontSize: 11 }}>
+            Open asset
+          </a>
+        )}
+        {(media.items ?? []).slice(0, compactMaxItems(media.items?.length ?? 0)).map((it, i) => {
+          const url = it.vision_fetch_url ?? it.public_url;
+          if (!url) return null;
+          const label = it.role ? `${it.role}${it.index != null ? ` ${it.index}` : ""}` : `file ${i + 1}`;
+          return (
+            <a key={`${url}-${i}`} href={url} target="_blank" rel="noreferrer" className="detail-back" style={{ fontSize: 11 }}>
+              {label}
+            </a>
+          );
+        })}
+        {(media.items?.length ?? 0) > 6 ? (
+          <span style={{ color: "var(--muted)" }}>+{(media.items?.length ?? 0) - 6} more in JSON</span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function compactMaxItems(n: number): number {
+  return Math.min(n, 6);
+}
+
+function MetaChip({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        background: "var(--surface-2, #151515)",
+      }}
+    >
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{label}</div>
+      <div style={{ fontWeight: 600, fontSize: 12 }}>{value}</div>
+    </div>
+  );
+}
+
+function JsonPre({ value, maxHeight = 420 }: { value: unknown; maxHeight?: number }) {
+  let text = "";
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch {
+    text = String(value);
+  }
+  return (
+    <pre
+      style={{
+        marginTop: 10,
+        fontSize: 11,
+        lineHeight: 1.45,
+        maxHeight,
+        overflow: "auto",
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+        padding: 12,
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--surface-2, #111)",
+      }}
+    >
+      {text}
+    </pre>
+  );
+}
+
+function fmt(ts: string): string {
+  try {
+    return new Date(ts).toLocaleString();
+  } catch {
+    return ts;
+  }
+}

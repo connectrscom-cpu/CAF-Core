@@ -12,7 +12,9 @@ export async function GET(
     const { packId } = await context.params;
     const url = new URL(request.url);
     const project = url.searchParams.get("project")?.trim() || reviewQueueFallbackSlug();
-    const data = await getSignalPackForProject(project, packId);
+    const hydrateParam = url.searchParams.get("hydrate_visual_media");
+    const hydrate = hydrateParam !== "0" && hydrateParam !== "false";
+    const data = await getSignalPackForProject(project, packId, { hydrate_visual_media: hydrate });
     return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json(

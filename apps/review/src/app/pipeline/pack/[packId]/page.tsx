@@ -5,6 +5,10 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import {
+  VisualGuidelinesPanel,
+  type VisualGuidelinesPackView,
+} from "@/components/VisualGuidelinesPanel";
 
 type PackView = "ideas" | "hashtags" | "visual" | "derived";
 
@@ -15,14 +19,6 @@ type HashtagLeaderboardEntry = {
   avg_rating_score: number | null;
 };
 
-type VisualGuidelinesPackV1 = {
-  version?: number;
-  generated_at?: string;
-  inputs_import_id?: string;
-  insights_scanned?: number;
-  entries?: Record<string, unknown>[];
-  visual_guideline_cues?: string[];
-};
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v != null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -57,7 +53,8 @@ export default function SignalPackDetailPage() {
     if (!packId || !slug) return;
     setError(null);
     try {
-      const res = await fetch(`/api/pipeline/signal-packs/${packId}${qs}`, { cache: "no-store" });
+      const hydrateQs = qs ? `${qs}&hydrate_visual_media=1` : "?hydrate_visual_media=1";
+      const res = await fetch(`/api/pipeline/signal-packs/${packId}${hydrateQs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(await res.text());
       const j = (await res.json()) as { signal_pack: Record<string, unknown> };
       setPack(j.signal_pack ?? null);
@@ -91,7 +88,7 @@ export default function SignalPackDetailPage() {
     return out;
   }, [derived]);
 
-  const visualPack = useMemo((): VisualGuidelinesPackV1 | null => {
+  const visualPack = useMemo((): VisualGuidelinesPackView | null => {
     const v = asRecord(derived?.visual_guidelines_pack_v1);
     if (!v) return null;
     const entries = asArray(v.entries).filter((x): x is Record<string, unknown> => asRecord(x) != null) as Record<
@@ -101,6 +98,17 @@ export default function SignalPackDetailPage() {
     const cues = asArray(v.visual_guideline_cues)
       .map((x) => String(x ?? "").trim())
       .filter(Boolean);
+    const cuesByFormat = asArray(v.visual_guideline_cues_by_format)
+      .map((g) => asRecord(g))
+      .filter((g): g is Record<string, unknown> => g != null)
+      .map((g) => ({
+        format_pattern: String(g.format_pattern ?? "unknown"),
+        format_key: String(g.format_key ?? "unknown"),
+        cues: asArray(g.cues).map((x) => String(x ?? "").trim()).filter(Boolean),
+        example_insights_ids: asArray(g.example_insights_ids)
+          .map((x) => String(x ?? "").trim())
+          .filter(Boolean),
+      }));
     return {
       version: typeof v.version === "number" ? v.version : undefined,
       generated_at: typeof v.generated_at === "string" ? v.generated_at : undefined,
@@ -108,8 +116,15 @@ export default function SignalPackDetailPage() {
       insights_scanned: typeof v.insights_scanned === "number" ? v.insights_scanned : undefined,
       entries,
       visual_guideline_cues: cues,
+      visual_guideline_cues_by_format: cuesByFormat,
     };
   }, [derived]);
+
+  const importIdForPack = useMemo(() => {
+    const fromDerived = derived?.from_inputs_evidence_import_id;
+    if (typeof fromDerived === "string" && fromDerived.trim()) return fromDerived.trim();
+    return visualPack?.inputs_import_id ?? null;
+  }, [derived, visualPack?.inputs_import_id]);
 
   const ideasJson = useMemo(() => {
     const v = pack?.ideas_json;
@@ -203,9 +218,20 @@ export default function SignalPackDetailPage() {
           />
         )}
 
-        {view === "visual" && (
-          <VisualGuidelinesPanel visualPack={visualPack} ideasFromInsightsMeta={ideasFromInsightsMeta} />
-        )}
+        {view === "visual" &&
+          (visualPack ? (
+            <VisualGuidelinesPanel
+              visualPack={visualPack}
+              ideasFromInsightsMeta={ideasFromInsightsMeta}
+              importId={importIdForPack}
+              navHref={navHref}
+            />
+          ) : (
+            <p style={{ color: "var(--muted)", fontSize: 13, maxWidth: 720 }}>
+              No <code style={{ fontSize: 12 }}>visual_guidelines_pack_v1</code> on this pack. Run top-performer
+              carousel/video on the import, then rebuild the signal pack.
+            </p>
+          ))}
 
         {view === "derived" && <DerivedGlobalsPanel derived={derived} />}
       </div>
@@ -425,102 +451,6 @@ function HashtagsPanel(props: {
   );
 }
 
-function VisualGuidelinesPanel(props: {
-  visualPack: VisualGuidelinesPackV1 | null;
-  ideasFromInsightsMeta: Record<string, unknown> | null;
-}) {
-  const { visualPack, ideasFromInsightsMeta } = props;
-
-  if (!visualPack) {
-    return (
-      <p style={{ color: "var(--muted)", fontSize: 13, maxWidth: 720 }}>
-        No <code style={{ fontSize: 12 }}>visual_guidelines_pack_v1</code> on this pack. Run top-performer carousel/video
-        on the import, then rebuild the signal pack so Core compiles aesthetic entries into derived globals.
-      </p>
-    );
-  }
-
-  const cues = visualPack.visual_guideline_cues ?? [];
-  const entries = visualPack.entries ?? [];
-
-  return (
-    <section>
-      <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 720 }}>
-        From <code style={{ fontSize: 12 }}>derived_globals_json.visual_guidelines_pack_v1</code> — distilled from
-        top-performer insight tiers. Generation reads <code style={{ fontSize: 12 }}>visual_guideline_cues</code> and a
-        sample of <code style={{ fontSize: 12 }}>entries</code>.
-      </p>
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
-          gap: 10,
-          marginBottom: 16,
-          fontSize: 13,
-        }}
-      >
-        <MetaChip label="Version" value={String(visualPack.version ?? "—")} />
-        <MetaChip label="Insights scanned" value={String(visualPack.insights_scanned ?? "—")} />
-        <MetaChip label="Entries" value={String(entries.length)} />
-        <MetaChip label="Cues" value={String(cues.length)} />
-        {visualPack.generated_at ? <MetaChip label="Generated" value={fmt(visualPack.generated_at)} /> : null}
-        {ideasFromInsightsMeta?.top_performer_rows_in_context != null ? (
-          <MetaChip label="TP rows in ideas LLM" value={String(ideasFromInsightsMeta.top_performer_rows_in_context)} />
-        ) : null}
-      </div>
-
-      {cues.length > 0 && (
-        <>
-          <h3 style={{ fontSize: 14, margin: "16px 0 8px" }}>visual_guideline_cues</h3>
-          <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13, maxWidth: 900 }}>
-            {cues.map((c, i) => (
-              <li key={i} style={{ marginBottom: 8 }}>
-                {c}
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-
-      {entries.length > 0 && (
-        <>
-          <h3 style={{ fontSize: 14, margin: "20px 0 8px" }}>entries ({entries.length})</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {entries.map((entry, i) => (
-              <details
-                key={String(entry.insights_id ?? i)}
-                style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px" }}
-              >
-                <summary style={{ cursor: "pointer", fontSize: 13 }}>
-                  <strong>{String(entry.format_pattern ?? entry.analysis_tier ?? `entry ${i + 1}`)}</strong>
-                  {entry.evidence_kind ? (
-                    <span style={{ color: "var(--muted)", marginLeft: 8 }}>{String(entry.evidence_kind)}</span>
-                  ) : null}
-                  {entry.why_it_worked ? (
-                    <span style={{ color: "var(--muted)", marginLeft: 8 }}>
-                      — {String(entry.why_it_worked).slice(0, 80)}
-                      {String(entry.why_it_worked).length > 80 ? "…" : ""}
-                    </span>
-                  ) : null}
-                </summary>
-                <JsonPre value={entry} />
-              </details>
-            ))}
-          </div>
-        </>
-      )}
-
-      <details style={{ marginTop: 16 }}>
-        <summary style={{ cursor: "pointer", fontSize: 13, color: "var(--muted)" }}>
-          Full visual_guidelines_pack_v1 JSON
-        </summary>
-        <JsonPre value={visualPack} />
-      </details>
-    </section>
-  );
-}
-
 function DerivedGlobalsPanel({ derived }: { derived: Record<string, unknown> | null }) {
   if (!derived) {
     return (
@@ -595,12 +525,4 @@ function cellStr(v: unknown): string {
   const s = typeof v === "string" ? v : JSON.stringify(v);
   if (s.length <= 240) return s;
   return `${s.slice(0, 240)}…`;
-}
-
-function fmt(ts: string): string {
-  try {
-    return new Date(ts).toLocaleString();
-  } catch {
-    return ts;
-  }
 }
