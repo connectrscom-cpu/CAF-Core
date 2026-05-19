@@ -328,6 +328,7 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .sb-project-sel select:focus{border-color:var(--accent)}
 .sb-new-project{display:block;margin:6px 8px 0;padding:7px 12px;border-radius:8px;font-size:12px;font-weight:500;color:var(--accent);background:var(--blue-bg);text-align:center;border:1px solid transparent;cursor:pointer;transition:all .15s}
 .sb-new-project:hover{border-color:var(--accent);background:rgba(59,130,246,.15)}
+.sb-hint{display:block;font-size:10px;font-weight:400;color:var(--muted);text-transform:none;letter-spacing:0;margin-top:2px}
 .main{margin-left:var(--sidebar);flex:1;min-width:0}
 .ph{display:flex;align-items:center;justify-content:space-between;padding:20px 28px 0}
 .ph h2{font-size:22px;font-weight:700;letter-spacing:-.02em}
@@ -394,19 +395,46 @@ dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
 
 /** Review workbench pages embedded in the admin shell (iframe → same Next app as /). */
 const ADMIN_WORKBENCH_PAGES = [
-  { route: "/admin/workbench/runs", embedPath: "/runs", title: "Run Logs", sidebarKey: "workbench-runs" },
-  { route: "/admin/workbench/pipeline", embedPath: "/pipeline", title: "Pipeline inputs", sidebarKey: "workbench-pipeline" },
+  { route: "/admin/workbench/runs", embedPath: "/runs", title: "Run output log", sidebarKey: "workbench-runs" },
+  {
+    route: "/admin/workbench/pipeline",
+    embedPath: "/pipeline",
+    title: "Signal packs",
+    sidebarKey: "workbench-pipeline",
+    embedParams: { tab: "ideas" },
+  },
   { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish" },
-  { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template Playground", sidebarKey: "workbench-playground" },
-  { route: "/admin/workbench", embedPath: "/", title: "Review Console", sidebarKey: "workbench-review" },
-] as const;
+  { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground" },
+  { route: "/admin/workbench", embedPath: "/", title: "Review & approve", sidebarKey: "workbench-review" },
+];
 
-function adminWorkbenchBody(embedPath: string, title: string, projectSlug: string, reviewEnabled: boolean): string {
+function adminWorkbenchEmbedSrc(
+  embedPath: string,
+  projectSlug: string,
+  embedParams?: Record<string, string>
+): string {
+  const params = new URLSearchParams();
+  if (projectSlug) params.set("project", projectSlug);
+  if (embedParams) {
+    for (const [k, v] of Object.entries(embedParams)) {
+      if (v) params.set(k, v);
+    }
+  }
+  const q = params.toString();
+  return q ? `${embedPath}?${q}` : embedPath;
+}
+
+function adminWorkbenchBody(
+  embedPath: string,
+  title: string,
+  projectSlug: string,
+  reviewEnabled: boolean,
+  embedParams?: Record<string, string>
+): string {
   if (!reviewEnabled) {
     return `<div class="content"><div class="empty"><p>Review workbench is disabled (<code>CAF_REVIEW_ENABLED=0</code>).</p></div></div>`;
   }
-  const qs = projectSlug ? `?project=${encodeURIComponent(projectSlug)}` : "";
-  const src = `${embedPath}${qs}`;
+  const src = adminWorkbenchEmbedSrc(embedPath, projectSlug, embedParams);
   return `<div class="ph">
   <div><h2>${esc(title)}</h2><span class="ph-sub">CAF Review workbench</span></div>
   <a href="${esc(src)}" class="btn btn-sm" target="_blank" rel="noopener noreferrer">Open full screen</a>
@@ -423,22 +451,24 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
 
   const pq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
 
-  const projectLinks = [
-    { href: `/admin${pq}`, label: "Overview", key: "overview" },
-    { href: `/admin/inputs${pq}`, label: "1 — inputs", key: "inputs" },
-    { href: `/admin/processing${pq}`, label: "2 — processing", key: "processing" },
-    { href: `/admin/runs${pq}`, label: "3 — runs", key: "runs" },
-    { href: `/admin/jobs${pq}`, label: "3 — jobs", key: "jobs" },
-    { href: `/admin/learning${pq}`, label: "Learning", key: "learning" },
-    { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
+  const overviewLinks = [{ href: `/admin${pq}`, label: "Overview", key: "overview" }];
+
+  /** Project pipeline: research → production → learning (top to bottom). */
+  const workbenchLinks = [
+    { href: `/admin/inputs${pq}`, label: "Inputs & imports", key: "inputs" },
+    { href: `/admin/processing${pq}`, label: "Processing & ideas", key: "processing" },
+    { href: `/admin/workbench/pipeline${pq}`, label: "Signal packs", key: "workbench-pipeline" },
+    { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
+    { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
+    { href: `/admin/workbench${pq}`, label: "Review & approve", key: "workbench-review" },
+    { href: `/admin/workbench/runs${pq}`, label: "Run output log", key: "workbench-runs" },
+    { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
+    { href: `/admin/learning${pq}`, label: "Learning & metrics", key: "learning" },
   ];
 
-  const workbenchLinks = [
-    { href: `/admin/workbench${pq}`, label: "Review Console", key: "workbench-review" },
-    { href: `/admin/workbench/runs${pq}`, label: "Run Logs", key: "workbench-runs" },
-    { href: `/admin/workbench/pipeline${pq}`, label: "Pipeline inputs", key: "workbench-pipeline" },
-    { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
-    { href: `/admin/workbench/playground${pq}`, label: "Template Playground", key: "workbench-playground" },
+  const settingsLinks = [
+    { href: `/admin/config${pq}`, label: "Project settings", key: "config" },
+    { href: `/admin/workbench/playground${pq}`, label: "Template playground", key: "workbench-playground" },
   ];
 
   type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
@@ -491,16 +521,17 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   <a href="/admin/new-project" class="sb-new-project">+ New Project</a>
   <nav class="sb-nav">
     <div class="sb-title">Project</div>
-    ${projectLinks.map(l => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
-    <div class="sb-title" style="margin-top:16px">Workbench</div>
+    ${overviewLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    <div class="sb-title" style="margin-top:16px">Workbench<span class="sb-hint">research to learning</span></div>
     ${workbenchLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
-    <div class="sb-title" style="margin-top:16px">CAF Core</div>
+    <div class="sb-title" style="margin-top:16px">Settings</div>
+    ${settingsLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    <div class="sb-title" style="margin-top:16px">Platform</div>
     ${globalLinks.map(renderGlobalLink).join("\n    ")}
-    <div class="sb-title" style="margin-top:auto;padding-top:24px">External</div>
-    <a href="/admin/workbench${pq}" class="sb-link">Review workbench</a>
+    <div class="sb-title" style="margin-top:auto;padding-top:24px">System</div>
     <a href="/" class="sb-link" target="_blank" rel="noopener noreferrer">Review (full screen)</a>
-    <a href="/health" class="sb-link" target="_blank">Health</a>
-    <a href="/health/rendering" class="sb-link" target="_blank">Rendering deps</a>
+    <a href="/health" class="sb-link" target="_blank" rel="noopener noreferrer">API health</a>
+    <a href="/health/rendering" class="sb-link" target="_blank" rel="noopener noreferrer">Rendering health</a>
   </nav>
 </aside>`;
 }
@@ -606,7 +637,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       if (!currentSlug && projects.length > 0) {
         currentSlug = normalizeProjectSlugParam(projects[0].slug) ?? String(projects[0].slug ?? "");
       }
-      const body = adminWorkbenchBody(wb.embedPath, wb.title, currentSlug, config.CAF_REVIEW_ENABLED);
+      const embedParams = "embedParams" in wb ? wb.embedParams : undefined;
+      const body = adminWorkbenchBody(wb.embedPath, wb.title, currentSlug, config.CAF_REVIEW_ENABLED, embedParams);
       reply
         .type("text/html")
         .send(page(wb.title, wb.sidebarKey, body, projects, currentSlug, adminHeadTokenScript(config)));
@@ -4072,7 +4104,7 @@ loadPackView();
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
       .type("text/html")
-      .send(page("Inputs", "inputs", body, projects, currentSlug, adminHeadTokenScript(config)));
+      .send(page("Inputs & imports", "inputs", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   app.get("/admin/processing", async (request, reply) => {
@@ -4084,7 +4116,7 @@ loadPackView();
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
       .type("text/html")
-      .send(page("Processing", "processing", body, projects, currentSlug, adminHeadTokenScript(config)));
+      .send(page("Processing & ideas", "processing", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   app.get("/admin/scene-lab", async (request, reply) => {
@@ -6339,7 +6371,7 @@ async function eraseAllPrompt(){
 
 loadRules();
 </script>`;
-    reply.type("text/html").send(page("Learning", "learning", body, projects, currentSlug, adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Learning & metrics", "learning", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Project Config (tabbed: constraints, strategy, brand, platforms, flow types, risk rules, prompts, reference posts, heygen) ---
@@ -6349,7 +6381,7 @@ loadRules();
     const project = await resolveProject(db, query.project);
     if (!project) {
       const body = `<div class="ph"><div><h2>Project Config</h2><span class="ph-sub">No project selected</span></div></div><div class="content"><div class="empty" style="padding:80px 20px"><p style="font-size:16px;margin-bottom:16px">No projects exist yet.</p><a href="/admin/new-project" class="btn" style="display:inline-block;padding:10px 24px">Create your first project</a></div></div>`;
-      reply.type("text/html").send(page("Project Config", "config", body, projects, "", adminHeadTokenScript(config)));
+      reply.type("text/html").send(page("Project settings", "config", body, projects, "", adminHeadTokenScript(config)));
       return;
     }
     const currentSlug = project.slug;

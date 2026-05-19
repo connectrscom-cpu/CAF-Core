@@ -10,7 +10,7 @@ const NAV_ITEMS = [
     items: [
       { href: "/", label: "Review Console", icon: ReviewIcon },
       { href: "/runs", label: "Run Logs", icon: RunsIcon },
-      { href: "/pipeline", label: "Pipeline inputs", icon: PipelineIcon },
+      { href: "/pipeline?tab=ideas", label: "Signal packs", icon: PipelineIcon },
       { href: "/publish", label: "Publish", icon: PublishIcon },
       { href: "/playground", label: "Template Playground", icon: TemplateIcon },
     ],

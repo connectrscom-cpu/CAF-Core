@@ -3,9 +3,14 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 
 type Tab = "evidence" | "ideas";
+
+function parsePipelineTab(raw: string | null): Tab {
+  return raw === "ideas" ? "ideas" : "evidence";
+}
 
 interface ImportRow {
   id: string;
@@ -24,9 +29,14 @@ interface PackRow {
 }
 
 export default function PipelinePage() {
+  const searchParams = useSearchParams();
   const { activeProjectSlug, lockedSlug, navHref, ready, multiProject } = useReviewProject();
   const slug = (activeProjectSlug || lockedSlug || "").trim();
-  const [tab, setTab] = useState<Tab>("evidence");
+  const [tab, setTab] = useState<Tab>(() => parsePipelineTab(searchParams.get("tab")));
+
+  useEffect(() => {
+    setTab(parsePipelineTab(searchParams.get("tab")));
+  }, [searchParams]);
   const [imports, setImports] = useState<ImportRow[] | null>(null);
   const [packs, setPacks] = useState<PackRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -110,11 +120,11 @@ export default function PipelinePage() {
     <>
       <div className="page-header">
         <div>
-          <h2>Pipeline inputs</h2>
+          <h2>{tab === "ideas" ? "Signal packs" : "Pipeline inputs"}</h2>
           <span className="page-header-sub">
-            Upload scraper-style INPUTS workbooks into Core for provenance, and inspect signal-pack ideas (overall
-            candidates) when you need context next to human review. Processing controls (health, profile, RTP, QC,
-            build-from-import) stay in CAF Core Admin → Inputs &amp; processing — not here.
+            {tab === "ideas"
+              ? "Inspect signal packs built in Processing — overall candidate rows the planner uses for runs."
+              : "Upload and browse scraped evidence imports. For the full inputs console (health, RTP, QC, build-from-import), use Admin → Inputs & imports."}
           </span>
         </div>
       </div>
