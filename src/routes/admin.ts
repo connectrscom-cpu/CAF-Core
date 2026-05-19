@@ -386,8 +386,32 @@ pre.json{font-size:11px;overflow:auto;max-height:300px;background:var(--bg);padd
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:480px;width:90%}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
+.wb-embed{margin:-20px -28px 0;height:calc(100vh - 68px);min-height:480px;background:var(--bg)}
+.wb-embed-frame{width:100%;height:100%;border:0;display:block}
 @media(max-width:1024px){.sb{display:none}.main{margin-left:0}}
 `;
+}
+
+/** Review workbench pages embedded in the admin shell (iframe → same Next app as /). */
+const ADMIN_WORKBENCH_PAGES = [
+  { route: "/admin/workbench/runs", embedPath: "/runs", title: "Run Logs", sidebarKey: "workbench-runs" },
+  { route: "/admin/workbench/pipeline", embedPath: "/pipeline", title: "Pipeline inputs", sidebarKey: "workbench-pipeline" },
+  { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish" },
+  { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template Playground", sidebarKey: "workbench-playground" },
+  { route: "/admin/workbench", embedPath: "/", title: "Review Console", sidebarKey: "workbench-review" },
+] as const;
+
+function adminWorkbenchBody(embedPath: string, title: string, projectSlug: string, reviewEnabled: boolean): string {
+  if (!reviewEnabled) {
+    return `<div class="content"><div class="empty"><p>Review workbench is disabled (<code>CAF_REVIEW_ENABLED=0</code>).</p></div></div>`;
+  }
+  const qs = projectSlug ? `?project=${encodeURIComponent(projectSlug)}` : "";
+  const src = `${embedPath}${qs}`;
+  return `<div class="ph">
+  <div><h2>${esc(title)}</h2><span class="ph-sub">CAF Review workbench</span></div>
+  <a href="${esc(src)}" class="btn btn-sm" target="_blank" rel="noopener noreferrer">Open full screen</a>
+</div>
+<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div>`;
 }
 
 function sidebar(active: string, projects: ProjectRow[], currentSlug: string): string {
@@ -407,6 +431,14 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     { href: `/admin/jobs${pq}`, label: "3 — jobs", key: "jobs" },
     { href: `/admin/learning${pq}`, label: "Learning", key: "learning" },
     { href: `/admin/config${pq}`, label: "Project Config", key: "config" },
+  ];
+
+  const workbenchLinks = [
+    { href: `/admin/workbench${pq}`, label: "Review Console", key: "workbench-review" },
+    { href: `/admin/workbench/runs${pq}`, label: "Run Logs", key: "workbench-runs" },
+    { href: `/admin/workbench/pipeline${pq}`, label: "Pipeline inputs", key: "workbench-pipeline" },
+    { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
+    { href: `/admin/workbench/playground${pq}`, label: "Template Playground", key: "workbench-playground" },
   ];
 
   type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
@@ -460,10 +492,13 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   <nav class="sb-nav">
     <div class="sb-title">Project</div>
     ${projectLinks.map(l => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    <div class="sb-title" style="margin-top:16px">Workbench</div>
+    ${workbenchLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">CAF Core</div>
     ${globalLinks.map(renderGlobalLink).join("\n    ")}
     <div class="sb-title" style="margin-top:auto;padding-top:24px">External</div>
-    <a href="/" class="sb-link" target="_blank">API Root</a>
+    <a href="/admin/workbench${pq}" class="sb-link">Review workbench</a>
+    <a href="/" class="sb-link" target="_blank" rel="noopener noreferrer">Review (full screen)</a>
     <a href="/health" class="sb-link" target="_blank">Health</a>
     <a href="/health/rendering" class="sb-link" target="_blank">Rendering deps</a>
   </nav>
@@ -562,6 +597,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       .type("application/javascript; charset=utf-8")
       .send(js);
   });
+
+  for (const wb of ADMIN_WORKBENCH_PAGES) {
+    app.get(wb.route, async (request, reply) => {
+      const query = request.query as Record<string, string>;
+      const projects = await listProjects(db);
+      let currentSlug = normalizeProjectSlugParam(query.project) ?? "";
+      if (!currentSlug && projects.length > 0) {
+        currentSlug = normalizeProjectSlugParam(projects[0].slug) ?? String(projects[0].slug ?? "");
+      }
+      const body = adminWorkbenchBody(wb.embedPath, wb.title, currentSlug, config.CAF_REVIEW_ENABLED);
+      reply
+        .type("text/html")
+        .send(page(wb.title, wb.sidebarKey, body, projects, currentSlug, adminHeadTokenScript(config)));
+    });
+  }
 
   // ── JSON API endpoints ──────────────────────────────────────────────
 
