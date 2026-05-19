@@ -1,8 +1,9 @@
 /**
  * Top-performer **video** pass: multimodal on **sampled frame images + transcript** (no full video to OpenAI).
  * **Instagram, TikTok, and Facebook** only (`instagram_post`, `tiktok_video`, `facebook_post`); text-first kinds (e.g. Reddit) are skipped.
- * Skips rows without `analysis_frame_urls` (or aliases). When archiving is on, Core may still download one
- * **HTTPS source video** from `payload_json` (`video_url`, `source_video_url`, …) to Supabase — verified MP4/WebM/MKV bytes.
+ * Rows without pre-ingested `analysis_frame_urls` may still qualify when a downloadable **source video URL** exists:
+ * Core downloads the file, extracts JPEG frames (ffmpeg), persists `evidence_media_assets` (+ Supabase when configured),
+ * then runs vision on those frames + transcript.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -23,11 +24,14 @@ import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
+import { parseVideoAnalysisFrameUrls, parseVideoSourceUrlForArchive } from "./inputs-video-evidence-bundle.js";
+import { ensureVideoFramesForEvidenceRow } from "./inputs-video-evidence-preparation.js";
 import {
-  parseVideoAnalysisFrameUrls,
-  parseVideoAnalysisTranscript,
-  parseVideoSourceUrlForArchive,
-} from "./inputs-video-evidence-bundle.js";
+  TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
+  buildVideoAestheticAnalysisJson,
+  buildVideoInsightUserText,
+  parseTopPerformerVideoRiskFlags,
+} from "./inputs-top-performer-video-prompt.js";
 import {
   buildTopPerformerRatingGateRequestOverrides,
   resolveBroadInsightsSampleGate,
@@ -56,26 +60,10 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
-export const TOP_PERFORMER_VIDEO_SYSTEM_PROMPT = `You analyze **sampled static frames** from a short-form video (no audio, no full video playback).
-Return ONLY valid JSON:
-{
-  "hook_visual": "what the opening frames signal",
-  "message_clarity": "core message from visuals + transcript",
-  "pacing_notes": "inferred from frame sequence only (short)",
-  "palette": ["colours"],
-  "on_screen_text": "text visible across frames",
-  "style_summary": "2-4 sentences on aesthetic / format",
-  "format_pattern": "talking head | b-roll | text-on-screen | mixed | unknown",
-  "risk_flags": ["string"],
-  "why_it_worked": "why this may perform (short)"
-}
-If transcript is empty, rely on frames only. Be conservative when uncertain.`;
-
-export const TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE = `Evidence kind: {{EVIDENCE_KIND}}
-Pre-LLM score: {{PRE_LLM_SCORE}}
-Frame count: {{FRAME_COUNT}}
-Transcript (may be empty):
-{{TRANSCRIPT}}`;
+export {
+  TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
+  TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
+} from "./inputs-top-performer-video-prompt.js";
 
 export interface RunDeepVideoInsightsOptions {
   max_rows?: number;
@@ -94,6 +82,11 @@ export interface RunDeepVideoInsightsResult {
   candidates_with_frames: number;
   rows_analyzed: number;
   skipped_no_frames: number;
+  /** Rows with no frame URLs and no downloadable `video_url` / `source_video_url` in payload. */
+  skipped_no_video_source: number;
+  /** Rows that received new ffmpeg-extracted frames in this run. */
+  rows_frames_extracted_from_video: number;
+  evidence_media_rows_written: number;
   video_insights_total: number;
   rating_gate_active?: boolean;
   rating_top_fraction?: number;
@@ -117,6 +110,7 @@ export interface RunDeepVideoInsightsResult {
   top_performer_media_archive_frame_files_saved?: number;
   /** Successful Storage uploads counted from `role === "source_video"` archive items. */
   top_performer_media_archive_source_video_files_saved?: number;
+  rows_whisper_transcribed?: number;
 }
 
 function videoModel(profile: { synth_model: string; criteria_json: Record<string, unknown> }): string {
@@ -159,11 +153,6 @@ function makeVideoInsightsId(importId: string, rowId: string): string {
   return `ins_${importId.replace(/-/g, "").slice(0, 10)}_${rowId}_vdeep`;
 }
 
-function parseRiskFlags(v: unknown): string[] {
-  if (!Array.isArray(v)) return [];
-  return v.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
-}
-
 function isVideoEvidenceRow(kind: string, payload: Record<string, unknown>): boolean {
   if (kind === "tiktok_video") return true;
   return isVideoLikeEvidence(kind, payload);
@@ -191,7 +180,7 @@ export async function runDeepVideoInsightsForImport(
   const model = videoModel(profile);
   const minPre = videoMinPreLlm(criteria, opts.min_pre_llm_score);
   const maxRows = videoMaxRows(criteria, opts.max_rows);
-  const maxFrames = clamp(opts.max_frames ?? 10, 1, 12);
+  const maxFrames = clamp(opts.max_frames ?? 12, 1, 16);
 
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
   const sourceVideoArchiveRequested = mediaArchiveRequested && resolveTopPerformerArchiveSourceVideo(config, criteria);
@@ -222,9 +211,11 @@ export async function runDeepVideoInsightsForImport(
     pre_llm_score: number;
     frame_urls: string[];
     transcript: string;
+    caption_transcript: string;
   };
   const pool: Cand[] = [];
   let skippedNoFrames = 0;
+  let skippedNoVideoSource = 0;
   let skippedRatingGate = 0;
   let skippedBroadInsightsGate = 0;
   let skippedEvidenceKindFilter = 0;
@@ -251,15 +242,17 @@ export async function runDeepVideoInsightsForImport(
       continue;
     }
     const frameUrls = parseVideoAnalysisFrameUrls(payload, maxFrames);
-    if (frameUrls.length === 0) {
+    const videoSourceUrl = parseVideoSourceUrlForArchive(payload);
+    if (frameUrls.length === 0 && !videoSourceUrl) {
       skippedNoFrames++;
+      skippedNoVideoSource++;
       continue;
     }
     qualifyingVideoScratch.push({
       row_id: r.id,
       evidence_kind: r.evidence_kind,
       pre_llm_score: ev.pre_llm_score,
-      media_count: frameUrls.length,
+      media_count: frameUrls.length > 0 ? frameUrls.length : videoSourceUrl ? 1 : 0,
       caption_excerpt: excerptForTopPerformerPreview(payload),
       post_url: postUrlForTopPerformerPreview(r.evidence_kind, payload),
       already_has_tier_insight: existing.has(r.id),
@@ -270,8 +263,9 @@ export async function runDeepVideoInsightsForImport(
       evidence_kind: r.evidence_kind,
       payload,
       pre_llm_score: ev.pre_llm_score,
-      frame_urls: frameUrls,
-      transcript: parseVideoAnalysisTranscript(payload),
+      frame_urls: frameUrls.length > 0 ? frameUrls : [],
+      transcript: "",
+      caption_transcript: "",
     });
   }
 
@@ -297,26 +291,80 @@ export async function runDeepVideoInsightsForImport(
   };
 
   let analyzed = 0;
+  let rowsFramesExtracted = 0;
+  let rowsWhisperTranscribed = 0;
+  let evidenceMediaRowsWritten = 0;
+
+  const platformForRow = (kind: string): string => {
+    if (kind === "tiktok_video") return "tiktok";
+    if (kind === "facebook_post") return "facebook";
+    return "instagram";
+  };
+
   for (const c of top) {
     const system = TOP_PERFORMER_VIDEO_SYSTEM_PROMPT;
 
-    const userText = `Evidence kind: ${c.evidence_kind}
-Pre-LLM score: ${c.pre_llm_score}
-Frame count: ${c.frame_urls.length}
-Transcript (may be empty):
-${c.transcript || "(none)"}`;
+    const prep = await ensureVideoFramesForEvidenceRow(db, config, {
+      projectId: project.id,
+      projectSlug,
+      importId,
+      evidenceRowId: c.id,
+      sourcePlatform: platformForRow(c.evidence_kind),
+      payload: c.payload,
+      maxFrames,
+      criteria,
+      postUrl: postUrlForTopPerformerPreview(c.evidence_kind, c.payload),
+      postId: String(c.payload.id ?? c.payload.post_id ?? "").trim() || null,
+      ownerUsername: String(c.payload.username ?? c.payload.owner ?? "").trim() || null,
+      httpProxyUrl: mediaArchiveHttpProxyCfg.url,
+      forceReextract: !!opts.rescan,
+      openAiApiKey: apiKey,
+      audit: { ...auditBase, step: "inputs_top_performer_video_whisper" },
+    });
+    evidenceMediaRowsWritten += prep.evidence_media_rows_written;
+    if (prep.frames_extracted > 0) rowsFramesExtracted++;
+    if (prep.whisper_transcript?.trim()) rowsWhisperTranscribed++;
+
+    const frameUrls = prep.frame_urls.length > 0 ? prep.frame_urls : c.frame_urls;
+    if (frameUrls.length === 0) {
+      continue;
+    }
+
+    const frameTimestamps =
+      prep.frame_timestamps_sec.length === frameUrls.length
+        ? prep.frame_timestamps_sec
+        : prep.frame_timestamps_sec.length > 0
+          ? prep.frame_timestamps_sec
+          : Array.from({ length: frameUrls.length }, (_, i) => i);
+
+    const userText = buildVideoInsightUserText({
+      evidenceKind: c.evidence_kind,
+      preLlmScore: c.pre_llm_score,
+      frameCount: frameUrls.length,
+      frameTimestampsSec: frameTimestamps,
+      captionTranscript: prep.caption_transcript,
+      spokenTranscript: prep.whisper_transcript ?? "",
+      frameSource: prep.source,
+    });
 
     let storedInspection: Record<string, unknown> | undefined;
-    let visionFrameUrls = [...c.frame_urls];
+    let visionFrameUrls = [...frameUrls];
 
-    if (mediaArchiveRequested && mediaSupabaseConfigured) {
+    const skipRemoteFrameArchive =
+      prep.source === "extracted_from_video" ||
+      prep.source === "evidence_media_db" ||
+      frameUrls.some((u) => u.startsWith("data:image/"));
+
+    const remoteHttpsFrames = frameUrls.filter((u) => u.startsWith("https://"));
+
+    if (mediaArchiveRequested && mediaSupabaseConfigured && !skipRemoteFrameArchive && remoteHttpsFrames.length > 0) {
       const arch = await archiveTopPerformerVisionMedia(config, {
         projectSlug,
         inputsImportId: importId,
         sourceEvidenceRowId: c.id,
         tier: "top_performer_video",
         role: "video_frame",
-        urls: c.frame_urls,
+        urls: remoteHttpsFrames,
         archive_source_video: false,
         ...(mediaArchiveHttpProxyCfg.url ? { http_proxy_url: mediaArchiveHttpProxyCfg.url } : {}),
       });
@@ -329,21 +377,37 @@ ${c.transcript || "(none)"}`;
         }
       }
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
-      visionFrameUrls = c.frame_urls.map((src, i) => {
+      visionFrameUrls = remoteHttpsFrames.map((src, i) => {
         const it = arch.items[i];
         const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
         return relay || src;
       });
+      const dataUriFrames = frameUrls.filter((u) => u.startsWith("data:image/"));
+      visionFrameUrls = [...visionFrameUrls, ...dataUriFrames];
+    } else if (prep.source === "extracted_from_video" || prep.source === "evidence_media_db") {
+      storedInspection = {
+        archived_at: new Date().toISOString(),
+        tier: "top_performer_video",
+        project_slug: projectSlug,
+        inputs_import_id: importId,
+        source_evidence_row_id: c.id,
+        frame_resolution_source: prep.source,
+        frames_extracted: prep.frames_extracted,
+        source_video_archived: prep.source_video_archived,
+        items: [],
+      };
     }
 
     const user_content: Array<
       | { type: "text"; text: string }
       | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
     > = [{ type: "text", text: userText }];
-    for (const url of visionFrameUrls) {
+    for (let fi = 0; fi < visionFrameUrls.length; fi++) {
+      const url = visionFrameUrls[fi]!;
+      const visionUrl = url.startsWith("data:image/") ? url : finalizeHttpsImageUrlForOpenAiVision(url);
       user_content.push({
         type: "image_url",
-        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(url), detail: "low" },
+        image_url: { url: visionUrl, detail: fi < 2 ? "high" : "low" },
       });
     }
 
@@ -353,28 +417,26 @@ ${c.transcript || "(none)"}`;
         model,
         system_prompt: system,
         user_content,
-        max_tokens: 4096,
+        max_tokens: 12_000,
         response_format: "json_object",
       },
       { ...auditBase, step: STEP }
     );
 
     const parsed = parseJsonObjectFromLlmText(out.content) as Record<string, unknown> | null;
-    const aesthetic: Record<string, unknown> = parsed
-      ? {
-          hook_visual: parsed.hook_visual,
-          message_clarity: parsed.message_clarity,
-          pacing_notes: parsed.pacing_notes,
-          palette: parsed.palette,
-          on_screen_text: parsed.on_screen_text,
-          style_summary: parsed.style_summary,
-          format_pattern: parsed.format_pattern,
-        }
-      : {};
+    const aesthetic = buildVideoAestheticAnalysisJson(parsed);
+    if (prep.whisper_transcript) {
+      aesthetic.spoken_transcript_whisper = prep.whisper_transcript;
+    }
 
-    const risks = parseRiskFlags(parsed?.risk_flags);
+    const risks = parseTopPerformerVideoRiskFlags(parsed?.risk_flags);
 
-    if (mediaArchiveRequested && mediaSupabaseConfigured && sourceVideoArchiveRequested) {
+    if (
+      mediaArchiveRequested &&
+      mediaSupabaseConfigured &&
+      sourceVideoArchiveRequested &&
+      prep.source !== "extracted_from_video"
+    ) {
       const sourceVideoUrl = parseVideoSourceUrlForArchive(c.payload);
       if (sourceVideoUrl) {
         const arch2 = await archiveTopPerformerVisionMedia(config, {
@@ -436,7 +498,12 @@ ${c.transcript || "(none)"}`;
       cta_type: null,
       hashtags: null,
       caption_style: null,
-      hook_text: typeof parsed?.hook_visual === "string" ? parsed.hook_visual : null,
+      hook_text:
+        typeof parsed?.spoken_hook === "string"
+          ? parsed.spoken_hook
+          : typeof parsed?.hook_visual === "string"
+            ? parsed.hook_visual
+            : null,
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,
@@ -457,6 +524,9 @@ ${c.transcript || "(none)"}`;
     candidates_with_frames: pool.length,
     rows_analyzed: analyzed,
     skipped_no_frames: skippedNoFrames,
+    skipped_no_video_source: skippedNoVideoSource,
+    rows_frames_extracted_from_video: rowsFramesExtracted,
+    evidence_media_rows_written: evidenceMediaRowsWritten,
     video_insights_total: videoTotal,
     rating_gate_active: ratingGate.active,
     rating_top_fraction: ratingGate.fraction,
@@ -476,5 +546,6 @@ ${c.transcript || "(none)"}`;
     top_performer_media_archive_errors: mediaArchiveErrors,
     top_performer_media_archive_frame_files_saved: mediaArchiveFrameFilesSaved,
     top_performer_media_archive_source_video_files_saved: mediaArchiveSourceVideoFilesSaved,
+    rows_whisper_transcribed: rowsWhisperTranscribed,
   };
 }

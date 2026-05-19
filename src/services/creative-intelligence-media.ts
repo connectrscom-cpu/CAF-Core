@@ -58,6 +58,45 @@ function ffmpegBin(config: AppConfig): string {
 /**
  * Extract JPEG frames at given timestamps (seconds). Writes temp MP4 to disk.
  */
+/**
+ * Extract mono MP3 audio from a video file for Whisper (capped duration).
+ */
+export async function extractAudioMp3FromVideo(
+  config: AppConfig,
+  videoPath: string,
+  maxDurationSec = 120
+): Promise<Buffer | null> {
+  const ffmpeg = ffmpegBin(config);
+  const cap = Math.max(5, Math.min(maxDurationSec, 600));
+  try {
+    const { stdout } = await execFileAsync(
+      ffmpeg,
+      [
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        videoPath,
+        "-vn",
+        "-t",
+        String(cap),
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-f",
+        "mp3",
+        "pipe:1",
+      ],
+      { encoding: "buffer", maxBuffer: 12_000_000 }
+    );
+    if (stdout && stdout.length > 500) return stdout;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function extractVideoFramesJpeg(
   config: AppConfig,
   videoPath: string,

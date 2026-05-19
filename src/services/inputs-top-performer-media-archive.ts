@@ -212,7 +212,7 @@ async function fetchRemoteImageFile(
   }
 }
 
-async function fetchRemoteVideoFile(
+export async function fetchRemoteVideoFile(
   url: string,
   timeoutMs: number,
   maxBytes: number,

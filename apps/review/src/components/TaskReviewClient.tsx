@@ -18,6 +18,7 @@ import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
 import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { decodeTaskIdParam } from "@/lib/task-id";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskApiQuery } from "@/lib/task-links";
 import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
 import { VideoReviewEdits } from "@/components/VideoReviewEdits";
@@ -56,6 +57,7 @@ export interface TaskReviewClientProps {
 }
 
 export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClientProps) {
+  const { navHref } = useReviewProject();
   const router = useRouter();
   const task_id = useMemo(() => decodeTaskIdParam(taskIdParam), [taskIdParam]);
 
@@ -489,9 +491,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   return (
     <>
       <div className="detail-back">
-        <Link href="/">← Back to Workbench</Link>
+        <Link href={navHref("/")}>← Back to Workbench</Link>
         {runId && (
-          <> · <Link href={`/r/${encodeURIComponent(runId)}`}>Run: {runId}</Link></>
+          <> · <Link href={navHref(`/r/${encodeURIComponent(runId)}`)}>Run: {runId}</Link></>
         )}
       </div>
       <h1 className="detail-title">{data?.generated_title || task_id}</h1>
@@ -652,7 +654,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             <DecisionPanel
               taskId={execTaskId}
               projectSlug={(data.project ?? projectFromUrl).trim() || undefined}
-              onSuccess={() => router.push("/")}
+              onSuccess={() => router.push(navHref("/"))}
               existingDecision={decision}
               existingNotes={notes}
               existingRewriteCopy={data.rewrite_copy !== "false"}

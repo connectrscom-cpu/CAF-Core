@@ -599,6 +599,42 @@ const envSchema = z.object({
     .min(1_000_000)
     .max(500_000_000)
     .default(120_000_000),
+
+  /**
+   * **auto** (default): when top-performer video pass has no `analysis_frame_urls`, download a source
+   * HTTPS video, extract JPEG frames (ffmpeg), persist rows in `evidence_media_assets`, and run vision.
+   * **on** / **off**: force enable / disable (criteria `top_performer.extract_frames_from_video` can override in auto).
+   */
+  CAF_TOP_PERFORMER_EXTRACT_VIDEO_FRAMES: z
+    .string()
+    .optional()
+    .transform((v): "auto" | "on" | "off" => {
+      if (v === undefined || v === "") return "auto";
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return "off";
+      if (s === "1" || s === "true" || s === "yes" || s === "on") return "on";
+      if (s === "auto") return "auto";
+      return "auto";
+    }),
+
+  /** Whisper model for optional video speech-to-text (`/v1/audio/transcriptions`). */
+  OPENAI_WHISPER_MODEL: z.string().default("whisper-1"),
+
+  /**
+   * **auto** (default): run Whisper when extracting/downloading source video and ingest transcript is empty/short.
+   * **on** / **off**: force enable / disable. Criteria `top_performer.transcribe_video_audio` overrides in auto.
+   */
+  CAF_TOP_PERFORMER_VIDEO_WHISPER: z
+    .string()
+    .optional()
+    .transform((v): "auto" | "on" | "off" => {
+      if (v === undefined || v === "") return "auto";
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no" || s === "off") return "off";
+      if (s === "1" || s === "true" || s === "yes" || s === "on") return "on";
+      if (s === "auto") return "auto";
+      return "auto";
+    }),
 });
 
 /** Parse `CAF_META_ACCOUNT_SOURCE_MAP` (e.g. `CUISINA=SNS,OTHER=SNS`). Keys/values normalized to uppercase. */

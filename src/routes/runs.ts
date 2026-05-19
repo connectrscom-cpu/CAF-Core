@@ -25,6 +25,7 @@ import {
 } from "../services/job-pipeline.js";
 import { getRunOutputReview, upsertRunOutputReview } from "../repositories/run-output-reviews.js";
 import { buildRunExportData, renderRunExportMarkdown } from "../services/run-export.js";
+import { buildRunContentLogExport } from "../repositories/run-content-log-export.js";
 
 export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -142,6 +143,49 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     reply.header("Content-Type", "text/markdown; charset=utf-8");
     reply.header("Content-Disposition", `attachment; filename="${filenameBase}.md"`);
     return reply.send(md);
+  });
+
+  // ── Full content log (draft packages, stage snapshots, pipeline outcomes) ─
+  app.get("/v1/runs/:project_slug/:run_id/content-log-export", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(700).optional() }).safeParse(request.query);
+    const limit = query.success && query.data.limit != null ? query.data.limit : 500;
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const runIdText = params.data.run_id.trim();
+    try {
+      const exportData = await buildRunContentLogExport(db, project.id, runIdText, limit);
+      const filenameBase = `caf_run_${params.data.project_slug}_${runIdText}_content_log`.replace(
+        /[^a-zA-Z0-9._-]+/g,
+        "_"
+      );
+      reply.header("Content-Type", "application/json; charset=utf-8");
+      reply.header("Content-Disposition", `attachment; filename="${filenameBase}.json"`);
+      return { ok: true, project_slug: params.data.project_slug, run_id: runIdText, export: exportData };
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "RUN_NOT_FOUND") return reply.code(404).send({ ok: false, error: "run_not_found" });
+      const pgCode = (err as { code?: unknown }).code;
+      if (String(pgCode ?? "") === "42P01") {
+        try {
+          const exportData = await buildRunContentLogExport(db, project.id, runIdText, limit, {
+            include_outcomes: false,
+          });
+          const filenameBase = `caf_run_${params.data.project_slug}_${runIdText}_content_log`.replace(
+            /[^a-zA-Z0-9._-]+/g,
+            "_"
+          );
+          reply.header("Content-Type", "application/json; charset=utf-8");
+          reply.header("Content-Disposition", `attachment; filename="${filenameBase}.json"`);
+          return { ok: true, project_slug: params.data.project_slug, run_id: runIdText, export: exportData };
+        } catch {
+          return reply.code(500).send({ ok: false, error: "content_log_export_failed" });
+        }
+      }
+      request.log.error({ err }, "buildRunContentLogExport failed");
+      return reply.code(500).send({ ok: false, error: "content_log_export_failed" });
+    }
   });
 
   const outputReviewPutSchema = z.object({

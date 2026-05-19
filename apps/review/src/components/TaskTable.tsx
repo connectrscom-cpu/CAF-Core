@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
 import { isVideoUrl } from "@/lib/media-url";
 import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
@@ -73,6 +74,7 @@ function TaskRow({
   approvingTaskId?: string | null;
   onQuickApprove?: (row: ReviewQueueRow) => void;
 }) {
+  const { navHref } = useReviewProject();
   const taskId = getVal(row, "task_id");
   const project = getVal(row, "project");
   const platform = getVal(row, "platform");
@@ -81,7 +83,9 @@ function TaskRow({
   const decision = getVal(row, "decision");
   const title = getVal(row, "generated_title") || taskId;
   const thumb = getVal(row, "preview_url");
-  const taskHref = taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined);
+  const taskHref = navHref(
+    taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined)
+  );
 
   return (
     <tr

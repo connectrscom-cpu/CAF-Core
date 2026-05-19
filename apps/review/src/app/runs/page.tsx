@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import { RunExportToolbar } from "@/components/RunExportToolbar";
 
 interface RunsApiItem {
   id: string;
@@ -56,7 +57,7 @@ function statusColor(status: string): string {
 }
 
 export default function RunsPage() {
-  const { activeProjectSlug, lockedSlug } = useReviewProject();
+  const { navHref, activeProjectSlug, lockedSlug } = useReviewProject();
   const [data, setData] = useState<RunsApiResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +118,7 @@ export default function RunsPage() {
         <div>
           <h2>Run Logs</h2>
           <span className="page-header-sub">
-            History of every run, with prompt / context snapshot indicators. Click a run to open its review queue.
+            History of every run. Open a run for its review queue, or download / copy all draft packages and content logs per run.
           </span>
         </div>
         <button className="button" onClick={fetchRuns} disabled={loading}>
@@ -188,6 +189,7 @@ export default function RunsPage() {
                   <Th>Snapshots</Th>
                   <Th>Ideas pack</Th>
                   <Th>Created</Th>
+                  <Th>Export</Th>
                 </tr>
               </thead>
               <tbody>
@@ -199,9 +201,11 @@ export default function RunsPage() {
                     {showProjectColumn && <Td>{r.project_slug}</Td>}
                     <Td>
                       <Link
-                        href={`/r/${encodeURIComponent(r.run_id)}${
-                          r.project_slug ? `?project=${encodeURIComponent(r.project_slug)}` : ""
-                        }`}
+                        href={navHref(
+                          `/r/${encodeURIComponent(r.run_id)}${
+                            r.project_slug ? `?project=${encodeURIComponent(r.project_slug)}` : ""
+                          }`
+                        )}
                         className="detail-back"
                         style={{ padding: 0, fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}
                       >
@@ -253,9 +257,11 @@ export default function RunsPage() {
                     <Td>
                       {r.signal_pack_id ? (
                         <Link
-                          href={`/pipeline/pack/${encodeURIComponent(r.signal_pack_id)}${
-                            r.project_slug ? `?project=${encodeURIComponent(r.project_slug)}` : ""
-                          }`}
+                          href={navHref(
+                            `/pipeline/pack/${encodeURIComponent(r.signal_pack_id)}${
+                              r.project_slug ? `?project=${encodeURIComponent(r.project_slug)}` : ""
+                            }`
+                          )}
                           className="detail-back"
                           style={{ padding: 0, fontSize: 12 }}
                         >
@@ -266,6 +272,15 @@ export default function RunsPage() {
                       )}
                     </Td>
                     <Td>{fmt(r.created_at)}</Td>
+                    <Td>
+                      <div style={{ minWidth: 280 }}>
+                      <RunExportToolbar
+                        variant="compact"
+                        runId={r.run_id}
+                        projectSlug={(r.project_slug || activeProjectSlug || lockedSlug || "").trim()}
+                      />
+                      </div>
+                    </Td>
                   </tr>
                 ))}
               </tbody>

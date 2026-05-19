@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { TaskViewer } from "@/components/TaskViewer";
 import { createSyntheticSlides, parseSlidesFromJson } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
@@ -25,6 +26,7 @@ export interface ContentReviewClientProps {
 }
 
 export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentReviewClientProps) {
+  const { navHref } = useReviewProject();
   const task_id = useMemo(() => decodeTaskIdParam(taskIdParam), [taskIdParam]);
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
@@ -101,7 +103,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
   return (
     <>
       <div className="detail-back">
-        <Link href="/">← Back to Workbench</Link>
+        <Link href={navHref("/")}>← Back to Workbench</Link>
       </div>
       <h1 className="detail-title">Content: {task_id}</h1>
       <p className="detail-subtitle">

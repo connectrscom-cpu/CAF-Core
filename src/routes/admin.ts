@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
+import { adminSbLink, adminSidebarIcon } from "./admin-sidebar-icons.js";
 import {
   getProjectBySlug,
   ensureProject,
@@ -317,6 +318,10 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .sb-link{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;font-size:13px;font-weight:500;color:var(--fg2);transition:all .15s;text-decoration:none}
 .sb-link:hover{background:var(--card);color:var(--fg);text-decoration:none}
 .sb-link.active{background:var(--accent);color:#fff}
+.sb-link.active .sb-icon{opacity:1}
+.sb-icon{width:18px;height:18px;flex-shrink:0;opacity:.7}
+.sb-link span{line-height:1.3}
+.main--embed{padding:0;overflow:hidden}
 .sb-sublink{margin-left:14px;padding-left:18px;font-size:12px;color:var(--muted);position:relative}
 .sb-sublink::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border)}
 .sb-sublink:hover{color:var(--fg)}
@@ -387,8 +392,8 @@ pre.json{font-size:11px;overflow:auto;max-height:300px;background:var(--bg);padd
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:480px;width:90%}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
-.wb-embed{margin:-20px -28px 0;height:calc(100vh - 68px);min-height:480px;background:var(--bg)}
-.wb-embed-frame{width:100%;height:100%;border:0;display:block}
+.wb-embed{height:100vh;min-height:480px;background:var(--bg)}
+.wb-embed-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 @media(max-width:1024px){.sb{display:none}.main{margin-left:0}}
 `;
 }
@@ -420,6 +425,7 @@ function adminWorkbenchEmbedSrc(
       if (v) params.set(k, v);
     }
   }
+  params.set("embed", "admin");
   const q = params.toString();
   return q ? `${embedPath}?${q}` : embedPath;
 }
@@ -435,11 +441,7 @@ function adminWorkbenchBody(
     return `<div class="content"><div class="empty"><p>Review workbench is disabled (<code>CAF_REVIEW_ENABLED=0</code>).</p></div></div>`;
   }
   const src = adminWorkbenchEmbedSrc(embedPath, projectSlug, embedParams);
-  return `<div class="ph">
-  <div><h2>${esc(title)}</h2><span class="ph-sub">CAF Review workbench</span></div>
-  <a href="${esc(src)}" class="btn btn-sm" target="_blank" rel="noopener noreferrer">Open full screen</a>
-</div>
-<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div>`;
+  return `<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div>`;
 }
 
 function sidebar(active: string, projects: ProjectRow[], currentSlug: string): string {
@@ -499,14 +501,10 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     return false;
   };
   const renderGlobalLink = (link: GlobalLink): string => {
-    const activeCls = isParentActive(link) ? " active" : "";
-    let out = `<a href="${link.href}" class="sb-link${activeCls}">${link.label}</a>`;
+    let out = adminSbLink(link.href, link.label, link.key, isParentActive(link) ? link.key : active);
     if (link.children && link.children.length > 0) {
       out += link.children
-        .map(
-          (c) =>
-            `<a href="${c.href}" class="sb-link sb-sublink${c.key === active ? " active" : ""}">${c.label}</a>`
-        )
+        .map((c) => adminSbLink(c.href, c.label, c.key, active, "sb-sublink"))
         .join("\n    ");
     }
     return out;
@@ -521,25 +519,33 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   <a href="/admin/new-project" class="sb-new-project">+ New Project</a>
   <nav class="sb-nav">
     <div class="sb-title">Project</div>
-    ${overviewLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    ${overviewLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Workbench<span class="sb-hint">research to learning</span></div>
-    ${workbenchLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    ${workbenchLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Settings</div>
-    ${settingsLinks.map((l) => `<a href="${l.href}" class="sb-link${l.key === active ? " active" : ""}">${l.label}</a>`).join("\n    ")}
+    ${settingsLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Platform</div>
     ${globalLinks.map(renderGlobalLink).join("\n    ")}
     <div class="sb-title" style="margin-top:auto;padding-top:24px">System</div>
-    <a href="/" class="sb-link" target="_blank" rel="noopener noreferrer">Review (full screen)</a>
-    <a href="/health" class="sb-link" target="_blank" rel="noopener noreferrer">API health</a>
-    <a href="/health/rendering" class="sb-link" target="_blank" rel="noopener noreferrer">Rendering health</a>
+    <a href="/health" class="sb-link" target="_blank" rel="noopener noreferrer">${adminSidebarIcon("health")}<span>API health</span></a>
+    <a href="/health/rendering" class="sb-link" target="_blank" rel="noopener noreferrer">${adminSidebarIcon("health")}<span>Rendering health</span></a>
   </nav>
 </aside>`;
 }
 
-function page(title: string, activeSidebar: string, body: string, projects: ProjectRow[], currentSlug: string, headExtra = ""): string {
+function page(
+  title: string,
+  activeSidebar: string,
+  body: string,
+  projects: ProjectRow[],
+  currentSlug: string,
+  headExtra = "",
+  mainClass = ""
+): string {
+  const mainCls = mainClass ? `main ${mainClass}` : "main";
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} — CAF Core</title><style>${css()}</style>${headExtra}</head>
-<body><div class="shell">${sidebar(activeSidebar, projects, currentSlug)}<main class="main">${body}</main></div></body></html>`;
+<body><div class="shell">${sidebar(activeSidebar, projects, currentSlug)}<main class="${mainCls}">${body}</main></div></body></html>`;
 }
 
 /** Injected in &lt;head&gt;: global cafFetch() adds x-caf-core-token when CAF_CORE_REQUIRE_AUTH and token are set. */
@@ -641,7 +647,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       const body = adminWorkbenchBody(wb.embedPath, wb.title, currentSlug, config.CAF_REVIEW_ENABLED, embedParams);
       reply
         .type("text/html")
-        .send(page(wb.title, wb.sidebarKey, body, projects, currentSlug, adminHeadTokenScript(config)));
+        .send(
+          page(wb.title, wb.sidebarKey, body, projects, currentSlug, adminHeadTokenScript(config), "main--embed")
+        );
     });
   }
 
@@ -1981,8 +1989,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         active: true,
         labs_readonly: true,
         labs_short_description:
-          "Vision + Storage: sampled video frames + transcript for OpenAI; optional verified source video (MP4/WebM/MKV) to Supabase when `video_url` / `source_video_url` exist (analysis_tier=top_performer_video).",
-        labs_flow_description: "Processing: Top-performer enrichment — video frames.",
+          "Rich video vision (per-frame + replication_blueprint), ffmpeg frame extraction, optional Whisper ASR, evidence_media_assets + Supabase archive (analysis_tier=top_performer_video).",
+        labs_flow_description: "Processing: Top-performer enrichment — video (frames + Whisper + deep JSON).",
         system_prompt: TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
         user_prompt_template: TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
       },
@@ -6282,12 +6290,88 @@ ctLoad();
     </div>
   </div>
 </div>
+<dialog id="learning-inspect-dlg" style="max-width:640px;width:92%;padding:0;border:none;border-radius:12px;background:var(--card);color:var(--fg)">
+  <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
+    <h3 style="margin:0;font-size:17px">Rule details</h3>
+    <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">Payload and provenance before apply / retire.</p>
+  </div>
+  <div id="learning-inspect-body" style="padding:16px 18px;max-height:min(70vh,560px);overflow:auto;font-size:13px;line-height:1.5"></div>
+  <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
+    <button type="button" class="btn-ghost" onclick="closeInspectRule()">Close</button>
+  </div>
+</dialog>
+<style>
+#learning-inspect-dlg::backdrop{background:rgba(0,0,0,.6)}
+.lr-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 14px}
+.lr-dl dt{color:var(--muted);margin:0}
+.lr-dl dd{margin:0;word-break:break-word}
+.lr-section{font-weight:600;margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.lr-summary{margin:0;color:var(--fg2)}
+.lr-json{margin:0;padding:10px;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-word}
+tr.lr-row-active td{background:rgba(59,130,246,.08)!important}
+.lr-id-btn{background:none;border:none;padding:0;color:var(--accent);cursor:pointer;font-family:inherit;font-size:inherit;text-align:left}
+.lr-id-btn:hover{text-decoration:underline;color:var(--accent2)}
+</style>
 <script>
 const SLUG=${JSON.stringify(currentSlug)};
+let RULE_ROWS=[];
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function badge(s){const u=String(s||'').toUpperCase();let c='badge-b';if(u==='ACTIVE')c='badge-g';else if(u==='PENDING')c='badge-y';else if(u==='EXPIRED'||u==='REJECTED')c='badge-r';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
 function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch{return String(d)}}
 function setMsg(t,ok){const el=document.getElementById('learning-msg');if(!el)return;el.style.color=ok?'var(--fg2)':'var(--red)';el.textContent=t||'';}
+function rulePlainSummary(row){
+  const p=row&&row.action_payload&&typeof row.action_payload==='object'?row.action_payload:{};
+  const obs=typeof p.observation==='string'?p.observation:'';
+  const at=String(row.action_type||'');
+  if(at==='SCORE_PENALTY')return 'Lowers ranking scores (penalty '+String(p.penalty??'—')+', tag '+String(p.rejection_tag??'—')+'). '+obs;
+  if(at==='REDUCE_VOLUME')return 'Reduces planner volume for flow '+String(p.flow_type??row.scope_flow_type??'—')+'. '+String(p.recommendation||'')+' '+obs;
+  if(at==='SCORE_BOOST')return 'Increases ranking scores when trigger matches. '+obs;
+  if(at==='GENERATION_GUIDANCE'||at==='GENERATION_HINT')return typeof p.text==='string'?p.text:'Injects generation guidance for the content LLM. '+obs;
+  return at+': trigger "'+String(row.trigger_type||'—')+'" — see payload below.';
+}
+function jsonBlock(label,v){
+  if(v==null||(Array.isArray(v)&&v.length===0)||(typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===0))return '';
+  let text;
+  try{text=typeof v==='string'?v:JSON.stringify(v,null,2);}catch(e){text=String(v);}
+  return '<div style="margin-top:12px"><div class="lr-section">'+esc(label)+'</div><pre class="lr-json">'+esc(text)+'</pre></div>';
+}
+function inspectRule(ruleId){
+  const row=RULE_ROWS.find(function(r){return String(r.rule_id||'')===String(ruleId||'');});
+  if(!row){setMsg('Rule not found in loaded list.',false);return;}
+  const scope=[row.scope_flow_type,row.scope_platform].filter(Boolean).join(' / ')||'—';
+  const body=document.getElementById('learning-inspect-body');
+  if(!body)return;
+  body.innerHTML=
+    '<dl class="lr-dl">'+
+    '<dt>Rule ID</dt><dd class="mono" style="font-size:11px">'+esc(row.rule_id)+'</dd>'+
+    '<dt>Status</dt><dd>'+badge(row.status)+'</dd>'+
+    '<dt>Family</dt><dd>'+esc(row.rule_family||'—')+'</dd>'+
+    '<dt>Trigger</dt><dd>'+esc(row.trigger_type||'—')+'</dd>'+
+    '<dt>Scope</dt><dd>'+esc(scope)+'</dd>'+
+    '<dt>Action</dt><dd class="mono" style="font-size:11px">'+esc(row.action_type||'—')+'</dd>'+
+    '<dt>Confidence</dt><dd>'+(row.confidence!=null?esc(Number(row.confidence).toFixed(3)):'—')+'</dd>'+
+    '<dt>Applied</dt><dd>'+esc(fmtDate(row.applied_at))+'</dd>'+
+    '<dt>Created</dt><dd>'+esc(fmtDate(row.created_at))+'</dd>'+
+    (row.provenance?'<dt>Provenance</dt><dd>'+esc(row.provenance)+'</dd>':'')+
+    (row.hypothesis_id?'<dt>Hypothesis</dt><dd class="mono" style="font-size:11px">'+esc(row.hypothesis_id)+'</dd>':'')+
+    '</dl>'+
+    '<div class="lr-section">What it does</div><p class="lr-summary">'+esc(rulePlainSummary(row))+'</p>'+
+    jsonBlock('Action payload',row.action_payload)+
+    jsonBlock('Source entity IDs',row.source_entity_ids)+
+    jsonBlock('Evidence refs',row.evidence_refs);
+  const dlg=document.getElementById('learning-inspect-dlg');
+  if(dlg&&typeof dlg.showModal==='function')dlg.showModal();
+  document.querySelectorAll('#learning-rules tbody tr').forEach(function(tr){tr.classList.remove('lr-row-active');});
+  const sel='#learning-rules tbody tr[data-rule-id="'+String(ruleId).replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"]';
+  const active=document.querySelector(sel);
+  if(active)active.classList.add('lr-row-active');
+}
+function closeInspectRule(){
+  const dlg=document.getElementById('learning-inspect-dlg');
+  if(dlg&&typeof dlg.close==='function')dlg.close();
+  document.querySelectorAll('#learning-rules tbody tr.lr-row-active').forEach(function(tr){tr.classList.remove('lr-row-active');});
+}
+document.getElementById('learning-inspect-dlg')?.addEventListener('cancel',function(e){e.preventDefault();closeInspectRule();});
 
 async function loadRules(){
   if(!SLUG){setMsg('Select a project in the sidebar first.',false);return;}
@@ -6299,6 +6383,7 @@ async function loadRules(){
     const d=await r.json().catch(()=>({}));
     if(!r.ok||!d.ok)throw new Error(String(d.error||('HTTP '+r.status)));
     const rows=Array.isArray(d.rules)?d.rules:[];
+    RULE_ROWS=rows;
     if(rows.length===0){if(host)host.innerHTML='<div class="empty">No learning rules for this project.</div>';return;}
     let h='<table><thead><tr><th>Rule ID</th><th>Family</th><th>Trigger</th><th>Scope</th><th>Action</th><th>Status</th><th>Applied</th><th>Created</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
     for(const row of rows){
@@ -6306,8 +6391,9 @@ async function loadRules(){
       const rid=String(row.rule_id||'');
       const canApply=String(row.status||'')==='pending';
       const canRetire=String(row.status||'')==='active';
-      h+='<tr>';
-      h+='<td class="mono">'+esc(rid)+'</td>';
+      const ridShort=rid.length>36?rid.slice(0,34)+'…':rid;
+      h+='<tr data-rule-id="'+esc(rid)+'">';
+      h+='<td class="mono"><button type="button" class="lr-id-btn" title="'+esc(rid)+'" onclick="inspectRule('+JSON.stringify(rid)+')">'+esc(ridShort)+'</button></td>';
       h+='<td>'+esc(row.rule_family||'—')+'</td>';
       h+='<td>'+esc(row.trigger_type||'—')+'</td>';
       h+='<td>'+esc(scope)+'</td>';
@@ -6316,6 +6402,7 @@ async function loadRules(){
       h+='<td>'+fmtDate(row.applied_at)+'</td>';
       h+='<td>'+fmtDate(row.created_at)+'</td>';
       h+='<td style="white-space:nowrap">';
+      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" onclick="inspectRule('+JSON.stringify(rid)+')">Inspect</button> ';
       h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canApply?'':'disabled')+' onclick="applyRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Apply</button> ';
       h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canRetire?'':'disabled')+' onclick="retireRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Retire</button> ';
       h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Erase</button>';

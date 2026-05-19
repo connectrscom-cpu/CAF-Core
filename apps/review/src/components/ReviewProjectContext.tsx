@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { mergePreservedNavQuery } from "@/lib/preserved-nav-query";
 
 const STORAGE_KEY = "caf-review-active-project";
 
@@ -146,10 +147,11 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       const merged = new URLSearchParams(existingQs ?? "");
       if (multiProject && activeProjectSlug) merged.set("project", activeProjectSlug);
       else merged.delete("project");
+      mergePreservedNavQuery(merged, searchParams);
       const qs = merged.toString();
       return qs ? `${base}?${qs}` : base;
     },
-    [multiProject, activeProjectSlug]
+    [multiProject, activeProjectSlug, searchParams]
   );
 
   const value = useMemo<ReviewProjectContextValue>(

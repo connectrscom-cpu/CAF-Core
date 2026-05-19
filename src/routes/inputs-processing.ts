@@ -706,7 +706,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .object({
         max_rows: z.number().int().min(1).max(80).optional(),
         min_pre_llm_score: z.number().min(0).max(1).optional(),
-        max_frames: z.number().int().min(1).max(12).optional(),
+        max_frames: z.number().int().min(1).max(16).optional(),
         rescan: z.boolean().optional(),
         rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
         disable_rating_percentile_gate: z.boolean().optional(),

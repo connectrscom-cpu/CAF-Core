@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import { q } from "../db/queries.js";
 import type { InstagramNormalizedMediaAsset } from "../services/instagram-media-normalizer.js";
+import type { PendingEvidenceMediaAsset } from "../services/inputs-evidence-media-normalizer.js";
 
 export async function insertEvidenceMediaAssetsPending(
   db: Pool,
@@ -9,7 +10,8 @@ export async function insertEvidenceMediaAssetsPending(
   postUrl: string | null,
   postId: string | null,
   ownerUsername: string | null,
-  assets: InstagramNormalizedMediaAsset[]
+  assets: InstagramNormalizedMediaAsset[] | PendingEvidenceMediaAsset[],
+  sourcePlatform = "instagram"
 ): Promise<void> {
   if (assets.length === 0) return;
   const values: unknown[] = [];
@@ -22,7 +24,7 @@ export async function insertEvidenceMediaAssetsPending(
     values.push(
       projectId,
       evidenceRowId,
-      "instagram",
+      sourcePlatform,
       postUrl,
       postId,
       ownerUsername,
@@ -33,9 +35,9 @@ export async function insertEvidenceMediaAssetsPending(
       a.slide_index,
       "pending",
       JSON.stringify({
-        width: a.width ?? null,
-        height: a.height ?? null,
-        original_post_url: a.original_post_url ?? null,
+        width: "width" in a ? (a.width ?? null) : null,
+        height: "height" in a ? (a.height ?? null) : null,
+        original_post_url: "original_post_url" in a ? (a.original_post_url ?? null) : null,
       })
     );
   }
@@ -46,6 +48,151 @@ export async function insertEvidenceMediaAssetsPending(
      VALUES ${ph.join(", ")}`,
     values
   );
+}
+
+export interface EvidenceMediaRow {
+  id: string;
+  source_url: string;
+  asset_role: string;
+  media_type: string;
+  slide_index: number | null;
+  archive_status: string;
+  public_url: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
+}
+
+export async function findEvidenceMediaBySourceUrl(
+  db: Pool,
+  projectId: string,
+  evidenceRowId: string,
+  sourceUrl: string
+): Promise<EvidenceMediaRow | null> {
+  const rows = await q<EvidenceMediaRow>(
+    db,
+    `SELECT id::text AS id, source_url, asset_role, media_type, slide_index, archive_status,
+            public_url, storage_bucket, storage_path
+       FROM caf_core.evidence_media_assets
+      WHERE project_id = $1 AND evidence_row_id = $2::bigint AND source_url = $3
+      LIMIT 1`,
+    [projectId, evidenceRowId, sourceUrl]
+  );
+  return rows[0] ?? null;
+}
+
+/** Archived frame URLs for vision (extracted frames first, then thumbnails). */
+export async function listEvidenceMediaVisionFrameUrls(
+  db: Pool,
+  projectId: string,
+  evidenceRowId: string,
+  maxFrames: number
+): Promise<string[]> {
+  const rows = await q<{ public_url: string | null; source_url: string; asset_role: string }>(
+    db,
+    `SELECT public_url, source_url, asset_role
+       FROM caf_core.evidence_media_assets
+      WHERE project_id = $1
+        AND evidence_row_id = $2::bigint
+        AND archive_status = 'archived'
+        AND asset_role IN ('extracted_frame', 'video_frame', 'thumbnail')
+        AND (public_url IS NOT NULL OR source_url LIKE 'https://%')
+      ORDER BY
+        CASE asset_role
+          WHEN 'extracted_frame' THEN 0
+          WHEN 'video_frame' THEN 1
+          ELSE 2
+        END,
+        slide_index ASC NULLS LAST,
+        created_at ASC
+      LIMIT $3`,
+    [projectId, evidenceRowId, Math.max(1, Math.min(maxFrames, 24))]
+  );
+  const out: string[] = [];
+  for (const r of rows) {
+    const u = (r.public_url && r.public_url.trim()) || (r.source_url.startsWith("https://") ? r.source_url : "");
+    if (!u || out.includes(u)) continue;
+    out.push(u);
+    if (out.length >= maxFrames) break;
+  }
+  return out;
+}
+
+export async function upsertEvidenceMediaAssetArchived(
+  db: Pool,
+  args: {
+    projectId: string;
+    evidenceRowId: string;
+    sourcePlatform: string;
+    sourcePostUrl?: string | null;
+    sourcePostId?: string | null;
+    sourceOwnerUsername?: string | null;
+    sourceUrl: string;
+    sourceField: string;
+    assetRole: string;
+    mediaType: string;
+    slideIndex: number | null;
+    archiveStatus: "archived" | "failed" | "pending";
+    errorMessage?: string | null;
+    storageBucket?: string | null;
+    storagePath?: string | null;
+    publicUrl?: string | null;
+    metadata?: Record<string, unknown>;
+  }
+): Promise<string> {
+  const existing = await findEvidenceMediaBySourceUrl(db, args.projectId, args.evidenceRowId, args.sourceUrl);
+  if (existing) {
+    await db.query(
+      `UPDATE caf_core.evidence_media_assets
+          SET archive_status = $2,
+              error_message = $3,
+              storage_bucket = COALESCE($4, storage_bucket),
+              storage_path = COALESCE($5, storage_path),
+              public_url = COALESCE($6, public_url),
+              metadata_json = COALESCE(metadata_json, '{}'::jsonb) || $7::jsonb,
+              updated_at = now()
+        WHERE id = $1::uuid`,
+      [
+        existing.id,
+        args.archiveStatus,
+        args.errorMessage ?? null,
+        args.storageBucket ?? null,
+        args.storagePath ?? null,
+        args.publicUrl ?? null,
+        JSON.stringify(args.metadata ?? {}),
+      ]
+    );
+    return existing.id;
+  }
+
+  const ins = await q<{ id: string }>(
+    db,
+    `INSERT INTO caf_core.evidence_media_assets
+      (project_id, evidence_row_id, source_platform, source_post_url, source_post_id, source_owner_username,
+       source_url, source_field, asset_role, media_type, slide_index, archive_status, error_message,
+       storage_bucket, storage_path, public_url, metadata_json)
+     VALUES ($1, $2::bigint, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb)
+     RETURNING id::text AS id`,
+    [
+      args.projectId,
+      args.evidenceRowId,
+      args.sourcePlatform,
+      args.sourcePostUrl ?? null,
+      args.sourcePostId ?? null,
+      args.sourceOwnerUsername ?? null,
+      args.sourceUrl,
+      args.sourceField,
+      args.assetRole,
+      args.mediaType,
+      args.slideIndex,
+      args.archiveStatus,
+      args.errorMessage ?? null,
+      args.storageBucket ?? null,
+      args.storagePath ?? null,
+      args.publicUrl ?? null,
+      JSON.stringify(args.metadata ?? {}),
+    ]
+  );
+  return ins[0]!.id;
 }
 
 export interface EvidenceMediaPreviewRow {

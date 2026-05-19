@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { TaskTable } from "@/components/TaskTable";
 import type { ReviewQueueRow } from "@/lib/types";
 
@@ -12,6 +13,7 @@ interface ApprovedResponse {
 }
 
 export default function ApprovedPage() {
+  const { navHref } = useReviewProject();
   const [data, setData] = useState<ApprovedResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +46,7 @@ export default function ApprovedPage() {
       </div>
 
       <div style={{ padding: "20px 28px 28px" }}>
-        <Link href="/" className="detail-back" style={{ padding: 0, marginBottom: 16, display: "inline-block" }}>← Review Console</Link>
+        <Link href={navHref("/")} className="detail-back" style={{ padding: 0, marginBottom: 16, display: "inline-block" }}>← Review Console</Link>
         {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
         {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
         {data && !loading && (

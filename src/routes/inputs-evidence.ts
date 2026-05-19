@@ -12,7 +12,9 @@ import {
   sheetRowCountsForImport,
 } from "../repositories/inputs-evidence.js";
 import { insertEvidenceMediaAssetsPending } from "../repositories/inputs-evidence-media.js";
+import { normalizeGenericVideoEvidenceMedia } from "../services/inputs-evidence-media-normalizer.js";
 import { normalizeInstagramEvidenceMedia } from "../services/instagram-media-normalizer.js";
+import { isVideoLikeEvidence } from "../services/inputs-image-url-for-analysis.js";
 import { parseInputsSnsWorkbookBuffer } from "../services/inputs-sns-workbook-parser.js";
 import { computeInputHealth, flagSparseEvidenceRows, persistImportHealth } from "../services/input-health.js";
 
@@ -88,18 +90,41 @@ export function registerInputsEvidenceRoutes(app: FastifyInstance, deps: { db: P
       }));
       const rowIds = await insertInputsEvidenceRowsBatch(db, project.id, imp.id, slice);
       for (let j = 0; j < slice.length; j++) {
-        if (slice[j].evidence_kind !== "instagram_post") continue;
-        const norm = normalizeInstagramEvidenceMedia(slice[j].payload_json);
-        if (norm.media_assets.length === 0) continue;
-        await insertEvidenceMediaAssetsPending(
-          db,
-          project.id,
-          rowIds[j]!,
-          norm.post_url,
-          norm.post_id,
-          norm.owner_username,
-          norm.media_assets
-        );
+        const payload = slice[j].payload_json as Record<string, unknown>;
+        if (slice[j].evidence_kind === "instagram_post") {
+          const norm = normalizeInstagramEvidenceMedia(payload);
+          if (norm.media_assets.length > 0) {
+            await insertEvidenceMediaAssetsPending(
+              db,
+              project.id,
+              rowIds[j]!,
+              norm.post_url,
+              norm.post_id,
+              norm.owner_username,
+              norm.media_assets,
+              "instagram"
+            );
+          }
+          continue;
+        }
+        if (
+          slice[j].evidence_kind === "tiktok_video" ||
+          (slice[j].evidence_kind === "facebook_post" && isVideoLikeEvidence(slice[j].evidence_kind, payload))
+        ) {
+          const norm = normalizeGenericVideoEvidenceMedia(slice[j].evidence_kind, payload);
+          if (norm && norm.media_assets.length > 0) {
+            await insertEvidenceMediaAssetsPending(
+              db,
+              project.id,
+              rowIds[j]!,
+              norm.post_url,
+              norm.post_id,
+              norm.owner_username,
+              norm.media_assets,
+              norm.source_platform
+            );
+          }
+        }
       }
     }
 

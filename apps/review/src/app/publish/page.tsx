@@ -1334,9 +1334,11 @@ function PublishPageContent() {
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
                       <div style={{ fontSize: 12, color: "var(--muted)" }}>Preview (as-posted format)</div>
                       <Link
-                        href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(
-                          projectSlug || effectiveProjectForQueue
-                        )}`}
+                        href={navHref(
+                          `/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(
+                            projectSlug || effectiveProjectForQueue
+                          )}`
+                        )}
                         className="btn-ghost"
                         style={{ fontSize: 12 }}
                       >
@@ -1552,7 +1554,12 @@ function PublishPageContent() {
                   >
                     {saving ? "Scheduling…" : "Schedule selected platforms"}
                   </button>
-                  <Link href={`/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`} className="btn-ghost">
+                  <Link
+                    href={navHref(
+                      `/content/${encodeURIComponent(selected.task_id ?? "")}?project=${encodeURIComponent(projectSlug)}`
+                    )}
+                    className="btn-ghost"
+                  >
                     Open in content review
                   </Link>
 

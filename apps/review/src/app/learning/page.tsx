@@ -2,6 +2,8 @@
 
 import { Fragment, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useReviewProject } from "@/components/ReviewProjectContext";
+import { taskReviewHref } from "@/lib/task-links";
 
 async function copyTaskIdToClipboard(taskId: string): Promise<void> {
   try {
@@ -610,6 +612,7 @@ function buildNotesOnlyGuidelinesPrompt(input: {
 }
 
 export default function LearningPage() {
+  const { navHref } = useReviewProject();
   const [project, setProject] = useState("SNS");
   const [rules, setRules] = useState<LearningRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1445,7 +1448,7 @@ export default function LearningPage() {
                             Copy ID
                           </button>
                           <Link
-                            href={`/t/${encodeURIComponent(tid)}`}
+                            href={navHref(taskReviewHref("t", tid, project))}
                             className="btn-ghost"
                             style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
                             title="Human editorial workbench"
@@ -1453,7 +1456,7 @@ export default function LearningPage() {
                             Open task
                           </Link>
                           <Link
-                            href={`/content/${encodeURIComponent(tid)}`}
+                            href={navHref(taskReviewHref("content", tid, project))}
                             className="btn-ghost"
                             style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
                             title="Approved content view (read-only)"

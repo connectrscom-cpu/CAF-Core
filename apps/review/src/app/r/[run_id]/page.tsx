@@ -6,7 +6,9 @@ import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
 import type { ReviewQueueRow } from "@/lib/types";
+import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
+import { RunExportToolbar } from "@/components/RunExportToolbar";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 
 interface TasksResponse {
@@ -20,6 +22,7 @@ interface TasksResponse {
 }
 
 function RunContent() {
+  const { navHref } = useReviewProject();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -40,8 +43,6 @@ function RunContent() {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewSaving, setReviewSaving] = useState(false);
   const [reviewMsg, setReviewMsg] = useState<string | null>(null);
-  const [exportMsg, setExportMsg] = useState<string | null>(null);
-  const [exportBusy, setExportBusy] = useState(false);
 
   const queryString = useMemo(() => {
     const q = new URLSearchParams(searchParams.toString());
@@ -144,38 +145,14 @@ function RunContent() {
     const tid = (row.task_id ?? "").trim();
     if (!tid) return null;
     const proj = (row.project ?? "").trim();
-    return { href: taskReviewHref("t", tid, proj || undefined) };
-  }, [data?.items]);
+    return { href: navHref(taskReviewHref("t", tid, proj || undefined)) };
+  }, [data?.items, navHref]);
 
   const reviewNext = () => {
     if (firstReadyLink) router.push(firstReadyLink.href);
   };
 
   const runTitle = facets.run_display_names?.[run_id]?.trim();
-
-  const downloadExport = (format: "md" | "json") => {
-    if (!effectiveProjectSlug || !run_id) return;
-    const qs = new URLSearchParams({ run_id, project_slug: effectiveProjectSlug, format });
-    window.location.href = `/api/runs/export?${qs.toString()}`;
-  };
-
-  const copyExportToClipboard = async () => {
-    if (!effectiveProjectSlug || !run_id) return;
-    setExportBusy(true);
-    setExportMsg(null);
-    try {
-      const qs = new URLSearchParams({ run_id, project_slug: effectiveProjectSlug, format: "md" });
-      const res = await fetch(`/api/runs/export?${qs.toString()}`, { cache: "no-store" });
-      if (!res.ok) throw new Error(await res.text());
-      const text = await res.text();
-      await navigator.clipboard.writeText(text);
-      setExportMsg("Copied run export (Markdown) to clipboard.");
-    } catch (e) {
-      setExportMsg(e instanceof Error ? e.message : "Copy failed");
-    } finally {
-      setExportBusy(false);
-    }
-  };
 
   return (
     <>
@@ -193,32 +170,15 @@ function RunContent() {
             )}
           </span>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {effectiveProjectSlug && (
-            <>
-              <button type="button" className="btn-ghost" disabled={exportBusy} onClick={() => void copyExportToClipboard()}>
-                {exportBusy ? "Copying…" : "Copy export"}
-              </button>
-              <button type="button" className="btn-ghost" disabled={exportBusy} onClick={() => downloadExport("md")}>
-                Download export (MD)
-              </button>
-              <button type="button" className="btn-ghost" disabled={exportBusy} onClick={() => downloadExport("json")}>
-                Download export (JSON)
-              </button>
-            </>
-          )}
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {effectiveProjectSlug && <RunExportToolbar runId={run_id} projectSlug={effectiveProjectSlug} variant="header" />}
           {firstReadyLink && (
-            <button type="button" className="btn-primary" onClick={reviewNext}>
+            <button type="button" className="btn-primary" onClick={reviewNext} style={{ alignSelf: "flex-start" }}>
               Review next pending
             </button>
           )}
         </div>
       </div>
-      {exportMsg && (
-        <div style={{ padding: "0 28px", marginTop: -10, marginBottom: 12, color: exportMsg.includes("fail") ? "var(--red)" : "var(--muted)", fontSize: 13 }}>
-          {exportMsg}
-        </div>
-      )}
 
       <div
         className="card"
