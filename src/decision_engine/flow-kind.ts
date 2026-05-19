@@ -3,8 +3,11 @@
  */
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
+import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_VIDEO } from "../domain/top-performer-mimic-flow-types.js";
 
 export function isCarouselFlow(flowType: string): boolean {
+  const raw = flowType ?? "";
+  if (raw === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL) return true;
   const ft = resolveCanonicalFlowType(flowType);
   if (ft === CANONICAL_FLOW_TYPES.CAROUSEL) return true;
   // Legacy heuristic fallback (defensive for unmigrated DBs / ad-hoc flows)
@@ -14,6 +17,7 @@ export function isCarouselFlow(flowType: string): boolean {
 /** Video-class flows: include HeyGen/scene names without the word "video" in flow_type. */
 export function isVideoFlow(flowType: string): boolean {
   const raw = flowType ?? "";
+  if (raw === FLOW_TOP_PERFORMER_MIMIC_VIDEO) return true;
   const ft = resolveCanonicalFlowType(raw);
   if (isProductVideoFlow(raw)) return true;
   if (

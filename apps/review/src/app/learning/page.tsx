@@ -2,6 +2,7 @@
 
 import { Fragment, useEffect, useState, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
 
@@ -612,8 +613,12 @@ function buildNotesOnlyGuidelinesPrompt(input: {
 }
 
 export default function LearningPage() {
-  const { navHref } = useReviewProject();
-  const [project, setProject] = useState("SNS");
+  const searchParams = useSearchParams();
+  const { navHref, ready, multiProject, lockedSlug, activeProjectSlug } = useReviewProject();
+  const projectFromUrl = searchParams.get("project")?.trim() ?? "";
+  const scopedProject =
+    projectFromUrl || (multiProject ? activeProjectSlug : lockedSlug) || "SNS";
+  const [project, setProject] = useState(scopedProject);
   const [rules, setRules] = useState<LearningRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [analysisResult, setAnalysisResult] = useState<Record<string, unknown> | null>(null);
@@ -718,6 +723,13 @@ export default function LearningPage() {
       return st !== "llm_review" && st !== "llm_upstream_recommendation";
     });
   }, [observations, obsLogFilter]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const next =
+      projectFromUrl || (multiProject ? activeProjectSlug : lockedSlug) || "SNS";
+    setProject((prev) => (prev === next ? prev : next));
+  }, [ready, projectFromUrl, multiProject, activeProjectSlug, lockedSlug]);
 
   useEffect(() => {
     fetchRules();

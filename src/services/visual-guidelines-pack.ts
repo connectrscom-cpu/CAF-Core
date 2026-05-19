@@ -6,13 +6,16 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import type { EvidenceRowInsightEnrichedRow } from "../repositories/inputs-evidence-insights.js";
 import { listTopPerformerInsightsEnriched } from "../repositories/inputs-evidence-insights.js";
+import { listEvidenceRowsByIds } from "../repositories/inputs-evidence.js";
 import { listEvidenceMediaStorageByRowIds } from "../repositories/inputs-evidence-media.js";
+import { postUrlForTopPerformerPreview } from "./inputs-top-performer-qualifying-preview.js";
 import {
   compactEvidenceMediaRows,
   compactStoredInspectionMedia,
   mergeInspectionMedia,
   normalizeFormatPattern,
   primaryFormatKey,
+  signInspectionMediaForDisplay,
   type VisualGuidelineInspectionMedia,
 } from "./visual-guidelines-media.js";
 import { compactCueList } from "./visual-guidelines-cues.js";
@@ -130,7 +133,29 @@ function flatCueStrings(groups: VisualGuidelineCueGroup[], cap = 64): string[] {
 export type VisualGuidelineBuildOpts = {
   max_entries?: number;
   evidenceMediaByRowId?: Map<string, ReturnType<typeof compactEvidenceMediaRows>>;
+  evidencePostUrlByRowId?: Map<string, string>;
 };
+
+async function evidencePostUrlMapForRowIds(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  rowIds: string[]
+): Promise<Map<string, string>> {
+  const unique = [...new Set(rowIds.map((x) => x.trim()).filter((x) => /^\d+$/.test(x)))];
+  if (unique.length === 0) return new Map();
+  const rows = await listEvidenceRowsByIds(db, projectId, importId, unique);
+  const out = new Map<string, string>();
+  for (const r of rows) {
+    const payload =
+      r.payload_json && typeof r.payload_json === "object" && !Array.isArray(r.payload_json)
+        ? (r.payload_json as Record<string, unknown>)
+        : {};
+    const url = postUrlForTopPerformerPreview(r.evidence_kind, payload);
+    if (url) out.set(r.id, url);
+  }
+  return out;
+}
 
 /**
  * One condensed guideline row per top-performer insight (capped), ordered by evidence rating then pre_llm.
@@ -165,10 +190,13 @@ export function buildVisualGuidelineEntriesFromInsights(
     const fromEvidence = opts?.evidenceMediaByRowId?.get(r.source_evidence_row_id) ?? null;
     const inspection_media = mergeInspectionMedia(fromInsight, fromEvidence);
 
+    const postUrl = opts?.evidencePostUrlByRowId?.get(r.source_evidence_row_id) ?? null;
+
     const entry: Record<string, unknown> = {
       insights_id: r.insights_id,
       analysis_tier: r.analysis_tier,
       source_evidence_row_id: r.source_evidence_row_id,
+      evidence_post_url: postUrl,
       evidence_kind: r.evidence_kind,
       evidence_rating_score: r.evidence_rating_score ?? null,
       evidence_performance_review: r.evidence_performance_review_json ?? null,
@@ -232,9 +260,12 @@ export async function buildVisualGuidelinesPackForImport(
     evidenceMediaByRowId.set(rid, compactEvidenceMediaRows(arr));
   }
 
+  const evidencePostUrlByRowId = await evidencePostUrlMapForRowIds(db, projectId, importId, rowIds);
+
   const built = buildVisualGuidelineEntriesFromInsights(rows, {
     max_entries: opts?.max_entries,
     evidenceMediaByRowId,
+    evidencePostUrlByRowId,
   });
   return {
     version: 1,
@@ -253,7 +284,8 @@ export async function buildVisualGuidelinesPackForImport(
 export async function hydrateVisualGuidelinesPackMedia(
   db: Pool,
   projectId: string,
-  pack: VisualGuidelinesPackV1
+  pack: VisualGuidelinesPackV1,
+  config?: AppConfig
 ): Promise<VisualGuidelinesPackV1> {
   const importId = pack.inputs_import_id;
   if (!importId || !Array.isArray(pack.entries) || pack.entries.length === 0) return pack;
@@ -289,7 +321,10 @@ export async function hydrateVisualGuidelinesPackMedia(
     evidenceMediaByRowId.set(rid, compactEvidenceMediaRows(arr));
   }
 
-  const entries = pack.entries.map((entry) => {
+  const evidencePostUrlByRowId = await evidencePostUrlMapForRowIds(db, projectId, importId, rowIds);
+
+  const entries: Record<string, unknown>[] = [];
+  for (const entry of pack.entries) {
     const rowId = String(entry.source_evidence_row_id ?? "").trim();
     const tier = String(entry.analysis_tier ?? "");
     const candidates = insightByRow.get(rowId) ?? [];
@@ -299,15 +334,27 @@ export async function hydrateVisualGuidelinesPackMedia(
       candidates[0];
     const fromInsight = ins ? compactStoredInspectionMedia(ins.stored_inspection_media_json) : null;
     const fromEvidence = evidenceMediaByRowId.get(rowId) ?? null;
-    const inspection_media = mergeInspectionMedia(fromInsight, fromEvidence);
-    if (!inspection_media?.items.length && !asRecord(entry.inspection_media)?.items) {
-      return entry;
+    let inspection_media = mergeInspectionMedia(fromInsight, fromEvidence);
+    if (config && inspection_media) {
+      inspection_media = await signInspectionMediaForDisplay(config, inspection_media);
     }
-    return {
+    const postUrl =
+      (typeof entry.evidence_post_url === "string" && entry.evidence_post_url.trim()) ||
+      evidencePostUrlByRowId.get(rowId) ||
+      null;
+    const hasMedia = !!inspection_media?.items.length || !!asRecord(entry.inspection_media)?.items;
+    if (!hasMedia && !postUrl) {
+      entries.push(entry);
+      continue;
+    }
+    entries.push({
       ...entry,
-      inspection_media: inspection_media as unknown as Record<string, unknown>,
-    };
-  });
+      ...(postUrl ? { evidence_post_url: postUrl } : {}),
+      ...(inspection_media
+        ? { inspection_media: inspection_media as unknown as Record<string, unknown> }
+        : {}),
+    });
+  }
 
   const cues_by_format = buildCueGroups(entries);
   return {

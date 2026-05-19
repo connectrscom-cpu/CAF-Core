@@ -6,6 +6,11 @@ import {
   FLOW_PRODUCT_SOCIAL_PROOF,
   FLOW_PRODUCT_USECASE,
 } from "../domain/product-flow-types.js";
+import {
+  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+  FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+  FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+} from "../domain/top-performer-mimic-flow-types.js";
 
 /**
  * Default per-run generation-plan caps (each planned job / variation counts as 1).
@@ -15,6 +20,10 @@ import {
 /** Default planned jobs per video-classified flow_type when not in DB (incl. FLOW_VIDEO, Reel_Script, etc.). */
 export const DEFAULT_VIDEO_FLOW_PLAN_CAP = 1;
 const VIDEO_CAP = DEFAULT_VIDEO_FLOW_PLAN_CAP;
+
+/** Placeholder top-performer mimic flows default to 0 until generation is wired. */
+export const DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP = 0;
+const TOP_PERFORMER_MIMIC_CAP = DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP;
 
 /** Default planned jobs (incl. variations) per carousel-classified flow_type when not overridden in DB. */
 export const DEFAULT_CAROUSEL_FLOW_PLAN_CAP = 10;
@@ -119,7 +128,35 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly {
   },
 ] as const;
 
+/**
+ * Signal-pack top-performer mimic flows (placeholder — not enabled in planner yet).
+ * Shown on Runs → planning caps; uses `max_jobs_per_flow_type` like video families.
+ */
+export const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS: readonly {
+  readonly id: string;
+  readonly label: string;
+  readonly keys: readonly string[];
+}[] = [
+  {
+    id: "tp_mimic_video",
+    label: "Top performer mimic — video (placeholder)",
+    keys: [FLOW_TOP_PERFORMER_MIMIC_VIDEO],
+  },
+  {
+    id: "tp_mimic_carousel",
+    label: "Top performer mimic — carousel (placeholder)",
+    keys: [FLOW_TOP_PERFORMER_MIMIC_CAROUSEL],
+  },
+  {
+    id: "tp_mimic_image",
+    label: "Top performer mimic — static image (placeholder)",
+    keys: [FLOW_TOP_PERFORMER_MIMIC_IMAGE],
+  },
+] as const;
+
 const DEFAULT_VIDEO_FLOW_GROUPS: readonly (readonly string[])[] = VIDEO_PLAN_CAP_GROUPS.map((g) => g.keys);
+const DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS: readonly (readonly string[])[] =
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => g.keys);
 
 /** Carousel-like flow_type keys (matches decision_engine isCarouselFlow naming). */
 const DEFAULT_CAROUSEL_FLOW_GROUPS: readonly (readonly string[])[] = [
@@ -136,6 +173,11 @@ export function defaultMaxJobsPerFlowType(): Record<string, number> {
   for (const group of DEFAULT_CAROUSEL_FLOW_GROUPS) {
     for (const k of group) {
       out[k] = CAROUSEL_CAP;
+    }
+  }
+  for (const group of DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS) {
+    for (const k of group) {
+      out[k] = TOP_PERFORMER_MIMIC_CAP;
     }
   }
   return out;

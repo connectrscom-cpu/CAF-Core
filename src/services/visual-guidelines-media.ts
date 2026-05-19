@@ -2,6 +2,10 @@
  * Compact inspection / evidence-media references for visual guideline entries.
  */
 import type { AppConfig } from "../config.js";
+import { createSignedUrlForObjectKey } from "./supabase-storage.js";
+
+/** Fresh signed URLs for Review thumbnails (private `assets` bucket). */
+const DISPLAY_SIGNED_URL_TTL_SEC = 3600;
 
 export interface VisualGuidelineMediaItem {
   role: string;
@@ -176,4 +180,47 @@ export function normalizeFormatPattern(raw: unknown): string {
 export function primaryFormatKey(formatPattern: string): string {
   const t = formatPattern.split("|")[0]?.trim();
   return t || "unknown";
+}
+
+const THUMBNAIL_ROLES = ["carousel_slide", "video_frame", "evidence_media"] as const;
+
+/** Best URL for `<img src>` — prefer signed vision URL over public path that may 403. */
+export function pickInspectionMediaPreviewUrl(media: VisualGuidelineInspectionMedia | null): string | null {
+  if (!media?.items?.length) return null;
+  const items = media.items;
+  const ranked = [
+    ...items.filter((it) => THUMBNAIL_ROLES.includes(it.role as (typeof THUMBNAIL_ROLES)[number])),
+    ...items,
+  ];
+  const seen = new Set<string>();
+  for (const it of ranked) {
+    const u = (it.vision_fetch_url ?? it.public_url ?? "").trim();
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    return u;
+  }
+  return null;
+}
+
+/** Re-sign stored object keys so Review can load thumbnails from private buckets. */
+export async function signInspectionMediaForDisplay(
+  config: AppConfig,
+  media: VisualGuidelineInspectionMedia | null
+): Promise<VisualGuidelineInspectionMedia | null> {
+  if (!media?.items?.length) return media;
+  const items: VisualGuidelineMediaItem[] = [];
+  for (const it of media.items) {
+    let vision_fetch_url = it.vision_fetch_url;
+    if (it.bucket && it.object_path) {
+      const signed = await createSignedUrlForObjectKey(
+        config,
+        it.bucket,
+        it.object_path,
+        DISPLAY_SIGNED_URL_TTL_SEC
+      );
+      if ("signedUrl" in signed) vision_fetch_url = signed.signedUrl;
+    }
+    items.push({ ...it, vision_fetch_url });
+  }
+  return { ...media, items };
 }

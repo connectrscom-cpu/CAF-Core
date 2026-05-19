@@ -35,9 +35,43 @@ export type VisualGuidelineEntry = Record<string, unknown> & {
   format_key?: string;
   source_evidence_row_id?: string;
   evidence_kind?: string;
+  evidence_post_url?: string | null;
   why_it_worked?: string;
   inspection_media?: InspectionMedia;
 };
+
+const THUMBNAIL_ROLES = ["carousel_slide", "video_frame", "evidence_media"];
+
+function pickInspectionMediaPreviewUrl(media: InspectionMedia | null): string | null {
+  if (!media?.items?.length) return null;
+  const items = media.items;
+  const ranked = [
+    ...items.filter((it) => THUMBNAIL_ROLES.includes(String(it.role ?? ""))),
+    ...items,
+  ];
+  const seen = new Set<string>();
+  for (const it of ranked) {
+    const u = (it.vision_fetch_url ?? it.public_url ?? "").trim();
+    if (!u || seen.has(u)) continue;
+    seen.add(u);
+    return u;
+  }
+  return null;
+}
+
+function normalizeInstagramPostUrl(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").trim();
+  if (!t.startsWith("http")) return null;
+  if (!/instagram\.com/i.test(t)) return t;
+  try {
+    const u = new URL(t);
+    u.search = "";
+    u.hash = "";
+    return u.toString().replace(/\/$/, "");
+  } catch {
+    return t;
+  }
+}
 
 export type VisualGuidelineCueGroup = {
   format_pattern: string;
@@ -353,10 +387,11 @@ function EntryMediaCard(props: {
 }) {
   const { entry, importId, navHref, compact } = props;
   const media = parseInspectionMedia(entry.inspection_media);
-  const previewUrl =
-    media?.items?.find((it) => it.public_url || it.vision_fetch_url)?.public_url ??
-    media?.items?.find((it) => it.vision_fetch_url)?.vision_fetch_url ??
-    null;
+  const previewUrl = pickInspectionMediaPreviewUrl(media);
+  const instagramUrl = normalizeInstagramPostUrl(
+    typeof entry.evidence_post_url === "string" ? entry.evidence_post_url : null
+  );
+  const thumbSize = compact ? 48 : 72;
 
   return (
     <div
@@ -370,22 +405,22 @@ function EntryMediaCard(props: {
         alignItems: "flex-start",
       }}
     >
-      {previewUrl && !compact && (
+      {previewUrl ? (
         <a href={previewUrl} target="_blank" rel="noreferrer" style={{ flexShrink: 0 }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={previewUrl}
             alt=""
             style={{
-              width: 72,
-              height: 72,
+              width: thumbSize,
+              height: thumbSize,
               objectFit: "cover",
               borderRadius: 6,
               border: "1px solid var(--border)",
             }}
           />
         </a>
-      )}
+      ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ marginBottom: 4 }}>
           <strong>{String(entry.format_pattern ?? entry.analysis_tier ?? "entry")}</strong>
@@ -393,6 +428,19 @@ function EntryMediaCard(props: {
             <span style={{ color: "var(--muted)", marginLeft: 8 }}>{String(entry.evidence_kind)}</span>
           ) : null}
         </div>
+        {instagramUrl ? (
+          <p style={{ margin: "0 0 6px", fontSize: 12 }}>
+            <a
+              href={instagramUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="detail-back"
+              style={{ fontSize: 12, wordBreak: "break-all" }}
+            >
+              Open on Instagram ↗
+            </a>
+          </p>
+        ) : null}
         {entry.why_it_worked ? (
           <p style={{ margin: "0 0 6px", color: "var(--muted)", fontSize: 12 }}>
             {String(entry.why_it_worked).slice(0, compact ? 120 : 280)}
@@ -440,10 +488,7 @@ function MediaLinks({ media }: { media: InspectionMedia | null }) {
   }
 
   const folder = media.storage_folder_label ?? media.folder_prefix;
-  const firstOpen =
-    media.items?.find((it) => it.vision_fetch_url)?.vision_fetch_url ??
-    media.items?.find((it) => it.public_url)?.public_url ??
-    null;
+  const firstOpen = pickInspectionMediaPreviewUrl(media);
 
   return (
     <div style={{ fontSize: 11 }}>
@@ -460,7 +505,7 @@ function MediaLinks({ media }: { media: InspectionMedia | null }) {
           </a>
         )}
         {(media.items ?? []).slice(0, compactMaxItems(media.items?.length ?? 0)).map((it, i) => {
-          const url = it.vision_fetch_url ?? it.public_url;
+          const url = (it.vision_fetch_url ?? it.public_url)?.trim() || null;
           if (!url) return null;
           const label = it.role ? `${it.role}${it.index != null ? ` ${it.index}` : ""}` : `file ${i + 1}`;
           return (

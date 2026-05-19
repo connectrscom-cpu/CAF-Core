@@ -325,7 +325,8 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         const hydrated = await hydrateVisualGuidelinesPackMedia(
           db,
           project.id,
-          raw as VisualGuidelinesPackV1
+          raw as VisualGuidelinesPackV1,
+          config
         );
         pack.derived_globals_json = { ...dg, visual_guidelines_pack_v1: hydrated };
       }

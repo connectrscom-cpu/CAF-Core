@@ -40,4 +40,11 @@ describe("defaultMaxJobsPerFlowType", () => {
   it("exports video default cap constant", () => {
     expect(DEFAULT_VIDEO_FLOW_PLAN_CAP).toBe(1);
   });
+
+  it("defaults top-performer mimic placeholder flow keys to 0", () => {
+    const d = defaultMaxJobsPerFlowType();
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_VIDEO).toBe(0);
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).toBe(0);
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_IMAGE).toBe(0);
+  });
 });

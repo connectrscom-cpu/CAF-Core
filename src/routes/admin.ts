@@ -117,7 +117,12 @@ import {
   IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
   IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
 } from "../services/ideas-from-insights-llm.js";
-import { VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP } from "../decision_engine/default-plan-caps.js";
+import {
+  VIDEO_PLAN_CAP_GROUPS,
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+  DEFAULT_VIDEO_FLOW_PLAN_CAP,
+  DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+} from "../decision_engine/default-plan-caps.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
   LEGACY_FLOW_TYPE_TO_CANONICAL,
@@ -411,6 +416,7 @@ const ADMIN_WORKBENCH_PAGES = [
   { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish" },
   { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground" },
   { route: "/admin/workbench", embedPath: "/", title: "Review & approve", sidebarKey: "workbench-review" },
+  { route: "/admin/learning", embedPath: "/learning", title: "Learning & metrics", sidebarKey: "learning" },
 ];
 
 function adminWorkbenchEmbedSrc(
@@ -3319,6 +3325,13 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <input type="number" id="plan-cap-video-${esc(g.id)}" min="0" step="1" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Planner cap for this video family (all listed flow_type synonyms). Empty = default ${DEFAULT_VIDEO_FLOW_PLAN_CAP}."/>
     </div>`
     ).join("");
+    const topPerformerMimicCapRowsHtml = TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map(
+      (g) => `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px">
+      <label for="plan-cap-mimic-${esc(g.id)}" style="font-size:12px;min-width:200px;max-width:380px;color:var(--text)">${esc(g.label)}</label>
+      <input type="number" id="plan-cap-mimic-${esc(g.id)}" min="0" step="1" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Planner cap for ${esc(g.keys[0] ?? "")}. Empty = default ${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP} (off until flow is implemented)."/>
+    </div>`
+    ).join("");
 
     const body = `
 <style>
@@ -3369,6 +3382,12 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">Per type: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per family. Saving updates System limits and affects the next Start or Re-plan.</p>
       ${videoPlanCapRowsHtml}
       <p id="plan-cap-video-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
+        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px">Top performer mimic (placeholder)</div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 8px;line-height:1.45">Future flows that replicate signal-pack top performers (<code>visual_guidelines_pack_v1</code>, hashtag leaderboard). Not wired to generation yet — caps default to <strong>0</strong>. Saved with <strong>Save video caps</strong>.</p>
+        ${topPerformerMimicCapRowsHtml}
+        <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:8px 0 0;max-width:none">Loading…</p>
+      </div>
     </div>
   </div>
   <div id="toast-area"></div>
@@ -3439,6 +3458,8 @@ const DEFAULT_MAX_CAROUSEL=${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_AGG=${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_PER_FLOW=${DEFAULT_VIDEO_FLOW_PLAN_CAP};
 const VIDEO_PLAN_CAP_GROUPS=${JSON.stringify(VIDEO_PLAN_CAP_GROUPS)};
+const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS)};
+const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+action;}
@@ -3835,6 +3856,7 @@ async function loadPlanningCaps(){
   const cbtn=document.getElementById('plan-cap-carousel-save');
   const aggInp=document.getElementById('plan-cap-video-agg');
   const vHint=document.getElementById('plan-cap-video-hint');
+  const mHint=document.getElementById('plan-cap-mimic-hint');
   const vBtn=document.getElementById('plan-cap-video-save');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
@@ -3843,18 +3865,26 @@ async function loadPlanningCaps(){
     var el=document.getElementById('plan-cap-video-'+g.id);
     if(el)el.placeholder=String(DEFAULT_MAX_VIDEO_PER_FLOW);
   });
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+    var el=document.getElementById('plan-cap-mimic-'+g.id);
+    if(el)el.placeholder=String(DEFAULT_MAX_MIMIC_PER_FLOW);
+  });
   if(!SLUG){
     if(cinp){cinp.disabled=true;if(cbtn)cbtn.disabled=true;if(chint)chint.textContent='Pick a project in the sidebar (or ?project=slug) to edit planning caps.';}
     if(aggInp){aggInp.disabled=true;if(vBtn)vBtn.disabled=true;}
     VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
+    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=true;});
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
+    if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
     return;
   }
   if(cinp){cinp.disabled=false;if(cbtn)cbtn.disabled=false;}
   if(aggInp){aggInp.disabled=false;if(vBtn)vBtn.disabled=false;}
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=false;});
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
+  if(mHint)mHint.textContent='Loading…';
   try{
     const r=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
     const d=await r.json();
@@ -3862,6 +3892,7 @@ async function loadPlanningCaps(){
       var errMsg=esc(apiErr(d,'Could not load constraints'));
       if(chint)chint.textContent=errMsg;
       if(vHint)vHint.textContent=errMsg;
+      if(mHint)mHint.textContent=errMsg;
       return;
     }
     if(cinp){
@@ -3889,11 +3920,24 @@ async function loadPlanningCaps(){
         parts.push(g.label.split('(')[0].trim()+': '+eff);
       });
       if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved in System limits':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and Save video caps to use defaults for that family.';
+      var mParts=[];
+      TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+        var mel=document.getElementById('plan-cap-mimic-'+g.id);
+        var mset=false,mval=0;
+        for(var mi=0;mi<g.keys.length;mi++){
+          if(Object.prototype.hasOwnProperty.call(ov,g.keys[mi])){mval=ov[g.keys[mi]];mset=true;break;}
+        }
+        if(mel)mel.value=mset?String(mval):'';
+        var meff=mset?mval:DEFAULT_MAX_MIMIC_PER_FLOW;
+        mParts.push(g.label.replace(' (placeholder)','')+': '+meff);
+      });
+      if(mHint)mHint.textContent='Mimic flows (placeholder): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' = off until flows are implemented.';
     }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));
     if(chint)chint.textContent=msg;
     if(vHint)vHint.textContent=msg;
+    if(mHint)mHint.textContent=msg;
   }
 }
 
@@ -3915,22 +3959,35 @@ async function saveVideoPlanningCaps(){
       if(!Number.isFinite(tn)||tn<0){showToast('Each video type: non-negative integer or empty.',false);return;}
     }
   }
+  for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
+    var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
+    var minp=document.getElementById('plan-cap-mimic-'+mg.id);
+    var mtr=(minp&&minp.value||'').trim();
+    if(mtr!==''){
+      var mn=parseInt(mtr,10);
+      if(!Number.isFinite(mn)||mn<0){showToast('Each mimic flow: non-negative integer or empty.',false);return;}
+    }
+  }
   if(vBtn)vBtn.disabled=true;
   try{
     var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
     var d0=await r0.json();
     if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
     var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
-    for(var gj=0;gj<VIDEO_PLAN_CAP_GROUPS.length;gj++){
-      var grp=VIDEO_PLAN_CAP_GROUPS[gj];
-      var inpg=document.getElementById('plan-cap-video-'+grp.id);
-      var rawg=(inpg&&inpg.value||'').trim();
-      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
-      if(rawg!==''){
-        var ng=parseInt(rawg,10);
-        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+    function mergePlanCapGroup(groups,prefix){
+      for(var gj=0;gj<groups.length;gj++){
+        var grp=groups[gj];
+        var inpg=document.getElementById(prefix+grp.id);
+        var rawg=(inpg&&inpg.value||'').trim();
+        for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+        if(rawg!==''){
+          var ng=parseInt(rawg,10);
+          for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+        }
       }
     }
+    mergePlanCapGroup(VIDEO_PLAN_CAP_GROUPS,'plan-cap-video-');
+    mergePlanCapGroup(TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,'plan-cap-mimic-');
     var body={_project:SLUG,max_jobs_per_flow_type:merged};
     if(aggRaw==='')body.max_video_jobs_per_run='';
     else body.max_video_jobs_per_run=parseInt(aggRaw,10);
@@ -6309,200 +6366,6 @@ ctLoad();
     reply.type("text/html").send(page("Carousel templates", "carousel-templates", body, projects, "", adminHeadTokenScript(config)));
   });
 
-  // --- Learning (project-scoped) ---
-  app.get("/admin/learning", async (request, reply) => {
-    const query = request.query as Record<string, string>;
-    const projects = await listProjects(db);
-    const project = await resolveProject(db, query.project);
-    const currentSlug = project?.slug ?? projects[0]?.slug ?? "";
-    const body = `
-<div class="ph"><div><h2>Learning</h2><span class="ph-sub">Project learning rules (apply / retire / erase)</span></div></div>
-<div class="content">
-  <div class="card">
-    <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
-      <span>Rules</span>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
-        <button class="btn-ghost" type="button" onclick="loadRules()">Refresh</button>
-        <button class="btn-ghost" type="button" style="color:var(--red);border:1px solid var(--border)" onclick="eraseAllPrompt()">Erase ALL</button>
-      </div>
-    </div>
-    <div id="learning-msg" class="form-msg" style="padding:0 20px 12px;color:var(--fg2)"></div>
-    <div id="learning-rules" style="overflow-x:auto;padding:0 20px 18px"><div class="empty">Loading…</div></div>
-    <div style="padding:0 20px 18px;color:var(--muted);font-size:12px">
-      Notes: “Erase” permanently deletes rows from <code>caf_core.learning_rules</code>. “Retire” sets status to expired.
-    </div>
-  </div>
-</div>
-<dialog id="learning-inspect-dlg" style="max-width:640px;width:92%;padding:0;border:none;border-radius:12px;background:var(--card);color:var(--fg)">
-  <div style="padding:16px 18px;border-bottom:1px solid var(--border)">
-    <h3 style="margin:0;font-size:17px">Rule details</h3>
-    <p style="margin:8px 0 0;font-size:12px;color:var(--muted)">Payload and provenance before apply / retire.</p>
-  </div>
-  <div id="learning-inspect-body" style="padding:16px 18px;max-height:min(70vh,560px);overflow:auto;font-size:13px;line-height:1.5"></div>
-  <div style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px">
-    <button type="button" class="btn-ghost" onclick="closeInspectRule()">Close</button>
-  </div>
-</dialog>
-<style>
-#learning-inspect-dlg::backdrop{background:rgba(0,0,0,.6)}
-.lr-dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 14px}
-.lr-dl dt{color:var(--muted);margin:0}
-.lr-dl dd{margin:0;word-break:break-word}
-.lr-section{font-weight:600;margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
-.lr-summary{margin:0;color:var(--fg2)}
-.lr-json{margin:0;padding:10px;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;overflow:auto;max-height:240px;white-space:pre-wrap;word-break:break-word}
-tr.lr-row-active td{background:rgba(59,130,246,.08)!important}
-.lr-id-btn{background:none;border:none;padding:0;color:var(--accent);cursor:pointer;font-family:inherit;font-size:inherit;text-align:left}
-.lr-id-btn:hover{text-decoration:underline;color:var(--accent2)}
-</style>
-<script>
-const SLUG=${JSON.stringify(currentSlug)};
-let RULE_ROWS=[];
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-function badge(s){const u=String(s||'').toUpperCase();let c='badge-b';if(u==='ACTIVE')c='badge-g';else if(u==='PENDING')c='badge-y';else if(u==='EXPIRED'||u==='REJECTED')c='badge-r';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
-function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch{return String(d)}}
-function setMsg(t,ok){const el=document.getElementById('learning-msg');if(!el)return;el.style.color=ok?'var(--fg2)':'var(--red)';el.textContent=t||'';}
-function rulePlainSummary(row){
-  const p=row&&row.action_payload&&typeof row.action_payload==='object'?row.action_payload:{};
-  const obs=typeof p.observation==='string'?p.observation:'';
-  const at=String(row.action_type||'');
-  if(at==='SCORE_PENALTY')return 'Lowers ranking scores (penalty '+String(p.penalty??'—')+', tag '+String(p.rejection_tag??'—')+'). '+obs;
-  if(at==='REDUCE_VOLUME')return 'Reduces planner volume for flow '+String(p.flow_type??row.scope_flow_type??'—')+'. '+String(p.recommendation||'')+' '+obs;
-  if(at==='SCORE_BOOST')return 'Increases ranking scores when trigger matches. '+obs;
-  if(at==='GENERATION_GUIDANCE'||at==='GENERATION_HINT')return typeof p.text==='string'?p.text:'Injects generation guidance for the content LLM. '+obs;
-  return at+': trigger "'+String(row.trigger_type||'—')+'" — see payload below.';
-}
-function jsonBlock(label,v){
-  if(v==null||(Array.isArray(v)&&v.length===0)||(typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).length===0))return '';
-  let text;
-  try{text=typeof v==='string'?v:JSON.stringify(v,null,2);}catch(e){text=String(v);}
-  return '<div style="margin-top:12px"><div class="lr-section">'+esc(label)+'</div><pre class="lr-json">'+esc(text)+'</pre></div>';
-}
-function inspectRule(ruleId){
-  const row=RULE_ROWS.find(function(r){return String(r.rule_id||'')===String(ruleId||'');});
-  if(!row){setMsg('Rule not found in loaded list.',false);return;}
-  const scope=[row.scope_flow_type,row.scope_platform].filter(Boolean).join(' / ')||'—';
-  const body=document.getElementById('learning-inspect-body');
-  if(!body)return;
-  body.innerHTML=
-    '<dl class="lr-dl">'+
-    '<dt>Rule ID</dt><dd class="mono" style="font-size:11px">'+esc(row.rule_id)+'</dd>'+
-    '<dt>Status</dt><dd>'+badge(row.status)+'</dd>'+
-    '<dt>Family</dt><dd>'+esc(row.rule_family||'—')+'</dd>'+
-    '<dt>Trigger</dt><dd>'+esc(row.trigger_type||'—')+'</dd>'+
-    '<dt>Scope</dt><dd>'+esc(scope)+'</dd>'+
-    '<dt>Action</dt><dd class="mono" style="font-size:11px">'+esc(row.action_type||'—')+'</dd>'+
-    '<dt>Confidence</dt><dd>'+(row.confidence!=null?esc(Number(row.confidence).toFixed(3)):'—')+'</dd>'+
-    '<dt>Applied</dt><dd>'+esc(fmtDate(row.applied_at))+'</dd>'+
-    '<dt>Created</dt><dd>'+esc(fmtDate(row.created_at))+'</dd>'+
-    (row.provenance?'<dt>Provenance</dt><dd>'+esc(row.provenance)+'</dd>':'')+
-    (row.hypothesis_id?'<dt>Hypothesis</dt><dd class="mono" style="font-size:11px">'+esc(row.hypothesis_id)+'</dd>':'')+
-    '</dl>'+
-    '<div class="lr-section">What it does</div><p class="lr-summary">'+esc(rulePlainSummary(row))+'</p>'+
-    jsonBlock('Action payload',row.action_payload)+
-    jsonBlock('Source entity IDs',row.source_entity_ids)+
-    jsonBlock('Evidence refs',row.evidence_refs);
-  const dlg=document.getElementById('learning-inspect-dlg');
-  if(dlg&&typeof dlg.showModal==='function')dlg.showModal();
-  document.querySelectorAll('#learning-rules tbody tr').forEach(function(tr){tr.classList.remove('lr-row-active');});
-  const sel='#learning-rules tbody tr[data-rule-id="'+String(ruleId).replace(/\\/g,'\\\\').replace(/"/g,'\\"')+'"]';
-  const active=document.querySelector(sel);
-  if(active)active.classList.add('lr-row-active');
-}
-function closeInspectRule(){
-  const dlg=document.getElementById('learning-inspect-dlg');
-  if(dlg&&typeof dlg.close==='function')dlg.close();
-  document.querySelectorAll('#learning-rules tbody tr.lr-row-active').forEach(function(tr){tr.classList.remove('lr-row-active');});
-}
-document.getElementById('learning-inspect-dlg')?.addEventListener('cancel',function(e){e.preventDefault();closeInspectRule();});
-
-async function loadRules(){
-  if(!SLUG){setMsg('Select a project in the sidebar first.',false);return;}
-  setMsg('',true);
-  const host=document.getElementById('learning-rules');
-  if(host)host.innerHTML='<div class="empty">Loading…</div>';
-  try{
-    const r=await cafFetch('/v1/learning/'+encodeURIComponent(SLUG)+'/rules');
-    const d=await r.json().catch(()=>({}));
-    if(!r.ok||!d.ok)throw new Error(String(d.error||('HTTP '+r.status)));
-    const rows=Array.isArray(d.rules)?d.rules:[];
-    RULE_ROWS=rows;
-    if(rows.length===0){if(host)host.innerHTML='<div class="empty">No learning rules for this project.</div>';return;}
-    let h='<table><thead><tr><th>Rule ID</th><th>Family</th><th>Trigger</th><th>Scope</th><th>Action</th><th>Status</th><th>Applied</th><th>Created</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
-    for(const row of rows){
-      const scope=[row.scope_flow_type,row.scope_platform].filter(Boolean).join(' / ')||'—';
-      const rid=String(row.rule_id||'');
-      const canApply=String(row.status||'')==='pending';
-      const canRetire=String(row.status||'')==='active';
-      const ridShort=rid.length>36?rid.slice(0,34)+'…':rid;
-      h+='<tr data-rule-id="'+esc(rid)+'">';
-      h+='<td class="mono"><button type="button" class="lr-id-btn" title="'+esc(rid)+'" onclick="inspectRule('+JSON.stringify(rid)+')">'+esc(ridShort)+'</button></td>';
-      h+='<td>'+esc(row.rule_family||'—')+'</td>';
-      h+='<td>'+esc(row.trigger_type||'—')+'</td>';
-      h+='<td>'+esc(scope)+'</td>';
-      h+='<td class="mono" style="font-size:11px">'+esc(row.action_type||'—')+'</td>';
-      h+='<td>'+badge(row.status)+'</td>';
-      h+='<td>'+fmtDate(row.applied_at)+'</td>';
-      h+='<td>'+fmtDate(row.created_at)+'</td>';
-      h+='<td style="white-space:nowrap">';
-      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" onclick="inspectRule('+JSON.stringify(rid)+')">Inspect</button> ';
-      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canApply?'':'disabled')+' onclick="applyRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Apply</button> ';
-      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;border:1px solid var(--border)" '+(canRetire?'':'disabled')+' onclick="retireRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Retire</button> ';
-      h+='<button type="button" class="btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseRule('+JSON.stringify(SLUG)+','+JSON.stringify(rid)+')">Erase</button>';
-      h+='</td>';
-      h+='</tr>';
-    }
-    h+='</tbody></table>';
-    if(host)host.innerHTML=h;
-  }catch(e){
-    if(host)host.innerHTML='<div class="empty" style="color:var(--red)">Could not load rules: '+esc(String(e&&e.message||e))+'</div>';
-  }
-}
-
-async function applyRule(storageSlug,ruleId){
-  if(!confirm('Apply rule '+ruleId+'?'))return;
-  setMsg('Applying…',true);
-  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId)+'/apply',{method:'POST'});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok||!d.ok){setMsg('Apply failed: '+String(d.error||('HTTP '+r.status)),false);return;}
-  setMsg('Applied '+ruleId,true);
-  loadRules();
-}
-async function retireRule(storageSlug,ruleId){
-  if(!confirm('Retire rule '+ruleId+'?'))return;
-  setMsg('Retiring…',true);
-  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId)+'/retire',{method:'POST'});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok||!d.ok){setMsg('Retire failed: '+String(d.error||('HTTP '+r.status)),false);return;}
-  setMsg('Retired '+ruleId,true);
-  loadRules();
-}
-async function eraseRule(storageSlug,ruleId){
-  if(!confirm('Erase rule '+ruleId+'?\\n\\nThis permanently deletes it.'))return;
-  setMsg('Erasing…',true);
-  const r=await cafFetch('/v1/learning/'+encodeURIComponent(storageSlug)+'/rules/'+encodeURIComponent(ruleId),{method:'DELETE'});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok||!d.ok){setMsg('Erase failed: '+String(d.error||('HTTP '+r.status)),false);return;}
-  setMsg('Erased '+ruleId,true);
-  loadRules();
-}
-async function eraseAllPrompt(){
-  if(!SLUG){setMsg('Select a project in the sidebar first.',false);return;}
-  const status=prompt('Erase which status? Enter: any, pending, active, expired, superseded, rejected','any')||'any';
-  const s=String(status||'any').trim()||'any';
-  if(!confirm('Erase ALL '+s.toUpperCase()+' rules for project '+SLUG+'?\\n\\nThis permanently deletes rows from Core.'))return;
-  setMsg('Erasing '+s+'…',true);
-  const r=await cafFetch('/v1/learning/'+encodeURIComponent(SLUG)+'/rules/erase-all',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:s,scope_type:'project'})});
-  const d=await r.json().catch(()=>({}));
-  if(!r.ok||!d.ok){setMsg('Erase-all failed: '+String(d.error||('HTTP '+r.status)),false);return;}
-  setMsg('Erased '+String(d.erased||'?')+' rule(s).',true);
-  loadRules();
-}
-
-loadRules();
-</script>`;
-    reply.type("text/html").send(page("Learning & metrics", "learning", body, projects, currentSlug, adminHeadTokenScript(config)));
-  });
 
   // --- Project Config (tabbed: constraints, strategy, brand, platforms, flow types, risk rules, prompts, reference posts, heygen) ---
   app.get("/admin/config", async (request, reply) => {
