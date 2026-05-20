@@ -1237,6 +1237,9 @@ export function buildSlideRenderContext(
     body,
     handle: String(current.handle ?? base.cta_handle ?? cta.cta_handle ?? ""),
     ...(projectDisplayName ? { project_display_name: projectDisplayName } : {}),
+    ...(typeof baseRec.background_image_url === "string" && baseRec.background_image_url.trim()
+      ? { background_image_url: baseRec.background_image_url.trim() }
+      : {}),
   };
 
   synchronizeCoverRootStringFields(out);

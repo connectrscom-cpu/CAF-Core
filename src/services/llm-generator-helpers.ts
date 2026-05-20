@@ -9,6 +9,11 @@ import {
 import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  pickTopPerformerKnowledgeForStep,
+  topPerformerKnowledgeStepForFlowType,
+} from "../domain/signal-pack-top-performer-knowledge.js";
 import { filterSignalPackHashtagCandidates } from "../domain/signal-hashtag-sanitize.js";
 import { loadConfig } from "../config.js";
 import { budgetSignalPackContextForLlm } from "./llm-creation-pack-budget.js";
@@ -359,6 +364,19 @@ export async function buildCreationPack(
 
   if (isProductVideoFlow(flowType)) {
     pack.product_video_hashtag_allowlist = filteredForProduct;
+  }
+
+  if (flowType && isTopPerformerMimicRenderableFlow(flowType)) {
+    const derivedGlobals =
+      signalPack?.derived_globals_json &&
+      typeof signalPack.derived_globals_json === "object" &&
+      !Array.isArray(signalPack.derived_globals_json)
+        ? (signalPack.derived_globals_json as Record<string, unknown>)
+        : null;
+    const step = topPerformerKnowledgeStepForFlowType(flowType);
+    if (step) {
+      pack.top_performer_mimic_knowledge = pickTopPerformerKnowledgeForStep(derivedGlobals, step);
+    }
   }
 
   return pack;

@@ -41,7 +41,7 @@ export function isProductImageFlow(flowType: string | null | undefined): boolean
 }
 
 export function isCarouselFlow(flowType: string): boolean {
-  if (flowType === "FLOW_CAROUSEL") return true;
+  if (flowType === "FLOW_CAROUSEL" || flowType === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL") return true;
   return /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
 }
 
@@ -60,11 +60,12 @@ export function isVideoFlow(flowType: string): boolean {
 }
 
 /**
- * Image-class flows: currently only FLOW_IMG_* product flows. Kept narrow on purpose — matching
- * by substring (e.g. /image/i) would false-positive on Video_Script flow names.
+ * Image-class flows: product image ads + top-performer mimic image posts.
  */
 export function isImageFlow(flowType: string | null | undefined): boolean {
-  return isProductImageFlow(flowType);
+  const ft = (flowType ?? "").trim();
+  if (ft === "FLOW_TOP_PERFORMER_MIMIC_IMAGE") return true;
+  return isProductImageFlow(ft);
 }
 
 export type ReviewContentKind = "carousel" | "video" | "image" | "unknown";

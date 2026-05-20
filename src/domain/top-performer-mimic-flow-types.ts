@@ -1,7 +1,6 @@
 /**
- * Placeholder flow_type keys for content that mimics signal-pack top performers
- * (`derived_globals_json.visual_guidelines_pack_v1`, hashtag leaderboard, etc.).
- * Generation / planning wiring is not implemented yet — caps are reserved in admin UI.
+ * Top-performer mimic flow_type keys (image + carousel wired when MIMIC_IMAGE_ENABLED).
+ * Video mimic remains a placeholder. Read knowledge via `pickTopPerformerKnowledgeForStep`.
  */
 export const FLOW_TOP_PERFORMER_MIMIC_VIDEO = "FLOW_TOP_PERFORMER_MIMIC_VIDEO";
 export const FLOW_TOP_PERFORMER_MIMIC_CAROUSEL = "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL";
@@ -19,3 +18,19 @@ export function isTopPerformerMimicFlow(flowType: string): boolean {
   const ft = (flowType ?? "").trim();
   return (TOP_PERFORMER_MIMIC_FLOW_TYPES as readonly string[]).includes(ft);
 }
+
+export function isTopPerformerMimicImageFlow(flowType: string): boolean {
+  return (flowType ?? "").trim() === FLOW_TOP_PERFORMER_MIMIC_IMAGE;
+}
+
+export function isTopPerformerMimicCarouselFlow(flowType: string): boolean {
+  return (flowType ?? "").trim() === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL;
+}
+
+/** Image + carousel mimic flows wired to gpt-image-1 (excludes video placeholder). */
+export function isTopPerformerMimicRenderableFlow(flowType: string): boolean {
+  return isTopPerformerMimicImageFlow(flowType) || isTopPerformerMimicCarouselFlow(flowType);
+}
+
+export const TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE =
+  "Top-performer mimic flows require MIMIC_IMAGE_ENABLED=1 and OPENAI_API_KEY — enable in env and project allowed_flow_types.";

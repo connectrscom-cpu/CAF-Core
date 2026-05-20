@@ -1,5 +1,10 @@
 import type { Pool } from "pg";
-import { mergeSignalPackDerivedGlobalsJson } from "../repositories/signal-packs.js";
+import {
+  buildTopPerformerKnowledgeV1,
+  mergeTopPerformerKnowledgeIntoDerivedGlobals,
+  SIGNAL_PACK_DERIVED_GLOBALS_KEYS,
+} from "../domain/signal-pack-top-performer-knowledge.js";
+import { getSignalPackById, mergeSignalPackDerivedGlobalsJson } from "../repositories/signal-packs.js";
 import { listCreativeInsights } from "../repositories/creative-intelligence.js";
 
 /**
@@ -61,5 +66,13 @@ export async function mergeCreativeStylingIntoSignalPack(
         };
 
   await mergeSignalPackDerivedGlobalsJson(db, signalPackId, patch);
+  const pack = await getSignalPackById(db, signalPackId);
+  if (pack) {
+    await mergeSignalPackDerivedGlobalsJson(db, signalPackId, {
+      [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.topPerformerKnowledgeV1]: buildTopPerformerKnowledgeV1(
+        pack.derived_globals_json ?? {}
+      ),
+    });
+  }
   return { merged: true, insight_count: insights.length };
 }

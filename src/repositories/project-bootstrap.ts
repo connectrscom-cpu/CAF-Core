@@ -4,6 +4,7 @@ import { q, qOne } from "../db/queries.js";
 import {
   seedCanonicalAllowedFlowTypes,
   seedProductFlowTypesSkeleton,
+  seedMimicFlowTypesSkeleton,
   type HeygenConfigRow,
   upsertHeygenConfig,
   upsertRiskRule,
@@ -159,6 +160,7 @@ export async function ensureDefaultProjectProfileData(db: Pool, projectId: strin
   if (c.flow_types === 0) {
     await seedCanonicalAllowedFlowTypes(db, projectId);
     await seedProductFlowTypesSkeleton(db, projectId);
+    await seedMimicFlowTypesSkeleton(db, projectId);
   }
 
   if (c.risk_rules === 0) {

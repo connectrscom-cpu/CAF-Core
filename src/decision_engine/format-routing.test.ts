@@ -26,13 +26,16 @@ describe("format-routing", () => {
     expect(isPrimaryFormatMatch(c)).toBe(true);
   });
 
-  it("treats carousel idea × video flow as fallback only", () => {
+  it("excludes carousel idea × video flow from planning pools", () => {
     const c = cand({
       candidate_id: "a_FLOW_HEYGEN",
       flow_type: "FLOW_HEYGEN_VIDEO",
       payload: { idea_id: "a", format: "carousel" },
     });
     expect(isPrimaryFormatMatch(c)).toBe(false);
+    const { primary, fallback } = partitionCandidatesForPlanningPhases([c]);
+    expect(primary).toHaveLength(0);
+    expect(fallback).toHaveLength(0);
   });
 
   it("treats video idea × video flow as primary match", () => {
@@ -60,7 +63,6 @@ describe("format-routing", () => {
     const { primary, fallback } = partitionCandidatesForPlanningPhases(sorted);
     expect(primary).toHaveLength(1);
     expect(primary[0]?.flow_type).toBe("FLOW_CAROUSEL");
-    expect(fallback).toHaveLength(1);
-    expect(fallback[0]?.flow_type).toBe("FLOW_HEYGEN_VIDEO");
+    expect(fallback).toHaveLength(0);
   });
 });

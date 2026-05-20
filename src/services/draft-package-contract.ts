@@ -1,10 +1,10 @@
-import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 import { extractExplicitVideoPromptText, extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 
 export type DraftPackageContractMode = "skip" | "warn" | "enforce";
 
-export type DraftPackageType = "carousel_package" | "heygen_package";
+export type DraftPackageType = "carousel_package" | "heygen_package" | "image_package";
 
 export type DraftPackageValidation = {
   output: Record<string, unknown>;
@@ -152,6 +152,7 @@ function normalizeCarouselPublishMetadata(out: Record<string, unknown>): void {
 }
 
 function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
+  if (isImageFlow(flowType ?? "")) return "image_package";
   if (isCarouselFlow(flowType ?? "")) return "carousel_package";
   if (isVideoFlow(flowType ?? "")) return "heygen_package";
   return null;
@@ -216,6 +217,20 @@ function validateHeygenPackage(
   return { warnings, errors };
 }
 
+function validateImagePackage(out: Record<string, unknown>): { warnings: string[]; errors: string[] } {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  const caption = String(out.caption ?? out.primary_copy ?? "").trim();
+  if (!caption) {
+    warnings.push("image_package: missing caption/primary_copy (publish readiness weaker)");
+  }
+  const tags = normalizeHashtags(out.hashtags);
+  if (tags.length === 0) {
+    warnings.push("image_package: missing hashtags (discoverability risk)");
+  }
+  return { warnings, errors };
+}
+
 /**
  * Validate and lightly normalize generated_output into a strict execution-ready DraftPackage.
  * This is intentionally tolerant: it adds canonical fields (package_type) and emits warnings
@@ -236,6 +251,8 @@ export function validateAndNormalizeDraftPackage(
       ? "heygen_package"
       : rawType === "carousel_package"
         ? "carousel_package"
+        : rawType === "image_package"
+          ? "image_package"
         : rawType === "render_copy"
           ? "carousel_package"
           : null;
@@ -258,6 +275,13 @@ export function validateAndNormalizeDraftPackage(
     ensureStringField(output, "hook_text", String(output.hook_text ?? output.hook ?? output.headline ?? ""));
     ensureStringField(output, "primary_copy", String(output.primary_copy ?? output.caption ?? ""));
     ensureStringField(output, "cta_text", String(output.cta_text ?? output.cta ?? ""));
+  } else if (package_type === "image_package") {
+    const ht = uniq(normalizeHashtags(output.hashtags));
+    if (ht.length > 0) output.hashtags = ht;
+    const r = validateImagePackage(output);
+    warnings.push(...r.warnings);
+    errors.push(...r.errors);
+    ensureStringField(output, "primary_copy", String(output.primary_copy ?? output.caption ?? ""));
   } else if (package_type === "heygen_package") {
     // Normalize hashtags to bare tokens, and try extracting from caption if present.
     const ht = uniq(normalizeHashtags(output.hashtags));

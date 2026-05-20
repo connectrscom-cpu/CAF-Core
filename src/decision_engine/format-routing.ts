@@ -1,15 +1,20 @@
 /**
- * Format-first planning: ideas with `format` are matched to flow families in two passes.
+ * Strict format-first planning: ideas with `format` only compete in matching flow families.
  *
  * Pass 1 (primary): carousel ideas × carousel flows, video ideas × video flows, etc.
- * Pass 2 (fallback): same ideas may compete for other flow families (e.g. carousel idea → video)
- * after the primary pass, using per-(idea, flow-bucket) dedupe so one idea can still get both
- * a carousel job and a video job when caps allow.
+ * Pass 2 (fallback): ideas **without** `format`, or post/thread/other buckets only — never
+ * cross-format fallback for declared carousel or video ideas.
  */
-import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow } from "./flow-kind.js";
+import { FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
 export type IdeaFormatBucket = "carousel" | "video" | "post" | "thread" | "other";
+
+/** Planner / signal-pack row `format` field (same buckets as idea payloads). */
+export function bucketForRowFormat(row: Record<string, unknown>): IdeaFormatBucket | null {
+  return bucketForIdeaFormat(row.format);
+}
 
 export function bucketForIdeaFormat(raw: unknown): IdeaFormatBucket | null {
   const f = String(raw ?? "")
@@ -24,8 +29,10 @@ export function bucketForIdeaFormat(raw: unknown): IdeaFormatBucket | null {
 }
 
 export function bucketForFlowType(flowType: string): IdeaFormatBucket {
+  if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) return "post";
   if (isCarouselFlow(flowType)) return "carousel";
   if (isVideoFlow(flowType)) return "video";
+  if (isImageFlow(flowType)) return "post";
   return "other";
 }
 
@@ -49,6 +56,21 @@ export function isPrimaryFormatMatch(c: ScoredCandidate): boolean {
   }
   return ideaBucket === flowBucket;
 }
+
+/** Whether an enabled flow may be expanded for a planner row with a declared `format`. */
+export function flowTypeMatchesRowFormat(
+  flowType: string,
+  ideaBucket: IdeaFormatBucket | null
+): boolean {
+  if (!ideaBucket) return true;
+  const flowBucket = bucketForFlowType(flowType);
+  if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
+    return flowBucket === "other";
+  }
+  return ideaBucket === flowBucket;
+}
+
+const STRICT_FORMAT_BUCKETS = new Set<IdeaFormatBucket>(["carousel", "video"]);
 
 /** Pass 1: at most one planned job per idea within its declared format family. */
 export function ideaKeyPrimaryPass(c: ScoredCandidate): string {
@@ -76,8 +98,15 @@ export function partitionCandidatesForPlanningPhases(sorted: ScoredCandidate[]):
   const primary: ScoredCandidate[] = [];
   const fallback: ScoredCandidate[] = [];
   for (const c of sorted) {
-    if (isPrimaryFormatMatch(c)) primary.push(c);
-    else fallback.push(c);
+    if (isPrimaryFormatMatch(c)) {
+      primary.push(c);
+      continue;
+    }
+    const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format);
+    if (ideaBucket && STRICT_FORMAT_BUCKETS.has(ideaBucket)) {
+      continue;
+    }
+    fallback.push(c);
   }
   return { primary, fallback };
 }

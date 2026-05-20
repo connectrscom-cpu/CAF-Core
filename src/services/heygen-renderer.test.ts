@@ -91,6 +91,11 @@ describe("FLOW_VID_PROMPT_NO_AVATAR (canonical no-avatar prompt video)", () => {
     expect(resolveFlowEngineTemplateFlowType("FLOW_VID_PROMPT_NO_AVATAR")).toBe("FLOW_VID_PROMPT");
   });
 
+  it("falls back mimic flows to FLOW_CAROUSEL templates", () => {
+    expect(resolveFlowEngineTemplateFlowType("FLOW_TOP_PERFORMER_MIMIC_CAROUSEL")).toBe("FLOW_CAROUSEL");
+    expect(resolveFlowEngineTemplateFlowType("FLOW_TOP_PERFORMER_MIMIC_IMAGE")).toBe("FLOW_CAROUSEL");
+  });
+
   it("infers HEYGEN_NO_AVATAR so HeyGen uses Video Agent without avatar", () => {
     expect(resolveHeygenRenderMode("FLOW_VID_PROMPT_NO_AVATAR", undefined)).toBe("HEYGEN_NO_AVATAR");
     expect(inferHeygenRenderModeFromFlowType("FLOW_VID_PROMPT_NO_AVATAR")).toBe("HEYGEN_NO_AVATAR");

@@ -33,6 +33,7 @@ import {
 } from "../repositories/review-queue.js";
 import {
   buildCarouselPublishUrls,
+  buildImagePublishUrl,
   buildVideoPublishUrl,
   mergePublishUrlsIntoJob,
   mergeVideoPublishUrlIntoJob,
@@ -41,7 +42,7 @@ import { computeAutoValidationScores } from "../services/autoValidation.js";
 import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
-import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
 import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
 import { coerceIngestedGenerationPayload } from "../domain/stage-contract.js";
 import { buildValidationOutputV1 } from "../domain/validation-output.js";
@@ -287,6 +288,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       if (isCarouselFlow(flow)) {
         const urls = await buildCarouselPublishUrls(db, project.id, task_id);
         await mergePublishUrlsIntoJob(db, project.id, task_id, urls);
+      } else if (isImageFlow(flow)) {
+        const imgUrl = await buildImagePublishUrl(db, project.id, task_id);
+        if (imgUrl) await mergePublishUrlsIntoJob(db, project.id, task_id, [imgUrl]);
       } else if (isVideoFlow(flow)) {
         const vUrl = await buildVideoPublishUrl(db, project.id, task_id, gp2);
         if (vUrl) await mergeVideoPublishUrlIntoJob(db, project.id, task_id, vUrl);

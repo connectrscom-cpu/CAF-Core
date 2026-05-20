@@ -8,6 +8,7 @@ import type { AppConfig } from "../config.js";
 import { getInputsIdeaListById, listInputsIdeasForList } from "../repositories/inputs-idea-lists.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
+import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 
 export type IdeaFormatLimitBucket = "carousel" | "video" | "post" | "thread" | "other";
@@ -112,7 +113,7 @@ export async function buildSignalPackFromIdeaList(
     ideas_json: ideasJson,
     selected_idea_ids_json: [],
     source_inputs_idea_list_id: ideaListId,
-    derived_globals_json: {
+    derived_globals_json: mergeTopPerformerKnowledgeIntoDerivedGlobals({
       from_inputs_idea_list_id: ideaListId,
       from_inputs_import_id: list.inputs_import_id,
       ideas_count: ideasJson.length,
@@ -122,7 +123,7 @@ export async function buildSignalPackFromIdeaList(
       visual_guidelines_pack_v1: visualGuidelinesPack,
       format_limits: opts?.format_limits && Object.keys(opts.format_limits).length > 0 ? opts.format_limits : undefined,
       created_at: new Date().toISOString(),
-    },
+    }),
     notes: opts?.notes ?? `Built from inputs idea list ${ideaListId}`,
     upload_filename: `from_idea_list:${ideaListId}`,
     source_inputs_import_id: list.inputs_import_id,

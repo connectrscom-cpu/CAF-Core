@@ -201,7 +201,7 @@ export async function decideGenerationPlan(
     pass: "primary",
     ideaKey: ideaKeyPrimaryPass,
   });
-  // Pass 2: cross-format fallback (e.g. carousel idea → video) and ideas without `format`.
+  // Pass 2: ideas without `format` (and post/thread/other); no carousel↔video cross-format.
   await selectJobsFromCandidates(selectionCtx, selectionState, fallback, {
     pass: "fallback",
     ideaKey: ideaKeyFallbackPass,

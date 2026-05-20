@@ -1,4 +1,8 @@
 import { PRODUCT_VIDEO_FLOW_TYPES } from "./product-flow-types.js";
+import {
+  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+  FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+} from "./top-performer-mimic-flow-types.js";
 
 /**
  * Canonical flow_type values for planning — these are the *new* short identifiers used across
@@ -76,6 +80,10 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
   const c = resolveCanonicalFlowType(flowType);
   /** Share FLOW_VID_PROMPT prompt templates / output schemas — routing differs by job flow_type (avatar vs no avatar). */
   if (c === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR) return CANONICAL_FLOW_TYPES.VID_PROMPT;
+  /** Mimic flows inherit carousel schema + fallback prompts until native rows exist. */
+  if (c === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || c === FLOW_TOP_PERFORMER_MIMIC_IMAGE) {
+    return CANONICAL_FLOW_TYPES.CAROUSEL;
+  }
   return c;
 }
 

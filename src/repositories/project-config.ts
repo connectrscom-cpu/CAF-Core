@@ -8,6 +8,10 @@ import {
   isProductVideoFlow,
   type ProductHeygenMode,
 } from "../domain/product-flow-types.js";
+import {
+  TOP_PERFORMER_MIMIC_FLOW_TYPES,
+  FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+} from "../domain/top-performer-mimic-flow-types.js";
 import { q, qOne } from "../db/queries.js";
 
 // ---------------------------------------------------------------------------
@@ -437,6 +441,33 @@ export async function seedProductFlowTypesSkeleton(db: Pool, projectId: string):
       prompt_template_id: null,
       priority_weight: p--,
       notes: "Image ad flow — generation blocked until image tool is integrated.",
+      heygen_mode: null,
+    });
+  }
+}
+
+/**
+ * Top-performer mimic flows — **disabled** until enabled per project + `MIMIC_IMAGE_ENABLED=1`.
+ */
+export async function seedMimicFlowTypesSkeleton(db: Pool, projectId: string): Promise<void> {
+  let p = 4;
+  for (const ft of TOP_PERFORMER_MIMIC_FLOW_TYPES) {
+    const notes =
+      ft === FLOW_TOP_PERFORMER_MIMIC_VIDEO
+        ? "Top-performer video mimic — not wired in this release."
+        : "Top-performer visual mimic — requires MIMIC_IMAGE_ENABLED and archived inspection media.";
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: ft,
+      enabled: false,
+      default_variation_count: 1,
+      requires_signal_pack: true,
+      requires_learning_context: false,
+      allowed_platforms: null,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: p--,
+      notes,
       heygen_mode: null,
     });
   }

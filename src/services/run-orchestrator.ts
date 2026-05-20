@@ -55,6 +55,7 @@ import {
   resolveVideoIntent,
   shouldExcludeFlowFromVideoRouting,
 } from "../decision_engine/video-flow-routing.js";
+import { bucketForRowFormat, flowTypeMatchesRowFormat } from "../decision_engine/format-routing.js";
 import { loadProductHeygenModesForFlows, loadVideoRoutingConfig } from "./video-routing-config.js";
 
 /** Planner source rows written to the run before Start (`POST .../candidates`). */
@@ -404,8 +405,8 @@ function resolveCandidateDataForPlannedJob(
 /**
  * Build CandidateInput[] from the overall_candidates_json and allowed flows.
  *
- * Each planner source row becomes one candidate per enabled flow type.
- * The "sign" or "topic" field becomes the candidate_id.
+ * Each planner source row becomes candidates for **format-matched** enabled flows only
+ * (carousel rows → carousel flows, video rows → one routed video flow, etc.).
  */
 function buildCandidatesFromSignalPack(
   overallCandidates: Record<string, unknown>[],
@@ -480,7 +481,12 @@ function buildCandidatesFromSignalPack(
       continue;
     }
 
+    const rowFormatBucket = bucketForRowFormat(row);
+
     for (const flow of flowsForExpansion) {
+      if (!flowTypeMatchesRowFormat(flow.flow_type, rowFormatBucket)) {
+        continue;
+      }
       if (shouldSkipCandidateForFlow(platform, flow.flow_type)) {
         continue;
       }

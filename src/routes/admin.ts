@@ -120,8 +120,11 @@ import {
 import {
   VIDEO_PLAN_CAP_GROUPS,
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+  PLAN_CAP_UI_CATEGORIES,
+  ALL_PLAN_CAP_UI_GROUPS,
   DEFAULT_VIDEO_FLOW_PLAN_CAP,
   DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+  type PlanCapGroupDef,
 } from "../decision_engine/default-plan-caps.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
@@ -580,6 +583,38 @@ document.addEventListener("DOMContentLoaded",function(){
 
 function esc(s: unknown): string {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function planCapInputId(g: PlanCapGroupDef): string {
+  return g.uiChannel === "mimic" ? `plan-cap-mimic-${g.id}` : `plan-cap-video-${g.id}`;
+}
+
+function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
+  const inputId = planCapInputId(g);
+  const defaultCap =
+    g.uiChannel === "mimic" ? DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP : DEFAULT_VIDEO_FLOW_PLAN_CAP;
+  const title =
+    g.uiChannel === "mimic"
+      ? `Planner cap for ${g.keys[0] ?? ""}. Empty = default ${defaultCap}.`
+      : `Planner cap for this video family (all listed flow_type synonyms). Empty = default ${defaultCap}.`;
+  return `
+      <div class="plan-cap-row">
+        <label for="${inputId}">${esc(g.label)}</label>
+        <input type="number" id="${inputId}" min="0" step="1" title="${esc(title)}" />
+      </div>`;
+}
+
+function renderPlanCapColumnsHtml(): string {
+  return PLAN_CAP_UI_CATEGORIES.map((cat) => {
+    const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
+    const rows = groups.map((g) => renderPlanCapRowHtml(g)).join("");
+    return `
+    <div class="plan-cap-col">
+      <div class="plan-cap-col-title">${esc(cat.label)}</div>
+      <p class="plan-cap-col-hint">${esc(cat.hint)}</p>
+      ${rows}
+    </div>`;
+  }).join("");
 }
 
 function statusBadge(status: string): string {
@@ -3318,20 +3353,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
-    const videoPlanCapRowsHtml = VIDEO_PLAN_CAP_GROUPS.map(
-      (g) => `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px">
-      <label for="plan-cap-video-${esc(g.id)}" style="font-size:12px;min-width:200px;max-width:340px;color:var(--text)">${esc(g.label)}</label>
-      <input type="number" id="plan-cap-video-${esc(g.id)}" min="0" step="1" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Planner cap for this video family (all listed flow_type synonyms). Empty = default ${DEFAULT_VIDEO_FLOW_PLAN_CAP}."/>
-    </div>`
-    ).join("");
-    const topPerformerMimicCapRowsHtml = TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map(
-      (g) => `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px">
-      <label for="plan-cap-mimic-${esc(g.id)}" style="font-size:12px;min-width:200px;max-width:380px;color:var(--text)">${esc(g.label)}</label>
-      <input type="number" id="plan-cap-mimic-${esc(g.id)}" min="0" step="1" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Planner cap for ${esc(g.keys[0] ?? "")}. Empty = default ${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP} (off until flow is implemented)."/>
-    </div>`
-    ).join("");
+    const planCapColumnsHtml = renderPlanCapColumnsHtml();
 
     const body = `
 <style>
@@ -3347,6 +3369,19 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 .runs-ops-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
 .runs-ops-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .runs-ops-hint{font-size:12px;color:var(--muted);flex:1;min-width:220px;max-width:480px;line-height:1.45}
+.plan-cap-section{margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.plan-cap-toolbar{display:flex;flex-wrap:wrap;gap:20px 28px;align-items:flex-start;margin-bottom:12px}
+.plan-cap-toolbar-block{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.plan-cap-toolbar-block .runs-ops-hint{flex:1;min-width:200px;max-width:none;margin:0}
+.plan-cap-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
+@media (max-width:1100px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:720px){.plan-cap-grid{grid-template-columns:1fr}}
+.plan-cap-col{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg)}
+.plan-cap-col-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.plan-cap-col-hint{font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.4}
+.plan-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;margin-top:8px}
+.plan-cap-row label{font-size:12px;line-height:1.35;color:var(--text);cursor:pointer}
+.plan-cap-row input{width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text)}
 .sp-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2000;align-items:center;justify-content:center;padding:24px}
 .sp-modal-card{max-width:920px;max-height:90vh;overflow:auto;width:100%;position:relative}
 .sp-modal-table{width:100%;border-collapse:collapse;font-size:11px;margin:8px 0}
@@ -3364,30 +3399,27 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
       <p class="runs-ops-hint"><strong>Create run</strong> picks a <strong>signal pack</strong> (research + <code>ideas_json</code>). Before <strong>Start</strong>, open <strong>Runs → Candidates</strong> and materialize <code>runs.candidates_json</code> from pack ideas (all, LLM subset, or pick manually in the UI). <strong>Start</strong> expands that JSON × flows and plans jobs. <strong>Upload .xlsx</strong> is optional legacy ingest. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps <code>candidates_json</code>). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
-    <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);align-items:flex-start">
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-        <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max carousel jobs / run</label>
-        <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Saved in System limits for this project. Empty uses server default."/>
-        <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save cap</button>
+    <div class="runs-ops-row plan-cap-section" style="align-items:stretch;flex-direction:column;gap:10px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Planning caps</div>
+      <div class="plan-cap-toolbar">
+        <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max carousel jobs / run</label>
+          <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Saved in System limits for this project. Empty uses server default."/>
+          <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save cap</button>
+        </div>
+        <p id="plan-cap-carousel-hint" class="runs-ops-hint">Loading…</p>
       </div>
-      <p id="plan-cap-carousel-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-    </div>
-    <div class="runs-ops-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);flex-direction:column;align-items:stretch;gap:10px">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Video planning caps</div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-        <label for="plan-cap-video-agg" style="font-size:13px;white-space:nowrap">Max video jobs / run (all types)</label>
-        <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
-        <button type="button" class="btn-ghost" id="plan-cap-video-save" onclick="saveVideoPlanningCaps()" style="border:1px solid var(--border)">Save video caps</button>
+      <div class="plan-cap-toolbar">
+        <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-video-agg" style="font-size:13px;white-space:nowrap">Max video jobs / run (all types)</label>
+          <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
+          <button type="button" class="btn-ghost" id="plan-cap-video-save" onclick="saveVideoPlanningCaps()" style="border:1px solid var(--border)">Save video caps</button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45;flex:1;min-width:240px">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per family (mimic default <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong>). Saving updates System limits for the next Start or Re-plan.</p>
       </div>
-      <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">Per type: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per family. Saving updates System limits and affects the next Start or Re-plan.</p>
-      ${videoPlanCapRowsHtml}
+      <div class="plan-cap-grid">${planCapColumnsHtml}</div>
       <p id="plan-cap-video-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-      <div style="margin-top:14px;padding-top:14px;border-top:1px dashed var(--border)">
-        <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px">Top performer mimic (placeholder)</div>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 8px;line-height:1.45">Future flows that replicate signal-pack top performers (<code>visual_guidelines_pack_v1</code>, hashtag leaderboard). Not wired to generation yet — caps default to <strong>0</strong>. Saved with <strong>Save video caps</strong>.</p>
-        ${topPerformerMimicCapRowsHtml}
-        <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:8px 0 0;max-width:none">Loading…</p>
-      </div>
+      <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
     </div>
   </div>
   <div id="toast-area"></div>
@@ -3929,9 +3961,9 @@ async function loadPlanningCaps(){
         }
         if(mel)mel.value=mset?String(mval):'';
         var meff=mset?mval:DEFAULT_MAX_MIMIC_PER_FLOW;
-        mParts.push(g.label.replace(' (placeholder)','')+': '+meff);
+        mParts.push(g.label.replace(' (not wired)','')+': '+meff);
       });
-      if(mHint)mHint.textContent='Mimic flows (placeholder): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' = off until flows are implemented.';
+      if(mHint)mHint.textContent='Top performer mimic: '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' = off until enabled in allowed flow types + env.';
     }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));

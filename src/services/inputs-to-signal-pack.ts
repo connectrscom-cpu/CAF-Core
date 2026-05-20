@@ -29,6 +29,7 @@ import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.
 import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds, backfillTopPerformerInsightPerformanceReviews } from "../repositories/inputs-evidence-insights.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
+import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 
 const STEP_RATING = "inputs_rating_batch";
@@ -337,7 +338,7 @@ ${JSON.stringify(synthInput, null, 0)}`;
     max_insights_scan: 2000,
     max_entries: 48,
   });
-  const derived_globals_json: Record<string, unknown> = {
+  const derived_globals_json = mergeTopPerformerKnowledgeIntoDerivedGlobals({
     from_inputs_evidence_import_id: importId,
     inputs_stats: stats,
     total_candidates: normalized.length,
@@ -356,7 +357,7 @@ ${JSON.stringify(synthInput, null, 0)}`;
     platforms_found: [...new Set(normalized.map((c) => c.platform).filter(Boolean))],
     signs_found: [...new Set(normalized.map((c) => c.sign).filter(Boolean))],
     synthesized_at: new Date().toISOString(),
-  };
+  });
 
   const pack = await insertSignalPack(db, {
     run_id: packRunId,

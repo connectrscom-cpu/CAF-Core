@@ -3,7 +3,11 @@
  */
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
-import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_VIDEO } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+  FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+  isTopPerformerMimicImageFlow,
+} from "../domain/top-performer-mimic-flow-types.js";
 
 export function isCarouselFlow(flowType: string): boolean {
   const raw = flowType ?? "";
@@ -37,4 +41,9 @@ export function isVideoFlow(flowType: string): boolean {
     /heygen|HeyGen_Render/i.test(raw) ||
     /scene_assembly|sceneassembly|FLOW_SCENE/i.test(raw)
   );
+}
+
+/** Single-image top-performer mimic (format: post bucket). */
+export function isImageFlow(flowType: string): boolean {
+  return isTopPerformerMimicImageFlow(flowType ?? "");
 }

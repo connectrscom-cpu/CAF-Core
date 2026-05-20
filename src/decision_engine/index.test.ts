@@ -90,7 +90,7 @@ describe("decideGenerationPlan", () => {
     );
   });
 
-  it("plans carousel ideas on carousel flows before video fallback", async () => {
+  it("plans carousel ideas on carousel flows only (no video cross-format)", async () => {
     const { decideGenerationPlan } = await import("./index.js");
 
     const result = await decideGenerationPlan(
@@ -131,13 +131,11 @@ describe("decideGenerationPlan", () => {
       }
     );
 
-    expect(result.selected).toHaveLength(2);
-    expect(result.selected.map((j) => j.flow_type).sort()).toEqual(
-      ["FLOW_CAROUSEL", "FLOW_HEYGEN_VIDEO"].sort()
-    );
+    expect(result.selected).toHaveLength(1);
+    expect(result.selected[0]?.flow_type).toBe("FLOW_CAROUSEL");
   });
 
-  it("plans video ideas on video flows before carousel fallback", async () => {
+  it("plans video ideas on video flows only (no carousel cross-format)", async () => {
     const { decideGenerationPlan } = await import("./index.js");
 
     const result = await decideGenerationPlan(
@@ -178,9 +176,8 @@ describe("decideGenerationPlan", () => {
       }
     );
 
-    expect(result.selected).toHaveLength(2);
-    expect(result.selected.find((j) => j.flow_type === "FLOW_HEYGEN_VIDEO")).toBeTruthy();
-    expect(result.selected.find((j) => j.flow_type === "FLOW_CAROUSEL")).toBeTruthy();
+    expect(result.selected).toHaveLength(1);
+    expect(result.selected[0]?.flow_type).toBe("FLOW_HEYGEN_VIDEO");
   });
 });
 

@@ -1,0 +1,79 @@
+import { describe, expect, it } from "vitest";
+import { classifyMimicMode } from "./mimic-mode-classifier.js";
+import {
+  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+  FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+} from "../domain/top-performer-mimic-flow-types.js";
+import { pickMimicPayload, mergeMimicPayloadSlice } from "../domain/mimic-payload.js";
+import { bucketForFlowType } from "../decision_engine/format-routing.js";
+import { isImageFlow } from "../decision_engine/flow-kind.js";
+
+describe("classifyMimicMode", () => {
+  it("returns image_full for mimic image flow", () => {
+    expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_IMAGE, {}).mode).toBe("image_full");
+  });
+
+  it("returns template_bg for text-heavy listicle carousel", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "listicle",
+        slides: [
+          { text_density: "high", image_or_photo_role: "none" },
+          { text_density: "high", image_or_photo_role: "none" },
+        ],
+      },
+    };
+    expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry).mode).toBe("template_bg");
+  });
+
+  it("returns carousel_visual with per-slide plans for image-led deck", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        slides: [
+          { text_density: "low", image_or_photo_role: "full-bleed photo" },
+          { text_density: "high", image_or_photo_role: "none" },
+        ],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("carousel_visual");
+    expect(r.slide_plans?.[0]?.render_mode).toBe("full_bleed");
+    expect(r.slide_plans?.[1]?.render_mode).toBe("hbs");
+  });
+});
+
+describe("mimic-payload", () => {
+  it("round-trips mimic_v1 on generation_payload", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "image_full" as const,
+      classified_at: "2026-01-01T00:00:00.000Z",
+      source_insights_id: "ins_a",
+      analysis_tier: "top_performer_deep",
+      reference_items: [
+        {
+          index: 1,
+          role: "carousel_slide",
+          vision_fetch_url: "https://example.com/a.jpg",
+          bucket: "assets",
+          object_path: "top-performer/x/slide_01.png",
+        },
+      ],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const gp = mergeMimicPayloadSlice({}, mimic);
+    const picked = pickMimicPayload(gp);
+    expect(picked?.mode).toBe("image_full");
+    expect(picked?.reference_items).toHaveLength(1);
+    expect(picked?.reference_items[0]?.bucket).toBe("assets");
+    expect(picked?.reference_items[0]?.object_path).toBe("top-performer/x/slide_01.png");
+  });
+});
+
+describe("flow routing", () => {
+  it("maps mimic image flow to post bucket", () => {
+    expect(bucketForFlowType(FLOW_TOP_PERFORMER_MIMIC_IMAGE)).toBe("post");
+    expect(isImageFlow(FLOW_TOP_PERFORMER_MIMIC_IMAGE)).toBe(true);
+  });
+});

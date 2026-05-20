@@ -185,6 +185,21 @@ const envSchema = z.object({
    */
   VIDEO_ASSEMBLY_MUX_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(7_200_000).default(1_800_000),
 
+  /** When false (default), FLOW_TOP_PERFORMER_MIMIC_* draft/render paths stay off even if flow types are enabled. */
+  MIMIC_IMAGE_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
+  MIMIC_IMAGE_INPUT_FIDELITY: z.enum(["high", "low"]).default("high"),
+  MIMIC_IMAGE_QUALITY: z.enum(["high", "medium", "low", "auto"]).default("high"),
+  /** Instagram 4:5 default */
+  MIMIC_IMAGE_DEFAULT_SIZE: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536"),
+
   OPENAI_API_KEY: z.string().optional(),
   /** Base URL for REST calls (chat, videos). Videos API: POST/GET `/videos`. */
   OPENAI_API_BASE: z.string().default("https://api.openai.com/v1"),

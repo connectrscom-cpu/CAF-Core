@@ -52,6 +52,25 @@ export async function buildCarouselPublishUrls(
   return [...new Set(urls)];
 }
 
+/** Primary STATIC_IMAGE URL for single-image mimic publish prefill. */
+export async function buildImagePublishUrl(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<string | null> {
+  const assets = await listAssetsByTask(db, projectId, taskId);
+  for (const a of assets) {
+    const t = (a.asset_type ?? "").toLowerCase();
+    if (t.includes("static_image") || t === "image") {
+      if (a.public_url?.trim()) return a.public_url.trim();
+    }
+  }
+  for (const a of assets) {
+    if (a.public_url?.trim()) return a.public_url.trim();
+  }
+  return null;
+}
+
 export async function mergePublishUrlsIntoJob(
   db: Pool,
   projectId: string,

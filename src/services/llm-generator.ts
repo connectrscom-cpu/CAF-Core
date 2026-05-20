@@ -19,6 +19,10 @@ import {
   isProductVideoFlow,
   PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE,
 } from "../domain/product-flow-types.js";
+import {
+  isTopPerformerMimicRenderableFlow,
+  TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
+} from "../domain/top-performer-mimic-flow-types.js";
 import { loadConfig } from "../config.js";
 import {
   appendVideoUserPromptDurationHardFooter,
@@ -163,6 +167,23 @@ export async function generateForJob(
     };
   }
 
+  if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
+    const appCfg = loadConfig();
+    if (!appCfg.MIMIC_IMAGE_ENABLED || !apiKey?.trim()) {
+      return {
+        draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+        task_id: job.task_id,
+        raw_output: "",
+        parsed_output: null,
+        model_used: model,
+        prompt_name: String(job.generation_payload.prompt_id ?? "unknown"),
+        tokens_used: 0,
+        success: false,
+        error: TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
+      };
+    }
+  }
+
   /** Match Flow Engine workbook `flow_type`; legacy job rows still resolve templates. */
   const templateFlowType = resolveFlowEngineTemplateFlowType(job.flow_type);
   const wantSceneBundle = prefersVideoSceneBundleTemplate(templateFlowType, job.flow_type);
@@ -197,7 +218,8 @@ export async function generateForJob(
    * operators can edit angle-specific prompts in Prompt Labs without touching the
    * canonical row. Other flows keep resolved-first ordering.
    */
-  const preferNative = isProductVideoFlow(job.flow_type);
+  const preferNative =
+    isProductVideoFlow(job.flow_type) || isTopPerformerMimicRenderableFlow(job.flow_type);
   const lookupOrder = preferNative
     ? [job.flow_type, templateFlowType]
     : [templateFlowType, job.flow_type];

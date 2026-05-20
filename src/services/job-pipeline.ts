@@ -37,7 +37,17 @@ import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
-import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
+import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { pickMimicPayload } from "../domain/mimic-payload.js";
+import { prepareMimicDraftPackage } from "./mimic-draft-prep.js";
+import { processImageMimicJob } from "./mimic-image-job.js";
+import {
+  ensureMimicCarouselBackground,
+  renderMimicCarouselSlideFullBleed,
+  slideMimicRenderMode,
+} from "./mimic-carousel-render.js";
+import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -112,12 +122,13 @@ export class RenderNotReadyError extends Error {
 type PreRenderStep =
   | { kind: "terminal" }
   | { kind: "render_carousel"; recommended_route: string | null }
-  | { kind: "render_video"; recommended_route: string | null };
+  | { kind: "render_video"; recommended_route: string | null }
+  | { kind: "render_image"; recommended_route: string | null };
 
 type RenderTicket = {
   jobId: string;
   task_id: string;
-  kind: "carousel" | "video";
+  kind: "carousel" | "video" | "image";
   recommended_route: string | null;
 };
 
@@ -202,6 +213,27 @@ async function processJobUpToRender(
     }
   }
 
+  if (
+    config.MIMIC_IMAGE_ENABLED &&
+    (isTopPerformerMimicCarouselFlow(job.flow_type) || isImageFlow(job.flow_type))
+  ) {
+    const freshJob = await reloadJobRow(db, job.id);
+    if (freshJob) {
+      await prepareMimicDraftPackage(
+        db,
+        config,
+        {
+          id: freshJob.id,
+          task_id: freshJob.task_id,
+          project_id: freshJob.project_id,
+          flow_type: freshJob.flow_type,
+          generation_payload: (freshJob.generation_payload ?? {}) as Record<string, unknown>,
+        },
+        run?.run_id ?? null
+      );
+    }
+  }
+
   const qcResult = await runQcForJob(db, job.id, config.CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC);
 
   if (!qcResult.qc_passed && qcResult.recommended_route === "BLOCKED") {
@@ -219,7 +251,7 @@ async function processJobUpToRender(
   // If QC fails but the router wants HUMAN_REVIEW, skip media for non-carousel flows (often incomplete JSON).
   // Carousel jobs still run the renderer when possible so review queue rows get slide thumbnails in `assets`.
   if (!qcResult.qc_passed && qcResult.recommended_route === "HUMAN_REVIEW") {
-    if (!isCarouselFlow(job.flow_type)) {
+    if (!isCarouselFlow(job.flow_type) && !isImageFlow(job.flow_type)) {
       await advanceToInReview(db, job, run, qcResult.recommended_route);
       return { kind: "terminal" };
     }
@@ -272,6 +304,28 @@ async function processJobUpToRender(
     }
     return { kind: "render_video", recommended_route: route };
   }
+  if (isImageFlow(job.flow_type)) {
+    if (opts?.stop_before_render) {
+      return { kind: "terminal" };
+    }
+    const skipImageRender = await qOne<{ skip: boolean | null }>(
+      db,
+      `SELECT (generation_payload->>'skip_image_render') = 'true' AS skip
+       FROM caf_core.content_jobs WHERE id = $1`,
+      [job.id]
+    );
+    if (skipImageRender?.skip === true) {
+      await db.query(
+        `UPDATE caf_core.content_jobs
+         SET generation_payload = generation_payload - 'skip_image_render', updated_at = now()
+         WHERE id = $1`,
+        [job.id]
+      );
+      await advanceToInReview(db, job, run, route);
+      return { kind: "terminal" };
+    }
+    return { kind: "render_image", recommended_route: route };
+  }
   await advanceToInReview(db, job, run, route);
   return { kind: "terminal" };
 }
@@ -290,6 +344,8 @@ async function processOneJob(
   const jobForMedia = (await reloadJobRow(db, job.id)) ?? job;
   if (step.kind === "render_carousel") {
     await processCarouselJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
+  } else if (step.kind === "render_image") {
+    await processImageMimicJob(db, config, jobForMedia as JobRow, run, step.recommended_route);
   } else {
     await processVideoJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
   }
@@ -388,7 +444,12 @@ export async function processRunJobs(
         renderTickets.push({
           jobId: job.id,
           task_id: job.task_id,
-          kind: step.kind === "render_carousel" ? "carousel" : "video",
+          kind:
+            step.kind === "render_carousel"
+              ? "carousel"
+              : step.kind === "render_image"
+                ? "image"
+                : "video",
           recommended_route: step.recommended_route,
         });
       }
@@ -402,6 +463,7 @@ export async function processRunJobs(
   }
 
   const carouselTickets = renderTickets.filter((t) => t.kind === "carousel");
+  const imageTickets = renderTickets.filter((t) => t.kind === "image");
   const videoTickets = renderTickets.filter((t) => t.kind === "video");
 
   if (carouselTickets.length > 0) {
@@ -413,6 +475,8 @@ export async function processRunJobs(
     if (!jobRow) throw new Error(`Job disappeared: ${t.task_id}`);
     if (t.kind === "carousel") {
       await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    } else if (t.kind === "image") {
+      await processImageMimicJob(db, config, jobRow as JobRow, run, t.recommended_route);
     } else {
       await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     }
@@ -485,7 +549,31 @@ export async function processRunJobs(
     });
   };
 
+  const imageLane = async () => {
+    await runWithConcurrency(imageTickets, 1, async (t) => {
+      try {
+        await runOneRender(t);
+        const refreshed = await qOne<{ status: string }>(
+          db,
+          `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+          [t.jobId]
+        );
+        if (refreshed?.status !== "RENDERING") {
+          await incrementRunJobsCompleted(db, runUuid);
+          processed++;
+        }
+      } catch (err) {
+        if (err instanceof RenderNotReadyError) {
+          return;
+        }
+        const msg = err instanceof Error ? err.message : String(err);
+        await markJobFailedPipeline(db, run, t.task_id, t.jobId, msg, errors);
+      }
+    });
+  };
+
   await carouselLane();
+  await imageLane();
   await videoLane();
 
   const pendingRows = await q<{ flow_type: string }>(
@@ -581,6 +669,7 @@ export async function renderRunGeneratedJobs(
   let rendered = 0;
 
   const carouselTickets: RenderTicket[] = [];
+  const imageTickets: RenderTicket[] = [];
   const videoTickets: RenderTicket[] = [];
 
   for (const job of eligible) {
@@ -591,6 +680,8 @@ export async function renderRunGeneratedJobs(
     const route = String((job as any).recommended_route ?? "").trim() || "AUTO";
     if (isCarouselFlow(job.flow_type)) {
       carouselTickets.push({ jobId: job.id, task_id: job.task_id, kind: "carousel", recommended_route: route });
+    } else if (isImageFlow(job.flow_type)) {
+      imageTickets.push({ jobId: job.id, task_id: job.task_id, kind: "image", recommended_route: route });
     } else if (isVideoFlow(job.flow_type)) {
       videoTickets.push({ jobId: job.id, task_id: job.task_id, kind: "video", recommended_route: route });
     }
@@ -605,6 +696,8 @@ export async function renderRunGeneratedJobs(
     if (!jobRow) throw new Error(`Job disappeared: ${t.task_id}`);
     if (t.kind === "carousel") {
       await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
+    } else if (t.kind === "image") {
+      await processImageMimicJob(db, config, jobRow as JobRow, run, t.recommended_route);
     } else {
       await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     }
@@ -652,6 +745,7 @@ export async function renderRunGeneratedJobs(
   };
 
   await lane(carouselTickets, pipeConfig.carouselRenderConcurrency);
+  await lane(imageTickets, 1);
   await lane(videoTickets, pipeConfig.videoRenderConcurrency);
 
   return { rendered, errors };
@@ -1291,11 +1385,31 @@ async function processCarouselJob(
   if (!Number.isFinite(n) || n < 1) {
     throw new Error(`Invalid carousel slide count (${String(n)}); check generated_output / structure_variables.slide_count.`);
   }
+
+  const mimicPayloadRaw = pickMimicPayload(job.generation_payload);
+  let mimicPayload = mimicPayloadRaw;
+  let mimicBackgroundUrl: string | null = null;
+  if (
+    config.MIMIC_IMAGE_ENABLED &&
+    isTopPerformerMimicCarouselFlow(job.flow_type) &&
+    mimicPayloadRaw
+  ) {
+    mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
+    mimicBackgroundUrl = await ensureMimicCarouselBackground(db, config, job, mimicPayload);
+    if (mimicBackgroundUrl) {
+      baseRender.background_image_url = mimicBackgroundUrl;
+      (renderBase as Record<string, unknown>).background_image_url = mimicBackgroundUrl;
+    }
+  }
+
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
-  const template = await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
-    allowedTemplates: projectPinnedTemplates,
-    implicitPickSeed: job.task_id,
-  });
+  const template =
+    mimicPayload?.mode === "template_bg"
+      ? "carousel_mimic_bg"
+      : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
+          allowedTemplates: projectPinnedTemplates,
+          implicitPickSeed: job.task_id,
+        });
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectRow = await getProjectById(db, job.project_id);
   const projectDisplayName =
@@ -1367,6 +1481,50 @@ async function processCarouselJob(
         slide_total: n,
         template,
       });
+
+      const slideMode =
+        config.MIMIC_IMAGE_ENABLED &&
+        isTopPerformerMimicCarouselFlow(job.flow_type) &&
+        mimicPayload
+          ? slideMimicRenderMode(mimicPayload, i)
+          : null;
+
+      if (slideMode === "full_bleed" && mimicPayload) {
+        const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
+          db,
+          config,
+          job,
+          mimicPayload,
+          i
+        );
+        const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+        const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.${ext}`;
+        let publicUrl: string | null = null;
+        let storedPath = objectPath;
+        try {
+          const up = await uploadBuffer(config, objectPath, buffer, mimeType);
+          publicUrl = up.public_url;
+          storedPath = up.object_path;
+        } catch {
+          /* Supabase optional */
+        }
+        await insertAsset(db, {
+          asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
+          task_id: job.task_id,
+          project_id: job.project_id,
+          asset_type: "CAROUSEL_SLIDE",
+          position: i - 1,
+          bucket: config.SUPABASE_ASSETS_BUCKET,
+          object_path: storedPath,
+          public_url: publicUrl,
+          provider: "openai-gpt-image-1",
+          metadata_json: { slide_index: i, mimic: true },
+        });
+        slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
+        continue;
+      }
 
       const ctx = buildSlideRenderContext(renderBase, usableSlides, i, {
         instagramHandle: projectInstagramHandle,
