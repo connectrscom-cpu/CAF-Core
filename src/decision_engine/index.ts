@@ -11,52 +11,33 @@ import {
 } from "../repositories/core.js";
 import { getLearningRulesForPlanning } from "../services/learning-rule-selection.js";
 import { evaluateKillSwitches } from "./kill_switches.js";
-import { resolvePromptVersion } from "./prompt_selector.js";
 import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
 import { defaultWeights, scoreCandidate } from "./scoring.js";
-import { selectRoute } from "./route_selector.js";
 import {
   defaultMaxJobsPerFlowType,
   DEFAULT_CAROUSEL_FLOW_PLAN_CAP,
   DEFAULT_VIDEO_FLOW_PLAN_CAP,
 } from "./default-plan-caps.js";
-import type { GenerationPlanRequest, GenerationPlanResult, PlannedJob, ScoredCandidate } from "./types.js";
+import { partitionCandidatesForPlanningPhases } from "./format-routing.js";
+import {
+  createPlanSelectionState,
+  ideaKeyFallbackPass,
+  ideaKeyPrimaryPass,
+  selectJobsFromCandidates,
+} from "./plan-selection.js";
+import type { GenerationPlanRequest, GenerationPlanResult, ScoredCandidate } from "./types.js";
 import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 
 export type { GenerationPlanRequest, GenerationPlanResult } from "./types.js";
 
 export { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 export { generationPlanRequestSchema } from "./types.js";
-
-type IdeaFormatBucket = "carousel" | "video" | "post" | "thread" | "other";
-
-function bucketForIdeaFormat(raw: unknown): IdeaFormatBucket | null {
-  const f = String(raw ?? "")
-    .toLowerCase()
-    .trim();
-  if (!f) return null;
-  if (f === "carousel") return "carousel";
-  if (f === "video") return "video";
-  if (f === "post") return "post";
-  if (f === "thread") return "thread";
-  return "other";
-}
-
-function bucketForFlowType(flowType: string): IdeaFormatBucket {
-  if (isCarouselFlow(flowType)) return "carousel";
-  if (isVideoFlow(flowType)) return "video";
-  return "other";
-}
-
-function ideaKeyForDedupe(c: ScoredCandidate): string {
-  const p = (c.payload ?? {}) as Record<string, unknown>;
-  const ideaId =
-    String(p.idea_id ?? p.candidate_id ?? p.id ?? "").trim() ||
-    // fallback: candidate_id in our orchestrator is `${baseIdeaId}_${flow_type}`
-    String(c.candidate_id).trim();
-  const bucket = bucketForIdeaFormat(p.format) ?? bucketForFlowType(c.flow_type);
-  return `${ideaId}|${bucket}`;
-}
+export {
+  bucketForIdeaFormat,
+  bucketForFlowType,
+  isPrimaryFormatMatch,
+  partitionCandidatesForPlanningPhases,
+} from "./format-routing.js";
 
 export async function decideGenerationPlan(
   db: Pool,
@@ -196,77 +177,40 @@ export async function decideGenerationPlan(
     else if (isVideoFlow(ft)) perFlowCaps[ft] = DEFAULT_VIDEO_FLOW_PLAN_CAP;
     else perFlowCaps[ft] = config.DEFAULT_OTHER_FLOW_PLAN_CAP;
   }
-  const selected: PlannedJob[] = [];
-  let remainingSlots =
-    maxDaily === null ? Number.POSITIVE_INFINITY : Math.max(0, maxDaily - jobsToday);
-  let plannedCarousel = 0;
-  let plannedVideo = 0;
-  const perFlowPlanned: Record<string, number> = {};
-  const usedIdeaFormat = new Set<string>();
+  const { primary, fallback } = partitionCandidatesForPlanningPhases(sorted);
 
-  for (const c of sorted) {
-    if (remainingSlots <= 0) break;
+  const selectionCtx = {
+    db,
+    projectId: project.id,
+    cafGlobalProjectId: cafGlobal.id,
+    minScore,
+    variationCap,
+    maxDaily,
+    jobsToday,
+    maxPrompts,
+    maxCarouselPlan,
+    maxVideoPlan,
+    perFlowCaps,
+    autoValThreshold,
+    promptOverride: req.prompt_override,
+  };
+  const selectionState = createPlanSelectionState(selectionCtx);
 
-    // Avoid selecting the same underlying idea more than once for the same format bucket.
-    // This prevents double-picking when multiple flow_types map to the same output format.
-    const ideaFormatKey = ideaKeyForDedupe(c);
-    if (usedIdeaFormat.has(ideaFormatKey)) {
-      dropped.push({ candidate_id: c.candidate_id, reason: "duplicate_idea_format", pre_gen_score: c.pre_gen_score });
-      continue;
-    }
+  // Pass 1: format-matched (carousel ideas → carousel flows, video ideas → video flows, …).
+  await selectJobsFromCandidates(selectionCtx, selectionState, primary, {
+    pass: "primary",
+    ideaKey: ideaKeyPrimaryPass,
+  });
+  // Pass 2: cross-format fallback (e.g. carousel idea → video) and ideas without `format`.
+  await selectJobsFromCandidates(selectionCtx, selectionState, fallback, {
+    pass: "fallback",
+    ideaKey: ideaKeyFallbackPass,
+  });
 
-    const resolvedPrompt = await resolvePromptVersion(db, {
-      projectId: project.id,
-      cafGlobalProjectId: cafGlobal.id,
-      flowType: c.flow_type,
-      maxActive: maxPrompts,
-      override: req.prompt_override,
-    });
-    const route = selectRoute(c, { autoValidationThreshold: autoValThreshold });
-    const ft = c.flow_type;
-    let varsThisCandidate = Math.min(variationCap, remainingSlots);
-
-    const usedFt = perFlowPlanned[ft] ?? 0;
-    const capFt = perFlowCaps[ft] ?? 0;
-    varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, capFt - usedFt));
-    if (isCarouselFlow(ft)) {
-      varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, maxCarouselPlan - plannedCarousel));
-    }
-    if (isVideoFlow(ft)) {
-      varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, maxVideoPlan - plannedVideo));
-    }
-
-    if (varsThisCandidate <= 0) {
-      dropped.push({
-        candidate_id: c.candidate_id,
-        reason: "plan_cap",
-        pre_gen_score: c.pre_gen_score,
-      });
-      continue;
-    }
-
-    usedIdeaFormat.add(ideaFormatKey);
-    for (let v = 0; v < varsThisCandidate; v++) {
-      selected.push({
-        candidate_id: c.candidate_id,
-        flow_type: c.flow_type,
-        platform: c.target_platform ?? c.platform,
-        source_row_index_1_based: c.source_row_index_1_based,
-        variation_index: v,
-        variation_name: v === 0 ? "v1" : `v${v + 1}`,
-        prompt_version_id: resolvedPrompt.selected?.prompt_version_id ?? null,
-        prompt_id: resolvedPrompt.selected?.prompt_id ?? null,
-        prompt_version_label: resolvedPrompt.selected?.version ?? null,
-        prompt_source: resolvedPrompt.source,
-        recommended_route: route,
-        pre_gen_score: c.pre_gen_score,
-      });
-      remainingSlots -= 1;
-      if (isCarouselFlow(ft)) plannedCarousel += 1;
-      if (isVideoFlow(ft)) plannedVideo += 1;
-      perFlowPlanned[ft] = (perFlowPlanned[ft] ?? 0) + 1;
-    }
-  }
+  const selected = selectionState.selected;
+  const plannedCarousel = selectionState.plannedCarousel;
+  const plannedVideo = selectionState.plannedVideo;
+  dropped.push(...selectionState.dropped);
 
   const result: GenerationPlanResult = {
     trace_id: traceId,
@@ -289,6 +233,8 @@ export async function decideGenerationPlan(
       max_jobs_per_flow_type: Object.keys(perFlowOverrides).length ? perFlowOverrides : undefined,
       planned_carousel_jobs: plannedCarousel,
       planned_video_jobs: plannedVideo,
+      planning_primary_candidates: primary.length,
+      planning_fallback_candidates: fallback.length,
     },
   };
 

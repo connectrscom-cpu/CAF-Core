@@ -1,0 +1,66 @@
+import { describe, expect, it } from "vitest";
+import {
+  isPrimaryFormatMatch,
+  partitionCandidatesForPlanningPhases,
+} from "./format-routing.js";
+import type { ScoredCandidate } from "./types.js";
+
+function cand(
+  partial: Partial<ScoredCandidate> & Pick<ScoredCandidate, "candidate_id" | "flow_type">
+): ScoredCandidate {
+  return {
+    pre_gen_score: 0.8,
+    score_breakdown: {},
+    confidence_score: 0.8,
+    ...partial,
+  };
+}
+
+describe("format-routing", () => {
+  it("treats carousel idea × carousel flow as primary match", () => {
+    const c = cand({
+      candidate_id: "a_FLOW_CAROUSEL",
+      flow_type: "FLOW_CAROUSEL",
+      payload: { idea_id: "a", format: "carousel" },
+    });
+    expect(isPrimaryFormatMatch(c)).toBe(true);
+  });
+
+  it("treats carousel idea × video flow as fallback only", () => {
+    const c = cand({
+      candidate_id: "a_FLOW_HEYGEN",
+      flow_type: "FLOW_HEYGEN_VIDEO",
+      payload: { idea_id: "a", format: "carousel" },
+    });
+    expect(isPrimaryFormatMatch(c)).toBe(false);
+  });
+
+  it("treats video idea × video flow as primary match", () => {
+    const c = cand({
+      candidate_id: "b_FLOW_HEYGEN",
+      flow_type: "FLOW_HEYGEN_VIDEO",
+      payload: { idea_id: "b", format: "video" },
+    });
+    expect(isPrimaryFormatMatch(c)).toBe(true);
+  });
+
+  it("partitions primary before fallback lists", () => {
+    const sorted = [
+      cand({
+        candidate_id: "a_FLOW_HEYGEN",
+        flow_type: "FLOW_HEYGEN_VIDEO",
+        payload: { idea_id: "a", format: "carousel" },
+      }),
+      cand({
+        candidate_id: "a_FLOW_CAROUSEL",
+        flow_type: "FLOW_CAROUSEL",
+        payload: { idea_id: "a", format: "carousel" },
+      }),
+    ];
+    const { primary, fallback } = partitionCandidatesForPlanningPhases(sorted);
+    expect(primary).toHaveLength(1);
+    expect(primary[0]?.flow_type).toBe("FLOW_CAROUSEL");
+    expect(fallback).toHaveLength(1);
+    expect(fallback[0]?.flow_type).toBe("FLOW_HEYGEN_VIDEO");
+  });
+});

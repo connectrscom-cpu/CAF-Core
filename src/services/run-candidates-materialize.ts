@@ -12,6 +12,7 @@ import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
+import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
 import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
@@ -67,6 +68,7 @@ function mapIdeasV2ToPlannerSourceRows(
     const thesis = String(i.thesis ?? "").trim();
     const platform = String(i.platform ?? "Multi").trim() || "Multi";
     const format = String(i.format ?? "post").trim();
+    const videoStyle = normalizeVideoStyle(i.video_style ?? i.video_pipeline);
     const cta = String(i.cta ?? "").trim();
     const whyNow = String(i.why_now ?? "").trim();
     const novelty = String(i.novelty_angle ?? "").trim();
@@ -93,6 +95,7 @@ function mapIdeasV2ToPlannerSourceRows(
       platform,
       target_platform: platform,
       format,
+      ...(format.toLowerCase() === "video" && videoStyle ? { video_style: videoStyle } : {}),
       content_idea: contentIdea,
       summary,
       confidence_score: confidence ?? ideaScore ?? 0.8,

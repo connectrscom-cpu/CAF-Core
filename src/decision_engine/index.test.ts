@@ -85,7 +85,102 @@ describe("decideGenerationPlan", () => {
 
     expect(result.selected).toHaveLength(1);
     expect(result.selected[0]?.candidate_id).toBe("idea1_FLOW_CAROUSEL");
-    expect(result.dropped_candidates.some((d) => d.reason === "duplicate_idea_format")).toBe(true);
+    expect(result.dropped_candidates.some((d) => d.reason === "duplicate_idea_primary_format")).toBe(
+      true
+    );
+  });
+
+  it("plans carousel ideas on carousel flows before video fallback", async () => {
+    const { decideGenerationPlan } = await import("./index.js");
+
+    const result = await decideGenerationPlan(
+      {} as any,
+      {
+        DECISION_ENGINE_VERSION: "test",
+        DEFAULT_MIN_SCORE_TO_GENERATE: 0,
+        DEFAULT_MAX_VARIATIONS: 1,
+        DEFAULT_MAX_DAILY_JOBS: null,
+        DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN: 100,
+        DEFAULT_MAX_VIDEO_JOBS_PER_RUN: 100,
+        DEFAULT_OTHER_FLOW_PLAN_CAP: 100,
+      } as any,
+      {
+        project_slug: "p",
+        run_id: "RUN_1",
+        min_score: 0,
+        max_variations_per_candidate: 1,
+        dry_run: true,
+        candidates: [
+          {
+            candidate_id: "idea1_FLOW_HEYGEN",
+            flow_type: "FLOW_HEYGEN_VIDEO",
+            target_platform: "Instagram",
+            confidence_score: 1,
+            payload: { idea_id: "idea1", format: "carousel" },
+            dedupe_key: "k1",
+          },
+          {
+            candidate_id: "idea1_FLOW_CAROUSEL",
+            flow_type: "FLOW_CAROUSEL",
+            target_platform: "Instagram",
+            confidence_score: 0.5,
+            payload: { idea_id: "idea1", format: "carousel" },
+            dedupe_key: "k2",
+          },
+        ],
+      }
+    );
+
+    expect(result.selected).toHaveLength(2);
+    expect(result.selected.map((j) => j.flow_type).sort()).toEqual(
+      ["FLOW_CAROUSEL", "FLOW_HEYGEN_VIDEO"].sort()
+    );
+  });
+
+  it("plans video ideas on video flows before carousel fallback", async () => {
+    const { decideGenerationPlan } = await import("./index.js");
+
+    const result = await decideGenerationPlan(
+      {} as any,
+      {
+        DECISION_ENGINE_VERSION: "test",
+        DEFAULT_MIN_SCORE_TO_GENERATE: 0,
+        DEFAULT_MAX_VARIATIONS: 1,
+        DEFAULT_MAX_DAILY_JOBS: null,
+        DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN: 100,
+        DEFAULT_MAX_VIDEO_JOBS_PER_RUN: 100,
+        DEFAULT_OTHER_FLOW_PLAN_CAP: 100,
+      } as any,
+      {
+        project_slug: "p",
+        run_id: "RUN_1",
+        min_score: 0,
+        max_variations_per_candidate: 1,
+        dry_run: true,
+        candidates: [
+          {
+            candidate_id: "idea2_FLOW_CAROUSEL",
+            flow_type: "FLOW_CAROUSEL",
+            target_platform: "Instagram",
+            confidence_score: 1,
+            payload: { idea_id: "idea2", format: "video" },
+            dedupe_key: "k3",
+          },
+          {
+            candidate_id: "idea2_FLOW_HEYGEN",
+            flow_type: "FLOW_HEYGEN_VIDEO",
+            target_platform: "Instagram",
+            confidence_score: 0.4,
+            payload: { idea_id: "idea2", format: "video" },
+            dedupe_key: "k4",
+          },
+        ],
+      }
+    );
+
+    expect(result.selected).toHaveLength(2);
+    expect(result.selected.find((j) => j.flow_type === "FLOW_HEYGEN_VIDEO")).toBeTruthy();
+    expect(result.selected.find((j) => j.flow_type === "FLOW_CAROUSEL")).toBeTruthy();
   });
 });
 

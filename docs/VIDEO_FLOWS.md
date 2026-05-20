@@ -13,6 +13,18 @@ This doc explains how **video jobs** are routed and rendered in CAF Core, with s
 
 ---
 
+## Planning: which video flow_type is chosen at run start
+
+When `project_system_constraints.video_routing.enabled` is true (default after migration `059`):
+
+1. Planner rows with `format: "video"` are routed to **one** enabled flow: `script_avatar` → `FLOW_VID_SCRIPT`, `prompt_avatar` → `FLOW_VID_PROMPT`, `no_avatar` → `FLOW_VID_PROMPT_NO_AVATAR` (plus legacy aliases and `FLOW_PRODUCT_*` via `heygen_mode`).
+2. Set `video_style` on ideas (`script_avatar` | `prompt_avatar` | `no_avatar`) when materializing candidates; b-roll / multi-scene ideas should use `no_avatar` (scene assembly is **not** used by this router).
+3. **Scene assembly** flows are excluded from expansion while routing is on; the scene-assembly LLM router is skipped.
+
+Implementation: `src/decision_engine/video-flow-routing.ts`, `src/services/run-orchestrator.ts` (`buildCandidatesFromSignalPack`).
+
+---
+
 ## Routing: how a job becomes a rendered video
 
 ### Entry points

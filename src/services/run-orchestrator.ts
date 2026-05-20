@@ -47,6 +47,15 @@ import {
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
+import type { ProductHeygenMode } from "../domain/product-flow-types.js";
+import type { VideoRoutingConfig } from "../decision_engine/video-flow-routing.js";
+import {
+  isVideoFormatRow,
+  pickVideoFlowForIntent,
+  resolveVideoIntent,
+  shouldExcludeFlowFromVideoRouting,
+} from "../decision_engine/video-flow-routing.js";
+import { loadProductHeygenModesForFlows, loadVideoRoutingConfig } from "./video-routing-config.js";
 
 /** Planner source rows written to the run before Start (`POST .../candidates`). */
 function plannerSourceRowsFromRun(run: RunRow): Record<string, unknown>[] {
@@ -115,14 +124,25 @@ export async function startRun(
     // Only mark the run as PLANNING once the request is actually actionable.
     await updateRunStatus(db, runUuid, "PLANNING", { started_at: new Date().toISOString() });
 
-    overallCandidates = await expandOverallCandidatesWithSceneAssemblyRouter(db, config, {
-      projectId: run.project_id,
-      runId: run.run_id,
-      signalPackId: run.signal_pack_id,
-      overallCandidates,
-      enabledFlows,
+    const videoRouting = await loadVideoRoutingConfig(db, config, run.project_id);
+    if (!videoRouting.enabled) {
+      overallCandidates = await expandOverallCandidatesWithSceneAssemblyRouter(db, config, {
+        projectId: run.project_id,
+        runId: run.run_id,
+        signalPackId: run.signal_pack_id,
+        overallCandidates,
+        enabledFlows,
+      });
+    }
+    const productHeygenModes = await loadProductHeygenModesForFlows(
+      db,
+      run.project_id,
+      enabledFlows.map((f) => f.flow_type)
+    );
+    const candidates = buildCandidatesFromSignalPack(overallCandidates, enabledFlows, run.run_id, {
+      videoRouting,
+      productHeygenModes,
     });
-    const candidates = buildCandidatesFromSignalPack(overallCandidates, enabledFlows, run.run_id);
 
     if (candidates.length === 0) {
       await updateRunStatus(db, runUuid, "COMPLETED", {
@@ -158,7 +178,7 @@ export async function startRun(
         selected_count: plan.selected.length,
         dropped_count: plan.dropped_candidates.length,
         planned_candidate_ids: plan.selected.map((j) => j.candidate_id),
-        meta: plan.meta,
+        meta: { ...plan.meta, video_routing_enabled: videoRouting.enabled },
       });
     } catch {
       /* plan_summary_json column may be missing on older DBs */
@@ -390,9 +410,18 @@ function resolveCandidateDataForPlannedJob(
 function buildCandidatesFromSignalPack(
   overallCandidates: Record<string, unknown>[],
   enabledFlows: Array<{ flow_type: string; priority_weight: number | null; allowed_platforms: string | null }>,
-  runId: string
+  runId: string,
+  opts?: {
+    videoRouting?: VideoRoutingConfig;
+    productHeygenModes?: Map<string, ProductHeygenMode | null>;
+  }
 ): CandidateInput[] {
   const candidates: CandidateInput[] = [];
+  const videoRouting = opts?.videoRouting;
+  const productModes = opts?.productHeygenModes ?? new Map<string, ProductHeygenMode | null>();
+  const flowsForExpansion = enabledFlows.filter(
+    (f) => !videoRouting?.enabled || !shouldExcludeFlowFromVideoRouting(f.flow_type)
+  );
 
   for (let rowIdx = 0; rowIdx < overallCandidates.length; rowIdx++) {
     const row = overallCandidates[rowIdx]!;
@@ -401,7 +430,57 @@ function buildCandidatesFromSignalPack(
     const platform = String(row.platform ?? row.target_platform ?? "Instagram");
     const sourceRowIndex1Based = rowIdx + 1;
 
-    for (const flow of enabledFlows) {
+    const pushCandidate = (flowType: string, payload: Record<string, unknown>) => {
+      candidates.push({
+        candidate_id: `${candidateId}_${flowType}`,
+        content_idea: String(row.summary ?? row.content_idea ?? row.dominant_themes ?? ""),
+        run_id: runId,
+        platform,
+        target_platform: platform,
+        flow_type: flowType,
+        confidence_score: confidence,
+        platform_fit: parseFloat(String(row.platform_fit ?? 0.7)),
+        novelty_score: parseFloat(String(row.novelty_score ?? 0.5)),
+        past_performance_similarity: parseFloat(String(row.past_performance ?? 0.5)),
+        recommended_route: String(row.recommended_route ?? "HUMAN_REVIEW"),
+        dedupe_key: `${candidateId}_${flowType}_${platform}`,
+        payload,
+        source_row_index_1_based: sourceRowIndex1Based,
+      });
+    };
+
+    if (videoRouting?.enabled && isVideoFormatRow(row)) {
+      const route = resolveVideoIntent(row, videoRouting);
+      const flowType = pickVideoFlowForIntent(flowsForExpansion, route.intent, productModes);
+      const payload = {
+        ...row,
+        video_route: {
+          intent: route.intent,
+          reason: route.reason,
+          confidence: route.confidence,
+          matched_flow_type: flowType,
+        },
+      };
+      if (!flowType) {
+        logPipelineEvent("warn", "plan", "video_route_no_matching_flow", {
+          run_id: runId,
+          data: { candidate_id: candidateId, intent: route.intent, platform },
+        });
+        continue;
+      }
+      if (shouldSkipCandidateForFlow(platform, flowType)) continue;
+      const flow = flowsForExpansion.find((f) => f.flow_type === flowType);
+      const flowPlatforms = flow?.allowed_platforms
+        ? flow.allowed_platforms.split(",").map((p) => p.trim())
+        : null;
+      if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
+        continue;
+      }
+      pushCandidate(flowType, payload);
+      continue;
+    }
+
+    for (const flow of flowsForExpansion) {
       if (shouldSkipCandidateForFlow(platform, flow.flow_type)) {
         continue;
       }
@@ -414,22 +493,7 @@ function buildCandidatesFromSignalPack(
         continue;
       }
 
-      candidates.push({
-        candidate_id: `${candidateId}_${flow.flow_type}`,
-        content_idea: String(row.summary ?? row.content_idea ?? row.dominant_themes ?? ""),
-        run_id: runId,
-        platform,
-        target_platform: platform,
-        flow_type: flow.flow_type,
-        confidence_score: confidence,
-        platform_fit: parseFloat(String(row.platform_fit ?? 0.7)),
-        novelty_score: parseFloat(String(row.novelty_score ?? 0.5)),
-        past_performance_similarity: parseFloat(String(row.past_performance ?? 0.5)),
-        recommended_route: String(row.recommended_route ?? "HUMAN_REVIEW"),
-        dedupe_key: `${candidateId}_${flow.flow_type}_${platform}`,
-        payload: row,
-        source_row_index_1_based: sourceRowIndex1Based,
-      });
+      pushCandidate(flow.flow_type, row);
     }
   }
 

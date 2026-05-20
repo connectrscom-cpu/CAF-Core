@@ -22,6 +22,8 @@ export interface ConstraintRow {
   max_video_jobs_per_run: number | null;
   /** Per flow_type caps (override engine defaults; see default-plan-caps for built-in video caps). */
   max_jobs_per_flow_type: Record<string, unknown>;
+  /** Video router: script_avatar | prompt_avatar | no_avatar (migration 059). */
+  video_routing?: unknown;
 }
 
 export interface SuppressionRuleRow {
