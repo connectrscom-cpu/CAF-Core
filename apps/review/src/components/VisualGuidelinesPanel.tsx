@@ -5,6 +5,29 @@ import { useMemo, useState } from "react";
 
 const MAX_CUES_PER_FORMAT = 10;
 
+type FormatFamily = "carousel" | "video" | "single_image" | "mixed" | "other";
+
+const FORMAT_FAMILY_ORDER: FormatFamily[] = ["carousel", "video", "single_image", "mixed", "other"];
+
+const CAROUSEL_FORMAT_KEYS = new Set([
+  "educational",
+  "listicle",
+  "story",
+  "before_after",
+  "promo",
+  "meme grid",
+  "meme_grid",
+]);
+const VIDEO_FORMAT_KEYS = new Set(["talking_head", "b_roll", "text_on_screen", "ugc", "product_demo"]);
+
+const FORMAT_FAMILY_LABELS: Record<FormatFamily, string> = {
+  carousel: "Carousel",
+  video: "Video",
+  single_image: "Single image",
+  mixed: "Mixed",
+  other: "Other",
+};
+
 const FORMAT_HINTS: Record<string, string> = {
   listicle:
     "Listicle = swipeable carousel where each slide is one list item (e.g. one zodiac sign, one tip).",
@@ -222,6 +245,87 @@ function entryIdsForGroup(group: VisualGuidelineCueGroup, entries: VisualGuideli
   });
 }
 
+function humanizeFormatKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function inferFormatFamilyFromTier(tier: string): FormatFamily | null {
+  const t = tier.toLowerCase();
+  if (t.includes("carousel")) return "carousel";
+  if (t.includes("video")) return "video";
+  if (t.includes("deep") || t.includes("image")) return "single_image";
+  return null;
+}
+
+function inferFormatFamilyFromKey(formatKey: string): FormatFamily | null {
+  const key = formatKey.toLowerCase().trim();
+  if (CAROUSEL_FORMAT_KEYS.has(key)) return "carousel";
+  if (VIDEO_FORMAT_KEYS.has(key)) return "video";
+  if (key === "mixed") return "mixed";
+  return null;
+}
+
+function inferFormatFamilyFromEntry(entry: VisualGuidelineEntry): FormatFamily {
+  const fromTier = inferFormatFamilyFromTier(String(entry.analysis_tier ?? ""));
+  if (fromTier) return fromTier;
+  const formatKey = String(entry.format_key ?? String(entry.format_pattern ?? "").split("|")[0]?.trim() ?? "");
+  const fromKey = inferFormatFamilyFromKey(formatKey);
+  if (fromKey) return fromKey;
+  const media = parseInspectionMedia(entry.inspection_media);
+  const roles = new Set((media?.items ?? []).map((it) => String(it.role ?? "")));
+  if (roles.has("carousel_slide")) return "carousel";
+  if (roles.has("video_frame") || roles.has("source_video")) return "video";
+  if (roles.has("evidence_media")) return "single_image";
+  return "other";
+}
+
+function inferFormatFamilyForGroup(group: VisualGuidelineCueGroup, entries: VisualGuidelineEntry[]): FormatFamily {
+  const related = entryIdsForGroup(group, entries);
+  const tallies = new Map<FormatFamily, number>();
+  for (const entry of related) {
+    const fam = inferFormatFamilyFromEntry(entry);
+    tallies.set(fam, (tallies.get(fam) ?? 0) + 1);
+  }
+  let best: FormatFamily = "other";
+  let bestCount = -1;
+  for (const [fam, count] of tallies) {
+    if (count > bestCount) {
+      best = fam;
+      bestCount = count;
+    }
+  }
+  if (bestCount > 0) return best;
+  const fromKey = inferFormatFamilyFromKey(group.format_key);
+  if (fromKey) return fromKey;
+  const fromPattern = inferFormatFamilyFromKey(group.format_pattern.split("|")[0]?.trim() ?? "");
+  return fromPattern ?? "other";
+}
+
+function groupCueGroupsByFamily(
+  groups: VisualGuidelineCueGroup[],
+  entries: VisualGuidelineEntry[]
+): Array<{ family: FormatFamily; groups: VisualGuidelineCueGroup[] }> {
+  const byFamily = new Map<FormatFamily, VisualGuidelineCueGroup[]>();
+  for (const group of groups) {
+    const family = inferFormatFamilyForGroup(group, entries);
+    const list = byFamily.get(family) ?? [];
+    list.push(group);
+    byFamily.set(family, list);
+  }
+  for (const list of byFamily.values()) {
+    list.sort((a, b) => b.cues.length - a.cues.length || a.format_key.localeCompare(b.format_key));
+  }
+  return FORMAT_FAMILY_ORDER.filter((family) => byFamily.has(family)).map((family) => ({
+    family,
+    groups: byFamily.get(family)!,
+  }));
+}
+
+function entryFormatSubtitle(entry: VisualGuidelineEntry): string {
+  const key = String(entry.format_key ?? String(entry.format_pattern ?? "").split("|")[0]?.trim() ?? "unknown");
+  return humanizeFormatKey(key);
+}
+
 export function VisualGuidelinesPanel(props: {
   visualPack: VisualGuidelinesPackView;
   ideasFromInsightsMeta: Record<string, unknown> | null;
@@ -253,6 +357,13 @@ export function VisualGuidelinesPanel(props: {
     visualPack.visual_guideline_cues?.length ??
     cueGroups.reduce((n, g) => n + g.cues.length, 0);
 
+  const cueGroupsByFamily = useMemo(
+    () => groupCueGroupsByFamily(cueGroups, entries),
+    [cueGroups, entries]
+  );
+
+  const familyCount = cueGroupsByFamily.length;
+
   return (
     <section>
       <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 820 }}>
@@ -274,7 +385,8 @@ export function VisualGuidelinesPanel(props: {
         <MetaChip label="Version" value={String(visualPack.version ?? "—")} />
         <MetaChip label="Insights scanned" value={String(visualPack.insights_scanned ?? "—")} />
         <MetaChip label="Entries" value={String(entries.length)} />
-        <MetaChip label="Format groups" value={String(cueGroups.length)} />
+        <MetaChip label="Format families" value={String(familyCount)} />
+        <MetaChip label="Format styles" value={String(cueGroups.length)} />
         <MetaChip label="Cues" value={String(flatCueCount)} />
         {visualPack.generated_at ? <MetaChip label="Generated" value={fmt(visualPack.generated_at)} /> : null}
         {ideasFromInsightsMeta?.top_performer_rows_in_context != null ? (
@@ -283,78 +395,92 @@ export function VisualGuidelinesPanel(props: {
       </div>
 
       <h3 style={{ fontSize: 14, margin: "8px 0 10px" }}>Cues by format</h3>
-      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 }}>
-        {cueGroups.map((group) => {
-          const open = expandedFormat === group.format_key;
-          const examples = entryIdsForGroup(group, entries).slice(0, 6);
-          return (
-            <div
-              key={group.format_key}
-              style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}
-            >
-              <button
-                type="button"
-                onClick={() => setExpandedFormat(open ? null : group.format_key)}
-                style={{
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "10px 12px",
-                  background: "var(--surface-2, #151515)",
-                  border: "none",
-                  color: "inherit",
-                  cursor: "pointer",
-                  fontSize: 13,
-                }}
-              >
-                <strong>{group.format_key}</strong>
-                <span style={{ color: "var(--muted)", marginLeft: 8 }}>
-                  {group.cues.length} cues · {examples.length} example{examples.length === 1 ? "" : "s"}
-                </span>
-                <span style={{ float: "right", color: "var(--muted)" }}>{open ? "▾" : "▸"}</span>
-              </button>
-              {open && (
-                <div style={{ padding: "12px 14px" }}>
-                  {FORMAT_HINTS[group.format_key] ? (
-                    <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
-                      {FORMAT_HINTS[group.format_key]}
-                    </p>
-                  ) : null}
-                  {group.format_pattern !== group.format_key && (
-                    <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
-                      Full pattern: <code>{group.format_pattern}</code>
-                    </p>
-                  )}
-                  <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 8px" }}>
-                    Showing up to {MAX_CUES_PER_FORMAT} non-redundant cues. Per-post JSON and assets are under Examples.
-                  </p>
-                  <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13 }}>
-                    {group.cues.map((c, i) => (
-                      <li key={i} style={{ marginBottom: 6 }}>
-                        {c}
-                      </li>
-                    ))}
-                  </ul>
-                  {examples.length > 0 && (
-                    <>
-                      <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px" }}>Examples</p>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {examples.map((ex) => (
-                          <EntryMediaCard
-                            key={String(ex.insights_id)}
-                            entry={ex}
-                            importId={importId}
-                            navHref={navHref}
-                            compact
-                          />
-                        ))}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 24 }}>
+        {cueGroupsByFamily.map(({ family, groups }) => (
+          <div key={family}>
+            <h4 style={{ fontSize: 13, fontWeight: 700, margin: "0 0 8px", color: "var(--fg)" }}>
+              {FORMAT_FAMILY_LABELS[family]}
+              <span style={{ color: "var(--muted)", fontWeight: 500, marginLeft: 8 }}>
+                {groups.length} style{groups.length === 1 ? "" : "s"}
+              </span>
+            </h4>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {groups.map((group) => {
+                const expandKey = `${family}:${group.format_key}`;
+                const open = expandedFormat === expandKey;
+                const examples = entryIdsForGroup(group, entries).slice(0, 6);
+                return (
+                  <div
+                    key={expandKey}
+                    style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setExpandedFormat(open ? null : expandKey)}
+                      style={{
+                        width: "100%",
+                        textAlign: "left",
+                        padding: "10px 12px",
+                        background: "var(--surface-2, #151515)",
+                        border: "none",
+                        color: "inherit",
+                        cursor: "pointer",
+                        fontSize: 13,
+                      }}
+                    >
+                      <strong>{humanizeFormatKey(group.format_key)}</strong>
+                      <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+                        {group.cues.length} cues · {examples.length} example{examples.length === 1 ? "" : "s"}
+                      </span>
+                      <span style={{ float: "right", color: "var(--muted)" }}>{open ? "▾" : "▸"}</span>
+                    </button>
+                    {open && (
+                      <div style={{ padding: "12px 14px" }}>
+                        {FORMAT_HINTS[group.format_key] ? (
+                          <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
+                            {FORMAT_HINTS[group.format_key]}
+                          </p>
+                        ) : null}
+                        {group.format_pattern !== group.format_key && (
+                          <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
+                            Full pattern: <code>{group.format_pattern}</code>
+                          </p>
+                        )}
+                        <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 8px" }}>
+                          Showing up to {MAX_CUES_PER_FORMAT} non-redundant cues. Per-post JSON and assets are under
+                          Examples.
+                        </p>
+                        <ul style={{ margin: "0 0 12px", paddingLeft: 18, fontSize: 13 }}>
+                          {group.cues.map((c, i) => (
+                            <li key={i} style={{ marginBottom: 6 }}>
+                              {c}
+                            </li>
+                          ))}
+                        </ul>
+                        {examples.length > 0 && (
+                          <>
+                            <p style={{ fontSize: 12, fontWeight: 600, margin: "0 0 8px" }}>Examples</p>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                              {examples.map((ex) => (
+                                <EntryMediaCard
+                                  key={String(ex.insights_id)}
+                                  entry={ex}
+                                  importId={importId}
+                                  navHref={navHref}
+                                  compact
+                                />
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
-                    </>
-                  )}
-                </div>
-              )}
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
 
       <h3 style={{ fontSize: 14, margin: "8px 0 10px" }}>All entries ({entries.length})</h3>
@@ -423,9 +549,12 @@ function EntryMediaCard(props: {
       ) : null}
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ marginBottom: 4 }}>
-          <strong>{String(entry.format_pattern ?? entry.analysis_tier ?? "entry")}</strong>
+          <strong>{FORMAT_FAMILY_LABELS[inferFormatFamilyFromEntry(entry)]}</strong>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>{entryFormatSubtitle(entry)}</div>
           {entry.evidence_kind ? (
-            <span style={{ color: "var(--muted)", marginLeft: 8 }}>{String(entry.evidence_kind)}</span>
+            <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 0, display: "block", marginTop: 2 }}>
+              {String(entry.evidence_kind)}
+            </span>
           ) : null}
         </div>
         {instagramUrl ? (

@@ -3,7 +3,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import {
   VisualGuidelinesPanel,
@@ -163,7 +163,34 @@ export default function SignalPackDetailPage() {
       }
       if (keys.size >= 16) break;
     }
-    return Array.from(keys);
+    const preferred = [
+      "id",
+      "title",
+      "format",
+      "platform",
+      "status",
+      "thesis",
+      "three_liner",
+      "why_now",
+      "novelty_angle",
+      "who_for",
+      "key_points",
+      "cta",
+      "confidence_score",
+      "run_id",
+      "created_at",
+    ];
+    const discovered = Array.from(keys);
+    return discovered.sort((a, b) => {
+      const ia = preferred.indexOf(a.toLowerCase());
+      const ib = preferred.indexOf(b.toLowerCase());
+      if (ia >= 0 || ib >= 0) {
+        if (ia < 0) return 1;
+        if (ib < 0) return -1;
+        return ia - ib;
+      }
+      return a.localeCompare(b);
+    });
   }, [filtered]);
 
   const ideasFromInsightsMeta = useMemo(() => asRecord(derived?.ideas_from_insights_llm), [derived]);
@@ -351,30 +378,32 @@ function IdeasPanel(props: {
       )}
 
       {filtered.length > 0 && (
-        <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <HorizontalScrollTable>
+          <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ background: "var(--surface-2, #151515)" }}>
-                <Th>idx</Th>
+                <Th style={{ minWidth: 44 }}>idx</Th>
                 {columns.map((c) => (
-                  <Th key={c}>{c}</Th>
+                  <Th key={c} style={columnHeaderStyle(c)}>
+                    {c}
+                  </Th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((row, idx) => (
                 <tr key={idx} style={{ borderTop: "1px solid var(--border)" }}>
-                  <Td>{idx + 1}</Td>
+                  <Td style={{ minWidth: 44 }}>{idx + 1}</Td>
                   {columns.map((c) => (
-                    <Td key={c} style={{ maxWidth: 260, verticalAlign: "top" }}>
-                      {cellStr(row[c])}
+                    <Td key={c} style={columnCellStyle(c)}>
+                      {c.toLowerCase() === "format" ? formatCellValue(row[c], row) : cellStr(row[c], c)}
                     </Td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
+        </HorizontalScrollTable>
       )}
 
       {pack && rows.length === 0 && (
@@ -508,9 +537,151 @@ function JsonPre({ value, maxHeight = 420 }: { value: unknown; maxHeight?: numbe
   );
 }
 
-function Th({ children }: { children: ReactNode }) {
+const EXTRA_WIDE_COLUMNS = new Set(["thesis", "three_liner", "novelty_angle"]);
+const WIDE_COLUMNS = new Set([
+  "title",
+  "why_now",
+  "who_for",
+  "key_points",
+  "cta",
+  "expected_outcome",
+  ...EXTRA_WIDE_COLUMNS,
+]);
+
+function isWideColumn(col: string): boolean {
+  return WIDE_COLUMNS.has(col.toLowerCase());
+}
+
+function columnHeaderStyle(col: string): CSSProperties {
+  const key = col.toLowerCase();
+  if (EXTRA_WIDE_COLUMNS.has(key)) return { minWidth: 340, maxWidth: 480 };
+  if (WIDE_COLUMNS.has(key)) return { minWidth: 220, maxWidth: 360 };
+  if (key === "format") return { minWidth: 120, maxWidth: 160 };
+  return { minWidth: 88, maxWidth: 180 };
+}
+
+function columnCellStyle(col: string): CSSProperties {
+  const base: CSSProperties = {
+    verticalAlign: "top",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    ...columnHeaderStyle(col),
+  };
+  return base;
+}
+
+function HorizontalScrollTable({ children }: { children: ReactNode }) {
+  const topRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const syncing = useRef(false);
+
+  const syncScrollWidth = useCallback(() => {
+    const content = contentRef.current;
+    const top = topRef.current;
+    const body = bodyRef.current;
+    if (!content || !top || !body) return;
+    const w = content.scrollWidth;
+    const spacer = top.firstElementChild as HTMLElement | null;
+    if (spacer) spacer.style.width = `${w}px`;
+    top.scrollLeft = body.scrollLeft;
+  }, []);
+
+  useLayoutEffect(() => {
+    syncScrollWidth();
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => syncScrollWidth());
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [children, syncScrollWidth]);
+
+  const onTopScroll = () => {
+    if (syncing.current || !topRef.current || !bodyRef.current) return;
+    syncing.current = true;
+    bodyRef.current.scrollLeft = topRef.current.scrollLeft;
+    syncing.current = false;
+  };
+
+  const onBodyScroll = () => {
+    if (syncing.current || !topRef.current || !bodyRef.current) return;
+    syncing.current = true;
+    topRef.current.scrollLeft = bodyRef.current.scrollLeft;
+    syncing.current = false;
+  };
+
   return (
-    <th style={{ textAlign: "left", padding: "8px 10px", fontWeight: 600, fontSize: 11, color: "var(--muted)" }}>
+    <div style={{ border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div
+        ref={topRef}
+        onScroll={onTopScroll}
+        aria-hidden
+        style={{
+          overflowX: "auto",
+          overflowY: "hidden",
+          height: 14,
+          borderBottom: "1px solid var(--border)",
+          background: "var(--surface-2, #151515)",
+        }}
+      >
+        <div style={{ height: 1 }} />
+      </div>
+      <div ref={bodyRef} onScroll={onBodyScroll} style={{ overflowX: "auto" }}>
+        <div ref={contentRef}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function formatFamilyLabel(raw: string): string {
+  const key = raw.toLowerCase().replace(/\s+/g, "_");
+  const labels: Record<string, string> = {
+    carousel: "Carousel",
+    video: "Video",
+    single_image: "Single image",
+    post: "Post",
+    thread: "Thread",
+    blog: "Blog",
+    memo: "Memo",
+    slides: "Slides",
+    script: "Script",
+  };
+  return labels[key] ?? raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatSubtitleFromRow(row: Record<string, unknown>): string | null {
+  for (const key of ["format_style", "format_subtype", "format_pattern", "visual_style", "hook_type"]) {
+    const v = row[key];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+function formatCellValue(formatRaw: unknown, row: Record<string, unknown>): ReactNode {
+  const family = formatRaw == null ? "—" : formatFamilyLabel(String(formatRaw));
+  const subtitle = formatSubtitleFromRow(row);
+  if (!subtitle) return family;
+  const sub = subtitle.includes("_") ? formatFamilyLabel(subtitle) : subtitle;
+  return (
+    <span>
+      <span style={{ display: "block", fontWeight: 600 }}>{family}</span>
+      <span style={{ display: "block", fontSize: 11, color: "var(--muted)", marginTop: 2 }}>{sub}</span>
+    </span>
+  );
+}
+
+function Th({ children, style }: { children: ReactNode; style?: CSSProperties }) {
+  return (
+    <th
+      style={{
+        textAlign: "left",
+        padding: "8px 10px",
+        fontWeight: 600,
+        fontSize: 11,
+        color: "var(--muted)",
+        ...style,
+      }}
+    >
       {children}
     </th>
   );
@@ -520,9 +691,10 @@ function Td({ children, style }: { children: ReactNode; style?: CSSProperties })
   return <td style={{ padding: "8px 10px", ...style }}>{children}</td>;
 }
 
-function cellStr(v: unknown): string {
+function cellStr(v: unknown, col?: string): string {
   if (v == null) return "—";
   const s = typeof v === "string" ? v : JSON.stringify(v);
+  if (col && isWideColumn(col)) return s;
   if (s.length <= 240) return s;
   return `${s.slice(0, 240)}…`;
 }
