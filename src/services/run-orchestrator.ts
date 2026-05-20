@@ -26,6 +26,7 @@ import {
 } from "../repositories/runs.js";
 import {
   ensureDefaultAllowedFlowsIfNone,
+  ensureMimicFlowsEnabledWhenCapped,
   getBrandConstraints,
   getStrategyDefaults,
   listAllowedFlowTypes,
@@ -115,6 +116,7 @@ export async function startRun(
     }
 
     await ensureDefaultAllowedFlowsIfNone(db, run.project_id);
+    await ensureMimicFlowsEnabledWhenCapped(db, run.project_id);
     const allowedFlows = await listAllowedFlowTypes(db, run.project_id);
     const enabledFlows = allowedFlows.filter((f) => f.enabled && !isOfflinePipelineFlow(f.flow_type));
 

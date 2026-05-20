@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   isPrimaryFormatMatch,
   partitionCandidatesForPlanningPhases,
+  flowTypeMatchesRowFormat,
+  planningLaneForFlowType,
 } from "./format-routing.js";
+import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
 function cand(
@@ -64,5 +67,11 @@ describe("format-routing", () => {
     expect(primary).toHaveLength(1);
     expect(primary[0]?.flow_type).toBe("FLOW_CAROUSEL");
     expect(fallback).toHaveLength(0);
+  });
+
+  it("allows mimic image flow on carousel-format planner rows", () => {
+    expect(flowTypeMatchesRowFormat(FLOW_TOP_PERFORMER_MIMIC_IMAGE, "carousel")).toBe(true);
+    expect(planningLaneForFlowType(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL)).toBe("mimic_carousel");
+    expect(planningLaneForFlowType("FLOW_CAROUSEL")).toBe("carousel");
   });
 });

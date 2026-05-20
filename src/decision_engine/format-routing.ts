@@ -6,7 +6,11 @@
  * cross-format fallback for declared carousel or video ideas.
  */
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "./flow-kind.js";
-import { FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+  isTopPerformerMimicCarouselFlow,
+  isTopPerformerMimicImageFlow,
+} from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
 export type IdeaFormatBucket = "carousel" | "video" | "post" | "thread" | "other";
@@ -50,6 +54,7 @@ export function ideaIdFromCandidate(c: ScoredCandidate): string {
 export function isPrimaryFormatMatch(c: ScoredCandidate): boolean {
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format);
   if (!ideaBucket) return false;
+  if (isTopPerformerMimicImageFlow(c.flow_type) && ideaBucket === "carousel") return true;
   const flowBucket = bucketForFlowType(c.flow_type);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
     return flowBucket === "other";
@@ -63,6 +68,7 @@ export function flowTypeMatchesRowFormat(
   ideaBucket: IdeaFormatBucket | null
 ): boolean {
   if (!ideaBucket) return true;
+  if (isTopPerformerMimicImageFlow(flowType) && ideaBucket === "carousel") return true;
   const flowBucket = bucketForFlowType(flowType);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
     return flowBucket === "other";
@@ -72,11 +78,24 @@ export function flowTypeMatchesRowFormat(
 
 const STRICT_FORMAT_BUCKETS = new Set<IdeaFormatBucket>(["carousel", "video"]);
 
-/** Pass 1: at most one planned job per idea within its declared format family. */
+/**
+ * Planning dedupe lane within a format bucket. Standard carousel/video flows share a lane
+ * (one job per idea); mimic flows use separate lanes so they can run parallel to FLOW_CAROUSEL.
+ */
+export function planningLaneForFlowType(flowType: string): string {
+  if (isTopPerformerMimicCarouselFlow(flowType)) return "mimic_carousel";
+  if (isTopPerformerMimicImageFlow(flowType)) return "mimic_image";
+  if (isCarouselFlow(flowType)) return "carousel";
+  if (isVideoFlow(flowType)) return "video";
+  return bucketForFlowType(flowType);
+}
+
+/** Pass 1: at most one planned job per idea per lane within its declared format family. */
 export function ideaKeyPrimaryPass(c: ScoredCandidate): string {
   const ideaId = ideaIdFromCandidate(c);
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format) ?? "other";
-  return `${ideaId}|primary:${ideaBucket}`;
+  const lane = planningLaneForFlowType(c.flow_type);
+  return `${ideaId}|primary:${ideaBucket}:${lane}`;
 }
 
 /** Pass 2 / legacy: one job per idea per output flow family. */

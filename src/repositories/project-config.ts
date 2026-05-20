@@ -11,7 +11,13 @@ import {
 import {
   TOP_PERFORMER_MIMIC_FLOW_TYPES,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+  isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+} from "../decision_engine/default-plan-caps.js";
+import { getConstraints, normalizePerFlowCaps } from "./core.js";
 import { q, qOne } from "../db/queries.js";
 
 // ---------------------------------------------------------------------------
@@ -470,6 +476,50 @@ export async function seedMimicFlowTypesSkeleton(db: Pool, projectId: string): P
       notes,
       heygen_mode: null,
     });
+  }
+}
+
+/**
+ * When operator sets a positive plan cap for mimic flows, ensure the corresponding
+ * allowed_flow_types row is enabled (caps alone do not expand candidates).
+ */
+export async function ensureMimicFlowsEnabledWhenCapped(db: Pool, projectId: string): Promise<void> {
+  const constraints = await getConstraints(db, projectId);
+  const caps = normalizePerFlowCaps(constraints?.max_jobs_per_flow_type);
+  const rows = await listAllowedFlowTypes(db, projectId);
+  const byFlow = new Map(rows.map((r) => [r.flow_type, r]));
+
+  for (const group of TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS) {
+    if (group.keys[0] === FLOW_TOP_PERFORMER_MIMIC_VIDEO) continue;
+    let cap: number | undefined;
+    for (const key of group.keys) {
+      if (Object.prototype.hasOwnProperty.call(caps, key)) {
+        cap = caps[key];
+        break;
+      }
+    }
+    const effective = cap ?? DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP;
+    if (effective <= 0) continue;
+
+    for (const ft of group.keys) {
+      if (!isTopPerformerMimicRenderableFlow(ft)) continue;
+      const row = byFlow.get(ft);
+      if (!row || row.enabled) continue;
+      await upsertAllowedFlowType(db, projectId, {
+        flow_type: row.flow_type,
+        enabled: true,
+        default_variation_count: row.default_variation_count,
+        requires_signal_pack: row.requires_signal_pack,
+        requires_learning_context: row.requires_learning_context,
+        allowed_platforms: row.allowed_platforms,
+        output_schema_version: row.output_schema_version,
+        qc_checklist_version: row.qc_checklist_version,
+        prompt_template_id: row.prompt_template_id,
+        priority_weight: row.priority_weight,
+        notes: row.notes,
+        heygen_mode: row.heygen_mode ?? null,
+      });
+    }
   }
 }
 
