@@ -2,8 +2,8 @@
  * Top-performer vision passes (image / carousel / video) should not scan the whole import.
  * After the usual pre-LLM cutoff:
  * - By default, rows must have **`broad_llm`** row insights (same cohort as the broad insights pass).
- * - Additionally, rows may be restricted to the top fraction of **rated** performers
- *   (`inputs_evidence_rows.rating_score`), default top 5%.
+ * - Legacy helper `resolveTopPerformerRatingGate` (import-wide top fraction of rated rows) is
+ *   **deprecated** — vision passes use `applyTopPerformerPercentileSelection` with per-format-family pools.
  */
 import type { Pool } from "pg";
 import { listEvidenceRowInsightIdsByImportTier } from "../repositories/inputs-evidence-insights.js";

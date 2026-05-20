@@ -56,4 +56,25 @@ describe("inputs-top-performer-percentile-pool", () => {
     const { selected } = applyTopPerformerPercentileSelection(eligible, config);
     expect(selected.map((r) => r.id)).toEqual(["high"]);
   });
+
+  it("applyTopPerformerPercentileSelection applies top fraction independently per format family", () => {
+    const config = resolveTopPerformerPercentileConfig({
+      top_performer: { rating_top_fraction: 0.5 },
+    });
+    const eligible = [
+      { id: "c1", score: 0.2, score_source: "pre_llm_score" as const, family: "carousel" as const },
+      { id: "c2", score: 0.9, score_source: "pre_llm_score" as const, family: "carousel" as const },
+      { id: "v1", score: 0.1, score_source: "pre_llm_score" as const, family: "video" as const },
+      { id: "v2", score: 0.8, score_source: "pre_llm_score" as const, family: "video" as const },
+    ];
+    const { selected, stats } = applyTopPerformerPercentileSelection(eligible, config, {
+      groupByFormatFamily: (r) => r.family,
+    });
+    expect(selected.map((r) => r.id).sort()).toEqual(["c2", "v2"]);
+    expect(stats.grouped_by_format_family).toBe(true);
+    expect(stats.format_groups).toEqual([
+      { format_family: "carousel", universe_count: 2, percentile_cap: 1, selected_count: 1 },
+      { format_family: "video", universe_count: 2, percentile_cap: 1, selected_count: 1 },
+    ]);
+  });
 });

@@ -42,6 +42,7 @@ import {
   applyTopPerformerPercentileSelection,
   resolveTopPerformerPercentileConfig,
   scoreRowForTopPerformer,
+  topPerformerFormatFamilyForRow,
   type ScoredTopPerformerRow,
 } from "./inputs-top-performer-percentile-pool.js";
 import {
@@ -641,6 +642,7 @@ export async function runDeepCarouselInsightsForImport(
       broadIdSet: broadGate.active ? broadGate.idSet : null,
       maxRows,
       ratedRowsInImport,
+      groupByFormatFamily: (r) => topPerformerFormatFamilyForRow(r.evidence_kind, r.payload),
     }
   );
 
@@ -836,9 +838,11 @@ ${textBundle}`;
     carousel_insights_total: carouselTotal,
     percentile_gate_active: percentileConfig.active,
     percentile_top_fraction: percentileConfig.fraction,
+    percentile_scope: "top_performer_carousel",
     percentile_universe_count: percentileStats.universe_count,
     percentile_cap: percentileStats.percentile_cap,
     percentile_score_basis: percentileStats.score_basis,
+    percentile_format_groups: percentileStats.format_groups,
     skipped_percentile_selection: skippedPercentileSelection,
     percentile_gate_disabled: percentileConfig.disabled,
     rating_gate_active: percentileConfig.active,
