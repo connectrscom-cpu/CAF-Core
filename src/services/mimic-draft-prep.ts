@@ -71,7 +71,7 @@ export async function prepareMimicDraftPackage(
     [JSON.stringify(merged), job.id]
   );
 
-  logPipelineEvent("info", "mimic_draft_prep", "mimic_v1 stored", {
+  logPipelineEvent("info", "generate", "mimic_v1 stored", {
     run_id: runId ?? undefined,
     task_id: job.task_id,
     flow_type: job.flow_type,

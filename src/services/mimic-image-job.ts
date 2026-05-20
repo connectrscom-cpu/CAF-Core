@@ -69,7 +69,7 @@ export async function processImageMimicJob(
 
   await deleteAssetsForTask(db, job.project_id, job.task_id);
 
-  logPipelineEvent("info", "mimic_image_gen", "starting image mimic render", {
+  logPipelineEvent("info", "render", "starting image mimic render", {
     run_id: job.run_id,
     task_id: job.task_id,
     flow_type: job.flow_type,
