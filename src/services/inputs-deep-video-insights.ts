@@ -44,6 +44,7 @@ import {
   scoreRowForTopPerformer,
   topPerformerFormatFamilyForRow,
   type ScoredTopPerformerRow,
+  type TopPerformerPercentileGroupStat,
 } from "./inputs-top-performer-percentile-pool.js";
 import {
   archiveTopPerformerVisionMedia,
@@ -99,9 +100,11 @@ export interface RunDeepVideoInsightsResult {
   video_insights_total: number;
   percentile_gate_active?: boolean;
   percentile_top_fraction?: number;
+  percentile_scope?: string;
   percentile_universe_count?: number;
   percentile_cap?: number;
   percentile_score_basis?: string;
+  percentile_format_groups?: TopPerformerPercentileGroupStat[];
   skipped_percentile_selection?: number;
   percentile_gate_disabled?: string;
   rating_gate_active?: boolean;
