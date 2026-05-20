@@ -100,5 +100,7 @@ export interface GenerationPlanResult {
     max_jobs_per_flow_type?: Record<string, number>;
     planned_carousel_jobs?: number;
     planned_video_jobs?: number;
+    planning_primary_candidates?: number;
+    planning_fallback_candidates?: number;
   };
 }
