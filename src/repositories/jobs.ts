@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { qOne } from "../db/queries.js";
+import { q, qOne } from "../db/queries.js";
 
 export interface DeleteContentJobsByTaskIdsOpts {
   /** Also remove drafts whose `run_id` matches (run-level cleanup; omit for single-task delete). */
@@ -219,4 +219,34 @@ export async function getContentJobByTaskId(
     `SELECT * FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
     [projectId, taskId]
   );
+}
+
+/** Per-run job counts grouped by `content_jobs.status` (for stage progress on the Runs table). */
+export async function countContentJobsByRunAndStatus(
+  db: Pool,
+  projectId: string,
+  runIds: string[]
+): Promise<Map<string, Record<string, number>>> {
+  const ids = [...new Set(runIds.map((id) => id.trim()).filter(Boolean))];
+  const out = new Map<string, Record<string, number>>();
+  if (ids.length === 0) return out;
+
+  const rows = await q<{ run_id: string; status: string; c: number }>(
+    db,
+    `SELECT run_id, status, count(*)::int AS c
+       FROM caf_core.content_jobs
+      WHERE project_id = $1 AND run_id = ANY($2::text[])
+      GROUP BY run_id, status`,
+    [projectId, ids]
+  );
+
+  for (const row of rows) {
+    let counts = out.get(row.run_id);
+    if (!counts) {
+      counts = {};
+      out.set(row.run_id, counts);
+    }
+    counts[row.status] = row.c;
+  }
+  return out;
 }

@@ -20,6 +20,7 @@ import {
   PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE,
 } from "../domain/product-flow-types.js";
 import {
+  isTopPerformerMimicCarouselFlow,
   isTopPerformerMimicRenderableFlow,
   TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
@@ -33,6 +34,13 @@ import {
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+import { pickMimicPayload } from "../domain/mimic-payload.js";
+import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import {
   creationContextHasUnreplacedPlaceholders,
@@ -411,6 +419,26 @@ export async function generateForJob(
     creative_style_guidance: creativeStyleGuidance,
     ...(carouselBodyTargets ? { carousel_body_length: carouselBodyTargets } : {}),
   };
+
+  const mimicForCopy = pickMimicPayload(payload);
+  const mimicRenderContextFromPayload = asRecord(payload.mimic_render_context);
+  if (mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    templateContext.mimic_render_context =
+      mimicRenderContextFromPayload ??
+      (mimicForCopy.visual_guideline
+        ? buildMimicRenderContextForLlm(mimicForCopy, mimicForCopy.visual_guideline)
+        : null);
+    if (templateContext.mimic_render_context) {
+      const ctx = templateContext.mimic_render_context as Record<string, unknown>;
+      const targetSlides = ctx.target_slide_count;
+      if (typeof targetSlides === "number" && targetSlides > 0) {
+        templateContext.structure_variables = {
+          ...(asRecord(templateContext.structure_variables) ?? {}),
+          slide_count: targetSlides,
+        };
+      }
+    }
+  }
   if (isVideoFlow(job.flow_type)) {
     const genOut = pickGeneratedOutputOrEmpty(payload);
     const includeVs = wantSceneBundle || extractSpokenScriptText(genOut, 1).length > 0;

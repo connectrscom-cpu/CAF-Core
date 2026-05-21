@@ -45,7 +45,7 @@ import {
 } from "../domain/top-performer-mimic-flow-types.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
-import { prepareMimicDraftPackage } from "./mimic-draft-prep.js";
+import { prepareMimicDraftPackage, ensureMimicReferenceBeforeCopyGeneration } from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
 import {
   ensureMimicCarouselBackground,
@@ -257,6 +257,24 @@ async function processJobUpToRender(
   const hasGenerated = Boolean(payloadSnap?.generation_payload?.generated_output);
 
   if (openaiKey && !hasGenerated) {
+    if (isTopPerformerMimicRenderableFlow(job.flow_type) && config.MIMIC_IMAGE_ENABLED) {
+      const preGenJob = await reloadJobRow(db, job.id);
+      if (preGenJob) {
+        await ensureMimicReferenceBeforeCopyGeneration(
+          db,
+          config,
+          {
+            id: preGenJob.id,
+            task_id: preGenJob.task_id,
+            project_id: preGenJob.project_id,
+            flow_type: preGenJob.flow_type,
+            generation_payload: (preGenJob.generation_payload ?? {}) as Record<string, unknown>,
+          },
+          run?.run_id ?? null
+        );
+      }
+    }
+
     const genResult = await generateForJob(db, job.id, openaiKey, openaiModel, {
       schemaValidationMode: resolveOutputSchemaValidationMode(config),
     });

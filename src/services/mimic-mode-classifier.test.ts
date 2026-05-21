@@ -26,6 +26,22 @@ describe("classifyMimicMode", () => {
     expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry).mode).toBe("template_bg");
   });
 
+  it("returns template_bg when on-screen transcript exceeds char threshold", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        slides: [
+          {
+            text_density: "low",
+            image_or_photo_role: "full-bleed photo",
+            on_screen_text_transcript: "A".repeat(220),
+          },
+        ],
+      },
+    };
+    expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry).mode).toBe("template_bg");
+  });
+
   it("returns carousel_visual with per-slide plans for image-led deck", () => {
     const entry = {
       aesthetic_analysis_json: {

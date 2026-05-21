@@ -69,8 +69,8 @@ describe("format-routing", () => {
     expect(fallback).toHaveLength(0);
   });
 
-  it("allows mimic image flow on carousel-format planner rows", () => {
-    expect(flowTypeMatchesRowFormat(FLOW_TOP_PERFORMER_MIMIC_IMAGE, "carousel")).toBe(true);
+  it("does not route carousel-format ideas to mimic image flow", () => {
+    expect(flowTypeMatchesRowFormat(FLOW_TOP_PERFORMER_MIMIC_IMAGE, "carousel")).toBe(false);
     expect(planningLaneForFlowType(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL)).toBe("mimic_carousel");
     expect(planningLaneForFlowType("FLOW_CAROUSEL")).toBe("carousel");
   });

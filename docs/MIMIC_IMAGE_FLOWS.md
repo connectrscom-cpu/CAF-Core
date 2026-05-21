@@ -35,17 +35,20 @@ Migration **`061_mimic_flow_prompts.sql`** adds Flow Engine `flow_definitions` +
 ## Operator workflow
 
 1. **Plan run** — mimic flows compete in parallel with regular carousel flows when both enabled
-2. **Generate Jobs** — LLM draft + `job_drafts` row + `generation_payload.mimic_v1` (reference + mode); status **GENERATED**
-3. **Review** — inspect copy and mimic metadata (no assets yet)
-4. **Render** — gpt-image-1 produces assets; status **IN_REVIEW**
+2. **Resolve reference** (before LLM) — `mimic_v1` + `mimic_render_context` on the job; listicle / ≥200-char on-screen text → `template_bg`
+3. **Generate Jobs** — LLM copy informed by render plan; then `mimic_carousel_package` snapshot; status **GENERATED**
+4. **Review** — inspect copy and mimic metadata (no assets yet)
+5. **Render** — gpt-image-1 background extract + template overlay, or per-slide mimic; status **IN_REVIEW**
 
 ## Mimic modes (`mimic_v1.mode`)
 
 | Mode | When | Render |
 |------|------|--------|
-| `image_full` | Single-image top performer | One `STATIC_IMAGE` |
+| `image_full` | Single-frame top performer (exactly **one** archived reference image) | One `STATIC_IMAGE` with **new** on-image copy from LLM (not reference text) |
 | `template_bg` | Text-heavy template carousel | Background extract + `carousel_mimic_bg.hbs` slides |
-| `carousel_visual` | Image-led carousel | Per-slide mimic (full bleed or HBS) |
+| `carousel_visual` | Image-led carousel (**2+** reference frames, or multi-slide deck) | Per-slide mimic (full bleed or HBS) |
+
+**Routing:** `FLOW_TOP_PERFORMER_MIMIC_IMAGE` is for **post**-format ideas with a **single** archived frame. Carousel-format ideas and references with 2+ slides must use `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`. Generate fails early if image mimic resolves to multiple reference frames.
 
 ## Config
 

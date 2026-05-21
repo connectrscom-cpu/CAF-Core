@@ -26,7 +26,19 @@ import {
 } from "./inputs-sns-workbook-parser.js";
 import { SCRAPER_OUTPUT_SHEETS } from "./inputs-source-sync.js";
 import {
-  buildRedditApifyInput,
+  apifyWaitSec,
+  buildFacebookApifyInput,
+  buildInstagramApifyInput,
+  buildRedditApifyInputFromConfig,
+  buildTiktokApifyInput,
+  datasetLimitFor,
+  defaultScraperConfig,
+  mergeScraperConfig,
+  parseHashtagList,
+  resolveActorId,
+  type ScraperProjectConfig,
+} from "./inputs-scraper-apify-config.js";
+import {
   enabledWebsiteSources,
   facebookUrlsFromSources,
   prepareInstagramSources,
@@ -44,56 +56,7 @@ import { logPipelineEvent } from "./pipeline-logger.js";
 export const SCRAPER_KEYS = ["instagram", "tiktok", "html", "facebook", "reddit", "all"] as const;
 export type ScraperKey = (typeof SCRAPER_KEYS)[number];
 
-const ACTORS = {
-  instagram: "shu8hvrXbJbY3Eb9W",
-  tiktok: "GdWCkxBtKWOsKjdch",
-  facebook: "KoJrdxJCTtpon81KY",
-  reddit: "oAuCIx3ItNrs2okjQ",
-} as const;
-
-export interface ScraperProjectConfig {
-  scrapers?: Record<
-    string,
-    {
-      enabled?: boolean;
-      resultsLimit?: number;
-      oldestPostDateUnified?: string;
-      resultsPerPage?: number;
-      minLikes?: number;
-      maxPostCount?: number;
-      maxComments?: number;
-      fetchTimeoutMs?: number;
-    }
-  >;
-  apify?: { useApifyProxy?: boolean; proxyCountryCode?: string };
-  tiktokVideoKvStore?: string;
-}
-
-export function defaultScraperConfig(): ScraperProjectConfig {
-  return {
-    scrapers: {
-      instagram: { enabled: true, resultsLimit: 10 },
-      tiktok: { enabled: true, oldestPostDateUnified: "7 days", resultsPerPage: 10 },
-      html: { enabled: true, fetchTimeoutMs: 30_000 },
-      facebook: { enabled: true, minLikes: 5 },
-      reddit: { enabled: true, maxPostCount: 30, maxComments: 3 },
-    },
-    apify: { useApifyProxy: true, proxyCountryCode: "US" },
-    tiktokVideoKvStore: "caf-tiktok-astrology-media",
-  };
-}
-
-export function mergeScraperConfig(stored: Record<string, unknown> | null | undefined): ScraperProjectConfig {
-  const base = defaultScraperConfig();
-  if (!stored || typeof stored !== "object") return base;
-  const scrapers = { ...base.scrapers, ...(stored.scrapers as Record<string, unknown> | undefined) };
-  return {
-    ...base,
-    ...stored,
-    scrapers: scrapers as ScraperProjectConfig["scrapers"],
-    apify: { ...base.apify, ...(stored.apify as Record<string, unknown> | undefined) },
-  };
-}
+export { defaultScraperConfig, mergeScraperConfig, type ScraperProjectConfig };
 
 async function loadEnabledSources(
   db: Pool,
@@ -214,65 +177,69 @@ async function persistEvidenceImport(
 
 async function scrapeInstagram(
   token: string,
-  config: ScraperProjectConfig,
+  cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
   const prepared = prepareInstagramSources(sources);
-  const limit = config.scrapers?.instagram?.resultsLimit ?? 10;
+  const ig = cfg.scrapers?.instagram ?? {};
+  const actorId = resolveActorId("instagram", ig);
+  const wait = apifyWaitSec(cfg);
+  const limit = datasetLimitFor(cfg, "instagram");
   const out: Record<string, unknown>[] = [];
+
+  if (ig.runMode === "batch") {
+    const urls = prepared.map((s) => String(s.instagramUrl ?? "")).filter(Boolean);
+    if (urls.length === 0) return [];
+    const run = await runApifyActor(token, actorId, buildInstagramApifyInput(cfg, urls), { waitForFinishSec: wait });
+    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+    const ctx = prepared[0] ?? {};
+    for (const item of items) out.push(transformInstagramApifyPost(item, ctx));
+    return out;
+  }
 
   for (const src of prepared) {
     const url = String(src.instagramUrl ?? "");
     if (!url) continue;
-    const run = await runApifyActor(token, ACTORS.instagram, {
-      directUrls: [url],
-      resultsType: "posts",
-      resultsLimit: limit,
-      scrapePosts: true,
-      scrapeReels: true,
-      scrapeStories: false,
-      proxyConfiguration: { useApifyProxy: config.apify?.useApifyProxy !== false },
+    const run = await runApifyActor(token, actorId, buildInstagramApifyInput(cfg, [url]), {
+      waitForFinishSec: wait,
     });
-    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit: 500 });
-    for (const item of items) {
-      out.push(transformInstagramApifyPost(item, src));
-    }
+    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+    for (const item of items) out.push(transformInstagramApifyPost(item, src));
   }
   return out;
 }
 
 async function scrapeTiktok(
   token: string,
-  config: ScraperProjectConfig,
-  sources: Record<string, unknown>[]
+  cfg: ScraperProjectConfig,
+  sources: Record<string, unknown>[],
+  hashtagSources: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
   const profiles = tiktokProfilesFromSources(sources);
-  if (profiles.length === 0) return [];
+  const tt = cfg.scrapers?.tiktok ?? {};
+  const extraProfiles = parseHashtagList(
+    Array.isArray(tt.extraProfiles) ? tt.extraProfiles.join("\n") : String(tt.extraProfiles ?? "")
+  );
+  const extraHashtags = parseHashtagList(
+    Array.isArray(tt.extraHashtags) ? tt.extraHashtags.join("\n") : String(tt.extraHashtags ?? "")
+  );
+  const useSourceHashtags = tt.useHashtagsFromSources !== false && hashtagSources.length > 0;
+  if (profiles.length === 0 && extraProfiles.length === 0 && !useSourceHashtags && extraHashtags.length === 0) {
+    return [];
+  }
 
-  const run = await runApifyActor(token, ACTORS.tiktok, {
-    commentsPerPost: 0,
-    excludePinnedPosts: false,
-    maxFollowersPerProfile: 0,
-    maxFollowingPerProfile: 0,
-    maxRepliesPerComment: 0,
-    oldestPostDateUnified: config.scrapers?.tiktok?.oldestPostDateUnified ?? "7 days",
-    profileScrapeSections: ["videos"],
-    profileSorting: "latest",
-    profiles,
-    proxyCountryCode: config.apify?.proxyCountryCode ?? "US",
-    resultsPerPage: config.scrapers?.tiktok?.resultsPerPage ?? 10,
-    scrapeRelatedVideos: false,
-    shouldDownloadAvatars: false,
-    shouldDownloadCovers: true,
-    shouldDownloadMusicCovers: false,
-    shouldDownloadSlideshowImages: true,
-    shouldDownloadVideos: true,
-    videoKvStoreIdOrName: config.tiktokVideoKvStore ?? "caf-tiktok-astrology-media",
-    downloadSubtitlesOptions: "DOWNLOAD_AND_TRANSCRIBE_VIDEOS_WITHOUT_SUBTITLES",
-    maxProfilesPerQuery: 10,
-  });
+  const actorId = resolveActorId("tiktok", tt);
+  const wait = apifyWaitSec(cfg);
+  const limit = datasetLimitFor(cfg, "tiktok");
+  const input = buildTiktokApifyInput(cfg, profiles, hashtagSources);
+  if (!Array.isArray(input.profiles) || (input.profiles as string[]).length === 0) {
+    if (!Array.isArray(input.hashtags) || (input.hashtags as string[]).length === 0) {
+      return [];
+    }
+  }
 
-  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit: 2000 });
+  const run = await runApifyActor(token, actorId, input, { waitForFinishSec: wait });
+  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
   const out: Record<string, unknown>[] = [];
   for (const item of items) {
     const row = transformTiktokApifyItem(item);
@@ -283,40 +250,41 @@ async function scrapeTiktok(
 
 async function scrapeReddit(
   token: string,
-  config: ScraperProjectConfig,
+  cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
   const links = subredditLinksFromSources(sources);
   if (links.length === 0) return [];
-  const input = buildRedditApifyInput(links);
-  if (config.scrapers?.reddit?.maxPostCount != null) {
-    input.maxPostCount = config.scrapers.reddit.maxPostCount;
-  }
-  if (config.scrapers?.reddit?.maxComments != null) {
-    input.maxComments = config.scrapers.reddit.maxComments;
-  }
-  const run = await runApifyActor(token, ACTORS.reddit, input);
-  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit: 5000 });
+  const rd = cfg.scrapers?.reddit ?? {};
+  const actorId = resolveActorId("reddit", rd);
+  const wait = apifyWaitSec(cfg);
+  const limit = datasetLimitFor(cfg, "reddit");
+  const input = buildRedditApifyInputFromConfig(cfg, links);
+  const run = await runApifyActor(token, actorId, input, { waitForFinishSec: wait });
+  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
   return transformRedditApifyDataset(items);
 }
 
 async function scrapeFacebook(
   token: string,
-  _config: ScraperProjectConfig,
+  cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
   const urls = facebookUrlsFromSources(sources);
   if (urls.length === 0) return [];
+  const fb = cfg.scrapers?.facebook ?? {};
+  const actorId = resolveActorId("facebook", fb);
+  const wait = apifyWaitSec(cfg);
+  const limit = datasetLimitFor(cfg, "facebook");
+  const filterOpts = { minLikes: fb.minLikes ?? 5, requireCaption: fb.requireCaption !== false };
   const out: Record<string, unknown>[] = [];
   for (const startUrl of urls) {
-    const run = await runApifyActor(token, ACTORS.facebook, {
-      startUrls: [{ url: startUrl }],
-      resultsLimit: 30,
-      proxyConfiguration: { useApifyProxy: true },
+    const run = await runApifyActor(token, actorId, buildFacebookApifyInput(cfg, startUrl), {
+      waitForFinishSec: wait,
     });
-    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit: 500 });
+    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
     for (const item of items) {
-      const row = transformFacebookApifyPost(item);
+      const row = transformFacebookApifyPost(item, filterOpts);
       if (row) out.push(row);
     }
   }
@@ -324,22 +292,31 @@ async function scrapeFacebook(
 }
 
 async function scrapeHtml(
-  config: ScraperProjectConfig,
+  cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[]
 ): Promise<Record<string, unknown>[]> {
+  const htmlCfg = cfg.scrapers?.html ?? {};
   const sites = enabledWebsiteSources(sources);
-  const timeout = config.scrapers?.html?.fetchTimeoutMs ?? 30_000;
+  const timeout = htmlCfg.fetchTimeoutMs ?? 30_000;
+  const ua = htmlCfg.userAgent ?? "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)";
   const out: Record<string, unknown>[] = [];
 
   for (const site of sites) {
     try {
       const res = await fetch(site.url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)" },
+        headers: { "User-Agent": ua },
         signal: AbortSignal.timeout(timeout),
       });
       if (!res.ok) continue;
       const html = await res.text();
-      out.push(transformHtmlFetch(html, { url: site.url, sourceName: site.name }));
+      out.push(
+        transformHtmlFetch(html, {
+          url: site.url,
+          sourceName: site.name,
+          maxMainTextChars: htmlCfg.maxMainTextChars,
+          minParagraphChars: htmlCfg.minParagraphChars,
+        })
+      );
     } catch (e) {
       logPipelineEvent("warn", "other", "inputs scraper html fetch failed", {
         data: { url: site.url, error: e instanceof Error ? e.message : String(e) },
@@ -366,7 +343,7 @@ async function runOneScraper(
 ): Promise<ParsedInputsEvidenceRow[]> {
   const tab = SCRAPER_SOURCE_TAB[scraperKey];
   const sources = await loadEnabledSources(db, projectId, tab);
-  if (sources.length === 0) {
+  if (sources.length === 0 && scraperKey !== "tiktok") {
     throw new Error(`No enabled sources in ${tab}`);
   }
 
@@ -385,9 +362,11 @@ async function runOneScraper(
       case "instagram":
         payloads = await scrapeInstagram(token!, projectConfig, sources);
         break;
-      case "tiktok":
-        payloads = await scrapeTiktok(token!, projectConfig, sources);
+      case "tiktok": {
+        const hashtagSources = await loadEnabledSources(db, projectId, "hashtags");
+        payloads = await scrapeTiktok(token!, projectConfig, sources, hashtagSources);
         break;
+      }
       case "reddit":
         payloads = await scrapeReddit(token!, projectConfig, sources);
         break;

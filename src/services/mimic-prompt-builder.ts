@@ -1,12 +1,25 @@
 import type { MimicMode } from "../domain/mimic-payload.js";
 
-export function buildMimicImageFullPrompt(): string {
-  return [
-    "Recreate this image with nearly identical composition, layout, color grade, and visual style.",
+export function buildMimicImageFullPrompt(opts?: { onImageCopy?: string | null }): string {
+  const copy = String(opts?.onImageCopy ?? "").trim();
+  const parts = [
+    "Recreate this image's visual design only: composition, layout, color grade, background, and decorative elements.",
     "Preserve framing, spacing, and design energy.",
-    "Apply only subtle visual variation — do not copy logos, brand marks, or recognizable faces verbatim.",
-    "Keep the same hook-style visual pattern suitable for social media.",
-  ].join(" ");
+    "Remove all original on-image text from the reference.",
+  ];
+  if (copy) {
+    parts.push(
+      `Replace on-image text with this new copy exactly (fresh wording — not paraphrase of the reference): """${copy.slice(0, 1200)}""".`
+    );
+  } else {
+    parts.push(
+      "Use placeholder lorem-style blocks for text regions — do not reproduce reference wording verbatim."
+    );
+  }
+  parts.push(
+    "Apply subtle visual variation — do not copy logos, brand marks, or recognizable faces verbatim."
+  );
+  return parts.join(" ");
 }
 
 export function buildMimicTemplateBackgroundPrompt(): string {
@@ -37,8 +50,11 @@ export function buildMimicCarouselSlidePrompt(opts: {
   return parts.join(" ");
 }
 
-export function mimicPromptForMode(mode: MimicMode, slide?: { index: number; layout?: string; visual?: string }): string {
-  if (mode === "image_full") return buildMimicImageFullPrompt();
+export function mimicPromptForMode(
+  mode: MimicMode,
+  slide?: { index: number; layout?: string; visual?: string; onImageCopy?: string | null }
+): string {
+  if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy });
   if (mode === "template_bg") return buildMimicTemplateBackgroundPrompt();
   return buildMimicCarouselSlidePrompt({
     slideIndex: slide?.index ?? 1,

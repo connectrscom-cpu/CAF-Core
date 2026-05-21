@@ -37,7 +37,7 @@ import {
   listQcChecks, upsertQcCheck, deleteQcChecklist,
   listRiskPolicies, upsertRiskPolicy, deleteRiskPolicy,
 } from "../repositories/flow-engine.js";
-import { riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
+import { computeRunStageProgress } from "../domain/run-stage-progress.js";
 import { q, qOne } from "../db/queries.js";
 import {
   getJobStats,
@@ -86,6 +86,7 @@ import {
   deleteAllContentJobsForProject,
   deleteContentJobByTaskId,
   deleteContentJobsByTaskIds,
+  countContentJobsByRunAndStatus,
   getContentJobByTaskId,
 } from "../repositories/jobs.js";
 import {
@@ -1604,8 +1605,25 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const limit = Math.min(200, Math.max(1, parseInt(query.limit ?? "50", 10)));
     const offset = (pg - 1) * limit;
     const runs = await listRuns(db, project.id, limit, offset);
+    const jobCountsByRun = await countContentJobsByRunAndStatus(
+      db,
+      project.id,
+      runs.map((r) => r.run_id)
+    );
+    const runsWithProgress = runs.map((run) => {
+      const progress = computeRunStageProgress(
+        run.status,
+        jobCountsByRun.get(run.run_id) ?? {},
+        run.total_jobs
+      );
+      return {
+        ...run,
+        jobs_completed: progress.done,
+        total_jobs: progress.total || run.total_jobs,
+      };
+    });
     const totalCount = await getRunCount(db, project.id);
-    return { ok: true, runs, total: totalCount, page: pg, limit };
+    return { ok: true, runs: runsWithProgress, total: totalCount, page: pg, limit };
   });
 
   /** Per-job carousel/video pipeline outcomes (slide counts, copy/script preview, errors) for a run. */
@@ -3996,13 +4014,28 @@ function showSignalPackTransparency(d){
 }
 
 let runsPage=1;
-async function loadRuns(p){
+let runsPollTimer=null;
+function restartRunsPoll(runs){
+  if(runsPollTimer){clearInterval(runsPollTimer);runsPollTimer=null;}
+  const active=(runs||[]).some(function(r){
+    const s=String(r.status||'').toUpperCase();
+    return s==='PLANNING'||s==='GENERATING'||s==='RENDERING'||s==='REVIEWING';
+  });
+  if(!active)return;
+  runsPollTimer=setInterval(function(){
+    if(document.visibilityState!=='visible')return;
+    loadRuns(runsPage,true);
+  },4000);
+}
+async function loadRuns(p,silent){
   runsPage=p||1;
   const el=document.getElementById('runs-table');
   if(!el)return;
   const pgEl=document.getElementById('runs-pager');
-  el.innerHTML='<div class="empty">Loading...</div>';
-  if(pgEl)pgEl.innerHTML='';
+  if(!silent){
+    el.innerHTML='<div class="empty">Loading...</div>';
+    if(pgEl)pgEl.innerHTML='';
+  }
   try{
   if(!SLUG){
     el.innerHTML='<div class="empty" style="color:var(--yellow)">No project slug in this page. Use the sidebar or open <span class="mono">/admin/runs?project=SNS</span></div>';
@@ -4062,6 +4095,7 @@ async function loadRuns(p){
   if(pageNum>1)pg+=' <button class="btn-ghost" onclick="loadRuns('+(pageNum-1)+')">Prev</button>';
   if(pageNum<totalPages)pg+=' <button class="btn-ghost" onclick="loadRuns('+(pageNum+1)+')">Next</button>';
   if(pgEl)pgEl.innerHTML=pg;
+  restartRunsPoll(runs);
   }catch(err){
     const msg=(err&&err.name==='AbortError')?'Request timed out — try again.':(err.message||String(err));
     el.innerHTML='<div class="empty" style="color:var(--red)">Could not load runs: '+esc(msg)+'</div>';

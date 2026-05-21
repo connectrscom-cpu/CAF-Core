@@ -479,11 +479,17 @@ export function transformRedditApifyDataset(items: Record<string, unknown>[]): R
   return out;
 }
 
-export function transformFacebookApifyPost(item: Record<string, unknown>): Record<string, unknown> | null {
+export function transformFacebookApifyPost(
+  item: Record<string, unknown>,
+  opts?: { minLikes?: number; requireCaption?: boolean }
+): Record<string, unknown> | null {
   if (item.error) return null;
+  const minLikes = opts?.minLikes ?? 5;
+  const requireCaption = opts?.requireCaption !== false;
   const likes = Number(item.likes ?? 0);
   const caption = String(item.text ?? item.caption ?? "").trim();
-  if (likes <= 5 || !caption) return null;
+  if (likes <= minLikes) return null;
+  if (requireCaption && !caption) return null;
   const chunks = [caption];
   while (chunks.length < 4 && chunks[chunks.length - 1]!.length > 45_000) {
     const s = chunks.pop()!;
@@ -552,16 +558,25 @@ function extractParagraphTexts(html: string, selectorHint: string): string[] {
 
 export function transformHtmlFetch(
   html: string,
-  meta: { url: string; sourceName: string; title?: string; meta_description?: string }
+  meta: {
+    url: string;
+    sourceName: string;
+    title?: string;
+    meta_description?: string;
+    maxMainTextChars?: number;
+    minParagraphChars?: number;
+  }
 ): Record<string, unknown> {
   const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
   const title = meta.title ?? (titleMatch?.[1] ?? "").replace(/<[^>]+>/g, "").trim();
   const descMatch = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
   const meta_description = meta.meta_description ?? descMatch?.[1]?.trim() ?? "";
 
-  const a = extractParagraphTexts(html, "article");
-  const b = extractParagraphTexts(html, "main");
-  const c = extractParagraphTexts(html, "content");
+  const minPara = meta.minParagraphChars ?? 30;
+  const filterMin = (arr: string[]) => arr.filter((s) => s.length >= minPara);
+  const a = filterMin(extractParagraphTexts(html, "article"));
+  const b = filterMin(extractParagraphTexts(html, "main"));
+  const c = filterMin(extractParagraphTexts(html, "content"));
   const merged = cleanLines([...a, ...b, ...c]);
   const pools = [
     { name: "article", lines: a },
@@ -571,7 +586,8 @@ export function transformHtmlFetch(
   ];
   pools.sort((x, y) => y.lines.reduce((acc, s) => acc + s.length, 0) - x.lines.reduce((acc, s) => acc + s.length, 0));
   const best = pools[0]!;
-  const main_text = best.lines.join("\n\n").slice(0, 30_000);
+  const maxChars = meta.maxMainTextChars ?? 30_000;
+  const main_text = best.lines.join("\n\n").slice(0, maxChars);
   const content_hash = createHash("sha256").update(main_text).digest("hex");
 
   return {

@@ -1,6 +1,7 @@
 /** Inner HTML + script for GET /admin/inputs — uploads, source registry, Apify scrapers. */
 
 import { adminCafTermHtml, adminOptionsLinkHtml, adminOptionsMenuHtml, adminPageHeaderHtml } from "./admin-ui-shared.js";
+import { SCRAPER_CONFIG_FIELDS } from "../services/inputs-scraper-apify-config.js";
 
 const SOURCE_TABS = [
   { id: "all_sources", label: "All Sources" },
@@ -11,6 +12,59 @@ const SOURCE_TABS = [
   { id: "facebook", label: "Facebook" },
   { id: "hashtags", label: "Hashtags" },
 ] as const;
+
+const CFG_SECTIONS: Array<{ id: keyof typeof SCRAPER_CONFIG_FIELDS; title: string }> = [
+  { id: "apify", title: "Apify global" },
+  { id: "instagram", title: "Instagram · apify/instagram-scraper" },
+  { id: "tiktok", title: "TikTok · clockworks/tiktok-scraper" },
+  { id: "reddit", title: "Reddit · trudax/reddit-scraper-lite" },
+  { id: "facebook", title: "Facebook · apify/facebook-posts-scraper" },
+  { id: "html", title: "HTML / blogs (HTTP, no Apify)" },
+];
+
+function scraperConfigFieldHtml(
+  sectionId: string,
+  f: {
+    key: string;
+    label: string;
+    type: string;
+    placeholder?: string;
+    min?: number;
+    max?: number;
+    options?: readonly string[];
+  }
+): string {
+  const id = `cfg-${sectionId}-${f.key}`;
+  const ph = "placeholder" in f && f.placeholder ? ` placeholder="${f.placeholder}"` : "";
+  if (f.type === "checkbox") {
+    return `<label class="scraper-cfg-field scraper-cfg-field--check"><input type="checkbox" id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="checkbox" /><span>${f.label}</span></label>`;
+  }
+  if (f.type === "select") {
+    const opts = (f.options ?? []).map((o) => `<option value="${o}">${o}</option>`).join("");
+    return `<label class="scraper-cfg-field"><span>${f.label}</span><select id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="select">${opts}</select></label>`;
+  }
+  if (f.type === "textarea") {
+    return `<label class="scraper-cfg-field scraper-cfg-field--wide"><span>${f.label}</span><textarea id="${id}" rows="3" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="textarea"${ph}></textarea></label>`;
+  }
+  const min = "min" in f && f.min != null ? ` min="${f.min}"` : "";
+  const max = "max" in f && f.max != null ? ` max="${f.max}"` : "";
+  return `<label class="scraper-cfg-field"><span>${f.label}</span><input type="${f.type === "number" ? "number" : "text"}" id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="${f.type}"${min}${max}${ph} /></label>`;
+}
+
+function scraperConfigFormHtml(): string {
+  const sections = CFG_SECTIONS.map((sec) => {
+    const fields = SCRAPER_CONFIG_FIELDS[sec.id]
+      .map((f) => scraperConfigFieldHtml(sec.id, f))
+      .join("");
+    return `<details class="scraper-cfg-section" open><summary>${sec.title}</summary><div class="scraper-cfg-grid">${fields}</div></details>`;
+  }).join("");
+  return `${sections}<details class="scraper-cfg-section"><summary>Advanced · actor input JSON merge</summary><p class="runs-ops-hint" style="margin:0 0 8px">Deep-merge onto built actor payloads (same escape hatch as editing n8n <span class="mono">customBody</span>).</p><div class="scraper-cfg-grid scraper-cfg-grid--wide">${["instagram", "tiktok", "reddit", "facebook"]
+    .map(
+      (k) =>
+        `<label class="scraper-cfg-field scraper-cfg-field--wide"><span>actorInputExtras.${k}</span><textarea id="cfg-extras-${k}" rows="4" class="mono" placeholder="{}"></textarea></label>`
+    )
+    .join("")}</div></details>`;
+}
 
 const SCRAPERS = [
   { key: "instagram", label: "Instagram", sourceTab: "igaccounts", actor: "apify/instagram-scraper" },
@@ -112,18 +166,18 @@ ${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence"
           <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Creates one evidence import with all output sheets (InstagramPostData, Tiktok_Videos, …).</p>
         </div>
         <div class="tp-sidebar-card">
-          <div style="font-size:12px;font-weight:600;margin-bottom:8px">TikTok window</div>
-          <label style="font-size:11px;display:block;margin-bottom:4px">oldestPostDateUnified</label>
-          <input type="text" id="cfg-tiktok-window" class="mono" style="width:100%;padding:6px 8px" placeholder="7 days" />
-          <label style="font-size:11px;display:block;margin:10px 0 4px">Instagram resultsLimit</label>
-          <input type="number" id="cfg-ig-limit" min="1" max="50" style="width:100%;padding:6px 8px" />
-          <button type="button" class="btn-ghost btn-sm" id="btn-save-scraper-config" style="margin-top:10px;width:100%">Save config</button>
-          <span id="scraper-config-msg" style="font-size:11px;display:block;margin-top:6px"></span>
+          <button type="button" class="btn btn-sm" id="btn-save-scraper-config" style="width:100%">Save all scraper config</button>
+          <button type="button" class="btn-ghost btn-sm" id="btn-reset-scraper-config" style="width:100%;margin-top:6px">Reset to defaults</button>
+          <span id="scraper-config-msg" style="font-size:11px;display:block;margin-top:8px"></span>
         </div>
       </aside>
       <div class="tp-main">
         <div class="card" style="margin-bottom:14px">
-          <div class="card-h">Scraper runs</div>
+          <div class="card-h">Apify actor options <span style="font-weight:400;color:var(--muted);font-size:11px">— mirrors n8n customBody fields</span></div>
+          <div style="padding:12px 16px" id="scraper-config-form">${scraperConfigFormHtml()}</div>
+        </div>
+        <div class="card" style="margin-bottom:14px">
+          <div class="card-h">Run scrapers</div>
           <div style="padding:12px 16px">${scraperCards}</div>
         </div>
         <div class="card">
@@ -140,6 +194,8 @@ ${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence"
 <script>
 const SLUG=${SLUG};
 const SOURCE_TABS=${JSON.stringify(SOURCE_TABS)};
+const CFG_SECTIONS=${JSON.stringify(CFG_SECTIONS.map((s) => s.id))};
+var scraperCfgCache=null;
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function processingHref(importId){
@@ -219,6 +275,73 @@ async function loadSources(){
   }catch(e){root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||e)+'</div>';}
 }
 
+function setCfgInput(section,key,val,type){
+  var el=document.getElementById('cfg-'+section+'-'+key);
+  if(!el)return;
+  if(type==='checkbox'){el.checked=!!val;return;}
+  if(type==='textarea'){
+    if(Array.isArray(val))el.value=val.join('\\n');
+    else el.value=val!=null?String(val):'';
+    return;
+  }
+  if(key==='profileScrapeSections'&&Array.isArray(val)){el.value=val.join(', ');return;}
+  if(key==='extraHashtags'&&Array.isArray(val)){el.value=val.join('\\n');return;}
+  if(key==='extraProfiles'&&Array.isArray(val)){el.value=val.join('\\n');return;}
+  el.value=val!=null?String(val):'';
+}
+function readCfgInput(section,key,type){
+  var el=document.getElementById('cfg-'+section+'-'+key);
+  if(!el)return undefined;
+  if(type==='checkbox')return !!el.checked;
+  if(type==='number'){var n=parseFloat(el.value);return Number.isFinite(n)?n:undefined;}
+  var s=String(el.value||'').trim();
+  if(type==='textarea'){
+    if(key==='extraHashtags'||key==='extraProfiles')return s?s.split(/[\\n,;]+/).map(function(x){return x.trim();}).filter(Boolean):[];
+    return s;
+  }
+  if(key==='profileScrapeSections')return s?s.split(/,+/).map(function(x){return x.trim();}).filter(Boolean):[];
+  return s;
+}
+function populateScraperForm(cfg){
+  scraperCfgCache=cfg||{};
+  document.querySelectorAll('[data-cfg-section]').forEach(function(el){
+    var sec=el.getAttribute('data-cfg-section');
+    var key=el.getAttribute('data-cfg-key');
+    var type=el.getAttribute('data-cfg-type')||'text';
+    if(!sec||!key)return;
+    var bucket=sec==='apify'?cfg.apify:(cfg.scrapers&&cfg.scrapers[sec]);
+    setCfgInput(sec,key,bucket?bucket[key]:undefined,type);
+  });
+  var extras=cfg.actorInputExtras||{};
+  ['instagram','tiktok','reddit','facebook'].forEach(function(k){
+    var ta=document.getElementById('cfg-extras-'+k);
+    if(ta)ta.value=extras[k]?JSON.stringify(extras[k],null,2):'';
+  });
+}
+function gatherScraperForm(){
+  var cfg=scraperCfgCache?JSON.parse(JSON.stringify(scraperCfgCache)):{apify:{},scrapers:{},actorInputExtras:{}};
+  if(!cfg.apify)cfg.apify={};
+  if(!cfg.scrapers)cfg.scrapers={};
+  if(!cfg.actorInputExtras)cfg.actorInputExtras={};
+  document.querySelectorAll('[data-cfg-section]').forEach(function(el){
+    var sec=el.getAttribute('data-cfg-section');
+    var key=el.getAttribute('data-cfg-key');
+    var type=el.getAttribute('data-cfg-type')||'text';
+    if(!sec||!key)return;
+    var val=readCfgInput(sec,key,type);
+    if(sec==='apify')cfg.apify[key]=val;
+    else{if(!cfg.scrapers[sec])cfg.scrapers[sec]={};cfg.scrapers[sec][key]=val;}
+  });
+  ['instagram','tiktok','reddit','facebook'].forEach(function(k){
+    var ta=document.getElementById('cfg-extras-'+k);
+    if(!ta)return;
+    var raw=String(ta.value||'').trim();
+    if(!raw){delete cfg.actorInputExtras[k];return;}
+    try{cfg.actorInputExtras[k]=JSON.parse(raw);}catch(e){throw new Error('Invalid JSON in actorInputExtras.'+k+': '+String(e.message||e));}
+  });
+  return cfg;
+}
+
 async function loadScraperMeta(){
   var el=document.getElementById('apify-status');
   if(!SLUG||!el)return;
@@ -227,11 +350,7 @@ async function loadScraperMeta(){
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     el.innerHTML=d.apify_configured?'<span style="color:var(--green)">Apify token configured</span>':'<span style="color:var(--yellow)">APIFY_API_TOKEN not set on Core</span>';
-    var cfg=d.config||{};
-    var ig=document.getElementById('cfg-ig-limit');
-    var tt=document.getElementById('cfg-tiktok-window');
-    if(ig)ig.value=String((cfg.scrapers&&cfg.scrapers.instagram&&cfg.scrapers.instagram.resultsLimit)||10);
-    if(tt)tt.value=String((cfg.scrapers&&cfg.scrapers.tiktok&&cfg.scrapers.tiktok.oldestPostDateUnified)||'7 days');
+    populateScraperForm(d.config||{});
   }catch(e){el.textContent=String(e.message||e);}
 }
 
@@ -239,19 +358,25 @@ async function saveScraperConfig(){
   var msg=document.getElementById('scraper-config-msg');
   if(!SLUG)return;
   try{
-    var r0=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/scraper-config');
-    var d0=await r0.json();
-    var cfg=d0.config||{};
-    if(!cfg.scrapers)cfg.scrapers={};
-    if(!cfg.scrapers.instagram)cfg.scrapers.instagram={};
-    if(!cfg.scrapers.tiktok)cfg.scrapers.tiktok={};
-    cfg.scrapers.instagram.resultsLimit=parseInt(document.getElementById('cfg-ig-limit')?.value||'10',10);
-    cfg.scrapers.tiktok.oldestPostDateUnified=document.getElementById('cfg-tiktok-window')?.value||'7 days';
+    var cfg=gatherScraperForm();
     var r=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/scraper-config',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({config:cfg})});
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    scraperCfgCache=cfg;
     if(msg){msg.style.color='var(--green)';msg.textContent='Saved';}
   }catch(e){if(msg){msg.style.color='var(--red)';msg.textContent=String(e.message||e);}}
+}
+
+async function resetScraperConfig(){
+  if(!SLUG)return;
+  if(!confirm('Reset all scraper options to CAF defaults?'))return;
+  try{
+    var r0=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/meta');
+    var d0=await r0.json();
+    if(!r0.ok||!d0.ok)throw new Error(apiErr(d0,'HTTP '+r0.status));
+    populateScraperForm(d0.default_config||{});
+    await saveScraperConfig();
+  }catch(e){alert(String(e.message||e));}
 }
 
 async function runScraper(key){
@@ -299,6 +424,7 @@ document.getElementById('btn-reload-sources')?.addEventListener('click',loadSour
 document.getElementById('source-tab-sel')?.addEventListener('change',loadSources);
 document.getElementById('btn-reload-scraper-runs')?.addEventListener('click',loadScraperRuns);
 document.getElementById('btn-save-scraper-config')?.addEventListener('click',saveScraperConfig);
+document.getElementById('btn-reset-scraper-config')?.addEventListener('click',resetScraperConfig);
 document.getElementById('btn-run-all-scrapers')?.addEventListener('click',function(){runScraper('all');});
 document.querySelectorAll('.btn-run-scraper').forEach(function(btn){
   btn.addEventListener('click',function(){runScraper(btn.getAttribute('data-scraper'));});

@@ -1,39 +1,12 @@
 import type { MimicMode, MimicSlidePlan } from "../domain/mimic-payload.js";
 import {
+  aestheticSlideRecords,
+  requiresCopyBeforeVisualMimic,
+} from "../domain/mimic-text-heavy.js";
+import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
-  return null;
-}
-
-function slideRecords(entry: Record<string, unknown>): Record<string, unknown>[] {
-  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
-  const slides = aes.slides;
-  if (!Array.isArray(slides)) return [];
-  return slides.map((s) => asRecord(s)).filter((x): x is Record<string, unknown> => x != null);
-}
-
-function avgTextDensityHigh(slides: Record<string, unknown>[]): boolean {
-  if (slides.length === 0) return false;
-  let high = 0;
-  for (const s of slides) {
-    if (String(s.text_density ?? "").toLowerCase() === "high") high++;
-  }
-  return high >= Math.ceil(slides.length * 0.6);
-}
-
-function mostlyNoImageRole(slides: Record<string, unknown>[]): boolean {
-  if (slides.length === 0) return true;
-  let none = 0;
-  for (const s of slides) {
-    const role = String(s.image_or_photo_role ?? "").toLowerCase();
-    if (!role || role === "none") none++;
-  }
-  return none >= Math.ceil(slides.length * 0.6);
-}
 
 export function classifyMimicMode(
   flowType: string,
@@ -46,17 +19,9 @@ export function classifyMimicMode(
     return { mode: "carousel_visual" };
   }
 
-  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
-  const formatPattern = String(aes.format_pattern ?? entry.format_pattern ?? "").toLowerCase();
-  const slides = slideRecords(entry);
-  const templateLike =
-    (formatPattern === "educational" ||
-      formatPattern === "listicle" ||
-      formatPattern.includes("list")) &&
-    avgTextDensityHigh(slides) &&
-    mostlyNoImageRole(slides);
+  const slides = aestheticSlideRecords(entry);
 
-  if (templateLike) {
+  if (requiresCopyBeforeVisualMimic(entry)) {
     return { mode: "template_bg" };
   }
 

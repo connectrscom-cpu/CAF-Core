@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
+import { onImageCopyForMimicRender } from "../domain/mimic-copy-guard.js";
 import { requireMimicPayloadForRender } from "../domain/mimic-payload.js";
+import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligibility.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
 import { editImageFromReference } from "./mimic-image-provider.js";
@@ -51,6 +53,8 @@ export async function processImageMimicJob(
     throw new Error(`processImageMimicJob expected mode image_full, got ${mimic.mode}`);
   }
 
+  assertImageMimicSingleReference(mimic.reference_items);
+
   const ref = mimic.reference_items[0];
   if (!ref?.vision_fetch_url) {
     throw new Error("mimic_v1 has no reference image URL");
@@ -75,9 +79,16 @@ export async function processImageMimicJob(
     flow_type: job.flow_type,
   });
 
+  const onImageCopy = onImageCopyForMimicRender(payload);
+  if (!onImageCopy.trim()) {
+    throw new Error(
+      "Image mimic render requires on-image copy in generated_output (hook_text, cover, or slide body) — regenerate the job draft."
+    );
+  }
+
   const { buffer, mimeType } = await editImageFromReference(config, {
     referenceUrl,
-    prompt: mimicPromptForMode("image_full"),
+    prompt: mimicPromptForMode("image_full", { onImageCopy }),
     audit: {
       db,
       projectId: job.project_id,

@@ -15,11 +15,15 @@ import {
 } from "../repositories/inputs-sources.js";
 import { syncSourcesFromWorkbookBuffer } from "../services/inputs-source-sync.js";
 import {
-  SCRAPER_KEYS,
   defaultScraperConfig,
   getProjectScraperConfig,
   runInputsScraper,
+  SCRAPER_KEYS,
 } from "../services/inputs-scraper-orchestrator.js";
+import {
+  DEFAULT_ACTOR_IDS,
+  SCRAPER_CONFIG_FIELDS,
+} from "../services/inputs-scraper-apify-config.js";
 import { hasApifyToken } from "../services/apify-client.js";
 
 const UUID_RE =
@@ -41,6 +45,8 @@ export function registerInputsScraperRoutes(
       scraper_keys: SCRAPER_KEYS.filter((k) => k !== "all"),
       apify_configured: hasApifyToken(config.APIFY_API_TOKEN),
       default_config: defaultScraperConfig(),
+      default_actor_ids: DEFAULT_ACTOR_IDS,
+      config_fields: SCRAPER_CONFIG_FIELDS,
     };
   });
 

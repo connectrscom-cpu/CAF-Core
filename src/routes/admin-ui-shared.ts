@@ -196,6 +196,15 @@ span.caf-pipeline-stage{cursor:default}
 .tp-tab-panel.active{display:block}
 .tp-table-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
 .tp-insights-table-wrap{font-size:12px;width:100%;max-height:min(68vh,560px);overflow-x:auto;overflow-y:auto;border:1px solid rgba(59,130,246,.22);border-radius:8px;-webkit-overflow-scrolling:touch;background:linear-gradient(180deg,var(--surface-2) 0%,var(--card) 100%)}
+.scraper-cfg-section{border:1px solid var(--border);border-radius:10px;padding:0 12px 12px;margin-bottom:10px;background:var(--surface-2)}
+.scraper-cfg-section>summary{cursor:pointer;font-size:13px;font-weight:600;padding:10px 0;list-style-position:inside}
+.scraper-cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px 14px;margin-top:8px}
+.scraper-cfg-grid--wide{grid-template-columns:1fr}
+.scraper-cfg-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--fg2)}
+.scraper-cfg-field--wide{grid-column:1/-1}
+.scraper-cfg-field--check{flex-direction:row;align-items:center;gap:8px;padding-top:18px}
+.scraper-cfg-field input,.scraper-cfg-field select,.scraper-cfg-field textarea{font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)}
+.scraper-cfg-field textarea.mono,.scraper-cfg-field textarea{font-family:ui-monospace,monospace;font-size:11px}
 .tp-qualify-compact{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);font-size:11px;color:var(--muted);max-height:120px;overflow:auto}
 .tp-qualify-compact ul{margin:4px 0 0;padding-left:16px;line-height:1.4}
 .runs-ops-hint{display:none!important}

@@ -68,7 +68,6 @@ export function ideaIdFromCandidate(c: ScoredCandidate): string {
 export function isPrimaryFormatMatch(c: ScoredCandidate): boolean {
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format);
   if (!ideaBucket) return false;
-  if (isTopPerformerMimicImageFlow(c.flow_type) && ideaBucket === "carousel") return true;
   const flowBucket = bucketForFlowType(c.flow_type);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
     return flowBucket === "other";
@@ -82,7 +81,6 @@ export function flowTypeMatchesRowFormat(
   ideaBucket: IdeaFormatBucket | null
 ): boolean {
   if (!ideaBucket) return true;
-  if (isTopPerformerMimicImageFlow(flowType) && ideaBucket === "carousel") return true;
   const flowBucket = bucketForFlowType(flowType);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
     return flowBucket === "other";
