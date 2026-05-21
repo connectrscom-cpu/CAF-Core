@@ -54,9 +54,9 @@ export const ADMIN_CAF_GLOSSARY: Record<string, string> = {
   processing:
     "Filter evidence, generate insights, build ideas, and compile a signal pack from an import.",
   inputs:
-    "Evidence for this project. Today, n8n flows run scrapers that collect posts from hashtags and accounts chosen as sources for the project; results land here as imports (.xlsx). You can also upload INPUTS workbooks manually. Source picking and scraper config will move into this page later.",
+    "Evidence for this project. Upload INPUTS workbooks (.xlsx) or run Apify scrapers from the Sources + Scrapers tabs. Both paths write the same evidence import shape for Processing.",
   inputSources:
-    "Automated collection runs in n8n: each flow uses scrapers and selects hashtags / accounts that fit the project’s source list. Imports appear in the table below until source management lives here.",
+    "Project source registry (accounts, subreddits, blogs, hashtags) — synced from workbook or edited in Inputs → Sources. Scrapers read enabled rows per platform.",
   filterEvidence:
     "Step 2: Score and filter scraped rows with profile gates + cutoff (0–1). No LLM — only deterministic rules.",
   evidenceFunnel:

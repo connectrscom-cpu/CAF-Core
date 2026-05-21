@@ -201,6 +201,9 @@ const envSchema = z.object({
   MIMIC_IMAGE_DEFAULT_SIZE: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536"),
 
   OPENAI_API_KEY: z.string().optional(),
+
+  /** Apify token for INPUTS scrapers (same as n8n Apify credentials / APIFY_API_TOKEN in .env). */
+  APIFY_API_TOKEN: z.string().optional(),
   /** Base URL for REST calls (chat, videos). Videos API: POST/GET `/videos`. */
   OPENAI_API_BASE: z.string().default("https://api.openai.com/v1"),
   OPENAI_MODEL: z.string().default("gpt-4o"),

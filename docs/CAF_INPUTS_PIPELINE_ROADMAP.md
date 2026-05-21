@@ -12,12 +12,14 @@ This backlog tracks **CAF Core** (APIs + Admin). The **Review** app stays focuse
 ## Done (Core + Admin)
 
 - **027** — `inputs_evidence_imports` / `inputs_evidence_rows` (XLSX ingest, dedupe keys).
+- **063** — `inputs_source_rows`, `inputs_scraper_config`, `inputs_scraper_runs` — project source registry + Apify scraper runs into the same evidence import shape as XLSX.
 - **028** — Row ratings + `inputs_processing_profiles` (criteria, models, caps, min score).
 - **029** — Import/row health fields, selection snapshot on import, `signal_packs.source_inputs_import_id`, `runs.plan_summary_json`, `insights_packs`, `qc_flow_profiles`; health + selection in build path.
 - **Evidence upload API** — `POST /v1/inputs-evidence/upload`, list/detail/rows.
 - **Processing API** — `GET/PUT …/profile`, import stats (`recompute_health`), `POST …/build-signal-pack`, audit, insights packs list, RTP summary, QC flow profiles CRUD.
 - **Rating + synthesis** — OpenAI batch scoring → persisted rating columns → synthesis to `overall_candidates_json` (planner contract aligned with XLSX packs).
 - **Admin UI** — **Inputs** vs **Processing** (sidebar); Processing segments: Evidence, broad insights per platform, top performers (image / carousel / video), profile & audit.
+- **Inputs Admin** — tabs: **Imports** (XLSX upload unchanged), **Sources** (sidebar sheet picker + sync source tabs from workbook), **Scrapers** (Apify + HTML, run history → evidence import).
 - **030–032** — `inputs_evidence_row_insights`: tiers `broad_llm`, `top_performer_deep`, `top_performer_video`, `top_performer_carousel` (migrations **030**, **031**, **032**).
 
 ### Stage 2 (evidence insights) — complete
