@@ -115,7 +115,7 @@ export function VideoReviewEdits({
 
   return (
     <>
-      <div className="card">
+      <div className="card surface-info">
         <div className="card-header">{provider} prompt — analyze</div>
         <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
           {displaySource === "submitted" ? (
@@ -254,7 +254,7 @@ export function VideoReviewEdits({
         />
       </div>
 
-      <div className="card">
+      <div className="card surface-orange">
         <div className="card-header">Edits for rework</div>
 
         {onSkipVideoRegenerationChange && (

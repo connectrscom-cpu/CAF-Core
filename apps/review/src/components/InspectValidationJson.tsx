@@ -149,15 +149,15 @@ export function InspectValidationJson({ job }: InspectValidationJsonProps) {
 
   if (!job) {
     return (
-      <div className="card">
-        <div className="card-header">Inspect JSON</div>
+    <div className="card surface-purple">
+      <div className="card-header">Inspect JSON</div>
         <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>No job payload loaded.</p>
       </div>
     );
   }
 
   return (
-    <div className="card">
+    <div className="card surface-purple">
       <div className="card-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span>Inspect JSON</span>
         <button type="button" className="btn-ghost" onClick={() => setExpanded((v) => !v)} style={{ fontSize: 12 }}>

@@ -66,7 +66,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     metadata_json: z.record(z.unknown()).optional(),
     /** How to pick ideas from the pack into planned_jobs_json before Start. */
     idea_picking_mode: z.enum(["rules", "llm", "manual"]).optional().default("rules"),
-    /** When idea_picking_mode is llm; default 40 in materialize. */
+    /** @deprecated Ignored on create — LLM pick uses full pack size (same ceiling as automated rules). */
     llm_max_ideas: z.number().int().min(1).max(100).optional(),
   });
 
@@ -119,7 +119,6 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       try {
         materialize = await materializeRunCandidates(db, config, project.id, run, pack, {
           mode: "llm",
-          ...(body.data.llm_max_ideas != null ? { max_ideas: body.data.llm_max_ideas } : {}),
         });
       } catch (e) {
         materialize_error = e instanceof Error ? e.message : String(e);

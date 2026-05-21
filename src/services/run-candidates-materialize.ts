@@ -15,17 +15,24 @@ import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
 import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
 import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
+import { getBrandConstraints, getProductProfile, getStrategyDefaults } from "../repositories/project-config.js";
+import { pickBrandSliceForSnapshot, pickStrategySliceForSnapshot } from "./run-context-snapshot.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
-export const RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT = `You pick which content ideas should become planner rows for a generation run.
+export const RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT = `You pick which content ideas from a signal pack should become planner rows for a generation run.
 Return ONLY valid JSON: {"idea_ids":["..."]}
 Rules:
-- Each id MUST appear exactly in the input list (field idea_id).
-- Pick at most {{MAX_PICK}} ids.
-- Prefer a diverse, high-impact subset (platforms, angles).`;
+- Each id MUST appear exactly in the input list (use the "idea_id" field from each row).
+- Apply the project strategy, brand constraints, and product profile in the user message.
+- Exclude ideas that violate banned words/claims, off-brand tone, or clear strategy mismatches.
+- Include every idea that qualifies — up to {{MAX_PICK}} ids (the full signal pack; same ceiling as automated logical rules).
+- When multiple ideas qualify, prefer a diverse mix of platforms, formats, and angles.`;
 
-export const RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE = `Ideas (JSON):
+export const RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE = `Project context (JSON):
+{{PROJECT_CONTEXT_JSON}}
+
+Ideas (JSON):
 {{ROWS_JSON}}`;
 
 export type RunCandidatesMaterializeMode =
@@ -39,8 +46,69 @@ export interface RunCandidatesMaterializeBody {
   mode: RunCandidatesMaterializeMode;
   /** Required when mode === manual */
   idea_ids?: string[];
-  /** When mode === llm; default 40 */
+  /** When mode === llm; defaults to all ideas in the pack (same ceiling as automated rules). */
   max_ideas?: number;
+}
+
+function ideasForLlmPick(pack: SignalPackRow): { id: string; row: Record<string, unknown> }[] {
+  const rich = ideasJsonAsRich(pack);
+  if (rich.length > 0) {
+    return rich
+      .map((i) => {
+        const id = String(i.id ?? i.idea_id ?? "").trim();
+        const contentIdea = String(i.content_idea ?? i.three_liner ?? i.thesis ?? i.title ?? "").trim();
+        const summary = String(i.summary ?? i.three_liner ?? "").trim();
+        return {
+          id,
+          row: {
+            idea_id: id,
+            title: i.title,
+            platform: i.platform,
+            format: i.format,
+            content_idea: contentIdea.slice(0, 400),
+            summary: summary.slice(0, 300),
+            confidence_score: i.confidence_score ?? i.idea_score,
+            risk_flags: i.risk_flags,
+          },
+        };
+      })
+      .filter((x) => x.id);
+  }
+  return ideasArray(pack)
+    .map((i) => {
+      const id = String(i.idea_id ?? "").trim();
+      return {
+        id,
+        row: {
+          idea_id: i.idea_id,
+          platform: i.platform,
+          content_idea: (i.content_idea ?? "").slice(0, 400),
+          summary: (i.summary ?? "").slice(0, 300),
+        },
+      };
+    })
+    .filter((x) => x.id);
+}
+
+function productProfileSliceForLlmPick(
+  product: Awaited<ReturnType<typeof getProductProfile>>
+): Record<string, unknown> | null {
+  if (!product) return null;
+  const out: Record<string, unknown> = {};
+  const keys = [
+    "product_name",
+    "product_category",
+    "one_liner",
+    "value_proposition",
+    "primary_audience",
+    "key_benefits",
+    "differentiators",
+  ] as const;
+  for (const k of keys) {
+    const v = (product as unknown as Record<string, unknown>)[k];
+    if (v !== undefined && v !== null && v !== "") out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function ideasArray(pack: SignalPackRow): SignalPackIdea[] {
@@ -221,22 +289,40 @@ export async function materializeRunCandidates(
     if (rows.length === 0) throw new Error("No matching ideas for the given idea_ids");
     provenance = { ...provenance, idea_ids: ids, row_count: rows.length };
   } else if (body.mode === "llm") {
-    const ideas = ideasArray(pack);
-    if (ideas.length === 0) throw new Error("signal_pack.ideas_json is empty — nothing for the LLM to select from");
-    const maxPick = Math.min(100, Math.max(1, body.max_ideas ?? 40));
+    const entries = ideasForLlmPick(pack);
+    if (entries.length === 0) {
+      throw new Error("signal_pack.ideas_json is empty — nothing for the LLM to select from");
+    }
+    const maxPick = Math.min(
+      200,
+      Math.max(1, body.max_ideas ?? entries.length)
+    );
     const apiKey = config.OPENAI_API_KEY?.trim();
     if (!apiKey) throw new Error("OPENAI_API_KEY is required for mode=llm");
 
-    const compact = ideas.map((i) => ({
-      idea_id: i.idea_id,
-      platform: i.platform,
-      content_idea: (i.content_idea ?? "").slice(0, 400),
-      summary: (i.summary ?? "").slice(0, 300),
-    }));
+    const [brand, strategy, product] = await Promise.all([
+      getBrandConstraints(db, projectId),
+      getStrategyDefaults(db, projectId),
+      getProductProfile(db, projectId),
+    ]);
+    const projectContext = {
+      strategy: pickStrategySliceForSnapshot(
+        (strategy as unknown as Record<string, unknown> | null) ?? null
+      ),
+      brand_constraints: pickBrandSliceForSnapshot(
+        (brand as unknown as Record<string, unknown> | null) ?? null
+      ),
+      product_profile: productProfileSliceForLlmPick(product),
+    };
+
+    const compact = entries.map((e) => e.row);
 
     const system = RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT.replace(/\{\{MAX_PICK\}\}/g, String(maxPick));
 
-    const user = RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE.replace("{{ROWS_JSON}}", JSON.stringify(compact, null, 0));
+    const user = RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE.replace(
+      "{{PROJECT_CONTEXT_JSON}}",
+      JSON.stringify(projectContext, null, 0)
+    ).replace("{{ROWS_JSON}}", JSON.stringify(compact, null, 0));
 
     const out = await openaiChat(
       apiKey,
@@ -269,6 +355,9 @@ export async function materializeRunCandidates(
       llm_idea_ids: picked.slice(0, maxPick),
       row_count: rows.length,
       model: out.model,
+      project_context: projectContext,
+      pack_idea_count: entries.length,
+      max_pick: maxPick,
     };
   } else {
     throw new Error(`Unknown mode: ${(body as RunCandidatesMaterializeBody).mode}`);

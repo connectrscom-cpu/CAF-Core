@@ -1,38 +1,16 @@
 /** Inner HTML + script for GET /admin/processing — imports, evidence by platform, insights, top-performer passes, profile. */
 
-import {
-  DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
-  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
-} from "../decision_engine/default-plan-caps.js";
 import { adminCafTermHtml, adminLlmPromptTitleAttr, adminPipelineSketchHtml } from "./admin-ui-shared.js";
-
-function escHtml(s: string): string {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-function processingMimicCapsToolbarHtml(): string {
-  return TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => {
-    const short = g.label.replace(/^Top performer mimic — /i, "Mimic ");
-    return `<label style="font-size:11px;white-space:nowrap">${escHtml(short)} <input type="number" id="proc-cap-mimic-${escHtml(g.id)}" min="0" step="1" placeholder="${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}" title="Max mimic jobs per run (applied when you Start a run). Empty = default ${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}." style="width:52px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)"/></label>`;
-  }).join("");
-}
 
 export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
-  const mimicCapGroupsJson = JSON.stringify(
-    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => ({ id: g.id, keys: [...g.keys] })),
-  );
   const T = adminCafTermHtml;
   const PL = adminLlmPromptTitleAttr;
   return `
 <div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="processing">Processing</span></h2>${adminPipelineSketchHtml("evidence", currentSlug)}</div></div>
 <div class="content">
-  <div class="card" style="margin-bottom:14px">
+  <div class="card processing-workbench" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
       <div class="caf-toolbar" id="imports-toolbar" style="margin-bottom:10px">
         <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
@@ -47,13 +25,7 @@ export function adminProcessingBody(currentSlug: string): string {
         </div>
         <span id="imports-hint" class="caf-stat-chips"></span>
       </div>
-      <div id="processing-mimic-toolbar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
-        <span style="font-size:11px;font-weight:600;color:var(--muted)" title="Planner caps applied when you Start a run (jobs are created at run time, not in Processing)">${T("mimicCaps", "Mimic caps")}</span>
-        ${processingMimicCapsToolbarHtml()}
-        <button type="button" class="btn-ghost btn-sm" id="btn-save-proc-mimic-caps">Save</button>
-        <span id="processing-mimic-cap-hint" style="font-size:11px;color:var(--muted)"></span>
-      </div>
-      <div id="processing-activity-wrap" style="display:none;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:11px;line-height:1.45">
+      <div id="processing-activity-wrap" style="display:none;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:13px;line-height:1.45">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px">
           <strong style="font-size:12px">Activity</strong>
           <button type="button" class="btn-ghost btn-sm" id="btn-clear-activity-log">Clear</button>
@@ -216,8 +188,8 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="prellm-root">
             <style>
               .prellm-evidence-table{width:100%;border-collapse:separate;border-spacing:0}
-              .prellm-evidence-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:10px 12px;font-size:12px;white-space:nowrap;vertical-align:bottom}
-              .prellm-evidence-table td{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--border);font-size:12px}
+              .prellm-evidence-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:10px 12px;font-size:14px;white-space:nowrap;vertical-align:bottom}
+              .prellm-evidence-table td{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--border);font-size:14px}
               .prellm-evidence-table tr.prellm-row-dim{opacity:0.55}
               .prellm-cell-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;max-width:min(320px,36vw);line-height:1.4;word-break:break-word;white-space:pre-wrap}
               .prellm-cell-hashtags{max-width:min(180px,22vw);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
@@ -729,12 +701,8 @@ export function adminProcessingBody(currentSlug: string): string {
               </div>
               <div id="pack-inspect-msg" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
               <details id="pack-inspect-ideas-details" style="display:none;margin-top:10px">
-                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">ideas_json (curated ideas)</summary>
-                <div id="pack-inspect-ideas" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
-              </details>
-              <details id="pack-inspect-overall-details" style="display:none;margin-top:10px">
-                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">overall_candidates_json (legacy planner rows)</summary>
-                <div id="pack-inspect-overall" style="margin-top:8px;font-size:12px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
+                <summary style="cursor:pointer;font-size:14px;color:var(--muted)">ideas_json (curated ideas)</summary>
+                <div id="pack-inspect-ideas" style="margin-top:8px;font-size:14px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
               </details>
               <details id="pack-inspect-raw-details" style="display:none;margin-top:10px">
                 <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Raw signal pack JSON</summary>
@@ -801,8 +769,6 @@ export function adminProcessingBody(currentSlug: string): string {
 </script>
 <script>
 const SLUG=${SLUG};
-const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${mimicCapGroupsJson};
-const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function bind(id,ev,fn){var e=document.getElementById(id);if(e)e.addEventListener(ev,fn);}
@@ -3326,7 +3292,6 @@ bind('broad-rescan','change',scheduleBroadEligibilityEstimate);
 bind('broad-use-cutoff','change',scheduleBroadEligibilityEstimate);
 bind('btn-pack-inspect-reload','click',loadPackInspectDropdown);
 bind('pack-inspect-select','change',loadSelectedSignalPack);
-bind('btn-save-proc-mimic-caps','click',saveProcessingMimicCaps);
 bind('pack-idea-list-select','change',function(){
   var id=(this.value||'').trim();
   if(id)selectedIdeaListId=id;
@@ -3792,8 +3757,7 @@ async function loadPackInspectDropdown(){
       var when=String(p.created_at||'').slice(0,19);
       var fn=p.upload_filename||p.run_id||p.id;
       var ideasN=Number(p.ideas_count||0);
-      var overallN=Number(p.candidate_count||0);
-      h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' | '+String(fn||'')+' (ideas '+ideasN+', overall '+overallN+')')+'</option>';
+      h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' | '+String(fn||'')+' ('+ideasN+' ideas)')+'</option>';
     }
     sel.innerHTML=h;
     if(prev&&sel.querySelector('option[value="'+prev.replace(/"/g,'')+'"]'))sel.value=prev;
@@ -3814,23 +3778,19 @@ async function loadSelectedSignalPack(){
   var sel=document.getElementById('pack-inspect-select');
   var msg=document.getElementById('pack-inspect-msg');
   var ideasD=document.getElementById('pack-inspect-ideas-details');
-  var overallD=document.getElementById('pack-inspect-overall-details');
   var rawD=document.getElementById('pack-inspect-raw-details');
   var ideasWrap=document.getElementById('pack-inspect-ideas');
-  var overallWrap=document.getElementById('pack-inspect-overall');
   var rawPre=document.getElementById('pack-inspect-raw');
   if(!sel||!SLUG)return;
   var id=(sel.value||'').trim();
   if(!id){
     if(ideasD)ideasD.style.display='none';
-    if(overallD)overallD.style.display='none';
     if(rawD)rawD.style.display='none';
     if(msg){msg.textContent='';msg.style.color='';}
     return;
   }
   if(msg){msg.textContent='Loading pack...';msg.style.color='';}
   if(ideasWrap)ideasWrap.innerHTML='Loading...';
-  if(overallWrap)overallWrap.innerHTML='Loading...';
   if(rawPre)rawPre.textContent='Loading...';
   try{
     var r=await cafFetch('/v1/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(id));
@@ -3838,22 +3798,14 @@ async function loadSelectedSignalPack(){
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var pack=d.signal_pack||{};
     var ideas=Array.isArray(pack.ideas_json)?pack.ideas_json:[];
-    var overall=Array.isArray(pack.overall_candidates_json)?pack.overall_candidates_json:[];
-    if(msg)msg.textContent='Pack loaded. ideas_json '+String(ideas.length)+', overall_candidates_json '+String(overall.length)+'.';
+    if(msg)msg.textContent='Pack loaded — '+String(ideas.length)+' ideas in ideas_json.';
     if(ideasD)ideasD.style.display='block';
-    if(overallD)overallD.style.display='block';
     if(rawD)rawD.style.display='block';
     if(ideasWrap)ideasWrap.innerHTML=renderInsightTable(ideas.slice(0,120),[
       {key:'idea_id',label:'idea_id'},
       {key:'title',label:'title'},
       {key:'platform',label:'platform'},
       {key:'hook',label:'hook'}
-    ]);
-    if(overallWrap)overallWrap.innerHTML=renderInsightTable(overall.slice(0,120),[
-      {key:'candidate_id',label:'candidate_id'},
-      {key:'platform',label:'platform'},
-      {key:'summary',label:'summary'},
-      {key:'content_idea',label:'content_idea'}
     ]);
     if(rawPre)rawPre.textContent=JSON.stringify({
       id: pack.id,
@@ -3863,9 +3815,7 @@ async function loadSelectedSignalPack(){
       source_window: pack.source_window,
       source_inputs_import_id: (pack.source_inputs_import_id!=null?pack.source_inputs_import_id:null),
       ideas_count: ideas.length,
-      overall_candidates_count: overall.length,
       ideas_json: ideas,
-      overall_candidates_json: overall,
       derived_globals_json: (pack.derived_globals_json!=null?pack.derived_globals_json:{}),
       notes: (pack.notes!=null?pack.notes:null)
     },null,2);
@@ -3876,7 +3826,6 @@ async function loadSelectedSignalPack(){
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
     if(ideasD)ideasD.style.display='none';
-    if(overallD)overallD.style.display='none';
     if(rawD)rawD.style.display='none';
   }
 }
@@ -4123,7 +4072,7 @@ bind('btn-build-pack','click',async function(){
     var raw=await r.text();
     var d;try{d=JSON.parse(raw);}catch{throw new Error(raw.slice(0,400));}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> | insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> | ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) | overall_candidates_json '+esc(String(d.overall_candidates_count||0))+' | rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
+    msg.innerHTML='Done. Signal pack <a class="btn-ghost btn-sm" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(d.signal_pack_id)+'">open</a> | insights pack <span class="mono">'+esc(d.insights_pack_id||'')+'</span> | ideas_json '+esc(String(d.ideas_count||0))+' (LLM context '+esc(String(d.ideas_llm_context_insights||0))+' insights, '+esc(String(d.ideas_llm_top_performer_rows_in_context||0))+' w/ top-performer) | rated '+d.rows_rated+'/'+d.rows_considered_for_rating+' rows.';
     stepState.pack_id=String(d.signal_pack_id||'');
     stepState.pack_created_at=String(d.created_at||'');
     renderStepper();
@@ -4131,112 +4080,6 @@ bind('btn-build-pack','click',async function(){
     loadPackInspectDropdown();
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
-
-function normalizePerFlowCapsClient(raw){
-  if(raw==null)return {};
-  if(typeof raw==='string'){
-    var st=raw.trim();
-    if(!st)return {};
-    try{return normalizePerFlowCapsClient(JSON.parse(st));}catch(e){return {};}
-  }
-  if(typeof raw!=='object'||Array.isArray(raw))return {};
-  var out={};
-  for(var i=0,ks=Object.keys(raw);i<ks.length;i++){
-    var k=ks[i];
-    var val=raw[k];
-    var n=typeof val==='number'?val:Number(val);
-    if(Number.isFinite(n)&&n>=0)out[k]=Math.min(Math.floor(n),1000000);
-  }
-  return out;
-}
-
-async function loadProcessingMimicCaps(){
-  var hint=document.getElementById('processing-mimic-cap-hint');
-  var btn=document.getElementById('btn-save-proc-mimic-caps');
-  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
-    var el=document.getElementById('proc-cap-mimic-'+g.id);
-    if(el)el.placeholder=String(DEFAULT_MAX_MIMIC_PER_FLOW);
-  });
-  if(!SLUG){
-    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
-      var el=document.getElementById('proc-cap-mimic-'+g.id);
-      if(el)el.disabled=true;
-    });
-    if(btn)btn.disabled=true;
-    if(hint)hint.textContent='Pick a project to edit mimic caps.';
-    return;
-  }
-  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
-    var el=document.getElementById('proc-cap-mimic-'+g.id);
-    if(el)el.disabled=false;
-  });
-  if(btn)btn.disabled=false;
-  if(hint)hint.textContent='Loading…';
-  try{
-    var r=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
-    var d=await r.json();
-    if(!d.ok)throw new Error(apiErr(d,'Could not load constraints'));
-    var merged=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
-    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
-      var el=document.getElementById('proc-cap-mimic-'+g.id);
-      if(!el)return;
-      var v=null;
-      for(var ki=0;ki<g.keys.length;ki++){
-        if(merged[g.keys[ki]]!=null){v=merged[g.keys[ki]];break;}
-      }
-      el.value=v!=null?String(v):'';
-    });
-    if(hint)hint.textContent='Applied when you Start a run on Runs.';
-  }catch(e){
-    if(hint){hint.textContent=String(e.message||e);hint.style.color='var(--red)';}
-  }
-}
-
-async function saveProcessingMimicCaps(){
-  if(!SLUG){if(window.showToast)window.showToast('Select a project first.',false);return;}
-  var btn=document.getElementById('btn-save-proc-mimic-caps');
-  var hint=document.getElementById('processing-mimic-cap-hint');
-  for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
-    var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
-    var minp=document.getElementById('proc-cap-mimic-'+mg.id);
-    var mtr=(minp&&minp.value||'').trim();
-    if(mtr!==''){
-      var mn=parseInt(mtr,10);
-      if(!Number.isFinite(mn)||mn<0){
-        if(hint){hint.textContent='Each mimic cap: non-negative integer or empty.';hint.style.color='var(--red)';}
-        return;
-      }
-    }
-  }
-  if(btn)btn.disabled=true;
-  try{
-    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
-    var d0=await r0.json();
-    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
-    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
-    for(var gj=0;gj<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;gj++){
-      var grp=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[gj];
-      var inpg=document.getElementById('proc-cap-mimic-'+grp.id);
-      var rawg=(inpg&&inpg.value||'').trim();
-      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
-      if(rawg!==''){
-        var ng=parseInt(rawg,10);
-        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
-      }
-    }
-    var body={_project:SLUG,max_jobs_per_flow_type:merged};
-    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var rawText=await r.text();
-    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
-    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
-    if(hint){hint.textContent='Mimic caps saved.';hint.style.color='var(--green)';}
-    if(window.showToast)window.showToast('Mimic planning caps saved.',true);
-    await loadProcessingMimicCaps();
-  }catch(e){
-    if(hint){hint.textContent=String(e.message||e);hint.style.color='var(--red)';}
-    if(window.showToast)window.showToast(String(e.message||e),false);
-  }finally{if(btn)btn.disabled=false;}
-}
 
 function renderPackSettings(){
   var pre=document.getElementById('pack-settings');
@@ -4340,7 +4183,6 @@ try{
   setStep(hashOk?hashStep:(selectedImportId?'evidence':'select'));
   if(SLUG){
     loadImports();
-    loadProcessingMimicCaps();
     bindCafTerms(document.getElementById('import-workbench')||document);
   }else{
     var root0=document.getElementById('imports-root');

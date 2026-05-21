@@ -164,7 +164,7 @@ function WorkbenchContent() {
           q.set("status", key);
           const count = data?.tabCounts?.[key];
           return (
-            <Link key={key} href={`/?${q.toString()}`} className={`tab ${isActive ? "active" : ""}`}>
+            <Link key={key} href={`/?${q.toString()}`} className={`tab tab--${key} ${isActive ? "active" : ""}`}>
               {label}
               {count !== undefined && <span className="tab-count">{count}</span>}
             </Link>
@@ -185,8 +185,9 @@ function WorkbenchContent() {
           />
         </div>
         <div className="workbench-table">
+          <div className="workbench-table-inner">
           {validStatus === "needs_edit" && (
-            <div className="caf-toolbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+            <div className="caf-toolbar surface-warn" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
               <button
                 type="button"
                 className="btn-primary"
@@ -225,6 +226,7 @@ function WorkbenchContent() {
               onAfterDecision={fetchTasks}
             />
           )}
+          </div>
         </div>
       </div>
     </>

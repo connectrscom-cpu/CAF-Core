@@ -7,6 +7,53 @@ export interface SignalPackIdeaUiRow {
   title: string;
   detail: string;
   platform: string;
+  format: string;
+}
+
+const FORMAT_TAB_ORDER = ["video", "carousel", "post", "thread", "blog", "slides", "script", "memo"] as const;
+
+/** Normalize pack format strings into stable tab keys. */
+export function normalizeIdeaFormatTab(format: unknown): string {
+  const f = String(format ?? "")
+    .trim()
+    .toLowerCase();
+  if (!f) return "other";
+  if (f.includes("carousel")) return "carousel";
+  if (f.includes("video") || f.includes("reel") || f.includes("short")) return "video";
+  if (f.includes("thread")) return "thread";
+  if (f.includes("post") || f.includes("static") || f.includes("image")) return "post";
+  if (f.includes("blog")) return "blog";
+  if (f.includes("slide")) return "slides";
+  if (f.includes("script")) return "script";
+  if (f.includes("memo")) return "memo";
+  if ((FORMAT_TAB_ORDER as readonly string[]).includes(f)) return f;
+  return "other";
+}
+
+export function formatTabLabel(tab: string): string {
+  if (tab === "other") return "Other";
+  return tab.charAt(0).toUpperCase() + tab.slice(1);
+}
+
+export function groupIdeasByFormatTab(rows: SignalPackIdeaUiRow[]): Map<string, SignalPackIdeaUiRow[]> {
+  const map = new Map<string, SignalPackIdeaUiRow[]>();
+  for (const row of rows) {
+    const tab = normalizeIdeaFormatTab(row.format);
+    const list = map.get(tab) ?? [];
+    list.push(row);
+    map.set(tab, list);
+  }
+  return map;
+}
+
+export function orderedFormatTabs(rows: SignalPackIdeaUiRow[]): string[] {
+  const grouped = groupIdeasByFormatTab(rows);
+  const tabs: string[] = [];
+  for (const k of FORMAT_TAB_ORDER) {
+    if ((grouped.get(k)?.length ?? 0) > 0) tabs.push(k);
+  }
+  if ((grouped.get("other")?.length ?? 0) > 0) tabs.push("other");
+  return tabs;
 }
 
 /**
@@ -25,6 +72,7 @@ export function buildSignalPackIdeasForUi(signalPack: SignalPackRow | null): Sig
         title: i.title.trim(),
         detail,
         platform: String(i.platform ?? "Multi"),
+        format: String(i.format ?? "post"),
       };
     });
   }
@@ -44,6 +92,7 @@ export function buildSignalPackIdeasForUi(signalPack: SignalPackRow | null): Sig
       title: content_idea || idea_id,
       detail: summary || content_idea || "—",
       platform: String(o.platform ?? o.target_platform ?? "Multi"),
+      format: String(o.format ?? o.content_format ?? "post"),
     });
   }
   return out;

@@ -524,7 +524,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               carouselLivePreview={carouselLivePreview}
             />
 
-            <div className="card mt-4">
+            <div className="card mt-4 surface-teal">
               <div className="card-header">Task Info</div>
               <div className="info-row"><span className="info-label">Task ID</span><span className="info-value font-mono">{execTaskId}</span></div>
               {(data.project ?? "").trim() && (
@@ -554,7 +554,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               )}
             </div>
 
-            <div className="card mt-4">
+            <div className="card mt-4 surface-purple">
               <div className="card-header">Upstream lineage (inspect fields)</div>
               <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--fg-secondary)" }}>
                 Run → Signal pack → Idea → Grounding insights → Evidence rows.

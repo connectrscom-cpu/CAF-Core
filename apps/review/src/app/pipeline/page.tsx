@@ -192,7 +192,7 @@ export default function PipelinePage() {
               <p style={{ color: "var(--muted)" }}>No evidence imports yet.</p>
             )}
             {imports && imports.length > 0 && (
-              <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+              <div className="pipeline-table-wrap">
                 <table className="caf-table-compact">
                   <thead>
                     <tr>
@@ -237,7 +237,7 @@ export default function PipelinePage() {
                   <p style={{ color: "var(--muted)" }}>No signal packs for this project.</p>
                 )}
                 {packs && packs.length > 0 && (
-                  <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+                  <div className="pipeline-table-wrap">
                     <table className="caf-table-compact">
                       <thead>
                         <tr>

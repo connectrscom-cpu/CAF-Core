@@ -4,7 +4,7 @@ import { ReviewAppShell } from "@/components/ReviewAppShell";
 
 export const metadata: Metadata = {
   title: "CAF Review",
-  description: "Review and approve CAF-generated content",
+  description: "Review Console for CAF-generated content",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

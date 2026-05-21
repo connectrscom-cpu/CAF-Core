@@ -113,7 +113,7 @@ export function CarouselEdits({
   ]);
 
   return (
-    <div className="card">
+    <div className="card surface-orange">
       <div className="card-header">Edits for rework</div>
 
       <div style={{ marginBottom: 12 }}>
@@ -303,7 +303,7 @@ export function CarouselEditsExport({
   }, [taskId, runId, editedSlides, rawPayload, finalTitleOverride, finalHookOverride, generatedCaption, finalHashtagsOverride, extraFields]);
 
   return (
-    <div className="card">
+    <div className="card surface-muted">
       <div className="card-header">End of review</div>
       <button type="button" className="btn-ghost" onClick={exportEdited} style={{ width: "100%" }}>
         Export edited JSON (for rework flow)

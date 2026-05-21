@@ -38,11 +38,11 @@ export default function RendererSettingsPage() {
         {loading && <p style={{ color: "var(--muted)" }}>Loading…</p>}
         {!loading && health && (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="card">
+            <div className="card surface-info">
               <div className="card-header">RENDERER_BASE_URL</div>
               <p className="font-mono" style={{ fontSize: 13, wordBreak: "break-all" }}>{health.base_url || "(not set)"}</p>
             </div>
-            <div className="card">
+            <div className="card surface-success">
               <div className="card-header">Status</div>
               <p>
                 {health.reachable

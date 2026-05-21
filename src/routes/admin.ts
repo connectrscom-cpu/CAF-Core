@@ -62,6 +62,8 @@ import {
   adminCafUiScript,
   adminLlmPromptTitle,
   adminLlmPromptTitleAttr,
+  adminManualIdeaPickModalHtml,
+  adminManualIdeaPickScript,
   adminPageHeaderHtml,
   adminPhWithPipelineHtml,
   adminPipelineSketchHtml,
@@ -339,9 +341,10 @@ async function resolveProject(db: Pool, slugParam: string | undefined): Promise<
 function css(): string {
   return `
 :root{--bg:#09090b;--bg2:#0f0f12;--fg:#fafafa;--fg2:#a1a1aa;--accent:#3b82f6;--accent2:#2563eb;
---card:#141418;--card2:#1a1a1f;--border:#27272a;--border2:#1e1e22;--muted:#71717a;
---green:#22c55e;--green-bg:rgba(34,197,94,.1);--red:#ef4444;--red-bg:rgba(239,68,68,.1);
---yellow:#eab308;--yellow-bg:rgba(234,179,8,.1);--blue-bg:rgba(59,130,246,.1);--purple:#a855f7;--purple-bg:rgba(168,85,247,.1);
+--card:#141418;--card2:#1a1a1f;--surface-2:#16161c;--surface-3:#1c1c24;--border:#27272a;--border2:#1e1e22;--muted:#71717a;
+--green:#22c55e;--green-bg:rgba(34,197,94,.12);--red:#ef4444;--red-bg:rgba(239,68,68,.12);
+--yellow:#eab308;--yellow-bg:rgba(234,179,8,.12);--blue-bg:rgba(59,130,246,.12);--purple:#a855f7;--purple-bg:rgba(168,85,247,.12);
+--teal:#2dd4bf;--teal-bg:rgba(45,212,191,.12);--orange:#fb923c;--orange-bg:rgba(251,146,60,.12);--cyan:#22d3ee;--cyan-bg:rgba(34,211,238,.1);
 --sidebar:260px}
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{background:var(--bg);color:var(--fg);min-height:100vh;
@@ -366,7 +369,7 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .sb-sublink:hover{color:var(--fg)}
 .sb-sublink.active{background:var(--accent);color:#fff}
 .sb-sublink.active::before{background:var(--accent)}
-.sb-project-sel{margin:12px 8px 0;padding:8px 12px;display:flex;flex-direction:column;gap:6px}
+.sb-project-sel{margin:12px 8px 0;padding:8px 12px;display:flex;flex-direction:column;gap:6px;background:linear-gradient(135deg,rgba(59,130,246,.08) 0%,transparent 100%);border-radius:10px;border:1px solid rgba(59,130,246,.18)}
 .sb-project-sel label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .sb-project-sel select{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:13px;width:100%;outline:none;font-family:inherit}
 .sb-project-sel select:focus{border-color:var(--accent)}
@@ -378,7 +381,7 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .ph h2{font-size:22px;font-weight:700;letter-spacing:-.02em}
 .ph-sub{font-size:13px;color:var(--muted)}
 .content{padding:20px 28px 28px}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px}
+.card{background:linear-gradient(180deg,var(--card) 0%,var(--surface-2) 100%);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px}
 .card-h{font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid var(--border)}
 .info-row{display:flex;justify-content:space-between;padding:7px 0;font-size:13px;border-bottom:1px solid var(--border2)}
 .info-row:last-child{border-bottom:none}
@@ -386,7 +389,7 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 table{width:100%;border-collapse:collapse}
 th{text-align:left;padding:10px 12px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap}
 td{padding:10px 12px;font-size:13px;border-bottom:1px solid var(--border2);vertical-align:middle}
-tr{transition:background .1s}tbody tr:hover{background:var(--card2)}
+tr{transition:background .1s}tbody tr:nth-child(even){background:rgba(255,255,255,.015)}tbody tr:hover{background:var(--card2)}
 .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:9999px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.02em;white-space:nowrap}
 .badge-g{background:var(--green-bg);color:var(--green)}
 .badge-r{background:var(--red-bg);color:var(--red)}
@@ -396,7 +399,13 @@ tr{transition:background .1s}tbody tr:hover{background:var(--card2)}
 .mono{font-family:'SF Mono','Fira Code','Cascadia Code',monospace;font-size:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
-.stat-card{text-align:center}
+.stat-card{text-align:center;padding:16px 12px;border-radius:10px;border:1px solid var(--border)}
+.grid3 .stat-card:nth-child(3n+1){background:var(--blue-bg);border-color:rgba(59,130,246,.32)}
+.grid3 .stat-card:nth-child(3n+1) .num{color:var(--accent)}
+.grid3 .stat-card:nth-child(3n+2){background:var(--green-bg);border-color:rgba(34,197,94,.32)}
+.grid3 .stat-card:nth-child(3n+2) .num{color:var(--green)}
+.grid3 .stat-card:nth-child(3n+3){background:var(--purple-bg);border-color:rgba(168,85,247,.32)}
+.grid3 .stat-card:nth-child(3n+3) .num{color:var(--purple)}
 .stat-card .num{font-size:28px;font-weight:700;color:var(--accent)}
 .stat-card .lbl{font-size:12px;color:var(--muted);margin-top:4px}
 .empty{text-align:center;padding:40px 20px;color:var(--muted);font-size:14px}
@@ -431,6 +440,26 @@ pre.json{font-size:11px;overflow:auto;max-height:300px;background:var(--bg);padd
 dialog{background:var(--card);color:var(--fg);border:1px solid var(--border);border-radius:12px;padding:24px;max-width:480px;width:90%}
 dialog::backdrop{background:rgba(0,0,0,.6)}
 dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
+dialog.pl-prompt-dlg{max-width:min(1100px,96vw)!important;width:96vw;padding:0;max-height:92vh;overflow:hidden}
+.pl-prompt-dlg .pl-prompt-dlg-head{padding:20px 24px 0;flex-shrink:0}
+.pl-prompt-dlg .pl-prompt-dlg-head h3{margin-bottom:10px}
+.pl-prompt-dlg .pl-prompt-dlg-body{padding:0 24px 20px;overflow-y:auto;max-height:calc(92vh - 24px)}
+.pl-prompt-form{max-width:100%!important;margin:0;padding:8px 0 0}
+.pl-prompt-meta-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px;margin-bottom:14px}
+.pl-prompt-params-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px 14px;margin:14px 0}
+.pl-prompt-meta-grid .form-group,.pl-prompt-params-grid .form-group{margin-bottom:0}
+.pl-prompt-form .pl-prompt-field{margin-bottom:14px}
+.pl-prompt-form .pl-prompt-field-lg{margin-bottom:16px}
+.pl-prompt-form textarea.pl-prompt-ta{font-family:ui-monospace,'SF Mono','Fira Code',monospace;font-size:13px;line-height:1.55;min-height:220px;resize:vertical;background:var(--surface-2)}
+.pl-prompt-form textarea.pl-prompt-ta-lg{min-height:300px}
+.pl-prompt-form textarea.pl-prompt-ta-notes{font-family:inherit;min-height:72px;font-size:13px;line-height:1.45;background:var(--card)}
+@media(max-width:960px){
+.pl-prompt-meta-grid{grid-template-columns:1fr}
+.pl-prompt-params-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:560px){
+.pl-prompt-params-grid{grid-template-columns:1fr}
+}
 .wb-embed{height:100vh;min-height:480px;background:var(--bg)}
 .wb-embed-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 @media(max-width:1024px){.sb{display:none}.main{margin-left:0}}
@@ -456,10 +485,10 @@ const ADMIN_WORKBENCH_PAGES: {
     embedParams: { tab: "packs" },
     pipelineStage: "signal_pack",
   },
-  { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish", pipelineStage: "validation" },
+  { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish", pipelineStage: "publish" },
   { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground", pipelineStage: null },
-  { route: "/admin/workbench", embedPath: "/", title: "Review & approve", sidebarKey: "workbench-review", pipelineStage: "validation" },
-  { route: "/admin/learning", embedPath: "/learning", title: "Learning & metrics", sidebarKey: "learning", pipelineStage: "learning" },
+  { route: "/admin/workbench", embedPath: "/", title: "Review Console", sidebarKey: "workbench-review", pipelineStage: "validation" },
+  { route: "/admin/learning", embedPath: "/learning", title: "Learning", sidebarKey: "learning", pipelineStage: "learning" },
 ];
 
 function adminWorkbenchEmbedSrc(
@@ -518,9 +547,9 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
       children: [{ href: `/admin/workbench/pipeline${pq}`, label: "Signal packs", key: "workbench-pipeline" }],
     },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
-    { href: `/admin/workbench${pq}`, label: "Review & approve", key: "workbench-review" },
+    { href: `/admin/workbench${pq}`, label: "Review Console", key: "workbench-review" },
     { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
-    { href: `/admin/learning${pq}`, label: "Learning & metrics", key: "learning" },
+    { href: `/admin/learning${pq}`, label: "Learning", key: "learning" },
   ];
   const isWorkbenchParentActive = (link: WorkbenchLink): boolean => {
     if (link.key === active) return true;
@@ -3527,7 +3556,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 @keyframes panelSlide{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 .run-actions{display:flex;gap:6px;flex-wrap:wrap}
 .run-actions button{padding:4px 12px;font-size:12px}
-.runs-ops{border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:16px;background:var(--card2)}
+.runs-ops{border:1px solid rgba(59,130,246,.28);border-radius:10px;padding:16px 20px;margin-bottom:16px;background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,rgba(59,130,246,.03) 100%)}
 .runs-ops-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px}
 .runs-ops-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .runs-ops-hint{font-size:12px;color:var(--muted);flex:1;min-width:220px;max-width:480px;line-height:1.45}
@@ -3538,7 +3567,10 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
 @media (max-width:1100px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.plan-cap-grid{grid-template-columns:1fr}}
-.plan-cap-col{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--bg)}
+.plan-cap-col{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surface-2)}
+.plan-cap-grid .plan-cap-col:nth-child(3n+1){border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-grid .plan-cap-col:nth-child(3n+2){border-color:rgba(34,197,94,.28);background:linear-gradient(135deg,rgba(34,197,94,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-grid .plan-cap-col:nth-child(3n+3){border-color:rgba(168,85,247,.28);background:linear-gradient(135deg,rgba(168,85,247,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-col-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
 .plan-cap-col-hint{font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.4}
 .plan-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;margin-top:8px}
@@ -3546,8 +3578,8 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-row input{width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text)}
 .sp-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2000;align-items:center;justify-content:center;padding:24px}
 .sp-modal-card{max-width:920px;max-height:90vh;overflow:auto;width:100%;position:relative}
-.sp-modal-table{width:100%;border-collapse:collapse;font-size:11px;margin:8px 0}
-.sp-modal-table th,.sp-modal-table td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
+.sp-modal-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
+.sp-modal-table th,.sp-modal-table td{border:1px solid var(--border);padding:8px 12px;text-align:left;vertical-align:top;font-size:13px}
 </style>
 <div class="ph">
   <div class="caf-page-header-left"><h2>${esc(project?.display_name || currentSlug || "—")}</h2>${adminPipelineSketchHtml("run", currentSlug)}<span class="ph-sub">Runs &amp; signal packs</span></div>
@@ -3556,10 +3588,9 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
   <div class="runs-ops">
     <div class="runs-ops-title">Operations</div>
     <div class="runs-ops-row">
-      <button type="button" class="btn" onclick="togglePanel('upload-panel')">Upload signal pack (.xlsx)</button>
-      <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="togglePanel('create-panel')">Create run (pick signal pack)</button>
+      <button type="button" class="btn" onclick="togglePanel('create-panel')">Pick signal pack</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
-      <p class="runs-ops-hint"><strong>Create run</strong> picks a <strong>signal pack</strong> (research + <code>ideas_json</code>). Before <strong>Start</strong>, open <strong>Runs → Candidates</strong> and materialize <code>runs.candidates_json</code> from pack ideas (all, LLM subset, or pick manually in the UI). <strong>Start</strong> expands that JSON × flows and plans jobs. <strong>Upload .xlsx</strong> is optional legacy ingest. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps <code>candidates_json</code>). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
+      <p class="runs-ops-hint"><strong>Pick signal pack</strong> attaches a pack built in <strong>Processing</strong> (<code>ideas_json</code>). Choose automated rules, LLM picking, or manual format tabs before <strong>Start</strong>. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps planned jobs). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
     <div class="runs-ops-row plan-cap-section" style="align-items:stretch;flex-direction:column;gap:10px">
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Planning caps</div>
@@ -3621,19 +3652,8 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
     </div>
   </div>
 
-  <div id="upload-panel" class="panel card" style="display:none;max-width:520px">
-    <div class="card-h">Upload Signal Pack (.xlsx)</div>
-    <form id="upload-form" enctype="multipart/form-data">
-      <div class="form-group"><label>File</label><input type="file" name="file" accept=".xlsx,.xls" required style="background:transparent;border:none;padding:6px 0"></div>
-      <div class="form-group"><label>Run name (optional)</label><input type="text" name="run_name" maxlength="200" placeholder="Friendly label — stored on the run, does not change run_id"></div>
-      <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
-      <div class="form-group"><label>Notes (optional)</label><textarea name="notes" rows="2" placeholder="Any notes about this pack..."></textarea></div>
-      <div class="form-actions"><button type="submit" class="btn" id="upload-btn">Upload &amp; Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('upload-panel')">Cancel</button><span id="upload-msg" class="form-msg"></span></div>
-    </form>
-  </div>
-
   <div id="create-panel" class="panel card" style="display:none;max-width:560px">
-    <div class="card-h">Create run</div>
+    <div class="card-h">Pick signal pack</div>
     <form id="create-form">
       <div class="form-group"><label>Signal pack <span style="color:var(--red)">*</span></label><select name="signal_pack_id" id="create-signal-pack" required style="width:100%;max-width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"><option value="">Loading…</option></select><p class="runs-ops-hint" style="margin:8px 0 0">Built in <strong>Processing</strong>; shows created date and idea/overall counts.</p></div>
       <div class="form-group"><label>Run ID (optional, auto-generated if empty)</label><input type="text" name="run_id" placeholder="e.g. SNS_2026W14"></div>
@@ -3654,17 +3674,14 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
             <input type="radio" name="idea_picking_mode" value="llm" class="idea-pick-input"/>
             <div class="idea-pick-card-body" title="${llmRunPickTitle}">
               <div class="idea-pick-card-title"><span data-caf-term="ideaPickingLlm">LLM picking</span></div>
-              <div class="idea-pick-card-desc">Model selects a diverse, high-impact subset before planning.</div>
-              <div id="create-llm-max-wrap" class="idea-pick-card-extra" style="display:none">
-                <label>Max ideas <input type="number" name="llm_max_ideas" id="create-llm-max" min="1" max="100" placeholder="40"/></label>
-              </div>
+              <div class="idea-pick-card-desc">Model selects ideas using project strategy, brand constraints, and product config — up to every idea in the pack (same ceiling as automated rules).</div>
             </div>
           </label>
           <label class="idea-pick-card">
             <input type="radio" name="idea_picking_mode" value="manual" class="idea-pick-input"/>
             <div class="idea-pick-card-body">
               <div class="idea-pick-card-title"><span data-caf-term="ideaPickingManual">Manual picking</span></div>
-              <div class="idea-pick-card-desc">Create the run empty — choose ideas on <strong>Planned jobs</strong> before Start.</div>
+              <div class="idea-pick-card-desc">Create the run, then pick ideas by format in a popup — save each tab, then apply overall.</div>
             </div>
           </label>
         </div>
@@ -3676,6 +3693,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
   <div id="runs-table"><div class="empty">Loading...</div></div>
   <div class="page-btns" id="runs-pager"></div>
 </div>
+${adminManualIdeaPickModalHtml()}
 <script>
 const SLUG=${JSON.stringify(currentSlug)};
 const LLM_JOB_GEN_TITLE=${JSON.stringify(adminLlmPromptTitle("(per job) active flow template", "Creation", "Video/HeyGen jobs → Prompt Labs → HeyGen agent tab"))};
@@ -3695,7 +3713,7 @@ function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}c
 function togglePanel(id){
   const el=document.getElementById(id);
   if(!el)return;
-  const panels=['upload-panel','create-panel'];
+  const panels=['create-panel'];
   panels.forEach(p=>{if(p!==id){const x=document.getElementById(p);if(x)x.style.display='none';}});
   const next=el.style.display==='none'?'block':'none';
   el.style.display=next;
@@ -3709,7 +3727,7 @@ function togglePanel(id){
   }
   if(next==='block'){
     try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
-    try{showToast((id==='create-panel'?'Create run':'Upload signal pack')+' panel opened.',true);}catch(_e){}
+    try{showToast('Pick signal pack panel opened.',true);}catch(_e){}
   }
 }
 
@@ -3740,8 +3758,6 @@ async function loadSignalPackSelect(){
 function syncCreateIdeaPickUi(){
   var modeEl=document.querySelector('input[name="idea_picking_mode"]:checked');
   var mode=modeEl?String(modeEl.value||'rules'):'rules';
-  var llmWrap=document.getElementById('create-llm-max-wrap');
-  if(llmWrap)llmWrap.style.display=mode==='llm'?'block':'none';
   var createBtn=document.getElementById('create-btn');
   if(createBtn){
     createBtn.title=mode==='llm'?LLM_RUN_PICK_TITLE:'Create run from selected signal pack (no LLM unless LLM picking is selected)';
@@ -4003,7 +4019,7 @@ async function loadRuns(p){
   if(!r.ok)throw new Error(apiErr(d,'HTTP '+r.status));
   if(!d.ok){el.innerHTML='<div class="empty">'+esc(apiErr(d,'Request failed'))+'</div>';return;}
   const runs=Array.isArray(d.runs)?d.runs:[];
-  if(!runs.length){el.innerHTML='<div class="empty">No runs yet. Upload a signal pack or create a run to get started.</div>';return;}
+  if(!runs.length){el.innerHTML='<div class="empty">No runs yet. Pick a signal pack from Processing to create one.</div>';return;}
   let h='<table><thead><tr><th>Run ID</th><th>Name</th><th>Status</th><th>Jobs</th><th>Created</th><th>Started</th><th>Completed</th><th>Actions</th></tr></thead><tbody>';
   for(const run of runs){
     const meta=run.metadata_json&&typeof run.metadata_json==='object'&&!Array.isArray(run.metadata_json)?run.metadata_json:{};
@@ -4299,28 +4315,6 @@ loadRuns(1);
 loadPlanningCaps();
 window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadRuns(runsPage);loadPlanningCaps();},0);});
 
-document.getElementById('upload-form')?.addEventListener('submit',async(e)=>{
-  e.preventDefault();
-  if(!SLUG){showToast('Select a project in the sidebar (or open /admin/runs?project=YOUR_SLUG)',false);return;}
-  const btn=document.getElementById('upload-btn');
-  if(btn){btn.disabled=true;btn.textContent='Uploading...';}
-  try{
-    const fd=new FormData(e.target);
-    fd.append('project_slug',SLUG);
-    const r=await cafFetch('/v1/signal-packs/upload',{method:'POST',body:fd});
-    const raw=await r.text();
-    let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status+' '+raw.slice(0,120));}
-    if(!r.ok)throw new Error(apiErr(d,'HTTP '+r.status));
-    if(!d.ok)throw new Error(apiErr(d,'Upload failed'));
-    showToast('Signal pack uploaded — Run '+d.run_id+' created ('+d.total_candidates+' candidates)',true);
-    if(d.transparency)showSignalPackTransparency(d);
-    const up=document.getElementById('upload-panel');if(up)up.style.display='none';
-    e.target.reset();
-    loadRuns(1);
-  }catch(err){showToast(err.message,false);}
-  finally{if(btn){btn.disabled=false;btn.textContent='Upload & Create Run';}}
-});
-
 document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
   e.preventDefault();
   if(!SLUG){showToast('Select a project in the sidebar',false);return;}
@@ -4330,15 +4324,6 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
     const fd=new FormData(e.target);
     const body={};
     for(const[k,v]of fd.entries()){
-      if(k==='llm_max_ideas'){
-        const mode=String(fd.get('idea_picking_mode')||'rules');
-        if(mode!=='llm')continue;
-        const t=String(v||'').trim();
-        if(!t)continue;
-        const n=parseInt(t,10);
-        if(Number.isFinite(n)&&n>=1)body.llm_max_ideas=n;
-        continue;
-      }
       if(v)body[k]=v;
     }
     if(!body.idea_picking_mode)body.idea_picking_mode='rules';
@@ -4350,11 +4335,14 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
     const runId=d.run&&d.run.run_id?String(d.run.run_id):'';
     const mode=String(d.idea_picking_mode||body.idea_picking_mode||'rules');
     if(mode==='manual'&&runId){
-      showToast('Run created: '+runId+' — pick ideas on Planned jobs.',true);
+      showToast('Run created: '+runId+' — pick ideas in the popup.',true);
       const cp=document.getElementById('create-panel');if(cp)cp.style.display='none';
       e.target.reset();
       syncCreateIdeaPickUi();
-      window.location.href='/admin/run-jobs?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(runId);
+      loadRuns(1);
+      if(typeof window.cafOpenManualIdeaPicker==='function'){
+        window.cafOpenManualIdeaPicker(runId,{statusElId:'create-msg',onApplied:function(){loadRuns(1);}});
+      }
       return;
     }
     if(d.materialize_error){
@@ -4372,6 +4360,7 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
   }catch(err){showToast(err.message,false);}
   finally{if(btn){btn.disabled=false;btn.textContent='Create Run';}}
 });
+${adminManualIdeaPickScript()}
 </script>`;
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -4413,16 +4402,7 @@ async function loadPackView(){
       return;
     }
     const p=d.signal_pack;
-    const oc=Array.isArray(p.overall_candidates_json)?p.overall_candidates_json:[];
     const idz=Array.isArray(p.ideas_json)?p.ideas_json:[];
-    let tb='<table class="sp-modal-table"><thead><tr><th>#</th><th>Overall row</th></tr></thead><tbody>';
-    const n=Math.min(oc.length,150);
-    for(let i=0;i<n;i++){
-      const row=oc[i];
-      tb+='<tr><td>'+(i+1)+'</td><td><pre style="margin:0;font-size:10px;white-space:pre-wrap;word-break:break-word">'+esc(pretty(row))+'</pre></td></tr>';
-    }
-    tb+='</tbody></table>';
-    if(oc.length>150)tb+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+oc.length+' rows.</p>';
     let ib='<table class="sp-modal-table"><thead><tr><th>#</th><th>Idea (insights-backed)</th></tr></thead><tbody>';
     const ni=Math.min(idz.length,150);
     for(let i=0;i<ni;i++){
@@ -4475,8 +4455,7 @@ async function loadPackView(){
     const rest={...p};
     delete rest.overall_candidates_json;
     delete rest.ideas_json;
-    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="card-h">ideas_json ('+idz.length+' — materialize into <span class="mono">runs.candidates_json</span> before Start)</div><div style="padding:12px 16px 16px">'+(idz.length?ib:'<p class="runs-ops-hint" style="margin:0">Empty — use legacy <strong>overall_candidates_json</strong> when building <span class="mono">candidates_json</span> on the run, or rebuild the pack in Processing.</p>')+'</div></div>'+
-      '<div class="card" style="margin-bottom:16px"><div class="card-h">overall_candidates_json ('+oc.length+' rows)</div><div style="padding:12px 16px 16px">'+tb+'</div></div>'+
+    root.innerHTML='<div class="card" style="margin-bottom:16px"><div class="card-h">ideas_json ('+idz.length+' — materialize into <span class="mono">runs.candidates_json</span> before Start)</div><div style="padding:12px 16px 16px">'+(idz.length?ib:'<p class="runs-ops-hint" style="margin:0">Empty — rebuild the pack in Processing (step 4 Build ideas, then step 5 Signal pack).</p>')+'</div></div>'+
       '<div class="card" style="margin-bottom:16px"><div class="card-h">hashtag_leaderboard_v1 ('+tags.length+')</div><div style="padding:12px 16px 16px">'+hb+'</div></div>'+
       '<div class="card" style="margin-bottom:16px"><div class="card-h">visual_guidelines_pack_v1</div><div style="padding:12px 16px 16px">'+vb+'</div></div>'+
       '<div class="card"><div class="card-h">Other pack fields (IG / TikTok / Reddit / HTML summaries, remaining derived_globals, …)</div><div style="padding:12px 16px 16px"><pre style="font-size:10px;line-height:1.45;max-height:480px;overflow:auto;margin:0">'+esc(pretty(rest))+'</pre></div></div>';
@@ -4536,8 +4515,8 @@ loadPackView();
     const packs = project ? await listSignalPacks(db, project.id, 80, 0) : [];
     const packOptions = packs
       .map((p) => {
-        const n = Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0;
-        const label = `${p.run_id} · ${n} overall rows · ${String(p.created_at).slice(0, 10)}`;
+        const nIdeas = Array.isArray(p.ideas_json) ? p.ideas_json.length : 0;
+        const label = `${p.run_id} · ${nIdeas} ideas · ${String(p.created_at).slice(0, 10)}`;
         return `<option value="${esc(p.id)}">${esc(label)}</option>`;
       })
       .join("");
@@ -4871,24 +4850,11 @@ ${runIdQ ? adminRunHubTabsHtml("planned", currentSlug, runIdQ) : ""}
 <div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize planned jobs</div><div style="padding:12px 16px 16px">
 <p style="margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
 <button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack jobs</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-btn-llm" title="${llmRunPickTitle}">LLM pick subset</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-llm" title="${llmRunPickTitle}">LLM pick (project config)</button>
 <button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick jobs manually</button></p>
 <p id="rc-mat-msg" style="font-size:12px;margin:0;min-height:1.2em;color:var(--muted)"></p>
 </div></div>
-<div id="rc-manual-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:16px;overflow:auto">
-<div class="card" style="max-width:760px;width:100%;margin:24px auto;max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35)">
-<div style="padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0">
-<h3 style="margin:0;font-size:16px">Pick jobs manually</h3>
-</div>
-<div id="rc-manual-list" style="overflow:auto;flex:1;min-height:120px;padding:12px 18px"></div>
-<div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center;flex-shrink:0">
-<button type="button" class="btn-ghost btn-sm" id="rc-manual-cancel">Cancel</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-manual-all">Select all</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-manual-none">Clear</button>
-<button type="button" class="btn btn-sm" id="rc-manual-apply">Apply selection</button>
-</div>
-</div>
-</div>
+${adminManualIdeaPickModalHtml()}
 <div id="rc-root"><div class="empty">Loading…</div></div>
 </div>
 <script>
@@ -5000,72 +4966,13 @@ async function postRunCandidates(body){
     await loadRunTransparency();
   }catch(e){if(msg){msg.style.color='var(--red)';msg.textContent=String((e&&e.message)||e);}}
 }
-function rcCloseManual(){
-  var ov=document.getElementById('rc-manual-overlay');
-  if(ov)ov.style.display='none';
-}
-function rcRenderManualList(ideas){
-  var box=document.getElementById('rc-manual-list');
-  if(!box)return;
-  if(!ideas.length){box.innerHTML='<p class="empty" style="margin:0">No ideas in this signal pack (<span class="mono">ideas_json</span> is empty).</p>';return;}
-  var h='<div style="display:flex;flex-direction:column;gap:10px">';
-  for(var i=0;i<ideas.length;i++){
-    var it=ideas[i];
-    var id=String(it.idea_id||'');
-    var title=esc(it.title||id);
-    var det=esc(it.detail||'');
-    var plat=esc(it.platform||'');
-    h+='<label style="display:flex;gap:12px;align-items:flex-start;padding:12px;border:1px solid var(--border);border-radius:10px;cursor:pointer;background:var(--card2)">';
-    h+='<input type="checkbox" class="rc-manual-cb" value="'+escAttr(id)+'" style="margin-top:3px;flex-shrink:0"/>';
-    h+='<span style="min-width:0;flex:1">';
-    h+='<span style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px">';
-    h+='<strong style="font-size:13px;line-height:1.35">'+title+'</strong>';
-    h+='<span class="badge badge-b" style="font-size:10px">'+plat+'</span>';
-    h+='<span class="mono" style="font-size:10px;color:var(--muted)">'+esc(id)+'</span>';
-    h+='</span>';
-    h+='<span style="font-size:12px;color:var(--fg2);line-height:1.45;display:block">'+det+'</span>';
-    h+='</span></label>';
-  }
-  h+='</div>';
-  box.innerHTML=h;
-}
-async function rcOpenManualPicker(){
-  var msg=document.getElementById('rc-mat-msg');
-  if(!SLUG||!RUN_ID){if(msg)msg.textContent='Missing project or run.';return;}
-  var ov=document.getElementById('rc-manual-overlay');
-  if(!ov)return;
-  if(msg){msg.style.color='var(--muted)';msg.textContent='Loading ideas…';}
-  try{
-    var r=await cafFetch('/v1/admin/run-transparency?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(RUN_ID));
-    var d=await r.json();
-    if(!r.ok||!d.ok)throw new Error((d&&d.error)||'Failed to load pack ideas');
-    var ideas=Array.isArray(d.signal_pack_ideas_ui)?d.signal_pack_ideas_ui:[];
-    rcRenderManualList(ideas);
-    if(msg)msg.textContent='';
-    ov.style.display='flex';
-  }catch(e){
-    if(msg){msg.style.color='var(--red)';msg.textContent=String((e&&e.message)||e);}
-  }
-}
+function rcCloseManual(){if(typeof window.cafCloseManualIdeaPicker==='function')window.cafCloseManualIdeaPicker();}
+function rcOpenManualPicker(){if(typeof window.rcOpenManualPicker==='function')window.rcOpenManualPicker();}
 document.getElementById('rc-btn-all')?.addEventListener('click',function(){postRunCandidates({mode:'from_pack_ideas_all'});});
 document.getElementById('rc-btn-llm')?.addEventListener('click',function(){postRunCandidates({mode:'llm'});});
 document.getElementById('rc-btn-manual')?.addEventListener('click',function(){rcOpenManualPicker();});
-document.getElementById('rc-manual-cancel')?.addEventListener('click',function(){rcCloseManual();});
-document.getElementById('rc-manual-overlay')?.addEventListener('click',function(ev){if(ev.target===this)rcCloseManual();});
-document.getElementById('rc-manual-all')?.addEventListener('click',function(){
-  document.querySelectorAll('.rc-manual-cb').forEach(function(el){el.checked=true;});
-});
-document.getElementById('rc-manual-none')?.addEventListener('click',function(){
-  document.querySelectorAll('.rc-manual-cb').forEach(function(el){el.checked=false;});
-});
-document.getElementById('rc-manual-apply')?.addEventListener('click',function(){
-  var ids=[];
-  document.querySelectorAll('.rc-manual-cb:checked').forEach(function(el){ids.push(el.value);});
-  if(!ids.length){var m=document.getElementById('rc-mat-msg');if(m){m.style.color='var(--red)';m.textContent='Select at least one idea.';}return;}
-  rcCloseManual();
-  postRunCandidates({mode:'manual',idea_ids:ids});
-});
 loadRunTransparency();
+${adminManualIdeaPickScript()}
 </script>`;
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -5889,7 +5796,13 @@ function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').
 function pre(txt){return '<pre class="mono-block" style="white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.45;background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:14px;max-height:420px;overflow:auto">'+esc(txt)+'</pre>';}
 function trunc(s,n){s=String(s||'');return s.length>n?s.slice(0,n)+'…':s;}
 function plFg(name,label,value,type,step){return '<div class="form-group"><label for="'+name+'">'+label+'</label><input type="'+(type||'text')+'" name="'+name+'" id="'+name+'" value="'+esc(value)+'"'+(step?' step="'+step+'"':'')+'></div>';}
-function plFgTa(name,label,value){return '<div class="form-group"><label for="'+name+'">'+label+'</label><textarea name="'+name+'" id="'+name+'" rows="4">'+esc(value)+'</textarea></div>';}
+function plFgTa(name,label,value,opts){
+  opts=opts||{};
+  var rows=opts.rows||12;
+  var wrapCls=opts.notes?' pl-prompt-field':' pl-prompt-field'+(opts.lg?' pl-prompt-field-lg':'');
+  var taCls='pl-prompt-ta'+(opts.lg?' pl-prompt-ta-lg':'')+(opts.notes?' pl-prompt-ta-notes':'');
+  return '<div class="form-group'+wrapCls+'"><label for="'+name+'">'+label+'</label><textarea class="'+taCls+'" name="'+name+'" id="'+name+'" rows="'+rows+'">'+esc(value)+'</textarea></div>';
+}
 function plVal(id){const el=document.getElementById(id);return el?String(el.value).trim():'';}
 function plNum(id){const s=plVal(id);if(s==='')return null;const n=Number(s);return Number.isFinite(n)?n:null;}
 function plOpenPromptEdit(kind, ix){
@@ -5901,39 +5814,43 @@ function plOpenPromptEdit(kind, ix){
   if(!data)return;
   const dlg=document.createElement('dialog');
   dlg.id='pl-prompt-dlg';
-  dlg.style.maxWidth='min(920px,96vw)';
-  dlg.style.width='100%';
+  dlg.className='pl-prompt-dlg';
   const isOverride=!!data.labs_readonly;
-  let h='<h3 style="margin-bottom:12px">'+(isOverride?'Edit prompt (override)':'Edit prompt template')+'</h3>';
-  h+='<p style="font-size:12px;color:var(--muted);margin-bottom:14px">';
-  h+=isOverride
+  let head='<h3 style="margin-bottom:12px">'+(isOverride?'Edit prompt (override)':'Edit prompt template')+'</h3>';
+  head+='<p style="font-size:12px;color:var(--muted);margin-bottom:14px">';
+  head+=isOverride
     ? 'This prompt is defined in code. Saving creates a DB <strong>override</strong> for Prompt Labs (does not modify source code). Use <strong>Description (notes)</strong> for human context.'
     : 'Saves to <span class="mono">caf_core.prompt_templates</span>. Use <strong>Description (notes)</strong> for what this prompt does in your team.';
-  h+='</p><p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.45">';
-  h+=isOverride
+  head+='</p><p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">';
+  head+=isOverride
     ? 'You may edit <strong>Prompt Name</strong> and the templates below. Renaming changes the override row key — it must still match the <span class="mono">prompt_name</span> Core loads for this built-in prompt or the override will not apply.'
     : 'You may edit <strong>Prompt Name</strong>, <strong>Flow Type</strong>, and all template fields. Renaming updates the same row (preserves id). Ensure pipeline code and integrations use the new names.';
-  h+='</p><form id="pl-prompt-form" class="config-form" style="max-width:100%">';
-  h+=plFg('pl_prompt_name','Prompt Name',data.prompt_name||'','text');
-  h+=plFg('pl_flow_type','Flow Type',data.flow_type||'','text');
-  h+=plFg('pl_prompt_role','Prompt Role',data.prompt_role||'','text');
-  h+=plFgTa('pl_system_prompt','System prompt',data.system_prompt||'');
-  h+=plFgTa('pl_user_prompt_template','User prompt template',data.user_prompt_template||'');
-  h+=plFgTa('pl_output_format_rule','Output format rule',data.output_format_rule||'');
-  h+=plFg('pl_schema_name','Output schema name',data.output_schema_name||'','text');
-  h+=plFg('pl_schema_version','Output schema version',data.output_schema_version||'','text');
-  h+=plFg('pl_temperature_default','Temperature',data.temperature_default!=null?String(data.temperature_default):'','number','0.01');
-  h+=plFg('pl_max_tokens_default','Max tokens',data.max_tokens_default!=null?String(data.max_tokens_default):'','number');
-  h+=plFg('pl_stop_sequences','Stop sequences',data.stop_sequences||'','text');
-  h+=plFgTa('pl_notes','Description (notes)',data.notes||'');
+  head+='</p>';
+  let form='<form id="pl-prompt-form" class="config-form pl-prompt-form">';
+  form+='<div class="pl-prompt-meta-grid">';
+  form+=plFg('pl_prompt_name','Prompt Name',data.prompt_name||'','text');
+  form+=plFg('pl_flow_type','Flow Type',data.flow_type||'','text');
+  form+=plFg('pl_prompt_role','Prompt Role',data.prompt_role||'','text');
+  form+='</div>';
+  form+=plFgTa('pl_system_prompt','System prompt',data.system_prompt||'',{rows:18,lg:true});
+  form+=plFgTa('pl_user_prompt_template','User prompt template',data.user_prompt_template||'',{rows:18,lg:true});
+  form+=plFgTa('pl_output_format_rule','Output format rule',data.output_format_rule||'',{rows:10});
+  form+='<div class="pl-prompt-params-grid">';
+  form+=plFg('pl_schema_name','Output schema name',data.output_schema_name||'','text');
+  form+=plFg('pl_schema_version','Output schema version',data.output_schema_version||'','text');
+  form+=plFg('pl_temperature_default','Temperature',data.temperature_default!=null?String(data.temperature_default):'','number','0.01');
+  form+=plFg('pl_max_tokens_default','Max tokens',data.max_tokens_default!=null?String(data.max_tokens_default):'','number');
+  form+=plFg('pl_stop_sequences','Stop sequences',data.stop_sequences||'','text');
+  form+='</div>';
+  form+=plFgTa('pl_notes','Description (notes)',data.notes||'',{rows:4,notes:true});
   if(isOverride){
-    h+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">';
-    h+='<button type="button" class="btn-ghost btn-sm" id="pl-prompt-clear">Clear override</button>';
-    h+='<span style="font-size:11px;color:var(--muted)">Clearing restores the built-in code prompt.</span>';
-    h+='</div>';
+    form+='<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">';
+    form+='<button type="button" class="btn-ghost btn-sm" id="pl-prompt-clear">Clear override</button>';
+    form+='<span style="font-size:11px;color:var(--muted)">Clearing restores the built-in code prompt.</span>';
+    form+='</div>';
   }
-  h+='<div class="form-actions"><button type="submit" class="btn">Save</button> <button type="button" class="btn-ghost" id="pl-prompt-cancel">Cancel</button><span id="pl-prompt-msg" class="form-msg"></span></div></form>';
-  dlg.innerHTML=h;
+  form+='<div class="form-actions"><button type="submit" class="btn">Save</button> <button type="button" class="btn-ghost" id="pl-prompt-cancel">Cancel</button><span id="pl-prompt-msg" class="form-msg"></span></div></form>';
+  dlg.innerHTML='<div class="pl-prompt-dlg-head">'+head+'</div><div class="pl-prompt-dlg-body">'+form+'</div>';
   document.body.appendChild(dlg);
   document.getElementById('pl-prompt-cancel').onclick=function(){dlg.remove();};
   if(isOverride){
@@ -6153,7 +6070,7 @@ async function loadPL(){
   html+='<div id="pl-processing" class="tab-panel active">';
   if(pc.length){
     html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Evidence scoring &amp; funnel ('+pc.length+')</div>';
-    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Pre-LLM controls in Processing (score formula, cutoff, live funnel, mimic caps). Not LLM prompts — configured per project in the Processing workbench.</p>';
+    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Pre-LLM controls in Processing (score formula, cutoff, live funnel). Not LLM prompts — configured per project in the Processing workbench.</p>';
     html+=plRenderControlList(pc);
     html+='</div>';
   }

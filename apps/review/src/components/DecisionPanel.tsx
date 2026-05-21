@@ -227,7 +227,7 @@ export function DecisionPanel({
   };
 
   return (
-    <div className="card">
+    <div className="card surface-warn">
       <div className="card-header">Decision</div>
 
       <div className="decision-buttons">

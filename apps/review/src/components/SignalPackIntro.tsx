@@ -15,14 +15,6 @@ const STRUCTURE_EXAMPLE = `{
       "confidence": 0.82
     }
   ],
-  "overall_candidates_json": [
-    {
-      "candidate_id": "SNS_2026W14_Instagram_0001",
-      "platform": "Instagram",
-      "format": "carousel",
-      "content_idea": "…"
-    }
-  ],
   "derived_globals_json": {
     "hashtag_leaderboard_v1": [{ "hashtag": "#acoustic", "count": 12 }],
     "visual_guidelines_v1": { "carousel": { "typography": "…" } },
@@ -38,7 +30,7 @@ type Props = {
 /** Short intro on the Signal packs tab — research bundle before runs/jobs exist. */
 export function SignalPackIntro({ processingHref }: Props) {
   return (
-    <div className="card signal-pack-intro" style={{ marginBottom: 16, padding: "16px 18px" }}>
+    <div className="card surface-info signal-pack-intro" style={{ marginBottom: 16, padding: "16px 18px" }}>
       <div className="card-header" style={{ marginBottom: 10, paddingBottom: 8 }}>
         What is a <CafTerm term="signalPack">signal pack</CafTerm>?
       </div>
@@ -57,10 +49,6 @@ export function SignalPackIntro({ processingHref }: Props) {
       <ul style={{ fontSize: 13, lineHeight: 1.5, color: "var(--fg2)", margin: "0 0 12px", paddingLeft: 18 }}>
         <li>
           <code style={{ fontSize: 12 }}>ideas_json</code> — curated concepts (platform, format, hook, confidence)
-        </li>
-        <li>
-          <code style={{ fontSize: 12 }}>overall_candidates_json</code> — planner-facing rows (rated / synthesized
-          from evidence)
         </li>
         <li>
           <code style={{ fontSize: 12 }}>derived_globals_json</code> — hashtags, visual guidelines, publication
