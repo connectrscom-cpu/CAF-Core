@@ -1,5 +1,13 @@
 import type { Pool } from "pg";
+import { isCarouselFlow, isImageFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { q } from "../db/queries.js";
+
+export function flowKindForContentLog(flowType: string): string {
+  if (isCarouselFlow(flowType)) return "carousel";
+  if (isVideoFlow(flowType)) return "video";
+  if (isImageFlow(flowType)) return "image";
+  return "other";
+}
 
 export interface RunContentOutcomeInsert {
   project_id: string;
@@ -26,6 +34,31 @@ export interface RunContentOutcomeRow {
   job_status: string;
   error_message: string | null;
   summary: Record<string, unknown>;
+}
+
+export async function insertPlannedRunContentOutcomeSafe(
+  db: Pool,
+  row: {
+    project_id: string;
+    run_id: string;
+    task_id: string;
+    flow_type: string;
+    summary: Record<string, unknown>;
+  }
+): Promise<void> {
+  try {
+    await insertRunContentOutcome(db, {
+      ...row,
+      flow_kind: flowKindForContentLog(row.flow_type),
+      outcome: "planned",
+      job_status: "PLANNED",
+      slide_count: null,
+      asset_count: 0,
+      error_message: null,
+    });
+  } catch (e) {
+    console.warn("[run-orchestrator] run_content_outcomes planned insert failed", e);
+  }
 }
 
 export async function insertRunContentOutcome(db: Pool, row: RunContentOutcomeInsert): Promise<void> {

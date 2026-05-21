@@ -15,7 +15,9 @@ import {
 } from "../domain/top-performer-mimic-flow-types.js";
 import {
   DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+  DEFAULT_VIDEO_FLOW_PLAN_CAP,
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+  VIDEO_PLAN_CAP_GROUPS,
 } from "../decision_engine/default-plan-caps.js";
 import { getConstraints, normalizePerFlowCaps } from "./core.js";
 import { q, qOne } from "../db/queries.js";
@@ -479,18 +481,20 @@ export async function seedMimicFlowTypesSkeleton(db: Pool, projectId: string): P
   }
 }
 
-/**
- * When operator sets a positive plan cap for mimic flows, ensure the corresponding
- * allowed_flow_types row is enabled (caps alone do not expand candidates).
- */
-export async function ensureMimicFlowsEnabledWhenCapped(db: Pool, projectId: string): Promise<void> {
+async function enableAllowedFlowRowsWhenCapped(
+  db: Pool,
+  projectId: string,
+  groups: readonly { keys: readonly string[] }[],
+  defaultCap: number,
+  opts?: { skipGroup?: (group: { keys: readonly string[] }) => boolean; allowFlow?: (flowType: string) => boolean }
+): Promise<void> {
   const constraints = await getConstraints(db, projectId);
   const caps = normalizePerFlowCaps(constraints?.max_jobs_per_flow_type);
   const rows = await listAllowedFlowTypes(db, projectId);
   const byFlow = new Map(rows.map((r) => [r.flow_type, r]));
 
-  for (const group of TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS) {
-    if (group.keys[0] === FLOW_TOP_PERFORMER_MIMIC_VIDEO) continue;
+  for (const group of groups) {
+    if (opts?.skipGroup?.(group)) continue;
     let cap: number | undefined;
     for (const key of group.keys) {
       if (Object.prototype.hasOwnProperty.call(caps, key)) {
@@ -498,11 +502,11 @@ export async function ensureMimicFlowsEnabledWhenCapped(db: Pool, projectId: str
         break;
       }
     }
-    const effective = cap ?? DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP;
+    const effective = cap ?? defaultCap;
     if (effective <= 0) continue;
 
     for (const ft of group.keys) {
-      if (!isTopPerformerMimicRenderableFlow(ft)) continue;
+      if (opts?.allowFlow && !opts.allowFlow(ft)) continue;
       const row = byFlow.get(ft);
       if (!row || row.enabled) continue;
       await upsertAllowedFlowType(db, projectId, {
@@ -521,6 +525,40 @@ export async function ensureMimicFlowsEnabledWhenCapped(db: Pool, projectId: str
       });
     }
   }
+}
+
+/**
+ * When video plan caps are positive, ensure matching allowed_flow_types rows are enabled.
+ * Caps alone do not expand candidates — disabled video flows skip format=video rows entirely.
+ */
+export async function ensureVideoFlowsEnabledWhenCapped(
+  db: Pool,
+  projectId: string,
+  defaultMaxVideoJobsPerRun = 4
+): Promise<void> {
+  const constraints = await getConstraints(db, projectId);
+  const aggregateExplicit = constraints?.max_video_jobs_per_run;
+  const aggregateEffective = aggregateExplicit != null ? aggregateExplicit : defaultMaxVideoJobsPerRun;
+  if (aggregateEffective <= 0) return;
+
+  await enableAllowedFlowRowsWhenCapped(db, projectId, VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP);
+}
+
+/**
+ * When operator sets a positive plan cap for mimic flows, ensure the corresponding
+ * allowed_flow_types row is enabled (caps alone do not expand candidates).
+ */
+export async function ensureMimicFlowsEnabledWhenCapped(db: Pool, projectId: string): Promise<void> {
+  await enableAllowedFlowRowsWhenCapped(
+    db,
+    projectId,
+    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+    DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+    {
+      skipGroup: (group) => group.keys[0] === FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+      allowFlow: (ft) => isTopPerformerMimicRenderableFlow(ft),
+    }
+  );
 }
 
 /**

@@ -27,11 +27,13 @@ import {
 import {
   ensureDefaultAllowedFlowsIfNone,
   ensureMimicFlowsEnabledWhenCapped,
+  ensureVideoFlowsEnabledWhenCapped,
   getBrandConstraints,
   getStrategyDefaults,
   listAllowedFlowTypes,
 } from "../repositories/project-config.js";
 import { deleteAllJobsForRun, upsertContentJob } from "../repositories/jobs.js";
+import { insertPlannedRunContentOutcomeSafe } from "../repositories/run-content-outcomes.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import type { CandidateInput } from "../decision_engine/types.js";
 import { qOne } from "../db/queries.js";
@@ -116,6 +118,7 @@ export async function startRun(
     }
 
     await ensureDefaultAllowedFlowsIfNone(db, run.project_id);
+    await ensureVideoFlowsEnabledWhenCapped(db, run.project_id, config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN);
     await ensureMimicFlowsEnabledWhenCapped(db, run.project_id);
     const allowedFlows = await listAllowedFlowTypes(db, run.project_id);
     const enabledFlows = allowedFlows.filter((f) => f.enabled && !isOfflinePipelineFlow(f.flow_type));
@@ -324,6 +327,25 @@ export async function startRun(
         triggered_by: "system",
         actor: "run-orchestrator",
         metadata: { run_uuid: runUuid, trace_id: plan.trace_id },
+      });
+
+      await insertPlannedRunContentOutcomeSafe(db, {
+        project_id: run.project_id,
+        run_id: run.run_id,
+        task_id: taskId,
+        flow_type: job.flow_type,
+        summary: {
+          platform: job.platform ?? null,
+          candidate_id: job.candidate_id,
+          variation: job.variation_name,
+          pre_gen_score: job.pre_gen_score,
+          recommended_route: job.recommended_route,
+          format: candidateData?.format ?? null,
+          idea_id: candidateData?.idea_id ?? candidateData?.candidate_id ?? null,
+          content_idea: String(
+            candidateData?.content_idea ?? candidateData?.title ?? candidateData?.summary ?? ""
+          ).slice(0, 280),
+        },
       });
     }
 

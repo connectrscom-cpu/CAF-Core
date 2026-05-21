@@ -3676,7 +3676,7 @@ async function openRunContentLog(runId){
     }
     const rows=Array.isArray(d.outcomes)?d.outcomes:[];
     if(!rows.length){
-      body.innerHTML='<p class="empty">No rows yet. Apply migration <span class="mono">007_run_content_outcomes.sql</span>, then run <strong>Process</strong> on jobs — outcomes append after each carousel/video render attempt.</p>';
+      body.innerHTML='<p class="empty">No rows yet. Run <strong>Start</strong> or <strong>Re-plan</strong> to log one <span class="mono">planned</span> row per job. If the table is missing, apply migration <span class="mono">007_run_content_outcomes.sql</span> (<span class="mono">npm run migrate</span> or restart Core with migrations enabled). Render <strong>Process</strong> appends <span class="mono">completed</span> / <span class="mono">failed</span> rows after carousel/video attempts.</p>';
       return;
     }
     window._runContentLogRows=rows.map(function(o){return{task_id:String(o.task_id||''),summary:prettyObj(o.summary)};});

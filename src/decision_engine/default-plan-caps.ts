@@ -21,8 +21,8 @@ import {
 export const DEFAULT_VIDEO_FLOW_PLAN_CAP = 1;
 const VIDEO_CAP = DEFAULT_VIDEO_FLOW_PLAN_CAP;
 
-/** Placeholder top-performer mimic flows default to 0 until generation is wired. */
-export const DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP = 0;
+/** Default planned jobs per mimic flow family when not overridden in DB (carousel + image). */
+export const DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP = 5;
 const TOP_PERFORMER_MIMIC_CAP = DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP;
 
 /** Default planned jobs (incl. variations) per carousel-classified flow_type when not overridden in DB. */
