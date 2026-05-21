@@ -72,6 +72,7 @@ import {
 } from "./admin-ui-shared.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
+import { riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
 import { buildSignalPackIdeasForUi } from "../services/signal-pack-ideas-ui.js";
 import { runSceneAssemblyLabNew, runSceneAssemblyLabRegenerate } from "../services/scene-assembly-lab.js";

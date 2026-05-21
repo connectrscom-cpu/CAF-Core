@@ -52,7 +52,7 @@ export function buildMimicCarouselSlidePrompt(opts: {
 
 export function mimicPromptForMode(
   mode: MimicMode,
-  slide?: { index: number; layout?: string; visual?: string; onImageCopy?: string | null }
+  slide?: { index?: number; layout?: string; visual?: string; onImageCopy?: string | null }
 ): string {
   if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy });
   if (mode === "template_bg") return buildMimicTemplateBackgroundPrompt();
