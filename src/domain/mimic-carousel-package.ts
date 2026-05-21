@@ -187,6 +187,7 @@ export function composeMimicCarouselDraftPackage(
       deck_visual_system: null,
       replication_blueprint: null,
       evidence_post_url: null,
+      slides: null,
     } satisfies MimicCarouselVisualGuideline);
 
   return {
