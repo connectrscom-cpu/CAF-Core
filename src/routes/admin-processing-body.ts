@@ -12,8 +12,14 @@ export function adminProcessingBody(currentSlug: string): string {
 <div class="content">
   <div class="card processing-workbench" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
-      <div class="caf-toolbar" id="imports-toolbar" style="margin-bottom:10px">
-        <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
+      <div class="caf-toolbar" id="imports-toolbar" style="margin-bottom:10px;flex-wrap:wrap">
+        <label class="processing-import-pick" for="imports-select">
+          <span class="processing-import-pick-label">Import</span>
+          <select id="imports-select" aria-label="Pick an evidence import">
+            <option value="">Loading…</option>
+          </select>
+        </label>
+        <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload</button>
         <a class="btn-ghost btn-sm" href="/admin/inputs${inputsPq}">Inputs</a>
         <div class="caf-options-menu" data-caf-options style="margin-left:auto">
           <button type="button" class="btn-ghost btn-sm caf-options-trigger">⋯ Options</button>
@@ -36,7 +42,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <pre id="processing-activity-log" style="margin:8px 0 0;max-height:min(40vh,320px);overflow:auto;white-space:pre-wrap;font-size:10px;background:var(--bg);padding:8px;border-radius:6px;border:1px solid var(--border);color:var(--text)"></pre>
         </details>
       </div>
-      <div id="imports-root" class="empty">Loading…</div>
+      <div id="imports-root" style="display:none" aria-hidden="true"></div>
       <div id="import-workbench" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
         <div id="stepper" class="caf-stepper">
           <button type="button" class="caf-step-pill step-btn active" id="step-select" data-step="select" title="Pick the evidence import you want to process.">
@@ -161,29 +167,28 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="op-lens-out" class="runs-ops-hint" style="min-height:2em">—</div>
         </details>
         <div id="panel-evidence" style="padding:12px 0 0">
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;margin-bottom:12px">
-            <div style="flex:1;min-width:280px">
-              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-                <div>
-                  <div style="font-size:12px;color:var(--muted);margin-bottom:2px">Selected import</div>
-                  <div style="font-size:13px;font-weight:600" id="evidence-import-label">—</div>
-                </div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <button type="button" class="btn-ghost btn-sm" id="btn-refresh-evidence" title="Reload import stats + evidence preview from the database (no LLM).">Refresh</button>
-                </div>
-              </div>
-              <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
-                <div style="font-size:13px;font-weight:600;margin-bottom:8px">${T("evidenceFunnel", "Evidence funnel")}</div>
-                <div id="evidence-funnel" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
-                <div id="evidence-funnel-hint" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+          <div style="margin-bottom:12px">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:flex-end;margin-bottom:8px">
+              <button type="button" class="btn-ghost btn-sm" id="btn-refresh-evidence" title="Reload import stats + evidence preview from the database (no LLM).">Refresh</button>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg)">
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px">${T("evidenceFunnel", "Evidence funnel")}</div>
+              <div id="evidence-funnel" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
+              <div id="evidence-funnel-hint" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
+            </div>
+            <div id="evidence-cutoff-bar" class="prellm-cutoff-bar">
+              <span class="prellm-cutoff-label">${T("cutoffScore", "Cutoff")}</span>
+              <span id="prellm-min-val" class="mono prellm-cutoff-value">0.00</span>
+              <div class="prellm-cutoff-wrap">
+                <span class="prellm-cutoff-endpoint" aria-hidden="true">0</span>
+                <input type="range" id="prellm-min-score" class="prellm-cutoff-range" min="0" max="1" step="0.01" value="0" aria-valuemin="0" aria-valuemax="1" />
+                <span class="prellm-cutoff-endpoint" aria-hidden="true">1</span>
               </div>
             </div>
-            <div style="flex:1;min-width:320px">
-              <details id="import-stats-debug" style="margin:0">
-                <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (import stats JSON)</summary>
-                <pre id="import-stats" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;overflow:auto;max-height:260px;margin-top:8px;white-space:pre-wrap"></pre>
-              </details>
-            </div>
+            <details id="import-stats-debug" style="margin:10px 0 0">
+              <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (import stats JSON)</summary>
+              <pre id="import-stats" style="font-size:11px;background:var(--bg);padding:10px;border-radius:8px;overflow:auto;max-height:260px;margin-top:8px;white-space:pre-wrap"></pre>
+            </details>
           </div>
           <div id="prellm-root">
             <style>
@@ -225,30 +230,6 @@ export function adminProcessingBody(currentSlug: string): string {
                   </div>
                   <span id="prellm-cutoff-snapshot-msg" style="display:block;margin-top:8px;font-size:12px;color:var(--muted)"></span>
                 </div>
-                <div class="prellm-sidebar-card">
-                  <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("cutoffScore", "Cutoff & sort")}</div>
-                  <div style="display:flex;flex-direction:column;gap:10px">
-                    <label style="font-size:14px;white-space:nowrap">${T("cutoffScore", "Cutoff")} <span id="prellm-min-val" class="mono">0.00</span></label>
-                    <div class="prellm-cutoff-wrap" style="width:100%">
-                      <span class="prellm-cutoff-endpoint" aria-hidden="true">0</span>
-                      <input type="range" id="prellm-min-score" class="prellm-cutoff-range" min="0" max="1" step="0.01" value="0" aria-valuemin="0" aria-valuemax="1" />
-                      <span class="prellm-cutoff-endpoint" aria-hidden="true">1</span>
-                    </div>
-                    <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:100%;max-width:120px;font-size:14px;padding:6px 8px" title="0–1" />
-                  </div>
-                  <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
-                    <label style="font-size:13px;color:var(--fg2);display:flex;gap:8px;align-items:flex-start">
-                      <input type="checkbox" id="prellm-show-below" style="margin-top:3px" /> <span>${T("showBelowCutoff", "Show rows below cutoff")}</span>
-                    </label>
-                    <label style="font-size:13px;color:var(--fg2);display:flex;gap:8px;align-items:center">
-                      Sort
-                      <select id="prellm-sort" style="font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
-                        <option value="score_desc">Score ↓</option>
-                        <option value="score_asc">Score ↑</option>
-                      </select>
-                    </label>
-                  </div>
-                </div>
                 <details id="prellm-debug" style="margin:0">
                   <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (pre-LLM preview JSON)</summary>
                   <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
@@ -259,6 +240,17 @@ export function adminProcessingBody(currentSlug: string): string {
                 <div id="prellm-table-toolbar" style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
                   <div style="font-size:13px;font-weight:600;margin-bottom:8px">${T("tableFilters", "Table filters")}</div>
                   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+                    <label style="font-size:13px;color:var(--fg2);display:flex;gap:6px;align-items:center">
+                      <input type="checkbox" id="prellm-show-below" style="margin:0" />
+                      <span>${T("showBelowCutoff", "Below cutoff")}</span>
+                    </label>
+                    <label style="font-size:13px;color:var(--fg2);display:flex;gap:6px;align-items:center">
+                      Sort
+                      <select id="prellm-sort" style="font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
+                        <option value="score_desc">Score ↓</option>
+                        <option value="score_asc">Score ↑</option>
+                      </select>
+                    </label>
                     <label style="font-size:13px;color:var(--fg2)">Search
                       <input id="prellm-filter-search" type="search" placeholder="Caption, hashtags, URL..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
                     </label>
@@ -862,6 +854,7 @@ function fmtInsightScore(v){
 }
 let selectedImportId='';
 var selectedImportLabel='';
+var importRowsCache=[];
 var selectedIdeaListId='';
 var prellmKind='';
 var prellmKinds=[];
@@ -969,11 +962,50 @@ async function refreshInsightCounts(){
 }
 
 function syncEvidenceHeader(){
-  var el=document.getElementById('evidence-import-label');
-  if(!el)return;
-  if(!selectedImportId){el.textContent='-';return;}
-  var label=(selectedImportLabel||'').trim();
-  el.textContent=label?label:('Import '+selectedImportId.slice(0,8));
+  syncImportSelect();
+}
+
+function syncImportSelect(){
+  var sel=document.getElementById('imports-select');
+  if(!sel)return;
+  if(selectedImportId&&sel.value!==selectedImportId){
+    var has=false;
+    for(var i=0;i<sel.options.length;i++){
+      if(sel.options[i].value===selectedImportId){has=true;break;}
+    }
+    if(has)sel.value=selectedImportId;
+  }
+}
+
+function applyImportSelection(id){
+  if(!id)return;
+  if(id===selectedImportId){
+    syncImportSelect();
+    return;
+  }
+  selectedImportId=id;
+  selectedImportLabel='';
+  for(var i=0;i<importRowsCache.length;i++){
+    var imp=importRowsCache[i];
+    if(imp&&imp.id===id){
+      selectedImportLabel=String(imp.upload_filename||'').trim();
+      break;
+    }
+  }
+  selectedIdeaListId='';
+  stepState.evidence_valid=false;
+  stepState.insights_present=false;
+  stepState.ideas_present=false;
+  stepState.pack_id='';
+  stepState.pack_created_at='';
+  setImportInUrl(selectedImportId);
+  var wb=document.getElementById('import-workbench');
+  if(wb)wb.style.display='block';
+  syncImportSelect();
+  loadImportStats();
+  loadPrellmKindsAndPreview();
+  setStep('evidence');
+  loadIdeaListDropdowns();
 }
 
 var stepState={
@@ -1433,12 +1465,18 @@ bind('btn-refresh-evidence','click',function(){
 });
 
 async function loadImports(){
+  var sel=document.getElementById('imports-select');
   var root=document.getElementById('imports-root');
   var hint=document.getElementById('imports-hint');
   var wb=document.getElementById('import-workbench');
-  if(!root){try{pushProcessingActivity(cafTs()+' loadImports: #imports-root missing from DOM',true);}catch(_r){}return;}
-  if(!SLUG){root.innerHTML='<div class="empty">Select a project in the sidebar.</div>';return;}
-  root.innerHTML='Loading...';
+  if(!sel){try{pushProcessingActivity(cafTs()+' loadImports: #imports-select missing from DOM',true);}catch(_r){}return;}
+  if(!SLUG){
+    sel.innerHTML='<option value="">Select a project in the sidebar</option>';
+    if(wb)wb.style.display='none';
+    return;
+  }
+  sel.innerHTML='<option value="">Loading…</option>';
+  sel.disabled=true;
   if(hint)hint.textContent='GET /v1/inputs-evidence/'+encodeURIComponent(SLUG)+' ...';
   try{pushProcessingActivity(cafTs()+' loadImports: requesting /v1/inputs-evidence/'+encodeURIComponent(SLUG),false);}catch(_p){}
   var ac=new AbortController();
@@ -1453,66 +1491,58 @@ async function loadImports(){
     }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var rows=d.imports||[];
+    importRowsCache=rows;
     if(selectedImportId){
       selectedImportLabel='';
       for(var si=0;si<rows.length;si++){
-        var imp=rows[si];
-        if(imp&&imp.id===selectedImportId){
-          selectedImportLabel=String(imp.upload_filename||'').trim();
+        var imp0=rows[si];
+        if(imp0&&imp0.id===selectedImportId){
+          selectedImportLabel=String(imp0.upload_filename||'').trim();
           break;
         }
       }
     }
-    if(rows.length===0){root.innerHTML='<div class="empty">No evidence imports for this project.</div>';if(hint)hint.textContent='';wb.style.display='none';return;}
-    var tb='<table class="sp-modal-table"><thead><tr><th>Created</th><th>File</th><th>Rows</th><th></th></tr></thead><tbody>';
+    if(rows.length===0){
+      sel.innerHTML='<option value="">No evidence imports for this project</option>';
+      sel.disabled=true;
+      if(hint)hint.textContent='';
+      if(wb)wb.style.display='none';
+      if(root)root.innerHTML='';
+      return;
+    }
+    var h='<option value="">Pick an import…</option>';
     for(var i=0;i<rows.length;i++){
       var x=rows[i];
-      var sel=x.id===selectedImportId?'btn btn-sm':'btn-ghost btn-sm';
-      var trStyle=x.id===selectedImportId?'background:rgba(100,160,255,0.10);outline:1px solid rgba(100,160,255,0.25);':'';
-      tb+='<tr style="'+trStyle+'"><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.upload_filename||'-')+'</td><td>'+esc(x.stored_row_count)+'</td><td><button type="button" class="'+sel+' sel-import" data-id="'+esc(x.id)+'">'+(x.id===selectedImportId?'Selected':'Select')+'</button></td></tr>';
+      var when=String(x.created_at||'').slice(0,19).replace('T',' ');
+      var fn=String(x.upload_filename||'-');
+      var label=when+' · '+fn+' ('+String(x.stored_row_count||0)+' rows)';
+      h+='<option value="'+esc(x.id)+'"'+(x.id===selectedImportId?' selected':'')+'>'+esc(label)+'</option>';
     }
-    tb+='</tbody></table>';
-    root.innerHTML=tb;
-    if(hint)hint.textContent=rows.length+' import(s) | last fetch succeeded';
-    root.querySelectorAll('.sel-import').forEach(function(btn){
-      btn.addEventListener('click',function(){
-        selectedImportId=btn.getAttribute('data-id')||'';
-        selectedIdeaListId='';
-        stepState.evidence_valid=false;
-        stepState.insights_present=false;
-        stepState.ideas_present=false;
-        stepState.pack_id='';
-        stepState.pack_created_at='';
-        try{
-          var tr=btn.closest('tr');
-          var tds=tr?tr.querySelectorAll('td'):null;
-          selectedImportLabel=(tds&&tds.length>=2)?String(tds[1].textContent||'').trim():'';
-        }catch(e){selectedImportLabel='';}
-        setImportInUrl(selectedImportId);
-        wb.style.display='block';
-        loadImportStats();
-        loadPrellmKindsAndPreview();
-        setStep('evidence');
-        loadImports();
-        loadIdeaListDropdowns();
-      });
-    });
+    sel.innerHTML=h;
+    sel.disabled=false;
+    if(hint)hint.textContent=rows.length+' import(s)';
+    if(root)root.innerHTML='';
     if(selectedImportId){
-      wb.style.display='block';
+      if(wb)wb.style.display='block';
       loadImportStats();
       loadPrellmKindsAndPreview();
       setStep(currentStep||'evidence');
       loadIdeaListDropdowns();
-    }
+    }else if(wb)wb.style.display='none';
   }catch(e){
     var msg=String(e.message||e);
     if(msg==='AbortError'||msg.indexOf('aborted')>=0)msg='Request timed out (90s). Check Core is up, network, and auth token.';
     try{pushProcessingActivity(cafTs()+' loadImports failed: '+msg,true);}catch(_a){}
     if(hint)hint.textContent='Last error: '+msg;
-    root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(msg)+'</div>'+
-      '<p style="margin:10px 0 0;font-size:12px;color:var(--muted)">See <strong>Activity</strong> above for the exact URL, HTTP status, and timing. Expand <strong>Full request log</strong> for history.</p>';
+    sel.innerHTML='<option value="">Could not load imports</option>';
+    sel.disabled=true;
+    if(root){
+      root.style.display='block';
+      root.innerHTML='<div class="empty" style="color:var(--red);padding:8px 0">'+esc(msg)+'</div>';
+    }
   }finally{
     clearTimeout(to);
+    sel.disabled=sel.options.length<=1;
   }
 }
 
@@ -1602,6 +1632,18 @@ async function loadAudit(){
 }
 
 bind('btn-reload-imports','click',loadImports);
+bind('imports-select','change',function(){
+  var id=String(this.value||'');
+  if(!id){
+    selectedImportId='';
+    selectedImportLabel='';
+    setImportInUrl('');
+    var wb=document.getElementById('import-workbench');
+    if(wb)wb.style.display='none';
+    return;
+  }
+  applyImportSelection(id);
+});
 bind('btn-reload-audit','click',loadAudit);
 
 async function loadPrellmKindsAndPreview(){
@@ -1679,19 +1721,16 @@ async function ensurePrellmMinByKindDefaults(kinds){
 
 function syncPrellmSliderFromKind(){
   var minEl=document.getElementById('prellm-min-score');
-  var minNum=document.getElementById('prellm-min-score-num');
   var minVal=document.getElementById('prellm-min-val');
   if(!minEl||!prellmKind)return;
   var v=prellmMinByKind[prellmKind];
   if(typeof v!=='number'){
-    // Default to the suggested table (or 0.35) and keep it per-kind once changed.
     var s=PRELLM_SUGGESTED[prellmKind]||PRELLM_SUGGESTED._default;
     v=(s&&s.min_score);
     if(v==null||!Number.isFinite(v))v=0.35;
     prellmMinByKind[prellmKind]=v;
   }
   minEl.value=String(v);
-  if(minNum)minNum.value=String(v);
   if(minVal)minVal.textContent=Number(v).toFixed(2);
   minEl.setAttribute('aria-valuenow',String(v));
 }
@@ -1930,14 +1969,12 @@ async function loadPrellmPreview(){
   var counts=document.getElementById('prellm-counts');
   var wrap=document.getElementById('prellm-table-wrap');
   var minEl=document.getElementById('prellm-min-score');
-  var minNum=document.getElementById('prellm-min-score-num');
   var minVal=document.getElementById('prellm-min-val');
   var showBelow=document.getElementById('prellm-show-below');
   var sortEl=document.getElementById('prellm-sort');
   if(!SLUG||!selectedImportId||!prellmKind||!counts||!wrap||!minEl||!sortEl)return;
   var minScore=parseFloat(minEl.value)||0;
   prellmMinByKind[prellmKind]=minScore;
-  if(minNum)minNum.value=String(minScore);
   if(minVal)minVal.textContent=minScore.toFixed(2);
   counts.textContent='Loading...';
   wrap.innerHTML='';
@@ -2018,17 +2055,8 @@ function scheduleSavePrellmCutoff(){
 }
 
 bind('prellm-min-score','input',function(){
-  var minNum=document.getElementById('prellm-min-score-num');
-  if(minNum)minNum.value=String(this.value||'0');
-  schedulePrellmPreview();
-  scheduleSavePrellmCutoff();
-});
-bind('prellm-min-score-num','input',function(){
-  var v=parseFloat(this.value||'0');
-  if(!Number.isFinite(v))v=0;
-  v=Math.max(0,Math.min(1,v));
-  var minEl=document.getElementById('prellm-min-score');
-  if(minEl)minEl.value=String(v);
+  var minVal=document.getElementById('prellm-min-val');
+  if(minVal)minVal.textContent=Number(parseFloat(this.value||'0')||0).toFixed(2);
   schedulePrellmPreview();
   scheduleSavePrellmCutoff();
 });

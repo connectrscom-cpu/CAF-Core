@@ -162,6 +162,13 @@ span.caf-pipeline-stage{cursor:default}
 .prellm-cutoff-wrap{display:flex;align-items:center;gap:8px;flex:1;min-width:200px}
 .prellm-cutoff-range{flex:1;min-width:140px;max-width:100%;accent-color:var(--accent)}
 .prellm-cutoff-endpoint{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;min-width:1ch}
+.processing-import-pick{display:flex;align-items:center;gap:10px;flex:1;min-width:min(100%,280px);max-width:min(560px,100%)}
+.processing-import-pick-label{font-size:13px;font-weight:500;color:var(--fg2);white-space:nowrap}
+.processing-import-pick select{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:13px}
+.prellm-cutoff-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:10px;padding:10px 12px;border:1px solid rgba(59,130,246,.28);border-radius:10px;background:linear-gradient(135deg,rgba(59,130,246,.08) 0%,rgba(59,130,246,.02) 100%)}
+.prellm-cutoff-bar .prellm-cutoff-wrap{flex:1;min-width:min(100%,240px);max-width:520px}
+.prellm-cutoff-label{font-size:13px;font-weight:600;color:var(--fg)}
+.prellm-cutoff-value{font-size:14px;font-weight:600;color:var(--accent);min-width:3ch;font-variant-numeric:tabular-nums}
 .tp-split-layout{display:flex;gap:14px;align-items:flex-start}
 @media (max-width:960px){.tp-split-layout{flex-direction:column}}
 .tp-sidebar{flex:0 0 min(300px,30vw);width:min(300px,30vw);max-width:100%;display:flex;flex-direction:column;gap:10px;position:sticky;top:12px;align-self:flex-start;max-height:calc(100vh - 88px);overflow-y:auto}
