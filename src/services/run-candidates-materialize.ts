@@ -18,6 +18,16 @@ import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
+export const RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT = `You pick which content ideas should become planner rows for a generation run.
+Return ONLY valid JSON: {"idea_ids":["..."]}
+Rules:
+- Each id MUST appear exactly in the input list (field idea_id).
+- Pick at most {{MAX_PICK}} ids.
+- Prefer a diverse, high-impact subset (platforms, angles).`;
+
+export const RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE = `Ideas (JSON):
+{{ROWS_JSON}}`;
+
 export type RunCandidatesMaterializeMode =
   | "manual"
   | "llm"
@@ -224,14 +234,9 @@ export async function materializeRunCandidates(
       summary: (i.summary ?? "").slice(0, 300),
     }));
 
-    const system = `You pick which content ideas should become planner rows for a generation run.
-Return ONLY valid JSON: {"idea_ids":["..."]}
-Rules:
-- Each id MUST appear exactly in the input list (field idea_id).
-- Pick at most ${maxPick} ids.
-- Prefer a diverse, high-impact subset (platforms, angles).`;
+    const system = RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT.replace(/\{\{MAX_PICK\}\}/g, String(maxPick));
 
-    const user = `Ideas (JSON):\n${JSON.stringify(compact, null, 0)}`;
+    const user = RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE.replace("{{ROWS_JSON}}", JSON.stringify(compact, null, 0));
 
     const out = await openaiChat(
       apiKey,

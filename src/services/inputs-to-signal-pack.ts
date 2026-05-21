@@ -35,6 +35,37 @@ import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js"
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
 
+export const EVIDENCE_RATING_SYSTEM_PROMPT = `You score social-media and scraped content rows for a marketing content pipeline.
+Return ONLY valid JSON with shape:
+{"ratings":[{"row_db_id":"string","components":{"engagement_potential":0-1,"topic_clarity":0-1,"brand_voice_fit":0-1,"originality":0-1},"rationale":"short","include_in_pack":boolean}]}
+One entry per input row, same order as provided. Be strict about numeric 0-1.`;
+
+export const EVIDENCE_RATING_USER_PROMPT_TEMPLATE = `Weights for overall score (informational; you still output all components 0-1): {{WEIGHTS_JSON}}
+Project criteria / notes: {{EXTRA_INSTRUCTIONS}}
+
+Rows:
+{{ROWS_JSON}}`;
+
+export const SIGNAL_PACK_SYNTH_SYSTEM_PROMPT = `You build overall_candidates_json for CAF Core — the list of content "ideas" that will be multiplied by enabled flow types when a run starts.
+
+Each idea MUST be one object with at least:
+- "content_idea": string (hook / idea the creator would post)
+- "summary": string (1-2 sentences; can mirror content_idea)
+- "platform": string (e.g. Instagram, TikTok, Multi — match the source when obvious)
+- "confidence_score": number 0-1 (use the provided llm_score as baseline)
+- "novelty_score", "platform_fit", "past_performance": numbers 0-1 (sensible defaults from components if needed)
+- "sign": string optional (zodiac / segment if inferable from text, else "")
+- "dominant_themes": optional short string
+- "evidence_row_ids": array of string ids referencing input rows used (from row_db_id)
+
+Do NOT include markdown. Return ONLY JSON: {"overall_candidates":[...] }
+Max {{MAX_IDEAS}} objects.`;
+
+export const SIGNAL_PACK_SYNTH_USER_PROMPT_TEMPLATE = `Synthesize up to {{MAX_IDEAS}} strong, non-redundant ideas from these rated evidence rows (higher llm_score first). Merge duplicates.
+
+Rows:
+{{ROWS_JSON}}`;
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
@@ -205,16 +236,11 @@ export async function buildSignalPackFromEvidenceImport(
       text: compactRowPayload(r),
     }));
 
-    const system = `You score social-media and scraped content rows for a marketing content pipeline.
-Return ONLY valid JSON with shape:
-{"ratings":[{"row_db_id":"string","components":{"engagement_potential":0-1,"topic_clarity":0-1,"brand_voice_fit":0-1,"originality":0-1},"rationale":"short","include_in_pack":boolean}]}
-One entry per input row, same order as provided. Be strict about numeric 0-1.`;
+    const system = EVIDENCE_RATING_SYSTEM_PROMPT;
 
-    const user = `Weights for overall score (informational; you still output all components 0-1): ${JSON.stringify(weights)}
-Project criteria / notes: ${extra || "(none)"}
-
-Rows:
-${JSON.stringify(payload, null, 0)}`;
+    const user = EVIDENCE_RATING_USER_PROMPT_TEMPLATE.replace("{{WEIGHTS_JSON}}", JSON.stringify(weights))
+      .replace("{{EXTRA_INSTRUCTIONS}}", extra || "(none)")
+      .replace("{{ROWS_JSON}}", JSON.stringify(payload, null, 0));
 
     const out = await openaiChat(
       apiKey,
@@ -270,25 +296,12 @@ ${JSON.stringify(payload, null, 0)}`;
     payload_excerpt: compactRowPayload(r),
   }));
 
-  const synthSystem = `You build overall_candidates_json for CAF Core — the list of content "ideas" that will be multiplied by enabled flow types when a run starts.
+  const synthSystem = SIGNAL_PACK_SYNTH_SYSTEM_PROMPT.replace(/\{\{MAX_IDEAS\}\}/g, String(maxIdeas));
 
-Each idea MUST be one object with at least:
-- "content_idea": string (hook / idea the creator would post)
-- "summary": string (1-2 sentences; can mirror content_idea)
-- "platform": string (e.g. Instagram, TikTok, Multi — match the source when obvious)
-- "confidence_score": number 0-1 (use the provided llm_score as baseline)
-- "novelty_score", "platform_fit", "past_performance": numbers 0-1 (sensible defaults from components if needed)
-- "sign": string optional (zodiac / segment if inferable from text, else "")
-- "dominant_themes": optional short string
-- "evidence_row_ids": array of string ids referencing input rows used (from row_db_id)
-
-Do NOT include markdown. Return ONLY JSON: {"overall_candidates":[...] }
-Max ${maxIdeas} objects.`;
-
-  const synthUser = `Synthesize up to ${maxIdeas} strong, non-redundant ideas from these rated evidence rows (higher llm_score first). Merge duplicates.
-
-Rows:
-${JSON.stringify(synthInput, null, 0)}`;
+  const synthUser = SIGNAL_PACK_SYNTH_USER_PROMPT_TEMPLATE.replace(/\{\{MAX_IDEAS\}\}/g, String(maxIdeas)).replace(
+    "{{ROWS_JSON}}",
+    JSON.stringify(synthInput, null, 0)
+  );
 
   const synthOut = await openaiChat(
     apiKey,

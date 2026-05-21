@@ -78,6 +78,52 @@ function WorkbenchContent() {
 
   const groupBy = (searchParams.get("group") ?? "") as GroupBy;
 
+  const projectSlugForRework =
+    (searchParams.get("project") ?? "").trim() || activeProjectSlug || lockedSlug || "";
+  const runFilter = (searchParams.get("run_id") ?? "").trim();
+  const needsEditCount = data?.tabCounts?.needs_edit ?? 0;
+  const [reworkBusy, setReworkBusy] = useState(false);
+  const [reworkMsg, setReworkMsg] = useState<string | null>(null);
+
+  async function triggerPendingRework() {
+    if (!projectSlugForRework) {
+      setReworkMsg("Select a project first.");
+      return;
+    }
+    const scope = runFilter
+      ? `run ${runFilter}`
+      : `project ${projectSlugForRework}`;
+    const n = needsEditCount > 0 ? needsEditCount : "all";
+    if (
+      !window.confirm(
+        `Trigger rework for ${n} NEEDS_EDIT job(s) in ${scope}?\n\nWork runs in the background (one job at a time). Refresh this tab to watch items leave the queue.`
+      )
+    ) {
+      return;
+    }
+    setReworkBusy(true);
+    setReworkMsg(null);
+    try {
+      const res = await fetch("/api/rework/pending", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project_slug: projectSlugForRework,
+          ...(runFilter ? { run_id: runFilter } : {}),
+          limit: 200,
+        }),
+      });
+      const j = (await res.json()) as { ok?: boolean; message?: string; queued?: number; error?: string };
+      if (!res.ok || !j.ok) throw new Error(j.error || j.message || `HTTP ${res.status}`);
+      setReworkMsg(j.message || `Queued ${j.queued ?? 0} rework job(s).`);
+      void fetchTasks();
+    } catch (e) {
+      setReworkMsg(e instanceof Error ? e.message : "Rework request failed");
+    } finally {
+      setReworkBusy(false);
+    }
+  }
+
   const tabStatuses = [
     { key: "in_review" as const, label: "Waiting for Approval" },
     { key: "needs_edit" as const, label: "Waiting for Rework" },
@@ -139,6 +185,29 @@ function WorkbenchContent() {
           />
         </div>
         <div className="workbench-table">
+          {validStatus === "needs_edit" && (
+            <div className="caf-toolbar" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={reworkBusy || !projectSlugForRework}
+                onClick={() => void triggerPendingRework()}
+                title="Queue background rework for every job with status NEEDS_EDIT (uses stored review instructions when present)"
+              >
+                {reworkBusy ? "Queuing…" : runFilter ? "Rework all NEEDS_EDIT in run" : "Rework all NEEDS_EDIT"}
+              </button>
+              <span style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.45, maxWidth: 560 }}>
+                {runFilter
+                  ? `Scoped to run ${runFilter}. Clears the Waiting for Rework queue sequentially (LLM + render may take minutes per job).`
+                  : "All NEEDS_EDIT jobs for the selected project. Pick a run in Filters to scope."}
+              </span>
+              {reworkMsg ? (
+                <span style={{ fontSize: 12, color: reworkMsg.includes("failed") ? "var(--red)" : "var(--green)" }}>
+                  {reworkMsg}
+                </span>
+              ) : null}
+            </div>
+          )}
           {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
           {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
           {data && !loading && (

@@ -57,7 +57,17 @@ import { buildRunContentLogExport } from "../repositories/run-content-log-export
 import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
 import { adminInputsBody } from "./admin-inputs-body.js";
 import { adminProcessingBody } from "./admin-processing-body.js";
-import { adminCafUiCss, adminCafUiScript, adminRunHubTabsHtml } from "./admin-ui-shared.js";
+import {
+  adminCafUiCss,
+  adminCafUiScript,
+  adminLlmPromptTitle,
+  adminLlmPromptTitleAttr,
+  adminPageHeaderHtml,
+  adminPhWithPipelineHtml,
+  adminPipelineSketchHtml,
+  adminRunHubTabsHtml,
+  type CafPipelineStage,
+} from "./admin-ui-shared.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
@@ -118,6 +128,16 @@ import {
   IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
   IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
 } from "../services/ideas-from-insights-llm.js";
+import {
+  EVIDENCE_RATING_SYSTEM_PROMPT,
+  EVIDENCE_RATING_USER_PROMPT_TEMPLATE,
+  SIGNAL_PACK_SYNTH_SYSTEM_PROMPT,
+  SIGNAL_PACK_SYNTH_USER_PROMPT_TEMPLATE,
+} from "../services/inputs-to-signal-pack.js";
+import {
+  RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT,
+  RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE,
+} from "../services/run-candidates-materialize.js";
 import {
   VIDEO_PLAN_CAP_GROUPS,
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
@@ -258,6 +278,16 @@ async function listProjects(db: Pool, opts?: { include_system?: boolean }): Prom
 }
 
 /** Trim and strip CR/LF (pasted URLs / form noise); empty → undefined */
+/** Sidebar / page context from ?project= when slug matches a known project. */
+function sidebarSlugFromQuery(queryProject: string | undefined, projects: ProjectRow[]): string {
+  const slug = normalizeProjectSlugParam(queryProject);
+  if (!slug) return "";
+  const ok = projects.some(
+    (p) => (normalizeProjectSlugParam(p.slug) ?? String(p.slug ?? "")) === slug
+  );
+  return ok ? slug : "";
+}
+
 function normalizeProjectSlugParam(slug: string | undefined | null): string | undefined {
   if (slug == null) return undefined;
   const cleaned = String(slug).replace(/[\r\n\t\v\f\u0085\u2028\u2029]+/g, "").trim();
@@ -409,19 +439,27 @@ ${adminCafUiCss()}
 }
 
 /** Review workbench pages embedded in the admin shell (iframe → same Next app as /). */
-const ADMIN_WORKBENCH_PAGES = [
-  { route: "/admin/workbench/runs", embedPath: "/runs", title: "Run output log", sidebarKey: "workbench-runs" },
+const ADMIN_WORKBENCH_PAGES: {
+  route: string;
+  embedPath: string;
+  title: string;
+  sidebarKey: string;
+  embedParams?: Record<string, string>;
+  pipelineStage: CafPipelineStage | null;
+}[] = [
+  { route: "/admin/workbench/runs", embedPath: "/runs", title: "Run output log", sidebarKey: "workbench-runs", pipelineStage: "validation" },
   {
     route: "/admin/workbench/pipeline",
     embedPath: "/pipeline",
     title: "Signal packs",
     sidebarKey: "workbench-pipeline",
     embedParams: { tab: "packs" },
+    pipelineStage: "signal_pack",
   },
-  { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish" },
-  { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground" },
-  { route: "/admin/workbench", embedPath: "/", title: "Review & approve", sidebarKey: "workbench-review" },
-  { route: "/admin/learning", embedPath: "/learning", title: "Learning & metrics", sidebarKey: "learning" },
+  { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish", pipelineStage: "validation" },
+  { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground", pipelineStage: null },
+  { route: "/admin/workbench", embedPath: "/", title: "Review & approve", sidebarKey: "workbench-review", pipelineStage: "validation" },
+  { route: "/admin/learning", embedPath: "/learning", title: "Learning & metrics", sidebarKey: "learning", pipelineStage: "learning" },
 ];
 
 function adminWorkbenchEmbedSrc(
@@ -446,13 +484,15 @@ function adminWorkbenchBody(
   title: string,
   projectSlug: string,
   reviewEnabled: boolean,
-  embedParams?: Record<string, string>
+  embedParams?: Record<string, string>,
+  pipelineStage: CafPipelineStage | null = null
 ): string {
   if (!reviewEnabled) {
     return `<div class="content"><div class="empty"><p>Review workbench is disabled (<code>CAF_REVIEW_ENABLED=0</code>).</p></div></div>`;
   }
   const src = adminWorkbenchEmbedSrc(embedPath, projectSlug, embedParams);
-  return `<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div>`;
+  const header = `<div class="wb-shell-header"><h2>${esc(title)}</h2>${adminPipelineSketchHtml(pipelineStage, projectSlug)}</div>`;
+  return `<div class="wb-shell">${header}<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div></div>`;
 }
 
 function sidebar(active: string, projects: ProjectRow[], currentSlug: string): string {
@@ -467,15 +507,33 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   const overviewLinks = [{ href: `/admin${pq}`, label: "Overview", key: "overview" }];
 
   /** Project pipeline: research → production → learning (top to bottom). */
-  const workbenchLinks = [
+  type WorkbenchLink = { href: string; label: string; key: string; children?: WorkbenchLink[] };
+  const PROCESSING_CHILD_KEYS = new Set(["workbench-pipeline"]);
+  const workbenchLinks: WorkbenchLink[] = [
     { href: `/admin/inputs${pq}`, label: "Inputs & imports", key: "inputs" },
-    { href: `/admin/processing${pq}`, label: "Processing", key: "processing" },
-    { href: `/admin/workbench/pipeline${pq}`, label: "Signal packs", key: "workbench-pipeline" },
+    {
+      href: `/admin/processing${pq}`,
+      label: "Processing",
+      key: "processing",
+      children: [{ href: `/admin/workbench/pipeline${pq}`, label: "Signal packs", key: "workbench-pipeline" }],
+    },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
     { href: `/admin/workbench${pq}`, label: "Review & approve", key: "workbench-review" },
     { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
     { href: `/admin/learning${pq}`, label: "Learning & metrics", key: "learning" },
   ];
+  const isWorkbenchParentActive = (link: WorkbenchLink): boolean => {
+    if (link.key === active) return true;
+    if (link.key === "processing" && PROCESSING_CHILD_KEYS.has(active)) return true;
+    return false;
+  };
+  const renderWorkbenchLink = (link: WorkbenchLink): string => {
+    let out = adminSbLink(link.href, link.label, link.key, isWorkbenchParentActive(link) ? link.key : active);
+    if (link.children && link.children.length > 0 && isWorkbenchParentActive(link)) {
+      out += link.children.map((c) => adminSbLink(c.href, c.label, c.key, active, "sb-sublink")).join("\n    ");
+    }
+    return out;
+  };
 
   const settingsLinks = [
     { href: `/admin/config${pq}`, label: "Project settings", key: "config" },
@@ -483,24 +541,25 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   ];
 
   type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
+  const gq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   const globalLinks: GlobalLink[] = [
-    { href: "/admin/platform-overview", label: "Platform overview", key: "platform-overview" },
-    { href: "/admin/projects", label: "Projects", key: "projects" },
+    { href: `/admin/platform-overview${gq}`, label: "Platform overview", key: "platform-overview" },
+    { href: `/admin/projects${gq}`, label: "Projects", key: "projects" },
     {
-      href: "/admin/global-learning",
+      href: `/admin/global-learning${gq}`,
       label: "Global Learning",
       key: "global-learning",
       // Sub-pages live under the Global Learning hub — the Decision Engine surfaces the rules
       // and traces driving learning, and Learning Prompts shows the exact system prompts used
       // by the LLM reviewers that feed the learning store.
       children: [
-        { href: "/admin/engine", label: "Decision Engine", key: "engine" },
-        { href: "/admin/learning-prompts", label: "Learning Prompts", key: "learning-prompts" },
+        { href: `/admin/engine${gq}`, label: "Decision Engine", key: "engine" },
+        { href: `/admin/learning-prompts${gq}`, label: "Learning Prompts", key: "learning-prompts" },
       ],
     },
-    { href: "/admin/flow-engine", label: "Flow Engine", key: "flow-engine" },
-    { href: "/admin/prompt-labs", label: "Prompt labs", key: "prompt-labs" },
-    { href: "/admin/carousel-templates", label: "Carousel templates", key: "carousel-templates" },
+    { href: `/admin/flow-engine${gq}`, label: "Flow Engine", key: "flow-engine" },
+    { href: `/admin/prompt-labs${gq}`, label: "Prompt labs", key: "prompt-labs" },
+    { href: `/admin/carousel-templates${gq}`, label: "Carousel templates", key: "carousel-templates" },
   ];
 
   const LEARNING_CHILD_KEYS = new Set(["engine", "learning-prompts"]);
@@ -530,7 +589,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     <div class="sb-title">Project</div>
     ${overviewLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Workbench<span class="sb-hint">research to learning</span></div>
-    ${workbenchLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
+    ${workbenchLinks.map(renderWorkbenchLink).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Settings</div>
     ${settingsLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Platform</div>
@@ -565,9 +624,29 @@ function adminHeadTokenScript(config: AppConfig): string {
       ? `window.__CAF_CORE_FETCH_TOKEN=${JSON.stringify(config.CAF_CORE_API_TOKEN)};`
       : "window.__CAF_CORE_FETCH_TOKEN='';";
   return `<script>${tokenJs}
+(function(){
+  var STORAGE="caf-admin-active-project";
+  try{
+    var url=new URL(window.location.href);
+    var p=(url.searchParams.get("project")||"").trim();
+    if(p){
+      localStorage.setItem(STORAGE,p);
+    }else{
+      var stored=(localStorage.getItem(STORAGE)||"").trim();
+      if(stored){
+        url.searchParams.set("project",stored);
+        window.location.replace(url.toString());
+      }
+    }
+  }catch(_e){}
+})();
 window.cafFetch=function(u,o){o=o||{};o.headers=Object.assign({},o.headers||{});if(window.__CAF_CORE_FETCH_TOKEN)o.headers["x-caf-core-token"]=window.__CAF_CORE_FETCH_TOKEN;return fetch(u,o);};
 window.cafSwitchProject=function(slug){
   var s=String(slug||"").replace(/[\\r\\n\\t\\v\\f\\u0085\\u2028\\u2029]+/g,"").trim();
+  try{
+    if(s)localStorage.setItem("caf-admin-active-project",s);
+    else localStorage.removeItem("caf-admin-active-project");
+  }catch(_e){}
   var url=new URL(window.location.href);
   if(s)url.searchParams.set("project",s);else url.searchParams.delete("project");
   window.location.assign(url.toString());
@@ -686,7 +765,14 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         currentSlug = normalizeProjectSlugParam(projects[0].slug) ?? String(projects[0].slug ?? "");
       }
       const embedParams = "embedParams" in wb ? wb.embedParams : undefined;
-      const body = adminWorkbenchBody(wb.embedPath, wb.title, currentSlug, config.CAF_REVIEW_ENABLED, embedParams);
+      const body = adminWorkbenchBody(
+        wb.embedPath,
+        wb.title,
+        currentSlug,
+        config.CAF_REVIEW_ENABLED,
+        embedParams,
+        wb.pipelineStage
+      );
       reply
         .type("text/html")
         .send(
@@ -1056,6 +1142,8 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   app.post("/v1/admin/rework/pending", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const projectSlug = typeof body.project_slug === "string" ? body.project_slug : undefined;
+    const runId =
+      typeof body.run_id === "string" && body.run_id.trim() ? body.run_id.trim() : undefined;
     const limitRaw = typeof body.limit === "number" ? body.limit : undefined;
     const limit = Math.min(500, Math.max(1, Math.floor(limitRaw ?? 200)));
 
@@ -1069,10 +1157,11 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         SELECT j.task_id
         FROM caf_core.content_jobs j
         WHERE j.project_id = $1 AND j.status = 'NEEDS_EDIT'
+          AND ($3::text IS NULL OR j.run_id = $3)
         ORDER BY j.updated_at DESC
         LIMIT $2
       `,
-      [project.id, limit]
+      [project.id, limit, runId ?? null]
     );
 
     const taskIds = rows.map((r) => String(r.task_id || "").trim()).filter(Boolean);
@@ -1104,6 +1193,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       ok: true,
       accepted: true,
       project_slug: project.slug,
+      run_id: runId ?? null,
       queued: taskIds.length,
       message:
         taskIds.length === 0
@@ -1507,7 +1597,12 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       };
     } catch (err) {
       request.log.error({ err }, "listRunContentOutcomesForAdmin failed");
-      return reply.code(500).send({ ok: false, error: "content_outcomes_failed" });
+      const detail = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({
+        ok: false,
+        error: "content_outcomes_failed",
+        message: `Could not load run content log.${detail ? ` ${detail.slice(0, 240)}` : ""}`,
+      });
     }
   });
 
@@ -2045,6 +2140,76 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         system_prompt: IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
         user_prompt_template: IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
       },
+      {
+        prompt_name: "SIGNAL_PACK__Rating_Batch_v1",
+        flow_type: "PROCESSING_SIGNAL_PACK",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Batch LLM scoring of evidence rows (engagement_potential, topic_clarity, brand_voice_fit, originality) before signal pack build.",
+        labs_flow_description: "Processing: Build signal pack (full import) — rating step (inputs_rating_batch).",
+        system_prompt: EVIDENCE_RATING_SYSTEM_PROMPT,
+        user_prompt_template: EVIDENCE_RATING_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: "SIGNAL_PACK__Synthesize_Candidates_v1",
+        flow_type: "PROCESSING_SIGNAL_PACK",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "LLM synthesis of overall_candidates_json from top-rated evidence rows (legacy planner rows).",
+        labs_flow_description: "Processing: Build signal pack (full import) — synthesize step (inputs_signal_pack_synthesize).",
+        system_prompt: SIGNAL_PACK_SYNTH_SYSTEM_PROMPT,
+        user_prompt_template: SIGNAL_PACK_SYNTH_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: "RUN__Candidates_From_Ideas_LLM_v1",
+        flow_type: "PROCESSING_RUN_PLANNING",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Optional LLM idea picking when materializing run candidates from a signal pack (Create run → idea picking mode: LLM).",
+        labs_flow_description: "Processing → Runs: signal pack ideas_json → runs.candidates_json subset.",
+        system_prompt: RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT,
+        user_prompt_template: RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE,
+      },
+    ];
+    const processing_controls_base = [
+      {
+        control_key: "live_funnel",
+        title: "Live funnel",
+        description:
+          "Real-time TOTAL → PROFILE → PASS CUTOFF counts for the active platform tab. Updates as you change the score formula or cutoff (no LLM).",
+        admin_path: "/admin/processing",
+        admin_hint: "Processing → step 2 Filter evidence → sidebar (top).",
+      },
+      {
+        control_key: "score_formula",
+        title: "Score formula",
+        description:
+          "Weighted feature scores, profile min score, and min primary text chars. Drives pre-LLM evidence ranking before insights (no LLM).",
+        admin_path: "/admin/processing",
+        admin_hint: "Processing → step 2 Filter evidence → sidebar.",
+      },
+      {
+        control_key: "cutoff_sort",
+        title: "Cutoff & sort",
+        description:
+          "Cutoff slider (0–1), show-below-cutoff toggle, and table sort order for the evidence preview table (no LLM).",
+        admin_path: "/admin/processing",
+        admin_hint: "Processing → step 2 Filter evidence → sidebar.",
+      },
+      {
+        control_key: "mimic_caps",
+        title: "Mimic caps",
+        description:
+          "Per-flow planner caps for top-performer mimic flows, applied when you Start a run (jobs created at run time).",
+        admin_path: "/admin/processing",
+        admin_hint: "Processing toolbar — Mimic caps.",
+      },
     ];
     const learning_prompts_base = [
       {
@@ -2156,6 +2321,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       },
       prompt_templates: prompt_templates_for_labs,
       processing_prompts,
+      processing_controls: processing_controls_base,
       learning_prompts,
       validation_prompts: [],
       prompt_labs_overrides: overrides,
@@ -2822,8 +2988,9 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 
     const body = `
 <div class="ph">
-  <div>
+  <div class="caf-page-header-left">
     <h2>Projects</h2>
+    ${adminPipelineSketchHtml(null, currentSlug)}
     <span class="ph-sub">Browse and manage CAF Core projects (slug, name, active, color)</span>
   </div>
   <div class="page-actions" style="display:flex;gap:10px;align-items:center">
@@ -3008,7 +3175,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 
     if (!globalProject) {
       const body = `
-<div class="ph"><div><h2>Global Learning</h2><span class="ph-sub">System-wide learning store</span></div></div>
+${adminPhWithPipelineHtml("Global Learning", "learning", currentSlug, "System-wide learning store")}
 <div class="content">
   <div class="card">
     <div class="card-h">Missing system project</div>
@@ -3026,12 +3193,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     ]);
 
     const body = `
-<div class="ph">
-  <div>
-    <h2>Global Learning</h2>
-    <span class="ph-sub">System-wide learning store (rules/evidence that apply across projects)</span>
-  </div>
-</div>
+${adminPhWithPipelineHtml("Global Learning", "learning", currentSlug, "System-wide learning store (rules/evidence that apply across projects)")}
 
 <div class="content">
   <div class="card">
@@ -3059,11 +3221,11 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     <div class="card-h">Sub-sections</div>
     <p style="color:var(--fg2);margin:0 0 12px">The learning store is fed and introspected by two sub-sections, also reachable directly from the sidebar.</p>
     <div class="grid2">
-      <a href="/admin/engine" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
+      <a href="/admin/engine${currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : ""}" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
         <span><strong style="color:var(--fg)">Decision Engine</strong><br><span style="color:var(--muted);font-size:12px">Suppression rules, learning rules, prompt versions, and decision traces.</span></span>
         <span style="color:var(--accent)">&rarr;</span>
       </a>
-      <a href="/admin/learning-prompts" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
+      <a href="/admin/learning-prompts${currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : ""}" class="sb-link" style="justify-content:space-between;border:1px solid var(--border);padding:14px 16px">
         <span><strong style="color:var(--fg)">Learning Prompts</strong><br><span style="color:var(--muted);font-size:12px">The exact system prompts used by the LLM reviewers (carousel + video) that emit learning signal.</span></span>
         <span style="color:var(--accent)">&rarr;</span>
       </a>
@@ -3081,10 +3243,12 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
   });
 
   // --- Learning prompts (global) ---
-  app.get("/admin/learning-prompts", async (_request, reply) => {
+  app.get("/admin/learning-prompts", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
     const body = `
-<div class="ph"><div><h2>Learning prompts</h2><span class="ph-sub">The exact prompt strings used by learning analyzers and LLM review</span></div></div>
+${adminPhWithPipelineHtml("Learning prompts", "learning", currentSlug, "The exact prompt strings used by learning analyzers and LLM review")}
 <div class="content">
   <div class="card">
     <div class="card-h">LLM review (approved content) — system prompt</div>
@@ -3104,12 +3268,14 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     <p class="mono" style="color:var(--muted);margin-bottom:0">Source: <span class="mono">src/services/editorial-engineering-prompt.ts</span></p>
   </div>
 </div>`;
-    reply.type("text/html").send(page("Learning prompts", "learning-prompts", body, projects, "", adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Learning prompts", "learning-prompts", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Platform overview (all projects) ---
-  app.get("/admin/platform-overview", async (_request, reply) => {
+  app.get("/admin/platform-overview", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
     const summary = await getPlatformObservabilitySummary(db);
     const rows = summary.projects
       .map((r) => {
@@ -3128,7 +3294,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       })
       .join("");
     const body = `
-<div class="ph"><div><h2>Platform overview</h2><span class="ph-sub">CAF Core — projects &amp; production KPIs</span></div></div>
+${adminPhWithPipelineHtml("Platform overview", null, currentSlug, "CAF Core — projects &amp; production KPIs")}
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div class="card-h">Roll-up</div>
@@ -3151,22 +3317,14 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
   </div>
   <p style="font-size:12px;color:var(--muted);line-height:1.5">Open a project row for the full Overview (runs, review metrics, learning, observability inventory).</p>
 </div>`;
-    reply.type("text/html").send(page("Platform overview", "platform-overview", body, projects, "", adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Platform overview", "platform-overview", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Overview (project) ---
   app.get("/admin", async (request, reply) => {
     const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
-    let project: ProjectRow | null;
-    const pq = normalizeProjectSlugParam(query.project);
-    if (pq) {
-      project = await getProjectBySlug(db, pq);
-    } else if (projects.length > 0) {
-      project = projects[0];
-    } else {
-      project = null;
-    }
+    const project = await resolveProject(db, query.project);
 
     if (!project) {
       const body = `
@@ -3247,7 +3405,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       : "";
 
     const body = `
-<div class="ph"><div><h2>${esc(project.display_name || project.slug)}</h2><span class="ph-sub">Overview — production &amp; review</span></div></div>
+${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, currentSlug, "Overview — production &amp; review")}
 <div class="content">
   <form method="get" class="card" style="margin-bottom:14px;padding:12px 16px;display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end">
     <input type="hidden" name="project" value="${esc(currentSlug)}"/>
@@ -3352,6 +3510,12 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
     const currentSlug = project?.slug ?? "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
     const planCapColumnsHtml = renderPlanCapColumnsHtml();
+    const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
+    const llmJobGenTitle = adminLlmPromptTitleAttr(
+      "(per job) active flow template",
+      "Creation",
+      "Video/HeyGen jobs → Prompt Labs → HeyGen agent tab"
+    );
 
     const body = `
 <style>
@@ -3386,7 +3550,7 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 .sp-modal-table th,.sp-modal-table td{border:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}
 </style>
 <div class="ph">
-  <div><h2>${esc(project?.display_name || currentSlug || "—")}</h2><span class="ph-sub">Runs &amp; signal packs</span></div>
+  <div class="caf-page-header-left"><h2>${esc(project?.display_name || currentSlug || "—")}</h2>${adminPipelineSketchHtml("run", currentSlug)}<span class="ph-sub">Runs &amp; signal packs</span></div>
 </div>
 <div class="content">
   <div class="runs-ops">
@@ -3476,23 +3640,32 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <div class="form-group"><label>Run name (optional)</label><input type="text" name="name" maxlength="200" placeholder="Friendly label for this run"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
       <fieldset class="form-group" style="border:none;padding:0;margin:0">
-        <legend style="font-size:13px;font-weight:500;margin-bottom:8px">Idea picking</legend>
-        <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">How ideas from the signal pack become planned jobs on this run (before <strong>Start</strong>).</p>
-        <div style="display:flex;flex-direction:column;gap:10px">
-          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
-            <input type="radio" name="idea_picking_mode" value="rules" checked style="margin-top:3px;flex-shrink:0"/>
-            <span><span data-caf-term="ideaPickingRules">Automated (logical rules)</span> — all pack ideas, mapped deterministically</span>
+        <legend style="font-size:13px;font-weight:600;margin-bottom:6px">Idea picking</legend>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;line-height:1.45">How pack ideas become planned jobs before you <strong>Start</strong> the run.</p>
+        <div class="idea-pick-grid">
+          <label class="idea-pick-card idea-pick-card--selected">
+            <input type="radio" name="idea_picking_mode" value="rules" checked class="idea-pick-input"/>
+            <div class="idea-pick-card-body">
+              <div class="idea-pick-card-title"><span data-caf-term="ideaPickingRules">Automated (logical rules)</span></div>
+              <div class="idea-pick-card-desc">Every idea in the pack — mapped deterministically by format, platform, and scoring rules.</div>
+            </div>
           </label>
-          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
-            <input type="radio" name="idea_picking_mode" value="llm" style="margin-top:3px;flex-shrink:0"/>
-            <span><span data-caf-term="ideaPickingLlm">LLM picking</span> — model selects a subset</span>
+          <label class="idea-pick-card">
+            <input type="radio" name="idea_picking_mode" value="llm" class="idea-pick-input"/>
+            <div class="idea-pick-card-body" title="${llmRunPickTitle}">
+              <div class="idea-pick-card-title"><span data-caf-term="ideaPickingLlm">LLM picking</span></div>
+              <div class="idea-pick-card-desc">Model selects a diverse, high-impact subset before planning.</div>
+              <div id="create-llm-max-wrap" class="idea-pick-card-extra" style="display:none">
+                <label>Max ideas <input type="number" name="llm_max_ideas" id="create-llm-max" min="1" max="100" placeholder="40"/></label>
+              </div>
+            </div>
           </label>
-          <div id="create-llm-max-wrap" style="display:none;margin:-4px 0 0 28px">
-            <label style="font-size:12px;color:var(--muted)">Max ideas (LLM) <input type="number" name="llm_max_ideas" id="create-llm-max" min="1" max="100" placeholder="40" style="width:72px;margin-left:8px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)"/></label>
-          </div>
-          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
-            <input type="radio" name="idea_picking_mode" value="manual" style="margin-top:3px;flex-shrink:0"/>
-            <span><span data-caf-term="ideaPickingManual">Manual picking</span> — choose ideas on Planned jobs after create</span>
+          <label class="idea-pick-card">
+            <input type="radio" name="idea_picking_mode" value="manual" class="idea-pick-input"/>
+            <div class="idea-pick-card-body">
+              <div class="idea-pick-card-title"><span data-caf-term="ideaPickingManual">Manual picking</span></div>
+              <div class="idea-pick-card-desc">Create the run empty — choose ideas on <strong>Planned jobs</strong> before Start.</div>
+            </div>
           </label>
         </div>
       </fieldset>
@@ -3505,6 +3678,8 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 </div>
 <script>
 const SLUG=${JSON.stringify(currentSlug)};
+const LLM_JOB_GEN_TITLE=${JSON.stringify(adminLlmPromptTitle("(per job) active flow template", "Creation", "Video/HeyGen jobs → Prompt Labs → HeyGen agent tab"))};
+const LLM_RUN_PICK_TITLE=${JSON.stringify(adminLlmPromptTitle("RUN__Candidates_From_Ideas_LLM_v1", "Processing"))};
 const DEFAULT_MAX_CAROUSEL=${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_AGG=${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_PER_FLOW=${DEFAULT_VIDEO_FLOW_PLAN_CAP};
@@ -3527,6 +3702,10 @@ function togglePanel(id){
   if(id==='create-panel'&&next==='block'){
     loadSignalPackSelect();
     syncCreateIdeaPickUi();
+    if(typeof window.__bindCafTerms==='function'){
+      var cp=document.getElementById('create-panel');
+      if(cp)window.__bindCafTerms(cp);
+    }
   }
   if(next==='block'){
     try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
@@ -3563,10 +3742,20 @@ function syncCreateIdeaPickUi(){
   var mode=modeEl?String(modeEl.value||'rules'):'rules';
   var llmWrap=document.getElementById('create-llm-max-wrap');
   if(llmWrap)llmWrap.style.display=mode==='llm'?'block':'none';
+  var createBtn=document.getElementById('create-btn');
+  if(createBtn){
+    createBtn.title=mode==='llm'?LLM_RUN_PICK_TITLE:'Create run from selected signal pack (no LLM unless LLM picking is selected)';
+  }
+  document.querySelectorAll('.idea-pick-card').forEach(function(card){
+    var inp=card.querySelector('input[name="idea_picking_mode"]');
+    if(inp&&inp.checked)card.classList.add('idea-pick-card--selected');
+    else card.classList.remove('idea-pick-card--selected');
+  });
 }
 document.querySelectorAll('input[name="idea_picking_mode"]').forEach(function(el){
   el.addEventListener('change',syncCreateIdeaPickUi);
 });
+syncCreateIdeaPickUi();
 
 function showToast(msg,ok){
   const area=document.getElementById('toast-area');
@@ -3841,7 +4030,7 @@ async function loadRuns(p){
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
-    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title='Generate packages: runs LLM → QC → diagnostics for each PLANNED job, then stops at GENERATED (Package ready). Render is manual.'>Generate</button>";
+    if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title="+JSON.stringify(LLM_JOB_GEN_TITLE)+">Generate</button>";
     if(canRender)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'render')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("render")+")' title='Render GENERATED jobs for this run (manual step).'>Render</button>";
     if(canReplan)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'replan')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("replan")+")' title="+JSON.stringify("Delete all jobs and run the decision engine again")+">Re-plan</button>";
     if(canCancel)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'cancel')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("cancel")+")' style='color:var(--red)'>Cancel</button>";
@@ -4199,7 +4388,7 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
 
     const body = `
-<div class="ph"><div><h2>Signal pack</h2><span class="ph-sub">Stored payload — what feeds the planner (Overall × flows)</span></div></div>
+${adminPhWithPipelineHtml("Signal pack", "signal_pack", currentSlug, "Stored payload — what feeds the planner (Overall × flows)")}
 <div class="content">
 <p class="runs-ops-hint">Use <span class="mono">?project=SLUG&amp;id=SIGNAL_PACK_UUID</span> from Runs → Pack. Scene-router LLM seeds are logged at run start under <span class="mono">api_call_audit</span> with step <span class="mono">llm_scene_assembly_candidate_router</span>.</p>
 <div id="sp-view-root"><div class="empty">Loading…</div></div>
@@ -4353,13 +4542,18 @@ loadPackView();
       })
       .join("");
 
+    const llmSceneLabTitle = adminLlmPromptTitleAttr(
+      "VID_SCENES__Scene_Prompt_Generator_v1 (active scene_assembly template)",
+      "Creation"
+    );
+
     const bodyNoProject = `
-<div class="ph"><div><h2>Scene assembly lab</h2><span class="ph-sub">Script + scenes; optional full media pipeline</span></div></div>
+${adminPhWithPipelineHtml("Scene assembly lab", "run", currentSlug, "Script + scenes; optional full media pipeline")}
 <div class="content"><p class="empty">Pick a project in the sidebar (or open <span class="mono">/admin/scene-lab?project=YOUR_SLUG</span>).</p></div>`;
 
     const body = project
       ? `
-<div class="ph"><div><h2>Scene assembly lab</h2><span class="ph-sub">LLM script + scene bundle, then (by default) QC and full scene-pipeline</span></div></div>
+${adminPhWithPipelineHtml("Scene assembly lab", "run", currentSlug, "LLM script + scene bundle, then (by default) QC and full scene-pipeline")}
 <div class="content">
   <p class="runs-ops-hint">Creates a <span class="mono">LAB_SA_*</span> run and one <span class="mono">FLOW_SCENE_ASSEMBLY</span> job. By default, after a successful generation Core runs the same pipeline as <strong>Process</strong>: QC, scene clips, voice, subtitles, and mux (requires working <span class="mono">VIDEO_ASSEMBLY_BASE_URL</span> / Sora config as in production). Check <strong>LLM only</strong> below to skip that step (dry run). Results: <a href="/admin/jobs?project=${esc(currentSlug)}">Jobs</a>.</p>
   <div class="card" style="margin-bottom:16px">
@@ -4387,7 +4581,7 @@ loadPackView();
         <textarea id="slab-cand" name="candidate_json" rows="6" placeholder='{ "content_idea": "…", "summary": "…" }'></textarea>
       </div>
       <div class="form-actions">
-        <button type="submit" class="btn" id="slab-new-btn">Run lab</button>
+        <button type="submit" class="btn" id="slab-new-btn" title="${llmSceneLabTitle}">Run lab</button>
         <span id="slab-new-msg" class="form-msg"></span>
       </div>
     </form>
@@ -4405,7 +4599,7 @@ loadPackView();
         <textarea id="slab-regen-cand" name="regen_candidate_json" rows="6" placeholder='{ "content_idea": "…", "summary": "…" }'></textarea>
       </div>
       <div class="form-actions">
-        <button type="submit" class="btn btn-ghost" id="slab-regen-btn">Regenerate + pipeline</button>
+        <button type="submit" class="btn btn-ghost" id="slab-regen-btn" title="${llmSceneLabTitle}">Regenerate + pipeline</button>
         <span id="slab-regen-msg" class="form-msg"></span>
       </div>
     </form>
@@ -4668,15 +4862,16 @@ document.getElementById('slab-copy-btn').addEventListener('click',async function
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const runIdQ = (query.run_id ?? "").trim();
+    const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
 
     const body = `
-<div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="plannedJobs">Planned jobs</span></h2></div></div>
+${adminPageHeaderHtml('<span data-caf-term="plannedJobs">Planned jobs</span>', "run", currentSlug)}
 ${runIdQ ? adminRunHubTabsHtml("planned", currentSlug, runIdQ) : ""}
 <div class="content">
 <div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize planned jobs</div><div style="padding:12px 16px 16px">
 <p style="margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
 <button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack jobs</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-btn-llm">LLM pick subset</button>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-llm" title="${llmRunPickTitle}">LLM pick subset</button>
 <button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick jobs manually</button></p>
 <p id="rc-mat-msg" style="font-size:12px;margin:0;min-height:1.2em;color:var(--muted)"></p>
 </div></div>
@@ -4886,9 +5081,16 @@ loadRunTransparency();
     const currentSlug = project?.slug ?? "";
     const initialRunId = query.run_id || "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
+    const llmJobGenTitleJs = JSON.stringify(
+      adminLlmPromptTitle(
+        "(per job) active flow template",
+        "Creation",
+        "Video/HeyGen jobs → Prompt Labs → HeyGen agent tab"
+      )
+    );
 
     const body = `
-<div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="jobs">Jobs</span></h2></div></div>
+${adminPageHeaderHtml('<span data-caf-term="jobs">Jobs</span>', "validation", currentSlug)}
 ${initialRunId ? adminRunHubTabsHtml("jobs", currentSlug, initialRunId) : ""}
 <div class="content">
 <style>
@@ -4941,6 +5143,7 @@ ${initialRunId ? adminRunHubTabsHtml("jobs", currentSlug, initialRunId) : ""}
 <script>
 const initRunId=${JSON.stringify(initialRunId)};
 const JOB_SLUG=${JSON.stringify(currentSlug)};
+const LLM_JOB_GEN_TITLE=${llmJobGenTitleJs};
 let jobsPage=1;
 let jobRowTaskIds=[];
 /** Full last_error per row index (same order as table); used for one-click copy. */
@@ -5237,7 +5440,7 @@ function renderJobDetailHtml(d){
   if(canResume){
     lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();resumeJob(event,'+JSON.stringify(j.task_id||'')+')" title="Resume pipeline without clearing payload (picks up missing renders)">Resume</button>');
   }
-  lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="Clears output, QC, assets; runs LLM → QC → render again">Re-run entire pipeline</button>');
+  lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run entire pipeline</button>');
   lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
   lines.push('<span style="font-size:11px;color:var(--muted)">Same task_id for the job’s life; rework adds drafts + archived snapshots below</span>');
   lines.push('</div>');
@@ -5398,7 +5601,7 @@ async function loadJobs(p,silent){
     if(showResume){
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — continues missing clips / mux">Resume</button>';
     }
-    h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="Clear output/QC/renders/assets and run full pipeline again">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
+    h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
     h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="14"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
   }
   h+='</tbody></table>';
@@ -5452,7 +5655,7 @@ window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(funct
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
 
     const body = `
-<div class="ph"><div><h2>Decision Engine</h2><span class="ph-sub">Suppression rules, learning rules, prompts, and decision traces</span></div></div>
+${adminPhWithPipelineHtml("Decision Engine", "learning", currentSlug, "Suppression rules, learning rules, prompts, and decision traces")}
 <div class="content" id="engine-content"><div class="empty">Loading...</div></div>
 <script>
 async function loadEngine(){
@@ -5495,10 +5698,12 @@ loadEngine();
   });
 
   // --- Flow Engine (global, CAF-Core level) ---
-  app.get("/admin/flow-engine", async (_, reply) => {
+  app.get("/admin/flow-engine", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
     const body = `
-<div class="ph"><div><h2>Flow Engine</h2><span class="ph-sub">Global catalog — shared across all projects</span></div></div>
+${adminPhWithPipelineHtml("Flow Engine", null, currentSlug, "Global catalog — shared across all projects")}
 <div class="tabs" id="fe-tabs">
   <button class="tab active" onclick="feTab('flow-defs',this)">Flow Definitions</button>
   <button class="tab" onclick="feTab('prompt-tpl',this)">Prompt Templates</button>
@@ -5655,13 +5860,15 @@ async function feDel(type,identifiers){
 
 loadFE();
 </script>`;
-    reply.type("text/html").send(page("Flow Engine", "flow-engine", body, projects, "", adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Flow Engine", "flow-engine", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
-  app.get("/admin/prompt-labs", async (_, reply) => {
+  app.get("/admin/prompt-labs", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
     const body = `
-<div class="ph"><div><h2>Prompt labs</h2><span class="ph-sub">Flow Engine DB templates + runtime prompt layers (video duration, publishing fields, HeyGen agent)</span></div></div>
+${adminPhWithPipelineHtml("Prompt labs", null, currentSlug, "Flow Engine DB templates + runtime prompt layers (video duration, publishing fields, HeyGen agent)")}
 <div class="tabs" id="pl-tabs">
   <button type="button" class="tab active" onclick="plTab('pl-processing',this)">Processing</button>
   <button type="button" class="tab" onclick="plTab('pl-creation',this)">Creation</button>
@@ -5809,6 +6016,33 @@ function plRenderPromptCard(p,kind,ix){
   out+='</div>';
   return out;
 }
+function plRenderPromptList(rows,kind){
+  if(!rows||!rows.length)return '<div class="empty">No prompts in this list.</div>';
+  var out='';
+  for(var ri=0;ri<rows.length;ri++){
+    var row=rows[ri];
+    var ix=kind==='processing'||kind==='learning'?row.ix:row.ix;
+    out+=plRenderPromptCard(row.p,kind,ix);
+  }
+  return out;
+}
+function plRenderControlCard(c){
+  var href=String(c.admin_path||'/admin/processing');
+  var hint=c.admin_hint?('<p style="font-size:11px;color:var(--muted);margin:8px 0 0">'+esc(c.admin_hint)+'</p>'):'';
+  return '<div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:12px;background:var(--card2)">'
+    +'<div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px">'
+    +'<div><strong style="font-size:14px;color:var(--fg)">'+esc(c.title||c.control_key||'Control')+'</strong>'
+    +' <span class="badge badge-b" style="font-size:10px">config</span></div>'
+    +'<a class="btn btn-sm" href="'+esc(href)+'">Open in Processing</a></div>'
+    +'<p style="font-size:13px;line-height:1.5;margin:0;color:var(--fg)">'+esc(c.description||'')+'</p>'
+    +hint+'</div>';
+}
+function plRenderControlList(items){
+  if(!items||!items.length)return '';
+  var out='';
+  for(var i=0;i<items.length;i++) out+=plRenderControlCard(items[i]);
+  return out;
+}
 function plDropdownPanel(selId,detailId,label,rows){
   if(!rows||rows.length===0)return '<div class="empty">No prompts in this list.</div>';
   var h='<div class="form-group" style="margin-bottom:14px"><label for="'+selId+'">'+esc(label)+'</label>';
@@ -5855,6 +6089,7 @@ async function loadPL(){
   window.__PL_PROCESSING=pp;
   const lp=d.learning_prompts||[];
   window.__PL_LEARNING=lp;
+  const pc=d.processing_controls||[];
 
   /** Align with canonical-flow-types: map legacy Flow Engine keys for tab routing only. */
   function plCanonicalFlowType(ftRaw){
@@ -5885,6 +6120,7 @@ async function loadPL(){
       if(p.active===false) return 'planning';
       return 'creation';
     }
+    if(/^FLOW_TOP_PERFORMER_MIMIC_/i.test(ft)||/^FLOW_TOP_PERFORMER_MIMIC_/i.test(ftRaw)) return 'creation';
     return 'planning';
   }
 
@@ -5915,14 +6151,20 @@ async function loadPL(){
 
   // Processing tab
   html+='<div id="pl-processing" class="tab-panel active">';
+  if(pc.length){
+    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Evidence scoring &amp; funnel ('+pc.length+')</div>';
+    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Pre-LLM controls in Processing (score formula, cutoff, live funnel, mimic caps). Not LLM prompts — configured per project in the Processing workbench.</p>';
+    html+=plRenderControlList(pc);
+    html+='</div>';
+  }
   html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Processing prompts ('+layers.processing.length+')</div>';
-  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Insights prompts used in Processing (broad LLM, top performers, and ideas-from-insights synthesis).</p>';
-  html+=plDropdownPanel('pl-sel-processing','pl-detail-processing','Choose processing prompt',layers.processing);
+  html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">All LLM prompts used in Processing — broad insights, top performers, ideas synthesis, signal-pack build, and optional run idea picking.</p>';
+  html+=plRenderPromptList(layers.processing,'processing');
   html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
   if(layers.planning.length){
-    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Planning &amp; other flow templates ('+layers.planning.length+')</div>';
-    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Ideation and viral-format prep. Deprecated inactive aliases are hidden from Prompt Labs (still editable in Flow Engine).</p>';
-    html+=plDropdownPanel('pl-sel-planning','pl-detail-planning','Choose template',layers.planning);
+    html+='<div class="card" style="margin-bottom:14px"><div class="card-h">Planning &amp; prep templates ('+layers.planning.length+')</div>';
+    html+='<p style="color:var(--muted);margin-bottom:14px;font-size:13px">Angle, structure, CTA, and hook prep templates. Mimic and creation generators live under <strong>Creation</strong>.</p>';
+    html+=plRenderPromptList(layers.planning,'template');
     html+='<p style="margin-top:6px"><a class="btn btn-sm" href="/admin/flow-engine">Flow Engine</a></p></div>';
   }
   html+='</div>';
@@ -6009,20 +6251,20 @@ async function loadPL(){
 
   root.innerHTML=html;
   plWireRowDropdown('pl-sel-validation',layers.validation,'template','pl-detail-validation');
-  plWireRowDropdown('pl-sel-processing',layers.processing,'processing','pl-detail-processing');
-  plWireRowDropdown('pl-sel-planning',layers.planning,'template','pl-detail-planning');
   plWireRowDropdown('pl-sel-creation',layers.creation,'template','pl-detail-creation');
   plWireRowDropdown('pl-sel-learning',layers.learning,'learning','pl-detail-learning');
   plWireRowDropdown('pl-sel-heygen-tpl',heygenPrompts,'template','pl-detail-heygen-tpl');
 }
 loadPL();
 </script>`;
-    reply.type("text/html").send(page("Prompt labs", "prompt-labs", body, projects, "", adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Prompt labs", "prompt-labs", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Carousel templates (list DB rows + preview via renderer + edit metadata) ---
-  app.get("/admin/carousel-templates", async (_, reply) => {
+  app.get("/admin/carousel-templates", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
     const ctProjectsJson = JSON.stringify(
       projects.map((p) => ({
         slug: p.slug,
@@ -6030,7 +6272,7 @@ loadPL();
       }))
     );
     const body = `
-<div class="ph"><div><h2>Carousel templates</h2><span class="ph-sub">Map logical template keys to renderer <code>.hbs</code> files, preview slide 1, edit metadata</span></div></div>
+${adminPhWithPipelineHtml("Carousel templates", null, currentSlug, "Map logical template keys to renderer <code>.hbs</code> files, preview slide 1, edit metadata")}
 <div class="content" id="ct-root"><div class="empty">Loading…</div></div>
 <script>
 window.__CT_PROJECTS=${ctProjectsJson};
@@ -6485,7 +6727,7 @@ function ctOpenEditWithHtml(name){
 
 ctLoad();
 </script>`;
-    reply.type("text/html").send(page("Carousel templates", "carousel-templates", body, projects, "", adminHeadTokenScript(config)));
+    reply.type("text/html").send(page("Carousel templates", "carousel-templates", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
 
@@ -6506,7 +6748,7 @@ ctLoad();
 tr.cfg-row-active td{background:rgba(59,130,246,.08)!important}
 tr.cfg-inline-expand td{border-top:1px solid var(--border)}
 </style>
-<div class="ph"><div><h2>${esc(project.display_name || project.slug)}</h2><span class="ph-sub">Project Config — like your Google Sheets project config workbook</span></div></div>
+${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, currentSlug, "Project Config — like your Google Sheets project config workbook")}
 <div class="tabs" id="config-tabs">
   <button class="tab active" onclick="cfgTab('tab-strategy',this)">Strategy Defaults</button>
   <button class="tab" onclick="cfgTab('tab-brand',this)">Brand Constraints</button>

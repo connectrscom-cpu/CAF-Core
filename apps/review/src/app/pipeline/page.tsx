@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { CafPageHeader } from "@/components/CafOptionsMenu";
 import { CafTerm } from "@/components/CafTerm";
+import { SignalPackIntro } from "@/components/SignalPackIntro";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 
 type Tab = "evidence" | "packs";
@@ -121,6 +122,9 @@ export default function PipelinePage() {
   const needProject = multiProject && !slug;
   const packCount = packs?.length ?? 0;
   const importCount = imports?.length ?? 0;
+  const isAdminEmbed = searchParams.get("embed") === "admin";
+  const processingHref =
+    isAdminEmbed && slug ? `/admin/processing?project=${encodeURIComponent(slug)}#pack` : null;
 
   return (
     <>
@@ -154,7 +158,7 @@ export default function PipelinePage() {
         </div>
 
         {!ready && <p style={{ color: "var(--muted)" }}>Loading…</p>}
-        {ready && needProject && (
+        {ready && needProject && tab === "evidence" && (
           <p style={{ color: "var(--yellow)" }}>Select a project in the sidebar.</p>
         )}
 
@@ -216,47 +220,54 @@ export default function PipelinePage() {
           </section>
         )}
 
-        {tab === "packs" && ready && slug && (
+        {tab === "packs" && ready && (
           <section>
-            <div className="caf-toolbar">
-              <button type="button" className="btn-ghost" onClick={() => void loadPacks()} disabled={loading}>
-                {loading ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-            {loading && !packs && <p style={{ color: "var(--muted)" }}>Loading…</p>}
-            {packs && packs.length === 0 && !loading && (
-              <p style={{ color: "var(--muted)" }}>No signal packs for this project.</p>
-            )}
-            {packs && packs.length > 0 && (
-              <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                <table className="caf-table-compact">
-                  <thead>
-                    <tr>
-                      <Th>Pack</Th>
-                      <Th>Run</Th>
-                      <Th>Ideas</Th>
-                      <Th>Created</Th>
-                      <Th></Th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {packs.map((p) => {
-                      const nIdeas = Number(p.ideas_count ?? p.jobs_count ?? 0);
-                      return (
-                        <tr key={p.id}>
-                          <Td>{p.upload_filename ?? p.id.slice(0, 8)}</Td>
-                          <Td className="job-id-cell">{p.run_id}</Td>
-                          <Td>{nIdeas}</Td>
-                          <Td>{fmt(p.created_at)}</Td>
-                          <Td>
-                            <Link href={navHref(`/pipeline/pack/${p.id}`)}>Open</Link>
-                          </Td>
+            <SignalPackIntro processingHref={processingHref} />
+            {needProject ? (
+              <p style={{ color: "var(--yellow)", marginTop: 12 }}>Select a project in the sidebar to list packs.</p>
+            ) : !slug ? null : (
+              <>
+                <div className="caf-toolbar">
+                  <button type="button" className="btn-ghost" onClick={() => void loadPacks()} disabled={loading}>
+                    {loading ? "Refreshing…" : "Refresh"}
+                  </button>
+                </div>
+                {loading && !packs && <p style={{ color: "var(--muted)" }}>Loading…</p>}
+                {packs && packs.length === 0 && !loading && (
+                  <p style={{ color: "var(--muted)" }}>No signal packs for this project.</p>
+                )}
+                {packs && packs.length > 0 && (
+                  <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+                    <table className="caf-table-compact">
+                      <thead>
+                        <tr>
+                          <Th>Pack</Th>
+                          <Th>Run</Th>
+                          <Th>Ideas</Th>
+                          <Th>Created</Th>
+                          <Th></Th>
                         </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                      </thead>
+                      <tbody>
+                        {packs.map((p) => {
+                          const nIdeas = Number(p.ideas_count ?? p.jobs_count ?? 0);
+                          return (
+                            <tr key={p.id}>
+                              <Td>{p.upload_filename ?? p.id.slice(0, 8)}</Td>
+                              <Td className="job-id-cell">{p.run_id}</Td>
+                              <Td>{nIdeas}</Td>
+                              <Td>{fmt(p.created_at)}</Td>
+                              <Td>
+                                <Link href={navHref(`/pipeline/pack/${p.id}`)}>Open</Link>
+                              </Td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
             )}
           </section>
         )}

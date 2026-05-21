@@ -1402,3 +1402,26 @@ export async function startPublicationPlacement(
     payload: Record<string, unknown>;
   }>(`/v1/publications/${encodeURIComponent(projectSlug)}/${encodeURIComponent(id)}/start`, body ?? {});
 }
+
+export type QueuePendingReworkResult = {
+  ok: boolean;
+  accepted?: boolean;
+  project_slug?: string;
+  run_id?: string | null;
+  queued?: number;
+  message?: string;
+  error?: string;
+};
+
+/** Queue background rework for all `content_jobs.status = NEEDS_EDIT` (optional run scope). */
+export async function queuePendingRework(args: {
+  project_slug: string;
+  run_id?: string;
+  limit?: number;
+}): Promise<QueuePendingReworkResult> {
+  return corePostRequired<QueuePendingReworkResult>("/v1/admin/rework/pending", {
+    project_slug: args.project_slug,
+    ...(args.run_id?.trim() ? { run_id: args.run_id.trim() } : {}),
+    limit: args.limit ?? 200,
+  });
+}

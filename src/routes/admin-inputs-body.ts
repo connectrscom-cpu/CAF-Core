@@ -1,6 +1,6 @@
 /** Inner HTML + script for GET /admin/inputs — upload INPUTS workbooks and browse import history. */
 
-import { adminCafTermHtml, adminOptionsLinkHtml, adminOptionsMenuHtml } from "./admin-ui-shared.js";
+import { adminCafTermHtml, adminOptionsLinkHtml, adminOptionsMenuHtml, adminPageHeaderHtml } from "./admin-ui-shared.js";
 
 export function adminInputsBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
@@ -10,8 +10,7 @@ export function adminInputsBody(currentSlug: string): string {
     "Options"
   );
   return `
-<div class="caf-page-header ph"><div class="caf-page-header-left"><h2>${adminCafTermHtml("inputs", "Inputs & imports")}</h2></div>
-<div class="caf-page-header-actions">${optionsMenu}</div></div>
+${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence", currentSlug, { actionsHtml: optionsMenu })}
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 16px">

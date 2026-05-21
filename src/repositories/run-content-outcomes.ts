@@ -198,10 +198,10 @@ async function fetchTransitionTrailsByTask(
     from_state: string | null;
     to_state: string;
     actor: string | null;
-    metadata: unknown;
+    metadata_json: unknown;
   }>(
     db,
-    `SELECT t.task_id, t.created_at, t.from_state, t.to_state, t.actor, t.metadata
+    `SELECT t.task_id, t.created_at, t.from_state, t.to_state, t.actor, t.metadata_json
      FROM caf_core.job_state_transitions t
      JOIN caf_core.content_jobs j
        ON j.project_id = t.project_id AND j.task_id = t.task_id
@@ -214,7 +214,7 @@ async function fetchTransitionTrailsByTask(
   for (const row of rows) {
     const bucket = byTask.get(row.task_id) ?? { status_history: [], events: [] };
     bucket.status_history.push(row.to_state);
-    const meta = asRecord(row.metadata);
+    const meta = asRecord(row.metadata_json);
     const err = meta?.error;
     bucket.events.push({
       at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
@@ -599,13 +599,24 @@ export async function listRunContentOutcomesForAdmin(
     };
   } catch (err) {
     const code = String((err as { code?: unknown })?.code ?? "");
-    if (code !== "42P01") throw err;
-    const fallback = await synthesizeCurrentOutcomesFromJobs(db, projectId, runId, limit);
-    return {
-      outcomes: fallback,
-      table_missing: true,
-      source: fallback.length > 0 ? "jobs_fallback" : "outcomes",
-    };
+    if (code === "42P01") {
+      const fallback = await synthesizeCurrentOutcomesFromJobs(db, projectId, runId, limit);
+      return {
+        outcomes: fallback,
+        table_missing: true,
+        source: fallback.length > 0 ? "jobs_fallback" : "outcomes",
+      };
+    }
+    try {
+      const fallback = await synthesizeCurrentOutcomesFromJobs(db, projectId, runId, limit);
+      return {
+        outcomes: fallback,
+        table_missing: false,
+        source: fallback.length > 0 ? "jobs_fallback" : "outcomes",
+      };
+    } catch {
+      throw err;
+    }
   }
 }
 
