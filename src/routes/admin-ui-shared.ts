@@ -239,6 +239,43 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .processing-workbench .badge{font-size:11px}
 .processing-workbench label,.processing-workbench .runs-ops-hint{font-size:14px}
 .processing-workbench .card-h{font-size:14px}
+.processing-workbench .insights-data-table,.processing-workbench .broad-insights-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.processing-workbench .insights-data-table th,.processing-workbench .broad-insights-table th,.processing-workbench .insights-data-table td,.processing-workbench .broad-insights-table td{padding:8px 10px;font-size:12px}
+.processing-workbench .insights-data-table thead th,.processing-workbench .broad-insights-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);white-space:nowrap;vertical-align:bottom;text-align:left;overflow:hidden;text-overflow:ellipsis}
+.processing-workbench .insights-data-table td,.processing-workbench .broad-insights-table td{vertical-align:top;border-bottom:1px solid var(--border);line-height:1.45;overflow:hidden}
+.processing-workbench .insights-data-table td.insight-cell-long,.processing-workbench .broad-insights-table td.insight-cell-long{max-width:0}
+.processing-workbench .insights-data-table .insight-cell-clamp,.processing-workbench .broad-insights-table .insight-cell-clamp{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;white-space:normal}
+.processing-workbench .insights-data-table .insight-clamp-3,.processing-workbench .broad-insights-table .insight-clamp-3{-webkit-line-clamp:3}
+.processing-workbench .insights-data-table td.insight-cell-mono,.processing-workbench .broad-insights-table td.insight-cell-mono{white-space:nowrap;font-variant-numeric:tabular-nums}
+.processing-workbench .insights-data-table td.insight-cell-score,.processing-workbench .broad-insights-table td.insight-cell-score{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.processing-workbench .insight-tags-wrap{display:flex;flex-wrap:wrap;gap:4px;max-height:5.2em;overflow:hidden}
+.processing-workbench .insight-tag{display:inline-block;padding:2px 7px;border-radius:999px;font-size:10px;line-height:1.35;background:var(--bg);border:1px solid var(--border);color:var(--fg2);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis}
+.processing-workbench .insight-cell-empty{color:var(--muted)}
+.broad-section{display:flex;flex-direction:column;gap:12px;margin-bottom:12px}
+.broad-panel{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--card)}
+.broad-panel--run{border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.06) 0%,var(--card) 100%)}
+.broad-panel-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px}
+.broad-panel-title span{font-weight:500;text-transform:none;letter-spacing:0;color:var(--fg2);margin-left:6px}
+.broad-action-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.broad-options-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px 14px;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.broad-options-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.broad-options-grid label.broad-check-row{flex-direction:row;align-items:center;gap:8px;padding-top:4px}
+.broad-options-grid input[type=number],.broad-options-grid input[type=checkbox]{margin:0}
+.broad-options-grid input[type=number]{width:100%;max-width:120px;font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)}
+.broad-status-line{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.45}
+.broad-status-line span{display:block;margin-top:2px}
+.broad-platform-wrap .broad-kind-tabs{display:flex;gap:8px;flex-wrap:wrap}
+.broad-kind-tabs .broad-kind{border-radius:9999px;font-weight:600;letter-spacing:.02em}
+.broad-kind-tabs .broad-kind.btn-ghost{border-color:var(--border2);background:var(--surface-2)}
+.broad-kind-tabs .broad-kind.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.broad-view-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 14px;align-items:end}
+.broad-view-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.broad-view-grid select,.broad-view-grid input{font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)}
+.broad-view-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.broad-filter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 12px;align-items:end}
+.broad-filter-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.broad-filter-grid input,.broad-filter-grid select{font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:100%}
+.broad-filter-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-top:4px}
 .caf-manual-pick-overlay{display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.55);align-items:center;justify-content:center;padding:20px;overflow:auto}
 .caf-manual-pick-modal{max-width:min(960px,96vw);width:100%;max-height:min(90vh,880px);display:flex;flex-direction:column;background:linear-gradient(180deg,var(--card) 0%,var(--surface-2) 100%);border:1px solid rgba(59,130,246,.28);border-radius:14px;box-shadow:0 20px 56px rgba(0,0,0,.45);overflow:hidden}
 .caf-manual-pick-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,transparent 100%)}
@@ -250,7 +287,11 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .caf-manual-pick-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
 .caf-manual-pick-tab .tab-count{display:inline-flex;min-width:18px;height:16px;padding:0 5px;margin-left:6px;border-radius:9999px;font-size:10px;font-weight:700;background:rgba(255,255,255,.2);align-items:center;justify-content:center}
 .caf-manual-pick-tab:not(.active) .tab-count{background:var(--blue-bg);color:var(--accent)}
-.caf-manual-pick-tab.tab-saved:not(.active){border-color:rgba(34,197,94,.35);color:var(--green)}
+.caf-manual-pick-tab.tab-mimic:not(.active){border-color:rgba(168,85,247,.35);color:var(--purple)}
+.caf-manual-pick-tab.tab-mimic.active{background:var(--purple);border-color:var(--purple);color:#fff}
+.caf-manual-pick-tab.tab-mimic:not(.active) .tab-count{background:rgba(168,85,247,.15);color:var(--purple)}
+.caf-manual-pick-pill{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:600;background:rgba(234,179,8,.15);color:var(--yellow);vertical-align:middle}
+.caf-manual-pick-pill--ok{background:rgba(34,197,94,.15);color:var(--green)}
 .caf-manual-pick-body{flex:1;min-height:200px;overflow:auto;padding:0}
 .caf-manual-pick-table-wrap{overflow:auto;max-height:min(52vh,520px)}
 .caf-manual-pick-table{width:100%;border-collapse:collapse;font-size:14px}
@@ -470,8 +511,8 @@ export function adminManualIdeaPickModalHtml(): string {
   <div class="caf-manual-pick-modal">
     <div class="caf-manual-pick-head">
       <div>
-        <h3 id="caf-manual-pick-title">Pick ideas by format</h3>
-        <div class="caf-manual-pick-summary" id="caf-manual-pick-summary">Select ideas per tab, save each format, then apply overall.</div>
+        <h3 id="caf-manual-pick-title">Pick ideas &amp; mimic references</h3>
+        <div class="caf-manual-pick-summary" id="caf-manual-pick-summary">Select pack ideas by format, or top performers to mimic (image / carousel / video). Save each tab, then apply overall.</div>
       </div>
       <button type="button" class="btn-ghost btn-sm" id="caf-manual-pick-close" aria-label="Close">✕</button>
     </div>
@@ -500,6 +541,19 @@ export function adminManualIdeaPickScript(): string {
   return `
 (function(){
   var FORMAT_ORDER=['video','carousel','post','thread','blog','slides','script','memo','other'];
+  var MIMIC_TAB_ORDER=['mimic_image','mimic_carousel','mimic_video'];
+  function mimicTabLabel(tab){
+    if(tab==='mimic_image')return 'Mimic · Image';
+    if(tab==='mimic_carousel')return 'Mimic · Carousel';
+    if(tab==='mimic_video')return 'Mimic · Video';
+    return tab;
+  }
+  function isMimicTab(tab){return MIMIC_TAB_ORDER.indexOf(tab)>=0;}
+  function mimicKindForTab(tab){
+    if(tab==='mimic_image')return 'image';
+    if(tab==='mimic_carousel')return 'carousel';
+    return 'video';
+  }
   function mpEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function mpEscAttr(s){return mpEsc(s).replace(/"/g,'&quot;');}
   function normFormat(f){
@@ -518,7 +572,7 @@ export function adminManualIdeaPickScript(): string {
   }
   function fmtLabel(tab){return tab==='other'?'Other':tab.charAt(0).toUpperCase()+tab.slice(1);}
   var st={
-    runId:null,ideas:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
+    runId:null,ideas:[],mimicRefs:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
     onApplied:null,statusElId:null,busy:false
   };
   function overlay(){return document.getElementById('caf-manual-pick-overlay');}
@@ -540,12 +594,26 @@ export function adminManualIdeaPickScript(): string {
       Object.keys(set).forEach(function(id){if(set[id])ids[id]=1;});
     }
     var n=Object.keys(ids).length;
-    el.textContent=n?('Overall: '+n+' idea(s) saved across tabs — apply when ready.'):'Select ideas per tab, save each format, then apply overall.';
+    var mCount=countSavedMimicPicks();
+    el.textContent=n||mCount
+      ?('Overall: '+n+' idea(s)'+(mCount?(' + '+mCount+' mimic reference(s)'):'')+' saved — apply when ready.')
+      :'Select pack ideas and/or top performers to mimic. Save each tab, then apply overall.';
+  }
+  function countSavedMimicPicks(){
+    var n=0;
+    for(var mi=0;mi<MIMIC_TAB_ORDER.length;mi++){
+      var tab=MIMIC_TAB_ORDER[mi];
+      var set=st.savedByTab[tab]||{};
+      n+=Object.keys(set).filter(function(k){return set[k];}).length;
+    }
+    return n;
   }
   function renderTabs(){
     var nav=document.getElementById('caf-manual-pick-tabs');
     if(!nav)return;
-    var tabs=FORMAT_ORDER.filter(function(t){return (st.byTab[t]||[]).length>0;});
+    var ideaTabs=FORMAT_ORDER.filter(function(t){return (st.byTab[t]||[]).length>0;});
+    var mimicTabs=MIMIC_TAB_ORDER.filter(function(t){return (st.byTab[t]||[]).length>0;});
+    var tabs=ideaTabs.concat(mimicTabs);
     if(!tabs.length){nav.innerHTML='';return;}
     if(!st.activeTab||tabs.indexOf(st.activeTab)<0)st.activeTab=tabs[0];
     var h='';
@@ -556,8 +624,9 @@ export function adminManualIdeaPickScript(): string {
       var draft=st.draftByTab[t]||{};
       var draftN=Object.keys(draft).filter(function(k){return draft[k];}).length;
       var count=savedN||draftN;
-      var cls='caf-manual-pick-tab'+(t===st.activeTab?' active':'')+(savedN>0?' tab-saved':'');
-      h+='<button type="button" class="'+cls+'" data-mp-tab="'+mpEscAttr(t)+'">'+mpEsc(fmtLabel(t));
+      var label=isMimicTab(t)?mimicTabLabel(t):fmtLabel(t);
+      var cls='caf-manual-pick-tab'+(t===st.activeTab?' active':'')+(savedN>0?' tab-saved':'')+(isMimicTab(t)?' tab-mimic':'');
+      h+='<button type="button" class="'+cls+'" data-mp-tab="'+mpEscAttr(t)+'">'+mpEsc(label);
       if(count)h+='<span class="tab-count">'+count+'</span>';
       h+='</button>';
     }
@@ -585,21 +654,29 @@ export function adminManualIdeaPickScript(): string {
     var tab=st.activeTab;
     var rows=tab?st.byTab[tab]||[]:[];
     if(!rows.length){
-      body.innerHTML='<div class="empty" style="padding:24px">No ideas for this format.</div>';
+      body.innerHTML='<div class="empty" style="padding:24px">'+(isMimicTab(tab||'')
+        ?'No top-performer references for this mimic type. Run top-performer insights and rebuild the signal pack.'
+        :'No ideas for this format.')+'</div>';
       return;
     }
     var draft=st.draftByTab[tab]||{};
     var saved=st.savedByTab[tab]||{};
+    var mimic=isMimicTab(tab);
     var h='<div class="caf-manual-pick-table-wrap"><table class="caf-manual-pick-table"><thead><tr>';
     h+='<th style="width:36px"><input type="checkbox" id="caf-manual-pick-head-cb" title="Toggle all in tab"/></th>';
-    h+='<th>Title</th><th>Platform</th><th>Summary</th><th>Idea ID</th></tr></thead><tbody>';
+    h+='<th>'+(mimic?'Reference':'Title')+'</th><th>Platform</th><th>Summary</th><th>'+(mimic?'Insights ID':'Idea ID')+'</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var it=rows[i];
-      var id=String(it.idea_id||'');
+      var id=String(mimic?(it.pick_id||it.insights_id||''):(it.idea_id||''));
       var on=!!(draft[id]||saved[id]);
       h+='<tr class="'+(on?'is-selected':'')+'">';
       h+='<td><input type="checkbox" class="caf-manual-pick-cb" value="'+mpEscAttr(id)+'"'+(on?' checked':'')+'/></td>';
-      h+='<td><div class="pick-title">'+mpEsc(it.title||id)+'</div></td>';
+      h+='<td><div class="pick-title">'+mpEsc(it.title||id);
+      if(mimic){
+        var mediaOk=!!it.has_inspection_media;
+        h+=' <span class="caf-manual-pick-pill'+(mediaOk?' caf-manual-pick-pill--ok':'')+'">'+(mediaOk?'media':'no media')+'</span>';
+      }
+      h+='</div></td>';
       h+='<td><span class="badge badge-b">'+mpEsc(it.platform||'—')+'</span></td>';
       h+='<td><div class="pick-detail">'+mpEsc(it.detail||'—')+'</div></td>';
       h+='<td><span class="pick-id">'+mpEsc(id)+'</span></td></tr>';
@@ -628,14 +705,37 @@ export function adminManualIdeaPickScript(): string {
       st.byTab[tab].push(it);
     }
   }
+  function groupMimicRefs(refs){
+    for(var ri=0;ri<(refs||[]).length;ri++){
+      var row=refs[ri]||{};
+      var kind=String(row.mimic_kind||'');
+      var tab=kind==='image'?'mimic_image':kind==='carousel'?'mimic_carousel':kind==='video'?'mimic_video':null;
+      if(!tab)continue;
+      if(!st.byTab[tab])st.byTab[tab]=[];
+      st.byTab[tab].push(row);
+    }
+  }
   function allSavedIds(){
     var out={};
     var tabs=Object.keys(st.savedByTab);
     for(var i=0;i<tabs.length;i++){
+      if(isMimicTab(tabs[i]))continue;
       var set=st.savedByTab[tabs[i]]||{};
       Object.keys(set).forEach(function(id){if(set[id])out[id]=1;});
     }
     return Object.keys(out);
+  }
+  function allSavedMimicPicks(){
+    var picks=[];
+    for(var mi=0;mi<MIMIC_TAB_ORDER.length;mi++){
+      var tab=MIMIC_TAB_ORDER[mi];
+      var set=st.savedByTab[tab]||{};
+      var kind=mimicKindForTab(tab);
+      Object.keys(set).forEach(function(insightsId){
+        if(set[insightsId])picks.push({insights_id:insightsId,mimic_kind:kind});
+      });
+    }
+    return picks;
   }
   function closePicker(){
     var ov=overlay();
@@ -652,6 +752,7 @@ export function adminManualIdeaPickScript(): string {
     st.savedByTab={};
     st.draftByTab={};
     st.activeTab=null;
+    st.mimicRefs=[];
     var ov=overlay();
     if(!ov)return;
     ov.style.display='flex';
@@ -663,8 +764,11 @@ export function adminManualIdeaPickScript(): string {
       var d=await r.json();
       if(!r.ok||!d.ok)throw new Error((d&&d.error)||'Failed to load ideas');
       st.ideas=Array.isArray(d.signal_pack_ideas_ui)?d.signal_pack_ideas_ui:[];
+      st.mimicRefs=Array.isArray(d.signal_pack_mimic_references_ui)?d.signal_pack_mimic_references_ui:[];
+      st.byTab={};
       groupIdeas(st.ideas);
-      if(!st.ideas.length)throw new Error('Signal pack has no ideas in ideas_json.');
+      groupMimicRefs(st.mimicRefs);
+      if(!st.ideas.length&&!st.mimicRefs.length)throw new Error('Signal pack has no ideas_json and no top-performer references — build insights and rebuild the pack.');
       renderTabs();
       renderTable();
       updateSummary();
@@ -690,24 +794,29 @@ export function adminManualIdeaPickScript(): string {
     var draft=st.draftByTab[st.activeTab]||{};
     st.savedByTab[st.activeTab]=Object.assign({},draft);
     var n=Object.keys(draft).filter(function(k){return draft[k];}).length;
-    setMsg(fmtLabel(st.activeTab)+': saved '+n+' idea(s).',false);
+    setMsg((isMimicTab(st.activeTab)?mimicTabLabel(st.activeTab):fmtLabel(st.activeTab))+': saved '+n+' selection(s).',false);
     renderTabs();
     updateSummary();
   });
   document.getElementById('caf-manual-pick-apply')?.addEventListener('click',async function(){
     persistDraftTab();
     var ids=allSavedIds();
-    if(!ids.length){
-      setMsg('Save at least one tab, or save the current tab before applying.',true);
+    var mimicPicks=allSavedMimicPicks();
+    if(!ids.length&&!mimicPicks.length){
+      setMsg('Save at least one tab (ideas or mimic references) before applying.',true);
       return;
     }
     if(st.busy)return;
     st.busy=true;
-    setMsg('Saving '+ids.length+' idea(s) to planned jobs…',false);
+    var total=ids.length+mimicPicks.length;
+    setMsg('Saving '+total+' selection(s) to planned jobs…',false);
     try{
+      var body={mode:'manual'};
+      if(ids.length)body.idea_ids=ids;
+      if(mimicPicks.length)body.mimic_picks=mimicPicks;
       var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(st.runId)+'/jobs',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({mode:'manual',idea_ids:ids})
+        body:JSON.stringify(body)
       });
       var d=await r.json();
       if(!r.ok||!d.ok)throw new Error((d&&d.message)||(d&&d.error)||'HTTP '+r.status);

@@ -75,6 +75,7 @@ import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
 import { buildSignalPackIdeasForUi } from "../services/signal-pack-ideas-ui.js";
+import { buildSignalPackMimicReferencesForUi } from "../services/signal-pack-mimic-ui.js";
 import { runSceneAssemblyLabNew, runSceneAssemblyLabRegenerate } from "../services/scene-assembly-lab.js";
 import {
   runSceneAssemblyMergeClipsFromStorage,
@@ -144,10 +145,12 @@ import {
 } from "../services/run-candidates-materialize.js";
 import {
   VIDEO_PLAN_CAP_GROUPS,
+  CAROUSEL_PLAN_CAP_GROUPS,
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
   PLAN_CAP_UI_CATEGORIES,
   ALL_PLAN_CAP_UI_GROUPS,
   DEFAULT_VIDEO_FLOW_PLAN_CAP,
+  DEFAULT_CAROUSEL_FLOW_PLAN_CAP,
   DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
   type PlanCapGroupDef,
 } from "../decision_engine/default-plan-caps.js";
@@ -697,17 +700,25 @@ function esc(s: unknown): string {
 }
 
 function planCapInputId(g: PlanCapGroupDef): string {
-  return g.uiChannel === "mimic" ? `plan-cap-mimic-${g.id}` : `plan-cap-video-${g.id}`;
+  if (g.uiChannel === "mimic") return `plan-cap-mimic-${g.id}`;
+  if (g.uiChannel === "carousel") return `plan-cap-carousel-${g.id}`;
+  return `plan-cap-video-${g.id}`;
 }
 
 function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
   const inputId = planCapInputId(g);
   const defaultCap =
-    g.uiChannel === "mimic" ? DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP : DEFAULT_VIDEO_FLOW_PLAN_CAP;
+    g.uiChannel === "mimic"
+      ? DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP
+      : g.uiChannel === "carousel"
+        ? DEFAULT_CAROUSEL_FLOW_PLAN_CAP
+        : DEFAULT_VIDEO_FLOW_PLAN_CAP;
   const title =
     g.uiChannel === "mimic"
-      ? `Planner cap for ${g.keys[0] ?? ""}. Empty = default ${defaultCap}.`
-      : `Planner cap for this video family (all listed flow_type synonyms). Empty = default ${defaultCap}.`;
+      ? `Planner cap for ${g.keys[0] ?? ""}. Empty = default ${defaultCap}. Not counted toward regular carousel run cap.`
+      : g.uiChannel === "carousel"
+        ? `Planner cap for standard carousel family (all listed flow_type synonyms). Empty = default ${defaultCap}.`
+        : `Planner cap for this video family (all listed flow_type synonyms). Empty = default ${defaultCap}.`;
   return `
       <div class="plan-cap-row">
         <label for="${inputId}">${esc(g.label)}</label>
@@ -720,7 +731,7 @@ function renderPlanCapColumnsHtml(): string {
     const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
     const rows = groups.map((g) => renderPlanCapRowHtml(g)).join("");
     return `
-    <div class="plan-cap-col">
+    <div class="plan-cap-col" data-plan-cap-cat="${esc(cat.id)}">
       <div class="plan-cap-col-title">${esc(cat.label)}</div>
       <p class="plan-cap-col-hint">${esc(cat.hint)}</p>
       ${rows}
@@ -1552,6 +1563,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const ideasRaw = signalPack?.ideas_json;
     const signal_pack_ideas_count = Array.isArray(ideasRaw) ? ideasRaw.length : 0;
     const signal_pack_ideas_ui = buildSignalPackIdeasForUi(signalPack);
+    const signal_pack_mimic_references_ui = buildSignalPackMimicReferencesForUi(signalPack);
 
     return {
       ok: true,
@@ -1578,6 +1590,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       signal_pack_overall_candidates: signalPack?.overall_candidates_json ?? [],
       signal_pack_ideas_count,
       signal_pack_ideas_ui,
+      signal_pack_mimic_references_ui,
       signal_pack_meta: signalPack
         ? {
             id: signalPack.id,
@@ -3583,13 +3596,15 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-toolbar{display:flex;flex-wrap:wrap;gap:20px 28px;align-items:flex-start;margin-bottom:12px}
 .plan-cap-toolbar-block{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .plan-cap-toolbar-block .runs-ops-hint{flex:1;min-width:200px;max-width:none;margin:0}
-.plan-cap-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:start}
-@media (max-width:1100px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.plan-cap-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start}
+@media (max-width:1200px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.plan-cap-grid{grid-template-columns:1fr}}
 .plan-cap-col{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surface-2)}
-.plan-cap-grid .plan-cap-col:nth-child(3n+1){border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
-.plan-cap-grid .plan-cap-col:nth-child(3n+2){border-color:rgba(34,197,94,.28);background:linear-gradient(135deg,rgba(34,197,94,.1) 0%,var(--surface-2) 100%)}
-.plan-cap-grid .plan-cap-col:nth-child(3n+3){border-color:rgba(168,85,247,.28);background:linear-gradient(135deg,rgba(168,85,247,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="regular_carousel"]{border-color:rgba(251,146,60,.32);background:linear-gradient(135deg,rgba(251,146,60,.12) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="core_video"]{border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="product_video"]{border-color:rgba(34,197,94,.28);background:linear-gradient(135deg,rgba(34,197,94,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="top_performer_mimic"]{border-color:rgba(168,85,247,.28);background:linear-gradient(135deg,rgba(168,85,247,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-toolbar--mimic{border-top:1px dashed var(--border);padding-top:10px;margin-top:2px}
 .plan-cap-col-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
 .plan-cap-col-hint{font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.4}
 .plan-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;margin-top:8px}
@@ -3615,9 +3630,9 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Planning caps</div>
       <div class="plan-cap-toolbar">
         <div class="plan-cap-toolbar-block">
-          <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max carousel jobs / run</label>
-          <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Saved in System limits for this project. Empty uses server default."/>
-          <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save cap</button>
+          <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max regular carousel jobs / run</label>
+          <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap for FLOW_CAROUSEL only — top-performer mimic carousels are capped separately."/>
+          <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save carousel caps</button>
         </div>
         <p id="plan-cap-carousel-hint" class="runs-ops-hint">Loading…</p>
       </div>
@@ -3627,11 +3642,16 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
           <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
           <button type="button" class="btn-ghost" id="plan-cap-video-save" onclick="saveVideoPlanningCaps()" style="border:1px solid var(--border)">Save video caps</button>
         </div>
-        <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45;flex:1;min-width:240px">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per family (mimic default <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong>). Saving updates System limits for the next Start or Re-plan.</p>
+        <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45;flex:1;min-width:240px">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per video family, <strong>${DEFAULT_CAROUSEL_FLOW_PLAN_CAP}</strong> per regular carousel family, <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong> per mimic family.</p>
       </div>
       <div class="plan-cap-grid">${planCapColumnsHtml}</div>
       <p id="plan-cap-video-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-      <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      <div class="plan-cap-toolbar plan-cap-toolbar--mimic">
+        <div class="plan-cap-toolbar-block">
+          <button type="button" class="btn-ghost" id="plan-cap-mimic-save" onclick="saveMimicPlanningCaps()" style="border:1px solid var(--border)">Save mimic caps</button>
+        </div>
+        <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      </div>
     </div>
   </div>
   <div id="toast-area"></div>
@@ -3700,7 +3720,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
             <input type="radio" name="idea_picking_mode" value="manual" class="idea-pick-input"/>
             <div class="idea-pick-card-body">
               <div class="idea-pick-card-title"><span data-caf-term="ideaPickingManual">Manual picking</span></div>
-              <div class="idea-pick-card-desc">Create the run, then pick ideas by format in a popup — save each tab, then apply overall.</div>
+              <div class="idea-pick-card-desc">Create the run, then pick pack ideas by format and/or top performers to mimic (image, carousel, video) — save each tab, then apply overall.</div>
             </div>
           </label>
         </div>
@@ -3720,6 +3740,8 @@ const LLM_RUN_PICK_TITLE=${JSON.stringify(adminLlmPromptTitle("RUN__Candidates_F
 const DEFAULT_MAX_CAROUSEL=${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_AGG=${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN};
 const DEFAULT_MAX_VIDEO_PER_FLOW=${DEFAULT_VIDEO_FLOW_PLAN_CAP};
+const DEFAULT_MAX_CAROUSEL_PER_FLOW=${DEFAULT_CAROUSEL_FLOW_PLAN_CAP};
+const CAROUSEL_PLAN_CAP_GROUPS=${JSON.stringify(CAROUSEL_PLAN_CAP_GROUPS)};
 const VIDEO_PLAN_CAP_GROUPS=${JSON.stringify(VIDEO_PLAN_CAP_GROUPS)};
 const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS)};
 const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
@@ -4180,9 +4202,14 @@ async function loadPlanningCaps(){
   const vHint=document.getElementById('plan-cap-video-hint');
   const mHint=document.getElementById('plan-cap-mimic-hint');
   const vBtn=document.getElementById('plan-cap-video-save');
+  const mBtn=document.getElementById('plan-cap-mimic-save');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
+  CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){
+    var el=document.getElementById('plan-cap-carousel-'+g.id);
+    if(el)el.placeholder=String(DEFAULT_MAX_CAROUSEL_PER_FLOW);
+  });
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){
     var el=document.getElementById('plan-cap-video-'+g.id);
     if(el)el.placeholder=String(DEFAULT_MAX_VIDEO_PER_FLOW);
@@ -4194,6 +4221,8 @@ async function loadPlanningCaps(){
   if(!SLUG){
     if(cinp){cinp.disabled=true;if(cbtn)cbtn.disabled=true;if(chint)chint.textContent='Pick a project in the sidebar (or ?project=slug) to edit planning caps.';}
     if(aggInp){aggInp.disabled=true;if(vBtn)vBtn.disabled=true;}
+    if(mBtn)mBtn.disabled=true;
+    CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=true;});
     VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
     TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=true;});
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
@@ -4202,6 +4231,8 @@ async function loadPlanningCaps(){
   }
   if(cinp){cinp.disabled=false;if(cbtn)cbtn.disabled=false;}
   if(aggInp){aggInp.disabled=false;if(vBtn)vBtn.disabled=false;}
+  if(mBtn)mBtn.disabled=false;
+  CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=false;});
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=false;});
   if(chint)chint.textContent='Loading…';
@@ -4217,19 +4248,30 @@ async function loadPlanningCaps(){
       if(mHint)mHint.textContent=errMsg;
       return;
     }
+    var ov=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
     if(cinp){
       const cv=d.constraints&&d.constraints.max_carousel_jobs_per_run;
       const cHas=cv!=null&&cv!=='';
       cinp.value=cHas?String(cv):'';
       const cEff=cHas?Number(cv):DEFAULT_MAX_CAROUSEL;
-      if(chint)chint.textContent='Effective when you Start or Re-plan: '+cEff+' carousel job(s) per run ('+(cHas?'from System limits':'server default '+DEFAULT_MAX_CAROUSEL)+'). Clear the field and Save cap to use the default.';
+      var cParts=[];
+      CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){
+        var cel=document.getElementById('plan-cap-carousel-'+g.id);
+        var cset=false,cval=0;
+        for(var ci=0;ci<g.keys.length;ci++){
+          if(Object.prototype.hasOwnProperty.call(ov,g.keys[ci])){cval=ov[g.keys[ci]];cset=true;break;}
+        }
+        if(cel)cel.value=cset?String(cval):'';
+        var ceff=cset?cval:DEFAULT_MAX_CAROUSEL_PER_FLOW;
+        cParts.push(g.label.split('(')[0].trim()+': '+ceff);
+      });
+      if(chint)chint.textContent='Regular carousel aggregate: '+cEff+' / run ('+(cHas?'saved in System limits':'server default '+DEFAULT_MAX_CAROUSEL)+') — FLOW_CAROUSEL only; mimic carousels are separate. Per family: '+cParts.join(' · ')+'.';
     }
     if(aggInp){
       const vv=d.constraints&&d.constraints.max_video_jobs_per_run;
       const vHas=vv!=null&&vv!=='';
       aggInp.value=vHas?String(vv):'';
       var vEffAgg=vHas?Number(vv):DEFAULT_MAX_VIDEO_AGG;
-      var ov=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
       var parts=[];
       VIDEO_PLAN_CAP_GROUPS.forEach(function(g){
         var el=document.getElementById('plan-cap-video-'+g.id);
@@ -4253,7 +4295,7 @@ async function loadPlanningCaps(){
         var meff=mset?mval:DEFAULT_MAX_MIMIC_PER_FLOW;
         mParts.push(g.label.replace(' (not wired)','')+': '+meff);
       });
-      if(mHint)mHint.textContent='Top performer mimic: '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' = off until enabled in allowed flow types + env.';
+      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Requires allowed flow types + MIMIC_IMAGE_ENABLED for carousel/image.';
     }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));
@@ -4281,15 +4323,6 @@ async function saveVideoPlanningCaps(){
       if(!Number.isFinite(tn)||tn<0){showToast('Each video type: non-negative integer or empty.',false);return;}
     }
   }
-  for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
-    var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
-    var minp=document.getElementById('plan-cap-mimic-'+mg.id);
-    var mtr=(minp&&minp.value||'').trim();
-    if(mtr!==''){
-      var mn=parseInt(mtr,10);
-      if(!Number.isFinite(mn)||mn<0){showToast('Each mimic flow: non-negative integer or empty.',false);return;}
-    }
-  }
   if(vBtn)vBtn.disabled=true;
   try{
     var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
@@ -4309,7 +4342,6 @@ async function saveVideoPlanningCaps(){
       }
     }
     mergePlanCapGroup(VIDEO_PLAN_CAP_GROUPS,'plan-cap-video-');
-    mergePlanCapGroup(TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,'plan-cap-mimic-');
     var body={_project:SLUG,max_jobs_per_flow_type:merged};
     if(aggRaw==='')body.max_video_jobs_per_run='';
     else body.max_video_jobs_per_run=parseInt(aggRaw,10);
@@ -4322,11 +4354,58 @@ async function saveVideoPlanningCaps(){
   }catch(err){showToast(err.message,false);}
   finally{if(vBtn)vBtn.disabled=false;}
 }
+async function saveMimicPlanningCaps(){
+  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
+  const mBtn=document.getElementById('plan-cap-mimic-save');
+  for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
+    var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
+    var minp=document.getElementById('plan-cap-mimic-'+mg.id);
+    var mtr=(minp&&minp.value||'').trim();
+    if(mtr!==''){
+      var mn=parseInt(mtr,10);
+      if(!Number.isFinite(mn)||mn<0){showToast('Each mimic flow: non-negative integer or empty.',false);return;}
+    }
+  }
+  if(mBtn)mBtn.disabled=true;
+  try{
+    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    var d0=await r0.json();
+    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
+    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
+    for(var gj=0;gj<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;gj++){
+      var grp=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[gj];
+      var inpg=document.getElementById('plan-cap-mimic-'+grp.id);
+      var rawg=(inpg&&inpg.value||'').trim();
+      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+      if(rawg!==''){
+        var ng=parseInt(rawg,10);
+        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+      }
+    }
+    var body={_project:SLUG,max_jobs_per_flow_type:merged};
+    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var rawText=await r.text();
+    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
+    showToast('Mimic planning caps saved.',true);
+    await loadPlanningCaps();
+  }catch(err){showToast(err.message,false);}
+  finally{if(mBtn)mBtn.disabled=false;}
+}
 async function saveCarouselCap(){
   if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
   const inp=document.getElementById('plan-cap-carousel');
   const btn=document.getElementById('plan-cap-carousel-save');
   const raw=(inp&&inp.value||'').trim();
+  for(var ci=0;ci<CAROUSEL_PLAN_CAP_GROUPS.length;ci++){
+    var cg=CAROUSEL_PLAN_CAP_GROUPS[ci];
+    var cinpg=document.getElementById('plan-cap-carousel-'+cg.id);
+    var ctr=(cinpg&&cinpg.value||'').trim();
+    if(ctr!==''){
+      var cn=parseInt(ctr,10);
+      if(!Number.isFinite(cn)||cn<0){showToast('Regular carousel per-family: non-negative integer or empty.',false);return;}
+    }
+  }
   const body={_project:SLUG};
   if(raw==='')body.max_carousel_jobs_per_run='';
   else{
@@ -4336,11 +4415,26 @@ async function saveCarouselCap(){
   }
   if(btn)btn.disabled=true;
   try{
+    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    var d0=await r0.json();
+    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
+    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
+    for(var gi=0;gi<CAROUSEL_PLAN_CAP_GROUPS.length;gi++){
+      var grp=CAROUSEL_PLAN_CAP_GROUPS[gi];
+      var inpg=document.getElementById('plan-cap-carousel-'+grp.id);
+      var rawg=(inpg&&inpg.value||'').trim();
+      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+      if(rawg!==''){
+        var ng=parseInt(rawg,10);
+        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+      }
+    }
+    body.max_jobs_per_flow_type=merged;
     const r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const rawText=await r.text();
     let d;try{d=JSON.parse(rawText);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
-    showToast('Carousel job cap saved.',true);
+    showToast('Regular carousel caps saved.',true);
     await loadPlanningCaps();
   }catch(err){showToast(err.message,false);}
   finally{if(btn)btn.disabled=false;}
@@ -6946,9 +7040,9 @@ async function loadConfig(){
   h+=fg('max_active_prompt_versions','Max Active Prompt Versions',c.max_active_prompt_versions||'','number');
   h+=fg('default_variation_cap','Default Variation Cap',c.default_variation_cap||1,'number');
   h+=fg('auto_validation_pass_threshold','Auto-validation Pass Threshold',c.auto_validation_pass_threshold||'','number','0.01');
-  h+=fg('max_carousel_jobs_per_run','Max carousel jobs (per run plan)',c.max_carousel_jobs_per_run??'','number');
+  h+=fg('max_carousel_jobs_per_run','Max regular carousel jobs (FLOW_CAROUSEL per run plan)',c.max_carousel_jobs_per_run??'','number');
   h+=fg('max_video_jobs_per_run','Max video/reel jobs (per run plan)',c.max_video_jobs_per_run??'','number');
-  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; overrides defaults — carousel flows default to 10 each, scene assembly + 4 HeyGen paths default to 1)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
+  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; regular carousel default 10, video/mimic families per defaults)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
   h+='<div class="form-actions"><button type="submit" class="btn">Save Constraints</button><span id="constraints-msg" class="form-msg"></span></div>';
   h+='</form></div></div>';
 

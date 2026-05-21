@@ -295,8 +295,23 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     return { ok: true, run: updated };
   });
 
-  const materializeCandidatesSchema = z.discriminatedUnion("mode", [
-    z.object({ mode: z.literal("manual"), idea_ids: z.array(z.string()).min(1) }),
+  const materializeCandidatesSchema = z.union([
+    z
+      .object({
+        mode: z.literal("manual"),
+        idea_ids: z.array(z.string()).optional(),
+        mimic_picks: z
+          .array(
+            z.object({
+              insights_id: z.string().min(1),
+              mimic_kind: z.enum(["image", "carousel", "video"]),
+            })
+          )
+          .optional(),
+      })
+      .refine((b) => (b.idea_ids?.length ?? 0) > 0 || (b.mimic_picks?.length ?? 0) > 0, {
+        message: "idea_ids or mimic_picks required for manual mode",
+      }),
     z.object({ mode: z.literal("llm"), max_ideas: z.number().int().min(1).max(100).optional() }),
     z.object({ mode: z.literal("from_pack_ideas_all") }),
     z.object({ mode: z.literal("from_pack_overall") }),

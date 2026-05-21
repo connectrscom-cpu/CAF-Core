@@ -1,9 +1,11 @@
 import type { AppConfig } from "../config.js";
 import type { ConstraintRow } from "../repositories/core.js";
 import { normalizePerFlowCaps } from "../repositories/core.js";
+import { isTopPerformerMimicFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
 import {
   DEFAULT_CAROUSEL_FLOW_PLAN_CAP,
+  DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
   DEFAULT_VIDEO_FLOW_PLAN_CAP,
   defaultMaxJobsPerFlowType,
 } from "./default-plan-caps.js";
@@ -24,9 +26,15 @@ export function resolvePlanningCaps(
   const perFlowCaps: Record<string, number> = { ...defaultMaxJobsPerFlowType(), ...perFlowOverrides };
   for (const ft of flowTypesInScope) {
     if (perFlowCaps[ft] !== undefined) continue;
-    if (isCarouselFlow(ft)) perFlowCaps[ft] = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
-    else if (isVideoFlow(ft)) perFlowCaps[ft] = DEFAULT_VIDEO_FLOW_PLAN_CAP;
-    else perFlowCaps[ft] = config.DEFAULT_OTHER_FLOW_PLAN_CAP;
+    if (isTopPerformerMimicFlow(ft)) {
+      perFlowCaps[ft] = DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP;
+    } else if (isCarouselFlow(ft)) {
+      perFlowCaps[ft] = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
+    } else if (isVideoFlow(ft)) {
+      perFlowCaps[ft] = DEFAULT_VIDEO_FLOW_PLAN_CAP;
+    } else {
+      perFlowCaps[ft] = config.DEFAULT_OTHER_FLOW_PLAN_CAP;
+    }
   }
   return {
     maxCarouselPlan:

@@ -503,6 +503,35 @@ function buildCandidatesFromSignalPack(
     const candidateId = String(row.candidate_id ?? row.sign ?? row.topic ?? randomUUID());
     const confidence = parseFloat(String(row.confidence ?? row.confidence_score ?? 0.8));
     const platform = String(row.platform ?? row.target_platform ?? "Instagram");
+    const sourceRowIndex1Based = rowIdx + 1;
+
+    const targetFlowType = String(row.target_flow_type ?? "").trim();
+    if (targetFlowType) {
+      if (shouldSkipCandidateForFlow(platform, targetFlowType)) {
+        continue;
+      }
+      const flow = flowsForExpansion.find((f) => f.flow_type === targetFlowType);
+      if (!flow) {
+        logPipelineEvent("warn", "plan", "target_flow_type_not_enabled", {
+          run_id: runId,
+          data: { candidate_id: candidateId, target_flow_type: targetFlowType },
+        });
+        continue;
+      }
+      const flowPlatforms = flow.allowed_platforms
+        ? flow.allowed_platforms.split(",").map((p) => p.trim())
+        : null;
+      if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
+        continue;
+      }
+      pushCandidate(row, targetFlowType, row, {
+        candidateId,
+        confidence,
+        platform,
+        sourceRowIndex1Based,
+      });
+      continue;
+    }
 
     if (videoRouting?.enabled && isVideoFormatRow(row)) {
       pendingVideoRows.push({ rowIdx, row, candidateId, confidence, platform });
@@ -510,7 +539,6 @@ function buildCandidatesFromSignalPack(
     }
 
     const rowFormatBucket = bucketForRowFormat(row);
-    const sourceRowIndex1Based = rowIdx + 1;
 
     for (const flow of flowsForExpansion) {
       if (!flowTypeMatchesRowFormat(flow.flow_type, rowFormatBucket)) {

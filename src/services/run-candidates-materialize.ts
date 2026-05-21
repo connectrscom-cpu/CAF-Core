@@ -17,6 +17,18 @@ import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
 import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 import { getBrandConstraints, getProductProfile, getStrategyDefaults } from "../repositories/project-config.js";
 import { pickBrandSliceForSnapshot, pickStrategySliceForSnapshot } from "./run-context-snapshot.js";
+import {
+  mimicKindToFlowType,
+  type MimicPickKind,
+  findVisualGuidelineEntry,
+  TIER_FOR_KIND,
+} from "./signal-pack-mimic-ui.js";
+import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
+
+export type RunCandidatesMimicPick = {
+  insights_id: string;
+  mimic_kind: MimicPickKind;
+};
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
@@ -44,8 +56,10 @@ export type RunCandidatesMaterializeMode =
 
 export interface RunCandidatesMaterializeBody {
   mode: RunCandidatesMaterializeMode;
-  /** Required when mode === manual */
+  /** Required when mode === manual (unless mimic_picks is non-empty). */
   idea_ids?: string[];
+  /** Top-performer references to plan as mimic-only jobs (manual picker mimic tabs). */
+  mimic_picks?: RunCandidatesMimicPick[];
   /** When mode === llm; defaults to all ideas in the pack (same ceiling as automated rules). */
   max_ideas?: number;
 }
@@ -216,6 +230,81 @@ export function plannerRowsFromIdeaSubset(
   return normalizePlannerRows(mappedLegacy as unknown as Record<string, unknown>[], runIdHint);
 }
 
+function stringField(v: unknown, max = 800): string {
+  if (typeof v !== "string") return "";
+  const t = v.trim();
+  if (!t) return "";
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/** Planner rows for manually picked top-performer mimic references (one row → one mimic flow). */
+export function plannerRowsFromMimicPicks(
+  pack: SignalPackRow,
+  picks: RunCandidatesMimicPick[],
+  runIdHint: string
+): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+
+  for (const pick of picks) {
+    const insightsId = String(pick.insights_id ?? "").trim();
+    if (!insightsId) continue;
+    const dedupeKey = `${pick.mimic_kind}:${insightsId}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+
+    const entry = findVisualGuidelineEntry(pack, insightsId);
+    if (!entry) {
+      throw new Error(`No visual guideline entry for insights_id ${insightsId} — rebuild the signal pack.`);
+    }
+    const tier = stringField(entry.analysis_tier, 80);
+    const expectedTier = TIER_FOR_KIND[pick.mimic_kind];
+    if (tier && expectedTier && tier !== expectedTier) {
+      throw new Error(
+        `insights_id ${insightsId} is tier ${tier}, not ${expectedTier} — pick it under the matching mimic tab.`
+      );
+    }
+
+    const flowType = mimicKindToFlowType(pick.mimic_kind);
+    const rowId = stringField(entry.source_evidence_row_id, 40);
+    const hook = stringField(entry.hook_text_preview, 400);
+    const why = stringField(entry.why_it_worked, 600);
+    const formatPattern = stringField(entry.format_pattern, 120);
+    const platform = platformFromEvidenceKind(stringField(entry.evidence_kind, 80) || "instagram_post");
+    const ideaId = `mimic_${insightsId}`;
+    const contentIdea = hook || why.slice(0, 400) || `Mimic ${pick.mimic_kind} · ${insightsId}`;
+    const format =
+      pick.mimic_kind === "carousel" ? "carousel" : pick.mimic_kind === "video" ? "video" : "post";
+
+    rows.push({
+      idea_id: ideaId,
+      candidate_id: ideaId,
+      sign: ideaId,
+      topic: ideaId,
+      platform,
+      target_platform: platform,
+      format,
+      content_idea: contentIdea,
+      summary: why || contentIdea,
+      confidence: 0.88,
+      confidence_score: 0.88,
+      novelty_score: 0.55,
+      platform_fit: 0.82,
+      past_performance: 0.85,
+      recommended_route: "HUMAN_REVIEW",
+      source_evidence_row_id: rowId || undefined,
+      analysis_tier: tier || expectedTier,
+      grounding_insight_ids: [insightsId],
+      target_flow_type: flowType,
+      manual_mimic_pick: true,
+      mimic_kind: pick.mimic_kind,
+      provenance: "signal_pack.visual_guidelines_pack_v1",
+    });
+  }
+
+  return normalizePlannerRows(rows, runIdHint);
+}
+
 export async function materializeRunCandidates(
   db: Pool,
   config: AppConfig,
@@ -284,10 +373,26 @@ export async function materializeRunCandidates(
     };
   } else if (body.mode === "manual") {
     const ids = body.idea_ids ?? [];
-    if (ids.length === 0) throw new Error("idea_ids required when mode=manual");
-    rows = plannerRowsFromIdeaSubset(pack, ids, run.run_id, config);
-    if (rows.length === 0) throw new Error("No matching ideas for the given idea_ids");
-    provenance = { ...provenance, idea_ids: ids, row_count: rows.length };
+    const mimicPicks = body.mimic_picks ?? [];
+    if (ids.length === 0 && mimicPicks.length === 0) {
+      throw new Error("idea_ids or mimic_picks required when mode=manual");
+    }
+    const merged: Record<string, unknown>[] = [];
+    if (ids.length > 0) {
+      const ideaRows = plannerRowsFromIdeaSubset(pack, ids, run.run_id, config);
+      if (ideaRows.length === 0) throw new Error("No matching ideas for the given idea_ids");
+      merged.push(...ideaRows);
+    }
+    if (mimicPicks.length > 0) {
+      merged.push(...plannerRowsFromMimicPicks(pack, mimicPicks, run.run_id));
+    }
+    rows = merged;
+    provenance = {
+      ...provenance,
+      ...(ids.length ? { idea_ids: ids } : {}),
+      ...(mimicPicks.length ? { mimic_picks: mimicPicks } : {}),
+      row_count: rows.length,
+    };
   } else if (body.mode === "llm") {
     const entries = ideasForLlmPick(pack);
     if (entries.length === 0) {

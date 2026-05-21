@@ -30,13 +30,22 @@ export const DEFAULT_CAROUSEL_FLOW_PLAN_CAP = 10;
 const CAROUSEL_CAP = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
 
 /** Admin Runs → planning caps column groupings. */
-export type PlanCapUiCategory = "core_video" | "product_video" | "top_performer_mimic";
+export type PlanCapUiCategory =
+  | "regular_carousel"
+  | "core_video"
+  | "product_video"
+  | "top_performer_mimic";
 
 export const PLAN_CAP_UI_CATEGORIES: readonly {
   readonly id: PlanCapUiCategory;
   readonly label: string;
   readonly hint: string;
 }[] = [
+  {
+    id: "regular_carousel",
+    label: "Regular carousel",
+    hint: "Standard FLOW_CAROUSEL renderer jobs — not top-performer mimic (separate column).",
+  },
   {
     id: "core_video",
     label: "Core video flows",
@@ -59,9 +68,28 @@ export type PlanCapGroupDef = {
   readonly label: string;
   readonly keys: readonly string[];
   readonly category: PlanCapUiCategory;
-  /** Which admin input namespace (`plan-cap-video-*` vs `plan-cap-mimic-*`). */
-  readonly uiChannel: "video" | "mimic";
+  /** Which admin input namespace (`plan-cap-carousel-*`, `plan-cap-video-*`, `plan-cap-mimic-*`). */
+  readonly uiChannel: "carousel" | "video" | "mimic";
 };
+
+/** Carousel-like flow_type keys (standard renderer only — excludes mimic). */
+const DEFAULT_CAROUSEL_FLOW_GROUPS: readonly (readonly string[])[] = [
+  ["FLOW_CAROUSEL", "Flow_Carousel_Copy", "FLOW_CAROUSEL_COPY", "Carousel", "FLOW_CAROUSEL_STANDARD"],
+];
+
+/**
+ * Standard carousel flows — per-family caps in `max_jobs_per_flow_type`.
+ * Run-level `max_carousel_jobs_per_run` applies to these only (mimic is separate).
+ */
+export const CAROUSEL_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
+  {
+    id: "standard_carousel",
+    label: "Standard carousel (FLOW_CAROUSEL)",
+    category: "regular_carousel",
+    uiChannel: "carousel",
+    keys: DEFAULT_CAROUSEL_FLOW_GROUPS[0]!,
+  },
+] as const;
 
 /**
  * Video flow_type keys grouped for admin UX: one cap applies to every synonym in `keys`.
@@ -208,8 +236,9 @@ export const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   },
 ] as const;
 
-/** All per-flow cap rows for admin grid (video + mimic). */
+/** All per-flow cap rows for admin grid (carousel + video + mimic). */
 export const ALL_PLAN_CAP_UI_GROUPS: readonly PlanCapGroupDef[] = [
+  ...CAROUSEL_PLAN_CAP_GROUPS,
   ...VIDEO_PLAN_CAP_GROUPS,
   ...TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
 ];
@@ -217,11 +246,6 @@ export const ALL_PLAN_CAP_UI_GROUPS: readonly PlanCapGroupDef[] = [
 const DEFAULT_VIDEO_FLOW_GROUPS: readonly (readonly string[])[] = VIDEO_PLAN_CAP_GROUPS.map((g) => g.keys);
 const DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS: readonly (readonly string[])[] =
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => g.keys);
-
-/** Carousel-like flow_type keys (matches decision_engine isCarouselFlow naming). */
-const DEFAULT_CAROUSEL_FLOW_GROUPS: readonly (readonly string[])[] = [
-  ["FLOW_CAROUSEL", "Flow_Carousel_Copy", "FLOW_CAROUSEL_COPY", "Carousel", "FLOW_CAROUSEL_STANDARD"],
-];
 
 export function defaultMaxJobsPerFlowType(): Record<string, number> {
   const out: Record<string, number> = {};

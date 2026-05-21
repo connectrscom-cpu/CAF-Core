@@ -1,12 +1,13 @@
 /** Inner HTML + script for GET /admin/processing — imports, evidence by platform, insights, top-performer passes, profile. */
 
-import { adminCafTermHtml, adminLlmPromptTitleAttr, adminPipelineSketchHtml } from "./admin-ui-shared.js";
+import { ADMIN_CAF_GLOSSARY, adminCafTermHtml, adminLlmPromptTitleAttr, adminPipelineSketchHtml } from "./admin-ui-shared.js";
 
 export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   const T = adminCafTermHtml;
   const PL = adminLlmPromptTitleAttr;
+  const G = ADMIN_CAF_GLOSSARY;
   return `
 <div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="processing">Processing</span></h2>${adminPipelineSketchHtml("evidence", currentSlug)}</div></div>
 <div class="content">
@@ -306,79 +307,132 @@ export function adminProcessingBody(currentSlug: string): string {
             </div>
             <pre id="inspect-api-pre" style="font-size:11px;background:var(--card);padding:10px;border-radius:8px;max-height:460px;overflow:auto;white-space:pre-wrap;border:1px solid var(--border);margin:0;color:var(--text)">Click a button above.</pre>
           </details>
-          <p class="runs-ops-hint" style="margin-bottom:10px">Broad insights are text-only LLM analysis (<span class="mono">broad_llm</span>) per <strong>social platform</strong> evidence row. Source kinds (<span class="mono">source_registry</span>, <span class="mono">scraped_page</span>) stay under <strong>Sources</strong> — they are not run here.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
-            <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all" title="${PL("INSIGHTS__Broad_LLM_v1", "Processing", "All platform tabs — may overwrite if Rescan is on")}">Analyze all selected evidence</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights" title="${PL("INSIGHTS__Broad_LLM_v1", "Processing", "Current platform tab only — may overwrite if Rescan is on")}">Analyze this platform only</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">${T("maxInsightRows", "Max rows")} <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> ${T("rescanInsights", "Rescan")}</label>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-use-cutoff" type="checkbox" checked /> ${T("useCutoff", "Use cutoff")}</label>
-            <span id="broad-eligible-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
-            <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
-          </div>
-          <div id="broad-prompt-panel" style="display:none;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg);margin-bottom:10px">
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:8px">
-              <strong style="font-size:12px">Prompt preview + overrides</strong>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <button type="button" class="btn-ghost btn-sm" id="btn-load-broad-prompt">Load current prompt</button>
-                <button type="button" class="btn-ghost btn-sm" id="btn-reset-broad-prompt">Reset overrides</button>
-                <button type="button" class="btn-ghost btn-sm" id="btn-save-broad-labels">Save labels</button>
+          <p class="runs-ops-hint" style="margin-bottom:12px">Text-only LLM analysis (<span class="mono">broad_llm</span>) per social platform row. Registry / scraped sources belong under <strong>Sources</strong>, not here.</p>
+          <div class="broad-section">
+            <div class="broad-panel broad-platform-wrap">
+              <div class="broad-panel-title">1 · Platform <span>Choose which tab to analyze or view</span></div>
+              <div id="broad-kind-bar" class="broad-kind-tabs"></div>
+            </div>
+            <div class="broad-panel broad-panel--run">
+              <div class="broad-panel-title">2 · Run analysis <span>LLM batch on evidence rows for the active platform</span></div>
+              <div class="broad-action-row">
+                <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all" title="${PL("INSIGHTS__Broad_LLM_v1", "Processing", "All platform tabs — may overwrite if Rescan is on")}">Analyze all platforms</button>
+                <button type="button" class="btn btn-sm btn-ghost" id="btn-run-broad-insights" title="${PL("INSIGHTS__Broad_LLM_v1", "Processing", "Current platform tab only — may overwrite if Rescan is on")}">Analyze this tab only</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt &amp; labels…</button>
+              </div>
+              <div class="broad-options-grid">
+                <label>${T("maxInsightRows", "Max rows")}
+                  <input id="broad-max-rows" type="number" min="1" max="5000" value="800" title="${G.maxInsightRows!.replace(/"/g, "&quot;")}" />
+                </label>
+                <label class="broad-check-row" title="${G.rescanInsights!.replace(/"/g, "&quot;")}">
+                  <input id="broad-rescan" type="checkbox" /> ${T("rescanInsights", "Rescan existing rows")}
+                </label>
+                <label class="broad-check-row" title="${G.useCutoff!.replace(/"/g, "&quot;")}">
+                  <input id="broad-use-cutoff" type="checkbox" checked /> ${T("useCutoff", "Respect cutoff filter")}
+                </label>
+              </div>
+              <div class="broad-status-line">
+                <span id="broad-eligible-msg"></span>
+                <span id="prellm-insight-msg"></span>
+              </div>
+              <div id="broad-prompt-panel" style="display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:8px">
+                  <strong style="font-size:12px">Prompt preview + overrides</strong>
+                  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                    <button type="button" class="btn-ghost btn-sm" id="btn-load-broad-prompt">Load current prompt</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-reset-broad-prompt">Reset overrides</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-save-broad-labels">Save labels</button>
+                  </div>
+                </div>
+                <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
+                  You can edit the prompts and labels below. Use <span class="mono">{{ROWS_JSON}}</span> to control where the batch payload is inserted (otherwise it’s appended).
+                  Labels can also be referenced as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
+                  <span style="display:block;margin-top:6px">If you loaded a prompt preview, don’t keep a hard-coded <span class="mono">Rows (JSON): …</span> snapshot in your override — it will go stale across batches. Prefer <span class="mono">{{ROWS_JSON}}</span> (or leave the default user prompt alone).</span>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+                  <label style="font-size:12px;color:var(--muted)">custom_label_1 <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Angle / Theme" /></label>
+                  <label style="font-size:12px;color:var(--muted)">custom_label_2 <input id="broad-label-2" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
+                  <label style="font-size:12px;color:var(--muted)">custom_label_3 <input id="broad-label-3" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
+                  <span id="broad-prompt-msg" style="font-size:11px;color:var(--muted)"></span>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr;gap:10px">
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">System prompt</div>
+                    <textarea id="broad-system-prompt" rows="6" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+                  </div>
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:6px">User prompt</div>
+                    <textarea id="broad-user-prompt" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+                  </div>
+                </div>
               </div>
             </div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
-              You can edit the prompts and labels below. Use <span class="mono">{{ROWS_JSON}}</span> to control where the batch payload is inserted (otherwise it’s appended).
-              Labels can also be referenced as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
-              <span style="display:block;margin-top:6px">If you loaded a prompt preview, don’t keep a hard-coded <span class="mono">Rows (JSON): …</span> snapshot in your override — it will go stale across batches. Prefer <span class="mono">{{ROWS_JSON}}</span> (or leave the default user prompt alone).</span>
-            </div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-              <label style="font-size:12px;color:var(--muted)">custom_label_1 <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Angle / Theme" /></label>
-              <label style="font-size:12px;color:var(--muted)">custom_label_2 <input id="broad-label-2" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
-              <label style="font-size:12px;color:var(--muted)">custom_label_3 <input id="broad-label-3" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
-              <span id="broad-prompt-msg" style="font-size:11px;color:var(--muted)"></span>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr;gap:10px">
-              <div>
-                <div style="font-size:12px;color:var(--muted);margin-bottom:6px">System prompt</div>
-                <textarea id="broad-system-prompt" rows="6" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+            <div class="broad-panel">
+              <div class="broad-panel-title">3 · Results table <span>Load, sort, and export — no LLM</span></div>
+              <div class="broad-view-grid">
+                <label>Sort
+                  <select id="broad-insight-sort">
+                    <option value="rating_desc">Row rating ↓</option>
+                    <option value="pre_llm_desc">Pre-LLM score ↓</option>
+                    <option value="updated_desc">Updated ↓</option>
+                  </select>
+                </label>
+                <label>Show rows
+                  <select id="broad-insight-limit">
+                    <option value="80">80</option>
+                    <option value="120">120</option>
+                    <option value="200" selected>200</option>
+                  </select>
+                </label>
               </div>
-              <div>
-                <div style="font-size:12px;color:var(--muted);margin-bottom:6px">User prompt</div>
-                <textarea id="broad-user-prompt" rows="8" style="width:100%;font-family:ui-monospace,monospace;font-size:11px"></textarea>
+              <div class="broad-view-actions">
+                <button type="button" class="btn btn-sm" id="btn-reload-broad">Reload table</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy TSV</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the filtered insights table">Copy JSON</button>
+                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
+              </div>
+              <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Status</div>
+                <div id="broad-state" style="font-size:12px;color:var(--muted);line-height:1.45"></div>
+                <details id="broad-meta-debug" style="margin:8px 0 0">
+                  <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (broad meta JSON)</summary>
+                  <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
+                </details>
               </div>
             </div>
           </div>
-          <div id="broad-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-            <button type="button" class="btn-ghost btn-sm" id="btn-reload-broad">Reload broad insights</button>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">Sort
-              <select id="broad-insight-sort" style="font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                <option value="rating_desc">Row rating ↓</option>
-                <option value="pre_llm_desc">Pre-LLM score ↓</option>
-                <option value="updated_desc">Updated ↓</option>
-              </select>
-            </label>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">Rows
-              <select id="broad-insight-limit" style="font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                <option value="80">80</option>
-                <option value="120">120</option>
-                <option value="200" selected>200</option>
-              </select>
-            </label>
-            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy table</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the filtered insights table">Copy JSON</button>
-            <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
-            <span class="runs-ops-hint" style="margin:0;font-size:11px;max-width:640px"><strong>Reload broad insights</strong> re-fetches the table below from the database (no LLM). Use it after a run finishes or if another session wrote rows.</span>
-          </div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:stretch;margin:10px 0">
-            <div style="flex:1;min-width:320px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
-              <div style="font-size:12px;font-weight:600;margin-bottom:6px">State</div>
-              <div id="broad-state" style="font-size:12px;color:var(--muted)"></div>
+          <div id="broad-table-toolbar" class="broad-panel" style="margin:10px 0">
+            <div class="broad-panel-title">4 · Filter table <span>Client-side filters on loaded rows</span></div>
+            <div class="broad-filter-grid">
+              <label>Search
+                <input id="broad-filter-search" type="search" placeholder="Why, hook, hashtags…" />
+              </label>
+              <label>Display kind
+                <select id="broad-filter-kind">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label>Emotion
+                <select id="broad-filter-emotion">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label>Hook type
+                <select id="broad-filter-hook-type">
+                  <option value="">Any</option>
+                </select>
+              </label>
+              <label>Min pre-LLM
+                <input id="broad-filter-min-prellm" type="number" min="0" max="1" step="0.01" placeholder="any" />
+              </label>
+              <label>Min rating
+                <input id="broad-filter-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" />
+              </label>
+              <div class="broad-filter-actions">
+                <p id="broad-filter-summary" class="runs-ops-hint" style="margin:0;font-size:11px;flex:1">Reload the table first, then filter below.</p>
+                <button type="button" class="btn-ghost btn-sm" id="broad-filter-clear">Clear filters</button>
+              </div>
             </div>
-            <details id="broad-meta-debug" style="flex:1;min-width:320px;margin:0">
-              <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (broad meta JSON)</summary>
-              <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
-            </details>
           </div>
           <details id="broad-debug-details" style="display:none;margin:10px 0">
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Last broad run debug (copy/paste this into chat)</summary>
@@ -390,44 +444,6 @@ export function adminProcessingBody(currentSlug: string): string {
               <button type="button" class="btn-ghost btn-sm" id="btn-close-broad-evidence">Close</button>
             </div>
             <pre id="broad-evidence-pre" style="margin:0;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto"></pre>
-          </div>
-          <style>
-            .insights-data-table,.broad-insights-table{width:100%;border-collapse:separate;border-spacing:0;table-layout:auto}
-            .insights-data-table thead th,.broad-insights-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:8px 10px;font-size:11px;white-space:nowrap;vertical-align:bottom}
-            .insights-data-table td,.broad-insights-table td{padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border);font-size:12px}
-            .insights-data-table .insight-cell-clamp,.broad-insights-table .insight-cell-clamp,.insights-data-table .insight-cell-long,.broad-insights-table .insight-cell-long{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;max-width:min(320px,36vw);min-width:min(160px,24vw);line-height:1.4;word-break:break-word;white-space:normal}
-            .insights-data-table .insight-cell-mono,.broad-insights-table .insight-cell-mono{white-space:nowrap;font-variant-numeric:tabular-nums}
-          </style>
-          <div id="broad-table-toolbar" style="margin:10px 0;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
-            <div style="font-size:12px;font-weight:600;margin-bottom:8px">Table filters</div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-              <label style="font-size:12px;color:var(--muted)">Search
-                <input id="broad-filter-search" type="search" placeholder="Why, hook, hashtags, ID..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
-              </label>
-              <label style="font-size:12px;color:var(--muted)">Display kind
-                <select id="broad-filter-kind" style="display:block;margin-top:4px;font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label style="font-size:12px;color:var(--muted)">Emotion
-                <select id="broad-filter-emotion" style="display:block;margin-top:4px;font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label style="font-size:12px;color:var(--muted)">Hook type
-                <select id="broad-filter-hook-type" style="display:block;margin-top:4px;font-size:12px;min-width:120px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label style="font-size:12px;color:var(--muted)">Min pre-LLM
-                <input id="broad-filter-min-prellm" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
-              </label>
-              <label style="font-size:12px;color:var(--muted)">Min rating
-                <input id="broad-filter-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
-              </label>
-              <button type="button" class="btn-ghost btn-sm" id="broad-filter-clear" style="align-self:flex-end">Clear filters</button>
-            </div>
-            <p id="broad-filter-summary" class="runs-ops-hint" style="margin:8px 0 0;font-size:11px">Reload broad insights to filter rows in the table below.</p>
           </div>
           <div id="broad-hscroll-bar" style="display:none;margin:0 0 8px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
@@ -852,6 +868,38 @@ function fmtInsightScore(v){
   if(Number.isNaN(n))return esc(String(v));
   return esc(String(Math.round(n*10000)/10000));
 }
+function fmtInsightDate(v){
+  if(v===null||v===undefined||v==='')return '-';
+  try{
+    var d=new Date(v);
+    if(Number.isNaN(d.getTime()))return esc(String(v));
+    return esc(d.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}));
+  }catch(_e){
+    return esc(String(v));
+  }
+}
+function insightColWidth(key){
+  return INSIGHT_COL_WIDTHS[key]||120;
+}
+function fmtHashtagsCell(v){
+  if(typeof v!=='string'||!v.trim())return '<span class="insight-cell-empty">—</span>';
+  var raw=v.trim();
+  var parts=raw.split(/[,;]+/).map(function(t){return t.trim();}).filter(Boolean);
+  if(!parts.length)parts=[raw];
+  var chips=parts.slice(0,10).map(function(t){
+    var tag=t.replace(/^#/,'').trim();
+    if(!tag)return '';
+    return '<span class="insight-tag">#'+esc(tag)+'</span>';
+  }).filter(Boolean).join('');
+  var extra=parts.length>10?' <span class="insight-cell-empty">+'+(parts.length-10)+'</span>':'';
+  return '<div class="insight-tags-wrap" title="'+escAttr(raw)+'">'+chips+extra+'</div>';
+}
+function fmtInsightLongText(v,lines){
+  var s=typeof v==='string'?v.trim():'';
+  if(!s)return '<span class="insight-cell-empty">—</span>';
+  var cls='insight-cell-clamp'+(lines===3?' insight-clamp-3':'');
+  return '<div class="'+cls+'" title="'+escAttr(s)+'">'+esc(s)+'</div>';
+}
 let selectedImportId='';
 var selectedImportLabel='';
 var importRowsCache=[];
@@ -1151,14 +1199,7 @@ var lastBroadInsightsDisplayRows=null;
 var broadTableFilterTimer=null;
 var broadHscrollSyncing=false;
 var BROAD_INSIGHT_TABLE_COLS=[
-  {key:'insights_id',label:'Insight ID'},
-  {key:'source_evidence_row_id',label:'Evidence row'},
-  {key:'evidence_post_url',label:'Post URL'},
   {key:'evidence_kind',label:'Kind'},
-  {key:'pre_llm_score',label:'Pre-LLM score'},
-  {key:'evidence_rating_score',label:'Row rating'},
-  {key:'llm_model',label:'Model'},
-  {key:'updated_at',label:'Updated'},
   {key:'hook_type',label:'Hook type'},
   {key:'cta_type',label:'CTA type'},
   {key:'caption_style',label:'Caption style'},
@@ -1167,6 +1208,13 @@ var BROAD_INSIGHT_TABLE_COLS=[
   {key:'hook_text',label:'Hook'},
   {key:'primary_emotion',label:'Emotion'},
   {key:'secondary_emotion',label:'Emotion (2)'},
+  {key:'pre_llm_score',label:'Pre-LLM'},
+  {key:'evidence_rating_score',label:'Rating'},
+  {key:'source_evidence_row_id',label:'Evidence row'},
+  {key:'evidence_post_url',label:'Post URL'},
+  {key:'insights_id',label:'Insight ID'},
+  {key:'llm_model',label:'Model'},
+  {key:'updated_at',label:'Updated'},
   {key:'custom_label_1',label:'Label 1'},
   {key:'custom_label_2',label:'Label 2'},
   {key:'custom_label_3',label:'Label 3'},
@@ -1175,21 +1223,21 @@ var BROAD_INSIGHT_TABLE_COLS=[
 var TOP_PERFORMER_INSIGHT_TABLE_COLS=[
   {key:'analysis_tier',label:'Tier'},
   {key:'evidence_kind',label:'Platform'},
+  {key:'hook_type',label:'Hook type'},
+  {key:'cta_type',label:'CTA type'},
+  {key:'caption_style',label:'Caption style'},
+  {key:'hashtags',label:'Hashtags'},
+  {key:'why_it_worked',label:'Why it worked'},
+  {key:'hook_text',label:'Hook'},
+  {key:'primary_emotion',label:'Emotion'},
+  {key:'secondary_emotion',label:'Emotion (2)'},
+  {key:'pre_llm_score',label:'Pre-LLM'},
+  {key:'evidence_rating_score',label:'Rating'},
   {key:'source_evidence_row_id',label:'Row ID'},
   {key:'evidence_post_url',label:'Post URL'},
   {key:'insights_id',label:'Insight ID'},
   {key:'llm_model',label:'Model'},
   {key:'updated_at',label:'Updated'},
-  {key:'pre_llm_score',label:'Pre-LLM'},
-  {key:'evidence_rating_score',label:'Row rating'},
-  {key:'hook_type',label:'Hook type'},
-  {key:'cta_type',label:'CTA type'},
-  {key:'caption_style',label:'Caption style'},
-  {key:'hashtags',label:'Hashtags'},
-  {key:'why_it_worked',label:'Why'},
-  {key:'hook_text',label:'Hook text'},
-  {key:'primary_emotion',label:'Emotion (1)'},
-  {key:'secondary_emotion',label:'Emotion (2)'},
   {key:'custom_label_1',label:'Label 1'},
   {key:'custom_label_2',label:'Label 2'},
   {key:'custom_label_3',label:'Label 3'},
@@ -1197,6 +1245,32 @@ var TOP_PERFORMER_INSIGHT_TABLE_COLS=[
   {key:'aesthetic_analysis_json',label:'Aesthetic'},
   {key:'raw_llm_json',label:'Raw LLM'}
 ];
+var INSIGHT_COL_WIDTHS={
+  analysis_tier:72,
+  insights_id:128,
+  source_evidence_row_id:108,
+  evidence_post_url:200,
+  evidence_kind:88,
+  pre_llm_score:72,
+  evidence_rating_score:72,
+  confidence_score:72,
+  llm_model:96,
+  updated_at:132,
+  hook_type:108,
+  cta_type:120,
+  caption_style:200,
+  hashtags:176,
+  why_it_worked:240,
+  hook_text:168,
+  primary_emotion:96,
+  secondary_emotion:96,
+  custom_label_1:132,
+  custom_label_2:132,
+  custom_label_3:132,
+  risk_flags_json:120,
+  aesthetic_analysis_json:160,
+  raw_llm_json:120
+};
 var lastOpLensPayload=null;
 var lastInspectBody='';
 async function runInspectApi(label,url,needImport){
@@ -3215,8 +3289,7 @@ function rerenderBroadTableFromCache(){
     return;
   }
   wrap.innerHTML=renderInsightTable(filtered,BROAD_INSIGHT_TABLE_COLS,{
-    tableClass:'insights-data-table',
-    minWidth:2800,
+    minWidth:2600,
     rowEvidenceLink:true,
     emptyMsg:'No rows.'
   });
@@ -3330,12 +3403,20 @@ bind('pack-idea-list-select','change',function(){
 function renderInsightTable(rows,cols,opts){
   opts=opts||{};
   if(!rows.length)return '<div class="empty" style="padding:12px">'+(opts.emptyMsg||'No rows.')+'</div>';
-  var minW=opts.minWidth||980;
-  var tblCls='sp-modal-table'+(opts.tableClass?(' '+opts.tableClass):'');
-  var longKeys={why_it_worked:1,hook_text:1,hashtags:1,caption_style:1,custom_label_1:1,custom_label_2:1,custom_label_3:1};
+  var tblCls='insights-data-table'+(opts.tableClass?(' '+opts.tableClass):'');
   var jsonKeys={risk_flags_json:1,aesthetic_analysis_json:1,raw_llm_json:1};
-  var tb='<table class="'+tblCls+'" style="width:max-content;min-width:'+minW+'px;table-layout:auto"><thead><tr>';
-  for(var c=0;c<cols.length;c++)tb+='<th>'+esc(cols[c].label)+'</th>';
+  var shortKeys={hook_type:1,cta_type:1,primary_emotion:1,secondary_emotion:1,analysis_tier:1,evidence_kind:1,llm_model:1};
+  var totalW=0;
+  var cg='<colgroup>';
+  for(var c0=0;c0<cols.length;c0++){
+    var w=insightColWidth(cols[c0].key);
+    totalW+=w;
+    cg+='<col style="width:'+w+'px" />';
+  }
+  cg+='</colgroup>';
+  var minW=Math.max(opts.minWidth||980,totalW);
+  var tb='<table class="'+tblCls+'" style="min-width:'+minW+'px"><thead><tr>';
+  for(var c=0;c<cols.length;c++)tb+='<th scope="col">'+esc(cols[c].label)+'</th>';
   tb+='</tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var x=rows[i];
@@ -3344,39 +3425,58 @@ function renderInsightTable(rows,cols,opts){
       var k=cols[j].key;
       var v=x[k];
       var cell;
-      var tdCls='insight-cell-mono';
+      var tdCls='';
       if(k==='source_evidence_row_id'&&opts.rowEvidenceLink){
+        tdCls='insight-cell-mono';
         cell='<a href="#" class="broad-ev-link" data-row-id="'+esc(String(v||''))+'">'+esc(String(v||''))+'</a>';
       }else if(k==='evidence_post_url'){
+        tdCls='insight-cell-mono';
         var pu=typeof v==='string'?v.trim():'';
-        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:12px" title="'+escAttr(pu)+'">'+esc(pu.length>56?pu.slice(0,53)+'...':pu)+'</a>';
-        else cell='<span style="color:var(--muted)">-</span>';
+        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:11px" title="'+escAttr(pu)+'">'+esc(pu.length>48?pu.slice(0,45)+'…':pu)+'</a>';
+        else cell='<span class="insight-cell-empty">—</span>';
       }else if(k==='evidence_kind'){
+        tdCls='insight-cell-mono';
         var dk=typeof x.evidence_display_kind==='string'?x.evidence_display_kind.trim():'';
         var rawK=typeof v==='string'?v:String(v||'');
-        cell=esc(dk||rawK);
+        cell=esc(dk||rawK||'—');
       }else if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'){
+        tdCls='insight-cell-score';
         cell=fmtInsightScore(v);
-      }else if(k==='insights_id'||k==='llm_model'||k==='updated_at'||k==='created_at'||k==='hook_type'||k==='cta_type'||k==='primary_emotion'||k==='secondary_emotion'||k==='analysis_tier'){
-        cell=esc(typeof v==='string'?v:String(v!=null?v:''));
+      }else if(k==='updated_at'||k==='created_at'){
+        tdCls='insight-cell-mono';
+        cell=fmtInsightDate(v);
+      }else if(k==='hashtags'){
+        tdCls='insight-cell-tags';
+        cell=fmtHashtagsCell(v);
+      }else if(k==='why_it_worked'||k==='caption_style'){
+        tdCls='insight-cell-long';
+        cell=fmtInsightLongText(v,4);
+      }else if(k==='hook_text'){
+        tdCls='insight-cell-long';
+        cell=fmtInsightLongText(v,3);
+      }else if(k==='custom_label_1'||k==='custom_label_2'||k==='custom_label_3'){
+        tdCls='insight-cell-long';
+        cell=fmtInsightLongText(v,2);
       }else if(jsonKeys[k]){
         tdCls='insight-cell-long';
         var js=v!==undefined&&v!==null?JSON.stringify(v):'';
         var full=js;
-        if(js.length>96)js=js.slice(0,93)+'...';
-        cell='<span class="mono" style="font-size:10px" title="'+escAttr(full)+'">'+esc(js||'-')+'</span>';
-      }else if(longKeys[k]&&typeof v==='string'&&v.length){
-        tdCls='insight-cell-long';
-        cell='<div class="insight-cell-clamp" title="'+escAttr(v)+'">'+esc(v)+'</div>';
+        if(js.length>96)js=js.slice(0,93)+'…';
+        cell=js?('<span class="mono" style="font-size:10px" title="'+escAttr(full)+'">'+esc(js)+'</span>'):'<span class="insight-cell-empty">—</span>';
+      }else if(shortKeys[k]||k==='insights_id'){
+        tdCls='insight-cell-mono';
+        var sv=typeof v==='string'?v.trim():String(v!=null?v:'');
+        cell=sv?esc(sv):'<span class="insight-cell-empty">—</span>';
       }else{
+        tdCls='insight-cell-mono';
         cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
       }
-      tb+='<td class="'+tdCls+'">'+cell+'</td>';
+      tb+='<td'+(tdCls?' class="'+tdCls+'"':'')+'>'+cell+'</td>';
     }
     tb+='</tr>';
   }
   tb+='</tbody></table>';
-  return tb;
+  return cg+tb;
 }
 
 function ideaSelKey(){
@@ -3930,8 +4030,7 @@ async function loadDeepInsightTable(elId,tier,tabKey){
     var rows=d.insights||[];
     if(tabKey)tpSetTabCount(tabKey,rows.length);
     el.innerHTML=rows.length?renderInsightTable(rows,TOP_PERFORMER_INSIGHT_TABLE_COLS,{
-      tableClass:'insights-data-table',
-      minWidth:3400,
+      minWidth:3200,
       emptyMsg:'No top-performer rows for this pass yet.'
     }):'<div class="empty" style="padding:12px">No rows yet — run the pass on the left.</div>';
   }catch(e){
