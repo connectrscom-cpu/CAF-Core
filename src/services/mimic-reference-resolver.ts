@@ -99,20 +99,47 @@ function listGuidelineTiers(derivedGlobals: Record<string, unknown> | null): str
 function resolveGuidelineEntry(
   derived: Record<string, unknown> | null,
   insightIds: string[],
-  primaryTier: string
+  primaryTier: string,
+  flowType?: string
 ): { entry: Record<string, unknown>; resolvedTier: string; reference_tier_fallback: boolean } | null {
   const tiersToTry = [primaryTier, ...(MIMIC_TIER_FALLBACKS[primaryTier] ?? [])];
   for (const tier of tiersToTry) {
     const entry = findGuidelineEntry(derived, insightIds, tier);
-    if (entry) {
-      return {
-        entry,
-        resolvedTier: tier,
-        reference_tier_fallback: tier !== primaryTier,
-      };
+    if (!entry) continue;
+    if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE && entryReferenceFrameCount(entry) > 1) {
+      continue;
     }
+    return {
+      entry,
+      resolvedTier: tier,
+      reference_tier_fallback: tier !== primaryTier,
+    };
   }
   return null;
+}
+
+/** Archived inspection frames on a visual-guidelines pack entry. */
+export function entryReferenceFrameCount(entry: Record<string, unknown>): number {
+  const media =
+    compactStoredInspectionMedia(entry.inspection_media) ??
+    compactStoredInspectionMedia(entry.stored_inspection_media_json);
+  if (!media?.items?.length) return 0;
+  return media.items.filter((it) => String(it.vision_fetch_url ?? it.public_url ?? "").trim()).length;
+}
+
+/** True when idea grounding resolves to a single-frame deep (or eligible fallback) reference. */
+export function mimicImageReferenceEligible(
+  derived: Record<string, unknown> | null,
+  insightIds: string[]
+): boolean {
+  if (insightIds.length === 0) return false;
+  const resolved = resolveGuidelineEntry(
+    derived,
+    insightIds,
+    "top_performer_deep",
+    FLOW_TOP_PERFORMER_MIMIC_IMAGE
+  );
+  return resolved != null && entryReferenceFrameCount(resolved.entry) <= 1;
 }
 
 export function resolveMimicReferenceFromLineage(
@@ -132,7 +159,7 @@ export function resolveMimicReferenceFromLineage(
       : lineage.grounding.map((g) => String(g.insight_row.insights_id ?? "").trim()).filter(Boolean);
 
   const derived = asRecord(lineage.signal_pack?.derived_globals_json);
-  const resolvedGuideline = resolveGuidelineEntry(derived, insightIds, tier);
+  const resolvedGuideline = resolveGuidelineEntry(derived, insightIds, tier, flowType);
 
   let entry = resolvedGuideline?.entry ?? null;
   let resolvedTier = tier;

@@ -3,6 +3,7 @@ import {
   aestheticSlideRecords,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
+import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
@@ -25,8 +26,10 @@ export function classifyMimicMode(
     return { mode: "template_bg" };
   }
 
+  const refFrames = entryReferenceFrameCount(entry);
+  const slideCount = Math.max(slides.length, refFrames, 1);
   const slide_plans: MimicSlidePlan[] = [];
-  for (let i = 0; i < Math.max(slides.length, 1); i++) {
+  for (let i = 0; i < slideCount; i++) {
     const s = slides[i] ?? {};
     const density = String(s.text_density ?? "").toLowerCase();
     const role = String(s.image_or_photo_role ?? "").toLowerCase();
@@ -35,7 +38,7 @@ export function classifyMimicMode(
     slide_plans.push({
       slide_index: i + 1,
       render_mode: fullBleed ? "full_bleed" : "hbs",
-      reference_index: Math.min(i + 1, slides.length || 1),
+      reference_index: Math.min(i + 1, refFrames || slides.length || 1),
     });
   }
 

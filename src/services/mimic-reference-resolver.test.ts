@@ -43,7 +43,7 @@ const carouselEntry = {
 };
 
 describe("resolveMimicReferenceFromLineage", () => {
-  it("falls back to top_performer_carousel when image mimic has no deep tier", () => {
+  it("falls back to single-frame top_performer_carousel when image mimic has no deep tier", () => {
     const resolved = resolveMimicReferenceFromLineage(
       FLOW_TOP_PERFORMER_MIMIC_IMAGE,
       lineageWithPack([carouselEntry]),
@@ -52,6 +52,34 @@ describe("resolveMimicReferenceFromLineage", () => {
     expect(resolved.analysis_tier).toBe("top_performer_carousel");
     expect(resolved.reference_tier_fallback).toBe(true);
     expect(resolved.reference_items[0]?.vision_fetch_url).toContain("slide_01.jpg");
+  });
+
+  it("does not fall back to multi-frame carousel for image mimic", () => {
+    expect(() =>
+      resolveMimicReferenceFromLineage(
+        FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+        lineageWithPack([
+          {
+            ...carouselEntry,
+            inspection_media: {
+              items: [
+                {
+                  index: 1,
+                  role: "carousel_slide",
+                  vision_fetch_url: "https://example.com/slide_01.jpg",
+                },
+                {
+                  index: 2,
+                  role: "carousel_slide",
+                  vision_fetch_url: "https://example.com/slide_02.jpg",
+                },
+              ],
+            },
+          },
+        ]),
+        { grounding_insight_ids: ["ins_c8b866cae1_22900_broad"] }
+      )
+    ).toThrow(/top_performer_deep/);
   });
 
   it("resolves carousel mimic from pack when idea is broad-grounded", () => {

@@ -69,6 +69,20 @@ describe("classifyMimicMode", () => {
     expect(r.mode).toBe("carousel_visual");
     expect(r.slide_plans?.[0]?.render_mode).toBe("full_bleed");
   });
+
+  it("plans one slide per archived reference frame when aesthetic slides are missing", () => {
+    const entry = {
+      stored_inspection_media_json: {
+        items: [
+          { index: 1, vision_fetch_url: "https://x/1.jpg" },
+          { index: 2, vision_fetch_url: "https://x/2.jpg" },
+        ],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.slide_plans).toHaveLength(2);
+    expect(r.slide_plans?.[1]?.reference_index).toBe(2);
+  });
 });
 
 describe("mimic-payload", () => {

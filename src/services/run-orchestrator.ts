@@ -51,6 +51,7 @@ import {
   type LearningSliceInput,
 } from "./run-context-snapshot.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import { shouldSkipMimicFlowExpansion } from "./mimic-planning-guards.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
@@ -149,6 +150,11 @@ export async function startRun(
     const candidates = buildCandidatesFromSignalPack(overallCandidates, enabledFlows, run.run_id, {
       videoRouting,
       productHeygenModes,
+      derivedGlobals: (pack.derived_globals_json &&
+      typeof pack.derived_globals_json === "object" &&
+      !Array.isArray(pack.derived_globals_json)
+        ? (pack.derived_globals_json as Record<string, unknown>)
+        : null),
       videoPlanningCaps: videoRouting.enabled
         ? {
             maxVideoPlan: planningCaps.maxVideoPlan,
@@ -447,6 +453,7 @@ function buildCandidatesFromSignalPack(
     videoRouting?: VideoRoutingConfig;
     productHeygenModes?: Map<string, ProductHeygenMode | null>;
     videoPlanningCaps?: { maxVideoPlan: number; perFlowCaps: Record<string, number> };
+    derivedGlobals?: Record<string, unknown> | null;
   }
 ): CandidateInput[] {
   const candidates: CandidateInput[] = [];
@@ -553,6 +560,10 @@ function buildCandidatesFromSignalPack(
         : null;
 
       if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
+        continue;
+      }
+
+      if (shouldSkipMimicFlowExpansion(flow.flow_type, row, opts?.derivedGlobals)) {
         continue;
       }
 
