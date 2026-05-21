@@ -57,6 +57,18 @@ describe("classifyMimicMode", () => {
     expect(r.slide_plans?.[0]?.render_mode).toBe("full_bleed");
     expect(r.slide_plans?.[1]?.render_mode).toBe("hbs");
   });
+
+  it("defaults missing photo role to full_bleed when text density is not high", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        slides: [{ text_density: "medium" }],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("carousel_visual");
+    expect(r.slide_plans?.[0]?.render_mode).toBe("full_bleed");
+  });
 });
 
 describe("mimic-payload", () => {

@@ -49,9 +49,11 @@ import { prepareMimicDraftPackage, ensureMimicReferenceBeforeCopyGeneration } fr
 import { processImageMimicJob } from "./mimic-image-job.js";
 import {
   ensureMimicCarouselBackground,
+  extractMimicSlideBackground,
   renderMimicCarouselSlideFullBleed,
   slideMimicRenderMode,
 } from "./mimic-carousel-render.js";
+import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -1539,13 +1541,26 @@ async function processCarouselJob(
   }
 
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
-  const template =
-    mimicPayload?.mode === "template_bg"
-      ? "carousel_mimic_bg"
-      : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
-          allowedTemplates: projectPinnedTemplates,
-          implicitPickSeed: job.task_id,
-        });
+  const isMimicCarousel =
+    config.MIMIC_IMAGE_ENABLED &&
+    isTopPerformerMimicCarouselFlow(job.flow_type) &&
+    Boolean(mimicPayload);
+  let template = isMimicCarousel
+    ? "carousel_mimic_bg"
+    : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
+        allowedTemplates: projectPinnedTemplates,
+        implicitPickSeed: job.task_id,
+      });
+  if (isMimicCarousel && mimicPayload) {
+    const evidenceTemplate = await ensureMimicEvidenceCarouselTemplate(
+      db,
+      config,
+      job.project_id,
+      { id: job.id, task_id: job.task_id },
+      mimicPayload
+    );
+    template = evidenceTemplate.template_base;
+  }
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectRow = await getProjectById(db, job.project_id);
   const projectDisplayName =
@@ -1662,7 +1677,16 @@ async function processCarouselJob(
         continue;
       }
 
-      const ctx = buildSlideRenderContext(renderBase, usableSlides, i, {
+      let slideRenderBase = renderBase;
+      if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
+        const slideBg =
+          (await extractMimicSlideBackground(db, config, job, mimicPayload, i)) ?? mimicBackgroundUrl;
+        if (slideBg) {
+          slideRenderBase = { ...renderBase, background_image_url: slideBg };
+        }
+      }
+
+      const ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {
         instagramHandle: projectInstagramHandle,
         projectDisplayName,
       });

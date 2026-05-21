@@ -30,7 +30,8 @@ export function classifyMimicMode(
     const s = slides[i] ?? {};
     const density = String(s.text_density ?? "").toLowerCase();
     const role = String(s.image_or_photo_role ?? "").toLowerCase();
-    const fullBleed = density !== "high" && role && role !== "none";
+    // Text-only slides use template overlay; otherwise default to full-bleed mimic when role is missing.
+    const fullBleed = role !== "none" && density !== "high";
     slide_plans.push({
       slide_index: i + 1,
       render_mode: fullBleed ? "full_bleed" : "hbs",

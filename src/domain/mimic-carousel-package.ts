@@ -4,8 +4,24 @@
  */
 import type { MimicMode, MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "./mimic-payload.js";
 import { pickMimicPayload } from "./mimic-payload.js";
+import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 
 export type MimicCarouselRenderStrategy = "template_background" | "per_slide_mimic";
+
+export interface MimicCarouselSlideColorTokens {
+  background: string | null;
+  primary_text: string | null;
+  accent: string[] | null;
+}
+
+export interface MimicCarouselSlideGuideline {
+  slide_index: number;
+  layout_template: string | null;
+  visual_description: string | null;
+  text_density: string | null;
+  image_or_photo_role: string | null;
+  color_tokens: MimicCarouselSlideColorTokens | null;
+}
 
 export interface MimicCarouselVisualGuideline {
   format_pattern: string | null;
@@ -16,6 +32,8 @@ export interface MimicCarouselVisualGuideline {
   deck_visual_system: Record<string, unknown> | null;
   replication_blueprint: Record<string, unknown> | null;
   evidence_post_url: string | null;
+  /** Per-slide layout / visual cues from top-performer deep analysis (no signed URLs). */
+  slides: MimicCarouselSlideGuideline[] | null;
 }
 
 export interface MimicCarouselVisualReference {
@@ -56,8 +74,45 @@ function renderStrategyForMode(mode: MimicMode): MimicCarouselRenderStrategy {
 }
 
 /** Slim top-performer vision row for the execution package (no signed URLs in guideline slice). */
+function isHexColor(value: string): boolean {
+  return /^#[0-9a-fA-F]{3,8}$/.test(value.trim());
+}
+
+function slimColorTokens(raw: unknown): MimicCarouselSlideColorTokens | null {
+  const ct = asRecord(raw);
+  if (!ct) return null;
+  const background = String(ct.background ?? "").trim();
+  const primary_text = String(ct.primary_text ?? "").trim();
+  const accentRaw = Array.isArray(ct.accent) ? ct.accent : [];
+  const accent = accentRaw
+    .map((v) => String(v ?? "").trim())
+    .filter((v) => isHexColor(v));
+  if (!isHexColor(background) && !isHexColor(primary_text) && accent.length === 0) {
+    return null;
+  }
+  return {
+    background: isHexColor(background) ? background : null,
+    primary_text: isHexColor(primary_text) ? primary_text : null,
+    accent: accent.length > 0 ? accent : null,
+  };
+}
+
+function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCarouselSlideGuideline[] {
+  const records = aestheticSlideRecords(entry);
+  if (records.length === 0) return [];
+  return records.map((s, i) => ({
+    slide_index: Number(s.slide_index ?? i + 1) || i + 1,
+    layout_template: String(s.layout_template ?? "").trim() || null,
+    visual_description: String(s.visual_description ?? "").trim() || null,
+    text_density: String(s.text_density ?? "").trim() || null,
+    image_or_photo_role: String(s.image_or_photo_role ?? "").trim() || null,
+    color_tokens: slimColorTokens(s.color_tokens),
+  }));
+}
+
 export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
   const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
+  const slides = slimSlideGuidelinesFromEntry(entry);
   return {
     format_pattern: String(aes.format_pattern ?? entry.format_pattern ?? "").trim() || null,
     format_key: String(entry.format_key ?? "").trim() || null,
@@ -67,6 +122,7 @@ export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): Mi
     deck_visual_system: asRecord(entry.deck_visual_system),
     replication_blueprint: asRecord(entry.replication_blueprint),
     evidence_post_url: String(entry.evidence_post_url ?? "").trim() || null,
+    slides: slides.length > 0 ? slides : null,
   };
 }
 

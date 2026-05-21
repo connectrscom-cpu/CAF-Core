@@ -74,4 +74,14 @@ describe("format-routing", () => {
     expect(planningLaneForFlowType(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL)).toBe("mimic_carousel");
     expect(planningLaneForFlowType("FLOW_CAROUSEL")).toBe("carousel");
   });
+
+  it("routes post-format ideas to mimic image flow", () => {
+    expect(flowTypeMatchesRowFormat(FLOW_TOP_PERFORMER_MIMIC_IMAGE, "post")).toBe(true);
+    const c = cand({
+      candidate_id: "a_FLOW_TOP_PERFORMER_MIMIC_IMAGE",
+      flow_type: FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+      payload: { idea_id: "a", format: "post" },
+    });
+    expect(isPrimaryFormatMatch(c)).toBe(true);
+  });
 });

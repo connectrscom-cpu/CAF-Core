@@ -64,12 +64,13 @@ export function ideaIdFromCandidate(c: ScoredCandidate): string {
   return cid;
 }
 
-/** Idea declares a format and the flow family matches (carousel↔carousel, video↔video, post/thread/other↔other). */
+/** Idea declares a format and the flow family matches (carousel↔carousel, video↔video, post↔post, thread/other↔other). */
 export function isPrimaryFormatMatch(c: ScoredCandidate): boolean {
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format);
   if (!ideaBucket) return false;
   const flowBucket = bucketForFlowType(c.flow_type);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
+    if (ideaBucket === flowBucket) return true;
     return flowBucket === "other";
   }
   return ideaBucket === flowBucket;
@@ -83,6 +84,7 @@ export function flowTypeMatchesRowFormat(
   if (!ideaBucket) return true;
   const flowBucket = bucketForFlowType(flowType);
   if (ideaBucket === "post" || ideaBucket === "thread" || ideaBucket === "other") {
+    if (ideaBucket === flowBucket) return true;
     return flowBucket === "other";
   }
   return ideaBucket === flowBucket;
