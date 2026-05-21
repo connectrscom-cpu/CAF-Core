@@ -234,19 +234,19 @@ export default function PipelinePage() {
                     <tr>
                       <Th>Pack</Th>
                       <Th>Run</Th>
-                      <Th>Jobs</Th>
+                      <Th>Ideas</Th>
                       <Th>Created</Th>
                       <Th></Th>
                     </tr>
                   </thead>
                   <tbody>
                     {packs.map((p) => {
-                      const nJobs = Number(p.jobs_count ?? p.ideas_count ?? 0);
+                      const nIdeas = Number(p.ideas_count ?? p.jobs_count ?? 0);
                       return (
                         <tr key={p.id}>
                           <Td>{p.upload_filename ?? p.id.slice(0, 8)}</Td>
                           <Td className="job-id-cell">{p.run_id}</Td>
-                          <Td>{nJobs}</Td>
+                          <Td>{nIdeas}</Td>
                           <Td>{fmt(p.created_at)}</Td>
                           <Td>
                             <Link href={navHref(`/pipeline/pack/${p.id}`)}>Open</Link>

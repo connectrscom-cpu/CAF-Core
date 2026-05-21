@@ -13,7 +13,7 @@ import { CafPageHeader } from "@/components/CafOptionsMenu";
 import { CafTerm } from "@/components/CafTerm";
 import { JsonTreeViewer } from "@/components/JsonTreeViewer";
 
-type PackView = "jobs" | "hashtags" | "visual" | "raw";
+type PackView = "ideas" | "hashtags" | "visual" | "raw";
 
 type HashtagLeaderboardEntry = {
   hashtag: string;
@@ -47,7 +47,7 @@ export default function SignalPackDetailPage() {
   const qs = useMemo(() => (slug ? `?project=${encodeURIComponent(slug)}` : ""), [slug]);
 
   const [pack, setPack] = useState<Record<string, unknown> | null>(null);
-  const [view, setView] = useState<PackView>("jobs");
+  const [view, setView] = useState<PackView>("ideas");
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -128,17 +128,19 @@ export default function SignalPackDetailPage() {
     return visualPack?.inputs_import_id ?? null;
   }, [derived, visualPack?.inputs_import_id]);
 
-  const jobsJson = useMemo(() => {
-    const jobs = pack?.jobs_json;
-    if (Array.isArray(jobs) && jobs.length > 0) {
-      return jobs.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
-    }
+  const ideasJson = useMemo(() => {
     const ideas = pack?.ideas_json;
-    if (!Array.isArray(ideas)) return [] as Record<string, unknown>[];
-    return ideas.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
-  }, [pack]);
+    if (Array.isArray(ideas) && ideas.length > 0) {
+      return ideas.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+    }
+    const legacyJobs = pack?.jobs_json;
+    if (Array.isArray(legacyJobs) && legacyJobs.length > 0) {
+      return legacyJobs.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+    }
+    return [] as Record<string, unknown>[];
+  }, [pack?.ideas_json, pack?.jobs_json]);
 
-  const rows = jobsJson;
+  const rows = ideasJson;
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -202,7 +204,7 @@ export default function SignalPackDetailPage() {
         chips={
           <>
             <span>{(pack?.upload_filename as string) || packId.slice(0, 8)}</span>
-            <span>{jobsJson.length} jobs</span>
+            <span>{ideasJson.length} ideas</span>
             {hashtagLeaderboard.length > 0 ? <span>{hashtagLeaderboard.length} hashtags</span> : null}
             {entryCount > 0 ? <span>{entryCount} visual entries</span> : null}
           </>
@@ -215,8 +217,8 @@ export default function SignalPackDetailPage() {
         {error && <p style={{ color: "var(--red)", marginBottom: 12 }}>{error}</p>}
         {!slug && <p style={{ color: "var(--muted)" }}>Select a project in the sidebar.</p>}
 
-        {view === "jobs" && (
-          <JobsPanel filter={filter} setFilter={setFilter} rows={rows} filtered={filtered} columns={columns} />
+        {view === "ideas" && (
+          <IdeasPanel filter={filter} setFilter={setFilter} rows={rows} filtered={filtered} columns={columns} />
         )}
 
         {view === "hashtags" && (
@@ -251,7 +253,7 @@ export default function SignalPackDetailPage() {
 
 function ViewTabs({ view, setView }: { view: PackView; setView: (v: PackView) => void }) {
   const tabs: { id: PackView; label: string }[] = [
-    { id: "jobs", label: "Jobs" },
+    { id: "ideas", label: "Ideas" },
     { id: "hashtags", label: "Hashtags" },
     { id: "visual", label: "Visual guidelines" },
     { id: "raw", label: "Raw data" },
@@ -289,7 +291,7 @@ function ViewTabs({ view, setView }: { view: PackView; setView: (v: PackView) =>
   );
 }
 
-function JobsPanel(props: {
+function IdeasPanel(props: {
   filter: string;
   setFilter: (s: string) => void;
   rows: Record<string, unknown>[];
@@ -305,7 +307,7 @@ function JobsPanel(props: {
           type="search"
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Search jobs…"
+          placeholder="Search ideas…"
           className="filter-input"
           style={{ maxWidth: 280 }}
         />
@@ -343,7 +345,7 @@ function JobsPanel(props: {
         </HorizontalScrollTable>
       )}
 
-      {rows.length === 0 && <p style={{ color: "var(--muted)" }}>This pack has no jobs yet.</p>}
+      {rows.length === 0 && <p style={{ color: "var(--muted)" }}>This pack has no ideas yet.</p>}
     </>
   );
 }

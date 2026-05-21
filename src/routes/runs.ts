@@ -64,6 +64,10 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     signal_pack_id: z.string().uuid({ message: "signal_pack_id must be a UUID of an existing signal pack" }),
     source_window: z.string().optional(),
     metadata_json: z.record(z.unknown()).optional(),
+    /** How to pick ideas from the pack into planned_jobs_json before Start. */
+    idea_picking_mode: z.enum(["rules", "llm", "manual"]).optional().default("rules"),
+    /** When idea_picking_mode is llm; default 40 in materialize. */
+    llm_max_ideas: z.number().int().min(1).max(100).optional(),
   });
 
   app.post("/v1/runs/:project_slug", async (request, reply) => {
@@ -88,6 +92,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     const runId = body.data.run_id ?? `RUN_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`;
 
     const label = trimRunDisplayName(body.data.name);
+    const ideaPickingMode = body.data.idea_picking_mode ?? "rules";
     const run = await createRun(db, {
       run_id: runId,
       project_id: project.id,
@@ -96,10 +101,45 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       metadata_json: {
         ...(body.data.metadata_json ?? {}),
         ...(label ? { display_name: label } : {}),
+        idea_picking_mode: ideaPickingMode,
       },
     });
 
-    return { ok: true, run };
+    let materialize: Awaited<ReturnType<typeof materializeRunCandidates>> | null = null;
+    let materialize_error: string | null = null;
+    if (ideaPickingMode === "rules") {
+      try {
+        materialize = await materializeRunCandidates(db, config, project.id, run, pack, {
+          mode: "from_pack_ideas_all",
+        });
+      } catch (e) {
+        materialize_error = e instanceof Error ? e.message : String(e);
+      }
+    } else if (ideaPickingMode === "llm") {
+      try {
+        materialize = await materializeRunCandidates(db, config, project.id, run, pack, {
+          mode: "llm",
+          ...(body.data.llm_max_ideas != null ? { max_ideas: body.data.llm_max_ideas } : {}),
+        });
+      } catch (e) {
+        materialize_error = e instanceof Error ? e.message : String(e);
+      }
+    }
+
+    const fresh = materialize ? await getRunById(db, run.id) : run;
+
+    return {
+      ok: true,
+      run: fresh,
+      idea_picking_mode: ideaPickingMode,
+      materialize: materialize
+        ? {
+            planner_rows: materialize.planner_rows,
+            candidates_provenance: materialize.candidates_provenance,
+          }
+        : null,
+      materialize_error,
+    };
   });
 
   // ── Run output review (holistic; editorial analysis ingests this) ────

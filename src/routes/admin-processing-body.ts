@@ -1,8 +1,33 @@
 /** Inner HTML + script for GET /admin/processing — imports, evidence by platform, insights, top-performer passes, profile. */
 
+import {
+  DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,
+} from "../decision_engine/default-plan-caps.js";
+import { adminCafTermHtml } from "./admin-ui-shared.js";
+
+function escHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function processingMimicCapsToolbarHtml(): string {
+  return TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => {
+    const short = g.label.replace(/^Top performer mimic — /i, "Mimic ");
+    return `<label style="font-size:11px;white-space:nowrap">${escHtml(short)} <input type="number" id="proc-cap-mimic-${escHtml(g.id)}" min="0" step="1" placeholder="${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}" title="Max mimic jobs per run (applied when you Start a run). Empty = default ${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}." style="width:52px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text)"/></label>`;
+  }).join("");
+}
+
 export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
+  const mimicCapGroupsJson = JSON.stringify(
+    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.map((g) => ({ id: g.id, keys: [...g.keys] })),
+  );
+  const T = adminCafTermHtml;
   return `
 <div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="processing">Processing</span></h2></div></div>
 <div class="content">
@@ -20,6 +45,21 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
         </div>
         <span id="imports-hint" class="caf-stat-chips"></span>
+      </div>
+      <div id="processing-pack-toolbar" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg)">
+        <label style="font-size:12px;font-weight:500;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          <span data-caf-term="signalPack">Signal pack</span>
+          <select id="processing-pack-select" style="min-width:min(280px,50vw);max-width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);font-size:12px">
+            <option value="">Loading…</option>
+          </select>
+        </label>
+        <button type="button" class="btn-ghost btn-sm" id="btn-processing-pack-reload" title="Reload signal packs for this project">Reload</button>
+        <span id="processing-pack-chip" class="caf-stat-chips"></span>
+        <span style="font-size:11px;color:var(--muted);opacity:.7">|</span>
+        <span style="font-size:11px;font-weight:600;color:var(--muted)" title="Planner caps applied when you Start a run (jobs are created at run time, not in Processing)">${T("mimicCaps", "Mimic caps")}</span>
+        ${processingMimicCapsToolbarHtml()}
+        <button type="button" class="btn-ghost btn-sm" id="btn-save-proc-mimic-caps">Save</button>
+        <span id="processing-mimic-cap-hint" style="font-size:11px;color:var(--muted)"></span>
       </div>
       <div id="processing-activity-wrap" style="display:none;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:11px;line-height:1.45">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px">
@@ -39,18 +79,18 @@ export function adminProcessingBody(currentSlug: string): string {
             1 Select import <span class="badge badge-y" id="step-badge-select">in progress</span>
           </button>
           <button type="button" class="caf-step-pill step-btn" id="step-evidence" data-step="evidence" title="Filter evidence using profile gates + cutoff (no LLM).">
-            2 Filter evidence <span class="badge badge-b" id="step-badge-evidence">not started</span>
+            2 ${T("filterEvidence", "Filter evidence")} <span class="badge badge-b" id="step-badge-evidence">not started</span>
           </button>
           <button type="button" class="caf-step-pill step-btn" id="step-insights" data-step="insights" title="Run broad insights and top-performer extraction.">
             3 <span data-caf-term="insights">Insights</span> <span class="badge badge-b" id="step-badge-insights">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="Generate and curate jobs from insights.">
-            4 Build <span data-caf-term="jobs">jobs</span> <span class="badge badge-b" id="step-badge-ideas">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="Generate and curate ideas from insights.">
+            4 Build <span data-caf-term="ideas">ideas</span> <span class="badge badge-b" id="step-badge-ideas">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="Build a signal pack from the job list.">
+          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="Compile a signal pack from the idea list (ideas_json). Jobs are created when you start a run.">
             5 <span data-caf-term="signalPack">Signal pack</span> <span class="badge badge-b" id="step-badge-pack">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-run" data-step="run" title="Proceed to Runs using the latest signal pack.">
+          <button type="button" class="caf-step-pill step-btn" id="step-run" data-step="run" title="Proceed to Runs — jobs are created when you start a run from the signal pack.">
             6 <span data-caf-term="run">Run</span> <span class="badge badge-b" id="step-badge-run">not started</span>
           </button>
         </div>
@@ -169,9 +209,9 @@ export function adminProcessingBody(currentSlug: string): string {
                 </div>
               </div>
               <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--bg)">
-                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Evidence funnel</div>
+                <div style="font-size:13px;font-weight:600;margin-bottom:8px">${T("evidenceFunnel", "Evidence funnel")}</div>
                 <div id="evidence-funnel" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></div>
-                <div id="evidence-funnel-hint" style="margin-top:6px;font-size:11px;color:var(--muted)"></div>
+                <div id="evidence-funnel-hint" style="margin-top:6px;font-size:12px;color:var(--muted)"></div>
               </div>
             </div>
             <div style="flex:1;min-width:320px">
@@ -184,8 +224,8 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="prellm-root">
             <style>
               .prellm-evidence-table{width:100%;border-collapse:separate;border-spacing:0}
-              .prellm-evidence-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:8px 10px;font-size:11px;white-space:nowrap;vertical-align:bottom}
-              .prellm-evidence-table td{padding:8px 10px;vertical-align:top;border-bottom:1px solid var(--border)}
+              .prellm-evidence-table thead th{position:sticky;top:0;background:var(--card);z-index:2;box-shadow:0 1px 0 var(--border);padding:10px 12px;font-size:12px;white-space:nowrap;vertical-align:bottom}
+              .prellm-evidence-table td{padding:10px 12px;vertical-align:top;border-bottom:1px solid var(--border);font-size:12px}
               .prellm-evidence-table tr.prellm-row-dim{opacity:0.55}
               .prellm-cell-clamp{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;max-width:min(320px,36vw);line-height:1.4;word-break:break-word;white-space:pre-wrap}
               .prellm-cell-hashtags{max-width:min(180px,22vw);font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
@@ -194,55 +234,56 @@ export function adminProcessingBody(currentSlug: string): string {
               .prellm-score-cell{white-space:nowrap;font-variant-numeric:tabular-nums}
             </style>
             <div id="prellm-kind-bar" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
-            <div style="border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--card);margin-bottom:12px">
-              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-                <strong style="font-size:14px">Score formula for this platform</strong>
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <button type="button" class="btn btn-sm" id="prellm-save-formula">Save formula</button>
-                  <button type="button" class="btn-ghost btn-sm" id="prellm-save-cutoff-snapshot" title="Writes cutoff + funnel counts to this import (selection_snapshot_json.operator_cutoff_ui)">Save cutoff &amp; pass counts</button>
+            <div class="prellm-formula-grid">
+            <div class="prellm-formula-card">
+              <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;margin-bottom:10px">
+                <strong style="font-size:15px">${T("scoreFormula", "Score formula")}</strong>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                  <button type="button" class="btn btn-sm" id="prellm-save-formula">Save</button>
+                  <button type="button" class="btn-ghost btn-sm" id="prellm-save-cutoff-snapshot" title="Writes cutoff + funnel counts to this import">Save cutoff</button>
                 </div>
               </div>
-              <div id="prellm-formula-hint" class="runs-ops-hint" style="margin-bottom:8px;font-size:12px"></div>
-              <div id="prellm-active-weights-strip" style="font-size:11px;color:var(--muted);margin-bottom:10px;min-height:1.2em;line-height:1.45"></div>
-              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-                <label style="font-size:12px">Profile min score <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:92px;font-size:12px" /></label>
-                <label style="font-size:12px">Min primary text chars <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:92px;font-size:12px" /></label>
+              <div id="prellm-formula-hint" class="runs-ops-hint" style="margin-bottom:8px;font-size:13px;line-height:1.45"></div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:6px">${T("activeWeights", "Active weights")}</div>
+              <div id="prellm-active-weights-strip" style="font-size:13px;color:var(--fg2);margin-bottom:12px;min-height:1.2em;line-height:1.5"></div>
+              <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
+                <label style="font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">${T("profileMinScore", "Profile min score")} <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:96px;font-size:14px;padding:6px 8px" /></label>
+                <label style="font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">${T("minPrimaryTextChars", "Min primary text chars")} <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:96px;font-size:14px;padding:6px 8px" /></label>
               </div>
-              <div id="prellm-weights-wrap" style="max-height:200px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)"></div>
-              <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
-                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                  <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
-                  <span id="prellm-save-msg" style="font-size:11px;color:var(--muted)"></span>
-                </div>
-                <span id="prellm-cutoff-snapshot-msg" style="font-size:11px;color:var(--muted);text-align:right;max-width:min(420px,46vw)"></span>
+              <div id="prellm-weights-wrap" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)"></div>
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
+                <span id="prellm-save-msg" style="font-size:12px;color:var(--muted)"></span>
               </div>
-              <p class="runs-ops-hint" style="margin:10px 0 0;font-size:11px"><span class="mono">text_signal</span> is text-length (0–1). <strong>Profile min</strong> drops weak rows before the blend. <strong>Cutoff</strong> (below) filters which scored rows stay in the table.</p>
+              <span id="prellm-cutoff-snapshot-msg" style="display:block;margin-top:8px;font-size:12px;color:var(--muted)"></span>
             </div>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:stretch;margin-bottom:12px">
-              <div style="flex:1;min-width:280px;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--bg)">
-                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Cutoff &amp; sort</div>
+              <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--bg)">
+                <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("cutoffScore", "Cutoff & sort")}</div>
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                  <label style="font-size:13px;white-space:nowrap">Cutoff <span id="prellm-min-val" class="mono">0.00</span></label>
-                  <input type="range" id="prellm-min-score" min="0" max="1" step="0.01" value="0" style="flex:1;min-width:160px;max-width:420px" />
-                  <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:88px;font-size:12px" title="0–1" />
+                  <label style="font-size:14px;white-space:nowrap">${T("cutoffScore", "Cutoff")} <span id="prellm-min-val" class="mono">0.00</span></label>
+                  <div class="prellm-cutoff-wrap">
+                    <span class="prellm-cutoff-endpoint" aria-hidden="true">0</span>
+                    <input type="range" id="prellm-min-score" class="prellm-cutoff-range" min="0" max="1" step="0.01" value="0" aria-valuemin="0" aria-valuemax="1" />
+                    <span class="prellm-cutoff-endpoint" aria-hidden="true">1</span>
+                  </div>
+                  <input id="prellm-min-score-num" type="number" min="0" max="1" step="0.01" value="0" style="width:92px;font-size:14px;padding:6px 8px" title="0–1" />
                 </div>
-                <div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                  <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
-                    <input type="checkbox" id="prellm-show-below" /> Show rows below cutoff (still passing profile min)
+                <div style="margin-top:12px;display:flex;flex-direction:column;gap:10px">
+                  <label style="font-size:13px;color:var(--fg2);display:flex;gap:8px;align-items:flex-start">
+                    <input type="checkbox" id="prellm-show-below" style="margin-top:3px" /> <span>${T("showBelowCutoff", "Show rows below cutoff")}</span>
                   </label>
-                  <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+                  <label style="font-size:13px;color:var(--fg2);display:flex;gap:8px;align-items:center">
                     Sort
-                    <select id="prellm-sort" style="font-size:12px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
+                    <select id="prellm-sort" style="font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
                       <option value="score_desc">Score ↓</option>
                       <option value="score_asc">Score ↑</option>
                     </select>
                   </label>
                 </div>
               </div>
-              <div style="flex:1;min-width:260px;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--card)">
-                <div style="font-size:12px;font-weight:600;margin-bottom:8px">Live funnel</div>
+              <div style="border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--card)">
+                <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("liveFunnel", "Live funnel")}</div>
                 <div id="prellm-live-totals" style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-variant-numeric:tabular-nums"></div>
-                <p class="runs-ops-hint" style="margin:10px 0 0;font-size:11px">Updates with the cutoff. The table adds <strong>Norm</strong> (raw 0–1 features) and <strong>Blend</strong> (each feature’s contribution to the score).</p>
               </div>
             </div>
             <details id="prellm-debug" style="margin:10px 0">
@@ -250,25 +291,25 @@ export function adminProcessingBody(currentSlug: string): string {
               <pre id="prellm-counts" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
             </details>
             <div id="prellm-table-toolbar" style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
-              <div style="font-size:12px;font-weight:600;margin-bottom:8px">Table filters</div>
+              <div style="font-size:13px;font-weight:600;margin-bottom:8px">${T("tableFilters", "Table filters")}</div>
               <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                <label style="font-size:12px;color:var(--muted)">Search
-                  <input id="prellm-filter-search" type="search" placeholder="Caption, hashtags, URL..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+                <label style="font-size:13px;color:var(--fg2)">Search
+                  <input id="prellm-filter-search" type="search" placeholder="Caption, hashtags, URL..." style="display:block;margin-top:4px;width:min(220px,40vw);font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
                 </label>
-                <label style="font-size:12px;color:var(--muted)">Display kind
-                  <select id="prellm-filter-kind" style="display:block;margin-top:4px;font-size:12px;min-width:140px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                <label style="font-size:13px;color:var(--fg2)">${T("displayKind", "Display kind")}
+                  <select id="prellm-filter-kind" style="display:block;margin-top:4px;font-size:13px;min-width:140px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
                     <option value="">Any</option>
                   </select>
                 </label>
-                <label style="font-size:12px;color:var(--muted)">Included
-                  <select id="prellm-filter-included" style="display:block;margin-top:4px;font-size:12px;min-width:100px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                <label style="font-size:13px;color:var(--fg2)">${T("includedColumn", "Included")}
+                  <select id="prellm-filter-included" style="display:block;margin-top:4px;font-size:13px;min-width:100px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
                     <option value="any">Any</option>
                     <option value="yes">yes</option>
                     <option value="no">no</option>
                   </select>
                 </label>
-                <label style="font-size:12px;color:var(--muted)">Min score
-                  <input id="prellm-filter-min-score" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:88px;font-size:12px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
+                <label style="font-size:13px;color:var(--fg2)">${T("cutoffScore", "Min score")}
+                  <input id="prellm-filter-min-score" type="number" min="0" max="1" step="0.01" placeholder="any" style="display:block;margin-top:4px;width:92px;font-size:13px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)" />
                 </label>
                 <button type="button" class="btn-ghost btn-sm" id="prellm-filter-clear" style="align-self:flex-end">Clear filters</button>
               </div>
@@ -283,6 +324,7 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
         </div>
         <div id="panel-broad" style="display:none;padding:12px 0 0">
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("broadInsights", "Broad insights")}</div>
           <details id="inspect-api-details" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg)">
             <summary style="cursor:pointer;font-size:13px;font-weight:600">Inspect — load live API JSON here (same auth as this page)</summary>
             <p class="runs-ops-hint" style="margin:8px 0 10px">Use this to see raw responses without curl. Server-side logs: <span class="mono">fly logs -a caf-core</span> (or your host); search for <span class="mono">inputs_top_performer</span> / OpenAI step names in <span class="mono">api_call_audit</span>.</p>
@@ -309,9 +351,9 @@ export function adminProcessingBody(currentSlug: string): string {
             <button type="button" class="btn btn-sm" id="btn-run-broad-insights-all" title="Analyzes filtered evidence across all platform tabs, writing broad insights rows to the database. May overwrite if Rescan is enabled.">Analyze all selected evidence</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-run-broad-insights" title="Analyzes the currently selected platform tab only, writing broad insights rows to the database. May overwrite if Rescan is enabled.">Analyze this platform only</button>
             <button type="button" class="btn-ghost btn-sm" id="btn-toggle-broad-prompt">Prompt & labels</button>
-            <label style="font-size:12px;color:var(--muted)">Max rows <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> Rescan (ignore existing)</label>
-            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-use-cutoff" type="checkbox" checked /> Use cutoff</label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">${T("maxInsightRows", "Max rows")} <input id="broad-max-rows" type="number" min="1" max="5000" value="800" style="width:92px;font-size:12px" /></label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-rescan" type="checkbox" /> ${T("rescanInsights", "Rescan")}</label>
+            <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center"><input id="broad-use-cutoff" type="checkbox" checked /> ${T("useCutoff", "Use cutoff")}</label>
             <span id="broad-eligible-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
             <span id="prellm-insight-msg" style="font-size:12px;color:var(--muted);max-width:520px"></span>
           </div>
@@ -438,7 +480,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="broad-table-wrap" style="font-size:12px;width:100%;max-height:520px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px;-webkit-overflow-scrolling:touch"></div>
         </div>
         <div id="panel-top" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px"><strong>Top performers</strong> — single image (<span class="mono">top_performer_deep</span>), carousel deck (<span class="mono">top_performer_carousel</span>, Instagram only, ≥2 <span class="mono">carousel_slide_urls</span>), video (<span class="mono">top_performer_video</span>, Instagram / TikTok / Facebook). Each run applies the <strong>Top %</strong> independently within that pass (e.g. top 5% of <em>carousel-eligible</em> rows on the carousel run, top 5% of <em>video-eligible</em> on video, top 5% of <em>single-image-eligible</em> on image) — <strong>not</strong> 5% of the whole import combined. Ranked by <span class="mono">rating_score</span> when rated, else <span class="mono">pre_llm_score</span>. Default top <strong>5%</strong> via profile <span class="mono">criteria_json.top_performer.rating_top_fraction</span> or the <strong>Top %</strong> control below. Optionally aligned to rows that already have <strong><span class="mono">broad_llm</span> insights</strong>. Run <strong>Rate import</strong> first to rank by performance metrics. <strong>Video:</strong> downloads <span class="mono">video_url</span>, uploads source MP4 + ffmpeg frames to <span class="mono">evidence_media/…</span>, runs vision + <strong>Whisper on every row</strong> with a video URL (long captions no longer skip ASR). <strong>Hook</strong> column shows the Whisper transcript when present. Re-run with <strong>Rescan</strong> to refresh. Disable download: env <span class="mono">CAF_TOP_PERFORMER_DOWNLOAD_SOURCE_VIDEO=off</span> or criteria <span class="mono">top_performer.download_source_video: false</span>. Requires <span class="mono">OPENAI_API_KEY</span>, <span class="mono">SUPABASE_*</span>, and <span class="mono">ffmpeg</span>. Profile opt-outs: <span class="mono">disable_broad_insights_align_gate</span> / <span class="mono">disable_rating_percentile_gate</span>.</p>
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("topPerformers", "Top performers")}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center">
             <button type="button" class="btn btn-sm" id="btn-run-deep-image-insights">Run top-performer (images)</button>
             <button type="button" class="btn btn-sm" id="btn-run-deep-carousel-insights">Run top-performer (carousel)</button>
@@ -535,7 +577,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="sources-table-wrap" style="font-size:12px;max-height:520px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-ideas" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Generate a curated idea list from your insights (broad + top-performer context per profile), then review rows here. Use the <strong>Signal pack</strong> tab to build a pack from a selected list, with optional caps per <span class="mono">format</span> (carousel, video, post, etc.).</p>
+          <div style="font-size:13px;font-weight:600;margin-bottom:10px">${T("buildIdeas", "Build ideas")}</div>
           <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:12px">
             <div class="form-group" style="margin:0;min-width:200px;flex:1;max-width:360px">
               <label style="font-size:12px">List title (optional)</label>
@@ -617,7 +659,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="idea-list-table-wrap" style="margin-top:8px;width:100%;max-height:480px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-pack" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Prefer building from an <strong>idea list</strong> you created in the Ideas tab, then add per-format limits if needed. Or run the full import pipeline (rating + synthesis) when you do not have a list yet.</p>
+          <p class="runs-ops-hint" style="margin-bottom:10px">Prefer building from an <strong>idea list</strong> from step 4 (Build ideas), then add per-format limits if needed. The signal pack stores <span class="mono">ideas_json</span> — jobs are created when you start a run.</p>
           <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg);margin-bottom:12px">
             <div style="font-size:13px;font-weight:600;margin-bottom:8px">Build from idea list</div>
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">
@@ -628,7 +670,7 @@ export function adminProcessingBody(currentSlug: string): string {
               </label>
             </div>
             <div id="pack-summary" style="font-size:12px;color:var(--muted);margin:0 0 8px"></div>
-            <p style="font-size:11px;color:var(--muted);margin:0 0 6px;max-width:800px">Max per format: leave <strong>blank</strong> for no cap in that bucket, <strong>0</strong> to exclude, or a number to take the top N by confidence within that format (blog, memo, slides, … use <span class="mono">Other</span>).</p>
+            <p style="font-size:12px;color:var(--muted);margin:0 0 6px;max-width:800px">${T("formatCap", "Max per format")}: leave <strong>blank</strong> for no cap, <strong>0</strong> to exclude, or a number for top N by confidence within that format.</p>
             <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px">
               <label class="fl-cap" style="font-size:11px">Carousel <input type="number" id="fl-carousel" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
               <label class="fl-cap" style="font-size:11px">Video <input type="number" id="fl-video" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
@@ -651,14 +693,9 @@ export function adminProcessingBody(currentSlug: string): string {
             <pre id="pack-settings" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;white-space:pre-wrap;max-height:320px;overflow:auto;margin-top:8px"></pre>
           </details>
           <div class="card" style="margin-top:12px">
-            <div class="card-h">Inspect an existing signal pack</div>
+            <div class="card-h">Inspect signal pack</div>
             <div style="padding:12px 16px 16px">
-              <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-                <select id="pack-inspect-select" style="min-width:320px;max-width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
-                  <option value="">Loading…</option>
-                </select>
-                <button type="button" class="btn-ghost btn-sm" id="btn-pack-inspect-reload">Reload list</button>
-              </div>
+              <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Use the <strong>Signal pack</strong> dropdown at the top of Processing. Packs hold curated <span class="mono">ideas_json</span> — not jobs.</p>
               <div id="pack-inspect-msg" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
               <details id="pack-inspect-ideas-details" style="display:none;margin-top:10px">
                 <summary style="cursor:pointer;font-size:12px;color:var(--muted)">ideas_json (curated ideas)</summary>
@@ -680,7 +717,7 @@ export function adminProcessingBody(currentSlug: string): string {
             <div style="flex:1;min-width:320px">
               <h3 style="font-size:14px;margin:0 0 8px">Run</h3>
               <p class="runs-ops-hint" style="margin:0 0 12px">
-                Use the latest signal pack you built to proceed to runs. This step keeps system internals hidden; open Debug only if needed.
+                Use the signal pack from the toolbar dropdown (or the one you just built). On <strong>Runs</strong>, pick that pack and <strong>Start</strong> — that is when jobs are created from ideas.
               </p>
               <div class="card" style="padding:12px 14px;margin:0">
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between">
@@ -733,6 +770,8 @@ export function adminProcessingBody(currentSlug: string): string {
 </script>
 <script>
 const SLUG=${SLUG};
+const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${mimicCapGroupsJson};
+const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function bind(id,ev,fn){var e=document.getElementById(id);if(e)e.addEventListener(ev,fn);}
@@ -892,6 +931,8 @@ function fmtN(n){
   return x.toLocaleString();
 }
 
+function bindCafTerms(root){if(typeof window.__bindCafTerms==='function')window.__bindCafTerms(root||document);}
+
 function renderFunnel(totals){
   var root=document.getElementById('evidence-funnel');
   var hint=document.getElementById('evidence-funnel-hint');
@@ -903,14 +944,15 @@ function renderFunnel(totals){
   var sparseDrop=Number(t.sparse_text_dropped||0);
   var belowDrop=Number(t.below_profile_min_dropped||0);
   root.innerHTML=
-    '<span class="badge badge-b">TOTAL '+esc(fmtN(total))+'</span>'+
+    '<span class="badge badge-b" data-caf-term="funnelTotal">TOTAL '+esc(fmtN(total))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
-    '<span class="badge badge-p">PROFILE '+esc(fmtN(passing))+'</span>'+
+    '<span class="badge badge-p" data-caf-term="funnelProfile">PROFILE '+esc(fmtN(passing))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
-    '<span class="badge '+(after>0?'badge-g':'badge-y')+'">CUTOFF '+esc(fmtN(after))+'</span>'+
+    '<span class="badge '+(after>0?'badge-g':'badge-y')+'" data-caf-term="funnelCutoff">CUTOFF '+esc(fmtN(after))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
-    '<span class="badge '+(after>0?'badge-g':'badge-y')+'">FINAL '+esc(fmtN(after))+'</span>';
+    '<span class="badge '+(after>0?'badge-g':'badge-y')+'" data-caf-term="funnelFinal">FINAL '+esc(fmtN(after))+'</span>';
   hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' | Below profile min dropped: '+fmtN(belowDrop);
+  bindCafTerms(root);
 }
 
 async function refreshInsightCounts(){
@@ -1240,7 +1282,7 @@ function setStep(step){
     refreshInsightCounts();
     refreshTopPerfDebugPre();
   }
-  if(step==='pack'){loadProfile().then(renderPackSettings);loadSignalPacksForInspector();loadIdeaListDropdowns();}
+  if(step==='pack'){loadProfile().then(renderPackSettings);loadProcessingSignalPacks();loadIdeaListDropdowns();if(getProcessingPackSelectId())loadSelectedSignalPack();}
   if(step==='ideas'){loadIdeaListTab();}
   if(step==='run'){syncRunPanel();}
   renderStepper();
@@ -1567,6 +1609,7 @@ function syncPrellmSliderFromKind(){
   minEl.value=String(v);
   if(minNum)minNum.value=String(v);
   if(minVal)minVal.textContent=Number(v).toFixed(2);
+  minEl.setAttribute('aria-valuenow',String(v));
 }
 
 function syncBroadKindsFromStats(bk){
@@ -1583,11 +1626,12 @@ function renderPrellmLiveTotals(totals){
     return;
   }
   el.innerHTML=
-    '<span class="badge badge-b" style="font-size:13px">TOTAL '+esc(fmtN(t.rows_in_kind))+'</span>'+
+    '<span class="badge badge-b" style="font-size:13px" data-caf-term="funnelTotal">TOTAL '+esc(fmtN(t.rows_in_kind))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
-    '<span class="badge badge-p" style="font-size:13px">PROFILE '+esc(fmtN(t.passing_profile_min))+'</span>'+
+    '<span class="badge badge-p" style="font-size:13px" data-caf-term="funnelProfile">PROFILE '+esc(fmtN(t.passing_profile_min))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
-    '<span class="badge badge-g" style="font-size:13px">PASS CUTOFF '+esc(fmtN(t.after_user_cutoff))+'</span>';
+    '<span class="badge badge-g" style="font-size:13px" data-caf-term="funnelCutoff">PASS CUTOFF '+esc(fmtN(t.after_user_cutoff))+'</span>';
+  bindCafTerms(el);
 }
 function renderActiveWeightsStrip(d){
   var el=document.getElementById('prellm-active-weights-strip');
@@ -1726,9 +1770,9 @@ function renderPrellmTable(rows){
   }
   var tb='<table class="sp-modal-table prellm-evidence-table"><thead><tr>'+
     '<th style="cursor:pointer" id="prellm-th-score">Score</th>'+
-    '<th style="font-size:11px">Norm<br/><span style="font-weight:400;color:var(--muted)">0-1 feats</span></th>'+
-    '<th style="font-size:11px">Blend<br/><span style="font-weight:400;color:var(--muted)">contrib.</span></th>'+
-    '<th>Kind</th><th>Inc.</th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
+    '<th style="font-size:12px"><span data-caf-term="normColumn">Norm</span></th>'+
+    '<th style="font-size:12px"><span data-caf-term="blendColumn">Blend</span></th>'+
+    '<th><span data-caf-term="displayKind">Kind</span></th><th><span data-caf-term="includedColumn">Inc.</span></th><th>URL</th><th>Caption</th><th>Hashtags</th></tr></thead><tbody>';
   for(var i=0;i<rows.length;i++){
     var x=rows[i];
     var inc=!!x.included_by_cutoff;
@@ -1757,6 +1801,7 @@ function renderPrellmTable(rows){
   }
   tb+='</tbody></table>';
   wrap.innerHTML=tb;
+  bindCafTerms(wrap);
   bind('prellm-th-score','click',function(){
     var cur=document.getElementById('prellm-sort');
     if(!cur)return;
@@ -2095,17 +2140,18 @@ function renderWeightsTable(weights){
     wrap.innerHTML='<div class="empty" style="padding:10px">No weights configured.</div>';
     return;
   }
-  var h='<table class="sp-modal-table" style="margin:0"><thead><tr><th>Feature</th><th>Weight</th><th></th></tr></thead><tbody>';
+  var h='<table class="sp-modal-table prellm-formula-table" style="margin:0"><thead><tr><th>Feature</th><th><span data-caf-term="featureWeight">Weight</span></th><th></th></tr></thead><tbody>';
   for(var i=0;i<keys.length;i++){
     var k=keys[i];
     h+='<tr>'+
-      '<td class="mono" style="max-width:220px;word-break:break-word">'+esc(k)+'</td>'+
-      '<td><input type="number" step="0.01" min="0" value="'+esc(String(weights[k]))+'" data-wkey="'+esc(k)+'" class="prellm-wt" style="width:92px;font-size:12px" /></td>'+
+      '<td class="mono" style="max-width:180px;word-break:break-word;font-size:13px">'+esc(k)+'</td>'+
+      '<td><input type="number" step="0.01" min="0" value="'+esc(String(weights[k]))+'" data-wkey="'+esc(k)+'" class="prellm-wt" style="width:84px;font-size:14px;padding:6px 8px" /></td>'+
       '<td><button type="button" class="btn-ghost btn-sm prellm-del-wt" data-wkey="'+esc(k)+'">Remove</button></td>'+
     '</tr>';
   }
   h+='</tbody></table>';
   wrap.innerHTML=h;
+  bindCafTerms(wrap);
 }
 
 async function renderPrellmFormulaEditor(){
@@ -3169,8 +3215,9 @@ bind('broad-table-hscroll','input',syncBroadWrapFromHscroll);
 bind('broad-max-rows','input',scheduleBroadEligibilityEstimate);
 bind('broad-rescan','change',scheduleBroadEligibilityEstimate);
 bind('broad-use-cutoff','change',scheduleBroadEligibilityEstimate);
-bind('btn-pack-inspect-reload','click',loadSignalPacksForInspector);
-bind('pack-inspect-select','change',loadSelectedSignalPack);
+bind('btn-processing-pack-reload','click',loadProcessingSignalPacks);
+bind('processing-pack-select','change',loadSelectedSignalPack);
+bind('btn-save-proc-mimic-caps','click',saveProcessingMimicCaps);
 bind('pack-idea-list-select','change',function(){
   var id=(this.value||'').trim();
   if(id)selectedIdeaListId=id;
@@ -3615,12 +3662,15 @@ async function loadIdeaListIdeasTable(){
     if(state)state.textContent='';
   }
 }
-async function loadSignalPacksForInspector(){
-  var sel=document.getElementById('pack-inspect-select');
+async function loadProcessingSignalPacks(){
+  var sel=document.getElementById('processing-pack-select');
   var msg=document.getElementById('pack-inspect-msg');
+  var chip=document.getElementById('processing-pack-chip');
   if(!sel||!SLUG)return;
+  var prev=(sel.value||'').trim();
   sel.innerHTML='<option value="">Loading...</option>';
-  if(msg){msg.textContent='';msg.style.color='';}
+  if(chip)chip.textContent='';
+  if(msg&&currentStep!=='pack'){msg.textContent='';msg.style.color='';}
   try{
     var r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=120&offset=0');
     var d=await r.json().catch(function(){return {};});
@@ -3628,7 +3678,8 @@ async function loadSignalPacksForInspector(){
     var rows=d.rows||[];
     if(!rows.length){
       sel.innerHTML='<option value="">No signal packs for this project yet</option>';
-      if(msg)msg.textContent='Build one in this tab (Build signal pack).';
+      if(chip)chip.textContent='Build one in step 5 (Signal pack).';
+      if(msg&&currentStep==='pack')msg.textContent='Build one in this step (Build signal pack).';
       return;
     }
     var h='<option value="">Select a signal pack...</option>';
@@ -3641,14 +3692,36 @@ async function loadSignalPacksForInspector(){
       h+='<option value="'+esc(String(p.id||''))+'">'+esc(when+' | '+String(fn||'')+' (ideas '+ideasN+', overall '+overallN+')')+'</option>';
     }
     sel.innerHTML=h;
+    if(prev&&sel.querySelector('option[value="'+prev.replace(/"/g,'')+'"]'))sel.value=prev;
+    else if(stepState.pack_id&&sel.querySelector('option[value="'+String(stepState.pack_id).replace(/"/g,'')+'"]'))sel.value=stepState.pack_id;
+    updateProcessingPackChip();
+    if(sel.value)loadSelectedSignalPack();
   }catch(e){
     sel.innerHTML='<option value="">Could not load signal packs</option>';
-    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+    if(chip){chip.textContent=String(e.message||e);chip.style.color='var(--red)';}
+    if(msg&&currentStep==='pack'){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }
 }
 
+function getProcessingPackSelectId(){
+  var sel=document.getElementById('processing-pack-select');
+  return sel?String(sel.value||'').trim():'';
+}
+
+function updateProcessingPackChip(){
+  var chip=document.getElementById('processing-pack-chip');
+  var sel=document.getElementById('processing-pack-select');
+  if(!chip||!sel)return;
+  var id=(sel.value||'').trim();
+  if(!id){chip.textContent='';chip.style.color='';return;}
+  var opt=sel.options[sel.selectedIndex];
+  var label=opt?String(opt.textContent||''):id;
+  chip.textContent=label;
+  chip.style.color='';
+}
+
 async function loadSelectedSignalPack(){
-  var sel=document.getElementById('pack-inspect-select');
+  var sel=document.getElementById('processing-pack-select');
   var msg=document.getElementById('pack-inspect-msg');
   var ideasD=document.getElementById('pack-inspect-ideas-details');
   var overallD=document.getElementById('pack-inspect-overall-details');
@@ -3663,6 +3736,7 @@ async function loadSelectedSignalPack(){
     if(overallD)overallD.style.display='none';
     if(rawD)rawD.style.display='none';
     if(msg){msg.textContent='';msg.style.color='';}
+    updateProcessingPackChip();
     return;
   }
   if(msg){msg.textContent='Loading pack...';msg.style.color='';}
@@ -3706,6 +3780,11 @@ async function loadSelectedSignalPack(){
       derived_globals_json: (pack.derived_globals_json!=null?pack.derived_globals_json:{}),
       notes: (pack.notes!=null?pack.notes:null)
     },null,2);
+    stepState.pack_id=id;
+    stepState.pack_created_at=String(pack.created_at||'');
+    updateProcessingPackChip();
+    renderStepper();
+    syncRunPanel();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
     if(ideasD)ideasD.style.display='none';
@@ -4012,7 +4091,7 @@ bind('btn-build-pack-from-idea-list','click',async function(){
     stepState.pack_created_at=String(d.created_at||'');
     renderStepper();
     syncRunPanel();
-    loadSignalPacksForInspector();
+    loadProcessingSignalPacks();
   }catch(e){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
   }
@@ -4034,9 +4113,115 @@ bind('btn-build-pack','click',async function(){
     stepState.pack_created_at=String(d.created_at||'');
     renderStepper();
     syncRunPanel();
-    loadSignalPacksForInspector();
+    loadProcessingSignalPacks();
   }catch(e){msg.textContent=String(e);msg.style.color='var(--red)';}
 });
+
+function normalizePerFlowCapsClient(raw){
+  if(raw==null)return {};
+  if(typeof raw==='string'){
+    var st=raw.trim();
+    if(!st)return {};
+    try{return normalizePerFlowCapsClient(JSON.parse(st));}catch(e){return {};}
+  }
+  if(typeof raw!=='object'||Array.isArray(raw))return {};
+  var out={};
+  for(var i=0,ks=Object.keys(raw);i<ks.length;i++){
+    var k=ks[i];
+    var val=raw[k];
+    var n=typeof val==='number'?val:Number(val);
+    if(Number.isFinite(n)&&n>=0)out[k]=Math.min(Math.floor(n),1000000);
+  }
+  return out;
+}
+
+async function loadProcessingMimicCaps(){
+  var hint=document.getElementById('processing-mimic-cap-hint');
+  var btn=document.getElementById('btn-save-proc-mimic-caps');
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+    var el=document.getElementById('proc-cap-mimic-'+g.id);
+    if(el)el.placeholder=String(DEFAULT_MAX_MIMIC_PER_FLOW);
+  });
+  if(!SLUG){
+    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+      var el=document.getElementById('proc-cap-mimic-'+g.id);
+      if(el)el.disabled=true;
+    });
+    if(btn)btn.disabled=true;
+    if(hint)hint.textContent='Pick a project to edit mimic caps.';
+    return;
+  }
+  TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+    var el=document.getElementById('proc-cap-mimic-'+g.id);
+    if(el)el.disabled=false;
+  });
+  if(btn)btn.disabled=false;
+  if(hint)hint.textContent='Loading…';
+  try{
+    var r=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    var d=await r.json();
+    if(!d.ok)throw new Error(apiErr(d,'Could not load constraints'));
+    var merged=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
+    TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
+      var el=document.getElementById('proc-cap-mimic-'+g.id);
+      if(!el)return;
+      var v=null;
+      for(var ki=0;ki<g.keys.length;ki++){
+        if(merged[g.keys[ki]]!=null){v=merged[g.keys[ki]];break;}
+      }
+      el.value=v!=null?String(v):'';
+    });
+    if(hint)hint.textContent='Applied when you Start a run on Runs.';
+  }catch(e){
+    if(hint){hint.textContent=String(e.message||e);hint.style.color='var(--red)';}
+  }
+}
+
+async function saveProcessingMimicCaps(){
+  if(!SLUG){if(window.showToast)window.showToast('Select a project first.',false);return;}
+  var btn=document.getElementById('btn-save-proc-mimic-caps');
+  var hint=document.getElementById('processing-mimic-cap-hint');
+  for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
+    var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
+    var minp=document.getElementById('proc-cap-mimic-'+mg.id);
+    var mtr=(minp&&minp.value||'').trim();
+    if(mtr!==''){
+      var mn=parseInt(mtr,10);
+      if(!Number.isFinite(mn)||mn<0){
+        if(hint){hint.textContent='Each mimic cap: non-negative integer or empty.';hint.style.color='var(--red)';}
+        return;
+      }
+    }
+  }
+  if(btn)btn.disabled=true;
+  try{
+    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
+    var d0=await r0.json();
+    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
+    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
+    for(var gj=0;gj<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;gj++){
+      var grp=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[gj];
+      var inpg=document.getElementById('proc-cap-mimic-'+grp.id);
+      var rawg=(inpg&&inpg.value||'').trim();
+      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+      if(rawg!==''){
+        var ng=parseInt(rawg,10);
+        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+      }
+    }
+    var body={_project:SLUG,max_jobs_per_flow_type:merged};
+    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var rawText=await r.text();
+    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
+    if(hint){hint.textContent='Mimic caps saved.';hint.style.color='var(--green)';}
+    if(window.showToast)window.showToast('Mimic planning caps saved.',true);
+    await loadProcessingMimicCaps();
+  }catch(e){
+    if(hint){hint.textContent=String(e.message||e);hint.style.color='var(--red)';}
+    if(window.showToast)window.showToast(String(e.message||e),false);
+  }finally{if(btn)btn.disabled=false;}
+}
 
 function renderPackSettings(){
   var pre=document.getElementById('pack-settings');
@@ -4138,6 +4323,9 @@ try{
   setStep(selectedImportId?'evidence':'select');
   if(SLUG){
     loadImports();
+    loadProcessingSignalPacks();
+    loadProcessingMimicCaps();
+    bindCafTerms(document.getElementById('import-workbench')||document);
   }else{
     var root0=document.getElementById('imports-root');
     var hint0=document.getElementById('imports-hint');

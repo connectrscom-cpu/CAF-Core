@@ -3475,6 +3475,27 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
       <div class="form-group"><label>Run ID (optional, auto-generated if empty)</label><input type="text" name="run_id" placeholder="e.g. SNS_2026W14"></div>
       <div class="form-group"><label>Run name (optional)</label><input type="text" name="name" maxlength="200" placeholder="Friendly label for this run"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
+      <fieldset class="form-group" style="border:none;padding:0;margin:0">
+        <legend style="font-size:13px;font-weight:500;margin-bottom:8px">Idea picking</legend>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">How ideas from the signal pack become planned jobs on this run (before <strong>Start</strong>).</p>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
+            <input type="radio" name="idea_picking_mode" value="rules" checked style="margin-top:3px;flex-shrink:0"/>
+            <span><span data-caf-term="ideaPickingRules">Automated (logical rules)</span> — all pack ideas, mapped deterministically</span>
+          </label>
+          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
+            <input type="radio" name="idea_picking_mode" value="llm" style="margin-top:3px;flex-shrink:0"/>
+            <span><span data-caf-term="ideaPickingLlm">LLM picking</span> — model selects a subset</span>
+          </label>
+          <div id="create-llm-max-wrap" style="display:none;margin:-4px 0 0 28px">
+            <label style="font-size:12px;color:var(--muted)">Max ideas (LLM) <input type="number" name="llm_max_ideas" id="create-llm-max" min="1" max="100" placeholder="40" style="width:72px;margin-left:8px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)"/></label>
+          </div>
+          <label style="display:flex;gap:10px;align-items:flex-start;font-size:13px;cursor:pointer">
+            <input type="radio" name="idea_picking_mode" value="manual" style="margin-top:3px;flex-shrink:0"/>
+            <span><span data-caf-term="ideaPickingManual">Manual picking</span> — choose ideas on Planned jobs after create</span>
+          </label>
+        </div>
+      </fieldset>
       <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('create-panel')">Cancel</button><span id="create-msg" class="form-msg"></span></div>
     </form>
   </div>
@@ -3503,7 +3524,10 @@ function togglePanel(id){
   panels.forEach(p=>{if(p!==id){const x=document.getElementById(p);if(x)x.style.display='none';}});
   const next=el.style.display==='none'?'block':'none';
   el.style.display=next;
-  if(id==='create-panel'&&next==='block')loadSignalPackSelect();
+  if(id==='create-panel'&&next==='block'){
+    loadSignalPackSelect();
+    syncCreateIdeaPickUi();
+  }
   if(next==='block'){
     try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
     try{showToast((id==='create-panel'?'Create run':'Upload signal pack')+' panel opened.',true);}catch(_e){}
@@ -3533,6 +3557,16 @@ async function loadSignalPackSelect(){
     showToast('Could not load signal packs: '+String(e.message||e),false);
   }
 }
+
+function syncCreateIdeaPickUi(){
+  var modeEl=document.querySelector('input[name="idea_picking_mode"]:checked');
+  var mode=modeEl?String(modeEl.value||'rules'):'rules';
+  var llmWrap=document.getElementById('create-llm-max-wrap');
+  if(llmWrap)llmWrap.style.display=mode==='llm'?'block':'none';
+}
+document.querySelectorAll('input[name="idea_picking_mode"]').forEach(function(el){
+  el.addEventListener('change',syncCreateIdeaPickUi);
+});
 
 function showToast(msg,ok){
   const area=document.getElementById('toast-area');
@@ -4106,15 +4140,45 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
   try{
     const fd=new FormData(e.target);
     const body={};
-    for(const[k,v]of fd.entries())if(v)body[k]=v;
+    for(const[k,v]of fd.entries()){
+      if(k==='llm_max_ideas'){
+        const mode=String(fd.get('idea_picking_mode')||'rules');
+        if(mode!=='llm')continue;
+        const t=String(v||'').trim();
+        if(!t)continue;
+        const n=parseInt(t,10);
+        if(Number.isFinite(n)&&n>=1)body.llm_max_ideas=n;
+        continue;
+      }
+      if(v)body[k]=v;
+    }
+    if(!body.idea_picking_mode)body.idea_picking_mode='rules';
     const r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const raw=await r.text();
     let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
     if(!r.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     if(!d.ok)throw new Error(apiErr(d,'Create failed'));
-    showToast('Run created: '+(d.run?.run_id||''),true);
+    const runId=d.run&&d.run.run_id?String(d.run.run_id):'';
+    const mode=String(d.idea_picking_mode||body.idea_picking_mode||'rules');
+    if(mode==='manual'&&runId){
+      showToast('Run created: '+runId+' — pick ideas on Planned jobs.',true);
+      const cp=document.getElementById('create-panel');if(cp)cp.style.display='none';
+      e.target.reset();
+      syncCreateIdeaPickUi();
+      window.location.href='/admin/run-jobs?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(runId);
+      return;
+    }
+    if(d.materialize_error){
+      showToast('Run created ('+runId+') but idea picking failed: '+d.materialize_error,false);
+    }else if(d.materialize&&typeof d.materialize.planner_rows==='number'){
+      const pickLabel=mode==='llm'?'LLM picked':'Automated rules applied to';
+      showToast('Run created: '+runId+' — '+pickLabel+' '+d.materialize.planner_rows+' idea(s).',true);
+    }else{
+      showToast('Run created: '+runId,true);
+    }
     const cp=document.getElementById('create-panel');if(cp)cp.style.display='none';
     e.target.reset();
+    syncCreateIdeaPickUi();
     loadRuns(1);
   }catch(err){showToast(err.message,false);}
   finally{if(btn){btn.disabled=false;btn.textContent='Create Run';}}

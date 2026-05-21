@@ -24,6 +24,7 @@ export function adminInputsBody(currentSlug: string): string {
         <span id="upload-busy" style="display:none;font-size:12px;color:var(--muted)">Uploading…</span>
         <span id="upload-msg" style="font-size:12px;color:var(--muted);max-width:420px"></span>
         <span id="imports-hint" class="caf-stat-chips"></span>
+        <span class="caf-stat-chips" style="margin-left:auto"><span data-caf-term="inputSources">n8n scraper flows · hashtags &amp; accounts</span></span>
       </div>
       <div id="imports-root" class="empty">Loading…</div>
     </div>

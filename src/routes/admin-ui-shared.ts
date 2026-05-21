@@ -5,17 +5,60 @@ export const ADMIN_CAF_GLOSSARY: Record<string, string> = {
     "Scraped rows from your INPUTS workbook (typically 9–10 platform sheets). Raw social and web content before analysis.",
   insights:
     "LLM analysis of evidence — patterns, hooks, top-performer findings, and strategic opportunities.",
+  ideas:
+    "Curated content concepts built during Processing (ideas_json). Fed into a signal pack before any run exists.",
   jobs:
-    "Content units that travel from signal pack → run planning → generation. The same concept throughout the pipeline.",
+    "Executable content units (content_jobs) created when you Start a run — planned from signal pack ideas × enabled flows.",
   signalPack:
-    "Bundle attached to a run: jobs, visual guidelines, hashtags, and derived globals.",
-  run: "One execution cycle for a project, tied to a signal pack.",
+    "Research bundle: curated ideas (ideas_json), visual guidelines, hashtags, and derived globals. Attached when you create a run.",
+  run: "One execution cycle for a project, tied to a signal pack. Starting a run creates jobs from pack ideas.",
   runOutputs: "Post-run artifacts: exports, content log, and output review.",
   plannedJobs:
     "Jobs selected from the signal pack for a run before planning and generation start.",
+  ideaPickingRules:
+    "Include every idea in the signal pack. Each idea becomes a planner row using deterministic rules (format, confidence, platform, creative-intel boost) — no LLM selection at this step.",
+  ideaPickingLlm:
+    "OpenAI picks a diverse, high-impact subset from pack ideas (default max 40) before you Start the run.",
+  ideaPickingManual:
+    "You choose which pack ideas become planner rows on Planned jobs before Start.",
   processing:
-    "Filter evidence, generate insights, build jobs, and compile a signal pack from an import.",
-  inputs: "Upload INPUTS workbooks and browse import history before processing.",
+    "Filter evidence, generate insights, build ideas, and compile a signal pack from an import.",
+  inputs:
+    "Evidence for this project. Today, n8n flows run scrapers that collect posts from hashtags and accounts chosen as sources for the project; results land here as imports (.xlsx). You can also upload INPUTS workbooks manually. Source picking and scraper config will move into this page later.",
+  inputSources:
+    "Automated collection runs in n8n: each flow uses scrapers and selects hashtags / accounts that fit the project’s source list. Imports appear in the table below until source management lives here.",
+  filterEvidence:
+    "Step 2: Score and filter scraped rows with profile gates + cutoff (0–1). No LLM — only deterministic rules.",
+  evidenceFunnel:
+    "How many rows remain after each gate for the selected platform tab.",
+  funnelTotal: "All evidence rows for this platform in the import.",
+  funnelProfile: "Rows passing profile min score and minimum text length.",
+  funnelCutoff: "Rows at or above your cutoff threshold on the blended score.",
+  funnelFinal: "Rows that proceed to insights and idea steps (same as cutoff pass).",
+  scoreFormula:
+    "Weighted blend of normalized features (0–1) per platform. Score = Σ(feature × weight) / Σ(weights). Saved in the processing profile.",
+  profileMinScore: "Hard floor (0–1) before blending — weaker rows drop out of the funnel.",
+  minPrimaryTextChars: "Drop rows whose primary caption/body is shorter than this (sparse text).",
+  featureWeight: "How much a normalized feature contributes to the blended score.",
+  textSignal: "Text-length signal normalized 0–1; often weighted in the blend.",
+  activeWeights: "Feature keys and weights currently used for this platform tab.",
+  cutoffScore: "Minimum blended score (0–1) for a row to count as included.",
+  showBelowCutoff: "Show sub-cutoff rows in the table (dimmed) for inspection.",
+  liveFunnel: "Row counts updating live as you move the cutoff slider.",
+  normColumn: "Per-feature values scaled 0–1 before weighting.",
+  blendColumn: "Each feature’s share of the final blended score.",
+  tableFilters: "Search and filter the scored table locally — does not change saved cutoff.",
+  displayKind: "Human-readable evidence subtype (e.g. Facebook video, Instagram carousel).",
+  includedColumn: "Whether the row passes the current cutoff (yes / no).",
+  platformTab: "Switch platform — each tab has its own formula, cutoff, and row set.",
+  broadInsights: "LLM text-only analysis (broad_llm) on filtered evidence rows.",
+  topPerformers: "Deep analysis on high-rated posts — vision for images/carousels/video.",
+  useCutoff: "Only send evidence that passed the cutoff into broad insight runs.",
+  rescanInsights: "Re-run LLM even when insight rows already exist for a row.",
+  maxInsightRows: "Cap how many evidence rows are sent per broad-insights batch.",
+  buildIdeas: "LLM curates an idea list from insights (ideas_json path in Processing).",
+  formatCap: "Limit how many ideas of this format go into the signal pack (blank = no cap, 0 = exclude).",
+  mimicCaps: "Max planned jobs per mimic flow family when you Start a run (not during Processing).",
 };
 
 export function adminCafUiCss(): string {
@@ -48,6 +91,15 @@ export function adminCafUiCss(): string {
 .caf-run-hub-tab{padding:10px 16px;font-size:13px;font-weight:500;color:var(--fg2);text-decoration:none;border-bottom:2px solid transparent;margin-bottom:-1px}
 .caf-run-hub-tab:hover{color:var(--fg);text-decoration:none}
 .caf-run-hub-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.prellm-formula-grid{display:grid;grid-template-columns:minmax(260px,400px) minmax(240px,1fr) minmax(220px,1fr);gap:12px;align-items:start;margin-bottom:12px}
+@media (max-width:960px){.prellm-formula-grid{grid-template-columns:1fr}}
+.prellm-formula-card{border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--card)}
+.prellm-formula-card .prellm-formula-table{font-size:13px}
+.prellm-formula-card .prellm-formula-table th,.prellm-formula-card .prellm-formula-table td{padding:10px 12px;font-size:13px}
+.prellm-formula-card .prellm-wt{font-size:14px!important;width:84px;padding:6px 8px}
+.prellm-cutoff-wrap{display:flex;align-items:center;gap:8px;flex:1;min-width:200px}
+.prellm-cutoff-range{flex:1;min-width:140px;max-width:100%;accent-color:var(--accent)}
+.prellm-cutoff-endpoint{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;min-width:1ch}
 .runs-ops-hint{display:none!important}
 .ph-sub{display:none}
 `;
@@ -59,22 +111,26 @@ export function adminCafUiScript(): string {
 (function(){
   var G=${glossary};
   function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
-  document.querySelectorAll('[data-caf-term]').forEach(function(el){
-    if(el.dataset.cafBound)return;
-    el.dataset.cafBound='1';
-    var key=el.getAttribute('data-caf-term')||'';
-    var tip=G[key];
-    if(!tip)return;
-    el.classList.add('caf-term');
-    el.setAttribute('title',tip);
-    if(!el.querySelector('.caf-term-icon')){
-      var icon=document.createElement('span');
-      icon.className='caf-term-icon';
-      icon.textContent='?';
-      icon.setAttribute('aria-hidden','true');
-      el.appendChild(icon);
-    }
-  });
+  window.__bindCafTerms=function(root){
+    var scope=root||document;
+    scope.querySelectorAll('[data-caf-term]').forEach(function(el){
+      if(el.dataset.cafBound)return;
+      el.dataset.cafBound='1';
+      var key=el.getAttribute('data-caf-term')||'';
+      var tip=G[key];
+      if(!tip)return;
+      el.classList.add('caf-term');
+      el.setAttribute('title',tip);
+      if(!el.querySelector('.caf-term-icon')){
+        var icon=document.createElement('span');
+        icon.className='caf-term-icon';
+        icon.textContent='?';
+        icon.setAttribute('aria-hidden','true');
+        el.appendChild(icon);
+      }
+    });
+  };
+  window.__bindCafTerms();
   document.querySelectorAll('[data-caf-options]').forEach(function(root){
     if(root.dataset.cafOptsBound)return;
     root.dataset.cafOptsBound='1';
