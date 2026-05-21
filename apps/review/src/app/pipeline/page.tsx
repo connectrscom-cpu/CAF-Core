@@ -281,7 +281,7 @@ function TabBtn({
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children }: { children?: React.ReactNode }) {
   return <th>{children}</th>;
 }
 
