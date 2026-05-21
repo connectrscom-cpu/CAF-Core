@@ -13,10 +13,12 @@ import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic
 import {
   pickTopPerformerKnowledgeForStep,
   topPerformerKnowledgeStepForFlowType,
+  type TopPerformerKnowledgeStepSlice,
+  type TopPerformerMediaLaneSlice,
 } from "../domain/signal-pack-top-performer-knowledge.js";
 import { filterSignalPackHashtagCandidates } from "../domain/signal-hashtag-sanitize.js";
 import { loadConfig } from "../config.js";
-import { budgetSignalPackContextForLlm } from "./llm-creation-pack-budget.js";
+import { budgetSignalPackContextForLlm, slimVisualGuidelineEntryForLlm } from "./llm-creation-pack-budget.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "./publish-metadata-enrich.js";
 
 /** Full research context for prompts (`{{creation_pack_json}}` / `{{signal_pack}}`). */
@@ -68,6 +70,25 @@ function uniqStrings(xs: string[], max: number): string[] {
     if (out.length >= max) break;
   }
   return out;
+}
+
+function slimTopPerformerKnowledgeForLlm(slice: TopPerformerKnowledgeStepSlice): TopPerformerKnowledgeStepSlice {
+  if ("media_lane" in slice) {
+    const lane = slice as TopPerformerMediaLaneSlice;
+    const entries = lane.entries.slice(0, 4).map((e) => slimVisualGuidelineEntryForLlm(e));
+    return {
+      ...lane,
+      entries,
+      entry_count: entries.length,
+    };
+  }
+  if ("hashtag_leaderboard_v1" in slice && Array.isArray(slice.hashtag_leaderboard_v1)) {
+    return {
+      ...slice,
+      hashtag_leaderboard_v1: slice.hashtag_leaderboard_v1.slice(0, 30),
+    };
+  }
+  return slice;
 }
 
 /**
@@ -325,6 +346,7 @@ export async function buildCreationPack(
   const platform_constraints = resolvePlatformConstraintsForPack(platforms, platform, flowType);
 
   const cfg = loadConfig();
+  const mimicFlowOnly = !!(flowType && isTopPerformerMimicRenderableFlow(flowType));
   const signal_pack = signalPack
     ? budgetSignalPackContextForLlm(
         structuredClone(signalPackContextForLlm(signalPack)) as Record<string, unknown>,
@@ -332,7 +354,8 @@ export async function buildCreationPack(
           maxTotalJsonChars: cfg.LLM_SIGNAL_PACK_JSON_MAX_CHARS,
           maxCandidateRows: cfg.LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS,
           maxStringFieldChars: cfg.LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS,
-        }
+        },
+        { candidateData, mimicFlowOnly }
       )
     : {};
 
@@ -375,7 +398,9 @@ export async function buildCreationPack(
         : null;
     const step = topPerformerKnowledgeStepForFlowType(flowType);
     if (step) {
-      pack.top_performer_mimic_knowledge = pickTopPerformerKnowledgeForStep(derivedGlobals, step);
+      pack.top_performer_mimic_knowledge = slimTopPerformerKnowledgeForLlm(
+        pickTopPerformerKnowledgeForStep(derivedGlobals, step)
+      );
     }
   }
 

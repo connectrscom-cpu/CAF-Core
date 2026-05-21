@@ -24,9 +24,17 @@ export interface ResolvedMimicReference {
   source_insights_id: string;
   source_evidence_row_id: string | null;
   analysis_tier: string;
+  /** True when a non-primary tier was used (e.g. carousel slide for image mimic). */
+  reference_tier_fallback?: boolean;
   reference_items: MimicReferenceItem[];
   guideline_entry: Record<string, unknown>;
 }
+
+/** When primary tier is missing from the pack, try these tiers (same inspection media shape). */
+const MIMIC_TIER_FALLBACKS: Record<string, readonly string[]> = {
+  top_performer_deep: ["top_performer_carousel"],
+  top_performer_carousel: [],
+};
 
 function expectedTier(flowType: string): string {
   if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) return "top_performer_deep";
@@ -76,6 +84,37 @@ function findGuidelineEntry(
   return null;
 }
 
+function listGuidelineTiers(derivedGlobals: Record<string, unknown> | null): string[] {
+  const pack = asRecord(derivedGlobals?.[SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]);
+  const entries = Array.isArray(pack?.entries) ? pack!.entries : [];
+  const tiers = new Set<string>();
+  for (const e of entries) {
+    const rec = asRecord(e);
+    const at = String(rec?.analysis_tier ?? "").trim();
+    if (at) tiers.add(at);
+  }
+  return [...tiers];
+}
+
+function resolveGuidelineEntry(
+  derived: Record<string, unknown> | null,
+  insightIds: string[],
+  primaryTier: string
+): { entry: Record<string, unknown>; resolvedTier: string; reference_tier_fallback: boolean } | null {
+  const tiersToTry = [primaryTier, ...(MIMIC_TIER_FALLBACKS[primaryTier] ?? [])];
+  for (const tier of tiersToTry) {
+    const entry = findGuidelineEntry(derived, insightIds, tier);
+    if (entry) {
+      return {
+        entry,
+        resolvedTier: tier,
+        reference_tier_fallback: tier !== primaryTier,
+      };
+    }
+  }
+  return null;
+}
+
 export function resolveMimicReferenceFromLineage(
   flowType: string,
   lineage: JobLineageResult,
@@ -93,7 +132,16 @@ export function resolveMimicReferenceFromLineage(
       : lineage.grounding.map((g) => String(g.insight_row.insights_id ?? "").trim()).filter(Boolean);
 
   const derived = asRecord(lineage.signal_pack?.derived_globals_json);
-  let entry = findGuidelineEntry(derived, insightIds, tier);
+  const resolvedGuideline = resolveGuidelineEntry(derived, insightIds, tier);
+
+  let entry = resolvedGuideline?.entry ?? null;
+  let resolvedTier = tier;
+  let referenceTierFallback = false;
+
+  if (resolvedGuideline) {
+    resolvedTier = resolvedGuideline.resolvedTier;
+    referenceTierFallback = resolvedGuideline.reference_tier_fallback;
+  }
 
   if (!entry && lineage.grounding.length > 0) {
     const match = lineage.grounding.find((g) => {
@@ -109,12 +157,19 @@ export function resolveMimicReferenceFromLineage(
         aesthetic_analysis_json: match.insight_row.aesthetic_analysis_json,
         stored_inspection_media_json: null,
       };
+      resolvedTier = String(entry.analysis_tier ?? tier);
     }
   }
 
   if (!entry) {
+    const available = listGuidelineTiers(derived);
+    const groundingLabel = insightIds.length ? insightIds.join(", ") : "none";
+    const tierHint =
+      tier === "top_performer_deep"
+        ? "Run the top-performer deep (single-image) vision pass and rebuild the signal pack, or use FLOW_TOP_PERFORMER_MIMIC_CAROUSEL when only carousel references exist."
+        : "Ground ideas to top-performer insights and rebuild the signal pack.";
     throw new Error(
-      `No visual guideline entry for mimic (${tier}). Ground ideas to top-performer insights and rebuild the signal pack.`
+      `No visual guideline entry for mimic (${tier}). Pack has tiers: ${available.join(", ") || "none"}. Idea grounding: ${groundingLabel}. ${tierHint}`
     );
   }
 
@@ -145,7 +200,8 @@ export function resolveMimicReferenceFromLineage(
   return {
     source_insights_id: String(entry.insights_id ?? insightIds[0] ?? ""),
     source_evidence_row_id: entry.source_evidence_row_id != null ? String(entry.source_evidence_row_id) : null,
-    analysis_tier: String(entry.analysis_tier ?? tier),
+    analysis_tier: String(entry.analysis_tier ?? resolvedTier),
+    reference_tier_fallback: referenceTierFallback,
     reference_items,
     guideline_entry: entry,
   };

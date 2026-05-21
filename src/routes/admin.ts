@@ -52,11 +52,12 @@ import {
   listTaskIdsMatchingJobFilters,
 } from "../repositories/admin.js";
 import { listApiCallAuditsForTask, listApiCallAuditsForRun } from "../repositories/api-call-audit.js";
-import { listRunContentOutcomes } from "../repositories/run-content-outcomes.js";
+import { listRunContentOutcomesForAdmin } from "../repositories/run-content-outcomes.js";
 import { buildRunContentLogExport } from "../repositories/run-content-log-export.js";
 import { getSignalPackById, listSignalPacks } from "../repositories/signal-packs.js";
 import { adminInputsBody } from "./admin-inputs-body.js";
 import { adminProcessingBody } from "./admin-processing-body.js";
+import { adminCafUiCss, adminCafUiScript, adminRunHubTabsHtml } from "./admin-ui-shared.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildTransparencyTraceView } from "../services/planning-transparency.js";
@@ -403,6 +404,7 @@ dialog h3{font-size:16px;font-weight:600;margin-bottom:16px}
 .wb-embed{height:100vh;min-height:480px;background:var(--bg)}
 .wb-embed-frame{width:100%;height:100%;border:0;display:block;background:var(--bg)}
 @media(max-width:1024px){.sb{display:none}.main{margin-left:0}}
+${adminCafUiCss()}
 `;
 }
 
@@ -414,7 +416,7 @@ const ADMIN_WORKBENCH_PAGES = [
     embedPath: "/pipeline",
     title: "Signal packs",
     sidebarKey: "workbench-pipeline",
-    embedParams: { tab: "ideas" },
+    embedParams: { tab: "packs" },
   },
   { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish" },
   { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground" },
@@ -467,12 +469,10 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
   /** Project pipeline: research → production → learning (top to bottom). */
   const workbenchLinks = [
     { href: `/admin/inputs${pq}`, label: "Inputs & imports", key: "inputs" },
-    { href: `/admin/processing${pq}`, label: "Processing & ideas", key: "processing" },
+    { href: `/admin/processing${pq}`, label: "Processing", key: "processing" },
     { href: `/admin/workbench/pipeline${pq}`, label: "Signal packs", key: "workbench-pipeline" },
     { href: `/admin/runs${pq}`, label: "Runs", key: "runs" },
-    { href: `/admin/jobs${pq}`, label: "Jobs", key: "jobs" },
     { href: `/admin/workbench${pq}`, label: "Review & approve", key: "workbench-review" },
-    { href: `/admin/workbench/runs${pq}`, label: "Run output log", key: "workbench-runs" },
     { href: `/admin/workbench/publish${pq}`, label: "Publish", key: "workbench-publish" },
     { href: `/admin/learning${pq}`, label: "Learning & metrics", key: "learning" },
   ];
@@ -554,7 +554,8 @@ function page(
   const mainCls = mainClass ? `main ${mainClass}` : "main";
   return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} — CAF Core</title><style>${css()}</style>${headExtra}</head>
-<body><div class="shell">${sidebar(activeSidebar, projects, currentSlug)}<main class="${mainCls}">${body}</main></div></body></html>`;
+<body><div class="shell">${sidebar(activeSidebar, projects, currentSlug)}<main class="${mainCls}">${body}</main></div>
+<script>${adminCafUiScript()}</script></body></html>`;
 }
 
 /** Injected in &lt;head&gt;: global cafFetch() adds x-caf-core-token when CAF_CORE_REQUIRE_AUTH and token are set. */
@@ -1497,18 +1498,15 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
     const limit = Math.min(500, Math.max(1, parseInt(query.limit ?? "300", 10)));
     try {
-      const outcomes = await listRunContentOutcomes(db, project.id, runIdText, limit);
-      return { ok: true, outcomes };
+      const listed = await listRunContentOutcomesForAdmin(db, project.id, runIdText, limit);
+      return {
+        ok: true,
+        outcomes: listed.outcomes,
+        source: listed.source,
+        table_missing: listed.table_missing,
+      };
     } catch (err) {
-      /**
-       * Content log is an optional admin feature. If migration 007 wasn't applied yet (or the table
-       * was dropped in a dev DB), return an empty list so the UI can show the friendly hint.
-       */
-      const e = err as { code?: unknown; message?: unknown };
-      if (String(e?.code ?? "") === "42P01") {
-        return { ok: true, outcomes: [] };
-      }
-      request.log.error({ err }, "listRunContentOutcomes failed");
+      request.log.error({ err }, "listRunContentOutcomesForAdmin failed");
       return reply.code(500).send({ ok: false, error: "content_outcomes_failed" });
     }
   });
@@ -3230,14 +3228,14 @@ document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preve
 
     const runsRows = recentRuns
       .map((r) => {
-        const cand = `/admin/run-candidates?project=${encodeURIComponent(currentSlug)}&run_id=${encodeURIComponent(r.run_id)}`;
+        const planned = `/admin/run-jobs?project=${encodeURIComponent(currentSlug)}&run_id=${encodeURIComponent(r.run_id)}`;
         const jobs = `/admin/jobs?project=${encodeURIComponent(currentSlug)}&run_id=${encodeURIComponent(r.run_id)}`;
         return `<tr>
           <td class="mono" style="font-size:11px">${esc(r.run_id)}</td>
           <td>${esc(r.status)}</td>
           <td>${r.total_jobs}</td>
           <td>${r.jobs_completed}</td>
-          <td style="white-space:nowrap;font-size:11px"><a href="${cand}">Candidates</a> · <a href="${jobs}">Jobs</a></td>
+          <td style="white-space:nowrap;font-size:11px"><a class="btn btn-sm" href="${jobs}">View jobs</a> · <a href="${planned}">Planned</a></td>
         </tr>`;
       })
       .join("");
@@ -3676,18 +3674,33 @@ async function openRunContentLog(runId){
     }
     const rows=Array.isArray(d.outcomes)?d.outcomes:[];
     if(!rows.length){
-      body.innerHTML='<p class="empty">No rows yet. Run <strong>Start</strong> or <strong>Re-plan</strong> to log one <span class="mono">planned</span> row per job. If the table is missing, apply migration <span class="mono">007_run_content_outcomes.sql</span> (<span class="mono">npm run migrate</span> or restart Core with migrations enabled). Render <strong>Process</strong> appends <span class="mono">completed</span> / <span class="mono">failed</span> rows after carousel/video attempts.</p>';
+      var hint='No rows yet. Run <strong>Start</strong> or <strong>Re-plan</strong> to log one <span class="mono">planned</span> row per job.';
+      if(d.table_missing){
+        hint+=' Migration <span class="mono">007_run_content_outcomes.sql</span> is not applied on this database — run <span class="mono">npm run migrate</span> or restart Core with migrations enabled.';
+      }
+      hint+=' Render <strong>Process</strong> appends <span class="mono">completed</span> / <span class="mono">failed</span> rows after carousel/video attempts.';
+      body.innerHTML='<p class="empty">'+hint+'</p>';
       return;
     }
     window._runContentLogRows=rows.map(function(o){return{task_id:String(o.task_id||''),summary:prettyObj(o.summary)};});
     window._runContentLogExport={project:SLUG,run_id:runId,exported_at:new Date().toISOString(),outcomes:rows};
-    let h='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px">';
+    let h='';
+    if(d.source==='jobs_fallback'){
+      h+='<p style="font-size:12px;color:var(--yellow);margin:0 0 10px;line-height:1.45">Showing basic job rows from <span class="mono">content_jobs</span>';
+      if(d.table_missing)h+=' (outcomes table missing — apply migration <span class="mono">007</span>)';
+      h+='.</p>';
+    }else if(d.source==='jobs_enriched'){
+      h+='<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">One row per job with <strong>current status</strong>, QC, render state, <strong>draft packages</strong> (<span class="mono">job_drafts</span>), and content preview in the summary / row JSON.</p>';
+    }
+    h+='<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 14px">';
     h+='<button type="button" class="btn" onclick="copyRunContentLogAll()" title="Copy entire log as JSON (paste into chat or a doc)">Copy full log</button>';
-    h+='<span style="font-size:12px;color:var(--muted)">Copies project, run_id, and all '+rows.length+' outcome row(s) as one JSON block.</span></div>';
-    h+='<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">Pipeline outcomes (newest first). Per row: <strong>Copy ID</strong> / <strong>Copy summary</strong> for a single cell.</p>';
-    h+='<table class="sp-modal-table"><thead><tr><th>When</th><th>task_id</th><th>Kind</th><th>Flow</th><th>Outcome</th><th>Slides</th><th>Assets</th><th>Job status</th><th>Error</th><th>Summary</th></tr></thead><tbody>';
+    h+='<span style="font-size:12px;color:var(--muted)">Copies project, run_id, and all '+rows.length+' job row(s) as one JSON block.</span></div>';
+    h+='<p style="font-size:12px;color:var(--muted);margin:0 0 10px;line-height:1.45">Latest state per job. Per row: <strong>Copy ID</strong> / <strong>Copy summary</strong> for QC, preview, and lifecycle detail.</p>';
+    h+='<table class="sp-modal-table"><thead><tr><th>Updated</th><th>task_id</th><th>Kind</th><th>Flow</th><th>Outcome</th><th>Slides</th><th>Assets</th><th>Drafts</th><th>Job status</th><th>QC</th><th>Error</th><th>Summary</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var o=rows[i];
+      var sum=o.summary&&typeof o.summary==='object'?o.summary:{};
+      var draftN=Array.isArray(o.job_drafts)?o.job_drafts.length:(sum.draft_count!=null?sum.draft_count:0);
       h+='<tr><td>'+esc(fmtDate(o.created_at))+'</td>';
       h+='<td class="mono" style="font-size:10px;max-width:160px;word-break:break-all;vertical-align:top">';
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:2px 8px;margin:0 0 6px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);display:block" onclick="copyRunContentLogTask('+i+')" title="Copy task_id to clipboard">Copy ID</button>';
@@ -3696,7 +3709,9 @@ async function openRunContentLog(runId){
       h+='<td>'+badge(o.outcome)+'</td>';
       h+='<td>'+(o.slide_count==null||o.slide_count===''?'—':esc(String(o.slide_count)))+'</td>';
       h+='<td>'+(o.asset_count==null||o.asset_count===''?'—':esc(String(o.asset_count)))+'</td>';
+      h+='<td>'+esc(String(draftN))+'</td>';
       h+='<td>'+esc(o.job_status||'—')+'</td>';
+      h+='<td class="mono" style="font-size:10px">'+esc(String(sum.qc_status||'—'))+'</td>';
       h+='<td style="max-width:160px;word-break:break-word;font-size:10px">'+esc(o.error_message||'')+'</td>';
       h+='<td style="vertical-align:top">';
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:2px 8px;margin:0 0 6px;cursor:pointer;border:1px solid var(--border);border-radius:4px;background:transparent;color:var(--fg);display:block" onclick="copyRunContentLogSummary('+i+')" title="Copy summary JSON to clipboard">Copy summary</button>';
@@ -3786,7 +3801,8 @@ async function loadRuns(p){
     h+='<td>'+run.jobs_completed+'/'+run.total_jobs+'</td>';
     h+='<td>'+fmtDate(run.created_at)+'</td><td>'+fmtDate(run.started_at)+'</td><td>'+fmtDate(run.completed_at)+'</td>';
     h+='<td><div class="run-actions">';
-    h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/run-candidates?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(run.run_id)+'">Candidates</a> ';
+    h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/run-jobs?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(run.run_id)+'">Planned jobs</a> ';
+    h+='<a class="btn btn-sm" style="font-size:11px;padding:4px 10px;text-decoration:none;margin-left:4px" href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">View jobs</a> ';
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunContentLog("+JSON.stringify(run.run_id)+")' title='Carousel slide counts + copy preview; video script preview + assets'>Content log</button> ";
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
@@ -3847,7 +3863,7 @@ async function runAction(runId,action){
         );
         if(ok){
           showToast('Materializing candidates from signal pack…',true,16000);
-          const mat=await doReq(base+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_ideas_all'})});
+          const mat=await doReq(base+'/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:'from_pack_ideas_all'})});
           if(!mat.r.ok||!mat.d.ok)throw new Error(apiErr(mat.d,'Materialize failed'));
           const n=Array.isArray(mat.d.planner_rows)?mat.d.planner_rows.length:0;
           showToast('Candidates materialized ('+n+' planner row(s)). Starting run…',true,20000);
@@ -4573,28 +4589,37 @@ document.getElementById('slab-copy-btn').addEventListener('click',async function
 
   app.get("/admin/run-candidates", async (request, reply) => {
     const query = request.query as Record<string, string>;
+    const project = (query.project ?? "").trim();
+    const runId = (query.run_id ?? "").trim();
+    const qs = new URLSearchParams();
+    if (project) qs.set("project", project);
+    if (runId) qs.set("run_id", runId);
+    const dest = `/admin/run-jobs${qs.toString() ? `?${qs.toString()}` : ""}`;
+    return reply.redirect(302, dest);
+  });
+
+  app.get("/admin/run-jobs", async (request, reply) => {
+    const query = request.query as Record<string, string>;
     const projects = await listProjects(db);
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const runIdQ = (query.run_id ?? "").trim();
 
     const body = `
-<div class="ph"><div><h2>Run transparency</h2><span class="ph-sub"><span class="mono">candidates_json</span> on the run · pack research · planner traces · API audit</span></div></div>
+<div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="plannedJobs">Planned jobs</span></h2></div></div>
+${runIdQ ? adminRunHubTabsHtml("planned", currentSlug, runIdQ) : ""}
 <div class="content">
-<p class="runs-ops-hint">Open from <strong>Runs</strong> → <strong>Candidates</strong>, or use <span class="mono">?project=SLUG&amp;run_id=RUN_ID</span>. Materialize <span class="mono">candidates_json</span> from pack <strong>ideas</strong> (buttons below) before <strong>Start</strong> on Runs. Per-task prompts: <a href="/admin/jobs?project=${encodeURIComponent(currentSlug)}${runIdQ ? `&run_id=${encodeURIComponent(runIdQ)}` : ""}">Jobs</a> → expand a row.</p>
-<div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize <span class="mono">runs.candidates_json</span></div><div style="padding:12px 16px 16px">
-<p class="runs-ops-hint" style="margin-top:0">Required before Start. Uses the run's signal pack <span class="mono">ideas_json</span>.</p>
+<div class="card" style="margin-bottom:14px" id="rc-actions-card"><div class="card-h">Materialize planned jobs</div><div style="padding:12px 16px 16px">
 <p style="margin:10px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
-<button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack ideas</button>
+<button type="button" class="btn btn-sm" id="rc-btn-all">Use all pack jobs</button>
 <button type="button" class="btn-ghost btn-sm" id="rc-btn-llm">LLM pick subset</button>
-<button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick ideas manually</button></p>
+<button type="button" class="btn-ghost btn-sm" id="rc-btn-manual">Pick jobs manually</button></p>
 <p id="rc-mat-msg" style="font-size:12px;margin:0;min-height:1.2em;color:var(--muted)"></p>
 </div></div>
 <div id="rc-manual-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;align-items:center;justify-content:center;padding:16px;overflow:auto">
 <div class="card" style="max-width:760px;width:100%;margin:24px auto;max-height:calc(100vh - 48px);display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.35)">
 <div style="padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0">
-<h3 style="margin:0;font-size:16px">Pick ideas manually</h3>
-<p style="margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.45">Choose which ideas from this signal pack become planner rows on the run. At least one must be selected.</p>
+<h3 style="margin:0;font-size:16px">Pick jobs manually</h3>
 </div>
 <div id="rc-manual-list" style="overflow:auto;flex:1;min-height:120px;padding:12px 18px"></div>
 <div style="padding:12px 18px;border-top:1px solid var(--border);display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;align-items:center;flex-shrink:0">
@@ -4709,7 +4734,7 @@ async function postRunCandidates(body){
   if(!SLUG||!RUN_ID){if(msg)msg.textContent='Missing project or run.';return;}
   if(msg){msg.style.color='var(--muted)';msg.textContent='Working…';}
   try{
-    var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(RUN_ID)+'/candidates',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(RUN_ID)+'/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json();
     if(!r.ok||!d.ok)throw new Error((d&&d.message)||(d&&d.error)||'HTTP '+r.status);
     if(msg){msg.style.color='var(--muted)';msg.textContent='Saved '+d.planner_rows+' planner row(s).';}
@@ -4786,7 +4811,7 @@ loadRunTransparency();
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
       .type("text/html")
-      .send(page("Run candidates", "runs", body, projects, currentSlug, adminHeadTokenScript(config)));
+      .send(page("Planned jobs", "runs", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Jobs ---
@@ -4799,7 +4824,8 @@ loadRunTransparency();
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
 
     const body = `
-<div class="ph"><div><h2>${esc(project?.display_name || currentSlug || "—")}</h2><span class="ph-sub">Jobs — your Google Sheets replacement</span></div></div>
+<div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="jobs">Jobs</span></h2></div></div>
+${initialRunId ? adminRunHubTabsHtml("jobs", currentSlug, initialRunId) : ""}
 <div class="content">
 <style>
 .job-row{cursor:pointer}
@@ -5266,7 +5292,7 @@ async function loadJobs(p,silent){
   jobLastErrors=d.rows.map(function(j){return j.last_error!=null?String(j.last_error):'';});
   var preserveTask=jobDetailOpenTaskId;
   var scrollY=window.scrollY||document.documentElement.scrollTop||0;
-  var h='<table class="jobs-main-table"><thead><tr><th>Task</th><th>Run</th><th>Platform</th><th>Flow</th><th>Package</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
+  var h='<table class="jobs-main-table"><thead><tr><th>Job ID</th><th>Run</th><th>Platform</th><th>Flow</th><th>Package</th><th>Status</th><th>Phase</th><th>Render</th><th>Error / last failure</th><th>Route</th><th>Score</th><th>QC</th><th>Updated</th><th style="white-space:nowrap">Actions</th></tr></thead><tbody>';
   for(var i=0;i<d.rows.length;i++){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');

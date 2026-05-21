@@ -1,10 +1,11 @@
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
+import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 import { extractExplicitVideoPromptText, extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 
 export type DraftPackageContractMode = "skip" | "warn" | "enforce";
 
-export type DraftPackageType = "carousel_package" | "heygen_package" | "image_package";
+export type DraftPackageType = "carousel_package" | "heygen_package" | "image_package" | "mimic_carousel_package";
 
 export type DraftPackageValidation = {
   output: Record<string, unknown>;
@@ -152,9 +153,44 @@ function normalizeCarouselPublishMetadata(out: Record<string, unknown>): void {
 }
 
 function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
+  if (isTopPerformerMimicCarouselFlow(flowType ?? "")) return "mimic_carousel_package";
   if (isImageFlow(flowType ?? "")) return "image_package";
   if (isCarouselFlow(flowType ?? "")) return "carousel_package";
   if (isVideoFlow(flowType ?? "")) return "heygen_package";
+  return null;
+}
+
+function validateMimicCarouselPackage(out: Record<string, unknown>): { warnings: string[]; errors: string[] } {
+  const warnings: string[] = [];
+  const errors: string[] = [];
+
+  const copy = asRecord(out.copy) ?? out;
+  const slides = slidesFromGeneratedOutput(copy);
+  const usable = slides.filter((s) => slideHasRenderableContent(s));
+  if (usable.length === 0) {
+    errors.push("mimic_carousel_package: no renderable slides in copy layer");
+  }
+
+  const caption = String(copy.caption ?? copy.primary_copy ?? out.caption ?? out.primary_copy ?? "").trim();
+  if (!caption) {
+    warnings.push("mimic_carousel_package: missing caption/primary_copy (publish readiness weaker)");
+  }
+  const tags = normalizeHashtags(copy.hashtags ?? out.hashtags);
+  if (tags.length === 0) {
+    warnings.push("mimic_carousel_package: missing hashtags (discoverability risk)");
+  }
+
+  const plan = asRecord(out.render_plan);
+  const mode = String(plan?.mode ?? "").trim();
+  if (!mode) {
+    warnings.push("mimic_carousel_package: render_plan.mode missing until mimic prep completes");
+  }
+
+  return { warnings, errors };
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
   return null;
 }
 
@@ -253,6 +289,8 @@ export function validateAndNormalizeDraftPackage(
         ? "carousel_package"
         : rawType === "image_package"
           ? "image_package"
+          : rawType === "mimic_carousel_package"
+            ? "mimic_carousel_package"
         : rawType === "render_copy"
           ? "carousel_package"
           : null;
@@ -263,7 +301,23 @@ export function validateAndNormalizeDraftPackage(
     output.package_type = package_type;
   }
 
-  if (package_type === "carousel_package") {
+  if (package_type === "mimic_carousel_package") {
+    const copyLayer = asRecord(output.copy) ?? output;
+    normalizeCarouselFieldToObject(copyLayer);
+    normalizeCarouselPublishMetadata(copyLayer);
+    if (output.copy && typeof output.copy === "object") {
+      output.copy = copyLayer;
+    } else {
+      Object.assign(output, copyLayer);
+    }
+    ensureStringField(copyLayer, "hook_text", String(copyLayer.hook_text ?? copyLayer.hook ?? copyLayer.headline ?? ""));
+    ensureStringField(copyLayer, "primary_copy", String(copyLayer.primary_copy ?? copyLayer.caption ?? ""));
+    ensureStringField(copyLayer, "cta_text", String(copyLayer.cta_text ?? copyLayer.cta ?? ""));
+
+    const r = validateMimicCarouselPackage(output);
+    warnings.push(...r.warnings);
+    errors.push(...r.errors);
+  } else if (package_type === "carousel_package") {
     normalizeCarouselFieldToObject(output);
     normalizeCarouselPublishMetadata(output);
 

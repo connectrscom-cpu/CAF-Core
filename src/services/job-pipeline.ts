@@ -38,7 +38,12 @@ import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  isTopPerformerMimicCarouselFlow,
+  isTopPerformerMimicRenderableFlow,
+  TOP_PERFORMER_MIMIC_RENDER_NOT_READY_MESSAGE,
+} from "../domain/top-performer-mimic-flow-types.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { prepareMimicDraftPackage } from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
@@ -52,7 +57,7 @@ import { hasActiveProviderSession, pickRenderState } from "../domain/content-job
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { estimateCarouselSlideFlyUsd } from "./render-cost-estimate.js";
-import { insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
+import { flowKindForContentLog, insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 import { HeygenPollTimeoutError } from "./heygen-renderer.js";
 import { SoraPollTimeoutError } from "./sora-scene-clips.js";
 
@@ -132,6 +137,40 @@ type RenderTicket = {
   recommended_route: string | null;
 };
 
+async function persistJobPipelineFailure(
+  db: Pool,
+  job: {
+    id: string;
+    task_id: string;
+    project_id: string;
+    run_id: string;
+    flow_type: string;
+    platform?: string | null;
+    generation_payload?: unknown;
+  },
+  msg: string,
+  fromState: string
+): Promise<void> {
+  const trimmed = msg.trim().slice(0, 2000);
+  await db.query(
+    `UPDATE caf_core.content_jobs
+     SET generation_payload = jsonb_set(
+           jsonb_set(COALESCE(generation_payload, '{}'::jsonb), '{generation_error}', to_jsonb($1::text), true),
+           '{last_error}', to_jsonb($1::text), true
+         ),
+         updated_at = now()
+     WHERE id = $2`,
+    [trimmed, job.id]
+  );
+  logPipelineEvent("error", "other", trimmed, {
+    run_id: job.run_id,
+    task_id: job.task_id,
+    flow_type: job.flow_type,
+    data: { from_state: fromState },
+  });
+  await recordLifecycleOutcomeSafe(db, job, "FAILED", "failed", trimmed);
+}
+
 async function markJobFailedPipeline(
   db: Pool,
   run: RunRow,
@@ -141,21 +180,45 @@ async function markJobFailedPipeline(
   errors: string[]
 ): Promise<void> {
   errors.push(`${taskId}: ${msg}`);
-  const prior = await qOne<{ status: string }>(
+  const prior = await qOne<{
+    status: string;
+    flow_type: string;
+    platform: string | null;
+    run_id: string;
+    generation_payload: unknown;
+  }>(
     db,
-    `SELECT status FROM caf_core.content_jobs WHERE id = $1`,
+    `SELECT status, flow_type, platform, run_id, generation_payload
+     FROM caf_core.content_jobs WHERE id = $1`,
     [jobId]
   );
+  const fromState = prior?.status ?? "GENERATING";
   await updateJobStatus(db, jobId, "FAILED");
   await insertJobStateTransition(db, {
     task_id: taskId,
     project_id: run.project_id,
-    from_state: prior?.status ?? "GENERATING",
+    from_state: fromState,
     to_state: "FAILED",
     triggered_by: "system",
     actor: "job-pipeline",
     metadata: { error: msg },
   });
+  if (prior) {
+    await persistJobPipelineFailure(
+      db,
+      {
+        id: jobId,
+        task_id: taskId,
+        project_id: run.project_id,
+        run_id: prior.run_id,
+        flow_type: prior.flow_type,
+        platform: prior.platform,
+        generation_payload: prior.generation_payload,
+      },
+      msg,
+      fromState
+    );
+  }
 }
 
 async function reloadJobRow(db: Pool, jobId: string): Promise<JobRow | null> {
@@ -210,13 +273,14 @@ async function processJobUpToRender(
         triggered_by: "system",
         actor: "job-pipeline",
       });
+      await recordLifecycleOutcomeSafe(db, job, "GENERATED", "generated");
     }
   }
 
-  if (
-    config.MIMIC_IMAGE_ENABLED &&
-    (isTopPerformerMimicCarouselFlow(job.flow_type) || isImageFlow(job.flow_type))
-  ) {
+  if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
+    if (!config.MIMIC_IMAGE_ENABLED) {
+      throw new Error(TOP_PERFORMER_MIMIC_RENDER_NOT_READY_MESSAGE);
+    }
     const freshJob = await reloadJobRow(db, job.id);
     if (freshJob) {
       await prepareMimicDraftPackage(
@@ -376,16 +440,18 @@ export async function processContentJobById(
     if (err instanceof RenderNotReadyError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     const prior = await qOne<{ status: string }>(db, `SELECT status FROM caf_core.content_jobs WHERE id = $1`, [jobId]);
+    const fromState = prior?.status ?? job.status;
     await updateJobStatus(db, jobId, "FAILED");
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: job.project_id,
-      from_state: prior?.status ?? job.status,
+      from_state: fromState,
       to_state: "FAILED",
       triggered_by: "system",
       actor: "job-pipeline",
       metadata: { error: msg },
     });
+    await persistJobPipelineFailure(db, job, msg, fromState);
     throw err;
   }
 }
@@ -1109,7 +1175,7 @@ async function ensureHeygenPayloadForFlowType(
 
 async function advanceToGenerating(
   db: Pool,
-  job: { id: string; task_id: string; status: string },
+  job: { id: string; task_id: string; status: string; project_id: string; run_id: string; flow_type: string; platform?: string | null; generation_payload?: unknown },
   run: RunRow | null
 ) {
   await updateJobStatus(db, job.id, "GENERATING");
@@ -1122,12 +1188,13 @@ async function advanceToGenerating(
       triggered_by: "system",
       actor: "job-pipeline",
     });
+    await recordLifecycleOutcomeSafe(db, job, "GENERATING", "generating");
   }
 }
 
 async function advanceToInReview(
   db: Pool,
-  job: { id: string; task_id: string },
+  job: { id: string; task_id: string; project_id: string; run_id: string; flow_type: string; platform?: string | null; generation_payload?: unknown },
   run: RunRow | null,
   recommendedRoute: string | null
 ) {
@@ -1142,7 +1209,15 @@ async function advanceToInReview(
       triggered_by: "system",
       actor: "job-pipeline",
     });
+    await recordLifecycleOutcomeSafe(db, job, st, outcomeLabelForReviewStatus(st));
   }
+}
+
+function outcomeLabelForReviewStatus(status: string): string {
+  if (status === "IN_REVIEW") return "in_review";
+  if (status === "NEEDS_EDIT") return "needs_edit";
+  if (status === "REJECTED") return "rejected";
+  return status.toLowerCase();
 }
 
 /**
@@ -1195,6 +1270,49 @@ async function recordRunContentOutcomeSafe(
   } catch (e) {
     console.warn("[job-pipeline] run_content_outcomes insert failed", e);
   }
+}
+
+async function recordLifecycleOutcomeSafe(
+  db: Pool,
+  job: {
+    project_id: string;
+    run_id: string;
+    task_id: string;
+    flow_type: string;
+    platform?: string | null;
+    generation_payload?: unknown;
+  },
+  jobStatus: string,
+  outcome: string,
+  errorMessage?: string | null
+): Promise<void> {
+  const gp =
+    job.generation_payload && typeof job.generation_payload === "object" && !Array.isArray(job.generation_payload)
+      ? (job.generation_payload as Record<string, unknown>)
+      : {};
+  const candidateData =
+    gp.candidate_data && typeof gp.candidate_data === "object" && !Array.isArray(gp.candidate_data)
+      ? (gp.candidate_data as Record<string, unknown>)
+      : {};
+  await recordRunContentOutcomeSafe(db, {
+    project_id: job.project_id,
+    run_id: job.run_id,
+    task_id: job.task_id,
+    flow_type: job.flow_type,
+    flow_kind: flowKindForContentLog(job.flow_type),
+    outcome,
+    job_status: jobStatus,
+    slide_count: null,
+    asset_count: await countAssetsForTask(db, job.project_id, job.task_id),
+    summary: {
+      platform: job.platform ?? candidateData.platform ?? null,
+      idea_id: candidateData.idea_id ?? candidateData.id ?? null,
+      content_idea: String(
+        candidateData.content_idea ?? candidateData.title ?? candidateData.summary ?? ""
+      ).slice(0, 280),
+    },
+    error_message: errorMessage?.trim() ? errorMessage.trim().slice(0, 500) : null,
+  });
 }
 
 function carouselOutcomeSummary(job: JobRow, template: string, usableSlides: Record<string, unknown>[], objectPaths: string[]) {

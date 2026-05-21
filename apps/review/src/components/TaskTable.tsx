@@ -126,7 +126,7 @@ function TaskRow({
           <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span>
         )}
       </td>
-      <td className="task-id-cell">
+      <td className="job-id-cell">
         <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
           {taskId}
         </Link>
@@ -325,7 +325,7 @@ export function TaskTable({
         <thead>
           <tr>
             <th style={{ width: 72 }}>Preview</th>
-            <th>Task ID</th>
+            <th>Job ID</th>
             {showProjectColumn && <th>Project</th>}
             {!hideTitleColumn && <th>Title / Hook</th>}
             <th>Platform</th>

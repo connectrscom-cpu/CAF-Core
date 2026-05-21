@@ -2,6 +2,21 @@
 
 Optional flows that mimic archived top-performer visuals using OpenAI `gpt-image-1` edits.
 
+## Mimic carousel draft package (`mimic_carousel_package`)
+
+**Distinct from `FLOW_CAROUSEL` / `carousel_package`.** Only `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` uses this type.
+
+After Generate + mimic prep, `generation_payload.draft_package_snapshot` holds:
+
+| Slice | Source |
+|-------|--------|
+| `copy` | LLM slides, caption, hashtags |
+| `render_plan` | Upstream vision analysis via `classifyMimicMode` — `template_background` (listicle/text-heavy) or `per_slide_mimic` (strong imagery) |
+| `visual_reference` | Archived inspection media paths (`bucket`, `object_path`, folder prefix) |
+| `visual_guideline` | Slim top-performer row: format pattern, deck system, replication blueprint |
+
+`mimic_v1` remains the render source of truth; the composed package is for review, content log, and operators.
+
 ## Enable (both required)
 
 1. **Env:** `MIMIC_IMAGE_ENABLED=1` and `OPENAI_API_KEY`

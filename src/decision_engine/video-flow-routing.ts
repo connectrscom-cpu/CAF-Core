@@ -7,6 +7,8 @@ import {
   isProductVideoFlow,
   type ProductHeygenMode,
 } from "../domain/product-flow-types.js";
+import { isVideoFlow } from "./flow-kind.js";
+import { DEFAULT_VIDEO_FLOW_PLAN_CAP } from "./default-plan-caps.js";
 
 export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar";
 
@@ -216,6 +218,8 @@ export interface EnabledFlowRef {
 
 /**
  * Pick one enabled flow_type for a routed video row (highest priority_weight first).
+ * Core HeyGen flows (FLOW_VID_*) win over FLOW_PRODUCT_* so organic video ideas are not
+ * routed to product marketing flows that may be enabled but plan-capped at 0.
  */
 export function pickVideoFlowForIntent(
   enabledFlows: EnabledFlowRef[],
@@ -223,11 +227,15 @@ export function pickVideoFlowForIntent(
   productModes: Map<string, ProductHeygenMode | null>
 ): string | null {
   const sorted = [...enabledFlows].sort(
-    (a, b) => (b.priority_weight ?? 0) - (a.priority_weight ?? 0)
+    (a, b) => Number(b.priority_weight ?? 0) - Number(a.priority_weight ?? 0)
   );
-  for (const f of sorted) {
-    const mode = productModes.get(f.flow_type) ?? null;
-    if (flowTypeMatchesVideoIntent(f.flow_type, intent, mode)) return f.flow_type;
+  const core = sorted.filter((f) => !isProductVideoFlow(f.flow_type));
+  const product = sorted.filter((f) => isProductVideoFlow(f.flow_type));
+  for (const bucket of [core, product]) {
+    for (const f of bucket) {
+      const mode = productModes.get(f.flow_type) ?? null;
+      if (flowTypeMatchesVideoIntent(f.flow_type, intent, mode)) return f.flow_type;
+    }
   }
   return null;
 }
@@ -244,4 +252,123 @@ export function isSceneAssemblyFlowType(flowType: string): boolean {
 
 export function shouldExcludeFlowFromVideoRouting(flowType: string): boolean {
   return isSceneAssemblyFlowType(flowType);
+}
+
+export const CORE_VIDEO_INTENTS: readonly VideoPipelineIntent[] = [
+  "prompt_avatar",
+  "script_avatar",
+  "no_avatar",
+];
+
+export interface VideoPlanningCaps {
+  maxVideoPlan: number;
+  perFlowCaps: Record<string, number>;
+}
+
+/** Tracks remaining per-flow and aggregate video slots while building candidates. */
+export class VideoPlanningSlotBudget {
+  private aggregateRemaining: number;
+  private readonly byFlow = new Map<string, number>();
+
+  constructor(
+    enabledFlows: EnabledFlowRef[],
+    caps: VideoPlanningCaps,
+    defaultFlowCap: number = DEFAULT_VIDEO_FLOW_PLAN_CAP
+  ) {
+    this.aggregateRemaining = Math.max(0, caps.maxVideoPlan);
+    for (const f of enabledFlows) {
+      if (!isVideoFlow(f.flow_type) || shouldExcludeFlowFromVideoRouting(f.flow_type)) continue;
+      const cap = caps.perFlowCaps[f.flow_type] ?? defaultFlowCap;
+      this.byFlow.set(f.flow_type, Math.max(0, cap));
+    }
+  }
+
+  canAssign(flowType: string): boolean {
+    if (this.aggregateRemaining <= 0) return false;
+    const rem = this.byFlow.get(flowType);
+    return rem !== undefined && rem > 0;
+  }
+
+  assign(flowType: string): void {
+    if (!this.canAssign(flowType)) return;
+    this.aggregateRemaining -= 1;
+    this.byFlow.set(flowType, (this.byFlow.get(flowType) ?? 0) - 1);
+  }
+}
+
+function dedupeIntents(intents: VideoPipelineIntent[]): VideoPipelineIntent[] {
+  const seen = new Set<VideoPipelineIntent>();
+  const out: VideoPipelineIntent[] = [];
+  for (const intent of intents) {
+    if (seen.has(intent)) continue;
+    seen.add(intent);
+    out.push(intent);
+  }
+  return out;
+}
+
+/** Intent try-order: honor explicit/heuristic rows; distribute default rows across open lanes. */
+export function buildVideoIntentTryOrder(
+  route: VideoRouteDecision,
+  platform: string,
+  _cfg: VideoRoutingConfig
+): VideoPipelineIntent[] {
+  const natural = route.intent;
+  if (route.confidence === "explicit" || route.confidence === "heuristic") {
+    return [natural];
+  }
+
+  const platformLower = platform.toLowerCase().trim();
+  let fill: VideoPipelineIntent[] = [...CORE_VIDEO_INTENTS];
+  if (platformLower === "tiktok" || platformLower === "reddit") {
+    fill = ["no_avatar", "prompt_avatar", "script_avatar"];
+  }
+  return dedupeIntents([natural, ...fill]);
+}
+
+export interface VideoFlowAssignment {
+  flowType: string;
+  route: VideoRouteDecision;
+  matchedIntent: VideoPipelineIntent;
+  assignment: "natural" | "slot_fill";
+}
+
+/**
+ * Pick a video flow for one planner row, consuming one planning slot when caps are provided.
+ * Without a budget, falls back to natural intent only (legacy behavior).
+ */
+export function assignVideoFlowForPlanningRow(
+  row: Record<string, unknown>,
+  cfg: VideoRoutingConfig,
+  enabledFlows: EnabledFlowRef[],
+  productModes: Map<string, ProductHeygenMode | null>,
+  budget?: VideoPlanningSlotBudget
+): VideoFlowAssignment | null {
+  const platform = String(row.platform ?? row.target_platform ?? "Instagram");
+  const route = resolveVideoIntent(row, cfg);
+  const tryOrder = budget
+    ? buildVideoIntentTryOrder(route, platform, cfg)
+    : [route.intent];
+
+  for (const intent of tryOrder) {
+    const flowType = pickVideoFlowForIntent(enabledFlows, intent, productModes);
+    if (!flowType) continue;
+    if (budget && !budget.canAssign(flowType)) continue;
+
+    if (budget) budget.assign(flowType);
+    const assignment: VideoFlowAssignment["assignment"] =
+      intent === route.intent ? "natural" : "slot_fill";
+    return {
+      flowType,
+      matchedIntent: intent,
+      assignment,
+      route: {
+        intent: route.intent,
+        reason: route.reason,
+        confidence: route.confidence,
+      },
+    };
+  }
+
+  return null;
 }

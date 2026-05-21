@@ -33,4 +33,7 @@ export function isTopPerformerMimicRenderableFlow(flowType: string): boolean {
 }
 
 export const TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE =
-  "Top-performer mimic flows require MIMIC_IMAGE_ENABLED=1 and OPENAI_API_KEY — enable in env and project allowed_flow_types.";
+  "Top-performer mimic copy generation requires OPENAI_API_KEY.";
+
+export const TOP_PERFORMER_MIMIC_RENDER_NOT_READY_MESSAGE =
+  "Top-performer mimic reference prep and render require MIMIC_IMAGE_ENABLED=1, OPENAI_API_KEY, and archived top-performer inspection media on the signal pack.";

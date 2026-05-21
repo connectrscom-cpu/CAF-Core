@@ -13,17 +13,17 @@ import { getLearningRulesForPlanning } from "../services/learning-rule-selection
 import { evaluateKillSwitches } from "./kill_switches.js";
 import { applyLearningBoosts, dedupeByKey, sortByScoreDesc } from "./ranking_rules.js";
 import { defaultWeights, scoreCandidate } from "./scoring.js";
+import { resolvePlanningCaps } from "./planning-caps.js";
 import {
-  defaultMaxJobsPerFlowType,
-  DEFAULT_CAROUSEL_FLOW_PLAN_CAP,
-  DEFAULT_VIDEO_FLOW_PLAN_CAP,
-} from "./default-plan-caps.js";
-import { partitionCandidatesForPlanningPhases } from "./format-routing.js";
+  partitionCandidatesForPlanningPhases,
+  partitionPrimaryForCarouselSpread,
+} from "./format-routing.js";
 import {
   createPlanSelectionState,
   ideaKeyFallbackPass,
   ideaKeyPrimaryPass,
   selectJobsFromCandidates,
+  selectTemplatedCarouselExtraVariations,
 } from "./plan-selection.js";
 import type { GenerationPlanRequest, GenerationPlanResult, ScoredCandidate } from "./types.js";
 import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
@@ -165,18 +165,14 @@ export async function decideGenerationPlan(
   sorted = sorted.slice(0, maxCand);
 
   const maxPrompts = constraints?.max_active_prompt_versions ?? null;
-  const maxCarouselPlan =
-    constraints?.max_carousel_jobs_per_run ?? config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN;
-  const maxVideoPlan = constraints?.max_video_jobs_per_run ?? config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN;
-  const perFlowOverrides = normalizePerFlowCaps(constraints?.max_jobs_per_flow_type);
-  const perFlowCaps: Record<string, number> = { ...defaultMaxJobsPerFlowType(), ...perFlowOverrides };
-  for (const c of sorted) {
-    const ft = c.flow_type;
-    if (perFlowCaps[ft] !== undefined) continue;
-    if (isCarouselFlow(ft)) perFlowCaps[ft] = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
-    else if (isVideoFlow(ft)) perFlowCaps[ft] = DEFAULT_VIDEO_FLOW_PLAN_CAP;
-    else perFlowCaps[ft] = config.DEFAULT_OTHER_FLOW_PLAN_CAP;
-  }
+  const planningCaps = resolvePlanningCaps(
+    config,
+    constraints,
+    sorted.map((c) => c.flow_type)
+  );
+  const maxCarouselPlan = planningCaps.maxCarouselPlan;
+  const maxVideoPlan = planningCaps.maxVideoPlan;
+  const perFlowCaps = planningCaps.perFlowCaps;
   const { primary, fallback } = partitionCandidatesForPlanningPhases(sorted);
 
   const selectionCtx = {
@@ -196,8 +192,15 @@ export async function decideGenerationPlan(
   };
   const selectionState = createPlanSelectionState(selectionCtx);
 
-  // Pass 1: format-matched (carousel ideas → carousel flows, video ideas → video flows, …).
-  await selectJobsFromCandidates(selectionCtx, selectionState, primary, {
+  // Pass 1: format-matched. Templated carousels spread v1 across distinct ideas first; mimic may overlap.
+  const { templatedCarousel, other: otherPrimary } = partitionPrimaryForCarouselSpread(primary);
+  await selectJobsFromCandidates(selectionCtx, selectionState, templatedCarousel, {
+    pass: "primary",
+    ideaKey: ideaKeyPrimaryPass,
+    maxVariationsPerCandidate: 1,
+  });
+  await selectTemplatedCarouselExtraVariations(selectionCtx, selectionState, variationCap);
+  await selectJobsFromCandidates(selectionCtx, selectionState, otherPrimary, {
     pass: "primary",
     ideaKey: ideaKeyPrimaryPass,
   });
@@ -230,7 +233,9 @@ export async function decideGenerationPlan(
       max_carousel_jobs_per_run: maxCarouselPlan,
       max_video_jobs_per_run: maxVideoPlan,
       default_other_flow_plan_cap: config.DEFAULT_OTHER_FLOW_PLAN_CAP,
-      max_jobs_per_flow_type: Object.keys(perFlowOverrides).length ? perFlowOverrides : undefined,
+      max_jobs_per_flow_type: Object.keys(normalizePerFlowCaps(constraints?.max_jobs_per_flow_type)).length
+        ? normalizePerFlowCaps(constraints?.max_jobs_per_flow_type)
+        : undefined,
       planned_carousel_jobs: plannedCarousel,
       planned_video_jobs: plannedVideo,
       planning_primary_candidates: primary.length,

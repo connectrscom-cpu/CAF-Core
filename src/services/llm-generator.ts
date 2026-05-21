@@ -167,21 +167,18 @@ export async function generateForJob(
     };
   }
 
-  if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
-    const appCfg = loadConfig();
-    if (!appCfg.MIMIC_IMAGE_ENABLED || !apiKey?.trim()) {
-      return {
-        draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
-        task_id: job.task_id,
-        raw_output: "",
-        parsed_output: null,
-        model_used: model,
-        prompt_name: String(job.generation_payload.prompt_id ?? "unknown"),
-        tokens_used: 0,
-        success: false,
-        error: TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
-      };
-    }
+  if (isTopPerformerMimicRenderableFlow(job.flow_type) && !apiKey?.trim()) {
+    return {
+      draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+      task_id: job.task_id,
+      raw_output: "",
+      parsed_output: null,
+      model_used: model,
+      prompt_name: String(job.generation_payload.prompt_id ?? "unknown"),
+      tokens_used: 0,
+      success: false,
+      error: TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
+    };
   }
 
   /** Match Flow Engine workbook `flow_type`; legacy job rows still resolve templates. */

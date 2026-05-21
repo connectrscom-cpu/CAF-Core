@@ -687,3 +687,66 @@ textarea { resize: vertical; }
     max-height: 320px;
   }
 }
+
+/* ── CAF workbench utilities ─────────────────────────────── */
+.caf-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.caf-page-header-left { display: flex; flex-direction: column; gap: 6px; }
+.caf-page-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.caf-stat-chips { font-size: 12px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+.page-header h2, .caf-page-header h2 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.card-header { text-transform: none; letter-spacing: 0; color: var(--fg); }
+.caf-toolbar {
+  display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px;
+  padding: 10px 12px; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: 10px;
+}
+.caf-term { position: relative; display: inline-flex; align-items: center; }
+.caf-term-label { cursor: help; border-bottom: 1px dotted var(--muted); display: inline-flex; align-items: center; gap: 4px; }
+.caf-term-icon {
+  font-size: 10px; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--card-hover); color: var(--muted);
+  display: inline-flex; align-items: center; justify-content: center; line-height: 1;
+}
+.caf-tooltip {
+  position: absolute; left: 0; top: calc(100% + 6px); z-index: 80;
+  min-width: 200px; max-width: 320px; padding: 10px 12px;
+  font-size: 12px; line-height: 1.45; color: var(--fg);
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.caf-options-menu { position: relative; display: inline-block; }
+.caf-options-trigger { padding: 5px 12px !important; font-size: 12px !important; }
+.caf-options-dropdown {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 90; min-width: 180px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.caf-options-item {
+  display: block; width: 100%; text-align: left; padding: 8px 12px; font-size: 12px;
+  color: var(--fg); background: none; border: none; border-radius: 6px; cursor: pointer; text-decoration: none;
+}
+.caf-options-item:hover { background: var(--card-hover); color: var(--fg); text-decoration: none; }
+.caf-options-item--danger { color: var(--red); }
+.caf-stepper { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 0 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.caf-step-pill {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+  font-size: 12px; font-weight: 500; border-radius: 9999px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--fg-secondary); cursor: pointer; transition: all 0.15s;
+}
+.caf-step-pill:hover { border-color: var(--fg-secondary); color: var(--fg); }
+.caf-step-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.caf-step-pill.done { border-color: var(--green); color: var(--green); }
+.caf-step-pill.locked { opacity: 0.45; cursor: not-allowed; }
+.caf-table-compact td, .caf-table-compact th { padding-top: 8px; padding-bottom: 8px; }
+.caf-run-hub-tabs { display: flex; gap: 0; padding: 0 28px; border-bottom: 1px solid var(--border); margin-top: 8px; }
+.caf-run-hub-tab {
+  padding: 10px 16px; font-size: 13px; font-weight: 500; color: var(--fg-secondary);
+  text-decoration: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.caf-run-hub-tab:hover { color: var(--fg); text-decoration: none; }
+.caf-run-hub-tab.active { color: var(--fg); border-bottom-color: var(--accent); }
+.caf-json-viewer { font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; max-height: min(60vh, 480px); overflow: auto; }
+.caf-json-toggle { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; background: none; border: none; color: var(--fg); padding: 2px 0; font-size: 12px; cursor: pointer; }
+.caf-json-key { color: var(--accent); }
+.caf-json-meta { color: var(--muted); margin-left: 4px; }
+.caf-json-val { color: var(--fg-secondary); }
+.job-id-cell { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: var(--accent); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

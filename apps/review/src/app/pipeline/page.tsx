@@ -4,12 +4,14 @@ import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { CafPageHeader } from "@/components/CafOptionsMenu";
+import { CafTerm } from "@/components/CafTerm";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 
-type Tab = "evidence" | "ideas";
+type Tab = "evidence" | "packs";
 
 function parsePipelineTab(raw: string | null): Tab {
-  return raw === "ideas" ? "ideas" : "evidence";
+  return raw === "packs" || raw === "ideas" ? "packs" : "evidence";
 }
 
 interface ImportRow {
@@ -24,7 +26,7 @@ interface PackRow {
   run_id: string;
   upload_filename: string | null;
   created_at: string;
-  overall_candidates_count?: number;
+  jobs_count?: number;
   ideas_count?: number;
 }
 
@@ -44,7 +46,7 @@ export default function PipelinePage() {
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
 
-  const qs = useMemo(() => (slug ? `?project=${encodeURIComponent(slug)}` : ""), [slug]);
+  const qs = useMemo(() => (slug ? `?project=${encodeURIComponent(slug)}&summary=1` : "?summary=1"), [slug]);
 
   const loadEvidence = useCallback(async () => {
     if (!slug) {
@@ -54,7 +56,9 @@ export default function PipelinePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/pipeline/inputs-imports${qs}`, { cache: "no-store" });
+      const res = await fetch(`/api/pipeline/inputs-imports${slug ? `?project=${encodeURIComponent(slug)}` : ""}`, {
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error(await res.text());
       const j = (await res.json()) as { imports?: ImportRow[] };
       setImports(j.imports ?? []);
@@ -64,7 +68,7 @@ export default function PipelinePage() {
     } finally {
       setLoading(false);
     }
-  }, [qs, slug]);
+  }, [slug]);
 
   const loadPacks = useCallback(async () => {
     if (!slug) {
@@ -104,8 +108,8 @@ export default function PipelinePage() {
       const res = await fetch("/api/pipeline/inputs-upload", { method: "POST", body: fd });
       const text = await res.text();
       if (!res.ok) throw new Error(text);
-      const j = JSON.parse(text) as { total_rows?: number; inputs_evidence_import_id?: string };
-      setUploadMsg(`Imported ${j.total_rows ?? 0} rows. Open the import below to inspect by sheet.`);
+      const j = JSON.parse(text) as { total_rows?: number };
+      setUploadMsg(`Imported ${j.total_rows ?? 0} rows`);
       await loadEvidence();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -115,49 +119,52 @@ export default function PipelinePage() {
   }
 
   const needProject = multiProject && !slug;
+  const packCount = packs?.length ?? 0;
+  const importCount = imports?.length ?? 0;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h2>{tab === "ideas" ? "Signal packs" : "Pipeline inputs"}</h2>
-          <span className="page-header-sub">
-            {tab === "ideas"
-              ? "Inspect signal packs built in Processing — overall candidate rows the planner uses for runs."
-              : "Upload and browse scraped evidence imports. For the full inputs console (health, RTP, QC, build-from-import), use Admin → Inputs & imports."}
-          </span>
-        </div>
-      </div>
+      <CafPageHeader
+        title={
+          tab === "packs" ? (
+            <CafTerm term="signalPack">Signal packs</CafTerm>
+          ) : (
+            <CafTerm term="evidence">Evidence imports</CafTerm>
+          )
+        }
+        chips={
+          tab === "packs"
+            ? slug
+              ? `${packCount} pack(s)`
+              : undefined
+            : slug
+              ? `${importCount} import(s)`
+              : undefined
+        }
+      />
 
       <div style={{ padding: "12px 28px 28px" }}>
-        <div style={{ display: "flex", gap: 8, marginBottom: 20, borderBottom: "1px solid var(--border)" }}>
+        <div className="tabs" style={{ padding: "0 0 0", marginBottom: 16 }}>
           <TabBtn active={tab === "evidence"} onClick={() => setTab("evidence")}>
-            Scraped evidence (XLSX)
+            Evidence (XLSX)
           </TabBtn>
-          <TabBtn active={tab === "ideas"} onClick={() => setTab("ideas")}>
-            Signal packs (ideas)
+          <TabBtn active={tab === "packs"} onClick={() => setTab("packs")}>
+            Signal packs
           </TabBtn>
         </div>
 
         {!ready && <p style={{ color: "var(--muted)" }}>Loading…</p>}
         {ready && needProject && (
-          <p style={{ color: "var(--yellow)" }}>
-            Select a project in the sidebar to upload or browse pipeline data for a tenant.
-          </p>
+          <p style={{ color: "var(--yellow)" }}>Select a project in the sidebar.</p>
         )}
 
         {error && <p style={{ color: "var(--red)", marginBottom: 12, fontSize: 13 }}>{error}</p>}
 
         {tab === "evidence" && ready && slug && (
           <section>
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Upload INPUTS workbook</h3>
-            <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 720 }}>
-              Matches the &quot;INPUTS — Sources for SNS&quot; shape: registry tabs (All Sources, SCRAPED,
-              Reddit_Raw_Info, Tiktok_Videos, …). Each sheet is stored as typed rows with dedupe keys for inspection.
-            </p>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: 10, fontSize: 13 }}>
-              <span className="button" style={{ position: "relative", overflow: "hidden" }}>
-                {uploading ? "Uploading…" : "Choose .xlsx"}
+            <div className="caf-toolbar">
+              <label className="btn-primary" style={{ position: "relative", overflow: "hidden", display: "inline-flex" }}>
+                {uploading ? "Uploading…" : "Upload .xlsx"}
                 <input
                   type="file"
                   accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -169,37 +176,36 @@ export default function PipelinePage() {
                     void onUpload(f);
                   }}
                 />
-              </span>
-              <span style={{ color: "var(--muted)" }}>Project: {slug}</span>
-            </label>
-            {uploadMsg && <p style={{ marginTop: 10, fontSize: 13, color: "var(--green)" }}>{uploadMsg}</p>}
+              </label>
+              <button type="button" className="btn-ghost" onClick={() => void loadEvidence()} disabled={loading}>
+                Reload
+              </button>
+              {uploadMsg ? <span className="caf-stat-chips" style={{ color: "var(--green)" }}>{uploadMsg}</span> : null}
+            </div>
 
-            <h3 style={{ fontSize: 14, margin: "24px 0 10px" }}>Recent imports</h3>
             {loading && !imports && <p style={{ color: "var(--muted)" }}>Loading…</p>}
             {imports && imports.length === 0 && !loading && (
-              <p style={{ color: "var(--muted)" }}>No evidence imports yet for this project.</p>
+              <p style={{ color: "var(--muted)" }}>No evidence imports yet.</p>
             )}
             {imports && imports.length > 0 && (
               <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <table className="caf-table-compact">
                   <thead>
-                    <tr style={{ background: "var(--surface-2, #151515)" }}>
+                    <tr>
                       <Th>File</Th>
-                      <Th>Rows stored</Th>
+                      <Th>Rows</Th>
                       <Th>Created</Th>
-                      <Th>Actions</Th>
+                      <Th></Th>
                     </tr>
                   </thead>
                   <tbody>
                     {imports.map((r) => (
-                      <tr key={r.id} style={{ borderTop: "1px solid var(--border)" }}>
+                      <tr key={r.id}>
                         <Td>{r.upload_filename ?? "—"}</Td>
                         <Td>{r.stored_row_count}</Td>
                         <Td>{fmt(r.created_at)}</Td>
                         <Td>
-                          <Link href={navHref(`/pipeline/evidence/${r.id}`)} className="detail-back">
-                            Inspect
-                          </Link>
+                          <Link href={navHref(`/pipeline/evidence/${r.id}`)}>Inspect</Link>
                         </Td>
                       </tr>
                     ))}
@@ -210,55 +216,40 @@ export default function PipelinePage() {
           </section>
         )}
 
-        {tab === "ideas" && ready && slug && (
+        {tab === "packs" && ready && slug && (
           <section>
-            <h3 style={{ fontSize: 14, marginBottom: 10 }}>Signal packs in Core</h3>
-            <p style={{ color: "var(--muted)", fontSize: 13, marginBottom: 12, maxWidth: 720 }}>
-              Each pack holds <code style={{ fontSize: 12 }}>ideas_json</code> /{" "}
-              <code style={{ fontSize: 12 }}>overall_candidates_json</code> plus{" "}
-              <code style={{ fontSize: 12 }}>derived_globals_json</code> (hashtag leaderboard, visual guidelines from
-              top-performer insights). Open a pack to inspect ideas, hashtags, and visual guideline JSON.
-            </p>
-            <button className="button" type="button" onClick={() => void loadPacks()} disabled={loading}>
-              {loading ? "Refreshing…" : "Refresh"}
-            </button>
-            {loading && !packs && <p style={{ color: "var(--muted)", marginTop: 12 }}>Loading…</p>}
+            <div className="caf-toolbar">
+              <button type="button" className="btn-ghost" onClick={() => void loadPacks()} disabled={loading}>
+                {loading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+            {loading && !packs && <p style={{ color: "var(--muted)" }}>Loading…</p>}
             {packs && packs.length === 0 && !loading && (
-              <p style={{ color: "var(--muted)", marginTop: 12 }}>No signal packs for this project.</p>
+              <p style={{ color: "var(--muted)" }}>No signal packs for this project.</p>
             )}
             {packs && packs.length > 0 && (
-              <div
-                style={{
-                  marginTop: 16,
-                  overflowX: "auto",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                }}
-              >
-                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <div style={{ overflowX: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
+                <table className="caf-table-compact">
                   <thead>
-                    <tr style={{ background: "var(--surface-2, #151515)" }}>
+                    <tr>
                       <Th>Pack</Th>
-                      <Th>Run id</Th>
-                      <Th>Ideas (rows)</Th>
+                      <Th>Run</Th>
+                      <Th>Jobs</Th>
                       <Th>Created</Th>
-                      <Th>Actions</Th>
+                      <Th></Th>
                     </tr>
                   </thead>
                   <tbody>
                     {packs.map((p) => {
-                      const nIdeas = Number(p.ideas_count ?? 0);
-                      const nOverall = Number(p.overall_candidates_count ?? 0);
+                      const nJobs = Number(p.jobs_count ?? p.ideas_count ?? 0);
                       return (
-                        <tr key={p.id} style={{ borderTop: "1px solid var(--border)" }}>
+                        <tr key={p.id}>
                           <Td>{p.upload_filename ?? p.id.slice(0, 8)}</Td>
-                          <Td style={{ fontFamily: "var(--font-mono, monospace)", fontSize: 12 }}>{p.run_id}</Td>
-                          <Td>{nIdeas > 0 ? nIdeas : nOverall}</Td>
+                          <Td className="job-id-cell">{p.run_id}</Td>
+                          <Td>{nJobs}</Td>
                           <Td>{fmt(p.created_at)}</Td>
                           <Td>
-                            <Link href={navHref(`/pipeline/pack/${p.id}`)} className="detail-back">
-                              Inspect pack
-                            </Link>
+                            <Link href={navHref(`/pipeline/pack/${p.id}`)}>Open</Link>
                           </Td>
                         </tr>
                       );
@@ -284,35 +275,22 @@ function TabBtn({
   children: React.ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        padding: "10px 14px",
-        fontSize: 13,
-        border: "none",
-        borderBottom: active ? "2px solid var(--accent)" : "2px solid transparent",
-        marginBottom: -1,
-        background: "transparent",
-        color: active ? "var(--fg)" : "var(--muted)",
-        cursor: "pointer",
-      }}
-    >
+    <button type="button" className={`tab ${active ? "active" : ""}`} onClick={onClick} style={{ background: "none", border: "none" }}>
       {children}
     </button>
   );
 }
 
 function Th({ children }: { children: React.ReactNode }) {
-  return (
-    <th style={{ textAlign: "left", padding: "10px 12px", fontWeight: 600, fontSize: 12, color: "var(--muted)" }}>
-      {children}
-    </th>
-  );
+  return <th>{children}</th>;
 }
 
-function Td({ children, style }: { children: React.ReactNode; style?: CSSProperties }) {
-  return <td style={{ padding: "10px 12px", verticalAlign: "top", ...style }}>{children}</td>;
+function Td({ children, className, style }: { children: React.ReactNode; className?: string; style?: CSSProperties }) {
+  return (
+    <td className={className} style={style}>
+      {children}
+    </td>
+  );
 }
 
 function fmt(ts: string): string {

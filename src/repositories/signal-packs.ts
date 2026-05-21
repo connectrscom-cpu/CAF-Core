@@ -8,8 +8,10 @@ export interface SignalPackRow {
   source_window: string | null;
   /** Planner-facing rows (synth / XLSX); see `ideas_json` for insight-backed ideas. */
   overall_candidates_json: unknown[];
-  /** Curated ideas from inputs Processing; preferred at run start when non-empty. */
+  /** Curated jobs from inputs Processing; preferred at run start when non-empty. */
   ideas_json?: unknown[] | null;
+  /** Canonical job rows (dual-written with ideas_json). */
+  jobs_json?: unknown[] | null;
   /**
    * Deprecated. Kept for backward compatibility with one iteration where we introduced a parallel rich idea list.
    * Do not write new data here — use `ideas_json` as the canonical rich idea contract.
@@ -49,6 +51,7 @@ export async function insertSignalPack(
     source_window?: string | null;
     overall_candidates_json: unknown[];
     ideas_json?: unknown[];
+    jobs_json?: unknown[];
     ideas_v2_json?: unknown[];
     selected_idea_ids_json?: unknown[];
     source_inputs_idea_list_id?: string | null;
@@ -73,9 +76,10 @@ export async function insertSignalPack(
     source_inputs_import_id?: string | null;
   }
 ): Promise<{ id: string }> {
+  const jobs = data.jobs_json ?? data.ideas_json ?? [];
   const row = await qOne<{ id: string }>(db, `
     INSERT INTO caf_core.signal_packs (
-      run_id, project_id, source_window, overall_candidates_json, ideas_json,
+      run_id, project_id, source_window, overall_candidates_json, ideas_json, jobs_json,
       ideas_v2_json, selected_idea_ids_json,
       source_inputs_idea_list_id,
       ig_summary_json, tiktok_summary_json, reddit_summary_json, fb_summary_json, html_summary_json,
@@ -85,16 +89,17 @@ export async function insertSignalPack(
       html_findings_raw_json, reddit_subreddit_insights_json,
       derived_globals_json, upload_filename, notes, source_inputs_import_id
     ) VALUES (
-      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,
-      $8,
-      $9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,
-      $14::jsonb,$15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,
-      $20::jsonb,$21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25,$26,$27
+      $1,$2,$3,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8::jsonb,
+      $9,
+      $10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14::jsonb,
+      $15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19::jsonb,$20::jsonb,
+      $21::jsonb,$22::jsonb,$23::jsonb,$24::jsonb,$25::jsonb,$26,$27,$28
     ) RETURNING id`,
     [
       data.run_id, data.project_id, data.source_window ?? null,
       JSON.stringify(data.overall_candidates_json),
-      JSON.stringify(data.ideas_json ?? []),
+      JSON.stringify(jobs),
+      JSON.stringify(jobs),
       JSON.stringify(data.ideas_v2_json ?? []),
       JSON.stringify(data.selected_idea_ids_json ?? []),
       data.source_inputs_idea_list_id ?? null,
@@ -134,15 +139,24 @@ export async function updateSignalPackIdeasJson(
   signalPackId: string,
   ideas: unknown[]
 ): Promise<number> {
+  const rows = ideas ?? [];
   const row = await qOne<{ n: string }>(
     db,
     `UPDATE caf_core.signal_packs
-        SET ideas_json = $2::jsonb
+        SET ideas_json = $2::jsonb, jobs_json = $2::jsonb
       WHERE id = $1
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify(ideas ?? [])]
+    [signalPackId, JSON.stringify(rows)]
   );
   return row ? 1 : 0;
+}
+
+export async function updateSignalPackJobsJson(
+  db: Pool,
+  signalPackId: string,
+  jobs: unknown[]
+): Promise<number> {
+  return updateSignalPackIdeasJson(db, signalPackId, jobs);
 }
 
 export async function updateSignalPackSelectedIdeaIds(

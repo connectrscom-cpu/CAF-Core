@@ -13,7 +13,7 @@ import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
-import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
+import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
@@ -33,15 +33,14 @@ export interface RunCandidatesMaterializeBody {
 }
 
 function ideasArray(pack: SignalPackRow): SignalPackIdea[] {
-  const raw = pack.ideas_json;
+  const raw = readSignalPackJobsJson(pack as unknown as Record<string, unknown>);
   if (!Array.isArray(raw) || raw.length === 0) return [];
   return raw as SignalPackIdea[];
 }
 
 function ideasJsonAsRich(pack: SignalPackRow): Record<string, unknown>[] {
-  const raw = pack.ideas_json;
+  const raw = readSignalPackJobsJson(pack as unknown as Record<string, unknown>);
   if (!Array.isArray(raw) || raw.length === 0) return [];
-  // parseIdeasV2 is now the canonical rich-idea parser (stored in ideas_json).
   return parseIdeasV2(raw) as unknown as Record<string, unknown>[];
 }
 

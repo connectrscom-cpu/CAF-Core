@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { CafPageHeader } from "@/components/CafOptionsMenu";
+import { CafTerm } from "@/components/CafTerm";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { RunExportToolbar } from "@/components/RunExportToolbar";
 
@@ -114,17 +116,15 @@ export default function RunsPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h2>Run Logs</h2>
-          <span className="page-header-sub">
-            History of every run. Open a run for its review queue, or download / copy all draft packages and content logs per run.
-          </span>
-        </div>
-        <button className="button" onClick={fetchRuns} disabled={loading}>
-          {loading ? "Refreshing…" : "Refresh"}
-        </button>
-      </div>
+      <CafPageHeader
+        title={<CafTerm term="run">Runs</CafTerm>}
+        chips={`${filtered.length} run${filtered.length === 1 ? "" : "s"}`}
+        actions={
+          <button type="button" className="btn-ghost" onClick={fetchRuns} disabled={loading}>
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+        }
+      />
 
       <div style={{ padding: "20px 28px 28px" }}>
         {error && (
@@ -187,7 +187,7 @@ export default function RunsPage() {
                   <Th>Started</Th>
                   <Th>Completed</Th>
                   <Th>Snapshots</Th>
-                  <Th>Ideas pack</Th>
+                  <Th>Signal pack</Th>
                   <Th>Created</Th>
                   <Th>Export</Th>
                 </tr>

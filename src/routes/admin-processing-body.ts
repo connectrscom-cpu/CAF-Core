@@ -4,51 +4,54 @@ export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   return `
-<div class="ph"><div><h2>Processing</h2><span class="ph-sub">Inputs → Evidence → Insights → Ideas → Signal pack → Run</span></div></div>
+<div class="caf-page-header ph"><div class="caf-page-header-left"><h2><span data-caf-term="processing">Processing</span></h2></div></div>
 <div class="content">
   <div class="card" style="margin-bottom:14px">
     <div style="padding:12px 16px 8px">
-      <p class="runs-ops-hint">Work through the pipeline steps below. Raw JSON is hidden under Debug panels.</p>
-      <div id="processing-activity-wrap" style="margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:11px;line-height:1.45">
-        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-start;justify-content:space-between;margin-bottom:6px">
-          <div>
-            <strong style="font-size:12px">Activity</strong>
-            <span style="display:block;margin-top:2px;color:var(--muted);font-size:11px">Last request from this page (method, URL, HTTP status, time). Failures turn red and open the log.</span>
+      <div class="caf-toolbar" id="imports-toolbar" style="margin-bottom:10px">
+        <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
+        <a class="btn-ghost btn-sm" href="/admin/inputs${inputsPq}">Inputs</a>
+        <div class="caf-options-menu" data-caf-options style="margin-left:auto">
+          <button type="button" class="btn-ghost btn-sm caf-options-trigger">⋯ Options</button>
+          <div class="caf-options-dropdown" style="display:none" role="menu">
+            <button type="button" class="caf-options-item" role="menuitem" id="btn-open-profile">Profile &amp; audit</button>
+            <button type="button" class="caf-options-item" role="menuitem" id="btn-toggle-operator-lens">Operator lens</button>
+            <button type="button" class="caf-options-item" role="menuitem" id="btn-toggle-activity-log">Activity log</button>
           </div>
-          <button type="button" class="btn-ghost btn-sm" id="btn-clear-activity-log" title="Clear the in-memory log (does not affect the server)">Clear log</button>
+        </div>
+        <span id="imports-hint" class="caf-stat-chips"></span>
+      </div>
+      <div id="processing-activity-wrap" style="display:none;margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--card);font-size:11px;line-height:1.45">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <strong style="font-size:12px">Activity</strong>
+          <button type="button" class="btn-ghost btn-sm" id="btn-clear-activity-log">Clear</button>
         </div>
         <div id="processing-activity-current" style="font-family:ui-monospace,monospace;word-break:break-all;color:var(--text);min-height:1.35em;padding:6px 8px;border-radius:6px;background:var(--bg);border:1px solid var(--border)">Waiting for JavaScript…</div>
         <details id="processing-activity-details" style="margin-top:8px">
-          <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Full request log (newest first)</summary>
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Full log</summary>
           <pre id="processing-activity-log" style="margin:8px 0 0;max-height:min(40vh,320px);overflow:auto;white-space:pre-wrap;font-size:10px;background:var(--bg);padding:8px;border-radius:6px;border:1px solid var(--border);color:var(--text)"></pre>
         </details>
       </div>
-      <div id="imports-toolbar" style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <button type="button" class="btn btn-sm" id="btn-reload-imports">Reload imports</button>
-        <a class="btn-ghost btn-sm" href="/admin/inputs${inputsPq}">Upload on Inputs</a>
-        <button type="button" class="btn-ghost btn-sm" id="btn-open-profile" title="Edit processing profile caps/models and view audit logs.">Profile &amp; audit</button>
-        <span id="imports-hint" style="font-size:12px;color:var(--muted)"></span>
-      </div>
       <div id="imports-root" class="empty">Loading…</div>
       <div id="import-workbench" style="display:none;margin-top:14px;border-top:1px solid var(--border);padding-top:12px">
-        <div id="stepper" style="display:flex;gap:8px;border-bottom:1px solid var(--border);padding:0 0 10px;flex-wrap:wrap;align-items:center">
-          <button type="button" class="btn btn-sm step-btn" id="step-select" data-step="select" title="Pick the evidence import you want to process.">
-            1. Select import <span class="badge badge-y" id="step-badge-select">in progress</span>
+        <div id="stepper" class="caf-stepper">
+          <button type="button" class="caf-step-pill step-btn active" id="step-select" data-step="select" title="Pick the evidence import you want to process.">
+            1 Select import <span class="badge badge-y" id="step-badge-select">in progress</span>
           </button>
-          <button type="button" class="btn-ghost btn-sm step-btn" id="step-evidence" data-step="evidence" title="Filter evidence using profile gates + cutoff (no LLM).">
-            2. Filter evidence <span class="badge badge-b" id="step-badge-evidence">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-evidence" data-step="evidence" title="Filter evidence using profile gates + cutoff (no LLM).">
+            2 Filter evidence <span class="badge badge-b" id="step-badge-evidence">not started</span>
           </button>
-          <button type="button" class="btn-ghost btn-sm step-btn" id="step-insights" data-step="insights" title="Run broad insights and top-performer extraction.">
-            3. Generate insights <span class="badge badge-b" id="step-badge-insights">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-insights" data-step="insights" title="Run broad insights and top-performer extraction.">
+            3 <span data-caf-term="insights">Insights</span> <span class="badge badge-b" id="step-badge-insights">not started</span>
           </button>
-          <button type="button" class="btn-ghost btn-sm step-btn" id="step-ideas" data-step="ideas" title="Generate and curate ideas from insights.">
-            4. Extract ideas <span class="badge badge-b" id="step-badge-ideas">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="Generate and curate jobs from insights.">
+            4 Build <span data-caf-term="jobs">jobs</span> <span class="badge badge-b" id="step-badge-ideas">not started</span>
           </button>
-          <button type="button" class="btn-ghost btn-sm step-btn" id="step-pack" data-step="pack" title="Build a signal pack from an idea list or full import pipeline.">
-            5. Build signal pack <span class="badge badge-b" id="step-badge-pack">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="Build a signal pack from the job list.">
+            5 <span data-caf-term="signalPack">Signal pack</span> <span class="badge badge-b" id="step-badge-pack">not started</span>
           </button>
-          <button type="button" class="btn-ghost btn-sm step-btn" id="step-run" data-step="run" title="Proceed to Runs using the latest signal pack.">
-            6. Run <span class="badge badge-b" id="step-badge-run">not started</span>
+          <button type="button" class="caf-step-pill step-btn" id="step-run" data-step="run" title="Proceed to Runs using the latest signal pack.">
+            6 <span data-caf-term="run">Run</span> <span class="badge badge-b" id="step-badge-run">not started</span>
           </button>
         </div>
         <details id="operator-read-lens" style="margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--bg);display:none">
@@ -1206,7 +1209,7 @@ function renderStepper(){
     var step=btn.getAttribute('data-step')||'';
     var ok=!!unlock[step];
     btn.disabled=!ok && step!=='select';
-    btn.className=(step===currentStep?'btn btn-sm step-btn':'btn-ghost btn-sm step-btn')+(btn.disabled?' disabled':'');
+    btn.className='caf-step-pill step-btn'+(step===currentStep?' active':'')+(btn.disabled?' locked':'');
     if(btn.disabled){
       btn.title='Complete the previous step first.';
     }
@@ -1284,6 +1287,18 @@ bind('btn-open-profile','click',function(){
   var isOpen=p.style.display==='block';
   p.style.display=isOpen?'none':'block';
   if(!isOpen){loadProfile();loadAudit();}
+});
+
+bind('btn-toggle-operator-lens','click',function(){
+  var el=document.getElementById('operator-read-lens');
+  if(!el)return;
+  el.style.display=el.style.display==='none'||!el.style.display?'block':'none';
+});
+
+bind('btn-toggle-activity-log','click',function(){
+  var el=document.getElementById('processing-activity-wrap');
+  if(!el)return;
+  el.style.display=el.style.display==='none'||!el.style.display?'block':'none';
 });
 
 bind('btn-refresh-evidence','click',function(){

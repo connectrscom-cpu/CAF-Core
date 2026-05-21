@@ -83,6 +83,8 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 ## Optional rules (Cursor)
 
 - `scene-assembly-n8n-legacy.mdc` — when touching scene/n8n-legacy paths
+- `mimic-signal-pack-llm-filter.mdc` — mimic LLM creation pack; single-idea `signal_pack` filter
+- `mimic-carousel-package.mdc` — `mimic_carousel_package` vs `FLOW_CAROUSEL` / `carousel_package`
 - `caf-domain-model.mdc` — **alwaysApply**
 
 If the user’s request conflicts with **domain invariants**, **ask** or **surface the tradeoff** before renaming IDs or changing status enums.

@@ -264,10 +264,13 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
   ]);
 
   /**
-   * Materialize `runs.candidates_json` from the run's signal pack (`ideas_json` or legacy `overall_candidates_json`).
-   * Required before Start (orchestrator no longer reads the pack directly for planner rows).
+   * Materialize `runs.planned_jobs_json` from the run's signal pack (`jobs_json` / legacy `ideas_json`).
+   * Legacy path: POST .../candidates
    */
-  app.post("/v1/runs/:project_slug/:run_id/candidates", async (request, reply) => {
+  async function handleMaterializeRunJobs(
+    request: { params: unknown; body: unknown },
+    reply: { code: (n: number) => { send: (b: unknown) => unknown } }
+  ) {
     const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
     const body = materializeCandidatesSchema.safeParse(request.body);
     if (!params.success || !body.success) {
@@ -290,7 +293,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       return reply.code(400).send({
         ok: false,
         error: "bad_request",
-        message: "Candidates can only be set while the run is in CREATED status.",
+        message: "Planned jobs can only be set while the run is in CREATED status.",
       });
     }
     if (!run.signal_pack_id) {
@@ -306,6 +309,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       return {
         ok: true,
         planner_rows: out.planner_rows,
+        planned_jobs_provenance: out.candidates_provenance,
         candidates_provenance: out.candidates_provenance,
         run: fresh,
       };
@@ -313,6 +317,12 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       const msg = e instanceof Error ? e.message : String(e);
       return reply.code(400).send({ ok: false, error: "materialize_failed", message: msg });
     }
+  }
+
+  app.post("/v1/runs/:project_slug/:run_id/jobs", handleMaterializeRunJobs);
+
+  app.post("/v1/runs/:project_slug/:run_id/candidates", async (request, reply) => {
+    return handleMaterializeRunJobs(request, reply);
   });
 
   // ── Start run (triggers orchestrator) ────────────────────────────────

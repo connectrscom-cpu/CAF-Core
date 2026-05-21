@@ -717,7 +717,17 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
  * Fallback: legacy cover/body/cta keys.
  */
 export function slidesFromGeneratedOutput(gen: Record<string, unknown>): Record<string, unknown>[] {
-  const candidates = collectRenderableSlideDecks(gen);
+  let base = gen;
+  if (gen.package_type === "mimic_carousel_package") {
+    const copy =
+      gen.copy && typeof gen.copy === "object" && !Array.isArray(gen.copy)
+        ? (gen.copy as Record<string, unknown>)
+        : null;
+    if (copy && (copy.carousel != null || copy.slides != null)) {
+      base = { ...copy, package_type: gen.package_type };
+    }
+  }
+  const candidates = collectRenderableSlideDecks(base);
   if (candidates.length === 0) return legacyCoverBodyCtaSlides(gen);
   const picked = candidates.length === 1 ? candidates[0]!.slides : pickBestSlideDeck(candidates);
   return normalizeSlideRoles(picked);

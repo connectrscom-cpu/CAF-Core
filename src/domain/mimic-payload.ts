@@ -30,9 +30,17 @@ export interface MimicPayloadV1 {
   source_insights_id: string;
   source_evidence_row_id?: string | null;
   analysis_tier: string;
+  /** True when carousel/image tier was used as fallback for missing deep tier. */
+  reference_tier_fallback?: boolean;
   reference_items: MimicReferenceItem[];
+  /** Supabase folder for archived inspection media (when present on guideline entry). */
+  storage_folder_prefix?: string | null;
+  storage_folder_label?: string | null;
+  /** Slim upstream vision analysis — pattern, blueprint, deck system (no signed URLs). */
+  visual_guideline?: Record<string, unknown>;
   twist_brief: { visual_only: true; legal_note: string };
   slide_plans?: MimicSlidePlan[];
+  background_image_url?: string | null;
   render?: {
     started_at?: string;
     finished_at?: string;
@@ -96,7 +104,17 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     source_evidence_row_id:
       rec.source_evidence_row_id != null ? String(rec.source_evidence_row_id) : null,
     analysis_tier: String(rec.analysis_tier ?? ""),
+    reference_tier_fallback: rec.reference_tier_fallback === true,
     reference_items,
+    storage_folder_prefix:
+      typeof rec.storage_folder_prefix === "string" && rec.storage_folder_prefix.trim()
+        ? rec.storage_folder_prefix.trim()
+        : null,
+    storage_folder_label:
+      typeof rec.storage_folder_label === "string" && rec.storage_folder_label.trim()
+        ? rec.storage_folder_label.trim()
+        : null,
+    visual_guideline: asRecord(rec.visual_guideline) ?? undefined,
     twist_brief: {
       visual_only: true,
       legal_note:

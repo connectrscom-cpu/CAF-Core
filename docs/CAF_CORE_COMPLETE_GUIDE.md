@@ -116,8 +116,10 @@ Fly (`fly.toml`, `Dockerfile`), Review on Vercel (`apps/review/vercel.json`). Fu
 | **Asset** | Render output — `assets` |
 | **Publication placement** | Post intent + outcome — `publication_placements` |
 
-**Note (current wiring):** run start/planning consumes **`runs.candidates_json`** (planner rows) rather than reading `signal_packs.*_json` directly during `start`. Populate it first via:
-- `POST /v1/runs/:project_slug/:run_id/candidates` (materialize from the run’s attached signal pack)
+**Note (current wiring):** run start/planning consumes **`runs.planned_jobs_json`** (canonical; dual-written with legacy `candidates_json`) rather than reading `signal_packs.*_json` directly during `start`. Populate it first via:
+- `POST /v1/runs/:project_slug/:run_id/jobs` (materialize from the run’s attached signal pack; legacy alias `.../candidates`)
+
+Signal packs store curated rows in **`jobs_json`** (dual-written with legacy `ideas_json`).
 
 `caf_core.candidates` exists historically; do not assume it is the planning source of truth.
 
@@ -131,7 +133,7 @@ Driven by `POST /v1/runs/:project_slug/:run_id/start` → `startRun` in `src/ser
 
 **`startRun` requires `signal_pack_id` on the run.**
 
-**`startRun` also expects `runs.candidates_json`** to already be materialized from the signal pack. Create it first via `POST /v1/runs/:project_slug/:run_id/candidates` while the run is still `CREATED`.
+**`startRun` also expects `runs.planned_jobs_json`** (or legacy `candidates_json`) to already be materialized from the signal pack. Create it first via `POST /v1/runs/:project_slug/:run_id/jobs` while the run is still `CREATED`.
 
 Allowed statuses (SQL check in migration `002`):  
 `CREATED`, `PLANNING`, `PLANNED`, `GENERATING`, `RENDERING`, `REVIEWING`, `COMPLETED`, `FAILED`, `CANCELLED`.

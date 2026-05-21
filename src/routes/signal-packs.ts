@@ -17,6 +17,7 @@ import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { trimRunDisplayName } from "../lib/run-display-name.js";
 import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
 import { parseIdeasV2, parseSelectedIdeaIds } from "../domain/signal-pack-ideas-v2.js";
+import { readSignalPackJobsJson, signalPackJobsApiFields } from "../domain/jobs-json-compat.js";
 import { assertGroundingInsightIdsUniqueAcrossIdeas } from "../domain/idea-grounding-uniqueness.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas, replaceSignalPackSelectedIdeas } from "../repositories/signal-pack-ideas.js";
@@ -275,26 +276,44 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         offset: z.coerce.number().int().default(0),
         /** When set, omit bulky JSON — for run picker UIs. */
         summary: z.enum(["1", "true"]).optional(),
+        include_legacy: z.enum(["1", "true"]).optional(),
       })
       .safeParse(request.query);
     if (!query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
     const packs = await listSignalPacks(db, project.id, query.data?.limit ?? 50, query.data?.offset ?? 0);
     const slim = query.data.summary === "1" || query.data.summary === "true";
+    const includeLegacy = query.data.include_legacy === "1" || query.data.include_legacy === "true";
     if (slim) {
       return {
         ok: true,
-        signal_packs: packs.map((p) => ({
-          id: p.id,
-          run_id: p.run_id,
-          created_at: p.created_at,
-          source_window: p.source_window,
-          upload_filename: p.upload_filename,
-          notes: p.notes,
-          source_inputs_import_id: p.source_inputs_import_id ?? null,
-          overall_candidates_count: Array.isArray(p.overall_candidates_json) ? p.overall_candidates_json.length : 0,
-          ideas_count: Array.isArray(p.ideas_json) ? p.ideas_json.length : 0,
-        })),
+        signal_packs: packs.map((p) => {
+          const jobsCount = readSignalPackJobsJson(p as unknown as Record<string, unknown>).length;
+          const row: Record<string, unknown> = {
+            id: p.id,
+            run_id: p.run_id,
+            created_at: p.created_at,
+            source_window: p.source_window,
+            upload_filename: p.upload_filename,
+            notes: p.notes,
+            source_inputs_import_id: p.source_inputs_import_id ?? null,
+            jobs_count: jobsCount,
+            ideas_count: jobsCount,
+          };
+          if (includeLegacy) {
+            row.overall_candidates_count = Array.isArray(p.overall_candidates_json)
+              ? p.overall_candidates_json.length
+              : 0;
+          }
+          return row;
+        }),
+        count: packs.length,
+      };
+    }
+    if (includeLegacy) {
+      return {
+        ok: true,
+        signal_packs: packs.map((p) => signalPackJobsApiFields(p as unknown as Record<string, unknown>, true)),
         count: packs.length,
       };
     }
@@ -308,6 +327,7 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       .object({
         /** Re-merge top-performer inspection / evidence_media URLs into visual_guidelines_pack_v1 entries. */
         hydrate_visual_media: z.enum(["1", "true"]).optional(),
+        include_legacy: z.enum(["1", "true"]).optional(),
       })
       .safeParse(request.query);
     if (!query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
@@ -331,7 +351,13 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         pack.derived_globals_json = { ...dg, visual_guidelines_pack_v1: hydrated };
       }
     }
-    return { ok: true, signal_pack: pack };
+    return {
+      ok: true,
+      signal_pack: signalPackJobsApiFields(
+        pack as unknown as Record<string, unknown>,
+        query.data.include_legacy === "1" || query.data.include_legacy === "true"
+      ),
+    };
   });
 
   /**

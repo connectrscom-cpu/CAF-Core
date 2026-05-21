@@ -5,6 +5,7 @@
  * Pass 2 (fallback): ideas **without** `format`, or post/thread/other buckets only — never
  * cross-format fallback for declared carousel or video ideas.
  */
+import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "./flow-kind.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
@@ -12,6 +13,19 @@ import {
   isTopPerformerMimicImageFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
+
+/** Standard renderer carousel (not top-performer mimic). */
+export function isStandardTemplatedCarouselFlow(flowType: string): boolean {
+  if (isTopPerformerMimicCarouselFlow(flowType) || isTopPerformerMimicImageFlow(flowType)) {
+    return false;
+  }
+  return resolveCanonicalFlowType(flowType) === CANONICAL_FLOW_TYPES.CAROUSEL;
+}
+
+/** Run-level max_carousel_jobs_per_run applies to templated carousels only (mimic is separate). */
+export function countsTowardCarouselRunCap(flowType: string): boolean {
+  return isStandardTemplatedCarouselFlow(flowType);
+}
 
 export type IdeaFormatBucket = "carousel" | "video" | "post" | "thread" | "other";
 
@@ -108,6 +122,29 @@ export function ideaKeyLegacyDedupe(c: ScoredCandidate): string {
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format);
   if (ideaBucket) return `${ideaIdFromCandidate(c)}|${ideaBucket}`;
   return ideaKeyFallbackPass(c);
+}
+
+/** One best-scored templated carousel candidate per idea, highest ideas first. */
+export function orderTemplatedCarouselCandidatesByIdea(
+  candidates: ScoredCandidate[]
+): ScoredCandidate[] {
+  const byIdea = new Map<string, ScoredCandidate>();
+  for (const c of candidates) {
+    if (!isStandardTemplatedCarouselFlow(c.flow_type)) continue;
+    const id = ideaIdFromCandidate(c);
+    const prev = byIdea.get(id);
+    if (!prev || c.pre_gen_score > prev.pre_gen_score) byIdea.set(id, c);
+  }
+  return [...byIdea.values()].sort((a, b) => b.pre_gen_score - a.pre_gen_score);
+}
+
+export function partitionPrimaryForCarouselSpread(primary: ScoredCandidate[]): {
+  templatedCarousel: ScoredCandidate[];
+  other: ScoredCandidate[];
+} {
+  const templatedCarousel = orderTemplatedCarouselCandidatesByIdea(primary);
+  const other = primary.filter((c) => !isStandardTemplatedCarouselFlow(c.flow_type));
+  return { templatedCarousel, other };
 }
 
 export function partitionCandidatesForPlanningPhases(sorted: ScoredCandidate[]): {

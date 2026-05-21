@@ -9,8 +9,11 @@ import {
   VisualGuidelinesPanel,
   type VisualGuidelinesPackView,
 } from "@/components/VisualGuidelinesPanel";
+import { CafPageHeader } from "@/components/CafOptionsMenu";
+import { CafTerm } from "@/components/CafTerm";
+import { JsonTreeViewer } from "@/components/JsonTreeViewer";
 
-type PackView = "ideas" | "hashtags" | "visual" | "derived";
+type PackView = "jobs" | "hashtags" | "visual" | "raw";
 
 type HashtagLeaderboardEntry = {
   hashtag: string;
@@ -44,8 +47,7 @@ export default function SignalPackDetailPage() {
   const qs = useMemo(() => (slug ? `?project=${encodeURIComponent(slug)}` : ""), [slug]);
 
   const [pack, setPack] = useState<Record<string, unknown> | null>(null);
-  const [view, setView] = useState<PackView>("ideas");
-  const [source, setSource] = useState<"ideas_json" | "overall_candidates_json">("ideas_json");
+  const [view, setView] = useState<PackView>("jobs");
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -126,27 +128,17 @@ export default function SignalPackDetailPage() {
     return visualPack?.inputs_import_id ?? null;
   }, [derived, visualPack?.inputs_import_id]);
 
-  const ideasJson = useMemo(() => {
-    const v = pack?.ideas_json;
-    if (!Array.isArray(v)) return [] as Record<string, unknown>[];
-    return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+  const jobsJson = useMemo(() => {
+    const jobs = pack?.jobs_json;
+    if (Array.isArray(jobs) && jobs.length > 0) {
+      return jobs.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
+    }
+    const ideas = pack?.ideas_json;
+    if (!Array.isArray(ideas)) return [] as Record<string, unknown>[];
+    return ideas.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
   }, [pack]);
 
-  const overallCandidates = useMemo(() => {
-    const v = pack?.overall_candidates_json;
-    if (!Array.isArray(v)) return [] as Record<string, unknown>[];
-    return v.filter((x): x is Record<string, unknown> => x != null && typeof x === "object");
-  }, [pack]);
-
-  const rows = useMemo(() => {
-    if (source === "overall_candidates_json") return overallCandidates;
-    return ideasJson;
-  }, [ideasJson, overallCandidates, source]);
-
-  useEffect(() => {
-    if (ideasJson.length > 0) setSource("ideas_json");
-    else setSource("overall_candidates_json");
-  }, [ideasJson.length, packId]);
+  const rows = jobsJson;
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -200,21 +192,22 @@ export default function SignalPackDetailPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <Link href={navHref("/pipeline?tab=ideas")} className="detail-back" style={{ fontSize: 13 }}>
-            ← Signal packs
-          </Link>
-          <h2 style={{ marginTop: 8 }}>Signal pack</h2>
-          <span className="page-header-sub">
-            {(pack?.upload_filename as string) || packId.slice(0, 8)} ·{" "}
-            {ideasJson.length > 0 ? `${ideasJson.length} ideas_json` : `${overallCandidates.length} overall candidates`}
-            {hashtagLeaderboard.length > 0 ? ` · ${hashtagLeaderboard.length} hashtags` : ""}
-            {entryCount > 0 ? ` · ${entryCount} visual entries` : ""}
-            {cueCount > 0 ? ` · ${cueCount} cues` : ""}
-          </span>
-        </div>
+      <div style={{ padding: "16px 28px 0" }}>
+        <Link href={navHref("/pipeline?tab=packs")} className="detail-back" style={{ fontSize: 13 }}>
+          ← Signal packs
+        </Link>
       </div>
+      <CafPageHeader
+        title={<CafTerm term="signalPack">Signal pack</CafTerm>}
+        chips={
+          <>
+            <span>{(pack?.upload_filename as string) || packId.slice(0, 8)}</span>
+            <span>{jobsJson.length} jobs</span>
+            {hashtagLeaderboard.length > 0 ? <span>{hashtagLeaderboard.length} hashtags</span> : null}
+            {entryCount > 0 ? <span>{entryCount} visual entries</span> : null}
+          </>
+        }
+      />
 
       <ViewTabs view={view} setView={setView} />
 
@@ -222,19 +215,8 @@ export default function SignalPackDetailPage() {
         {error && <p style={{ color: "var(--red)", marginBottom: 12 }}>{error}</p>}
         {!slug && <p style={{ color: "var(--muted)" }}>Select a project in the sidebar.</p>}
 
-        {view === "ideas" && (
-          <IdeasPanel
-            pack={pack}
-            source={source}
-            setSource={setSource}
-            filter={filter}
-            setFilter={setFilter}
-            ideasJson={ideasJson}
-            overallCandidates={overallCandidates}
-            rows={rows}
-            filtered={filtered}
-            columns={columns}
-          />
+        {view === "jobs" && (
+          <JobsPanel filter={filter} setFilter={setFilter} rows={rows} filtered={filtered} columns={columns} />
         )}
 
         {view === "hashtags" && (
@@ -260,7 +242,8 @@ export default function SignalPackDetailPage() {
             </p>
           ))}
 
-        {view === "derived" && <DerivedGlobalsPanel derived={derived} />}
+        {view === "raw" && derived && <JsonTreeViewer data={derived} />}
+        {view === "raw" && !derived && <p style={{ color: "var(--muted)", fontSize: 13 }}>No derived globals on this pack.</p>}
       </div>
     </>
   );
@@ -268,10 +251,10 @@ export default function SignalPackDetailPage() {
 
 function ViewTabs({ view, setView }: { view: PackView; setView: (v: PackView) => void }) {
   const tabs: { id: PackView; label: string }[] = [
-    { id: "ideas", label: "Ideas" },
+    { id: "jobs", label: "Jobs" },
     { id: "hashtags", label: "Hashtags" },
     { id: "visual", label: "Visual guidelines" },
-    { id: "derived", label: "derived_globals_json" },
+    { id: "raw", label: "Raw data" },
   ];
   return (
     <div
@@ -306,83 +289,37 @@ function ViewTabs({ view, setView }: { view: PackView; setView: (v: PackView) =>
   );
 }
 
-function IdeasPanel(props: {
-  pack: Record<string, unknown> | null;
-  source: "ideas_json" | "overall_candidates_json";
-  setSource: (s: "ideas_json" | "overall_candidates_json") => void;
+function JobsPanel(props: {
   filter: string;
   setFilter: (s: string) => void;
-  ideasJson: Record<string, unknown>[];
-  overallCandidates: Record<string, unknown>[];
   rows: Record<string, unknown>[];
   filtered: Record<string, unknown>[];
   columns: string[];
 }) {
-  const {
-    pack,
-    source,
-    setSource,
-    filter,
-    setFilter,
-    ideasJson,
-    overallCandidates,
-    rows,
-    filtered,
-    columns,
-  } = props;
+  const { filter, setFilter, rows, filtered, columns } = props;
 
   return (
     <>
-      {pack && (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
-              Source
-              <select
-                value={source}
-                onChange={(e) => setSource(e.target.value as "ideas_json" | "overall_candidates_json")}
-                style={{
-                  padding: "8px 10px",
-                  borderRadius: 6,
-                  border: "1px solid var(--border)",
-                  background: "transparent",
-                  color: "inherit",
-                  fontSize: 13,
-                }}
-              >
-                <option value="ideas_json" disabled={ideasJson.length === 0}>
-                  ideas_json ({ideasJson.length})
-                </option>
-                <option value="overall_candidates_json" disabled={overallCandidates.length === 0}>
-                  overall_candidates_json ({overallCandidates.length})
-                </option>
-              </select>
-            </label>
-
-            <label style={{ fontSize: 13, display: "inline-flex", alignItems: "center", gap: 8 }}>
-              Filter rows
-              <input
-                type="search"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                placeholder="Substring match on full row JSON"
-                style={{ padding: "8px 12px", minWidth: 280, borderRadius: 6, border: "1px solid var(--border)" }}
-              />
-            </label>
-
-            <span style={{ color: "var(--muted)", fontSize: 13 }}>
-              Showing {filtered.length} of {rows.length}
-            </span>
-          </div>
-        </div>
-      )}
+      <div className="caf-toolbar" style={{ marginBottom: 14 }}>
+        <input
+          type="search"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search jobs…"
+          className="filter-input"
+          style={{ maxWidth: 280 }}
+        />
+        <span className="caf-stat-chips">
+          {filtered.length} of {rows.length}
+        </span>
+      </div>
 
       {filtered.length > 0 && (
         <HorizontalScrollTable>
-          <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <table className="caf-table-compact" style={{ width: "max-content", minWidth: "100%" }}>
             <thead>
-              <tr style={{ background: "var(--surface-2, #151515)" }}>
-                <Th style={{ minWidth: 44 }}>idx</Th>
+              <tr>
+                <Th style={{ minWidth: 44 }}>#</Th>
                 {columns.map((c) => (
                   <Th key={c} style={columnHeaderStyle(c)}>
                     {c}
@@ -392,7 +329,7 @@ function IdeasPanel(props: {
             </thead>
             <tbody>
               {filtered.map((row, idx) => (
-                <tr key={idx} style={{ borderTop: "1px solid var(--border)" }}>
+                <tr key={idx}>
                   <Td style={{ minWidth: 44 }}>{idx + 1}</Td>
                   {columns.map((c) => (
                     <Td key={c} style={columnCellStyle(c)}>
@@ -406,15 +343,7 @@ function IdeasPanel(props: {
         </HorizontalScrollTable>
       )}
 
-      {pack && rows.length === 0 && (
-        <p style={{ color: "var(--muted)" }}>
-          This pack has no {source} rows.
-          {source === "overall_candidates_json" && ideasJson.length > 0 ? " Try switching to ideas_json." : ""}
-          {source === "ideas_json" && overallCandidates.length > 0
-            ? " Try switching to overall_candidates_json."
-            : ""}
-        </p>
-      )}
+      {rows.length === 0 && <p style={{ color: "var(--muted)" }}>This pack has no jobs yet.</p>}
     </>
   );
 }

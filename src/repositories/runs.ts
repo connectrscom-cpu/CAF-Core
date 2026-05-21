@@ -13,8 +13,10 @@ export interface RunRow {
   status: RunStatus;
   source_window: string | null;
   signal_pack_id: string | null;
-  /** Planner source rows materialized from pack ideas (manual / LLM) or legacy overall; required before Start. */
+  /** Planner source rows materialized from pack jobs (manual / LLM) or legacy overall; required before Start. */
   candidates_json?: unknown;
+  /** Canonical planned jobs (dual-written with candidates_json). */
+  planned_jobs_json?: unknown;
   metadata_json: Record<string, unknown>;
   /** Prompt version picks per flow_type at plan time (see run-prompt-versions-snapshot). Omitted before migration 008. */
   prompt_versions_snapshot?: Record<string, unknown>;
@@ -132,17 +134,29 @@ export async function updateRunCandidatesJson(
   candidates: unknown[],
   provenance: Record<string, unknown>
 ): Promise<RunRow | null> {
-  const metaPatch = JSON.stringify({ candidates_provenance: provenance });
+  const rows = candidates ?? [];
+  const metaPatch = JSON.stringify({ candidates_provenance: provenance, planned_jobs_provenance: provenance });
   return qOne<RunRow>(
     db,
     `UPDATE caf_core.runs SET
       candidates_json = $2::jsonb,
+      planned_jobs_json = $2::jsonb,
       metadata_json = coalesce(metadata_json, '{}'::jsonb) || $3::jsonb,
       updated_at = now()
      WHERE id = $1
      RETURNING *`,
-    [runUuid, JSON.stringify(candidates), metaPatch]
+    [runUuid, JSON.stringify(rows), metaPatch]
   );
+}
+
+/** Alias for jobs-centric naming. */
+export async function updateRunPlannedJobsJson(
+  db: Pool,
+  runUuid: string,
+  jobs: unknown[],
+  provenance: Record<string, unknown>
+): Promise<RunRow | null> {
+  return updateRunCandidatesJson(db, runUuid, jobs, provenance);
 }
 
 export async function patchRun(

@@ -3,6 +3,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
+import { CafPageHeader } from "@/components/CafOptionsMenu";
+import { CafTerm } from "@/components/CafTerm";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
 import type { ReviewQueueRow } from "@/lib/types";
@@ -152,49 +154,55 @@ function RunContent() {
     if (firstReadyLink) router.push(firstReadyLink.href);
   };
 
+  const runView = searchParams.get("view") === "outputs" ? "outputs" : "jobs";
+  const projectQs = effectiveProjectSlug ? `?project=${encodeURIComponent(effectiveProjectSlug)}` : "";
+
   const runTitle = facets.run_display_names?.[run_id]?.trim();
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h2>{runTitle ?? `Run: ${run_id}`}</h2>
-          <span className="page-header-sub" style={{ display: "block", marginTop: 4 }}>
-            {runTitle ? (
-              <>
-                <span className="mono">{run_id}</span>
-                <span style={{ display: "block", marginTop: 4 }}>Tasks belonging to this run</span>
-              </>
-            ) : (
-              "Tasks belonging to this run"
+      <CafPageHeader
+        title={<CafTerm term="run">{runTitle ?? run_id}</CafTerm>}
+        chips={runTitle ? run_id : undefined}
+        actions={
+          <>
+            {effectiveProjectSlug && <RunExportToolbar runId={run_id} projectSlug={effectiveProjectSlug} variant="header" />}
+            {firstReadyLink && runView === "jobs" && (
+              <button type="button" className="btn-primary" onClick={reviewNext}>
+                Review next pending
+              </button>
             )}
-          </span>
-        </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {effectiveProjectSlug && <RunExportToolbar runId={run_id} projectSlug={effectiveProjectSlug} variant="header" />}
-          {firstReadyLink && (
-            <button type="button" className="btn-primary" onClick={reviewNext} style={{ alignSelf: "flex-start" }}>
-              Review next pending
-            </button>
-          )}
-        </div>
-      </div>
+          </>
+        }
+      />
 
+      <nav className="caf-run-hub-tabs" style={{ paddingLeft: 28, paddingRight: 28 }}>
+        <Link
+          href={navHref(`/r/${encodeURIComponent(run_id)}${projectQs}`)}
+          className={`caf-run-hub-tab${runView === "jobs" ? " active" : ""}`}
+        >
+          Jobs
+        </Link>
+        <Link
+          href={navHref(`/r/${encodeURIComponent(run_id)}${projectQs}${projectQs ? "&" : "?"}view=outputs`)}
+          className={`caf-run-hub-tab${runView === "outputs" ? " active" : ""}`}
+        >
+          Run outputs
+        </Link>
+      </nav>
+
+      {runView === "outputs" && (
       <div
         className="card"
         style={{
-          margin: "0 28px 20px",
+          margin: "20px 28px",
           padding: "16px 20px",
           border: "1px solid var(--border)",
           borderRadius: 12,
           maxWidth: 920,
         }}
       >
-        <div style={{ fontWeight: 650, marginBottom: 8 }}>Run output review</div>
-        <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.45 }}>
-          Overall feedback on this run is stored in Core and merged into <strong>editorial analysis</strong> (engineering brief + optional
-          OpenAI synthesis), using the same rolling window as the analysis job.
-        </p>
+        <div style={{ fontWeight: 650, marginBottom: 8 }}><CafTerm term="runOutputs">Run output review</CafTerm></div>
         {!effectiveProjectSlug && (
           <p style={{ fontSize: 13, color: "var(--yellow)" }}>
             Set a <span className="mono">project</span> filter or open a task from this run so we know which tenant to write to.
@@ -243,7 +251,9 @@ function RunContent() {
           </>
         )}
       </div>
+      )}
 
+      {runView === "jobs" && (
       <div className="workbench">
         <div className="workbench-filters">
           <WorkbenchFilters
@@ -273,6 +283,7 @@ function RunContent() {
           )}
         </div>
       </div>
+      )}
     </>
   );
 }

@@ -41,10 +41,10 @@ describe("defaultMaxJobsPerFlowType", () => {
     expect(DEFAULT_VIDEO_FLOW_PLAN_CAP).toBe(1);
   });
 
-  it("defaults top-performer mimic placeholder flow keys to 0", () => {
+  it("defaults top-performer mimic flow keys to DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP", () => {
     const d = defaultMaxJobsPerFlowType();
-    expect(d.FLOW_TOP_PERFORMER_MIMIC_VIDEO).toBe(0);
-    expect(d.FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).toBe(0);
-    expect(d.FLOW_TOP_PERFORMER_MIMIC_IMAGE).toBe(0);
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_VIDEO).toBe(5);
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).toBe(5);
+    expect(d.FLOW_TOP_PERFORMER_MIMIC_IMAGE).toBe(5);
   });
 });

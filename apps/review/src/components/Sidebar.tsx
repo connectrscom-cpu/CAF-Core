@@ -9,8 +9,8 @@ const NAV_ITEMS = [
     section: "Workbench",
     items: [
       { href: "/", label: "Review Console", icon: ReviewIcon },
-      { href: "/runs", label: "Run Logs", icon: RunsIcon },
-      { href: "/pipeline?tab=ideas", label: "Signal packs", icon: PipelineIcon },
+      { href: "/runs", label: "Runs", icon: RunsIcon },
+      { href: "/pipeline?tab=packs", label: "Signal packs", icon: PipelineIcon },
       { href: "/publish", label: "Publish", icon: PublishIcon },
       { href: "/playground", label: "Template Playground", icon: TemplateIcon },
     ],

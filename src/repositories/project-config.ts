@@ -481,6 +481,62 @@ export async function seedMimicFlowTypesSkeleton(db: Pool, projectId: string): P
   }
 }
 
+/**
+ * Insert missing canonical video + mimic `allowed_flow_types` rows (disabled) so cap-based
+ * enablement can turn them on. Older projects often only have FLOW_CAROUSEL seeded.
+ */
+export async function ensureMissingAllowedFlowRowsForPlanning(db: Pool, projectId: string): Promise<number> {
+  const rows = await listAllowedFlowTypes(db, projectId);
+  const existing = new Set(rows.map((r) => r.flow_type));
+  let inserted = 0;
+
+  for (const seed of CANONICAL_ALLOWED_FLOW_SEEDS) {
+    if (existing.has(seed.flow_type)) continue;
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: seed.flow_type,
+      enabled: false,
+      default_variation_count: seed.default_variation_count,
+      requires_signal_pack: seed.requires_signal_pack,
+      requires_learning_context: false,
+      allowed_platforms: seed.allowed_platforms,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: seed.priority_weight,
+      notes: seed.notes,
+      heygen_mode: null,
+    });
+    inserted++;
+    existing.add(seed.flow_type);
+  }
+
+  let mimicPriority = 4;
+  for (const ft of TOP_PERFORMER_MIMIC_FLOW_TYPES) {
+    if (existing.has(ft)) continue;
+    const notes =
+      ft === FLOW_TOP_PERFORMER_MIMIC_VIDEO
+        ? "Top-performer video mimic — not wired in this release."
+        : "Top-performer visual mimic — requires MIMIC_IMAGE_ENABLED and archived inspection media.";
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: ft,
+      enabled: false,
+      default_variation_count: 1,
+      requires_signal_pack: true,
+      requires_learning_context: false,
+      allowed_platforms: null,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: mimicPriority--,
+      notes,
+      heygen_mode: null,
+    });
+    inserted++;
+  }
+
+  return inserted;
+}
+
 async function enableAllowedFlowRowsWhenCapped(
   db: Pool,
   projectId: string,

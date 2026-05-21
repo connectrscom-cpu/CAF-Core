@@ -27,11 +27,14 @@ import {
 import {
   ensureDefaultAllowedFlowsIfNone,
   ensureMimicFlowsEnabledWhenCapped,
+  ensureMissingAllowedFlowRowsForPlanning,
   ensureVideoFlowsEnabledWhenCapped,
   getBrandConstraints,
   getStrategyDefaults,
   listAllowedFlowTypes,
 } from "../repositories/project-config.js";
+import { getConstraints } from "../repositories/core.js";
+import { resolvePlanningCaps } from "../decision_engine/planning-caps.js";
 import { deleteAllJobsForRun, upsertContentJob } from "../repositories/jobs.js";
 import { insertPlannedRunContentOutcomeSafe } from "../repositories/run-content-outcomes.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
@@ -51,29 +54,19 @@ import { logPipelineEvent } from "./pipeline-logger.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
-import type { VideoRoutingConfig } from "../decision_engine/video-flow-routing.js";
 import {
+  assignVideoFlowForPlanningRow,
   isVideoFormatRow,
-  pickVideoFlowForIntent,
-  resolveVideoIntent,
   shouldExcludeFlowFromVideoRouting,
+  VideoPlanningSlotBudget,
+  type VideoRoutingConfig,
 } from "../decision_engine/video-flow-routing.js";
 import { bucketForRowFormat, flowTypeMatchesRowFormat } from "../decision_engine/format-routing.js";
-import { loadProductHeygenModesForFlows, loadVideoRoutingConfig } from "./video-routing-config.js";
+import { readRunPlannedJobsJson } from "../domain/jobs-json-compat.js";
 
-/** Planner source rows written to the run before Start (`POST .../candidates`). */
+/** Planner source rows written to the run before Start (`POST .../jobs` or legacy `.../candidates`). */
 function plannerSourceRowsFromRun(run: RunRow): Record<string, unknown>[] {
-  const raw = run.candidates_json as unknown;
-  if (Array.isArray(raw)) return raw as Record<string, unknown>[];
-  if (typeof raw === "string") {
-    try {
-      const p = JSON.parse(raw) as unknown;
-      return Array.isArray(p) ? (p as Record<string, unknown>[]) : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
+  return readRunPlannedJobsJson(run as unknown as Record<string, unknown>) as Record<string, unknown>[];
 }
 
 export interface StartRunResult {
@@ -118,6 +111,7 @@ export async function startRun(
     }
 
     await ensureDefaultAllowedFlowsIfNone(db, run.project_id);
+    await ensureMissingAllowedFlowRowsForPlanning(db, run.project_id);
     await ensureVideoFlowsEnabledWhenCapped(db, run.project_id, config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN);
     await ensureMimicFlowsEnabledWhenCapped(db, run.project_id);
     const allowedFlows = await listAllowedFlowTypes(db, run.project_id);
@@ -145,9 +139,21 @@ export async function startRun(
       run.project_id,
       enabledFlows.map((f) => f.flow_type)
     );
+    const constraints = await getConstraints(db, run.project_id);
+    const planningCaps = resolvePlanningCaps(
+      config,
+      constraints,
+      enabledFlows.map((f) => f.flow_type)
+    );
     const candidates = buildCandidatesFromSignalPack(overallCandidates, enabledFlows, run.run_id, {
       videoRouting,
       productHeygenModes,
+      videoPlanningCaps: videoRouting.enabled
+        ? {
+            maxVideoPlan: planningCaps.maxVideoPlan,
+            perFlowCaps: planningCaps.perFlowCaps,
+          }
+        : undefined,
     });
 
     if (candidates.length === 0) {
@@ -439,6 +445,7 @@ function buildCandidatesFromSignalPack(
   opts?: {
     videoRouting?: VideoRoutingConfig;
     productHeygenModes?: Map<string, ProductHeygenMode | null>;
+    videoPlanningCaps?: { maxVideoPlan: number; perFlowCaps: Record<string, number> };
   }
 ): CandidateInput[] {
   const candidates: CandidateInput[] = [];
@@ -447,65 +454,62 @@ function buildCandidatesFromSignalPack(
   const flowsForExpansion = enabledFlows.filter(
     (f) => !videoRouting?.enabled || !shouldExcludeFlowFromVideoRouting(f.flow_type)
   );
+  const videoBudget =
+    videoRouting?.enabled && opts?.videoPlanningCaps
+      ? new VideoPlanningSlotBudget(flowsForExpansion, opts.videoPlanningCaps)
+      : undefined;
+
+  type PendingVideoRow = {
+    rowIdx: number;
+    row: Record<string, unknown>;
+    candidateId: string;
+    confidence: number;
+    platform: string;
+  };
+  const pendingVideoRows: PendingVideoRow[] = [];
+
+  const pushCandidate = (
+    row: Record<string, unknown>,
+    flowType: string,
+    payload: Record<string, unknown>,
+    meta: {
+      candidateId: string;
+      confidence: number;
+      platform: string;
+      sourceRowIndex1Based: number;
+    }
+  ) => {
+    candidates.push({
+      candidate_id: `${meta.candidateId}_${flowType}`,
+      content_idea: String(row.summary ?? row.content_idea ?? row.dominant_themes ?? ""),
+      run_id: runId,
+      platform: meta.platform,
+      target_platform: meta.platform,
+      flow_type: flowType,
+      confidence_score: meta.confidence,
+      platform_fit: parseFloat(String(row.platform_fit ?? 0.7)),
+      novelty_score: parseFloat(String(row.novelty_score ?? 0.5)),
+      past_performance_similarity: parseFloat(String(row.past_performance ?? 0.5)),
+      recommended_route: String(row.recommended_route ?? "HUMAN_REVIEW"),
+      dedupe_key: `${meta.candidateId}_${flowType}_${meta.platform}`,
+      payload,
+      source_row_index_1_based: meta.sourceRowIndex1Based,
+    });
+  };
 
   for (let rowIdx = 0; rowIdx < overallCandidates.length; rowIdx++) {
     const row = overallCandidates[rowIdx]!;
     const candidateId = String(row.candidate_id ?? row.sign ?? row.topic ?? randomUUID());
     const confidence = parseFloat(String(row.confidence ?? row.confidence_score ?? 0.8));
     const platform = String(row.platform ?? row.target_platform ?? "Instagram");
-    const sourceRowIndex1Based = rowIdx + 1;
-
-    const pushCandidate = (flowType: string, payload: Record<string, unknown>) => {
-      candidates.push({
-        candidate_id: `${candidateId}_${flowType}`,
-        content_idea: String(row.summary ?? row.content_idea ?? row.dominant_themes ?? ""),
-        run_id: runId,
-        platform,
-        target_platform: platform,
-        flow_type: flowType,
-        confidence_score: confidence,
-        platform_fit: parseFloat(String(row.platform_fit ?? 0.7)),
-        novelty_score: parseFloat(String(row.novelty_score ?? 0.5)),
-        past_performance_similarity: parseFloat(String(row.past_performance ?? 0.5)),
-        recommended_route: String(row.recommended_route ?? "HUMAN_REVIEW"),
-        dedupe_key: `${candidateId}_${flowType}_${platform}`,
-        payload,
-        source_row_index_1_based: sourceRowIndex1Based,
-      });
-    };
 
     if (videoRouting?.enabled && isVideoFormatRow(row)) {
-      const route = resolveVideoIntent(row, videoRouting);
-      const flowType = pickVideoFlowForIntent(flowsForExpansion, route.intent, productModes);
-      const payload = {
-        ...row,
-        video_route: {
-          intent: route.intent,
-          reason: route.reason,
-          confidence: route.confidence,
-          matched_flow_type: flowType,
-        },
-      };
-      if (!flowType) {
-        logPipelineEvent("warn", "plan", "video_route_no_matching_flow", {
-          run_id: runId,
-          data: { candidate_id: candidateId, intent: route.intent, platform },
-        });
-        continue;
-      }
-      if (shouldSkipCandidateForFlow(platform, flowType)) continue;
-      const flow = flowsForExpansion.find((f) => f.flow_type === flowType);
-      const flowPlatforms = flow?.allowed_platforms
-        ? flow.allowed_platforms.split(",").map((p) => p.trim())
-        : null;
-      if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
-        continue;
-      }
-      pushCandidate(flowType, payload);
+      pendingVideoRows.push({ rowIdx, row, candidateId, confidence, platform });
       continue;
     }
 
     const rowFormatBucket = bucketForRowFormat(row);
+    const sourceRowIndex1Based = rowIdx + 1;
 
     for (const flow of flowsForExpansion) {
       if (!flowTypeMatchesRowFormat(flow.flow_type, rowFormatBucket)) {
@@ -523,8 +527,62 @@ function buildCandidatesFromSignalPack(
         continue;
       }
 
-      pushCandidate(flow.flow_type, row);
+      pushCandidate(row, flow.flow_type, row, {
+        candidateId,
+        confidence,
+        platform,
+        sourceRowIndex1Based,
+      });
     }
+  }
+
+  pendingVideoRows.sort((a, b) => b.confidence - a.confidence);
+
+  for (const pending of pendingVideoRows) {
+    const { row, rowIdx, candidateId, confidence, platform } = pending;
+    const assignment = assignVideoFlowForPlanningRow(
+      row,
+      videoRouting!,
+      flowsForExpansion,
+      productModes,
+      videoBudget
+    );
+    if (!assignment) {
+      logPipelineEvent("warn", "plan", "video_route_no_matching_flow", {
+        run_id: runId,
+        data: { candidate_id: candidateId, platform },
+      });
+      continue;
+    }
+
+    const { flowType, route, matchedIntent, assignment: assignmentKind } = assignment;
+    const payload = {
+      ...row,
+      video_route: {
+        intent: route.intent,
+        matched_intent: matchedIntent,
+        reason: route.reason,
+        confidence: route.confidence,
+        matched_flow_type: flowType,
+        assignment: assignmentKind,
+      },
+    };
+
+    if (shouldSkipCandidateForFlow(platform, flowType)) continue;
+    const flow = flowsForExpansion.find((f) => f.flow_type === flowType);
+    const flowPlatforms = flow?.allowed_platforms
+      ? flow.allowed_platforms.split(",").map((p) => p.trim())
+      : null;
+    if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
+      continue;
+    }
+
+    pushCandidate(row, flowType, payload, {
+      candidateId,
+      confidence,
+      platform,
+      sourceRowIndex1Based: rowIdx + 1,
+    });
   }
 
   return candidates;

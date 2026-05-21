@@ -1,10 +1,12 @@
 import type { Pool } from "pg";
 import { resolvePromptVersion } from "./prompt_selector.js";
 import { selectRoute } from "./route_selector.js";
-import { isCarouselFlow, isVideoFlow } from "./flow-kind.js";
+import { isVideoFlow } from "./flow-kind.js";
 import {
+  countsTowardCarouselRunCap,
   ideaKeyFallbackPass,
   ideaKeyPrimaryPass,
+  isStandardTemplatedCarouselFlow,
   type IdeaFormatBucket,
 } from "./format-routing.js";
 import type { GenerationPlanResult, PlannedJob, ScoredCandidate } from "./types.js";
@@ -60,6 +62,8 @@ export async function selectJobsFromCandidates(
   opts: {
     pass: "primary" | "fallback";
     ideaKey: (c: ScoredCandidate) => string;
+    /** Cap variations for this pass (e.g. 1 to spread v1 across ideas before v2). */
+    maxVariationsPerCandidate?: number;
   }
 ): Promise<void> {
   for (const c of sorted) {
@@ -84,12 +88,13 @@ export async function selectJobsFromCandidates(
     });
     const route = selectRoute(c, { autoValidationThreshold: ctx.autoValThreshold });
     const ft = c.flow_type;
-    let varsThisCandidate = Math.min(ctx.variationCap, state.remainingSlots);
+    const perCandidateCap = opts.maxVariationsPerCandidate ?? ctx.variationCap;
+    let varsThisCandidate = Math.min(ctx.variationCap, perCandidateCap, state.remainingSlots);
 
     const usedFt = state.perFlowPlanned[ft] ?? 0;
     const capFt = ctx.perFlowCaps[ft] ?? 0;
     varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, capFt - usedFt));
-    if (isCarouselFlow(ft)) {
+    if (countsTowardCarouselRunCap(ft)) {
       varsThisCandidate = Math.min(
         varsThisCandidate,
         Math.max(0, ctx.maxCarouselPlan - state.plannedCarousel)
@@ -128,8 +133,51 @@ export async function selectJobsFromCandidates(
         pre_gen_score: c.pre_gen_score,
       });
       state.remainingSlots -= 1;
-      if (isCarouselFlow(ft)) state.plannedCarousel += 1;
+      if (countsTowardCarouselRunCap(ft)) state.plannedCarousel += 1;
       if (isVideoFlow(ft)) state.plannedVideo += 1;
+      state.perFlowPlanned[ft] = (state.perFlowPlanned[ft] ?? 0) + 1;
+    }
+  }
+}
+
+/** After v1 spread, add v2+ for templated carousel jobs that already have variation_index 0. */
+export async function selectTemplatedCarouselExtraVariations(
+  ctx: PlanSelectionContext,
+  state: PlanSelectionState,
+  variationCap: number
+): Promise<void> {
+  if (variationCap <= 1) return;
+
+  const v1Jobs = state.selected.filter(
+    (j) => isStandardTemplatedCarouselFlow(j.flow_type) && j.variation_index === 0
+  );
+
+  for (const base of v1Jobs) {
+    for (let v = 1; v < variationCap; v++) {
+      if (state.remainingSlots <= 0) break;
+
+      const ft = base.flow_type;
+      const usedFt = state.perFlowPlanned[ft] ?? 0;
+      const capFt = ctx.perFlowCaps[ft] ?? 0;
+      if (usedFt >= capFt) break;
+      if (state.plannedCarousel >= ctx.maxCarouselPlan) break;
+
+      state.selected.push({
+        candidate_id: base.candidate_id,
+        flow_type: base.flow_type,
+        platform: base.platform,
+        source_row_index_1_based: base.source_row_index_1_based,
+        variation_index: v,
+        variation_name: `v${v + 1}`,
+        prompt_version_id: base.prompt_version_id,
+        prompt_id: base.prompt_id,
+        prompt_version_label: base.prompt_version_label,
+        prompt_source: base.prompt_source,
+        recommended_route: base.recommended_route,
+        pre_gen_score: base.pre_gen_score,
+      });
+      state.remainingSlots -= 1;
+      state.plannedCarousel += 1;
       state.perFlowPlanned[ft] = (state.perFlowPlanned[ft] ?? 0) + 1;
     }
   }

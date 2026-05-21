@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
 import type { RunRow } from "./runs.js";
 import type { SignalPackRow } from "./signal-packs.js";
-import { listRunContentOutcomes, type RunContentOutcomeRow } from "./run-content-outcomes.js";
+import { listRunContentOutcomesForAdmin, type RunContentOutcomeRow } from "./run-content-outcomes.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 
@@ -113,8 +113,11 @@ export async function buildRunContentLogExport(
 
   const includeOutcomes = opts?.include_outcomes !== false;
 
-  // The “content log” table is optional (migration 007). This call may throw 42P01; caller can catch it.
-  const outcomes = includeOutcomes ? await listRunContentOutcomes(db, projectId, runIdText, limit) : [];
+  // Outcomes table is optional (migration 007). Fall back to transitions / live job rows when empty.
+  const listed = includeOutcomes
+    ? await listRunContentOutcomesForAdmin(db, projectId, runIdText, limit)
+    : { outcomes: [], table_missing: false, source: "outcomes" as const };
+  const outcomes = listed.outcomes;
   const outcomesByTask = new Map(outcomes.map((o) => [o.task_id, o]));
 
   const jobs = await q<JsonRec>(

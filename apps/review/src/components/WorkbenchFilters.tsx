@@ -92,7 +92,7 @@ export function WorkbenchFilters({
         <input
           type="text"
           className="filter-input"
-          placeholder="task_id, title, caption..."
+          placeholder="job_id, title, caption..."
           value={params.search ?? ""}
           onChange={(e) => setParam("search", e.target.value)}
         />
@@ -189,7 +189,7 @@ export function WorkbenchFilters({
       <div className="filter-group">
         <label className="filter-label">Sort</label>
         <select className="filter-select" value={params.sort ?? "task_id"} onChange={(e) => setParam("sort", e.target.value)}>
-          <option value="task_id">Task ID</option>
+          <option value="task_id">Job ID</option>
           <option value="-submitted_at">Submitted (newest)</option>
           <option value="submitted_at">Submitted (oldest)</option>
           <option value="-review_status">Review status</option>
