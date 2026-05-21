@@ -4595,7 +4595,7 @@ document.getElementById('slab-copy-btn').addEventListener('click',async function
     if (project) qs.set("project", project);
     if (runId) qs.set("run_id", runId);
     const dest = `/admin/run-jobs${qs.toString() ? `?${qs.toString()}` : ""}`;
-    return reply.redirect(302, dest);
+    return reply.redirect(dest, 302);
   });
 
   app.get("/admin/run-jobs", async (request, reply) => {

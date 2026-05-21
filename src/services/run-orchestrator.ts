@@ -63,6 +63,7 @@ import {
 } from "../decision_engine/video-flow-routing.js";
 import { bucketForRowFormat, flowTypeMatchesRowFormat } from "../decision_engine/format-routing.js";
 import { readRunPlannedJobsJson } from "../domain/jobs-json-compat.js";
+import { loadProductHeygenModesForFlows, loadVideoRoutingConfig } from "./video-routing-config.js";
 
 /** Planner source rows written to the run before Start (`POST .../jobs` or legacy `.../candidates`). */
 function plannerSourceRowsFromRun(run: RunRow): Record<string, unknown>[] {

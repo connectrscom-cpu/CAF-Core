@@ -14,6 +14,7 @@ import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
 import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
+import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
