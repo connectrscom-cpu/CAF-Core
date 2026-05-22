@@ -569,10 +569,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     return out;
   };
 
-  const settingsLinks = [
-    { href: `/admin/config${pq}`, label: "Project settings", key: "config" },
-    { href: `/admin/workbench/playground${pq}`, label: "Template playground", key: "workbench-playground" },
-  ];
+  const settingsLinks = [{ href: `/admin/config${pq}`, label: "Project settings", key: "config" }];
 
   type GlobalLink = { href: string; label: string; key: string; children?: GlobalLink[] };
   const gq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";

@@ -12,7 +12,6 @@ const NAV_ITEMS = [
       { href: "/runs", label: "Runs", icon: RunsIcon },
       { href: "/pipeline?tab=packs", label: "Signal packs", icon: PipelineIcon },
       { href: "/publish", label: "Publish", icon: PublishIcon },
-      { href: "/playground", label: "Template Playground", icon: TemplateIcon },
     ],
   },
   {
@@ -124,16 +123,6 @@ function PipelineIcon() {
       <rect x="8" y="9" width="3" height="7" rx="0.5" />
       <rect x="13" y="7" width="3" height="9" rx="0.5" />
       <path d="M8 5v3M16 5v1" />
-    </svg>
-  );
-}
-
-function TemplateIcon() {
-  return (
-    <svg className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-      <line x1="3" y1="9" x2="21" y2="9" />
-      <line x1="9" y1="21" x2="9" y2="9" />
     </svg>
   );
 }
