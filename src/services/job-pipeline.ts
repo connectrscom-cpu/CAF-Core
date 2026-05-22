@@ -55,6 +55,7 @@ import {
 } from "./mimic-carousel-render.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
+import { mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -1670,7 +1671,7 @@ async function processCarouselJob(
           bucket: config.SUPABASE_ASSETS_BUCKET,
           object_path: storedPath,
           public_url: publicUrl,
-          provider: "openai-gpt-image-1",
+          provider: mimicImageProviderAssetLabel(config),
           metadata_json: { slide_index: i, mimic: true },
         });
         slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });

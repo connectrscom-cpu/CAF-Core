@@ -194,7 +194,11 @@ const envSchema = z.object({
       const s = v.trim().toLowerCase();
       return s === "1" || s === "true" || s === "yes";
     }),
+  /** Mimic render pixels: OpenAI gpt-image-1 or NVIDIA NIM Qwen image edit (reference-conditioned). */
+  MIMIC_IMAGE_PROVIDER: z.enum(["openai", "nvidia"]).default("openai"),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
+  /** NVIDIA build.nvidia.com model when MIMIC_IMAGE_PROVIDER=nvidia (OpenAI-compatible /images/edits). */
+  MIMIC_IMAGE_NVIDIA_MODEL: z.string().default("qwen/qwen-image-edit"),
   MIMIC_IMAGE_INPUT_FIDELITY: z.enum(["high", "low"]).default("high"),
   MIMIC_IMAGE_QUALITY: z.enum(["high", "medium", "low", "auto"]).default("high"),
   /** Instagram 4:5 default */
@@ -208,7 +212,7 @@ const envSchema = z.object({
   OPENAI_API_BASE: z.string().default("https://api.openai.com/v1"),
   /**
    * Top-performer **processing** vision only (carousel / image / video deep passes).
-   * Job generation, mimic render, and approval review always use OpenAI.
+   * Mimic render uses MIMIC_IMAGE_PROVIDER; job copy and approval review use OpenAI.
    */
   PROCESSING_VISION_PROVIDER: z.enum(["openai", "nvidia"]).default("openai"),
   /** NVIDIA build.nvidia.com / integrate.api.nvidia.com key when PROCESSING_VISION_PROVIDER=nvidia. */

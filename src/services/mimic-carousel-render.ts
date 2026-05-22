@@ -2,7 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import type { Pool } from "pg";
 import { insertAsset } from "../repositories/assets.js";
-import { editImageFromReference } from "./mimic-image-provider.js";
+import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { mimicPromptForMode } from "./mimic-prompt-builder.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { uploadBuffer } from "./supabase-storage.js";
@@ -68,7 +68,7 @@ export async function extractMimicSlideBackground(
     bucket: config.SUPABASE_ASSETS_BUCKET,
     object_path: storedPath,
     public_url: publicUrl,
-    provider: "openai-gpt-image-1",
+    provider: mimicImageProviderAssetLabel(config),
     metadata_json: { role: "template_background", slide_index: slideIndex },
   });
 

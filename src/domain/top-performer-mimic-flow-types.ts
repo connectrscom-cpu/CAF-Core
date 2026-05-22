@@ -27,7 +27,7 @@ export function isTopPerformerMimicCarouselFlow(flowType: string): boolean {
   return (flowType ?? "").trim() === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL;
 }
 
-/** Image + carousel mimic flows wired to gpt-image-1 (excludes video placeholder). */
+/** Image + carousel mimic flows wired to MIMIC_IMAGE_PROVIDER (OpenAI or NVIDIA Qwen). */
 export function isTopPerformerMimicRenderableFlow(flowType: string): boolean {
   return isTopPerformerMimicImageFlow(flowType) || isTopPerformerMimicCarouselFlow(flowType);
 }
@@ -36,4 +36,4 @@ export const TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE =
   "Top-performer mimic copy generation requires OPENAI_API_KEY.";
 
 export const TOP_PERFORMER_MIMIC_RENDER_NOT_READY_MESSAGE =
-  "Top-performer mimic reference prep and render require MIMIC_IMAGE_ENABLED=1, OPENAI_API_KEY, and archived top-performer inspection media on the signal pack.";
+  "Top-performer mimic render requires MIMIC_IMAGE_ENABLED=1, a configured MIMIC_IMAGE_PROVIDER (OPENAI_API_KEY or NVIDIA_NIM_API_KEY), and archived top-performer inspection media on the signal pack.";

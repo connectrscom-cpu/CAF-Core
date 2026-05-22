@@ -5,7 +5,7 @@ import { requireMimicPayloadForRender } from "../domain/mimic-payload.js";
 import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligibility.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
-import { editImageFromReference } from "./mimic-image-provider.js";
+import { editImageFromReference, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { mimicPromptForMode } from "./mimic-prompt-builder.js";
 import { refreshMimicPayloadReferenceUrls, refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { finalJobStatusAfterRender } from "./validation-router.js";
@@ -41,6 +41,7 @@ export async function processImageMimicJob(
   if (!config.MIMIC_IMAGE_ENABLED) {
     throw new Error("MIMIC_IMAGE_ENABLED is off");
   }
+  assertMimicImageProviderConfigured(config);
 
   const fresh = await db.query<{ generation_payload: Record<string, unknown> }>(
     `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
@@ -62,11 +63,13 @@ export async function processImageMimicJob(
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, ref);
 
+  const imageProvider = mimicImageProviderAssetLabel(config);
+
   await db.query(`UPDATE caf_core.content_jobs SET status = 'RENDERING', updated_at = now() WHERE id = $1`, [
     job.id,
   ]);
   await updateJobRenderState(db, job.id, {
-    provider: "openai-gpt-image-1",
+    provider: imageProvider,
     status: "pending",
     phase: "mimic_image_edit",
   });
@@ -122,14 +125,14 @@ export async function processImageMimicJob(
     bucket: config.SUPABASE_ASSETS_BUCKET,
     object_path: storedPath,
     public_url: publicUrl,
-    provider: "openai-gpt-image-1",
+    provider: imageProvider,
     metadata_json: { mimic_mode: mimic.mode, source_insights_id: mimic.source_insights_id },
   });
 
   const renderManifest = {
     render_type: "image_mimic",
     asset_type: "image",
-    provider: "openai-gpt-image-1",
+    provider: imageProvider,
     mimic_mode: mimic.mode,
     finished_at: new Date().toISOString(),
     slides: [{ index: 1, object_path: storedPath, public_url: publicUrl }],
@@ -148,7 +151,7 @@ export async function processImageMimicJob(
   );
 
   await updateJobRenderState(db, job.id, {
-    provider: "openai-gpt-image-1",
+    provider: imageProvider,
     status: "completed",
     phase: "done",
   });

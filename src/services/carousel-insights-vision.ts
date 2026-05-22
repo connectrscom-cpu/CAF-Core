@@ -2,9 +2,11 @@ import type { AppConfig } from "../config.js";
 import type { OpenAiAuditContext } from "./openai-chat.js";
 import type { ChatContentPart } from "./openai-chat-multimodal.js";
 import {
+  findCarouselSlidesNeedingRetry,
   findMissingCarouselSlideIndices,
   finalizeCarouselInsightJson,
   mergeCarouselInsightChunks,
+  remapChunkSlideIndices,
   TOP_PERFORMER_CAROUSEL_DECK_SUMMARY_PROMPT,
   TOP_PERFORMER_CAROUSEL_NVIDIA_JSON_APPENDIX,
   TOP_PERFORMER_CAROUSEL_SLIDES_CHUNK_PROMPT,
@@ -25,11 +27,12 @@ function chunkSizeForConfig(config: AppConfig, profileModel: string): number | n
 
 function buildImageParts(
   visionSlideUrls: string[],
-  finalizeUrl: (url: string) => string
+  finalizeUrl: (url: string) => string,
+  detail: "low" | "high" = "low"
 ): ChatContentPart[] {
   return visionSlideUrls.map((url) => ({
     type: "image_url" as const,
-    image_url: { url: finalizeUrl(url), detail: "low" as const },
+    image_url: { url: finalizeUrl(url), detail },
   }));
 }
 
@@ -52,10 +55,11 @@ async function callCarouselVision(args: {
   audit: Omit<OpenAiAuditContext, "step">;
   auditStep: string;
   maxTokens: number;
+  imageDetail?: "low" | "high";
 }): Promise<{ content: string; model: string; parsed: Record<string, unknown> | null }> {
   const user_content: ChatContentPart[] = [
     { type: "text", text: args.userText },
-    ...buildImageParts(args.visionSlideUrls, args.finalizeImageUrl),
+    ...buildImageParts(args.visionSlideUrls, args.finalizeImageUrl, args.imageDetail ?? "low"),
   ];
   const out = await processingVisionChatMultimodal(
     args.config,
@@ -72,7 +76,7 @@ async function callCarouselVision(args: {
   return { content: out.content, model: out.model, parsed: parseJsonObjectFromLlmText(out.content) };
 }
 
-async function retryMissingCarouselSlides(args: {
+async function retryIncompleteCarouselSlides(args: {
   config: AppConfig;
   profileModel: string;
   userText: string;
@@ -86,13 +90,11 @@ async function retryMissingCarouselSlides(args: {
   merged: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
   const retryChunks: Array<Record<string, unknown> | null> = [];
-  let lastModel = args.profileModel;
-  let lastContent = "";
 
-  let missing = findMissingCarouselSlideIndices(args.merged.slides, args.deckSlideCount);
-  if (missing.length === 0) return args.merged;
+  let needsRetry = findCarouselSlidesNeedingRetry(args.merged.slides, args.deckSlideCount);
+  if (needsRetry.length === 0) return args.merged;
 
-  for (const batch of batchIndices(missing, args.chunkSize)) {
+  for (const batch of batchIndices(needsRetry, args.chunkSize)) {
     const chunkUrls = batch.map((idx) => args.visionSlideUrls[idx - 1]).filter(Boolean);
     if (chunkUrls.length === 0) continue;
 
@@ -100,7 +102,8 @@ async function retryMissingCarouselSlides(args: {
     const globalEnd = batch[batch.length - 1]!;
     const chunkUserText =
       `${args.userText}\n\n` +
-      `RETRY — previous analysis missed slide OCR for indices: ${batch.join(", ")}.\n` +
+      `RETRY — previous analysis missed or hallucinated OCR for slide indices: ${batch.join(", ")}.\n` +
+      `Describe ONLY what is visible in each attached image. Do not invent brands, ads, or caption hashtags.\n` +
       `Attached images: slides ${globalStart}-${globalEnd} of ${args.deckSlideCount} total in this deck. ` +
       `Return slide_index values ${batch.join(", ")} only. slides.length MUST equal ${chunkUrls.length}.`;
 
@@ -115,26 +118,33 @@ async function retryMissingCarouselSlides(args: {
       audit: args.audit,
       auditStep: `${args.auditStep}_retry_${globalStart}_${globalEnd}`,
       maxTokens: args.maxTokens,
+      imageDetail: "high",
     });
 
-    lastModel = out.model;
-    lastContent = out.content;
-    retryChunks.push(out.parsed);
+    retryChunks.push(remapChunkSlideIndices(out.parsed, globalStart, chunkUrls.length));
   }
 
   if (retryChunks.length === 0) return args.merged;
 
   const retried = mergeCarouselInsightChunks([args.merged, ...retryChunks], args.deckSlideCount);
-  missing = findMissingCarouselSlideIndices(retried.slides, args.deckSlideCount);
-  if (missing.length > 0 && retried.slides) {
-    retried._slide_coverage = {
-      expected: args.deckSlideCount,
-      stored: Array.isArray(retried.slides) ? retried.slides.length : 0,
-      missing_indices: missing,
-    };
-  }
-
+  attachSlideCoverageMetadata(retried, args.deckSlideCount);
   return retried;
+}
+
+function attachSlideCoverageMetadata(merged: Record<string, unknown>, deckSlideCount: number): void {
+  const missing = findMissingCarouselSlideIndices(merged.slides, deckSlideCount);
+  const needsRetry = findCarouselSlidesNeedingRetry(merged.slides, deckSlideCount);
+  const weak = needsRetry.filter((idx) => !missing.includes(idx));
+  if (missing.length === 0 && weak.length === 0) {
+    delete merged._slide_coverage;
+    return;
+  }
+  merged._slide_coverage = {
+    expected: deckSlideCount,
+    stored: Array.isArray(merged.slides) ? merged.slides.length : 0,
+    missing_indices: missing,
+    weak_indices: weak,
+  };
 }
 
 /**
@@ -185,6 +195,7 @@ export async function runCarouselDeckVisionAnalysis(args: {
       audit,
       auditStep,
       maxTokens,
+      imageDetail: deckSlideCount > 1 ? "high" : "low",
     });
 
     if (!out.parsed) {
@@ -199,13 +210,14 @@ export async function runCarouselDeckVisionAnalysis(args: {
         audit,
         auditStep: `${auditStep}_parse_retry`,
         maxTokens,
+        imageDetail: deckSlideCount > 1 ? "high" : "low",
       });
       out = retry.parsed ? retry : out;
     }
 
     let parsed = finalizeCarouselInsightJson(out.parsed, deckSlideCount);
     if (parsed) {
-      parsed = await retryMissingCarouselSlides({
+      parsed = await retryIncompleteCarouselSlides({
         config,
         profileModel,
         userText,
@@ -219,6 +231,7 @@ export async function runCarouselDeckVisionAnalysis(args: {
         merged: parsed,
       });
       parsed = finalizeCarouselInsightJson(parsed, deckSlideCount);
+      if (parsed) attachSlideCoverageMetadata(parsed, deckSlideCount);
     }
 
     return { content: out.content, model: out.model, parsed };
@@ -249,7 +262,11 @@ export async function runCarouselDeckVisionAnalysis(args: {
   });
   lastModel = deckOut.model;
   lastContent = deckOut.content;
-  parsedChunks.push(deckOut.parsed);
+  const deckChunk = deckOut.parsed ? { ...deckOut.parsed } : null;
+  if (deckChunk && Array.isArray(deckChunk.slides)) {
+    delete deckChunk.slides;
+  }
+  parsedChunks.push(deckChunk);
 
   for (let start = 0; start < visionSlideUrls.length; start += chunkSize) {
     const chunkUrls = visionSlideUrls.slice(start, start + chunkSize);
@@ -273,13 +290,13 @@ export async function runCarouselDeckVisionAnalysis(args: {
       audit,
       auditStep: `${auditStep}_slides_${globalStart}_${globalEnd}`,
       maxTokens,
+      imageDetail: "high",
     });
 
     lastModel = out.model;
     lastContent = out.content;
-    parsedChunks.push(out.parsed ?? null);
-
-    if (!out.parsed) {
+    let chunkParsed = out.parsed;
+    if (!chunkParsed) {
       const retry = await callCarouselVision({
         config,
         profileModel,
@@ -291,12 +308,16 @@ export async function runCarouselDeckVisionAnalysis(args: {
         audit,
         auditStep: `${auditStep}_slides_${globalStart}_${globalEnd}_parse_retry`,
         maxTokens,
+        imageDetail: "high",
       });
       if (retry.parsed) {
-        parsedChunks[parsedChunks.length - 1] = retry.parsed;
+        chunkParsed = retry.parsed;
         lastContent = retry.content;
       }
     }
+    parsedChunks.push(
+      chunkParsed ? remapChunkSlideIndices(chunkParsed, globalStart, chunkUrls.length) : null
+    );
   }
 
   let merged = mergeCarouselInsightChunks(parsedChunks, deckSlideCount);
@@ -304,7 +325,7 @@ export async function runCarouselDeckVisionAnalysis(args: {
     return { content: lastContent, model: lastModel, parsed: null };
   }
 
-  merged = await retryMissingCarouselSlides({
+  merged = await retryIncompleteCarouselSlides({
     config,
     profileModel,
     userText,
@@ -319,6 +340,7 @@ export async function runCarouselDeckVisionAnalysis(args: {
   });
 
   const parsed = finalizeCarouselInsightJson(merged, deckSlideCount);
+  if (parsed) attachSlideCoverageMetadata(parsed, deckSlideCount);
   return {
     content: lastContent,
     model: lastModel,

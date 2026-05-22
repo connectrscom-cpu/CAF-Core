@@ -23,7 +23,7 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { normalizeCarouselInsightsLlmJson } from "./carousel-insights-llm-normalize.js";
+import { normalizeCarouselInsightsLlmJson, finalizeCarouselInsightJson } from "./carousel-insights-llm-normalize.js";
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
@@ -824,7 +824,7 @@ ${textBundle}`;
       auditStep: STEP,
     });
 
-    const parsed = normalizeCarouselInsightsLlmJson(visionOut.parsed);
+    const parsed = finalizeCarouselInsightJson(visionOut.parsed, c.slide_urls.length);
     const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
     const mechanism = resolveCarouselMechanismFields({
       parsed,

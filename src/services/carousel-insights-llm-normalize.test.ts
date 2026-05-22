@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  findCarouselSlidesNeedingRetry,
   findMissingCarouselSlideIndices,
+  findWeakCarouselSlideIndices,
+  isWeakCarouselSlide,
   mergeCarouselInsightChunks,
   normalizeCarouselInsightsLlmJson,
+  remapChunkSlideIndices,
   sanitizeCarouselSlides,
 } from "./carousel-insights-llm-normalize.js";
 
@@ -54,6 +58,22 @@ describe("normalizeCarouselInsightsLlmJson", () => {
     expect(dvs.overall_aesthetic).toBe("meme grid");
     expect(dvs.mlm_data).toBeUndefined();
   });
+
+  it("strips garbage from replication_blueprint and root mlm_data", () => {
+    const out = normalizeCarouselInsightsLlmJson({
+      format_pattern: "promo",
+      mlm_data: { summary: "bad" },
+      replication_blueprint: {
+        steps_to_remake: ["step"],
+        classifier_input: "drop me",
+      },
+      slides: [{ slide_index: 1, on_screen_text_transcript: "Buy" }],
+    });
+    expect(out?.mlm_data).toBeUndefined();
+    const bp = out?.replication_blueprint as Record<string, unknown>;
+    expect(bp.steps_to_remake).toEqual(["step"]);
+    expect(bp.classifier_input).toBeUndefined();
+  });
 });
 
 describe("sanitizeCarouselSlides", () => {
@@ -72,6 +92,26 @@ describe("sanitizeCarouselSlides", () => {
     expect(out[0]?.on_screen_text_transcript).toBe("much longer transcript on slide one");
     expect(out[1]?.slide_index).toBe(2);
   });
+
+  it("prefers non-hallucinated duplicate slide_index", () => {
+    const out = sanitizeCarouselSlides(
+      [
+        {
+          slide_index: 9,
+          on_screen_text_transcript: "Want a closer look at my @FashionNova?",
+          visual_description: "product collage",
+        },
+        {
+          slide_index: 9,
+          on_screen_text_transcript: "Gemini: slow down and listen to your body this week.",
+          visual_description: "text on green background",
+        },
+      ],
+      12
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.on_screen_text_transcript).toContain("Gemini");
+  });
 });
 
 describe("findMissingCarouselSlideIndices", () => {
@@ -82,6 +122,71 @@ describe("findMissingCarouselSlideIndices", () => {
         5
       )
     ).toEqual([2, 4, 5]);
+  });
+});
+
+describe("weak slide detection", () => {
+  it("flags FashionNova hallucinations and hashtag-only bleed", () => {
+    expect(
+      isWeakCarouselSlide({
+        slide_index: 9,
+        on_screen_text_transcript: "Want a closer look at my @FashionNova?",
+      })
+    ).toBe(true);
+    expect(
+      isWeakCarouselSlide({
+        slide_index: 5,
+        on_screen_text_transcript: "#moonomens #astrology",
+      })
+    ).toBe(true);
+    expect(
+      isWeakCarouselSlide({
+        slide_index: 3,
+        on_screen_text_transcript: "Aries: take a breath before you reply.",
+        visual_description: "white text centered on dark green background",
+      })
+    ).toBe(false);
+  });
+
+  it("findCarouselSlidesNeedingRetry unions missing and weak indices", () => {
+    const slides = [
+      { slide_index: 1, on_screen_text_transcript: "Hook slide text here" },
+      { slide_index: 3, on_screen_text_transcript: "#moonomens #astrology" },
+    ];
+    expect(findWeakCarouselSlideIndices(slides, 4)).toEqual([2, 3, 4]);
+    expect(findCarouselSlidesNeedingRetry(slides, 4)).toEqual([2, 3, 4]);
+  });
+});
+
+describe("remapChunkSlideIndices", () => {
+  it("remaps local 1..k indices to global chunk range", () => {
+    const out = remapChunkSlideIndices(
+      {
+        slides: [
+          { slide_index: 1, on_screen_text_transcript: "Five" },
+          { slide_index: 2, on_screen_text_transcript: "Six" },
+        ],
+      },
+      5,
+      2
+    );
+    expect((out?.slides as Record<string, unknown>[])[0]?.slide_index).toBe(5);
+    expect((out?.slides as Record<string, unknown>[])[1]?.slide_index).toBe(6);
+  });
+
+  it("preserves already-global indices", () => {
+    const out = remapChunkSlideIndices(
+      {
+        slides: [
+          { slide_index: 9, on_screen_text_transcript: "Nine" },
+          { slide_index: 10, on_screen_text_transcript: "Ten" },
+        ],
+      },
+      9,
+      2
+    );
+    expect((out?.slides as Record<string, unknown>[])[0]?.slide_index).toBe(9);
+    expect((out?.slides as Record<string, unknown>[])[1]?.slide_index).toBe(10);
   });
 });
 
