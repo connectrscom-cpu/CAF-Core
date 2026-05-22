@@ -11,6 +11,7 @@ import { ensureProject } from "../repositories/core.js";
 import {
   countEvidenceRowInsightsByImportTier,
   listEvidenceRowInsightIdsByImportTier,
+  listEvidenceRowInsightMechanismByRowIds,
   upsertEvidenceRowInsight,
 } from "../repositories/inputs-evidence-insights.js";
 import {
@@ -26,7 +27,7 @@ import { normalizeCarouselInsightsLlmJson } from "./carousel-insights-llm-normal
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
-import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
+import { summarizePayloadForLlm, extractEvidenceDisplayFields } from "./inputs-evidence-display.js";
 import {
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
   instagramCarouselStructuralHintPresent,
@@ -139,6 +140,9 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
   "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
   "risk_flags": ["meaningful risk strings only; use [] when none — never placeholders like \"none\" or \"n/a\""],
   "why_it_worked": "why this carousel may perform (short)",
+  "primary_emotion": "dominant emotional vibe (short)",
+  "secondary_emotion": "secondary vibe or empty string",
+  "caption_style": "how the post caption pairs with the carousel (short)",
 
   "deck_as_whole_summary": "2–5 sentences: overall story, brand/persona vibe, pacing, what makes the deck cohesive + swipe-worthy",
   "deck_visual_system": {
@@ -437,12 +441,74 @@ function buildCarouselAestheticAnalysisJson(parsed: Record<string, unknown> | nu
     on_screen_text_summary: parsed.on_screen_text_summary,
     cta_clarity: parsed.cta_clarity,
     format_pattern: parsed.format_pattern,
+    primary_emotion: parsed.primary_emotion,
+    secondary_emotion: parsed.secondary_emotion,
+    caption_style: parsed.caption_style,
   };
   if (Array.isArray(parsed.slides)) out.slides = parsed.slides;
   if (parsed.deck_as_whole_summary != null) out.deck_as_whole_summary = parsed.deck_as_whole_summary;
   if (parsed.deck_visual_system != null) out.deck_visual_system = parsed.deck_visual_system;
   if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
+  if (parsed._slide_coverage != null) out._slide_coverage = parsed._slide_coverage;
   return out;
+}
+
+function pickInsightString(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function resolveHashtagsFromEvidence(
+  evidenceKind: string,
+  payload: Record<string, unknown>,
+  caption: string
+): string | null {
+  const disp = extractEvidenceDisplayFields(evidenceKind, payload);
+  if (disp.hashtags?.trim()) return disp.hashtags.trim().slice(0, 800);
+  const fromCap = caption.match(/#[\p{L}\p{N}_]+/gu);
+  if (fromCap?.length) {
+    return [...new Set(fromCap.map((h) => h.replace(/^#/, "").toLowerCase()))].join(", ").slice(0, 800);
+  }
+  return null;
+}
+
+function inferCaptionStyleFromCaption(caption: string): string | null {
+  const t = caption.trim();
+  if (!t) return null;
+  if (t.length > 600) return "long_form_caption";
+  if (t.length < 80) return "micro_caption";
+  const firstLine = t.split("\n")[0]?.trim() ?? "";
+  if (/^(save|comment|link in bio|tap|swipe)/i.test(firstLine)) return "cta_forward";
+  return "standard_caption";
+}
+
+function resolveCarouselMechanismFields(args: {
+  parsed: Record<string, unknown> | null;
+  broad: {
+    primary_emotion: string | null;
+    secondary_emotion: string | null;
+    caption_style: string | null;
+    custom_label_1: string | null;
+    custom_label_2: string | null;
+    custom_label_3: string | null;
+    hashtags: string | null;
+  } | null;
+  evidenceKind: string;
+  payload: Record<string, unknown>;
+  caption: string;
+}) {
+  const { parsed, broad, evidenceKind, payload, caption } = args;
+  return {
+    primary_emotion: pickInsightString(parsed?.primary_emotion) ?? broad?.primary_emotion ?? null,
+    secondary_emotion: pickInsightString(parsed?.secondary_emotion) ?? broad?.secondary_emotion ?? null,
+    caption_style:
+      pickInsightString(parsed?.caption_style) ??
+      broad?.caption_style ??
+      inferCaptionStyleFromCaption(caption),
+    hashtags: broad?.hashtags ?? resolveHashtagsFromEvidence(evidenceKind, payload, caption),
+    custom_label_1: broad?.custom_label_1 ?? null,
+    custom_label_2: broad?.custom_label_2 ?? null,
+    custom_label_3: broad?.custom_label_3 ?? null,
+  };
 }
 
 export async function runDeepCarouselInsightsForImport(
@@ -674,6 +740,12 @@ export async function runDeepCarouselInsightsForImport(
 
   const top = percentileSelected.filter((c) => !existing.has(c.id));
   skippedExistingCarouselInsight = percentileSelected.filter((c) => existing.has(c.id)).length;
+  const broadMechanismByRow = await listEvidenceRowInsightMechanismByRowIds(
+    db,
+    importId,
+    "broad_llm",
+    top.map((c) => c.id)
+  );
   const ratingRows = await listEvidenceRowRatingFieldsByIds(db, project.id, importId, top.map((c) => c.id));
   const ratingSnapByRow = ratingReviewSnapshotsByRowId(
     ratingRows.map((row) => ({
@@ -754,6 +826,13 @@ ${textBundle}`;
 
     const parsed = normalizeCarouselInsightsLlmJson(visionOut.parsed);
     const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
+    const mechanism = resolveCarouselMechanismFields({
+      parsed,
+      broad: broadMechanismByRow.get(c.id) ?? null,
+      evidenceKind: c.evidence_kind,
+      payload: c.payload,
+      caption: c.caption,
+    });
 
     const risks = parseRiskFlags(parsed?.risk_flags);
 
@@ -778,15 +857,15 @@ ${textBundle}`;
       pre_llm_score: c.pre_llm_score,
       llm_model: visionOut.model || model,
       why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
-      primary_emotion: null,
-      secondary_emotion: null,
+      primary_emotion: mechanism.primary_emotion,
+      secondary_emotion: mechanism.secondary_emotion,
       hook_type: typeof parsed?.format_pattern === "string" ? parsed.format_pattern : null,
-      custom_label_1: null,
-      custom_label_2: null,
-      custom_label_3: null,
+      custom_label_1: mechanism.custom_label_1,
+      custom_label_2: mechanism.custom_label_2,
+      custom_label_3: mechanism.custom_label_3,
       cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
-      hashtags: null,
-      caption_style: null,
+      hashtags: mechanism.hashtags,
+      caption_style: mechanism.caption_style,
       hook_text: typeof parsed?.slide_arc === "string" ? parsed.slide_arc : null,
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,

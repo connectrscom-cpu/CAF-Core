@@ -13,7 +13,19 @@ const ROOT_STRING_FIELDS = [
   "format_pattern",
   "why_it_worked",
   "deck_as_whole_summary",
+  "primary_emotion",
+  "secondary_emotion",
+  "caption_style",
 ] as const;
+
+const DECK_VISUAL_SYSTEM_KEYS = new Set([
+  "overall_aesthetic",
+  "canvas_aspect",
+  "safe_margins_gutters",
+  "repeated_template",
+  "motion_or_energy",
+  "emoji_or_sticker_usage",
+]);
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -37,6 +49,12 @@ function normalizeTextDensity(raw: unknown): string | null {
   if (/\bmedium\b|4\d%|5\d%|6\d%/.test(s)) return "medium";
   if (/\blow\b|1\d%|2\d%|3\d%/.test(s)) return "low";
   return null;
+}
+
+function slideQualityScore(slide: Record<string, unknown>): number {
+  const transcript = pickString(slide, "on_screen_text_transcript") ?? "";
+  const visual = pickString(slide, "visual_description") ?? "";
+  return transcript.length * 2 + visual.length;
 }
 
 function normalizeSlideRecord(raw: unknown, fallbackIndex: number): Record<string, unknown> | null {
@@ -107,6 +125,66 @@ function applyAliases(root: Record<string, unknown>): void {
   }
 }
 
+function sanitizeDeckVisualSystem(raw: unknown): Record<string, unknown> | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (DECK_VISUAL_SYSTEM_KEYS.has(key)) out[key] = value;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function stripGarbageFromCarouselRoot(root: Record<string, unknown>): void {
+  if (root.deck_visual_system != null) {
+    const cleaned = sanitizeDeckVisualSystem(root.deck_visual_system);
+    if (cleaned) root.deck_visual_system = cleaned;
+    else delete root.deck_visual_system;
+  }
+}
+
+/** Drop out-of-range slides and dedupe by slide_index (keep richer OCR). */
+export function sanitizeCarouselSlides(
+  slides: unknown,
+  deckSlideCount: number
+): Record<string, unknown>[] {
+  if (!Array.isArray(slides) || deckSlideCount < 1) return [];
+
+  const byIndex = new Map<number, Record<string, unknown>>();
+  for (const raw of slides) {
+    const slide = normalizeSlideRecord(raw, 0);
+    if (!slide) continue;
+    const idx = Number(slide.slide_index);
+    if (!Number.isFinite(idx) || idx < 1 || idx > deckSlideCount) continue;
+
+    const prev = byIndex.get(idx);
+    if (!prev || slideQualityScore(slide) >= slideQualityScore(prev)) {
+      byIndex.set(idx, slide);
+    }
+  }
+
+  return [...byIndex.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, slide]) => slide);
+}
+
+/** Slide indices in 1..deckSlideCount missing from the parsed slides array. */
+export function findMissingCarouselSlideIndices(slides: unknown, deckSlideCount: number): number[] {
+  if (deckSlideCount < 1) return [];
+  const present = new Set<number>();
+  if (Array.isArray(slides)) {
+    for (const raw of slides) {
+      const idx = Number(asRecord(raw)?.slide_index);
+      if (Number.isFinite(idx) && idx >= 1 && idx <= deckSlideCount) present.add(idx);
+    }
+  }
+  const missing: number[] = [];
+  for (let i = 1; i <= deckSlideCount; i++) {
+    if (!present.has(i)) missing.push(i);
+  }
+  return missing;
+}
+
 /** Flatten Nemotron / alternate LLM shapes into canonical carousel insight JSON. */
 export function normalizeCarouselInsightsLlmJson(
   parsed: Record<string, unknown> | null | undefined
@@ -135,21 +213,56 @@ export function normalizeCarouselInsightsLlmJson(
     }
   }
 
+  stripGarbageFromCarouselRoot(root);
   return root;
 }
 
+/** Apply slide sanitization after merge / retry. */
+export function finalizeCarouselInsightJson(
+  insight: Record<string, unknown> | null | undefined,
+  deckSlideCount: number
+): Record<string, unknown> | null {
+  const normalized = normalizeCarouselInsightsLlmJson(insight);
+  if (!normalized) return null;
+  if (deckSlideCount > 0) {
+    normalized.slides = sanitizeCarouselSlides(normalized.slides, deckSlideCount);
+  }
+  return normalized;
+}
+
 /** Merge chunked Nemotron calls (deck summary + slide batches) into one insight object. */
-export function mergeCarouselInsightChunks(chunks: Array<Record<string, unknown> | null>): Record<string, unknown> {
+export function mergeCarouselInsightChunks(
+  chunks: Array<Record<string, unknown> | null>,
+  deckSlideCount?: number
+): Record<string, unknown> {
   const normalized = chunks
     .map((c) => normalizeCarouselInsightsLlmJson(c))
     .filter((c): c is Record<string, unknown> => c != null);
 
   if (normalized.length === 0) return {};
 
-  const merged: Record<string, unknown> = { ...normalized[0] };
+  const merged: Record<string, unknown> = {};
   const slides: Record<string, unknown>[] = [];
 
   for (const part of normalized) {
+    for (const key of ROOT_STRING_FIELDS) {
+      if (!pickString(merged, key) && pickString(part, key)) {
+        merged[key] = part[key];
+      }
+    }
+    if (merged.risk_flags == null && Array.isArray(part.risk_flags) && part.risk_flags.length > 0) {
+      merged.risk_flags = part.risk_flags;
+    }
+    if (merged.deck_as_whole_summary == null && part.deck_as_whole_summary != null) {
+      merged.deck_as_whole_summary = part.deck_as_whole_summary;
+    }
+    if (merged.deck_visual_system == null && part.deck_visual_system != null) {
+      merged.deck_visual_system = part.deck_visual_system;
+    }
+    if (merged.replication_blueprint == null && part.replication_blueprint != null) {
+      merged.replication_blueprint = part.replication_blueprint;
+    }
+
     const partSlides = Array.isArray(part.slides) ? part.slides : [];
     for (const raw of partSlides) {
       const slide = normalizeSlideRecord(raw, slides.length + 1);
@@ -158,21 +271,58 @@ export function mergeCarouselInsightChunks(chunks: Array<Record<string, unknown>
   }
 
   if (slides.length > 0) {
-    slides.sort((a, b) => Number(a.slide_index) - Number(b.slide_index));
     merged.slides = slides;
   }
+  if (merged.risk_flags == null) merged.risk_flags = [];
 
-  return normalizeCarouselInsightsLlmJson(merged) ?? merged;
+  const out = normalizeCarouselInsightsLlmJson(merged) ?? merged;
+  if (deckSlideCount != null && deckSlideCount > 0) {
+    out.slides = sanitizeCarouselSlides(out.slides, deckSlideCount);
+  }
+  return out;
 }
 
 export const TOP_PERFORMER_CAROUSEL_NVIDIA_JSON_APPENDIX = `
 
 NVIDIA / Nemotron — strict output contract:
 - Return ONE flat JSON object at the root. Never nest the payload under "deck", "carousel", "analysis", "result", or "output".
-- Required root strings: slide_arc, cover_vs_body, visual_consistency, on_screen_text_summary, cta_clarity, format_pattern, why_it_worked
+- Required root strings: slide_arc, cover_vs_body, visual_consistency, on_screen_text_summary, cta_clarity, format_pattern, why_it_worked, primary_emotion, secondary_emotion, caption_style
 - Required root arrays: risk_flags (use [] when none), slides (one object per attached image)
 - Each slides[] entry MUST include slide_index (1..N), on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, image_or_photo_role, text_density
-- format_pattern MUST be one of: educational, listicle, story, before_after, promo, mixed, unknown`;
+- format_pattern MUST be one of: educational, listicle, story, before_after, promo, mixed, unknown
+- slides.length MUST exactly equal the number of image attachments in the user message`;
+
+export const TOP_PERFORMER_CAROUSEL_DECK_SUMMARY_PROMPT = `You analyze an Instagram carousel deck from caption context and the cover slide image.
+
+Return ONLY flat JSON (no "deck" wrapper, no slides array):
+{
+  "slide_arc": "...",
+  "cover_vs_body": "...",
+  "visual_consistency": "...",
+  "on_screen_text_summary": "...",
+  "cta_clarity": "...",
+  "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
+  "risk_flags": [],
+  "why_it_worked": "...",
+  "primary_emotion": "dominant emotional vibe (short)",
+  "secondary_emotion": "secondary vibe or empty string",
+  "caption_style": "how the post caption pairs with the carousel (short)",
+  "deck_as_whole_summary": "...",
+  "deck_visual_system": {
+    "overall_aesthetic": "...",
+    "canvas_aspect": "...",
+    "safe_margins_gutters": "...",
+    "repeated_template": "...",
+    "motion_or_energy": "...",
+    "emoji_or_sticker_usage": "..."
+  },
+  "replication_blueprint": {
+    "steps_to_remake": ["..."],
+    "asset_sources": ["..."],
+    "tooling_notes": "...",
+    "legal_ethics": "..."
+  }
+}`;
 
 export const TOP_PERFORMER_CAROUSEL_SLIDES_CHUNK_PROMPT = `You analyze a subset of slides from a larger Instagram carousel deck.
 

@@ -177,6 +177,54 @@ export async function listEvidenceRowInsightIdsByImportTier(
   return new Set(rows.map((r) => r.id));
 }
 
+export type EvidenceInsightMechanismSlice = Pick<
+  EvidenceRowInsightRow,
+  | "primary_emotion"
+  | "secondary_emotion"
+  | "caption_style"
+  | "custom_label_1"
+  | "custom_label_2"
+  | "custom_label_3"
+  | "hashtags"
+>;
+
+/** Mechanism columns from an earlier tier (e.g. broad_llm) keyed by evidence row id. */
+export async function listEvidenceRowInsightMechanismByRowIds(
+  db: Pool,
+  importId: string,
+  tier: EvidenceInsightTier,
+  rowIds: string[]
+): Promise<Map<string, EvidenceInsightMechanismSlice>> {
+  const ids = [...new Set(rowIds.map((id) => String(id ?? "").trim()).filter((id) => /^\d+$/.test(id)))];
+  if (ids.length === 0) return new Map();
+
+  const rows = await q<{ id: string } & EvidenceInsightMechanismSlice>(
+    db,
+    `SELECT source_evidence_row_id::text AS id,
+            primary_emotion, secondary_emotion, caption_style,
+            custom_label_1, custom_label_2, custom_label_3, hashtags
+       FROM caf_core.inputs_evidence_row_insights
+      WHERE inputs_import_id = $1
+        AND analysis_tier = $2
+        AND source_evidence_row_id::text = ANY($3::text[])`,
+    [importId, tier, ids]
+  );
+
+  const out = new Map<string, EvidenceInsightMechanismSlice>();
+  for (const row of rows) {
+    out.set(row.id, {
+      primary_emotion: row.primary_emotion,
+      secondary_emotion: row.secondary_emotion,
+      caption_style: row.caption_style,
+      custom_label_1: row.custom_label_1,
+      custom_label_2: row.custom_label_2,
+      custom_label_3: row.custom_label_3,
+      hashtags: row.hashtags,
+    });
+  }
+  return out;
+}
+
 export async function listEvidenceRowInsights(
   db: Pool,
   projectId: string,
