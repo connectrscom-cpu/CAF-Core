@@ -22,8 +22,8 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { processingVisionChatMultimodal } from "./processing-vision-client.js";
-import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { normalizeCarouselInsightsLlmJson } from "./carousel-insights-llm-normalize.js";
+import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
@@ -740,30 +740,19 @@ ${textBundle}`;
       mediaArchiveErrors += slideRelay.errors.length;
     }
 
-    const user_content: Array<
-      { type: "text"; text: string } | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
-    > = [{ type: "text", text: userText }];
-    for (let i = 0; i < visionSlideUrls.length; i++) {
-      user_content.push({
-        type: "image_url",
-        image_url: { url: finalizeHttpsImageUrlForOpenAiVision(visionSlideUrls[i]), detail: "low" },
-      });
-    }
-
-    const out = await processingVisionChatMultimodal(
+    const visionOut = await runCarouselDeckVisionAnalysis({
       config,
-      model,
-      {
-        system_prompt: system,
-        user_content,
-        max_tokens: 8192,
-        response_format: "json_object",
-        deckSlideCount: c.slide_urls.length,
-      },
-      { ...auditBase, step: STEP }
-    );
+      profileModel: model,
+      systemPrompt: system,
+      userText,
+      visionSlideUrls,
+      deckSlideCount: c.slide_urls.length,
+      finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
+      audit: auditBase,
+      auditStep: STEP,
+    });
 
-    const parsed = parseJsonObjectFromLlmText(out.content) as Record<string, unknown> | null;
+    const parsed = normalizeCarouselInsightsLlmJson(visionOut.parsed);
     const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
 
     const risks = parseRiskFlags(parsed?.risk_flags);
@@ -787,7 +776,7 @@ ${textBundle}`;
       insights_id: makeCarouselInsightsId(importId, c.id),
       analysis_tier: "top_performer_carousel",
       pre_llm_score: c.pre_llm_score,
-      llm_model: out.model || model,
+      llm_model: visionOut.model || model,
       why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
       primary_emotion: null,
       secondary_emotion: null,
