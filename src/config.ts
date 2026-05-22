@@ -199,6 +199,19 @@ const envSchema = z.object({
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** NVIDIA build.nvidia.com model when MIMIC_IMAGE_PROVIDER=nvidia (OpenAI-compatible /images/edits). */
   MIMIC_IMAGE_NVIDIA_MODEL: z.string().default("qwen/qwen-image-edit"),
+  /**
+   * When NVIDIA Visual GenAI (/images/edits) is unavailable (404 on catalog), fall back to OpenAI gpt-image-1
+   * if OPENAI_API_KEY is set. Nemotron insights can stay on NVIDIA while mimic pixels use OpenAI.
+   */
+  MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return s === "1" || s === "true" || s === "yes";
+    }),
   MIMIC_IMAGE_INPUT_FIDELITY: z.enum(["high", "low"]).default("high"),
   MIMIC_IMAGE_QUALITY: z.enum(["high", "medium", "low", "auto"]).default("high"),
   /** Instagram 4:5 default */

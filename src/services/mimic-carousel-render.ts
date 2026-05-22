@@ -90,6 +90,13 @@ export async function extractMimicSlideBackground(
   return publicUrl ?? storedPath;
 }
 
+/** True when carousel mimic needs a stored background plate (template_bg or any hbs slide). */
+export function mimicCarouselNeedsBackgroundPlate(mimic: MimicPayloadV1): boolean {
+  if (mimic.mode === "template_bg") return true;
+  if (mimic.mode !== "carousel_visual") return false;
+  return (mimic.slide_plans ?? []).some((plan) => plan.render_mode === "hbs");
+}
+
 /** @deprecated Prefer per-slide `extractMimicSlideBackground` — kept for first-slide warm-up. */
 export async function ensureMimicCarouselBackground(
   db: Pool,
@@ -97,7 +104,7 @@ export async function ensureMimicCarouselBackground(
   job: { id: string; task_id: string; project_id: string; run_id: string },
   mimic: MimicPayloadV1
 ): Promise<string | null> {
-  if (mimic.mode !== "template_bg" && mimic.mode !== "carousel_visual") return null;
+  if (!mimicCarouselNeedsBackgroundPlate(mimic)) return null;
   return extractMimicSlideBackground(db, config, job, mimic, 1);
 }
 
