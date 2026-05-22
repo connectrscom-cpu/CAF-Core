@@ -22,8 +22,8 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { processingVisionChatMultimodal } from "./processing-vision-client.js";
-import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
+import { normalizeVideoInsightsLlmJson } from "./video-insights-llm-normalize.js";
+import { runVideoFramesVisionAnalysis } from "./video-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { parseVideoAnalysisFrameUrls, parseVideoSourceUrlForArchive } from "./inputs-video-evidence-bundle.js";
@@ -443,33 +443,19 @@ export async function runDeepVideoInsightsForImport(
     });
     visionFrameUrls = frameRelay.urls;
 
-    const user_content: Array<
-      | { type: "text"; text: string }
-      | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } }
-    > = [{ type: "text", text: userText }];
-    for (let fi = 0; fi < visionFrameUrls.length; fi++) {
-      const url = visionFrameUrls[fi]!;
-      const visionUrl = url.startsWith("data:image/") ? url : finalizeHttpsImageUrlForOpenAiVision(url);
-      user_content.push({
-        type: "image_url",
-        image_url: { url: visionUrl, detail: fi < 2 ? "high" : "low" },
-      });
-    }
-
-    const out = await processingVisionChatMultimodal(
+    const visionOut = await runVideoFramesVisionAnalysis({
       config,
-      model,
-      {
-        system_prompt: system,
-        user_content,
-        max_tokens: 12_000,
-        response_format: "json_object",
-        deckSlideCount: visionFrameUrls.length,
-      },
-      { ...auditBase, step: STEP }
-    );
+      profileModel: model,
+      systemPrompt: system,
+      userText,
+      visionFrameUrls,
+      frameCount: frameUrls.length,
+      finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
+      audit: auditBase,
+      auditStep: STEP,
+    });
 
-    const parsed = parseJsonObjectFromLlmText(out.content) as Record<string, unknown> | null;
+    const parsed = normalizeVideoInsightsLlmJson(visionOut.parsed);
     const aesthetic = buildVideoAestheticAnalysisJson(parsed);
     if (prep.whisper_transcript) {
       aesthetic.spoken_transcript_whisper = prep.whisper_transcript;
@@ -533,7 +519,7 @@ export async function runDeepVideoInsightsForImport(
       insights_id: makeVideoInsightsId(importId, c.id),
       analysis_tier: "top_performer_video",
       pre_llm_score: c.pre_llm_score,
-      llm_model: out.model || model,
+      llm_model: visionOut.model || model,
       why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
       primary_emotion: null,
       secondary_emotion: null,
@@ -541,7 +527,7 @@ export async function runDeepVideoInsightsForImport(
       custom_label_1: null,
       custom_label_2: null,
       custom_label_3: null,
-      cta_type: null,
+      cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
       hashtags: null,
       caption_style: null,
       hook_text: (() => {
