@@ -22,7 +22,7 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
+import { processingVisionChatMultimodal } from "./processing-vision-client.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
@@ -452,8 +452,12 @@ export async function runDeepCarouselInsightsForImport(
   importId: string,
   opts: RunDeepCarouselInsightsOptions = {}
 ): Promise<RunDeepCarouselInsightsResult> {
-  const apiKey = config.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("OPENAI_API_KEY is required for carousel insights");
+  if (config.PROCESSING_VISION_PROVIDER === "openai" && !config.OPENAI_API_KEY?.trim()) {
+    throw new Error("OPENAI_API_KEY is required for carousel insights");
+  }
+  if (config.PROCESSING_VISION_PROVIDER === "nvidia" && !config.NVIDIA_NIM_API_KEY?.trim()) {
+    throw new Error("NVIDIA_NIM_API_KEY is required when PROCESSING_VISION_PROVIDER=nvidia");
+  }
 
   const project = await ensureProject(db, projectSlug);
   const imp = await getInputsEvidenceImport(db, project.id, importId);
@@ -746,14 +750,15 @@ ${textBundle}`;
       });
     }
 
-    const out = await openaiChatMultimodal(
-      apiKey,
+    const out = await processingVisionChatMultimodal(
+      config,
+      model,
       {
-        model,
         system_prompt: system,
         user_content,
         max_tokens: 8192,
         response_format: "json_object",
+        deckSlideCount: c.slide_urls.length,
       },
       { ...auditBase, step: STEP }
     );

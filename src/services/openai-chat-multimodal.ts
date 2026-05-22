@@ -27,6 +27,13 @@ function isRetryableOpenAiHttp(status: number): boolean {
   return status === 408 || status === 409 || status === 429 || (status >= 500 && status <= 599);
 }
 
+export interface OpenAiMultimodalTransportOptions {
+  /** Full chat/completions URL; defaults to OpenAI. */
+  endpoint?: string;
+  /** Stored on api_call_audit.provider (e.g. openai, nvidia). */
+  provider?: string;
+}
+
 export async function openaiChatMultimodal(
   apiKey: string,
   params: {
@@ -36,8 +43,11 @@ export async function openaiChatMultimodal(
     max_tokens: number;
     response_format?: "json_object" | "text";
   },
-  audit?: OpenAiAuditContext | null
+  audit?: OpenAiAuditContext | null,
+  transport?: OpenAiMultimodalTransportOptions
 ): Promise<{ content: string; model: string; total_tokens: number }> {
+  const apiUrl = transport?.endpoint?.trim() || OPENAI_API_URL;
+  const auditProvider = transport?.provider?.trim() || "openai";
   const body: Record<string, unknown> = {
     model: params.model,
     messages: [
@@ -62,7 +72,7 @@ export async function openaiChatMultimodal(
   while (attempt <= maxRetries) {
     const attemptStartedAt = Date.now();
     try {
-      const res = await fetch(OPENAI_API_URL, {
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -82,12 +92,12 @@ export async function openaiChatMultimodal(
             taskId: audit.taskId,
             signalPackId: audit.signalPackId,
             step: audit.step,
-            provider: "openai",
+            provider: auditProvider,
             model: params.model,
             ok: false,
             errorMessage: `HTTP ${res.status}: ${errText.slice(0, 2000)}`,
             requestJson: {
-              endpoint: OPENAI_API_URL,
+              endpoint: apiUrl,
               multimodal: true,
               image_parts: imageCount,
               text_chars: textLen,
@@ -129,11 +139,11 @@ export async function openaiChatMultimodal(
           taskId: audit.taskId,
           signalPackId: audit.signalPackId,
           step: audit.step,
-          provider: "openai",
+          provider: auditProvider,
           model: out.model,
           ok: true,
           requestJson: {
-            endpoint: OPENAI_API_URL,
+            endpoint: apiUrl,
             multimodal: true,
             system_prompt: params.system_prompt,
             image_parts: imageCount,
@@ -170,12 +180,12 @@ export async function openaiChatMultimodal(
           taskId: audit.taskId,
           signalPackId: audit.signalPackId,
           step: audit.step,
-          provider: "openai",
+          provider: auditProvider,
           model: params.model,
           ok: false,
           errorMessage: `${name ? `${name}: ` : ""}${msg}`.slice(0, 4000),
           requestJson: {
-            endpoint: OPENAI_API_URL,
+            endpoint: apiUrl,
             multimodal: true,
             image_parts: imageCount,
             text_chars: textLen,

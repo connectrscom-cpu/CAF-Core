@@ -18,7 +18,7 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { openaiChatMultimodal } from "./openai-chat-multimodal.js";
+import { processingVisionChatMultimodal } from "./processing-vision-client.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
@@ -162,8 +162,12 @@ export async function runDeepImageInsightsForImport(
   importId: string,
   opts: RunDeepImageInsightsOptions = {}
 ): Promise<RunDeepImageInsightsResult> {
-  const apiKey = config.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("OPENAI_API_KEY is required for image insights");
+  if (config.PROCESSING_VISION_PROVIDER === "openai" && !config.OPENAI_API_KEY?.trim()) {
+    throw new Error("OPENAI_API_KEY is required for image insights");
+  }
+  if (config.PROCESSING_VISION_PROVIDER === "nvidia" && !config.NVIDIA_NIM_API_KEY?.trim()) {
+    throw new Error("NVIDIA_NIM_API_KEY is required when PROCESSING_VISION_PROVIDER=nvidia");
+  }
 
   const project = await ensureProject(db, projectSlug);
   const imp = await getInputsEvidenceImport(db, project.id, importId);
@@ -306,10 +310,10 @@ export async function runDeepImageInsightsForImport(
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 
-    const out = await openaiChatMultimodal(
-      apiKey,
+    const out = await processingVisionChatMultimodal(
+      config,
+      model,
       {
-        model,
         system_prompt: system,
         user_content: [
           { type: "text", text: userText },

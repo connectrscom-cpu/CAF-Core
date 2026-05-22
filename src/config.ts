@@ -206,6 +206,18 @@ const envSchema = z.object({
   APIFY_API_TOKEN: z.string().optional(),
   /** Base URL for REST calls (chat, videos). Videos API: POST/GET `/videos`. */
   OPENAI_API_BASE: z.string().default("https://api.openai.com/v1"),
+  /**
+   * Top-performer **processing** vision only (carousel / image / video deep passes).
+   * Job generation, mimic render, and approval review always use OpenAI.
+   */
+  PROCESSING_VISION_PROVIDER: z.enum(["openai", "nvidia"]).default("openai"),
+  /** NVIDIA build.nvidia.com / integrate.api.nvidia.com key when PROCESSING_VISION_PROVIDER=nvidia. */
+  NVIDIA_NIM_API_KEY: z.string().optional(),
+  NVIDIA_NIM_API_BASE: z.string().default("https://integrate.api.nvidia.com/v1"),
+  /** Default Nemotron VL model for processing when profile model is not an nvidia/* id. */
+  PROCESSING_VISION_NVIDIA_MODEL: z.string().default("nvidia/nemotron-nano-12b-v2-vl"),
+  /** Nemotron VL accepts up to 4 images per request; carousel/video frames are trimmed. */
+  PROCESSING_VISION_NVIDIA_MAX_IMAGES: z.coerce.number().int().min(1).max(8).default(4),
   OPENAI_MODEL: z.string().default("gpt-4o"),
   /** Vision-capable model for post-approval content review (images + text). */
   OPENAI_APPROVAL_REVIEW_MODEL: z.string().default("gpt-4o"),
