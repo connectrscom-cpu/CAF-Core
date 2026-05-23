@@ -138,6 +138,14 @@ const CAROUSEL_LAYOUT_CONTEXT_TO_CSS = {
   mimic_text_align: "--caf-text-align",
 };
 
+const CAROUSEL_THEME_CONTEXT_TO_CSS = {
+  carousel_paper: "--paper",
+  carousel_ink: "--ink",
+  carousel_body: "--body",
+  carousel_text_shadow_headline: "--text-shadow-headline",
+  carousel_text_shadow_body: "--text-shadow-body",
+};
+
 function cafCarouselTypographyStyleTag(context) {
   const ctx = context && typeof context === "object" && !Array.isArray(context) ? context : {};
   const inner = ctx.render && typeof ctx.render === "object" && !Array.isArray(ctx.render) ? ctx.render : {};
@@ -149,6 +157,11 @@ function cafCarouselTypographyStyleTag(context) {
     parts.push(`${cssVar}:${Math.round(n)}px`);
   }
   for (const [key, cssVar] of Object.entries(CAROUSEL_LAYOUT_CONTEXT_TO_CSS)) {
+    const raw = ctx[key] ?? inner[key];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    parts.push(`${cssVar}:${raw.trim()}`);
+  }
+  for (const [key, cssVar] of Object.entries(CAROUSEL_THEME_CONTEXT_TO_CSS)) {
     const raw = ctx[key] ?? inner[key];
     if (typeof raw !== "string" || !raw.trim()) continue;
     parts.push(`${cssVar}:${raw.trim()}`);

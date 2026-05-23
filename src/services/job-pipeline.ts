@@ -58,7 +58,7 @@ import {
   slideOnImageCopyFromSlides,
 } from "./mimic-carousel-render.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
-import { mimicSlideTypographyPatch } from "./mimic-slide-typography.js";
+import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
@@ -1705,7 +1705,7 @@ async function processCarouselJob(
         const mimicTypo = mimicSlideTypographyPatch(mimicPayload, i, n, {
           skipIfReviewerSet: renderBase as Record<string, unknown>,
         });
-        slideRenderBase = { ...slideRenderBase, ...mimicTypo };
+        slideRenderBase = { ...slideRenderBase, ...mimicSlideThemePatch(mimicPayload), ...mimicTypo };
       }
 
       slideRenderBase = await withInlinedBackgroundImage(slideRenderBase);

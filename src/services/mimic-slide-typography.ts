@@ -70,8 +70,171 @@ function deckHaystack(visualGuideline: Record<string, unknown> | null | undefine
 }
 
 export function isDarkCelestialDeck(visualGuideline: Record<string, unknown> | null | undefined): boolean {
-  const hay = deckHaystack(visualGuideline);
-  return /\bdark\b|celestial|moody|noir|night|moon|eclipse/.test(hay);
+  return isDarkVisualDeck(visualGuideline);
+}
+
+const DARK_DECK_RE =
+  /\bdark\b|celestial|moody|noir|night|moon|eclipse|silhouette|monochrom|black\s*and\s*white|\bb&w\b|shadowy|dramatic|mysterious|midnight|low[\s-]?key|high[\s-]?contrast/;
+
+export function hexRelativeLuminance(hex: string): number | null {
+  const h = hex.trim().replace(/^#/, "");
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  const lin = (c: number) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const r = lin(parseInt(h.slice(0, 2), 16) / 255);
+  const g = lin(parseInt(h.slice(2, 4), 16) / 255);
+  const b = lin(parseInt(h.slice(4, 6), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+export function isDarkHexColor(hex: string): boolean {
+  const lum = hexRelativeLuminance(hex);
+  return lum != null && lum < 0.38;
+}
+
+export function isLightHexColor(hex: string): boolean {
+  const lum = hexRelativeLuminance(hex);
+  return lum != null && lum > 0.62;
+}
+
+/** Dark photo / moody decks — zodiac silhouettes, celestial, B&W reference carousels, etc. */
+export function isDarkVisualDeck(visualGuideline: Record<string, unknown> | null | undefined): boolean {
+  const vg = visualGuideline ?? {};
+  if (DARK_DECK_RE.test(deckHaystack(vg))) return true;
+  const slides = Array.isArray(vg.slides) ? vg.slides : [];
+  for (const raw of slides) {
+    const slide = asRecord(raw);
+    const ct = asRecord(slide?.color_tokens);
+    const bg = typeof ct?.background === "string" ? ct.background.trim() : "";
+    if (bg && isDarkHexColor(bg)) return true;
+  }
+  return false;
+}
+
+export interface MimicCarouselTheme {
+  paper: string;
+  ink: string;
+  body: string;
+  text_shadow_headline: string;
+  text_shadow_body: string;
+}
+
+export const MIMIC_LIGHT_ON_DARK_THEME: MimicCarouselTheme = {
+  paper: "#0c0c0e",
+  ink: "#f5f5f7",
+  body: "#e8e8ed",
+  text_shadow_headline: "0 2px 24px rgba(0,0,0,0.92), 0 0 2px rgba(0,0,0,0.8)",
+  text_shadow_body: "0 1px 16px rgba(0,0,0,0.88), 0 0 1px rgba(0,0,0,0.7)",
+};
+
+export const MIMIC_DARK_ON_LIGHT_THEME: MimicCarouselTheme = {
+  paper: "#fffef9",
+  ink: "#1c1c1e",
+  body: "#3a3a3c",
+  text_shadow_headline: "0 1px 12px rgba(255,254,249,0.85)",
+  text_shadow_body: "0 1px 10px rgba(255,254,249,0.8)",
+};
+
+function colorTokensFromSlide(slide: Record<string, unknown> | null): {
+  background: string | null;
+  primary_text: string | null;
+  accent: string[] | null;
+} | null {
+  const ct = asRecord(slide?.color_tokens);
+  if (!ct) return null;
+  return {
+    background: typeof ct.background === "string" ? ct.background : null,
+    primary_text: typeof ct.primary_text === "string" ? ct.primary_text : null,
+    accent: Array.isArray(ct.accent) ? ct.accent.map(String) : null,
+  };
+}
+
+/**
+ * Readable text palette for mimic `template_bg` compositing.
+ * Defaults to light-on-dark when vision is ambiguous — Qwen plates are usually photo/dark frames.
+ */
+export function inferMimicCarouselTheme(
+  visualGuideline: Record<string, unknown> | null | undefined
+): MimicCarouselTheme {
+  const vg = visualGuideline ?? {};
+  const slides = Array.isArray(vg.slides) ? vg.slides : [];
+  const hay = deckHaystack(vg);
+  const lightPaperDeck = /cream|pastel|paper|white\s*background|light\s*background|off[\s-]?white|beige|parchment/.test(
+    hay
+  );
+
+  let bgLum: number | null = null;
+  let textLum: number | null = null;
+  let paperHex = "";
+  let inkHex = "";
+
+  for (const raw of slides) {
+    const slide = asRecord(raw);
+    const tokens = colorTokensFromSlide(slide);
+    if (!tokens) continue;
+    const bg = (tokens.background ?? "").trim();
+    const ink = (tokens.primary_text ?? "").trim();
+    const accent = tokens.accent?.find((c) => /^#[0-9a-fA-F]{6}$/.test(c.trim())) ?? "";
+    if (bg && /^#[0-9a-fA-F]{6}$/.test(bg)) {
+      paperHex = bg;
+      bgLum = hexRelativeLuminance(bg);
+    }
+    const textCandidate = ink || accent;
+    if (textCandidate && /^#[0-9a-fA-F]{6}$/.test(textCandidate)) {
+      inkHex = textCandidate;
+      textLum = hexRelativeLuminance(textCandidate);
+    }
+    if (bgLum != null || textLum != null) break;
+  }
+
+  const darkDeck =
+    isDarkVisualDeck(vg) || (bgLum != null && bgLum < 0.42) || (!lightPaperDeck && bgLum == null);
+
+  if (!darkDeck && lightPaperDeck && bgLum != null && bgLum > 0.62) {
+    return {
+      ...MIMIC_DARK_ON_LIGHT_THEME,
+      paper: paperHex || MIMIC_DARK_ON_LIGHT_THEME.paper,
+      ink: inkHex && textLum != null && textLum < 0.45 ? inkHex : MIMIC_DARK_ON_LIGHT_THEME.ink,
+      body: inkHex && textLum != null && textLum < 0.45 ? inkHex : MIMIC_DARK_ON_LIGHT_THEME.body,
+    };
+  }
+
+  if (bgLum != null && textLum != null && bgLum < 0.42 && textLum < 0.42) {
+    return { ...MIMIC_LIGHT_ON_DARK_THEME, paper: paperHex || MIMIC_LIGHT_ON_DARK_THEME.paper };
+  }
+
+  if (darkDeck) {
+    const useVisionLightText = textLum != null && textLum > 0.62;
+    return {
+      ...MIMIC_LIGHT_ON_DARK_THEME,
+      paper: paperHex || MIMIC_LIGHT_ON_DARK_THEME.paper,
+      ink: useVisionLightText ? inkHex : MIMIC_LIGHT_ON_DARK_THEME.ink,
+      body: useVisionLightText ? inkHex : MIMIC_LIGHT_ON_DARK_THEME.body,
+    };
+  }
+
+  return MIMIC_DARK_ON_LIGHT_THEME;
+}
+
+export interface MimicSlideThemePatch {
+  carousel_paper?: string;
+  carousel_ink?: string;
+  carousel_body?: string;
+  carousel_text_shadow_headline?: string;
+  carousel_text_shadow_body?: string;
+}
+
+/** Runtime palette override — injected by renderer after template compile (fixes contrast on Qwen plates). */
+export function mimicSlideThemePatch(
+  mimic: Pick<MimicPayloadV1, "visual_guideline">
+): MimicSlideThemePatch {
+  const theme = inferMimicCarouselTheme(mimic.visual_guideline);
+  return {
+    carousel_paper: theme.paper,
+    carousel_ink: theme.ink,
+    carousel_body: theme.body,
+    carousel_text_shadow_headline: theme.text_shadow_headline,
+    carousel_text_shadow_body: theme.text_shadow_body,
+  };
 }
 
 export function parseRelativeScaleHeadlinePx(raw: unknown, canvasHeight = CANVAS_HEIGHT): number | null {

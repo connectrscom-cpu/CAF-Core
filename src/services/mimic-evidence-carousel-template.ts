@@ -2,10 +2,9 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import type { MimicCarouselSlideColorTokens } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { addProjectCarouselTemplate } from "../repositories/project-config.js";
-import { isDarkCelestialDeck } from "./mimic-slide-typography.js";
+import { inferMimicCarouselTheme } from "./mimic-slide-typography.js";
 
 /** Persisted on `generation_payload` — links render template to top-performer evidence. */
 export const MIMIC_EVIDENCE_TEMPLATE_PAYLOAD_KEY = "mimic_evidence_template";
@@ -28,10 +27,6 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
-function isHexColor(value: string): boolean {
-  return /^#[0-9a-fA-F]{3,8}$/.test(value.trim());
-}
-
 /**
  * Traceable template base: `mimic_e{evidence_row_id}_{insights_id_slug}`.
  * Same evidence always resolves to the same template file (idempotent re-render).
@@ -48,65 +43,10 @@ export function mimicEvidenceTemplateBaseName(mimic: Pick<MimicPayloadV1, "sourc
   return TEMPLATE_BASE_RE.test(fallback) ? fallback : "mimic_top_performer_ref";
 }
 
-function pickThemeFromColorTokens(tokens: MimicCarouselSlideColorTokens | null | undefined): {
-  paper: string;
-  ink: string;
-  body: string;
-} | null {
-  if (!tokens) return null;
-  const paper = tokens.background && isHexColor(tokens.background) ? tokens.background : "";
-  const ink = tokens.primary_text && isHexColor(tokens.primary_text) ? tokens.primary_text : "";
-  const accent = tokens.accent?.find((c) => isHexColor(c)) ?? "";
-  if (!paper && !ink && !accent) return null;
-  return {
-    paper: paper || "#fffef9",
-    ink: ink || accent || "#1c1c1e",
-    body: ink || accent || "#3a3a3c",
-  };
-}
-
 export function pickMimicEvidenceTemplateTheme(
   visualGuideline: Record<string, unknown> | undefined
 ): { paper: string; ink: string; body: string; text_shadow_headline: string; text_shadow_body: string } {
-  const vg = visualGuideline ?? {};
-  const slides = Array.isArray(vg.slides) ? vg.slides : [];
-  for (const raw of slides) {
-    const slide = asRecord(raw);
-    const ct = asRecord(slide?.color_tokens);
-    const theme = pickThemeFromColorTokens(
-      ct
-        ? {
-            background: typeof ct.background === "string" ? ct.background : null,
-            primary_text: typeof ct.primary_text === "string" ? ct.primary_text : null,
-            accent: Array.isArray(ct.accent) ? ct.accent.map(String) : null,
-          }
-        : null
-    );
-    if (theme) {
-      const dark = isDarkCelestialDeck(vg);
-      return {
-        ...theme,
-        text_shadow_headline: dark ? "0 2px 20px rgba(0,0,0,0.85)" : "0 1px 12px rgba(255,254,249,0.85)",
-        text_shadow_body: dark ? "0 1px 12px rgba(0,0,0,0.75)" : "0 1px 10px rgba(255,254,249,0.8)",
-      };
-    }
-  }
-  if (isDarkCelestialDeck(vg)) {
-    return {
-      paper: "#0c0c0e",
-      ink: "#f5f5f7",
-      body: "#e8e8ed",
-      text_shadow_headline: "0 2px 20px rgba(0,0,0,0.85)",
-      text_shadow_body: "0 1px 12px rgba(0,0,0,0.75)",
-    };
-  }
-  return {
-    paper: "#fffef9",
-    ink: "#1c1c1e",
-    body: "#3a3a3c",
-    text_shadow_headline: "0 1px 12px rgba(255,254,249,0.85)",
-    text_shadow_body: "0 1px 10px rgba(255,254,249,0.8)",
-  };
+  return inferMimicCarouselTheme(visualGuideline);
 }
 
 async function templateFileExists(filePath: string): Promise<boolean> {

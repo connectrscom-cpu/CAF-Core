@@ -43,7 +43,7 @@ describe("mimicEvidenceTemplateBaseName", () => {
 });
 
 describe("pickMimicEvidenceTemplateTheme", () => {
-  it("uses first slide color_tokens from visual guideline", () => {
+  it("uses light text on dark backgrounds from vision color_tokens", () => {
     const theme = pickMimicEvidenceTemplateTheme({
       slides: [
         {
@@ -59,8 +59,8 @@ describe("pickMimicEvidenceTemplateTheme", () => {
     expect(theme).toEqual(
       expect.objectContaining({
         paper: "#112233",
-        ink: "#aabbcc",
-        body: "#aabbcc",
+        ink: "#f5f5f7",
+        body: "#e8e8ed",
       })
     );
   });

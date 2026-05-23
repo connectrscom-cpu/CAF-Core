@@ -5,7 +5,7 @@ import {
   slidesFromGeneratedOutput,
   withInlinedBackgroundImage,
 } from "@caf-core-carousel/carousel-render-pack";
-import { mimicSlideTypographyPatch } from "@caf-core-carousel/mimic-slide-typography";
+import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "@caf-core-carousel/mimic-slide-typography";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         usableSlides.length,
         { skipIfReviewerSet: payload }
       );
-      renderBase = { ...renderBase, ...mimicTypo };
+      renderBase = { ...renderBase, ...mimicSlideThemePatch({ visual_guideline: mimicV1.visual_guideline as Record<string, unknown> }), ...mimicTypo };
     }
     const ctx = buildSlideRenderContext(renderBase, usableSlides, slideIndex, {
       instagramHandle: instagramHandle || null,

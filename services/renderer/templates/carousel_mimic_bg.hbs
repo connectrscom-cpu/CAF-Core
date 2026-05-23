@@ -20,6 +20,8 @@
       --paper: #fffef9;
       --ink: #1c1c1e;
       --body: #3a3a3c;
+      --text-shadow-headline: 0 1px 12px rgba(255,254,249,0.85);
+      --text-shadow-body: 0 1px 10px rgba(255,254,249,0.8);
     }
 
     *{
@@ -78,7 +80,7 @@
       color:var(--ink);
       overflow-wrap:anywhere;
       word-break:break-word;
-      text-shadow: 0 1px 12px rgba(255,254,249,0.85);
+      text-shadow: var(--text-shadow-headline, 0 1px 12px rgba(255,254,249,0.85));
     }
 
     .cover .headline{
@@ -99,7 +101,7 @@
       word-break:break-word;
       min-width:0;
       max-width:100%;
-      text-shadow: 0 1px 10px rgba(255,254,249,0.8);
+      text-shadow: var(--text-shadow-body, 0 1px 10px rgba(255,254,249,0.8));
     }
 
     .handle,
