@@ -5,6 +5,7 @@ import {
 } from "./generation-display-fields";
 import { pickVideoUrlFromGenerationPayload } from "./job-preview-fields";
 import { isVideoFlow } from "./flow-kind";
+import { selectCarouselPreviewAssets } from "./media-url";
 
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
@@ -42,9 +43,9 @@ export function pickCaptionFromJob(job: ReviewJobDetail): string {
 /** Image URLs for carousel n8n (`publish_media_urls`); prefers signed assets, then payload fallbacks. */
 export function carouselUrlsFromJob(job: ReviewJobDetail): string[] {
   const gp = job.generation_payload as Record<string, unknown> | undefined;
-  const sorted = [...(job.assets ?? [])]
-    .filter((a) => (a.public_url ?? "").trim())
-    .sort((a, b) => a.position - b.position);
+  const sorted = selectCarouselPreviewAssets(
+    (job.assets ?? []).filter((a) => (a.public_url ?? "").trim())
+  );
   const urls: string[] = [];
   for (const a of sorted) {
     const t = (a.asset_type ?? "").toLowerCase();

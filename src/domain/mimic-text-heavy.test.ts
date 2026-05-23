@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD,
+  isTextOverlayDeckFromGuideline,
   referenceHasHeavyOnScreenText,
   requiresCopyBeforeVisualMimic,
 } from "./mimic-text-heavy.js";
@@ -27,6 +28,21 @@ describe("mimic-text-heavy", () => {
       })
     ).toBe(true);
     expect(referenceHasHeavyOnScreenText([{ on_screen_text_transcript: longText }])).toBe(true);
+  });
+
+  it("flags text-on-background decks from deck_visual_system when slide transcripts are missing", () => {
+    const entry = {
+      format_pattern: "mixed (reflective messaging with visual storytelling)",
+      deck_visual_system: {
+        repeated_template: "centered text over celestial backgrounds; similar layout across slides",
+        overall_aesthetic: "dark, celestial, reflective",
+      },
+      replication_blueprint: {
+        steps_to_remake: ["Layer text centrally over the imagery, using white or light colors for contrast."],
+      },
+    };
+    expect(isTextOverlayDeckFromGuideline(entry)).toBe(true);
+    expect(requiresCopyBeforeVisualMimic(entry)).toBe(true);
   });
 });
 

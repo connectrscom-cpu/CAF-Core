@@ -63,6 +63,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
+  /** Qwen background plates by asset position (for live preview compositing). */
+  const [mimicBackgroundByPosition, setMimicBackgroundByPosition] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submittedHeygenPrompt, setSubmittedHeygenPrompt] = useState<{
@@ -120,6 +122,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   useEffect(() => {
     setEditedSlides([]);
     setTaskAssets([]);
+    setMimicBackgroundByPosition({});
     setEditedScript("");
     setHeygenAvatarId("");
     setHeygenVoiceId("");
@@ -235,8 +238,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         const assetsJson: AssetsResponse = await assetsRes.json();
         const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
         const flowHint = (taskJson.data?.flow_type ?? "").trim();
+        const mimicBg: Record<number, string> = {};
+        for (const a of rows) {
+          if ((a.asset_type ?? "").toLowerCase() !== "mimic_background") continue;
+          const u = (a.public_url ?? "").trim();
+          if (u) mimicBg[a.position] = u;
+        }
+        setMimicBackgroundByPosition(mimicBg);
         setTaskAssets(taskAssetsToPreviewRows(rows, { flowTypeHint: flowHint }));
       } else {
+        setMimicBackgroundByPosition({});
         setTaskAssets([]);
       }
     } catch (e) {
@@ -463,7 +474,48 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       getPayload: () => {
         const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
         decorateCarouselSlidesPayload(slidesPayload);
-        return { ...slidesPayload, task_id: execTaskId, run_id: runId || undefined };
+        const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? gp.mimic_v1
+            : undefined;
+        const bgFromGp =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        return {
+          ...slidesPayload,
+          task_id: execTaskId,
+          run_id: runId || undefined,
+          ...(mimicV1 ? { mimic_v1: mimicV1 } : {}),
+          ...(bgFromGp ? { background_image_url: bgFromGp } : {}),
+        };
+      },
+      getBackgroundUrl: (slideIndex1Based: number) => {
+        const pos = slideIndex1Based - 1;
+        if (mimicBackgroundByPosition[pos]) return mimicBackgroundByPosition[pos];
+        const positions = Object.keys(mimicBackgroundByPosition)
+          .map(Number)
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b);
+        if (positions.length > 0) {
+          const cycled = positions[pos % positions.length];
+          if (cycled != null && mimicBackgroundByPosition[cycled]) {
+            return mimicBackgroundByPosition[cycled];
+          }
+        }
+        const fromAsset = mimicBackgroundByPosition[0];
+        if (fromAsset) return fromAsset;
+        const gp = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? (gp.mimic_v1 as Record<string, unknown>)
+            : null;
+        const fromPayload =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        const fromMimic =
+          mimicV1 && typeof mimicV1.background_image_url === "string"
+            ? mimicV1.background_image_url.trim()
+            : "";
+        return fromPayload || fromMimic || undefined;
       },
     };
   }, [
@@ -477,6 +529,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     editedSlides,
     rawPayload,
     decorateCarouselSlidesPayload,
+    mimicBackgroundByPosition,
+    fullJob,
   ]);
 
   const finalSlidesJsonOverride =

@@ -132,6 +132,12 @@ const CAROUSEL_TYPO_CONTEXT_TO_CSS = {
   carousel_handle_font_px: "--caf-carousel-handle-size",
 };
 
+const CAROUSEL_LAYOUT_CONTEXT_TO_CSS = {
+  mimic_page_justify: "--caf-page-justify",
+  mimic_page_align: "--caf-page-align",
+  mimic_text_align: "--caf-text-align",
+};
+
 function cafCarouselTypographyStyleTag(context) {
   const ctx = context && typeof context === "object" && !Array.isArray(context) ? context : {};
   const inner = ctx.render && typeof ctx.render === "object" && !Array.isArray(ctx.render) ? ctx.render : {};
@@ -141,6 +147,11 @@ function cafCarouselTypographyStyleTag(context) {
     const n = Number(raw);
     if (!Number.isFinite(n) || n <= 0 || n > 512) continue;
     parts.push(`${cssVar}:${Math.round(n)}px`);
+  }
+  for (const [key, cssVar] of Object.entries(CAROUSEL_LAYOUT_CONTEXT_TO_CSS)) {
+    const raw = ctx[key] ?? inner[key];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    parts.push(`${cssVar}:${raw.trim()}`);
   }
   if (parts.length === 0) return "";
   return `<style id="caf-carousel-typography">:root{${parts.join(";")}}</style>`;
@@ -154,6 +165,13 @@ async function hardenPageForFastRendering(page) {
     page.on("request", (req) => {
       const url = req.url();
       if (url.startsWith("data:") || url.startsWith("blob:") || url.startsWith("file:")) return req.continue();
+      // Allow Supabase/CDN background plates for mimic carousel templates (carousel_mimic_bg.hbs).
+      if (
+        (url.startsWith("http://") || url.startsWith("https://")) &&
+        (req.resourceType() === "image" || req.resourceType() === "media")
+      ) {
+        return req.continue();
+      }
       if (url.startsWith("http://") || url.startsWith("https://")) return req.abort("blockedbyclient");
       return req.continue();
     });

@@ -88,6 +88,31 @@ describe("stripNonRenderableDeckFields", () => {
 });
 
 describe("slidesFromGeneratedOutput", () => {
+  it("reads cover_slide + body_slides + cta_slide with nested text blocks", () => {
+    const gen = {
+      package_type: "mimic_carousel_package",
+      copy: {
+        carousel: {
+          cover_slide: {
+            text: { headline: "Unlocking Your Zodiac", body: "Discover unique traits." },
+          },
+          body_slides: [
+            { text: { headline: "Aries: Trailblazer", body: "Bold and fiery." } },
+            { text: { headline: "Taurus: Grounded", body: "Steady and loyal." } },
+          ],
+          cta_slide: {
+            text: { headline: "Discover More", body: "Visit @signandsound." },
+          },
+        },
+      },
+    };
+    const slides = slidesFromGeneratedOutput(gen);
+    expect(slides).toHaveLength(4);
+    expect(slides[0]?.headline).toBe("Unlocking Your Zodiac");
+    expect(slides[1]?.headline).toBe("Aries: Trailblazer");
+    expect(slides[3]?.headline).toBe("Discover More");
+  });
+
   it("reads slides from content.slides when model nests deck under content (LLM drift)", () => {
     const gen = {
       platform: "Instagram",
@@ -269,6 +294,25 @@ describe("carousel template shape (body_slides)", () => {
   it("single flat slide maps to cover + empty CTA shell (2 DOM slides)", () => {
     const gen = { slides: [{ headline: "Only", body: "one" }] };
     expect(carouselSlideCount(gen)).toBe(2);
+  });
+
+  it("maps cover_title and cover_subtitle from mimic-style cover slides", () => {
+    const gen = {
+      slides: [
+        {
+          cover_title: "Uncover Your Zodiac's Influence",
+          cover_subtitle: "Discover personal growth through the lens of your zodiac.",
+          slide_role: "cover",
+        },
+        { headline: "Aries", body: "Bold energy" },
+        { headline: "CTA", body: "Follow @brand" },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    expect(slideHasRenderableContent(flat[0]!)).toBe(true);
+    const ctx = buildSlideRenderContext(gen, flat, 1);
+    expect(String((ctx.cover_slide as { headline?: string }).headline)).toContain("Uncover Your Zodiac");
+    expect(String(ctx.cover_subtitle ?? "")).toContain("Discover personal growth");
   });
 
   it("buildSlideRenderContext injects cover_slide, body_slides, cta_slide from flat slides", () => {

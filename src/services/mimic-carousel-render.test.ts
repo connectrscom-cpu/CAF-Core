@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { slideVisionHints, mimicCarouselNeedsBackgroundPlate } from "./mimic-carousel-render.js";
+import {
+  assertMimicSlideBackgroundPresent,
+  effectiveMimicSlideRenderMode,
+  mimicCarouselNeedsBackgroundPlate,
+  referenceItemForMimicSlide,
+  requireMimicSlideBackgroundPlate,
+  slideVisionHints,
+} from "./mimic-carousel-render.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 
 function baseMimic(visualGuideline: Record<string, unknown>): MimicPayloadV1 {
@@ -61,5 +68,46 @@ describe("mimicCarouselNeedsBackgroundPlate", () => {
     mimic.mode = "carousel_visual";
     mimic.slide_plans = [{ slide_index: 3, reference_index: 1, render_mode: "hbs" }];
     expect(mimicCarouselNeedsBackgroundPlate(mimic)).toBe(true);
+  });
+});
+
+describe("referenceItemForMimicSlide", () => {
+  it("resolves 0-based archived indexes and cycles for extended decks", () => {
+    const mimic = baseMimic({});
+    mimic.reference_items = [
+      { index: 0, role: "carousel_slide", vision_fetch_url: "https://example.com/s1.jpg" },
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/s2.jpg" },
+    ];
+    expect(referenceItemForMimicSlide(mimic, 1)?.vision_fetch_url).toContain("s1.jpg");
+    expect(referenceItemForMimicSlide(mimic, 2)?.vision_fetch_url).toContain("s2.jpg");
+    expect(referenceItemForMimicSlide(mimic, 3)?.vision_fetch_url).toContain("s1.jpg");
+  });
+});
+
+describe("requireMimicSlideBackgroundPlate", () => {
+  it("throws when no reference item and no stored plate", async () => {
+    const mimic = baseMimic({});
+    mimic.mode = "template_bg";
+    mimic.reference_items = [];
+    await expect(
+      requireMimicSlideBackgroundPlate({ query: async () => ({ rows: [] }) } as any, {} as any, {
+        id: "j1",
+        task_id: "TASK_1",
+        project_id: "p1",
+        run_id: "r1",
+      }, mimic, 1)
+    ).rejects.toThrow(/Mimic carousel render blocked/);
+  });
+});
+
+describe("assertMimicSlideBackgroundPresent", () => {
+  it("throws when background_image_url is missing", () => {
+    expect(() => assertMimicSlideBackgroundPresent("TASK_1", 2, {})).toThrow(/slide 2/);
+  });
+
+  it("passes when background_image_url is set", () => {
+    expect(() =>
+      assertMimicSlideBackgroundPresent("TASK_1", 1, { background_image_url: "data:image/png;base64,abc" })
+    ).not.toThrow();
   });
 });

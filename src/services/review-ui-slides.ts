@@ -2,6 +2,7 @@ import {
   slidesFromGeneratedOutput,
   splitFlatSlidesToTemplateShape,
   stripNonRenderableDeckFields,
+  slideHasRenderableContent,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -32,17 +33,21 @@ export function slidesJsonForReviewUi(
   baseRender = stripNonRenderableDeckFields(baseRender);
   baseRender = normalizeLlmParsedForSchemaValidation(flowType ?? "", baseRender);
   const slides = slidesFromGeneratedOutput(baseRender);
-  if (slides.length > 0) {
+  const renderableSlides = slides.filter((s) =>
+    slideHasRenderableContent(s as Record<string, unknown>)
+  );
+  const deckSlides = renderableSlides.length > 0 ? renderableSlides : slides;
+  if (deckSlides.length > 0) {
     // Ensure microcopy slots (panel_title/panel_body/etc.) are visible + editable in Review UI by
     // materializing the template shape (same defaults renderer uses) and flattening back to slides[].
     if (isCarouselFlow(flowType ?? "")) {
-      const shaped = splitFlatSlidesToTemplateShape(slides);
+      const shaped = splitFlatSlidesToTemplateShape(deckSlides);
       const flat = [shaped.cover_slide, ...shaped.body_slides, shaped.cta_slide].filter(
-        (s) => s && typeof s === "object"
+        (s) => s && typeof s === "object" && slideHasRenderableContent(s as Record<string, unknown>)
       );
       return JSON.stringify(flat);
     }
-    return JSON.stringify(slides);
+    return JSON.stringify(deckSlides);
   }
   if (Array.isArray(existingSlides) && existingSlides.length > 0) {
     return JSON.stringify(existingSlides);

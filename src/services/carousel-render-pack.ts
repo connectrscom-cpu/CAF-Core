@@ -49,6 +49,8 @@ const HEADLINE_KEYS = [
   "slide_hook",
   "main_title",
   "hero",
+  /** Top-performer mimic carousel copy often uses cover_* on the first slide. */
+  "cover_title",
 ];
 const BODY_KEYS = [
   "body",
@@ -62,6 +64,8 @@ const BODY_KEYS = [
   "description",
   "supporting_copy",
   "deck",
+  /** Top-performer mimic carousel copy often uses cover_* on the first slide. */
+  "cover_subtitle",
   /** Some Flow_Carousel / Sheets adapters put the paragraph here instead of `body`. */
   "panel_body",
 ];
@@ -161,9 +165,30 @@ export function stripLeakedFieldLabelsFromSlideCopy(s: string): string {
   return out.join("\n").trim();
 }
 
+function copyFromNestedTextBlock(val: unknown): { headline: string; body: string } | null {
+  if (!val || typeof val !== "object" || Array.isArray(val)) return null;
+  const rec = val as Record<string, unknown>;
+  const headline = String(rec.headline ?? rec.title ?? rec.heading ?? rec.kicker ?? "").trim();
+  const body = String(
+    rec.body ?? rec.subtitle ?? rec.content ?? rec.note ?? rec.sub ?? rec.cta_sub ?? ""
+  ).trim();
+  if (!headline && !body) return null;
+  return { headline, body };
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
-  const headline = HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
-  let body = BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim());
+  const nestedText = copyFromNestedTextBlock(o.text);
+  const headline = nestedText?.headline
+    ?? HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && typeof v !== "object" && String(v).trim());
+  let body =
+    nestedText?.body ??
+    BODY_KEYS.map((k) => {
+      const v = o[k];
+      if (v == null) return undefined;
+      if (typeof v === "object") return undefined;
+      const s = String(v).trim();
+      return s.length > 0 ? s : undefined;
+    }).find(Boolean);
   if (body == null || String(body).trim() === "") {
     const fromBullets = bulletsToBody(o);
     if (fromBullets) body = fromBullets;
@@ -316,6 +341,30 @@ function slidesFromCarouselField(carouselVal: unknown): Record<string, unknown>[
     return nestedSlides
       .filter((x) => x && typeof x === "object" && !Array.isArray(x))
       .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+  }
+  const coverSlide = obj.cover_slide;
+  const bodySlides = obj.body_slides;
+  const ctaSlide = obj.cta_slide;
+  if (
+    (coverSlide && typeof coverSlide === "object" && !Array.isArray(coverSlide)) ||
+    (Array.isArray(bodySlides) && bodySlides.length > 0) ||
+    (ctaSlide && typeof ctaSlide === "object" && !Array.isArray(ctaSlide))
+  ) {
+    const assembled: Record<string, unknown>[] = [];
+    if (coverSlide && typeof coverSlide === "object" && !Array.isArray(coverSlide)) {
+      assembled.push(normalizeItemSlide({ ...(coverSlide as Record<string, unknown>), slide_role: "cover" }));
+    }
+    if (Array.isArray(bodySlides)) {
+      for (const s of bodySlides) {
+        if (s && typeof s === "object" && !Array.isArray(s)) {
+          assembled.push(normalizeItemSlide({ ...(s as Record<string, unknown>), slide_role: "body" }));
+        }
+      }
+    }
+    if (ctaSlide && typeof ctaSlide === "object" && !Array.isArray(ctaSlide)) {
+      assembled.push(normalizeItemSlide({ ...(ctaSlide as Record<string, unknown>), slide_role: "cta" }));
+    }
+    if (assembled.length > 0 && assembled.some(slideHasRenderableContent)) return assembled;
   }
   return [];
 }
@@ -1142,6 +1191,36 @@ export function synchronizeCoverRootStringFields(ctx: Record<string, unknown>): 
  * Merge base render context with one slide highlighted for multi-slide templates.
  * `ctaOptions` fills last-slide CTA copy and @handle from project strategy when the LLM omits them.
  */
+export async function inlineRemoteImageUrlForRenderer(url: string): Promise<string> {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith("data:")) return trimmed;
+  if (!/^https?:\/\//i.test(trimmed)) return trimmed;
+  const res = await fetch(trimmed, { redirect: "follow" });
+  if (!res.ok) {
+    throw new Error(`Failed to inline carousel background (${res.status}): ${trimmed.slice(0, 120)}`);
+  }
+  const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+  const buf = Buffer.from(await res.arrayBuffer());
+  return `data:${mimeType};base64,${buf.toString("base64")}`;
+}
+
+/** Puppeteer renderer blocks https:// CSS backgrounds — inline as data: URI before POST /render-binary. */
+export async function withInlinedBackgroundImage(
+  base: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const bg = typeof base.background_image_url === "string" ? base.background_image_url.trim() : "";
+  if (!bg || bg.startsWith("data:")) return base;
+  try {
+    return { ...base, background_image_url: await inlineRemoteImageUrlForRenderer(bg) };
+  } catch (err) {
+    console.warn(
+      "[carousel-render] background inline failed; renderer may show plain paper:",
+      err instanceof Error ? err.message : String(err)
+    );
+    return base;
+  }
+}
+
 export function buildSlideRenderContext(
   base: Record<string, unknown>,
   allSlides: Record<string, unknown>[],

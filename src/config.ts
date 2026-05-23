@@ -194,9 +194,15 @@ const envSchema = z.object({
       const s = v.trim().toLowerCase();
       return s === "1" || s === "true" || s === "yes";
     }),
-  /** Mimic render pixels: OpenAI gpt-image-1 or NVIDIA NIM Qwen image edit (reference-conditioned). */
-  MIMIC_IMAGE_PROVIDER: z.enum(["openai", "nvidia"]).default("openai"),
+  /** Mimic render pixels: DashScope Qwen (default), NVIDIA NIM, or OpenAI gpt-image-1. */
+  MIMIC_IMAGE_PROVIDER: z.enum(["openai", "nvidia", "dashscope"]).default("dashscope"),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
+  /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
+  DASHSCOPE_API_KEY: z.string().optional(),
+  /** Singapore intl default; Beijing: https://dashscope.aliyuncs.com/api/v1 */
+  DASHSCOPE_API_BASE: z.string().default("https://dashscope-intl.aliyuncs.com/api/v1"),
+  /** qwen-image-edit-max, qwen-image-edit-plus, qwen-image-edit, qwen-image-2.0-pro, … */
+  MIMIC_IMAGE_DASHSCOPE_MODEL: z.string().default("qwen-image-edit-max"),
   /** NVIDIA build.nvidia.com model when MIMIC_IMAGE_PROVIDER=nvidia (OpenAI-compatible /images/edits). */
   MIMIC_IMAGE_NVIDIA_MODEL: z.string().default("qwen/qwen-image-edit"),
   /**
@@ -207,7 +213,7 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => {
-      if (v === undefined || v === "") return true;
+      if (v === undefined || v === "") return false;
       const s = v.trim().toLowerCase();
       if (s === "0" || s === "false" || s === "no") return false;
       return s === "1" || s === "true" || s === "yes";

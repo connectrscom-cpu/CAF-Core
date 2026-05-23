@@ -1,7 +1,7 @@
 import type { AppConfig } from "../config.js";
-import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
 import type { Pool } from "pg";
-import { insertAsset } from "../repositories/assets.js";
+import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
 import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { mimicPromptForMode } from "./mimic-prompt-builder.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
@@ -10,6 +10,141 @@ import { uploadBuffer } from "./supabase-storage.js";
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
   return null;
+}
+
+function slideTextParts(slide: Record<string, unknown>): { headline: string; body: string } {
+  const headline = String(
+    slide.headline ?? slide.cover_title ?? slide.title ?? slide.panel_title ?? ""
+  ).trim();
+  const body = String(
+    slide.body ?? slide.cover_subtitle ?? slide.subtitle ?? slide.panel_body ?? ""
+  ).trim();
+  return { headline, body };
+}
+
+/** Headline + body for a 1-based carousel slide index (full-bleed copy injection). */
+export function slideOnImageCopyFromSlides(
+  slides: Record<string, unknown>[],
+  slideIndex1Based: number
+): string {
+  if (slides.length === 0) return "";
+  const idx = Math.max(0, Math.min(slides.length - 1, slideIndex1Based - 1));
+  const slide = slides[idx] ?? {};
+  const { headline, body } = slideTextParts(slide);
+  return [headline, body].filter(Boolean).join("\n\n").trim();
+}
+
+/** Resolve archived reference frame for a 1-based output slide (1-based or 0-based item indexes). */
+export function referenceItemForMimicSlide(
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): MimicReferenceItem | null {
+  const items = mimic.reference_items;
+  if (items.length === 0) return null;
+
+  const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
+  if (plan?.reference_index != null) {
+    const refIdx = plan.reference_index;
+    const exact = items.find((r) => r.index === refIdx);
+    if (exact) return exact;
+    if (refIdx >= 1 && refIdx <= items.length) {
+      const oneBased = items[refIdx - 1];
+      if (oneBased) return oneBased;
+    }
+    if (refIdx >= 0 && refIdx < items.length) {
+      const zeroBased = items[refIdx];
+      if (zeroBased) return zeroBased;
+    }
+  }
+
+  const positional = items[slideIndex - 1];
+  if (positional) return positional;
+  return items[(slideIndex - 1) % items.length] ?? items[0] ?? null;
+}
+
+function publicUrlFromAssetRow(
+  config: AppConfig,
+  row: { public_url: string | null; bucket: string | null; object_path: string | null }
+): string | null {
+  const direct = (row.public_url ?? "").trim();
+  if (direct) return direct;
+  const bucket = (row.bucket ?? "").trim();
+  const objectPath = (row.object_path ?? "").trim().replace(/^\/+/, "");
+  const base = (config.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  if (!bucket || !objectPath || !base) return null;
+  return `${base}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/")}`;
+}
+
+/** Reuse stored `MIMIC_BACKGROUND` plate when present; otherwise generate via Qwen. */
+export async function resolveMimicSlideBackgroundPlate(
+  db: Pool,
+  config: AppConfig,
+  job: { id: string; task_id: string; project_id: string; run_id: string },
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): Promise<string | null> {
+  const assets = await listAssetsByTask(db, job.project_id, job.task_id);
+  const pos = slideIndex - 1;
+  const existing = assets.find(
+    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === pos
+  );
+  if (existing) {
+    const url = publicUrlFromAssetRow(config, existing);
+    if (url) return url;
+  }
+  return extractMimicSlideBackground(db, config, job, mimic, slideIndex);
+}
+
+export class MimicBackgroundPlateRequiredError extends Error {
+  constructor(taskId: string, slideIndex: number, detail?: string) {
+    super(
+      `Mimic carousel render blocked for ${taskId} slide ${slideIndex}: ` +
+        "template background plate (MIMIC_BACKGROUND from Qwen) is required before compositing. " +
+        (detail ?? "Background generation or storage failed.")
+    );
+    this.name = "MimicBackgroundPlateRequiredError";
+  }
+}
+
+/** Same as `resolveMimicSlideBackgroundPlate` but never returns null — blocks plain-paper fallback renders. */
+export async function requireMimicSlideBackgroundPlate(
+  db: Pool,
+  config: AppConfig,
+  job: { id: string; task_id: string; project_id: string; run_id: string },
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): Promise<string> {
+  const url = await resolveMimicSlideBackgroundPlate(db, config, job, mimic, slideIndex);
+  if (!url?.trim()) {
+    throw new MimicBackgroundPlateRequiredError(job.task_id, slideIndex);
+  }
+  return url.trim();
+}
+
+export function effectiveMimicSlideRenderMode(
+  mimic: MimicPayloadV1,
+  slideIndex: number,
+  mimicVisualGenAiReachable: boolean
+): "full_bleed" | "hbs" | null {
+  let mode = slideMimicRenderMode(mimic, slideIndex);
+  if (mode === "full_bleed" && !mimicVisualGenAiReachable) mode = "hbs";
+  return mode;
+}
+
+export function assertMimicSlideBackgroundPresent(
+  taskId: string,
+  slideIndex: number,
+  renderBase: Record<string, unknown>,
+  detail?: string
+): void {
+  const bg =
+    typeof renderBase.background_image_url === "string" ? renderBase.background_image_url.trim() : "";
+  if (!bg) {
+    throw new MimicBackgroundPlateRequiredError(taskId, slideIndex, detail);
+  }
 }
 
 /**
@@ -22,12 +157,7 @@ export async function extractMimicSlideBackground(
   mimic: MimicPayloadV1,
   slideIndex: number
 ): Promise<string | null> {
-  const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
-  const refIdx = plan?.reference_index ?? slideIndex;
-  const item =
-    mimic.reference_items.find((r) => r.index === refIdx) ??
-    mimic.reference_items[refIdx - 1] ??
-    mimic.reference_items[0];
+  const item = referenceItemForMimicSlide(mimic, slideIndex);
   if (!item) return null;
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
@@ -97,7 +227,7 @@ export function mimicCarouselNeedsBackgroundPlate(mimic: MimicPayloadV1): boolea
   return (mimic.slide_plans ?? []).some((plan) => plan.render_mode === "hbs");
 }
 
-/** @deprecated Prefer per-slide `extractMimicSlideBackground` — kept for first-slide warm-up. */
+/** @deprecated Prefer per-slide `resolveMimicSlideBackgroundPlate` — kept for first-slide warm-up. */
 export async function ensureMimicCarouselBackground(
   db: Pool,
   config: AppConfig,
@@ -105,7 +235,7 @@ export async function ensureMimicCarouselBackground(
   mimic: MimicPayloadV1
 ): Promise<string | null> {
   if (!mimicCarouselNeedsBackgroundPlate(mimic)) return null;
-  return extractMimicSlideBackground(db, config, job, mimic, 1);
+  return resolveMimicSlideBackgroundPlate(db, config, job, mimic, 1);
 }
 
 export function slideMimicRenderMode(mimic: MimicPayloadV1, slideIndex: number): "full_bleed" | "hbs" | null {
@@ -116,10 +246,7 @@ export function slideMimicRenderMode(mimic: MimicPayloadV1, slideIndex: number):
 }
 
 export function referenceUrlForSlide(mimic: MimicPayloadV1, slideIndex: number): string | null {
-  const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
-  const idx = plan?.reference_index ?? slideIndex;
-  const item = mimic.reference_items.find((r) => r.index === idx) ?? mimic.reference_items[idx - 1];
-  return item?.vision_fetch_url ?? mimic.reference_items[0]?.vision_fetch_url ?? null;
+  return referenceItemForMimicSlide(mimic, slideIndex)?.vision_fetch_url ?? null;
 }
 
 export function slideVisionHints(
@@ -150,12 +277,10 @@ export async function renderMimicCarouselSlideFullBleed(
   config: AppConfig,
   job: { task_id: string; project_id: string; run_id: string },
   mimic: MimicPayloadV1,
-  slideIndex: number
+  slideIndex: number,
+  opts?: { onImageCopy?: string | null }
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-  const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
-  const idx = plan?.reference_index ?? slideIndex;
-  const item =
-    mimic.reference_items.find((r) => r.index === idx) ?? mimic.reference_items[idx - 1] ?? mimic.reference_items[0];
+  const item = referenceItemForMimicSlide(mimic, slideIndex);
   if (!item?.vision_fetch_url) throw new Error(`No reference URL for mimic slide ${slideIndex}`);
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
@@ -167,6 +292,7 @@ export async function renderMimicCarouselSlideFullBleed(
       index: slideIndex,
       layout: hints.layout,
       visual: hints.visual,
+      onImageCopy: opts?.onImageCopy,
     }),
     audit: {
       db,

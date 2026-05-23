@@ -19,6 +19,8 @@ export interface CarouselLivePreviewOptions {
   fontScale: string;
   instagramHandle?: string;
   getPayload: () => Record<string, unknown>;
+  /** Per-slide Qwen background plate for live preview (1-based slide index). */
+  getBackgroundUrl?: (slideIndex1Based: number) => string | undefined;
 }
 
 export interface CarouselSliderProps {
@@ -100,6 +102,7 @@ export function CarouselSlider({
               task_id: livePreview.taskId,
               run_id: livePreview.runId,
               instagram_handle: livePreview.instagramHandle ?? "",
+              background_image_url: livePreview.getBackgroundUrl?.(currentIndex + 1) ?? "",
               payload,
             }),
           });

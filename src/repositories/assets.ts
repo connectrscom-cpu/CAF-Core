@@ -64,3 +64,17 @@ export async function listAssetsByTask(
 export async function deleteAssetsForTask(db: Pool, projectId: string, taskId: string): Promise<void> {
   await db.query(`DELETE FROM caf_core.assets WHERE project_id = $1 AND task_id = $2`, [projectId, taskId]);
 }
+
+/** Re-render carousel finals without dropping Qwen background plates (`MIMIC_BACKGROUND`). */
+export async function deleteCarouselSlideAssetsForTask(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<void> {
+  await db.query(
+    `DELETE FROM caf_core.assets
+     WHERE project_id = $1 AND task_id = $2
+       AND UPPER(COALESCE(asset_type, '')) = 'CAROUSEL_SLIDE'`,
+    [projectId, taskId]
+  );
+}

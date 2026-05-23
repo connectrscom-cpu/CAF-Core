@@ -22,7 +22,7 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { normalizeVideoInsightsLlmJson } from "./video-insights-llm-normalize.js";
+import { finalizeVideoInsightParsed } from "./video-insights-llm-normalize.js";
 import { runVideoFramesVisionAnalysis } from "./video-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
@@ -132,6 +132,10 @@ export interface RunDeepVideoInsightsResult {
   rows_whisper_transcribed?: number;
   /** Rows where source MP4 was uploaded to Supabase (`evidence_media/…/source.mp4`). */
   rows_source_video_archived?: number;
+  /** Same canonical post URL already has a tier insight in this import (skipped re-vision). */
+  skipped_duplicate_post_url?: number;
+  /** Vision returned but failed quality gates — insight not persisted. */
+  rows_insight_rejected_quality?: number;
   deep_video_zero_work_summary?: string | null;
 }
 
@@ -333,6 +337,17 @@ export async function runDeepVideoInsightsForImport(
   let rowsSourceVideoArchived = 0;
   let rowsWhisperTranscribed = 0;
   let evidenceMediaRowsWritten = 0;
+  let skippedDuplicatePostUrl = 0;
+  let rowsInsightRejectedQuality = 0;
+
+  const seenPostUrls = new Set<string>();
+  if (!opts.rescan) {
+    for (const e of eligible) {
+      if (!existing.has(e.id)) continue;
+      const url = postUrlForTopPerformerPreview(e.evidence_kind, e.payload);
+      if (url) seenPostUrls.add(url);
+    }
+  }
 
   const platformForRow = (kind: string): string => {
     if (kind === "tiktok_video") return "tiktok";
@@ -341,6 +356,15 @@ export async function runDeepVideoInsightsForImport(
   };
 
   for (const c of top) {
+    const postUrl = postUrlForTopPerformerPreview(c.evidence_kind, c.payload);
+    if (postUrl) {
+      if (seenPostUrls.has(postUrl)) {
+        skippedDuplicatePostUrl++;
+        continue;
+      }
+      seenPostUrls.add(postUrl);
+    }
+
     const system = TOP_PERFORMER_VIDEO_SYSTEM_PROMPT;
 
     const prep = await ensureVideoFramesForEvidenceRow(db, config, {
@@ -455,10 +479,28 @@ export async function runDeepVideoInsightsForImport(
       auditStep: STEP,
     });
 
-    const parsed = normalizeVideoInsightsLlmJson(visionOut.parsed);
+    const finalized = finalizeVideoInsightParsed(visionOut.parsed, {
+      frameCount: frameUrls.length,
+      captionTranscript: prep.caption_transcript,
+    });
+    if (!finalized.parsed) {
+      rowsInsightRejectedQuality++;
+      if (storedInspection) {
+        storedInspection = {
+          ...storedInspection,
+          insight_quality_rejected: finalized.quality,
+        };
+      }
+      continue;
+    }
+
+    const parsed = finalized.parsed;
     const aesthetic = buildVideoAestheticAnalysisJson(parsed);
     if (prep.whisper_transcript) {
       aesthetic.spoken_transcript_whisper = prep.whisper_transcript;
+    }
+    if (finalized.quality.reasons.length > 0) {
+      aesthetic.insight_quality = finalized.quality;
     }
 
     const risks = parseTopPerformerVideoRiskFlags(parsed?.risk_flags);
@@ -528,7 +570,7 @@ export async function runDeepVideoInsightsForImport(
       custom_label_2: null,
       custom_label_3: null,
       cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
-      hashtags: null,
+      hashtags: finalized.hashtags,
       caption_style: null,
       hook_text: (() => {
         const whisper = prep.whisper_transcript?.trim();
@@ -604,6 +646,8 @@ export async function runDeepVideoInsightsForImport(
     top_performer_media_archive_frame_files_saved: mediaArchiveFrameFilesSaved,
     top_performer_media_archive_source_video_files_saved: mediaArchiveSourceVideoFilesSaved,
     rows_whisper_transcribed: rowsWhisperTranscribed,
+    skipped_duplicate_post_url: skippedDuplicatePostUrl,
+    rows_insight_rejected_quality: rowsInsightRejectedQuality,
     deep_video_zero_work_summary: deepVideoZeroWorkSummary,
   };
 }

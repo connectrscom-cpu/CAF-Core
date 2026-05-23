@@ -16,7 +16,7 @@ import {
   finalJobStatusAfterRender,
 } from "./validation-router.js";
 import { uploadBuffer } from "./supabase-storage.js";
-import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
+import { insertAsset, deleteAssetsForTask, deleteCarouselSlideAssetsForTask } from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
 import { getStrategyDefaults, listProjectCarouselTemplates, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
@@ -28,6 +28,7 @@ import {
   pickCarouselTemplateForRender,
   slideHasRenderableContent,
   stripNonRenderableDeckFields,
+  withInlinedBackgroundImage,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { runHeygenForContentJob } from "./heygen-renderer.js";
@@ -47,15 +48,19 @@ import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { prepareMimicDraftPackage, ensureMimicReferenceBeforeCopyGeneration } from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
+import { classifyMimicMode, extendSlidePlansForOutputCount, reconcileMimicPayloadAtRender } from "./mimic-mode-classifier.js";
 import {
-  ensureMimicCarouselBackground,
-  extractMimicSlideBackground,
+  assertMimicSlideBackgroundPresent,
+  effectiveMimicSlideRenderMode,
+  mimicCarouselNeedsBackgroundPlate,
+  requireMimicSlideBackgroundPlate,
   renderMimicCarouselSlideFullBleed,
-  slideMimicRenderMode,
+  slideOnImageCopyFromSlides,
 } from "./mimic-carousel-render.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
+import { mimicSlideTypographyPatch } from "./mimic-slide-typography.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
-import { mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
+import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -1527,18 +1532,17 @@ async function processCarouselJob(
 
   const mimicPayloadRaw = pickMimicPayload(job.generation_payload);
   let mimicPayload = mimicPayloadRaw;
-  let mimicBackgroundUrl: string | null = null;
   if (
     config.MIMIC_IMAGE_ENABLED &&
     isTopPerformerMimicCarouselFlow(job.flow_type) &&
     mimicPayloadRaw
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
-    mimicBackgroundUrl = await ensureMimicCarouselBackground(db, config, job, mimicPayload);
-    if (mimicBackgroundUrl) {
-      baseRender.background_image_url = mimicBackgroundUrl;
-      (renderBase as Record<string, unknown>).background_image_url = mimicBackgroundUrl;
-    }
+    mimicPayload = reconcileMimicPayloadAtRender(job.flow_type, mimicPayload);
+    mimicPayload = {
+      ...mimicPayload,
+      slide_plans: extendSlidePlansForOutputCount(mimicPayload, n),
+    };
   }
 
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
@@ -1546,6 +1550,10 @@ async function processCarouselJob(
     config.MIMIC_IMAGE_ENABLED &&
     isTopPerformerMimicCarouselFlow(job.flow_type) &&
     Boolean(mimicPayload);
+  const mimicVisualGenAiReachable =
+    isMimicCarousel && config.MIMIC_IMAGE_PROVIDER === "nvidia"
+      ? await isNvidiaVisualGenAiReachable(config)
+      : true;
   let template = isMimicCarousel
     ? "carousel_mimic_bg"
     : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
@@ -1621,7 +1629,16 @@ async function processCarouselJob(
   });
 
   try {
-    await deleteAssetsForTask(db, job.project_id, job.task_id);
+    if (isMimicCarousel && mimicPayload && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
+      for (let i = 1; i <= n; i++) {
+        const preMode = effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable);
+        if (preMode === "hbs") {
+          await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
+        }
+      }
+    }
+
+    await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
     for (let i = 1; i <= n; i++) {
@@ -1635,19 +1652,19 @@ async function processCarouselJob(
       });
 
       const slideMode =
-        config.MIMIC_IMAGE_ENABLED &&
-        isTopPerformerMimicCarouselFlow(job.flow_type) &&
-        mimicPayload
-          ? slideMimicRenderMode(mimicPayload, i)
+        isMimicCarousel && mimicPayload
+          ? effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable)
           : null;
 
       if (slideMode === "full_bleed" && mimicPayload) {
+        const onImageCopy = slideOnImageCopyFromSlides(usableSlides, i);
         const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
           db,
           config,
           job,
           mimicPayload,
-          i
+          i,
+          { onImageCopy: onImageCopy || undefined }
         );
         const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
         const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1680,11 +1697,25 @@ async function processCarouselJob(
 
       let slideRenderBase = renderBase;
       if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
-        const slideBg =
-          (await extractMimicSlideBackground(db, config, job, mimicPayload, i)) ?? mimicBackgroundUrl;
-        if (slideBg) {
+        const needsBgPlate = mimicCarouselNeedsBackgroundPlate(mimicPayload);
+        if (needsBgPlate) {
+          const slideBg = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
           slideRenderBase = { ...renderBase, background_image_url: slideBg };
         }
+        const mimicTypo = mimicSlideTypographyPatch(mimicPayload, i, n, {
+          skipIfReviewerSet: renderBase as Record<string, unknown>,
+        });
+        slideRenderBase = { ...slideRenderBase, ...mimicTypo };
+      }
+
+      slideRenderBase = await withInlinedBackgroundImage(slideRenderBase);
+      if (isMimicCarousel && mimicPayload && slideMode === "hbs" && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
+        assertMimicSlideBackgroundPresent(
+          job.task_id,
+          i,
+          slideRenderBase,
+          "Background plate URL missing after inline step — refusing plain-paper composite."
+        );
       }
 
       const ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {

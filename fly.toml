@@ -5,7 +5,8 @@
 # Optional: CAF_META_ACCOUNT_SOURCE_MAP=CUISINA=SNS so CUISINA uses SNS's META_FB / META_IG rows (same FB Page + IG account).
 # Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
 # On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
-# OPENAI_API_KEY; optional SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
+# Optional: SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
+# Mimic carousel pixels: MIMIC_IMAGE_PROVIDER=dashscope (Alibaba Qwen edit); set DASHSCOPE_API_KEY secret on Fly. Keep MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI=0 so OpenAI is never used for background extract.
 # Inputs XLSX (InstagramPostData): Apify/scraper columns like carousel_slide_urls_json / child_posts_json are normalized on import;
 # evidence rows persist slide CDN URLs in payload_json; caf_core.evidence_media_assets records pending URLs for audit.
 # Top-performer vision: set SUPABASE_* + leave CAF_TOP_PERFORMER_ARCHIVE_MEDIA on or auto so Core uploads slides to Supabase first,
@@ -25,6 +26,10 @@ primary_region = "ams"
   NODE_ENV = "production"
   PORT = "3847"
   HOST = "0.0.0.0"
+  MIMIC_IMAGE_PROVIDER = "dashscope"
+  MIMIC_IMAGE_DASHSCOPE_MODEL = "qwen-image-edit-max"
+  DASHSCOPE_API_BASE = "https://dashscope-intl.aliyuncs.com/api/v1"
+  MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI = "0"
 
 [http_service]
   internal_port = 3847

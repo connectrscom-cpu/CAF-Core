@@ -1,5 +1,5 @@
 import type { ReviewJobDetail } from "./caf-core-client";
-import { mediaKindFromAsset } from "./media-url";
+import { mediaKindFromAsset, selectCarouselPreviewAssets } from "./media-url";
 
 /** Common generation_payload / n8n shapes for a deliverable video URL. */
 export function pickVideoUrlFromGenerationPayload(p: Record<string, unknown> | null | undefined): string {
@@ -32,9 +32,9 @@ export function pickVideoUrlFromGenerationPayload(p: Record<string, unknown> | n
 
 /** preview_url + video_url for TaskViewer / workbench parity with list rows. */
 export function previewFieldsFromJob(job: ReviewJobDetail): { preview_url: string; video_url: string } {
-  const sorted = [...(job.assets ?? [])]
-    .filter((a) => (a.public_url ?? "").trim())
-    .sort((a, b) => a.position - b.position);
+  const sorted = selectCarouselPreviewAssets(
+    (job.assets ?? []).filter((a) => (a.public_url ?? "").trim())
+  );
   const first = sorted[0];
   const fromAssets = (first?.public_url ?? "").trim();
   const payload = job.generation_payload as Record<string, unknown> | undefined;

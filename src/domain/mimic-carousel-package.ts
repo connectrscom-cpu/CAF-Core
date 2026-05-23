@@ -14,6 +14,15 @@ export interface MimicCarouselSlideColorTokens {
   accent: string[] | null;
 }
 
+export interface MimicCarouselSlideTypography {
+  headline_guess: string | null;
+  body_guess: string | null;
+  accent_guess: string | null;
+  relative_scale: string | null;
+  text_placement: string | null;
+  hierarchy: string | null;
+}
+
 export interface MimicCarouselSlideGuideline {
   slide_index: number;
   layout_template: string | null;
@@ -21,6 +30,7 @@ export interface MimicCarouselSlideGuideline {
   text_density: string | null;
   image_or_photo_role: string | null;
   color_tokens: MimicCarouselSlideColorTokens | null;
+  typography: MimicCarouselSlideTypography | null;
 }
 
 export interface MimicCarouselVisualGuideline {
@@ -97,6 +107,21 @@ function slimColorTokens(raw: unknown): MimicCarouselSlideColorTokens | null {
   };
 }
 
+function slimTypography(raw: unknown): MimicCarouselSlideTypography | null {
+  const t = asRecord(raw);
+  if (!t) return null;
+  const headline_guess = String(t.headline_guess ?? "").trim() || null;
+  const body_guess = String(t.body_guess ?? "").trim() || null;
+  const accent_guess = String(t.accent_guess ?? "").trim() || null;
+  const relative_scale = String(t.relative_scale ?? "").trim() || null;
+  const text_placement = String(t.text_placement ?? "").trim() || null;
+  const hierarchy = String(t.hierarchy ?? "").trim() || null;
+  if (!headline_guess && !body_guess && !relative_scale && !text_placement && !hierarchy) {
+    return null;
+  }
+  return { headline_guess, body_guess, accent_guess, relative_scale, text_placement, hierarchy };
+}
+
 function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCarouselSlideGuideline[] {
   const records = aestheticSlideRecords(entry);
   if (records.length === 0) return [];
@@ -107,6 +132,7 @@ function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCaro
     text_density: String(s.text_density ?? "").trim() || null,
     image_or_photo_role: String(s.image_or_photo_role ?? "").trim() || null,
     color_tokens: slimColorTokens(s.color_tokens),
+    typography: slimTypography(s.typography),
   }));
 }
 

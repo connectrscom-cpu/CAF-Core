@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
-import { adminSbLink, adminSidebarIcon } from "./admin-sidebar-icons.js";
+import { adminSbFlowArrow, adminSbLink, adminSidebarIcon } from "./admin-sidebar-icons.js";
 import {
   getProjectBySlug,
   ensureProject,
@@ -368,6 +368,10 @@ a{color:var(--accent);text-decoration:none}a:hover{color:var(--accent2)}
 .sb-link.active .sb-icon{opacity:1}
 .sb-icon{width:18px;height:18px;flex-shrink:0;opacity:.7}
 .sb-link span{line-height:1.3}
+.sb-workbench-flow{display:flex;flex-direction:column;gap:0;padding-left:16px;position:relative;margin-top:2px}
+.sb-workbench-flow::before{content:"";position:absolute;left:5px;top:20px;bottom:20px;width:1px;background:var(--border);opacity:.55}
+.sb-flow-arrow{display:flex;align-items:center;justify-content:center;height:16px;width:12px;margin-left:-16px;color:var(--muted);opacity:.75;position:relative;z-index:1;background:var(--bg2)}
+.sb-flow-arrow .sb-icon{width:12px;height:12px;opacity:1}
 .main--embed{padding:0;overflow:hidden}
 .sb-sublink{margin-left:14px;padding-left:18px;font-size:12px;color:var(--muted);position:relative}
 .sb-sublink::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border)}
@@ -561,13 +565,20 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     if (link.key === "processing" && PROCESSING_CHILD_KEYS.has(active)) return true;
     return false;
   };
-  const renderWorkbenchLink = (link: WorkbenchLink): string => {
+  const renderWorkbenchBlock = (link: WorkbenchLink): string => {
     let out = adminSbLink(link.href, link.label, link.key, isWorkbenchParentActive(link) ? link.key : active);
     if (link.children && link.children.length > 0 && isWorkbenchParentActive(link)) {
       out += link.children.map((c) => adminSbLink(c.href, c.label, c.key, active, "sb-sublink")).join("\n    ");
     }
     return out;
   };
+  const workbenchFlowHtml = workbenchLinks
+    .map((link, i) => {
+      const block = renderWorkbenchBlock(link);
+      if (i >= workbenchLinks.length - 1) return block;
+      return `${block}\n    <div class="sb-flow-arrow" aria-hidden="true">${adminSbFlowArrow()}</div>`;
+    })
+    .join("\n    ");
 
   const settingsLinks = [{ href: `/admin/config${pq}`, label: "Project settings", key: "config" }];
 
@@ -620,7 +631,9 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     <div class="sb-title">Project</div>
     ${overviewLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Workbench<span class="sb-hint">research to learning</span></div>
-    ${workbenchLinks.map(renderWorkbenchLink).join("\n    ")}
+    <div class="sb-workbench-flow">
+    ${workbenchFlowHtml}
+    </div>
     <div class="sb-title" style="margin-top:16px">Settings</div>
     ${settingsLinks.map((l) => adminSbLink(l.href, l.label, l.key, active)).join("\n    ")}
     <div class="sb-title" style="margin-top:16px">Platform</div>

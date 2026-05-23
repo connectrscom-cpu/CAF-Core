@@ -134,7 +134,7 @@
   <!-- Cover -->
   <div class="slide cover">
     {{#if background_image_url}}
-    <div class="slide-bg" style="background-image:url('{{background_image_url}}');"></div>
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
     <div class="page">
       <div class="headline main-headline">
@@ -162,7 +162,7 @@
   {{#each body_slides}}
   <div class="slide body-slide">
     {{#if ../background_image_url}}
-    <div class="slide-bg" style="background-image:url('{{../background_image_url}}');"></div>
+    <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
     {{/if}}
     <div class="page">
       <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
@@ -174,7 +174,7 @@
   <!-- CTA -->
   <div class="slide cta">
     {{#if background_image_url}}
-    <div class="slide-bg" style="background-image:url('{{background_image_url}}');"></div>
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
     <div class="page">
       <div class="headline cta-text">

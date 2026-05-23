@@ -55,6 +55,11 @@ export function adminSidebarIcon(key: string): string {
   return ADMIN_SB_ICONS[key] ?? "";
 }
 
+/** Down chevron for workbench step progression (left rail). */
+export function adminSbFlowArrow(): string {
+  return svg('<line x1="12" y1="5" x2="12" y2="19"/><polyline points="6 13 12 19 18 13"/>');
+}
+
 export function adminSbLink(href: string, label: string, key: string, active: string, extraClass = ""): string {
   const icon = adminSidebarIcon(key);
   const cls = `sb-link${key === active ? " active" : ""}${extraClass ? ` ${extraClass}` : ""}`;

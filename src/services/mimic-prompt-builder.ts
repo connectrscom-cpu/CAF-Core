@@ -35,11 +35,25 @@ export function buildMimicCarouselSlidePrompt(opts: {
   slideIndex: number;
   layoutTemplate?: string | null;
   visualDescription?: string | null;
+  onImageCopy?: string | null;
 }): string {
   const parts = [
-    "Recreate this carousel slide with nearly identical composition, palette, and visual style.",
-    "Preserve layout archetype and design energy; vary details subtly without cloning logos or faces.",
+    "Recreate this carousel slide's visual design only: composition, palette, background, and decorative elements.",
+    "Remove all original on-image text and typography from the reference.",
   ];
+  const copy = String(opts.onImageCopy ?? "").trim();
+  if (copy) {
+    parts.push(
+      `Render this new on-slide copy exactly (headline + body, fresh wording — not paraphrase of the reference): """${copy.slice(0, 1200)}""".`
+    );
+  } else {
+    parts.push(
+      "Leave text regions clean or use neutral placeholder blocks — do not reproduce reference wording verbatim."
+    );
+  }
+  parts.push(
+    "Preserve layout archetype and design energy; vary details subtly without cloning logos or faces."
+  );
   if (opts.layoutTemplate?.trim()) {
     parts.push(`Layout archetype: ${opts.layoutTemplate.trim()}.`);
   }
@@ -60,5 +74,6 @@ export function mimicPromptForMode(
     slideIndex: slide?.index ?? 1,
     layoutTemplate: slide?.layout,
     visualDescription: slide?.visual,
+    onImageCopy: slide?.onImageCopy,
   });
 }

@@ -5,6 +5,7 @@ import type { AppConfig } from "../config.js";
 import type { MimicCarouselSlideColorTokens } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { addProjectCarouselTemplate } from "../repositories/project-config.js";
+import { isDarkCelestialDeck } from "./mimic-slide-typography.js";
 
 /** Persisted on `generation_payload` — links render template to top-performer evidence. */
 export const MIMIC_EVIDENCE_TEMPLATE_PAYLOAD_KEY = "mimic_evidence_template";
@@ -66,7 +67,7 @@ function pickThemeFromColorTokens(tokens: MimicCarouselSlideColorTokens | null |
 
 export function pickMimicEvidenceTemplateTheme(
   visualGuideline: Record<string, unknown> | undefined
-): { paper: string; ink: string; body: string } {
+): { paper: string; ink: string; body: string; text_shadow_headline: string; text_shadow_body: string } {
   const vg = visualGuideline ?? {};
   const slides = Array.isArray(vg.slides) ? vg.slides : [];
   for (const raw of slides) {
@@ -81,9 +82,31 @@ export function pickMimicEvidenceTemplateTheme(
           }
         : null
     );
-    if (theme) return theme;
+    if (theme) {
+      const dark = isDarkCelestialDeck(vg);
+      return {
+        ...theme,
+        text_shadow_headline: dark ? "0 2px 20px rgba(0,0,0,0.85)" : "0 1px 12px rgba(255,254,249,0.85)",
+        text_shadow_body: dark ? "0 1px 12px rgba(0,0,0,0.75)" : "0 1px 10px rgba(255,254,249,0.8)",
+      };
+    }
   }
-  return { paper: "#fffef9", ink: "#1c1c1e", body: "#3a3a3c" };
+  if (isDarkCelestialDeck(vg)) {
+    return {
+      paper: "#0c0c0e",
+      ink: "#f5f5f7",
+      body: "#e8e8ed",
+      text_shadow_headline: "0 2px 20px rgba(0,0,0,0.85)",
+      text_shadow_body: "0 1px 12px rgba(0,0,0,0.75)",
+    };
+  }
+  return {
+    paper: "#fffef9",
+    ink: "#1c1c1e",
+    body: "#3a3a3c",
+    text_shadow_headline: "0 1px 12px rgba(255,254,249,0.85)",
+    text_shadow_body: "0 1px 10px rgba(255,254,249,0.8)",
+  };
 }
 
 async function templateFileExists(filePath: string): Promise<boolean> {
@@ -95,13 +118,30 @@ async function templateFileExists(filePath: string): Promise<boolean> {
   }
 }
 
-function injectRootTheme(source: string, theme: { paper: string; ink: string; body: string }): string {
+function syncBackgroundMustache(source: string): string {
+  return source
+    .replace(/url\('\{\{background_image_url\}\}'\)/g, "url('{{{background_image_url}}}')")
+    .replace(/url\('\{\{\.\.\/background_image_url\}\}'\)/g, "url('{{{../background_image_url}}}')");
+}
+
+function injectRootTheme(
+  source: string,
+  theme: {
+    paper: string;
+    ink: string;
+    body: string;
+    text_shadow_headline: string;
+    text_shadow_body: string;
+  }
+): string {
   const inject = `
     /* mimic_evidence_template — palette from top-performer analysis */
     :root{
       --paper: ${theme.paper};
       --ink: ${theme.ink};
       --body: ${theme.body};
+      --text-shadow-headline: ${theme.text_shadow_headline};
+      --text-shadow-body: ${theme.text_shadow_body};
     }
 `;
   if (source.includes(":root{")) {
@@ -127,10 +167,12 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const outPath = path.join(tplDir, templateFileName);
   const reusedExisting = await templateFileExists(outPath);
 
+  const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
+
   if (!reusedExisting) {
     const basePath = path.join(tplDir, "carousel_mimic_bg.hbs");
     let source = await readFile(basePath, "utf8");
-    const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
+    source = syncBackgroundMustache(source);
     source = injectRootTheme(source, theme);
     const traceComment = [
       "<!--",
@@ -142,6 +184,11 @@ export async function ensureMimicEvidenceCarouselTemplate(
       "-->",
     ].join("\n");
     source = source.replace("<!DOCTYPE html>", `<!DOCTYPE html>\n${traceComment}`);
+    await writeFile(outPath, source, "utf8");
+  } else {
+    let source = await readFile(outPath, "utf8");
+    source = syncBackgroundMustache(source);
+    source = injectRootTheme(source, theme);
     await writeFile(outPath, source, "utf8");
   }
 

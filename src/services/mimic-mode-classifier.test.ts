@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyMimicMode } from "./mimic-mode-classifier.js";
+import { classifyMimicMode, extendSlidePlansForOutputCount } from "./mimic-mode-classifier.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
@@ -82,6 +82,43 @@ describe("classifyMimicMode", () => {
     const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.slide_plans).toHaveLength(2);
     expect(r.slide_plans?.[1]?.reference_index).toBe(2);
+  });
+
+  it("returns template_bg with hbs slide plans for celestial text-overlay carousel", () => {
+    const entry = {
+      format_pattern: "mixed (reflective messaging with visual storytelling)",
+      deck_visual_system: {
+        repeated_template: "centered text over celestial backgrounds; similar layout across slides",
+      },
+      stored_inspection_media_json: {
+        items: [
+          { index: 0, vision_fetch_url: "https://x/1.jpg" },
+          { index: 1, vision_fetch_url: "https://x/2.jpg" },
+        ],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("template_bg");
+    expect(r.slide_plans).toHaveLength(2);
+    expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+  });
+
+  it("extendSlidePlansForOutputCount cycles reference frames for extra output slides", () => {
+    const plans = extendSlidePlansForOutputCount(
+      {
+        mode: "template_bg",
+        reference_items: [{ index: 0 }, { index: 1 }],
+        slide_plans: [
+          { slide_index: 1, render_mode: "hbs", reference_index: 1 },
+          { slide_index: 2, render_mode: "hbs", reference_index: 2 },
+        ],
+      },
+      5
+    );
+    expect(plans).toHaveLength(5);
+    expect(plans[4]?.render_mode).toBe("hbs");
+    expect(plans[3]?.reference_index).toBe(2);
+    expect(plans[4]?.reference_index).toBe(1);
   });
 });
 

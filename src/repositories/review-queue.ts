@@ -104,14 +104,18 @@ const PREVIEW_THUMB_SUBQUERY = `
       AND a.public_url IS NOT NULL AND TRIM(a.public_url) <> ''
     ORDER BY
       CASE
-        WHEN lower(coalesce(a.asset_type, '')) LIKE '%image%' THEN 0
-        WHEN lower(coalesce(a.asset_type, '')) LIKE '%carousel%' THEN 0
-        WHEN a.public_url ~* '\\.(png|jpg|jpeg|gif|webp|avif)(\\?|#|$)' THEN 0
-        WHEN lower(coalesce(a.asset_type, '')) LIKE '%video%' THEN 1
-        WHEN a.public_url ~* '\\.(mp4|webm|mov|m4v)(\\?|#|$)' THEN 1
-        ELSE 2
+        WHEN lower(coalesce(a.asset_type, '')) = 'carousel_slide' THEN 0
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%carousel%'
+          AND lower(coalesce(a.asset_type, '')) NOT LIKE '%background%' THEN 1
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%image%' THEN 2
+        WHEN a.public_url ~* '\\.(png|jpg|jpeg|gif|webp|avif)(\\?|#|$)' THEN 2
+        WHEN lower(coalesce(a.asset_type, '')) = 'mimic_background' THEN 5
+        WHEN lower(coalesce(a.asset_type, '')) LIKE '%video%' THEN 6
+        WHEN a.public_url ~* '\\.(mp4|webm|mov|m4v)(\\?|#|$)' THEN 6
+        ELSE 3
       END,
-      a.position ASC NULLS LAST
+      a.position ASC NULLS LAST,
+      a.created_at DESC NULLS LAST
     LIMIT 1
   )`;
 

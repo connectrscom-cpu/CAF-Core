@@ -56,11 +56,13 @@ describe("pickMimicEvidenceTemplateTheme", () => {
         },
       ],
     });
-    expect(theme).toEqual({
-      paper: "#112233",
-      ink: "#aabbcc",
-      body: "#aabbcc",
-    });
+    expect(theme).toEqual(
+      expect.objectContaining({
+        paper: "#112233",
+        ink: "#aabbcc",
+        body: "#aabbcc",
+      })
+    );
   });
 });
 

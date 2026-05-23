@@ -111,10 +111,15 @@ export function buildVideoAestheticAnalysisJson(parsed: Record<string, unknown> 
   if (parsed.video_as_whole_summary != null) out.video_as_whole_summary = parsed.video_as_whole_summary;
   if (parsed.video_visual_system != null) out.video_visual_system = parsed.video_visual_system;
   if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
+  if (parsed._inference_limits != null) out._inference_limits = parsed._inference_limits;
   if (parsed.palette != null) out.palette = parsed.palette;
   if (parsed.on_screen_text != null) out.on_screen_text = parsed.on_screen_text;
   return out;
 }
+
+import {
+  TOP_PERFORMER_VIDEO_SINGLE_FRAME_USER_APPENDIX,
+} from "./video-insights-llm-normalize.js";
 
 export function buildVideoInsightUserText(args: {
   evidenceKind: string;
@@ -129,6 +134,7 @@ export function buildVideoInsightUserText(args: {
     args.frameTimestampsSec.length > 0
       ? args.frameTimestampsSec.map((t, i) => `${i + 1}. ${t}s`).join("\n")
       : "(not provided — infer order from attachments)";
+  const singleFrameNote = args.frameCount === 1 ? TOP_PERFORMER_VIDEO_SINGLE_FRAME_USER_APPENDIX : "";
   return `Evidence kind: ${args.evidenceKind}
 Pre-LLM score: ${args.preLlmScore}
 Frame count: ${args.frameCount}
@@ -140,5 +146,5 @@ Caption / ingest transcript (may be empty):
 ${args.captionTranscript || "(none)"}
 
 Spoken transcript (Whisper ASR, may be empty):
-${args.spokenTranscript || "(none)"}`;
+${args.spokenTranscript || "(none)"}${singleFrameNote}`;
 }

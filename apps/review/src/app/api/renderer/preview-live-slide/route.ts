@@ -3,7 +3,9 @@ import {
   buildSlideRenderContext,
   carouselRenderBaseForPipeline,
   slidesFromGeneratedOutput,
+  withInlinedBackgroundImage,
 } from "@caf-core-carousel/carousel-render-pack";
+import { mimicSlideTypographyPatch } from "@caf-core-carousel/mimic-slide-typography";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,8 @@ export async function POST(request: NextRequest) {
         ? (body.payload as Record<string, unknown>)
         : {};
     const instagramHandle = typeof body.instagram_handle === "string" ? body.instagram_handle.trim() : "";
+    const backgroundFromBody =
+      typeof body.background_image_url === "string" ? body.background_image_url.trim() : "";
 
     if (!template) {
       return NextResponse.json({ ok: false, error: "template required" }, { status: 400 });
@@ -35,7 +39,36 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "no slides in payload" }, { status: 400 });
     }
 
-    const renderBase = carouselRenderBaseForPipeline({ ...payload, slides: usableSlides }, usableSlides);
+    const mimicV1 =
+      payload.mimic_v1 && typeof payload.mimic_v1 === "object" && !Array.isArray(payload.mimic_v1)
+        ? (payload.mimic_v1 as Record<string, unknown>)
+        : null;
+    const backgroundFromPayload =
+      typeof payload.background_image_url === "string" ? payload.background_image_url.trim() : "";
+    const backgroundFromMimic =
+      mimicV1 && typeof mimicV1.background_image_url === "string"
+        ? mimicV1.background_image_url.trim()
+        : "";
+    const backgroundImageUrl = backgroundFromBody || backgroundFromPayload || backgroundFromMimic;
+
+    let renderBase = carouselRenderBaseForPipeline(
+      {
+        ...payload,
+        slides: usableSlides,
+        ...(backgroundImageUrl ? { background_image_url: backgroundImageUrl } : {}),
+      },
+      usableSlides
+    );
+    renderBase = await withInlinedBackgroundImage(renderBase);
+    if (mimicV1?.visual_guideline && typeof mimicV1.visual_guideline === "object") {
+      const mimicTypo = mimicSlideTypographyPatch(
+        { visual_guideline: mimicV1.visual_guideline as Record<string, unknown> },
+        slideIndex,
+        usableSlides.length,
+        { skipIfReviewerSet: payload }
+      );
+      renderBase = { ...renderBase, ...mimicTypo };
+    }
     const ctx = buildSlideRenderContext(renderBase, usableSlides, slideIndex, {
       instagramHandle: instagramHandle || null,
     });
