@@ -38,13 +38,13 @@ export function buildMimicCarouselSlidePrompt(opts: {
   onImageCopy?: string | null;
 }): string {
   const parts = [
-    "Recreate this carousel slide's visual design only: composition, palette, background, and decorative elements.",
-    "Remove all original on-image text and typography from the reference.",
+    "Recreate this carousel slide exactly: same visual style, layout, typography placement, colors, spacing, and decorative framing as the reference.",
+    "Remove all original on-image text from the reference before applying new copy.",
   ];
   const copy = String(opts.onImageCopy ?? "").trim();
   if (copy) {
     parts.push(
-      `Render this new on-slide copy exactly (headline + body, fresh wording — not paraphrase of the reference): """${copy.slice(0, 1200)}""".`
+      `Replace on-slide text with this new copy only — twist the wording, keep the same design language and hierarchy (headline vs body): """${copy.slice(0, 1200)}""".`
     );
   } else {
     parts.push(
@@ -52,7 +52,7 @@ export function buildMimicCarouselSlidePrompt(opts: {
     );
   }
   parts.push(
-    "Preserve layout archetype and design energy; vary details subtly without cloning logos or faces."
+    "Do not redesign the slide. Preserve layout archetype and design energy; vary decorative details subtly without cloning logos or faces."
   );
   if (opts.layoutTemplate?.trim()) {
     parts.push(`Layout archetype: ${opts.layoutTemplate.trim()}.`);

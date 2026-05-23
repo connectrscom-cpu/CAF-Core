@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD,
+  deckUsesUnifiedBackgroundPlate,
   isTextOverlayDeckFromGuideline,
+  isVisualLedShortCopyDeck,
   referenceHasHeavyOnScreenText,
   requiresCopyBeforeVisualMimic,
 } from "./mimic-text-heavy.js";
@@ -17,8 +18,39 @@ describe("mimic-text-heavy", () => {
     ).toBe(true);
   });
 
+  it("routes visual-led short-copy decks to whole-slide mimic", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        deck_visual_system: { overall_aesthetic: "cinematic photo carousel" },
+        slides: [
+          {
+            text_density: "low",
+            image_or_photo_role: "photo",
+            on_screen_text_transcript: "Hook line",
+          },
+        ],
+      },
+    };
+    expect(isVisualLedShortCopyDeck(entry)).toBe(true);
+    expect(requiresCopyBeforeVisualMimic(entry)).toBe(false);
+  });
+
+  it("unifies background plate for listicles and text-overlay decks", () => {
+    expect(deckUsesUnifiedBackgroundPlate({ aesthetic_analysis_json: { format_pattern: "listicle" } })).toBe(
+      true
+    );
+    const entry = {
+      format_pattern: "mixed",
+      deck_visual_system: {
+        repeated_template: "centered text over celestial backgrounds; similar layout across slides",
+      },
+    };
+    expect(deckUsesUnifiedBackgroundPlate(entry)).toBe(true);
+  });
+
   it("flags long on-screen transcripts", () => {
-    const longText = "x".repeat(MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD);
+    const longText = "x".repeat(201);
     expect(
       requiresCopyBeforeVisualMimic({
         aesthetic_analysis_json: {

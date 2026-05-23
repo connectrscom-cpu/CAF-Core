@@ -13,7 +13,7 @@ describe("classifyMimicMode", () => {
     expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_IMAGE, {}).mode).toBe("image_full");
   });
 
-  it("returns template_bg for text-heavy listicle carousel", () => {
+  it("returns template_bg with unified reference frame for listicle decks", () => {
     const entry = {
       aesthetic_analysis_json: {
         format_pattern: "listicle",
@@ -23,7 +23,33 @@ describe("classifyMimicMode", () => {
         ],
       },
     };
-    expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry).mode).toBe("template_bg");
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("template_bg");
+    expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
+  });
+
+  it("returns carousel_visual full_bleed for visual-led short-copy decks", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        deck_visual_system: { overall_aesthetic: "cinematic photo carousel" },
+        slides: [
+          {
+            text_density: "low",
+            image_or_photo_role: "full-bleed photo",
+            on_screen_text_transcript: "Bold hook line",
+          },
+          {
+            text_density: "low",
+            image_or_photo_role: "full-bleed photo",
+            on_screen_text_transcript: "Short CTA",
+          },
+        ],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("carousel_visual");
+    expect(r.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 
   it("returns template_bg when on-screen transcript exceeds char threshold", () => {
@@ -101,6 +127,7 @@ describe("classifyMimicMode", () => {
     expect(r.mode).toBe("template_bg");
     expect(r.slide_plans).toHaveLength(2);
     expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+    expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
   });
 
   it("extendSlidePlansForOutputCount cycles reference frames for extra output slides", () => {
@@ -117,8 +144,20 @@ describe("classifyMimicMode", () => {
     );
     expect(plans).toHaveLength(5);
     expect(plans[4]?.render_mode).toBe("hbs");
-    expect(plans[3]?.reference_index).toBe(2);
+    expect(plans[3]?.reference_index).toBe(1);
     expect(plans[4]?.reference_index).toBe(1);
+  });
+
+  it("extendSlidePlansForOutputCount keeps reference_index 1 for template_bg extras", () => {
+    const plans = extendSlidePlansForOutputCount(
+      {
+        mode: "template_bg",
+        reference_items: [{ index: 0 }, { index: 1 }],
+        slide_plans: [{ slide_index: 1, render_mode: "hbs", reference_index: 1 }],
+      },
+      4
+    );
+    expect(plans.every((p) => p.reference_index === 1)).toBe(true);
   });
 });
 

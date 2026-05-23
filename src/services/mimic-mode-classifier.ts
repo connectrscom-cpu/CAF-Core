@@ -1,6 +1,7 @@
 import type { MimicMode, MimicSlidePlan, MimicPayloadV1 } from "../domain/mimic-payload.js";
 import {
   aestheticSlideRecords,
+  deckUsesUnifiedBackgroundPlate,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
@@ -25,9 +26,10 @@ export function classifyMimicMode(
   if (requiresCopyBeforeVisualMimic(entry)) {
     const refFrames = entryReferenceFrameCount(entry);
     const slideCount = Math.max(slides.length, refFrames, 1);
+    const unifiedBg = deckUsesUnifiedBackgroundPlate(entry);
     const slide_plans: MimicSlidePlan[] = [];
     for (let i = 0; i < slideCount; i++) {
-      const refSlot = refFrames > 0 ? (i % refFrames) + 1 : 1;
+      const refSlot = unifiedBg ? 1 : refFrames > 0 ? (i % refFrames) + 1 : 1;
       slide_plans.push({
         slide_index: i + 1,
         render_mode: "hbs",
@@ -67,7 +69,8 @@ export function extendSlidePlansForOutputCount(
     mimic.mode === "template_bg" ? "hbs" : plans[plans.length - 1]?.render_mode ?? "hbs";
 
   for (let slideIndex = plans.length + 1; slideIndex <= outputSlideCount; slideIndex++) {
-    const refSlot = refCount > 0 ? ((slideIndex - 1) % refCount) + 1 : 1;
+    const unifiedBg = mimic.mode === "template_bg";
+    const refSlot = unifiedBg ? 1 : refCount > 0 ? ((slideIndex - 1) % refCount) + 1 : 1;
     const render_mode =
       mimic.mode === "template_bg"
         ? "hbs"

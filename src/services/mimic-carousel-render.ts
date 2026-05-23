@@ -1,5 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
+import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
 import type { Pool } from "pg";
 import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
 import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -78,6 +79,17 @@ function publicUrlFromAssetRow(
     .join("/")}`;
 }
 
+function mimicGuidelineEntry(mimic: MimicPayloadV1): Record<string, unknown> {
+  const vg = mimic.visual_guideline ?? {};
+  return { ...vg, aesthetic_analysis_json: vg };
+}
+
+/** Listicles / repeated-template decks reuse slide-1 background plate for every output slide. */
+export function mimicDeckUsesUnifiedBackgroundPlate(mimic: MimicPayloadV1): boolean {
+  if (mimic.mode !== "template_bg") return false;
+  return deckUsesUnifiedBackgroundPlate(mimicGuidelineEntry(mimic));
+}
+
 /** Reuse stored `MIMIC_BACKGROUND` plate when present; otherwise generate via Qwen. */
 export async function resolveMimicSlideBackgroundPlate(
   db: Pool,
@@ -86,8 +98,9 @@ export async function resolveMimicSlideBackgroundPlate(
   mimic: MimicPayloadV1,
   slideIndex: number
 ): Promise<string | null> {
+  const extractIndex = mimicDeckUsesUnifiedBackgroundPlate(mimic) ? 1 : slideIndex;
   const assets = await listAssetsByTask(db, job.project_id, job.task_id);
-  const pos = slideIndex - 1;
+  const pos = extractIndex - 1;
   const existing = assets.find(
     (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === pos
   );
@@ -95,7 +108,16 @@ export async function resolveMimicSlideBackgroundPlate(
     const url = publicUrlFromAssetRow(config, existing);
     if (url) return url;
   }
-  return extractMimicSlideBackground(db, config, job, mimic, slideIndex);
+  if (mimicDeckUsesUnifiedBackgroundPlate(mimic) && slideIndex > 1) {
+    const slideOne = assets.find(
+      (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === 0
+    );
+    if (slideOne) {
+      const url = publicUrlFromAssetRow(config, slideOne);
+      if (url) return url;
+    }
+  }
+  return extractMimicSlideBackground(db, config, job, mimic, extractIndex);
 }
 
 export class MimicBackgroundPlateRequiredError extends Error {

@@ -46,7 +46,7 @@ export function buildMimicRenderContextForLlm(
     format_pattern: formatPattern,
     render_sequence: copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic",
     operator_note: copyBefore
-      ? "Finalize all slide copy in this step. Render will extract a background plate and overlay this copy — gpt-image-1 runs only after copy exists."
-      : "Visual mimic may run per slide; still write fresh brand copy, not reference transcripts.",
+      ? "Finalize all slide copy in this step. Render extracts one shared background plate (listicle / text-overlay) and overlays copy via carousel_mimic_bg.hbs — same style frame, new wording per slide."
+      : "Visual-led deck with short on-slide copy: render recreates each whole slide in the reference style and swaps in your new wording only.",
   };
 }
