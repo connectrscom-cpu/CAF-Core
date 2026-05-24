@@ -46,7 +46,11 @@ import {
 } from "./inputs-top-performer-media-archive.js";
 import { getSupabaseStorageClient } from "./supabase-storage.js";
 import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
-import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
+import {
+  assertVisionImageUrlsSafeForRemoteFetch,
+  relayImageUrlsForOpenAiVision,
+  VISION_CDN_PROXY_HINT,
+} from "./inputs-top-performer-vision-relay.js";
 
 const STEP = "inputs_top_performer_image_insight";
 
@@ -296,10 +300,12 @@ export async function runDeepImageInsightsForImport(
         ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
       });
       const it0 = arch.items[0];
-      if (it0?.ok) {
-        const relay = it0.vision_fetch_url || it0.public_url;
-        if (relay) visionUrl = relay;
+      const signed = it0?.ok ? it0.vision_fetch_url || it0.public_url : null;
+      if (!signed) {
+        const err = it0?.error ?? "unknown";
+        throw new Error(`Could not archive top-performer image to Supabase (${err}). ${VISION_CDN_PROXY_HINT}`);
       }
+      visionUrl = signed;
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
     }
 
@@ -307,6 +313,7 @@ export async function runDeepImageInsightsForImport(
       http_proxy_url: embedHttpProxyCfg.url,
     });
     visionUrl = imgRelay.urls[0] ?? visionUrl;
+    assertVisionImageUrlsSafeForRemoteFetch([visionUrl]);
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 

@@ -59,7 +59,11 @@ import {
   type TopPerformerMediaQualifierPreviewRow,
 } from "./inputs-top-performer-qualifying-preview.js";
 import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
-import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
+import {
+  assertVisionImageUrlsSafeForRemoteFetch,
+  relayImageUrlsForOpenAiVision,
+  VISION_CDN_PROXY_HINT,
+} from "./inputs-top-performer-vision-relay.js";
 
 const STEP = "inputs_top_performer_video_insight";
 
@@ -441,11 +445,20 @@ export async function runDeepVideoInsightsForImport(
         }
       }
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
-      visionFrameUrls = remoteHttpsFrames.map((src, i) => {
+      const archivedFrames: string[] = [];
+      for (let i = 0; i < remoteHttpsFrames.length; i++) {
         const it = arch.items[i];
-        const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
-        return relay || src;
-      });
+        const signed = it?.ok ? it.vision_fetch_url || it.public_url : null;
+        if (!signed) {
+          const err = it?.error ?? "unknown";
+          throw new Error(
+            `Could not archive video frame ${i + 1} to Supabase (${err}). ` +
+              `Prefer ffmpeg extraction from source video when scrape thumbnails are expired. ${VISION_CDN_PROXY_HINT}`
+          );
+        }
+        archivedFrames.push(signed);
+      }
+      visionFrameUrls = archivedFrames;
       const dataUriFrames = frameUrls.filter((u) => u.startsWith("data:image/"));
       visionFrameUrls = [...visionFrameUrls, ...dataUriFrames];
     } else if (prep.source === "extracted_from_video" || prep.source === "evidence_media_db") {
@@ -466,6 +479,7 @@ export async function runDeepVideoInsightsForImport(
       http_proxy_url: mediaArchiveHttpProxyCfg.url,
     });
     visionFrameUrls = frameRelay.urls;
+    assertVisionImageUrlsSafeForRemoteFetch(visionFrameUrls);
 
     const visionOut = await runVideoFramesVisionAnalysis({
       config,

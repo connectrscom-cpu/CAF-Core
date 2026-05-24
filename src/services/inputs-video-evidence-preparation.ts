@@ -26,6 +26,7 @@ import { openaiWhisperTranscribe } from "./openai-whisper-transcribe.js";
 import type { OpenAiAuditContext } from "./openai-chat.js";
 import { fetchRemoteVideoFile } from "./inputs-top-performer-media-archive.js";
 import { tryCreateInstagramEmbedProxyAgent } from "./inputs-instagram-embed-carousel-resolver.js";
+import { shouldRelayImageUrlForOpenAi } from "./inputs-top-performer-vision-relay.js";
 import { createSignedUrlForObjectKey, getSupabaseStorageClient, uploadBuffer } from "./supabase-storage.js";
 
 export type VideoFrameResolutionSource =
@@ -275,7 +276,10 @@ export async function ensureVideoFramesForEvidenceRow(
     }
   }
 
-  if (videoUrl && canExtract && preferSourceDownload) {
+  const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
+  const payloadUsesBlockedCdn = fromPayload.some((u) => shouldRelayImageUrlForOpenAi(u));
+
+  if (videoUrl && canExtract && (preferSourceDownload || payloadUsesBlockedCdn)) {
     const extracted = await downloadExtractAndArchiveSourceVideo(
       db,
       config,
@@ -292,8 +296,7 @@ export async function ensureVideoFramesForEvidenceRow(
     }
   }
 
-  const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
-  if (fromPayload.length > 0) {
+  if (fromPayload.length > 0 && !payloadUsesBlockedCdn) {
     const whisper = videoUrl ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript) : null;
     return {
       frame_urls: fromPayload,
@@ -305,6 +308,14 @@ export async function ensureVideoFramesForEvidenceRow(
       caption_transcript: captionTranscript,
       whisper_transcript: whisper,
     };
+  }
+
+  if (fromPayload.length > 0 && payloadUsesBlockedCdn) {
+    return emptyResult({
+      extraction_error: videoUrl
+        ? "source_video_download_or_frame_extract_failed; payload_thumbnails_are_expired_instagram_cdn"
+        : "payload_thumbnails_are_expired_instagram_cdn_no_video_url",
+    });
   }
 
   if (!args.forceReextract) {

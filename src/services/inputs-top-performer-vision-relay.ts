@@ -100,7 +100,7 @@ export async function relayImageUrlsForOpenAiVision(
         const msg = e instanceof Error ? e.message : String(e);
         errors.push({ index: i, source_url: raw, error: msg });
         throw new Error(
-          `Could not download slide image ${i + 1} for vision (${msg}). ${VISION_CDN_PROXY_HINT}`
+          `Could not download vision image ${i + 1} (${msg}). ${VISION_CDN_PROXY_HINT}`
         );
       }
     }
