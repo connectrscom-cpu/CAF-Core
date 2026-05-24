@@ -5,6 +5,10 @@ import type { Pool } from "pg";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import type { OpenAiAuditContext } from "./openai-chat.js";
+import {
+  formatChatCompletionsHttpError,
+  isChatCompletionsHttpError,
+} from "./chat-completions-error.js";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -115,7 +119,7 @@ export async function openaiChatMultimodal(
           attempt++;
           continue;
         }
-        throw new Error(`OpenAI API error ${res.status}: ${errText}`);
+        throw new Error(formatChatCompletionsHttpError(res.status, errText, auditProvider));
       }
 
       const json = (await res.json()) as {
@@ -160,7 +164,7 @@ export async function openaiChatMultimodal(
         });
       }
       if (durationMs >= 20_000) {
-        const label = audit?.step ? `[${audit.step}]` : "[openaiChatMultimodal]";
+        const label = audit?.step ? `[${audit.step}]` : `[openaiChatMultimodal/${auditProvider}]`;
         console.info(
           `${label} completed in ${durationMs}ms (attempt ${attempt}/${maxRetries}, model=${out.model}, tokens=${out.total_tokens}, images=${imageCount})`
         );
@@ -173,7 +177,7 @@ export async function openaiChatMultimodal(
       const isFetchNet = err instanceof TypeError && /fetch/i.test(msg);
       const retryable = isAbort || isFetchNet;
 
-      if (audit && !(err instanceof Error && err.message.startsWith("OpenAI API error"))) {
+      if (audit && !isChatCompletionsHttpError(err)) {
         await tryInsertApiCallAudit(audit.db, {
           projectId: audit.projectId,
           runId: audit.runId,

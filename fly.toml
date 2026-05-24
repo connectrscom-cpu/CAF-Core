@@ -6,6 +6,7 @@
 # Optional: CAROUSEL_TEMPLATES_DIR (defaults to /app/carousel-templates in image — bundled .hbs).
 # On caf-renderer set CAF_TEMPLATE_API_URL=https://caf-core.fly.dev so missing disk templates load from Core /api/templates/*.
 # Optional: SUPABASE_* (uploads), HEYGEN_API_KEY, CAF_CORE_API_TOKEN, CAF_CORE_REQUIRE_AUTH.
+# Processing vision (carousel/video insights pass): PROCESSING_VISION_PROVIDER=nvidia → Nemotron VL via NVIDIA NIM; set NVIDIA_NIM_API_KEY secret on Fly.
 # Mimic carousel pixels: MIMIC_IMAGE_PROVIDER=dashscope (Alibaba Qwen edit); set DASHSCOPE_API_KEY secret on Fly. Keep MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI=0 so OpenAI is never used for background extract.
 # Inputs XLSX (InstagramPostData): Apify/scraper columns like carousel_slide_urls_json / child_posts_json are normalized on import;
 # evidence rows persist slide CDN URLs in payload_json; caf_core.evidence_media_assets records pending URLs for audit.
@@ -30,6 +31,7 @@ primary_region = "ams"
   MIMIC_IMAGE_DASHSCOPE_MODEL = "qwen-image-edit-max"
   DASHSCOPE_API_BASE = "https://dashscope-intl.aliyuncs.com/api/v1"
   MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI = "0"
+  PROCESSING_VISION_PROVIDER = "nvidia"
 
 [http_service]
   internal_port = 3847
