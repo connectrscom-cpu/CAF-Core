@@ -386,9 +386,34 @@ export async function fetchInstagramCarouselUrlsFromEmbedDetailed(
   for (const embedPageUrl of urlsToTry) {
     const one = await fetchOneInstagramEmbedPage(embedPageUrl, opts);
     acc = acc == null ? one : mergeInstagramEmbedFetchOutcomes(acc, one, opts.maxSlides);
-    if (acc.http_ok && acc.urls.length >= 2) break;
+    const minUrlsToStop = opts.maxSlides <= 1 ? 1 : 2;
+    if (acc.http_ok && acc.urls.length >= minUrlsToStop) break;
   }
   return acc ?? empty(false);
+}
+
+/** Fresh CDN URL for a single-image Instagram post (og:image / display_url from embed HTML). */
+export async function fetchFreshInstagramImageUrlFromPostEmbed(
+  postUrl: string,
+  config: AppConfig,
+  proxyUrl?: string | null
+): Promise<string | null> {
+  const agent = tryCreateInstagramEmbedProxyAgent(proxyUrl);
+  try {
+    const outcome = await fetchInstagramCarouselUrlsFromEmbedDetailed(postUrl, {
+      maxSlides: 1,
+      timeoutMs: config.CAF_INSTAGRAM_EMBED_FETCH_TIMEOUT_MS,
+      maxBytes: config.CAF_INSTAGRAM_EMBED_MAX_BYTES,
+      ...(agent ? { dispatcher: agent } : {}),
+    });
+    return outcome.urls[0] ?? null;
+  } finally {
+    try {
+      await agent?.close();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Returns {@link fetchInstagramCarouselUrlsFromEmbedDetailed} `.urls` only. */

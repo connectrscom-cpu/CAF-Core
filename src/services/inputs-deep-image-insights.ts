@@ -27,7 +27,7 @@ import {
   isVideoLikeEvidence,
   pickPrimaryImageUrlForDeepAnalysis,
 } from "./inputs-image-url-for-analysis.js";
-import { isCarouselDeepEligible } from "./inputs-carousel-evidence-bundle.js";
+import { isCarouselDeepEligible, instagramPostPermalinkFromPayload, isLikelyStaleInstagramCdnUrl } from "./inputs-carousel-evidence-bundle.js";
 import {
   buildTopPerformerRatingGateRequestOverrides,
   resolveBroadInsightsSampleGate,
@@ -45,10 +45,14 @@ import {
   resolveTopPerformerArchiveMedia,
 } from "./inputs-top-performer-media-archive.js";
 import { getSupabaseStorageClient } from "./supabase-storage.js";
-import { resolveInstagramEmbedHttpProxy } from "./inputs-instagram-embed-carousel-resolver.js";
+import {
+  fetchFreshInstagramImageUrlFromPostEmbed,
+  resolveInstagramEmbedHttpProxy,
+} from "./inputs-instagram-embed-carousel-resolver.js";
 import {
   assertVisionImageUrlsSafeForRemoteFetch,
   relayImageUrlsForOpenAiVision,
+  shouldRelayImageUrlForOpenAi,
   VISION_CDN_PROXY_HINT,
 } from "./inputs-top-performer-vision-relay.js";
 
@@ -289,6 +293,19 @@ export async function runDeepImageInsightsForImport(
 
     let visionUrl = c.image_url;
     let storedInspection: Record<string, unknown> | undefined;
+
+    const postUrlForRefresh = instagramPostPermalinkFromPayload(c.payload);
+    const needsFreshImage =
+      shouldRelayImageUrlForOpenAi(visionUrl) || isLikelyStaleInstagramCdnUrl(visionUrl);
+    if (c.evidence_kind === "instagram_post" && postUrlForRefresh && needsFreshImage) {
+      const fresh = await fetchFreshInstagramImageUrlFromPostEmbed(
+        postUrlForRefresh,
+        config,
+        embedHttpProxyCfg.url
+      );
+      if (fresh) visionUrl = fresh;
+    }
+
     if (mediaArchiveRequested && mediaSupabaseConfigured) {
       const arch = await archiveTopPerformerVisionMedia(config, {
         projectSlug,
@@ -296,23 +313,35 @@ export async function runDeepImageInsightsForImport(
         sourceEvidenceRowId: c.id,
         tier: "top_performer_deep",
         role: "carousel_slide",
-        urls: [c.image_url],
+        urls: [visionUrl],
         ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
       });
+      storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
       const it0 = arch.items[0];
       const signed = it0?.ok ? it0.vision_fetch_url || it0.public_url : null;
-      if (!signed) {
-        const err = it0?.error ?? "unknown";
-        throw new Error(`Could not archive top-performer image to Supabase (${err}). ${VISION_CDN_PROXY_HINT}`);
+      if (signed) {
+        visionUrl = signed;
+      } else if (it0?.error) {
+        storedInspection = {
+          ...storedInspection,
+          archive_download_error: it0.error,
+          archive_source_url: visionUrl,
+        };
       }
-      visionUrl = signed;
-      storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
     }
 
-    const imgRelay = await relayImageUrlsForOpenAiVision(config, [visionUrl], {
-      http_proxy_url: embedHttpProxyCfg.url,
-    });
-    visionUrl = imgRelay.urls[0] ?? visionUrl;
+    try {
+      const imgRelay = await relayImageUrlsForOpenAiVision(config, [visionUrl], {
+        http_proxy_url: embedHttpProxyCfg.url,
+      });
+      visionUrl = imgRelay.urls[0] ?? visionUrl;
+    } catch (relayErr) {
+      const relayMsg = relayErr instanceof Error ? relayErr.message : String(relayErr);
+      const postHint = postUrlForRefresh ? ` Post: ${postUrlForRefresh}.` : "";
+      throw new Error(
+        `Could not download top-performer image for vision (${relayMsg}).${postHint} ${VISION_CDN_PROXY_HINT}`
+      );
+    }
     assertVisionImageUrlsSafeForRemoteFetch([visionUrl]);
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
