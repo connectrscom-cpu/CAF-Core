@@ -8,6 +8,7 @@ import {
   openaiChatMultimodal,
   type ChatContentPart,
 } from "./openai-chat-multimodal.js";
+import { assertVisionImageUrlsSafeForRemoteFetch } from "./inputs-top-performer-vision-relay.js";
 
 export type ProcessingVisionProvider = "openai" | "nvidia";
 
@@ -117,6 +118,11 @@ export async function processingVisionChatMultimodal(
   const user_content = clampMultimodalImagesForProvider(params.user_content, call.maxImagesPerRequest, {
     deckSlideCount: params.deckSlideCount,
   });
+
+  const imageUrls = user_content
+    .filter((p): p is { type: "image_url"; image_url: { url: string } } => p.type === "image_url")
+    .map((p) => p.image_url.url);
+  assertVisionImageUrlsSafeForRemoteFetch(imageUrls);
 
   const out = await openaiChatMultimodal(
     call.apiKey,

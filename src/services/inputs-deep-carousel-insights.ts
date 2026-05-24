@@ -3,7 +3,8 @@
  * **Instagram only** (`instagram_post`); other platforms are skipped.
  * Slide URLs come from `parseCarouselSlideUrls(payload)` (**Apify / ingest-first** ordered URLs from
  * `carousel_slide_urls_json`, `childPosts`, etc., then explicit list keys + top-level covers + **nested**
- * Graph/scraper JSON), merged with embed fetch only when enabled and slides are still short.
+ * Graph/scraper JSON). When embed fetch is enabled, also re-fetches slide URLs from the post permalink
+ * when stored CDN links are missing or stale (old imports — Instagram `oe=` expiry / ~7d TTL).
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -33,6 +34,7 @@ import {
   instagramCarouselStructuralHintPresent,
   instagramPostPermalinkFromPayload,
   parseCarouselCaptionContext,
+  carouselSlideUrlsLookStale,
   parseCarouselSlideUrls,
 } from "./inputs-carousel-evidence-bundle.js";
 import {
@@ -58,7 +60,12 @@ import {
   postUrlForTopPerformerPreview,
   type TopPerformerMediaQualifierPreviewRow,
 } from "./inputs-top-performer-qualifying-preview.js";
-import { relayImageUrlsForOpenAiVision } from "./inputs-top-performer-vision-relay.js";
+import {
+  assertVisionImageUrlsSafeForRemoteFetch,
+  relayImageUrlsForOpenAiVision,
+  shouldRelayImageUrlForOpenAi,
+  VISION_CDN_PROXY_HINT,
+} from "./inputs-top-performer-vision-relay.js";
 import {
   extractInstagramPermalinkShortcode,
   fetchInstagramCarouselUrlsFromEmbedDetailed,
@@ -592,7 +599,6 @@ export async function runDeepCarouselInsightsForImport(
         if (isVideoLikeEvidence(r.evidence_kind, payload)) continue;
         const baseSlides = parseCarouselSlideUrls(payload, maxSlides);
         if (!instagramCarouselStructuralHintPresent(payload)) continue;
-        if (baseSlides.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) continue;
         const postUrl = instagramPostPermalinkFromPayload(payload);
         const shortcode = postUrl ? extractInstagramPermalinkShortcode(postUrl) : null;
         if (!postUrl || !shortcode) continue;
@@ -630,7 +636,10 @@ export async function runDeepCarouselInsightsForImport(
         } else {
           instagramEmbedFetchCacheHits++;
         }
-        const merged = mergeUniqueSlideUrls(p.baseSlides, outcome.urls, maxSlides);
+        const merged =
+          outcome.http_ok && outcome.urls.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP
+            ? mergeUniqueSlideUrls([], outcome.urls, maxSlides)
+            : mergeUniqueSlideUrls(p.baseSlides, outcome.urls, maxSlides);
         if (merged.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) {
           embedSlideOverrideByRowId.set(p.id, merged);
         }
@@ -680,7 +689,9 @@ export async function runDeepCarouselInsightsForImport(
     let usedEmbedFetch = false;
     if (embedSlideOverrideByRowId.has(r.id)) {
       slideUrls = embedSlideOverrideByRowId.get(r.id)!;
-      usedEmbedFetch = preEmbedCount < MIN_CAROUSEL_SLIDES_FOR_DEEP;
+      usedEmbedFetch =
+        preEmbedCount < MIN_CAROUSEL_SLIDES_FOR_DEEP ||
+        carouselSlideUrlsLookStale(parseCarouselSlideUrls(payload, maxSlides));
     }
     if (slideUrls.length < MIN_CAROUSEL_SLIDES_FOR_DEEP) {
       skippedInstagramFewSlides++;
@@ -782,6 +793,31 @@ ${textBundle}`;
     let storedInspection: Record<string, unknown> | undefined;
     let visionSlideUrls = [...c.slide_urls];
 
+    const postUrlForRefresh = instagramPostPermalinkFromPayload(c.payload);
+    const needsFreshSlides =
+      visionSlideUrls.some((u) => shouldRelayImageUrlForOpenAi(u)) ||
+      carouselSlideUrlsLookStale(visionSlideUrls);
+    if (embedCarouselFetchEnabled && postUrlForRefresh && needsFreshSlides) {
+      const rowEmbedAgent = tryCreateInstagramEmbedProxyAgent(embedHttpProxyCfg.url);
+      try {
+        const fresh = await fetchInstagramCarouselUrlsFromEmbedDetailed(postUrlForRefresh, {
+          maxSlides,
+          timeoutMs: config.CAF_INSTAGRAM_EMBED_FETCH_TIMEOUT_MS,
+          maxBytes: config.CAF_INSTAGRAM_EMBED_MAX_BYTES,
+          ...(rowEmbedAgent ? { dispatcher: rowEmbedAgent } : {}),
+        });
+        if (fresh.http_ok && fresh.urls.length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) {
+          visionSlideUrls = mergeUniqueSlideUrls([], fresh.urls, maxSlides);
+        }
+      } finally {
+        try {
+          await rowEmbedAgent?.close();
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
     if (mediaArchiveRequested && mediaSupabaseConfigured) {
       const arch = await archiveTopPerformerVisionMedia(config, {
         projectSlug,
@@ -789,7 +825,7 @@ ${textBundle}`;
         sourceEvidenceRowId: c.id,
         tier: "top_performer_carousel",
         role: "carousel_slide",
-        urls: c.slide_urls,
+        urls: visionSlideUrls,
         ...(embedHttpProxyCfg.url ? { http_proxy_url: embedHttpProxyCfg.url } : {}),
       });
       for (const it of arch.items) {
@@ -797,11 +833,26 @@ ${textBundle}`;
         else if (it.error) mediaArchiveErrors++;
       }
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
-      visionSlideUrls = c.slide_urls.map((src, i) => {
+      const archivedUrls: string[] = [];
+      for (let i = 0; i < visionSlideUrls.length; i++) {
         const it = arch.items[i];
-        const relay = it?.ok ? it.vision_fetch_url || it.public_url : null;
-        return relay || src;
-      });
+        const signed = it?.ok ? it.vision_fetch_url || it.public_url : null;
+        if (!signed) {
+          const src = visionSlideUrls[i] ?? "";
+          const err = it?.error ?? "unknown";
+          const postUrl = instagramPostPermalinkFromPayload(c.payload);
+          throw new Error(
+            `Could not archive carousel slide ${i + 1} to Supabase (${err}). ` +
+              (carouselSlideUrlsLookStale([src])
+                ? "Stored Instagram CDN URL looks expired — carousel pass should refresh from embed when post_url is present. "
+                : "") +
+              (postUrl ? `Post: ${postUrl}. ` : "") +
+              VISION_CDN_PROXY_HINT
+          );
+        }
+        archivedUrls.push(signed);
+      }
+      visionSlideUrls = archivedUrls;
     }
 
     const slideRelay = await relayImageUrlsForOpenAiVision(config, visionSlideUrls, {
@@ -811,6 +862,7 @@ ${textBundle}`;
     if (slideRelay.errors.length > 0) {
       mediaArchiveErrors += slideRelay.errors.length;
     }
+    assertVisionImageUrlsSafeForRemoteFetch(visionSlideUrls);
 
     const visionOut = await runCarouselDeckVisionAnalysis({
       config,

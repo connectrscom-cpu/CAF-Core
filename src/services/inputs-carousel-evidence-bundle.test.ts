@@ -3,6 +3,8 @@ import {
   instagramCarouselStructuralHintPresent,
   instagramPostPermalinkFromPayload,
   isCarouselDeepEligible,
+  isLikelyStaleInstagramCdnUrl,
+  carouselSlideUrlsLookStale,
   maxInstagramCarouselImgIndexFromPayload,
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
   parseCarouselSlideUrls,
@@ -173,5 +175,20 @@ describe("isCarouselDeepEligible", () => {
     });
     const urls = parseCarouselSlideUrls({ media_type: "Sidecar", raw_scrape: blob }, 8);
     expect(urls).toHaveLength(2);
+  });
+});
+
+describe("isLikelyStaleInstagramCdnUrl", () => {
+  it("detects expired oe= hex timestamp on Instagram CDN URLs", () => {
+    const expired =
+      "https://scontent-lga3-2.cdninstagram.com/v/t51.82787-15/x.jpg?oe=00000001&_nc_sid=10d13b";
+    expect(isLikelyStaleInstagramCdnUrl(expired, 1_700_000_000_000)).toBe(true);
+    expect(carouselSlideUrlsLookStale([expired], 1_700_000_000_000)).toBe(true);
+  });
+
+  it("treats far-future oe= as not stale", () => {
+    const fresh =
+      "https://scontent-lga3-2.cdninstagram.com/v/t51.82787-15/x.jpg?oe=ffffffff&_nc_sid=10d13b";
+    expect(isLikelyStaleInstagramCdnUrl(fresh, 1_700_000_000_000)).toBe(false);
   });
 });

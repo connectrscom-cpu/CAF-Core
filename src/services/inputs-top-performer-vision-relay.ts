@@ -33,6 +33,29 @@ export function shouldRelayImageUrlForOpenAi(url: string): boolean {
   return !isOpenAiDirectFetchableImageUrl(u);
 }
 
+export const VISION_CDN_PROXY_HINT =
+  "Set Fly secret CAF_INSTAGRAM_EMBED_HTTP_PROXY (HTTP CONNECT) so Core can download Instagram CDN slides, " +
+  "or ensure Supabase top-performer media archive succeeds (signed storage URLs). " +
+  "Old XLSX imports often store expired Instagram CDN links — carousel pass re-fetches slides from the post permalink when possible.";
+
+/**
+ * Remote vision providers (NVIDIA Nemotron, OpenAI) cannot fetch Instagram/TikTok CDN URLs from datacenter IPs.
+ * Call after archive + relay; throws if any URL would still be fetched server-side from a blocked host.
+ */
+export function assertVisionImageUrlsSafeForRemoteFetch(urls: string[]): void {
+  const blocked: string[] = [];
+  for (const raw of urls) {
+    const u = finalizeHttpsImageUrlForOpenAiVision(raw);
+    if (shouldRelayImageUrlForOpenAi(u)) blocked.push(u);
+  }
+  if (blocked.length === 0) return;
+  const sample = blocked[0]!.length > 96 ? `${blocked[0]!.slice(0, 96)}…` : blocked[0];
+  throw new Error(
+    `Vision blocked: ${blocked.length} slide image URL(s) are not reachable by the vision API ` +
+      `(Instagram/TikTok CDN returns 403 from server egress). Example: ${sample}. ${VISION_CDN_PROXY_HINT}`
+  );
+}
+
 export interface RelayImageUrlsForOpenAiResult {
   urls: string[];
   relayed_count: number;
@@ -76,7 +99,9 @@ export async function relayImageUrlsForOpenAiVision(
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         errors.push({ index: i, source_url: raw, error: msg });
-        out.push(finalized);
+        throw new Error(
+          `Could not download slide image ${i + 1} for vision (${msg}). ${VISION_CDN_PROXY_HINT}`
+        );
       }
     }
   } finally {

@@ -364,6 +364,29 @@ export function isCarouselDeepEligible(payload: Record<string, unknown>, maxSlid
   return parseCarouselSlideUrls(payload, maxSlides).length >= MIN_CAROUSEL_SLIDES_FOR_DEEP;
 }
 
+/**
+ * Instagram CDN URLs often carry an `oe` hex Unix expiry; after that (or ~7d from scrape) downloads return 403.
+ */
+export function isLikelyStaleInstagramCdnUrl(url: string, nowMs = Date.now()): boolean {
+  try {
+    const u = new URL(url.trim());
+    const host = u.hostname.toLowerCase();
+    if (!host.includes("cdninstagram") && !host.includes("fbcdn")) return false;
+    const oe = u.searchParams.get("oe");
+    if (!oe || !/^[0-9a-f]+$/i.test(oe)) return false;
+    const expSec = parseInt(oe, 16);
+    if (!Number.isFinite(expSec) || expSec <= 0) return false;
+    return expSec * 1000 < nowMs;
+  } catch {
+    return false;
+  }
+}
+
+/** True when any stored slide URL looks expired (carousel pass should re-fetch via embed). */
+export function carouselSlideUrlsLookStale(urls: string[], nowMs = Date.now()): boolean {
+  return urls.some((u) => isLikelyStaleInstagramCdnUrl(u, nowMs));
+}
+
 export function parseCarouselCaptionContext(payload: Record<string, unknown>, maxChars = 6000): string {
   const parts: string[] = [];
   for (const k of ["caption", "Caption", "body_text", "main_text", "accessibility_caption"]) {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isOpenAiDirectFetchableImageUrl, shouldRelayImageUrlForOpenAi } from "./inputs-top-performer-vision-relay.js";
+import {
+  assertVisionImageUrlsSafeForRemoteFetch,
+  isOpenAiDirectFetchableImageUrl,
+  shouldRelayImageUrlForOpenAi,
+} from "./inputs-top-performer-vision-relay.js";
 
 describe("inputs-top-performer-vision-relay", () => {
   it("flags Instagram CDN URLs for relay", () => {
@@ -16,5 +20,15 @@ describe("inputs-top-performer-vision-relay", () => {
         "https://xyz.supabase.co/storage/v1/object/sign/assets/foo.jpg?token=abc"
       )
     ).toBe(true);
+  });
+
+  it("assertVisionImageUrlsSafeForRemoteFetch rejects Instagram CDN URLs", () => {
+    const ig =
+      "https://scontent-lga3-2.cdninstagram.com/v/t51.82787-15/700124720_18455327794112293_4174262584309191_n.jpg";
+    expect(() => assertVisionImageUrlsSafeForRemoteFetch([ig])).toThrow(/Vision blocked/);
+    expect(() => assertVisionImageUrlsSafeForRemoteFetch([ig])).toThrow(/CAF_INSTAGRAM_EMBED_HTTP_PROXY/);
+    expect(() =>
+      assertVisionImageUrlsSafeForRemoteFetch(["data:image/jpeg;base64,abc"])
+    ).not.toThrow();
   });
 });
