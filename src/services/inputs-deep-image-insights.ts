@@ -98,6 +98,11 @@ export interface RunDeepImageInsightsResult {
   skipped_video: number;
   /** Multi-slide carousels use `top_performer_carousel` instead of single-image deep. */
   skipped_carousel: number;
+  /** Non-Instagram rows (reddit, facebook, scraped) excluded from single-image deep. */
+  skipped_non_instagram: number;
+  /** Rows that failed during vision analysis (error isolated, processing continued). */
+  skipped_error: number;
+  row_errors?: Array<{ row_id: string; error: string }>;
   deep_insights_total: number;
   percentile_gate_active?: boolean;
   percentile_top_fraction?: number;
@@ -216,10 +221,15 @@ export async function runDeepImageInsightsForImport(
   let skippedNoImage = 0;
   let skippedCarousel = 0;
   let skippedBroadInsightsGate = 0;
+  let skippedNonInstagram = 0;
 
   for (const r of dbRows) {
-    if (r.evidence_kind === "tiktok_video") {
-      skippedVideo++;
+    if (r.evidence_kind !== "instagram_post") {
+      if (r.evidence_kind === "tiktok_video" || isVideoLikeEvidence(r.evidence_kind, (r.payload_json ?? {}) as Record<string, unknown>)) {
+        skippedVideo++;
+      } else {
+        skippedNonInstagram++;
+      }
       continue;
     }
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
@@ -287,7 +297,11 @@ export async function runDeepImageInsightsForImport(
   };
 
   let analyzed = 0;
+  let skippedError = 0;
+  const rowErrors: Array<{ row_id: string; error: string }> = [];
+
   for (const c of top) {
+    try {
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2500);
     const system = TOP_PERFORMER_IMAGE_SYSTEM_PROMPT;
 
@@ -297,7 +311,7 @@ export async function runDeepImageInsightsForImport(
     const postUrlForRefresh = instagramPostPermalinkFromPayload(c.payload);
     const needsFreshImage =
       shouldRelayImageUrlForOpenAi(visionUrl) || isLikelyStaleInstagramCdnUrl(visionUrl);
-    if (c.evidence_kind === "instagram_post" && postUrlForRefresh && needsFreshImage) {
+    if (postUrlForRefresh && needsFreshImage) {
       const fresh = await fetchFreshInstagramImageUrlFromPostEmbed(
         postUrlForRefresh,
         config,
@@ -412,6 +426,12 @@ export async function runDeepImageInsightsForImport(
       ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;
+    } catch (rowErr) {
+      skippedError++;
+      const msg = rowErr instanceof Error ? rowErr.message : String(rowErr);
+      rowErrors.push({ row_id: c.id, error: msg.slice(0, 500) });
+      console.warn(`[${STEP}] row ${c.id} failed, continuing: ${msg.slice(0, 200)}`);
+    }
   }
 
   const deepTotal = await countEvidenceRowInsightsByImportTier(db, importId, "top_performer_deep");
@@ -425,6 +445,9 @@ export async function runDeepImageInsightsForImport(
     skipped_no_image: skippedNoImage,
     skipped_video: skippedVideo,
     skipped_carousel: skippedCarousel,
+    skipped_non_instagram: skippedNonInstagram,
+    skipped_error: skippedError,
+    ...(rowErrors.length > 0 ? { row_errors: rowErrors } : {}),
     deep_insights_total: deepTotal,
     percentile_gate_active: percentileConfig.active,
     percentile_top_fraction: percentileConfig.fraction,
