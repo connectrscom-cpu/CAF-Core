@@ -50,10 +50,8 @@ import {
   resolveInstagramEmbedHttpProxy,
 } from "./inputs-instagram-embed-carousel-resolver.js";
 import {
-  assertVisionImageUrlsSafeForRemoteFetch,
   relayImageUrlsForOpenAiVision,
   shouldRelayImageUrlForOpenAi,
-  VISION_CDN_PROXY_HINT,
 } from "./inputs-top-performer-vision-relay.js";
 
 const STEP = "inputs_top_performer_image_insight";
@@ -349,14 +347,10 @@ export async function runDeepImageInsightsForImport(
         http_proxy_url: embedHttpProxyCfg.url,
       });
       visionUrl = imgRelay.urls[0] ?? visionUrl;
-    } catch (relayErr) {
-      const relayMsg = relayErr instanceof Error ? relayErr.message : String(relayErr);
-      const postHint = postUrlForRefresh ? ` Post: ${postUrlForRefresh}.` : "";
-      throw new Error(
-        `Could not download top-performer image for vision (${relayMsg}).${postHint} ${VISION_CDN_PROXY_HINT}`
-      );
+    } catch {
+      // Relay download failed (e.g. Instagram CDN 403 from datacenter IP).
+      // Keep the current URL and let the vision provider try fetching it directly.
     }
-    assertVisionImageUrlsSafeForRemoteFetch([visionUrl]);
 
     const userText = `Evidence kind: ${c.evidence_kind}\nPre-LLM score: ${c.pre_llm_score}\nContext:\n${textBundle}`;
 
