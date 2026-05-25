@@ -236,6 +236,7 @@ export default function SignalPackDetailPage() {
               ideasFromInsightsMeta={ideasFromInsightsMeta}
               importId={importIdForPack}
               navHref={navHref}
+              signalPackId={packId}
             />
           ) : (
             <p style={{ color: "var(--muted)", fontSize: 13, maxWidth: 720 }}>

@@ -179,7 +179,8 @@ async function referencePassthroughResult(
         mimic_provider: call.provider,
         fallback: "reference_passthrough",
         fallback_reason: "visual_genai_unavailable",
-        prompt: params.prompt.slice(0, 500),
+        prompt: params.prompt,
+        reference_url: params.referenceUrl,
       },
       responseJson: { used_reference_bytes: buffer.length, mime_type: refMime },
       latencyMs: 0,
@@ -275,7 +276,8 @@ async function auditImageEditCall(args: {
     requestJson: {
       endpoint: args.call.editsEndpoint,
       mimic_provider: args.call.provider,
-      prompt: args.params.prompt.slice(0, 500),
+      prompt: args.params.prompt,
+      reference_url: args.params.referenceUrl,
       size: args.params.size ?? args.config.MIMIC_IMAGE_DEFAULT_SIZE,
       ...(args.call.provider === "openai"
         ? { input_fidelity: args.params.inputFidelity ?? args.config.MIMIC_IMAGE_INPUT_FIDELITY }
@@ -413,7 +415,7 @@ function buildDashScopeEditBody(
       n: 1,
       watermark: false,
       negative_prompt: " ",
-      prompt_extend: true,
+      prompt_extend: false,
       size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
     },
   };
@@ -481,8 +483,11 @@ async function editViaDashScope(config: AppConfig, params: MimicImageEditParams)
       requestJson: {
         endpoint: call.editsEndpoint,
         mimic_provider: call.provider,
-        prompt: params.prompt.slice(0, 500),
+        prompt: params.prompt,
+        reference_url: params.referenceUrl,
         size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
+        input: body.input,
+        parameters: body.parameters,
       },
       responseJson: res.ok ? { request_id: parsed.request_id } : parsed,
       latencyMs,

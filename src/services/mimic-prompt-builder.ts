@@ -38,29 +38,35 @@ export function buildMimicCarouselSlidePrompt(opts: {
   onImageCopy?: string | null;
 }): string {
   const parts = [
-    "Recreate this carousel slide exactly: same visual style, layout, typography placement, colors, spacing, and decorative framing as the reference.",
-    "Remove all original on-image text from the reference before applying new copy.",
+    "Recreate this carousel slide faithfully: match the visual style, layout, color palette, spacing, and decorative framing of the reference image.",
+    "Remove all original text from the reference.",
   ];
   const copy = String(opts.onImageCopy ?? "").trim();
   if (copy) {
-    parts.push(
-      `Replace on-slide text with this new copy only — twist the wording, keep the same design language and hierarchy (headline vs body): """${copy.slice(0, 1200)}""".`
-    );
+    const lines = copy.split(/\n{2,}/);
+    const headline = lines[0]?.trim() ?? "";
+    const body = lines.slice(1).join("\n").trim();
+    if (headline && body) {
+      parts.push(
+        `Place this text on the slide using the same text hierarchy and positioning as the reference. Headline: """${headline.slice(0, 400)}""" Body: """${body.slice(0, 800)}""".`
+      );
+    } else {
+      parts.push(
+        `Place this text on the slide matching the reference text positioning: """${copy.slice(0, 1200)}""".`
+      );
+    }
   } else {
     parts.push(
-      "Leave text regions clean or use neutral placeholder blocks — do not reproduce reference wording verbatim."
+      "Leave text areas empty or use neutral placeholder blocks."
     );
   }
-  parts.push(
-    "Do not redesign the slide. Preserve layout archetype and design energy; vary decorative details subtly without cloning logos or faces."
-  );
+  parts.push("Do not add logos, brand marks, or recognizable faces.");
   if (opts.layoutTemplate?.trim()) {
-    parts.push(`Layout archetype: ${opts.layoutTemplate.trim()}.`);
+    parts.push(`Layout style: ${opts.layoutTemplate.trim()}.`);
   }
   if (opts.visualDescription?.trim()) {
-    parts.push(`Visual content (adapt subtly): ${opts.visualDescription.trim().slice(0, 400)}.`);
+    parts.push(`Visual context: ${opts.visualDescription.trim().slice(0, 400)}.`);
   }
-  parts.push(`Slide index context: ${opts.slideIndex}.`);
   return parts.join(" ");
 }
 

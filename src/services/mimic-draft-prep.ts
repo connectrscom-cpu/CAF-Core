@@ -16,11 +16,13 @@ import {
   isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
+import type { MimicMode } from "../domain/mimic-payload.js";
 import { classifyMimicMode } from "./mimic-mode-classifier.js";
 import {
   resolveMimicReferenceFromLineage,
   type ResolvedMimicReference,
 } from "./mimic-reference-resolver.js";
+import { getMimicModeOverridesFromPack } from "../repositories/signal-packs.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
 
@@ -44,15 +46,17 @@ function inspectionFolderFromEntry(entry: Record<string, unknown>): {
 
 function buildMimicPayloadFromResolved(
   flowType: string,
-  resolved: ResolvedMimicReference
+  resolved: ResolvedMimicReference,
+  modeOverride?: MimicMode | null
 ): { mimic: MimicPayloadV1; visualGuideline: ReturnType<typeof slimVisualGuidelineFromEntry> } {
-  const { mode, slide_plans } = classifyMimicMode(flowType, resolved.guideline_entry);
+  const { mode, slide_plans } = classifyMimicMode(flowType, resolved.guideline_entry, modeOverride);
   const visualGuideline = slimVisualGuidelineFromEntry(resolved.guideline_entry);
   const folder = inspectionFolderFromEntry(resolved.guideline_entry);
 
   const mimic: MimicPayloadV1 = {
     schema_version: 1,
     mode,
+    mode_override: modeOverride ?? null,
     classified_at: new Date().toISOString(),
     source_insights_id: resolved.source_insights_id,
     source_evidence_row_id: resolved.source_evidence_row_id,
@@ -104,7 +108,11 @@ async function resolveMimicPayloadForJob(
   }
 
   assertMimicReferenceEligibleForFlow(job.flow_type, resolved.reference_items);
-  const built = buildMimicPayloadFromResolved(job.flow_type, resolved);
+
+  // Read any manual mode override set by a reviewer on the signal pack.
+  const overrides = getMimicModeOverridesFromPack(lineage.signal_pack);
+  const packOverride = overrides[resolved.source_insights_id] as MimicMode | null | undefined;
+  const built = buildMimicPayloadFromResolved(job.flow_type, resolved, packOverride ?? null);
 
   if (resolved.reference_tier_fallback) {
     logPipelineEvent("warn", "generate", "mimic reference tier fallback", {

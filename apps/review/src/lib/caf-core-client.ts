@@ -445,6 +445,36 @@ export async function getHeygenLastSubmit(
   return data?.submit ?? null;
 }
 
+export interface MimicImageAudit {
+  id: string;
+  created_at: string;
+  step: string;
+  provider: string;
+  model: string | null;
+  ok: boolean;
+  error_message: string | null;
+  prompt: string | null;
+  endpoint: string | null;
+  reference_url: string | null;
+  size: string | null;
+  latency_ms: number | null;
+}
+
+export async function getMimicImageAudits(
+  projectSlug: string,
+  taskId: string
+): Promise<MimicImageAudit[]> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return [];
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/mimic-image-audits?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/mimic-image-audits`;
+  const data = await coreGet<{ ok: boolean; audits: MimicImageAudit[] }>(path);
+  return data?.audits ?? [];
+}
+
 export interface JobLineageResponse {
   ok: boolean;
   lineage: Record<string, unknown>;
@@ -1424,4 +1454,18 @@ export async function queuePendingRework(args: {
     ...(args.run_id?.trim() ? { run_id: args.run_id.trim() } : {}),
     limit: args.limit ?? 200,
   });
+}
+
+export type MimicModeOverrideValue = "carousel_visual" | "template_bg" | null;
+
+/** Set or clear the mimic mode override on a carousel job. */
+export async function setMimicModeOverride(
+  projectSlug: string,
+  taskId: string,
+  modeOverride: MimicModeOverrideValue
+): Promise<{ ok: boolean; mode_override: MimicModeOverrideValue }> {
+  return corePostRequired<{ ok: boolean; mode_override: MimicModeOverrideValue }>(
+    `/v1/review-queue/${encodeURIComponent(projectSlug)}/mimic-mode-override`,
+    { task_id: taskId, mode_override: modeOverride }
+  );
 }

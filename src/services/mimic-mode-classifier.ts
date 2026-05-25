@@ -2,6 +2,7 @@ import type { MimicMode, MimicSlidePlan, MimicPayloadV1 } from "../domain/mimic-
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
+  hasVisualLedDeckCues,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
@@ -10,9 +11,14 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
 
+/**
+ * Classify mimic mode for a carousel entry.
+ * If `modeOverride` is provided (from a reviewer's manual pick), it takes precedence.
+ */
 export function classifyMimicMode(
   flowType: string,
-  entry: Record<string, unknown>
+  entry: Record<string, unknown>,
+  modeOverride?: MimicMode | null
 ): { mode: MimicMode; slide_plans?: MimicSlidePlan[] } {
   if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) {
     return { mode: "image_full" };
@@ -22,10 +28,12 @@ export function classifyMimicMode(
   }
 
   const slides = aestheticSlideRecords(entry);
+  const refFrames = entryReferenceFrameCount(entry);
+  const slideCount = Math.max(slides.length, refFrames, 1);
 
-  if (requiresCopyBeforeVisualMimic(entry)) {
-    const refFrames = entryReferenceFrameCount(entry);
-    const slideCount = Math.max(slides.length, refFrames, 1);
+  const effectiveMode: MimicMode = modeOverride ?? determineAutoMode(entry, slides);
+
+  if (effectiveMode === "template_bg") {
     const unifiedBg = deckUsesUnifiedBackgroundPlate(entry);
     const slide_plans: MimicSlidePlan[] = [];
     for (let i = 0; i < slideCount; i++) {
@@ -39,14 +47,11 @@ export function classifyMimicMode(
     return { mode: "template_bg", slide_plans };
   }
 
-  const refFrames = entryReferenceFrameCount(entry);
-  const slideCount = Math.max(slides.length, refFrames, 1);
   const slide_plans: MimicSlidePlan[] = [];
   for (let i = 0; i < slideCount; i++) {
     const s = slides[i] ?? {};
     const density = String(s.text_density ?? "").toLowerCase();
     const role = String(s.image_or_photo_role ?? "").toLowerCase();
-    // Text-only slides use template overlay; otherwise default to full-bleed mimic when role is missing.
     const fullBleed = role !== "none" && density !== "high";
     slide_plans.push({
       slide_index: i + 1,
@@ -56,6 +61,24 @@ export function classifyMimicMode(
   }
 
   return { mode: "carousel_visual", slide_plans };
+}
+
+function determineAutoMode(
+  entry: Record<string, unknown>,
+  slides: Record<string, unknown>[]
+): MimicMode {
+  if (!requiresCopyBeforeVisualMimic(entry)) return "carousel_visual";
+
+  // Visual-led deck cues can rescue entries that would otherwise be template_bg
+  // (e.g. "educational" entries that are actually photo-driven with short overlays).
+  if (hasVisualLedDeckCues(entry) && slides.length > 0) {
+    const heavySlides = slides.filter(
+      (s) => String(s.text_density ?? "").toLowerCase() === "high"
+    );
+    if (heavySlides.length < slides.length / 2) return "carousel_visual";
+  }
+
+  return "template_bg";
 }
 
 /** Ensure every output slide has a render plan (cycle reference frames for extras). */
@@ -98,6 +121,6 @@ export function reconcileMimicPayloadAtRender(
       })),
     },
   };
-  const classified = classifyMimicMode(flowType, entry);
+  const classified = classifyMimicMode(flowType, entry, mimic.mode_override);
   return { ...mimic, mode: classified.mode, slide_plans: classified.slide_plans ?? mimic.slide_plans };
 }

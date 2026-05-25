@@ -208,6 +208,43 @@ export async function mergeSignalPackDerivedGlobalsJson(
   return row ? 1 : 0;
 }
 
+/**
+ * Set or clear a mimic mode override for a visual guideline entry (by insights_id) on the signal pack.
+ * Stored at `derived_globals_json.mimic_mode_overrides[insights_id]`.
+ */
+export async function setSignalPackMimicModeOverride(
+  db: Pool,
+  signalPackId: string,
+  insightsId: string,
+  modeOverride: string | null
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs
+        SET derived_globals_json = jsonb_set(
+              COALESCE(derived_globals_json, '{}'::jsonb),
+              '{mimic_mode_overrides}',
+              COALESCE(derived_globals_json->'mimic_mode_overrides', '{}'::jsonb) || $3::jsonb
+            )
+      WHERE id = $1::uuid
+      RETURNING 1::text AS n`,
+    [signalPackId, insightsId, JSON.stringify({ [insightsId]: modeOverride })]
+  );
+  return row ? 1 : 0;
+}
+
+/** Read the mimic_mode_overrides map from a signal pack. */
+export function getMimicModeOverridesFromPack(
+  signalPack: SignalPackRow | null
+): Record<string, string | null> {
+  if (!signalPack) return {};
+  const dg = signalPack.derived_globals_json;
+  if (!dg || typeof dg !== "object" || Array.isArray(dg)) return {};
+  const overrides = (dg as Record<string, unknown>).mimic_mode_overrides;
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) return {};
+  return overrides as Record<string, string | null>;
+}
+
 function j(v: unknown): string | null {
   if (v == null) return null;
   return typeof v === "string" ? v : JSON.stringify(v);

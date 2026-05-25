@@ -172,6 +172,113 @@ export interface LatestHeygenSubmitAudit {
  * Returns null when the task has never been submitted to HeyGen. Never throws — we prefer a
  * missing panel to a broken review screen.
  */
+export interface MimicImageAuditRow {
+  id: string;
+  created_at: string;
+  step: string;
+  provider: string;
+  model: string | null;
+  ok: boolean;
+  error_message: string | null;
+  /** Exact text prompt sent to Qwen / image-edit provider. */
+  prompt: string | null;
+  endpoint: string | null;
+  reference_url: string | null;
+  size: string | null;
+  latency_ms: number | null;
+}
+
+function pickMimicAuditPrompt(req: Record<string, unknown>): string | null {
+  const direct = typeof req.prompt === "string" ? req.prompt.trim() : "";
+  if (direct) return direct;
+  const body = req.body;
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const b = body as Record<string, unknown>;
+    const p = typeof b.prompt === "string" ? b.prompt.trim() : "";
+    if (p) return p;
+  }
+  const input = req.input;
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const messages = (input as Record<string, unknown>).messages;
+    if (Array.isArray(messages)) {
+      for (const msg of messages) {
+        if (!msg || typeof msg !== "object" || Array.isArray(msg)) continue;
+        const content = (msg as Record<string, unknown>).content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+          const text = (part as Record<string, unknown>).text;
+          if (typeof text === "string" && text.trim()) return text.trim();
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function pickMimicAuditReferenceUrl(req: Record<string, unknown>): string | null {
+  const direct = typeof req.reference_url === "string" ? req.reference_url.trim() : "";
+  if (direct) return direct;
+  const input = req.input;
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const messages = (input as Record<string, unknown>).messages;
+    if (Array.isArray(messages)) {
+      for (const msg of messages) {
+        if (!msg || typeof msg !== "object" || Array.isArray(msg)) continue;
+        const content = (msg as Record<string, unknown>).content;
+        if (!Array.isArray(content)) continue;
+        for (const part of content) {
+          if (!part || typeof part !== "object" || Array.isArray(part)) continue;
+          const image = (part as Record<string, unknown>).image;
+          if (typeof image === "string" && image.trim()) return image.trim();
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Mimic carousel/image Qwen calls logged under step `mimic_bg_extract*` / `mimic_slide_gen_*`. */
+export async function listMimicImageAuditsForTask(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  limit = 40
+): Promise<MimicImageAuditRow[]> {
+  const { rows } = await db.query(
+    `SELECT id::text, created_at::text, step, provider, model, ok, error_message,
+            request_json, latency_ms
+     FROM caf_core.api_call_audit
+     WHERE project_id = $1
+       AND task_id = $2
+       AND (
+         step LIKE 'mimic_bg_extract%' OR
+         step LIKE 'mimic_slide_gen_%' OR
+         step = 'mimic_image_edit'
+       )
+     ORDER BY created_at ASC
+     LIMIT $3`,
+    [projectId, taskId, limit]
+  );
+  return rows.map((r) => {
+    const req = (r.request_json as Record<string, unknown> | null) ?? {};
+    return {
+      id: String(r.id),
+      created_at: String(r.created_at),
+      step: String(r.step),
+      provider: String(r.provider),
+      model: r.model != null ? String(r.model) : null,
+      ok: Boolean(r.ok),
+      error_message: r.error_message != null ? String(r.error_message) : null,
+      prompt: pickMimicAuditPrompt(req),
+      endpoint: typeof req.endpoint === "string" ? req.endpoint : null,
+      reference_url: pickMimicAuditReferenceUrl(req),
+      size: typeof req.size === "string" ? req.size : null,
+      latency_ms: r.latency_ms != null ? Number(r.latency_ms) : null,
+    };
+  });
+}
+
 export async function getLatestHeygenSubmitAuditForTask(
   db: Pool,
   projectId: string,

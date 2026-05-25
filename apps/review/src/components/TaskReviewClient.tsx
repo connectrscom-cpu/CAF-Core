@@ -26,6 +26,8 @@ import { ImageReviewEdits } from "@/components/ImageReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
+import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
+import { isMimicCarouselFlow } from "@/lib/flow-kind";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -325,6 +327,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     () => (flowTypeStr && !imageFlow ? isVideoFlow(flowTypeStr) : false),
     [flowTypeStr, imageFlow]
   );
+  const mimicCarouselFlow = useMemo(
+    () => (flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false),
+    [flowTypeStr]
+  );
   const mediaPrompt = (data?.generated_video_prompt ?? "").trim();
   const videoPromptLabel = heygenWorkbench ? "HeyGen" : "Video";
   const imagePromptLabel = "Image";
@@ -607,6 +613,19 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 </div>
               )}
             </div>
+
+            {mimicCarouselFlow && fullJob ? (
+              <MimicCarouselInspectPanel
+                job={fullJob}
+                taskId={execTaskId}
+                projectSlug={(data.project ?? projectFromUrl).trim()}
+                slideCount={editedSlides.length}
+                template={carouselTemplate}
+                instagramHandle={instagramHandleForPreview}
+                buildInspectPayload={carouselLivePreview?.getPayload}
+                getBackgroundUrl={carouselLivePreview?.getBackgroundUrl}
+              />
+            ) : null}
 
             <div className="card mt-4 surface-purple">
               <div className="card-header">Upstream lineage (inspect fields)</div>

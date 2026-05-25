@@ -1695,6 +1695,26 @@ async function processCarouselJob(
         continue;
       }
 
+      // template_bg (listicle) slides: store background plate directly — no HBS text overlay.
+      // Text compositing will be handled properly in a dedicated pass later.
+      if (slideMode === "hbs" && mimicPayload?.mode === "template_bg") {
+        const slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
+        await insertAsset(db, {
+          asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
+          task_id: job.task_id,
+          project_id: job.project_id,
+          asset_type: "CAROUSEL_SLIDE",
+          position: i - 1,
+          bucket: config.SUPABASE_ASSETS_BUCKET,
+          object_path: slideBgUrl,
+          public_url: slideBgUrl,
+          provider: mimicImageProviderAssetLabel(config),
+          metadata_json: { slide_index: i, mimic: true, template_bg_only: true },
+        });
+        slideResults.push({ index: i, public_url: slideBgUrl, object_path: slideBgUrl });
+        continue;
+      }
+
       let slideRenderBase = renderBase;
       if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
         const needsBgPlate = mimicCarouselNeedsBackgroundPlate(mimicPayload);

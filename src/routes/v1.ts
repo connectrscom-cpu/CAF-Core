@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { decideGenerationPlan, generationPlanRequestSchema } from "../decision_engine/index.js";
 import { ensureProject, upsertConstraints, getConstraints, mergeConstraintUpdate } from "../repositories/core.js";
-import { upsertContentJob, getContentJobByTaskId } from "../repositories/jobs.js";
+import { upsertContentJob, getContentJobByTaskId, patchMimicModeOverride } from "../repositories/jobs.js";
 import { insertLearningRule, applyLearningRule, listLearningRules } from "../repositories/learning.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import {
@@ -14,7 +14,7 @@ import {
   insertSuppressionRule,
   insertPromptVersion,
 } from "../repositories/ops.js";
-import { getLatestHeygenSubmitAuditForTask } from "../repositories/api-call-audit.js";
+import { getLatestHeygenSubmitAuditForTask, listMimicImageAuditsForTask } from "../repositories/api-call-audit.js";
 import {
   listReviewQueue,
   countReviewQueue,
@@ -1172,6 +1172,45 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const submit = await getLatestHeygenSubmitAuditForTask(db, project.id, query.data.task_id);
     return { ok: true, submit };
+  });
+
+  /**
+   * Mimic carousel Qwen / image-edit audit rows for a task (`mimic_bg_extract*`, `mimic_slide_gen_*`).
+   * Powers the review console mimic inspect panel — shows the exact prompt string sent to DashScope Qwen.
+   */
+  app.get("/v1/review-queue/:project_slug/task/:task_id/mimic-image-audits", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const audits = await listMimicImageAuditsForTask(db, project.id, params.data.task_id);
+    return { ok: true, audits };
+  });
+
+  app.get("/v1/review-queue/:project_slug/mimic-image-audits", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const audits = await listMimicImageAuditsForTask(db, project.id, query.data.task_id);
+    return { ok: true, audits };
+  });
+
+  /**
+   * Set or clear the mimic mode override for a carousel job.
+   * Body: { task_id, mode_override: "carousel_visual" | "template_bg" | null }
+   */
+  app.post("/v1/review-queue/:project_slug/mimic-mode-override", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({
+      task_id: z.string().min(1),
+      mode_override: z.enum(["carousel_visual", "template_bg"]).nullable(),
+    }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    const project = await ensureProject(db, params.data.project_slug);
+    const updated = await patchMimicModeOverride(db, project.id, body.data.task_id, body.data.mode_override);
+    if (!updated) return reply.code(404).send({ ok: false, error: "job_not_found_or_no_mimic_payload" });
+    return { ok: true, mode_override: body.data.mode_override };
   });
 
   /** Prefer this over path-segment `task_id` so very long ids (video / legacy) do not hit proxy URL limits. */

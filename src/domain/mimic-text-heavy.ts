@@ -29,7 +29,7 @@ export function referenceHasHeavyOnScreenText(slides: Record<string, unknown>[])
 export function isListicleLikeFormatPattern(formatPattern: string): boolean {
   const fp = formatPattern.toLowerCase().trim();
   if (!fp) return false;
-  return fp === "listicle" || fp === "educational" || fp.includes("list");
+  return fp === "listicle" || fp.includes("list");
 }
 
 const TEXT_OVERLAY_DECK_CUES = [

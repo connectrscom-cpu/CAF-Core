@@ -45,6 +45,10 @@ export function isCarouselFlow(flowType: string): boolean {
   return /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
 }
 
+export function isMimicCarouselFlow(flowType: string | null | undefined): boolean {
+  return (flowType ?? "").trim() === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL";
+}
+
 export function isVideoFlow(flowType: string): boolean {
   const ft = flowType ?? "";
   if (isProductVideoFlow(ft)) return true;

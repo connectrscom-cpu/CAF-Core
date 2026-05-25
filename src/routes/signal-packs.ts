@@ -10,6 +10,8 @@ import {
   updateSignalPackIdeasV2,
   updateSignalPackIdeasJson,
   updateSignalPackSelectedIdeaIds,
+  setSignalPackMimicModeOverride,
+  getMimicModeOverridesFromPack,
 } from "../repositories/signal-packs.js";
 import { createRun } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
@@ -512,5 +514,34 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
       /* ignore */
     }
     return { ok: true, updated: n, selected_count: selected.length, selected_idea_ids: selected };
+  });
+
+  /**
+   * POST /v1/signal-packs/:pack_id/mimic-mode-override
+   * Body: { insights_id, mode_override: "carousel_visual" | "template_bg" | null }
+   */
+  app.post("/v1/signal-packs/:pack_id/mimic-mode-override", async (request, reply) => {
+    const params = z.object({ pack_id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({
+      insights_id: z.string().min(1),
+      mode_override: z.enum(["carousel_visual", "template_bg"]).nullable(),
+    }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const n = await setSignalPackMimicModeOverride(
+      db, params.data.pack_id, body.data.insights_id, body.data.mode_override
+    );
+    if (!n) return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
+    return { ok: true, insights_id: body.data.insights_id, mode_override: body.data.mode_override };
+  });
+
+  /** GET /v1/signal-packs/:pack_id/mimic-mode-overrides */
+  app.get("/v1/signal-packs/:pack_id/mimic-mode-overrides", async (request, reply) => {
+    const params = z.object({ pack_id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const pack = await getSignalPackById(db, params.data.pack_id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, overrides: getMimicModeOverridesFromPack(pack) };
   });
 }

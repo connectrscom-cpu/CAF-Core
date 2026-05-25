@@ -250,3 +250,28 @@ export async function countContentJobsByRunAndStatus(
   }
   return out;
 }
+
+/**
+ * Patch `generation_payload.mimic_v1.mode_override` on a single job.
+ * Pass `null` to clear an existing override and revert to auto-classification.
+ */
+export async function patchMimicModeOverride(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  modeOverride: string | null
+): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE caf_core.content_jobs
+        SET generation_payload = jsonb_set(
+              COALESCE(generation_payload, '{}'::jsonb),
+              '{mimic_v1,mode_override}',
+              $3::jsonb
+            ),
+            updated_at = NOW()
+      WHERE project_id = $1 AND task_id = $2
+        AND generation_payload ? 'mimic_v1'`,
+    [projectId, taskId, JSON.stringify(modeOverride)]
+  );
+  return (rowCount ?? 0) > 0;
+}

@@ -314,6 +314,7 @@ textarea { resize: vertical; }
 .surface-warn { background: linear-gradient(135deg, rgba(234, 179, 8, 0.14) 0%, rgba(234, 179, 8, 0.05) 100%); border-color: rgba(234, 179, 8, 0.32) !important; }
 .surface-purple { background: linear-gradient(135deg, rgba(168, 85, 247, 0.14) 0%, rgba(168, 85, 247, 0.05) 100%); border-color: rgba(168, 85, 247, 0.32) !important; }
 .surface-teal { background: linear-gradient(135deg, rgba(45, 212, 191, 0.14) 0%, rgba(45, 212, 191, 0.05) 100%); border-color: rgba(45, 212, 191, 0.32) !important; }
+.surface-amber { background: linear-gradient(135deg, rgba(245, 158, 11, 0.16) 0%, rgba(245, 158, 11, 0.05) 100%); border-color: rgba(245, 158, 11, 0.34) !important; }
 .surface-orange { background: linear-gradient(135deg, rgba(251, 146, 60, 0.14) 0%, rgba(251, 146, 60, 0.05) 100%); border-color: rgba(251, 146, 60, 0.32) !important; }
 .surface-muted { background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface-3) 100%); border-color: var(--border-subtle) !important; }
 .signal-pack-intro .card-header { color: var(--accent); border-bottom-color: rgba(59, 130, 246, 0.25); }

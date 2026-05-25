@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 const MAX_CUES_PER_FORMAT = 10;
 
@@ -331,10 +331,39 @@ export function VisualGuidelinesPanel(props: {
   ideasFromInsightsMeta: Record<string, unknown> | null;
   importId: string | null;
   navHref: (path: string) => string;
+  signalPackId?: string;
 }) {
-  const { visualPack, ideasFromInsightsMeta, importId, navHref } = props;
+  const { visualPack, ideasFromInsightsMeta, importId, navHref, signalPackId } = props;
   const entries = visualPack.entries ?? [];
   const [expandedFormat, setExpandedFormat] = useState<string | null>(null);
+  const [modeOverrides, setModeOverrides] = useState<Record<string, string | null>>({});
+  const [overrideSaving, setOverrideSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!signalPackId) return;
+    fetch(`/api/pipeline/signal-packs/${signalPackId}/mimic-mode-overrides`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (j?.overrides) setModeOverrides(j.overrides as Record<string, string | null>);
+      })
+      .catch(() => {});
+  }, [signalPackId]);
+
+  const handleModeOverride = useCallback(async (insightsId: string, mode: "carousel_visual" | "template_bg" | null) => {
+    if (!signalPackId) return;
+    setOverrideSaving(insightsId);
+    try {
+      const res = await fetch(`/api/pipeline/signal-packs/${signalPackId}/mimic-mode-override`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ insights_id: insightsId, mode_override: mode }),
+      });
+      if (res.ok) {
+        setModeOverrides((prev) => ({ ...prev, [insightsId]: mode }));
+      }
+    } catch { /* ignore */ }
+    setOverrideSaving(null);
+  }, [signalPackId]);
 
   const cueGroups = useMemo(() => {
     const raw =
@@ -468,6 +497,9 @@ export function VisualGuidelinesPanel(props: {
                                   importId={importId}
                                   navHref={navHref}
                                   compact
+                                  modeOverride={modeOverrides[String(ex.insights_id ?? "")] ?? null}
+                                  onModeOverride={signalPackId ? handleModeOverride : undefined}
+                                  overrideSaving={overrideSaving}
                                 />
                               ))}
                             </div>
@@ -491,6 +523,9 @@ export function VisualGuidelinesPanel(props: {
             entry={entry}
             importId={importId}
             navHref={navHref}
+            modeOverride={modeOverrides[String(entry.insights_id ?? "")] ?? null}
+            onModeOverride={signalPackId ? handleModeOverride : undefined}
+            overrideSaving={overrideSaving}
           />
         ))}
       </div>
@@ -510,14 +545,19 @@ function EntryMediaCard(props: {
   importId: string | null;
   navHref: (path: string) => string;
   compact?: boolean;
+  modeOverride?: string | null;
+  onModeOverride?: (insightsId: string, mode: "carousel_visual" | "template_bg" | null) => void;
+  overrideSaving?: string | null;
 }) {
-  const { entry, importId, navHref, compact } = props;
+  const { entry, importId, navHref, compact, modeOverride, onModeOverride, overrideSaving } = props;
   const media = parseInspectionMedia(entry.inspection_media);
   const previewUrl = pickInspectionMediaPreviewUrl(media);
   const instagramUrl = normalizeInstagramPostUrl(
     typeof entry.evidence_post_url === "string" ? entry.evidence_post_url : null
   );
   const thumbSize = compact ? 48 : 72;
+  const isCarousel = inferFormatFamilyFromEntry(entry) === "carousel";
+  const insightsId = String(entry.insights_id ?? "").trim();
 
   return (
     <div
@@ -589,6 +629,62 @@ function EntryMediaCard(props: {
             <span style={{ color: "var(--muted)" }}> · row {String(entry.source_evidence_row_id)}</span>
           </p>
         ) : null}
+        {isCarousel && onModeOverride && insightsId && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, color: "var(--muted)", marginRight: 4 }}>Render:</span>
+            <button
+              type="button"
+              disabled={overrideSaving === insightsId}
+              onClick={() => onModeOverride(insightsId, "carousel_visual")}
+              style={{
+                fontSize: 11,
+                padding: "3px 8px",
+                borderRadius: 4,
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                background: modeOverride === "carousel_visual" ? "var(--accent)" : "transparent",
+                color: modeOverride === "carousel_visual" ? "#fff" : "inherit",
+              }}
+            >
+              Full bleed
+            </button>
+            <button
+              type="button"
+              disabled={overrideSaving === insightsId}
+              onClick={() => onModeOverride(insightsId, "template_bg")}
+              style={{
+                fontSize: 11,
+                padding: "3px 8px",
+                borderRadius: 4,
+                border: "1px solid var(--border)",
+                cursor: "pointer",
+                background: modeOverride === "template_bg" ? "var(--accent)" : "transparent",
+                color: modeOverride === "template_bg" ? "#fff" : "inherit",
+              }}
+            >
+              Template
+            </button>
+            {modeOverride && (
+              <button
+                type="button"
+                disabled={overrideSaving === insightsId}
+                onClick={() => onModeOverride(insightsId, null)}
+                style={{
+                  fontSize: 10,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  border: "1px solid var(--border)",
+                  cursor: "pointer",
+                  background: "transparent",
+                  color: "var(--muted)",
+                }}
+              >
+                Auto
+              </button>
+            )}
+            {overrideSaving === insightsId && <span style={{ fontSize: 10, color: "var(--muted)" }}>Saving…</span>}
+          </div>
+        )}
         {!compact && (
           <details style={{ marginTop: 8 }}>
             <summary style={{ cursor: "pointer", fontSize: 11, color: "var(--muted)" }}>Entry JSON</summary>

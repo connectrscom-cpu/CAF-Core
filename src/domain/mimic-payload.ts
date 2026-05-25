@@ -26,6 +26,8 @@ export interface MimicSlidePlan {
 export interface MimicPayloadV1 {
   schema_version: 1;
   mode: MimicMode;
+  /** Manual override set by a reviewer — takes precedence over the automatic classifier. */
+  mode_override?: MimicMode | null;
   classified_at: string;
   source_insights_id: string;
   source_evidence_row_id?: string | null;
@@ -96,9 +98,15 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
         .filter((x): x is MimicSlidePlan => x != null && x.slide_index > 0)
     : undefined;
 
+  const mode_override =
+    rec.mode_override === "image_full" || rec.mode_override === "template_bg" || rec.mode_override === "carousel_visual"
+      ? rec.mode_override
+      : null;
+
   return {
     schema_version: 1,
     mode,
+    mode_override,
     classified_at: String(rec.classified_at ?? ""),
     source_insights_id: String(rec.source_insights_id ?? ""),
     source_evidence_row_id:
