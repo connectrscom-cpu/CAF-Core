@@ -10,6 +10,8 @@ export interface MimicImageEditParams {
   size?: string;
   inputFidelity?: "high" | "low";
   quality?: string;
+  /** Second image for cross-slide consistency (DashScope multi-image input). */
+  previousSlideUrl?: string;
   /** Optional audit context */
   audit?: {
     db: Pool;
@@ -401,15 +403,16 @@ function buildDashScopeEditBody(
   config: AppConfig,
   params: MimicImageEditParams
 ): Record<string, unknown> {
+  const content: Array<Record<string, string>> = [{ image: params.referenceUrl }];
+  if (params.previousSlideUrl) {
+    content.push({ image: params.previousSlideUrl });
+  }
+  content.push({ text: params.prompt });
+
   return {
     model: call.model,
     input: {
-      messages: [
-        {
-          role: "user",
-          content: [{ image: params.referenceUrl }, { text: params.prompt }],
-        },
-      ],
+      messages: [{ role: "user", content }],
     },
     parameters: {
       n: 1,
@@ -448,61 +451,86 @@ async function parseDashScopeImageEditResponse(parsed: Record<string, unknown>):
   throw new Error("DashScope Qwen image edit returned no image data");
 }
 
+const DASHSCOPE_MAX_RETRIES = 3;
+const DASHSCOPE_RETRY_BASE_MS = 8_000;
+
+function isDashScopeRetryable(status: number): boolean {
+  return status === 429 || status === 503;
+}
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function editViaDashScope(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) throw new Error("DASHSCOPE_API_KEY is required when MIMIC_IMAGE_PROVIDER=dashscope");
-  const started = Date.now();
   const body = buildDashScopeEditBody(call, config, params);
-  const res = await fetch(call.editsEndpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${call.apiKey}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const latencyMs = Math.max(0, Date.now() - started);
-  const rawText = await res.text();
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse(rawText) as Record<string, unknown>;
-  } catch {
-    parsed = { raw: rawText.slice(0, 500) };
-  }
 
-  if (params.audit) {
-    await tryInsertApiCallAudit(params.audit.db, {
-      projectId: params.audit.projectId,
-      runId: params.audit.runId,
-      taskId: params.audit.taskId,
-      step: params.audit.step,
-      provider: call.provider,
-      model: call.model,
-      ok: res.ok && !parsed.code,
-      requestJson: {
-        endpoint: call.editsEndpoint,
-        mimic_provider: call.provider,
-        prompt: params.prompt,
-        reference_url: params.referenceUrl,
-        size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
-        input: body.input,
-        parameters: body.parameters,
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= DASHSCOPE_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const backoff = DASHSCOPE_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 2_000;
+      await sleep(backoff);
+    }
+
+    const started = Date.now();
+    const res = await fetch(call.editsEndpoint, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${call.apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
       },
-      responseJson: res.ok ? { request_id: parsed.request_id } : parsed,
-      latencyMs,
+      body: JSON.stringify(body),
     });
+    const latencyMs = Math.max(0, Date.now() - started);
+    const rawText = await res.text();
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      parsed = { raw: rawText.slice(0, 500) };
+    }
+
+    if (params.audit) {
+      await tryInsertApiCallAudit(params.audit.db, {
+        projectId: params.audit.projectId,
+        runId: params.audit.runId,
+        taskId: params.audit.taskId,
+        step: params.audit.step,
+        provider: call.provider,
+        model: call.model,
+        ok: res.ok && !parsed.code,
+        requestJson: {
+          endpoint: call.editsEndpoint,
+          mimic_provider: call.provider,
+          prompt: params.prompt,
+          reference_url: params.referenceUrl,
+          size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
+          input: body.input,
+          parameters: body.parameters,
+          ...(attempt > 0 ? { retry_attempt: attempt } : {}),
+        },
+        responseJson: res.ok ? { request_id: parsed.request_id } : parsed,
+        latencyMs,
+      });
+    }
+
+    if (!res.ok) {
+      const errMsg =
+        typeof parsed.message === "string"
+          ? parsed.message
+          : asRecord(parsed.error)?.message ?? rawText.slice(0, 300);
+      lastError = new Error(`${providerErrorLabel("dashscope")} failed (${res.status}): ${String(errMsg)}`);
+      if (isDashScopeRetryable(res.status) && attempt < DASHSCOPE_MAX_RETRIES) continue;
+      throw lastError;
+    }
+
+    return parseDashScopeImageEditResponse(parsed);
   }
 
-  if (!res.ok) {
-    const errMsg =
-      typeof parsed.message === "string"
-        ? parsed.message
-        : asRecord(parsed.error)?.message ?? rawText.slice(0, 300);
-    throw new Error(`${providerErrorLabel("dashscope")} failed (${res.status}): ${String(errMsg)}`);
-  }
-
-  return parseDashScopeImageEditResponse(parsed);
+  throw lastError ?? new Error("DashScope image edit: max retries exceeded");
 }
 
 /**

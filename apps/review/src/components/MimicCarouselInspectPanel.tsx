@@ -91,6 +91,35 @@ export function MimicCarouselInspectPanel({
   const templateUsed = useMemo(() => template || pickCarouselTemplateName(gp), [template, gp]);
   const renderManifest = useMemo(() => asRec(gp.render_manifest), [gp]);
 
+  const evidencePostUrl = useMemo(() => {
+    const vg = asRec(draftPackage?.visual_guideline);
+    const url = typeof vg?.evidence_post_url === "string" ? vg.evidence_post_url.trim() : "";
+    if (url) return url;
+    const mVg = asRec(mimicV1?.visual_guideline);
+    const url2 = typeof mVg?.evidence_post_url === "string" ? mVg.evidence_post_url.trim() : "";
+    return url2 || null;
+  }, [draftPackage, mimicV1]);
+
+  const signalPackId = useMemo(() => {
+    const v = gp.signal_pack_id;
+    return typeof v === "string" && v.trim() ? v.trim() : null;
+  }, [gp]);
+  const [spOverrides, setSpOverrides] = useState<Record<string, unknown> | null>(null);
+
+  useEffect(() => {
+    if (!signalPackId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/pipeline/signal-packs/${encodeURIComponent(signalPackId)}/mimic-mode-overrides`, { cache: "no-store" });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled && json.overrides) setSpOverrides(json.overrides);
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [signalPackId]);
+
   const currentModeOverride = useMemo((): MimicModeOverrideValue => {
     const v = mimicV1?.mode_override;
     if (v === "carousel_visual" || v === "template_bg") return v;
@@ -229,6 +258,22 @@ export function MimicCarouselInspectPanel({
         ) : null}
       </div>
 
+      {evidencePostUrl ? (
+        <div style={{ marginBottom: 12, padding: "8px 12px", background: "var(--surface-raised, rgba(0,0,0,0.04))", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-secondary)", whiteSpace: "nowrap" }}>
+            Original post:
+          </span>
+          <a
+            href={evidencePostUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 12, color: "var(--blue, #3b82f6)", wordBreak: "break-all" }}
+          >
+            {evidencePostUrl}
+          </a>
+        </div>
+      ) : null}
+
       {/* Mode override picker */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, padding: "8px 12px", background: "var(--surface-raised, rgba(0,0,0,0.04))", borderRadius: 6 }}>
         <label style={{ fontSize: 12, fontWeight: 600, color: "var(--fg-secondary)", whiteSpace: "nowrap" }}>
@@ -304,6 +349,20 @@ export function MimicCarouselInspectPanel({
               {pretty(mimicV1 ?? { note: "mimic_v1 missing — re-run Generate Jobs after mimic prep" })}
             </pre>
           </details>
+
+          {spOverrides && Object.keys(spOverrides).length > 0 ? (
+            <details open style={{ marginTop: 10 }}>
+              <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600, color: "var(--fg-secondary)" }}>
+                Signal pack mimic_mode_overrides
+              </summary>
+              <p style={{ fontSize: 11, color: "var(--muted)", margin: "6px 0 8px" }}>
+                Set in Signal Pack tab before job creation (stored on <span className="font-mono">derived_globals_json</span>).
+              </p>
+              <pre className="slides-json" style={{ marginTop: 4, maxHeight: 200 }}>
+                {pretty(spOverrides)}
+              </pre>
+            </details>
+          ) : null}
 
           {slidePlans.length > 0 ? (
             <details open style={{ marginTop: 10 }}>

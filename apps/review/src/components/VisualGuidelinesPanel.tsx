@@ -332,8 +332,9 @@ export function VisualGuidelinesPanel(props: {
   importId: string | null;
   navHref: (path: string) => string;
   signalPackId?: string;
+  onOverrideChanged?: () => void;
 }) {
-  const { visualPack, ideasFromInsightsMeta, importId, navHref, signalPackId } = props;
+  const { visualPack, ideasFromInsightsMeta, importId, navHref, signalPackId, onOverrideChanged } = props;
   const entries = visualPack.entries ?? [];
   const [expandedFormat, setExpandedFormat] = useState<string | null>(null);
   const [modeOverrides, setModeOverrides] = useState<Record<string, string | null>>({});
@@ -360,10 +361,11 @@ export function VisualGuidelinesPanel(props: {
       });
       if (res.ok) {
         setModeOverrides((prev) => ({ ...prev, [insightsId]: mode }));
+        onOverrideChanged?.();
       }
     } catch { /* ignore */ }
     setOverrideSaving(null);
-  }, [signalPackId]);
+  }, [signalPackId, onOverrideChanged]);
 
   const cueGroups = useMemo(() => {
     const raw =

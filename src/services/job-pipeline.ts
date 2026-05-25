@@ -15,7 +15,7 @@ import {
   routeJobAfterQc,
   finalJobStatusAfterRender,
 } from "./validation-router.js";
-import { uploadBuffer } from "./supabase-storage.js";
+import { uploadBuffer, createSignedUrlForObjectKey } from "./supabase-storage.js";
 import { insertAsset, deleteAssetsForTask, deleteCarouselSlideAssetsForTask } from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
 import { getStrategyDefaults, listProjectCarouselTemplates, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
@@ -57,6 +57,7 @@ import {
   renderMimicCarouselSlideFullBleed,
   slideOnImageCopyFromSlides,
 } from "./mimic-carousel-render.js";
+import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
@@ -1629,11 +1630,13 @@ async function processCarouselJob(
   });
 
   try {
+    const mimicPromptOverrides = isMimicCarousel ? await loadMimicPromptOverrides(db) : null;
+
     if (isMimicCarousel && mimicPayload && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
       for (let i = 1; i <= n; i++) {
         const preMode = effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable);
         if (preMode === "hbs") {
-          await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
+          await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
         }
       }
     }
@@ -1641,6 +1644,7 @@ async function processCarouselJob(
     await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
+    let previousFullBleedSlideUrl: string | null = null;
     for (let i = 1; i <= n; i++) {
       await updateJobRenderState(db, job.id, {
         provider: "carousel-renderer",
@@ -1664,7 +1668,11 @@ async function processCarouselJob(
           job,
           mimicPayload,
           i,
-          { onImageCopy: onImageCopy || undefined }
+          {
+            onImageCopy: onImageCopy || undefined,
+            promptOverrides: mimicPromptOverrides,
+            previousSlideUrl: previousFullBleedSlideUrl,
+          }
         );
         const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
         const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1692,6 +1700,13 @@ async function processCarouselJob(
           metadata_json: { slide_index: i, mimic: true },
         });
         slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
+        // Use signed URL for cross-slide consistency — DashScope may not reach public Supabase URLs
+        try {
+          const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, storedPath, 600);
+          previousFullBleedSlideUrl = "signedUrl" in signed ? signed.signedUrl : (publicUrl || null);
+        } catch {
+          previousFullBleedSlideUrl = publicUrl || null;
+        }
         continue;
       }
 

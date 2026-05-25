@@ -224,11 +224,11 @@ export async function setSignalPackMimicModeOverride(
         SET derived_globals_json = jsonb_set(
               COALESCE(derived_globals_json, '{}'::jsonb),
               '{mimic_mode_overrides}',
-              COALESCE(derived_globals_json->'mimic_mode_overrides', '{}'::jsonb) || $3::jsonb
+              COALESCE(derived_globals_json->'mimic_mode_overrides', '{}'::jsonb) || $2::jsonb
             )
       WHERE id = $1::uuid
       RETURNING 1::text AS n`,
-    [signalPackId, insightsId, JSON.stringify({ [insightsId]: modeOverride })]
+    [signalPackId, JSON.stringify({ [insightsId]: modeOverride })]
   );
   return row ? 1 : 0;
 }

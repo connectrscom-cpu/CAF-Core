@@ -237,6 +237,7 @@ export default function SignalPackDetailPage() {
               importId={importIdForPack}
               navHref={navHref}
               signalPackId={packId}
+              onOverrideChanged={load}
             />
           ) : (
             <p style={{ color: "var(--muted)", fontSize: 13, maxWidth: 720 }}>
@@ -245,7 +246,12 @@ export default function SignalPackDetailPage() {
             </p>
           ))}
 
-        {view === "raw" && derived && <JsonTreeViewer data={derived} />}
+        {view === "raw" && derived && (
+          <>
+            <MimicModeOverridesInspect derived={derived} />
+            <JsonTreeViewer data={derived} />
+          </>
+        )}
         {view === "raw" && !derived && <p style={{ color: "var(--muted)", fontSize: 13 }}>No derived globals on this pack.</p>}
       </div>
     </>
@@ -466,6 +472,68 @@ function JsonPre({ value, maxHeight = 420 }: { value: unknown; maxHeight?: numbe
     >
       {prettyJson(value)}
     </pre>
+  );
+}
+
+function MimicModeOverridesInspect({ derived }: { derived: Record<string, unknown> }) {
+  const overrides = asRecord(derived.mimic_mode_overrides);
+  if (!overrides || Object.keys(overrides).length === 0) return null;
+
+  const entries = Object.entries(overrides).filter(
+    ([, v]) => v != null && typeof v === "string" && v.trim() !== ""
+  );
+  if (entries.length === 0) return null;
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: "12px 14px",
+        borderRadius: 8,
+        border: "1px solid var(--border)",
+        background: "var(--surface-2, #111)",
+      }}
+    >
+      <p style={{ margin: "0 0 8px", fontSize: 12, fontWeight: 600, color: "var(--accent)" }}>
+        Mimic mode overrides ({entries.length})
+      </p>
+      <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", padding: "4px 8px", color: "var(--muted)", fontWeight: 500, borderBottom: "1px solid var(--border)" }}>
+              insights_id
+            </th>
+            <th style={{ textAlign: "left", padding: "4px 8px", color: "var(--muted)", fontWeight: 500, borderBottom: "1px solid var(--border)" }}>
+              mode
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map(([id, mode]) => (
+            <tr key={id}>
+              <td style={{ padding: "4px 8px", fontFamily: "var(--font-mono, monospace)", fontSize: 11 }}>
+                {id}
+              </td>
+              <td style={{ padding: "4px 8px" }}>
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "2px 8px",
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    background: String(mode) === "carousel_visual" ? "rgba(59,130,246,0.15)" : "rgba(168,85,247,0.15)",
+                    color: String(mode) === "carousel_visual" ? "#60a5fa" : "#c084fc",
+                  }}
+                >
+                  {String(mode)}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

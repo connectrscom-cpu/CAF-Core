@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 const CAF_CORE_URL = process.env.CAF_CORE_URL || "http://localhost:3210";
+const CAF_CORE_TOKEN = process.env.CAF_CORE_TOKEN || "";
 
 /**
  * GET /api/pipeline/signal-packs/[packId]/mimic-mode-overrides
@@ -15,8 +16,11 @@ export async function GET(
   try {
     const { packId } = await context.params;
     const base = CAF_CORE_URL.replace(/\/$/, "");
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
     const res = await fetch(`${base}/v1/signal-packs/${encodeURIComponent(packId)}/mimic-mode-overrides`, {
       cache: "no-store",
+      headers,
     });
     const json = await res.json();
     return NextResponse.json(json, { status: res.status });

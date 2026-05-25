@@ -118,6 +118,14 @@ import {
   replacePromptLabsOverrideKey,
 } from "../repositories/prompt-labs-overrides.js";
 import {
+  MIMIC_PROMPT_NAME_IMAGE_FULL,
+  MIMIC_PROMPT_NAME_TEMPLATE_BG,
+  MIMIC_PROMPT_NAME_CAROUSEL_SLIDE,
+  DEFAULT_MIMIC_IMAGE_FULL_PROMPT,
+  DEFAULT_MIMIC_TEMPLATE_BG_PROMPT,
+  DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT,
+} from "../services/mimic-prompt-builder.js";
+import {
   TOP_PERFORMER_IMAGE_SYSTEM_PROMPT,
   TOP_PERFORMER_IMAGE_USER_PROMPT_TEMPLATE,
 } from "../services/inputs-deep-image-insights.js";
@@ -2246,6 +2254,42 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         labs_flow_description: "Processing → Runs: signal pack ideas_json → runs.candidates_json subset.",
         system_prompt: RUN_CANDIDATES_FROM_IDEAS_SYSTEM_PROMPT,
         user_prompt_template: RUN_CANDIDATES_FROM_IDEAS_USER_PROMPT_TEMPLATE,
+      },
+      {
+        prompt_name: MIMIC_PROMPT_NAME_IMAGE_FULL,
+        flow_type: "RENDER_MIMIC_QWEN",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Qwen prompt for single-image full-bleed mimic (FLOW_TOP_PERFORMER_MIMIC_IMAGE). Sent to DashScope image-edit API with reference image. Supports {{on_image_copy}} and {{copy_instruction}} placeholders.",
+        labs_flow_description: "Render: Mimic image (full bleed) → Qwen/DashScope image edit.",
+        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Not a system/user pair — entire text below is the image-edit instruction.",
+        user_prompt_template: DEFAULT_MIMIC_IMAGE_FULL_PROMPT,
+      },
+      {
+        prompt_name: MIMIC_PROMPT_NAME_TEMPLATE_BG,
+        flow_type: "RENDER_MIMIC_QWEN",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Qwen prompt for background plate extraction (text removal) used by template_bg carousels. Sent to DashScope image-edit API with reference slide.",
+        labs_flow_description: "Render: Mimic carousel background plate extraction → Qwen/DashScope.",
+        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Strips text from reference slide to produce clean background for HBS overlay.",
+        user_prompt_template: DEFAULT_MIMIC_TEMPLATE_BG_PROMPT,
+      },
+      {
+        prompt_name: MIMIC_PROMPT_NAME_CAROUSEL_SLIDE,
+        flow_type: "RENDER_MIMIC_QWEN",
+        prompt_role: "processing",
+        active: true,
+        labs_readonly: true,
+        labs_short_description:
+          "Qwen prompt for full-bleed carousel slide recreation (carousel_visual mode). Sent once per slide to DashScope image-edit API. Supports {{on_image_copy}}, {{copy_instruction}}, {{layout_instruction}}, {{visual_instruction}} placeholders.",
+        labs_flow_description: "Render: Mimic carousel slide (visual full-bleed) → Qwen/DashScope.",
+        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Recreates the reference slide with new text. Uses per-slide interpolation.",
+        user_prompt_template: DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT,
       },
     ];
     const processing_controls_base = [

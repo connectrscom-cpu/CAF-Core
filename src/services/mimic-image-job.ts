@@ -6,7 +6,8 @@ import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligi
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
 import { editImageFromReference, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
-import { mimicPromptForMode } from "./mimic-prompt-builder.js";
+import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
+import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { refreshMimicPayloadReferenceUrls, refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { finalJobStatusAfterRender } from "./validation-router.js";
 import { uploadBuffer } from "./supabase-storage.js";
@@ -89,9 +90,10 @@ export async function processImageMimicJob(
     );
   }
 
+  const promptOverrides = await loadMimicPromptOverrides(db);
   const { buffer, mimeType } = await editImageFromReference(config, {
     referenceUrl,
-    prompt: mimicPromptForMode("image_full", { onImageCopy }),
+    prompt: mimicPromptForMode("image_full", { onImageCopy }, promptOverrides),
     audit: {
       db,
       projectId: job.project_id,
