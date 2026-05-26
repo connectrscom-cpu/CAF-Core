@@ -1283,6 +1283,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Extract the Supabase object_path from a public storage URL so it can be signed. */
+function extractObjectPathFromPublicUrl(config: AppConfig, url: string): string | null {
+  if (!url.startsWith("http")) return url;
+  const supabaseUrl = config.SUPABASE_URL;
+  if (!supabaseUrl) return null;
+  const publicPrefix = `${supabaseUrl}/storage/v1/object/public/${config.SUPABASE_ASSETS_BUCKET}/`;
+  if (url.startsWith(publicPrefix)) return url.slice(publicPrefix.length);
+  return null;
+}
+
 function isRendererUnavailableHttpError(msg: string): boolean {
   const m = String(msg ?? "");
   // job-pipeline wraps non-OK responses as: `Renderer slide ${i} returned ${status}: ...`
@@ -1668,8 +1678,9 @@ async function processCarouselJob(
           : null;
 
       if (slideMode === "full_bleed" && mimicPayload) {
-        // carousel_visual full-bleed: do NOT inject verbose LLM copy — Qwen should
-        // recreate the slide faithfully with only the reference's text pattern.
+        // carousel_visual full-bleed: recreate each slide independently from its own
+        // reference frame. Do NOT pass previousSlideUrl — DashScope merges/stacks
+        // multi-image inputs instead of using them for style-only consistency.
         const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
           db,
           config,
@@ -1678,7 +1689,6 @@ async function processCarouselJob(
           i,
           {
             promptOverrides: mimicPromptOverrides,
-            previousSlideUrl: previousFullBleedSlideUrl,
           }
         );
         const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -1720,7 +1730,15 @@ async function processCarouselJob(
       // template_bg (listicle) slides: extract background plate, then ask Qwen to
       // composite the LLM-generated copy onto the clean background.
       if (slideMode === "hbs" && mimicPayload?.mode === "template_bg") {
-        const slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
+        let slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
+        // DashScope cannot fetch Supabase public URLs — sign the background plate URL
+        const bgObjectPath = extractObjectPathFromPublicUrl(config, slideBgUrl);
+        if (bgObjectPath) {
+          try {
+            const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, bgObjectPath, 600);
+            if ("signedUrl" in signed) slideBgUrl = signed.signedUrl;
+          } catch { /* fall through to public URL */ }
+        }
         const onImageCopy = slideOnImageCopyFromSlides(usableSlides, i);
         const consistencyHint = i > 1
           ? "Maintain consistent text style, positioning, and formatting with the previous slides in this carousel."
