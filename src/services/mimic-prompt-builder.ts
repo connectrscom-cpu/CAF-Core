@@ -33,11 +33,14 @@ export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
 ].join(" ");
 
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
-  "Recreate this carousel slide as a near-identical variant: match the visual style, layout, color palette, spacing, composition, and subject matter of the reference image.",
+  "Create a new image inspired by this reference slide.",
+  "Keep the same overall composition, layout structure, and color palette, but change enough visual details (backgrounds, subjects, textures, styling) that it is clearly a distinct original work — not a copy.",
+  "Think of it as: same vibe, same energy, fresh execution.",
   "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
   "Do NOT add decorative frames, borders, ornamental elements, or vignettes that are not in the reference.",
+  "Do NOT reproduce logos, brand marks, watermarks, product mockups, book/guide covers, or recognizable faces.",
   "{{copy_instruction}}",
-  "Do not copy logos, brand marks, or recognizable faces verbatim — apply subtle variation.",
+  "{{intent_instruction}}",
   "{{consistency_instruction}}",
   "{{layout_instruction}}",
   "{{visual_instruction}}",
@@ -63,7 +66,7 @@ function buildCopyInstructionForImageFull(copy: string): string {
 }
 
 function buildCopyInstructionForSlide(copy: string): string {
-  if (!copy) return "Keep on-image text minimal — reproduce the reference text pattern without adding new text.";
+  if (!copy) return "Keep on-image text minimal — use similar text layout/placement as the reference but do NOT reproduce the reference wording.";
   const lines = copy.split(/\n{2,}/);
   const headline = lines[0]?.trim() ?? "";
   const body = lines.slice(1).join("\n").trim();
@@ -129,6 +132,7 @@ export function buildMimicCarouselSlidePrompt(
     visualDescription?: string | null;
     onImageCopy?: string | null;
     consistencyHint?: string | null;
+    intentInstruction?: string | null;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
@@ -140,6 +144,7 @@ export function buildMimicCarouselSlidePrompt(
     ? `Visual context: ${opts.visualDescription.trim().slice(0, 400)}.`
     : "";
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
+  const intentInstruction = opts.intentInstruction?.trim() || "";
   const template = overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT;
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForSlide(copy),
@@ -147,6 +152,7 @@ export function buildMimicCarouselSlidePrompt(
     layout_instruction: layoutInstruction,
     visual_instruction: visualInstruction,
     consistency_instruction: consistencyInstruction,
+    intent_instruction: intentInstruction,
   });
 }
 
@@ -168,7 +174,7 @@ export function buildMimicTemplateBgComposePrompt(
 
 export function mimicPromptForMode(
   mode: MimicMode | "template_bg_compose",
-  slide?: { index?: number; layout?: string; visual?: string; onImageCopy?: string | null; consistencyHint?: string | null },
+  slide?: { index?: number; layout?: string; visual?: string; onImageCopy?: string | null; consistencyHint?: string | null; intentInstruction?: string | null },
   overrides?: MimicPromptOverrides | null
 ): string {
   if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy }, overrides);
@@ -180,6 +186,7 @@ export function mimicPromptForMode(
     visualDescription: slide?.visual,
     onImageCopy: slide?.onImageCopy,
     consistencyHint: slide?.consistencyHint,
+    intentInstruction: slide?.intentInstruction,
   }, overrides);
 }
 

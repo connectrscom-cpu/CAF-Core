@@ -1,7 +1,6 @@
 /** Inner HTML + script for GET /admin/inputs — uploads, source registry, Apify scrapers. */
 
 import { adminCafTermHtml, adminOptionsLinkHtml, adminOptionsMenuHtml, adminPageHeaderHtml } from "./admin-ui-shared.js";
-import { SCRAPER_CONFIG_FIELDS } from "../services/inputs-scraper-apify-config.js";
 
 const SOURCE_TABS = [
   { id: "all_sources", label: "All Sources" },
@@ -13,8 +12,7 @@ const SOURCE_TABS = [
   { id: "hashtags", label: "Hashtags" },
 ] as const;
 
-const CFG_SECTIONS: Array<{ id: keyof typeof SCRAPER_CONFIG_FIELDS; title: string }> = [
-  { id: "apify", title: "Apify global" },
+const CFG_SECTIONS: Array<{ id: string; title: string }> = [
   { id: "instagram", title: "Instagram · apify/instagram-scraper" },
   { id: "tiktok", title: "TikTok · clockworks/tiktok-scraper" },
   { id: "reddit", title: "Reddit · trudax/reddit-scraper-lite" },
@@ -22,48 +20,11 @@ const CFG_SECTIONS: Array<{ id: keyof typeof SCRAPER_CONFIG_FIELDS; title: strin
   { id: "html", title: "HTML / blogs (HTTP, no Apify)" },
 ];
 
-function scraperConfigFieldHtml(
-  sectionId: string,
-  f: {
-    key: string;
-    label: string;
-    type: string;
-    placeholder?: string;
-    min?: number;
-    max?: number;
-    options?: readonly string[];
-  }
-): string {
-  const id = `cfg-${sectionId}-${f.key}`;
-  const ph = "placeholder" in f && f.placeholder ? ` placeholder="${f.placeholder}"` : "";
-  if (f.type === "checkbox") {
-    return `<label class="scraper-cfg-field scraper-cfg-field--check"><input type="checkbox" id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="checkbox" /><span>${f.label}</span></label>`;
-  }
-  if (f.type === "select") {
-    const opts = (f.options ?? []).map((o) => `<option value="${o}">${o}</option>`).join("");
-    return `<label class="scraper-cfg-field"><span>${f.label}</span><select id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="select">${opts}</select></label>`;
-  }
-  if (f.type === "textarea") {
-    return `<label class="scraper-cfg-field scraper-cfg-field--wide"><span>${f.label}</span><textarea id="${id}" rows="3" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="textarea"${ph}></textarea></label>`;
-  }
-  const min = "min" in f && f.min != null ? ` min="${f.min}"` : "";
-  const max = "max" in f && f.max != null ? ` max="${f.max}"` : "";
-  return `<label class="scraper-cfg-field"><span>${f.label}</span><input type="${f.type === "number" ? "number" : "text"}" id="${id}" data-cfg-section="${sectionId}" data-cfg-key="${f.key}" data-cfg-type="${f.type}"${min}${max}${ph} /></label>`;
-}
-
 function scraperConfigFormHtml(): string {
   const sections = CFG_SECTIONS.map((sec) => {
-    const fields = SCRAPER_CONFIG_FIELDS[sec.id]
-      .map((f) => scraperConfigFieldHtml(sec.id, f))
-      .join("");
-    return `<details class="scraper-cfg-section" open><summary>${sec.title}</summary><div class="scraper-cfg-grid">${fields}</div></details>`;
+    return `<details class="scraper-cfg-section" open><summary>${sec.title}</summary><div class="scraper-cfg-grid scraper-cfg-grid--wide"><textarea id="cfg-json-${sec.id}" rows="18" class="mono" style="width:100%;min-height:200px;font-size:12px;line-height:1.5;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);resize:vertical;tab-size:2" spellcheck="false"></textarea></div></details>`;
   }).join("");
-  return `${sections}<details class="scraper-cfg-section"><summary>Advanced · actor input JSON merge</summary><p class="runs-ops-hint" style="margin:0 0 8px">Deep-merge onto built actor payloads (same escape hatch as editing n8n <span class="mono">customBody</span>).</p><div class="scraper-cfg-grid scraper-cfg-grid--wide">${["instagram", "tiktok", "reddit", "facebook"]
-    .map(
-      (k) =>
-        `<label class="scraper-cfg-field scraper-cfg-field--wide"><span>actorInputExtras.${k}</span><textarea id="cfg-extras-${k}" rows="4" class="mono" placeholder="{}"></textarea></label>`
-    )
-    .join("")}</div></details>`;
+  return sections;
 }
 
 const SCRAPERS = [
@@ -173,7 +134,7 @@ ${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence"
       </aside>
       <div class="tp-main">
         <div class="card" style="margin-bottom:14px">
-          <div class="card-h">Apify actor options <span style="font-weight:400;color:var(--muted);font-size:11px">— mirrors n8n customBody fields</span></div>
+          <div class="card-h">Apify actor options <span style="font-weight:400;color:var(--muted);font-size:11px">— paste the same JSON you'd use on Apify actor input</span></div>
           <div style="padding:12px 16px" id="scraper-config-form">${scraperConfigFormHtml()}</div>
         </div>
         <div class="card" style="margin-bottom:14px">
@@ -196,6 +157,69 @@ const SLUG=${SLUG};
 const SOURCE_TABS=${JSON.stringify(SOURCE_TABS)};
 const CFG_SECTIONS=${JSON.stringify(CFG_SECTIONS.map((s) => s.id))};
 var scraperCfgCache=null;
+
+var DEFAULT_ACTOR_JSON={
+  instagram: ${JSON.stringify({
+    directUrls: [],
+    resultsType: "posts",
+    resultsLimit: 10,
+    scrapePosts: true,
+    scrapeReels: true,
+    scrapeStories: false,
+    proxyConfiguration: { useApifyProxy: true },
+    searchType: "hashtag",
+    addParentData: false,
+  }, null, 2)},
+  tiktok: ${JSON.stringify({
+    commentsPerPost: 0,
+    excludePinnedPosts: false,
+    maxFollowersPerProfile: 0,
+    maxFollowingPerProfile: 0,
+    maxRepliesPerComment: 0,
+    oldestPostDateUnified: "7 days",
+    profileScrapeSections: ["videos"],
+    profileSorting: "latest",
+    profiles: [],
+    proxyCountryCode: "US",
+    resultsPerPage: 10,
+    scrapeRelatedVideos: false,
+    shouldDownloadAvatars: false,
+    shouldDownloadCovers: true,
+    shouldDownloadMusicCovers: false,
+    shouldDownloadSlideshowImages: true,
+    shouldDownloadVideos: true,
+    videoKvStoreIdOrName: "caf-tiktok-astrology-media",
+    downloadSubtitlesOptions: "DOWNLOAD_AND_TRANSCRIBE_VIDEOS_WITHOUT_SUBTITLES",
+    searchSection: "",
+    maxProfilesPerQuery: 10,
+  }, null, 2)},
+  reddit: ${JSON.stringify({
+    startUrls: [],
+    searchPosts: true,
+    searchComments: true,
+    searchCommunities: false,
+    searchUsers: false,
+    maxPostCount: 30,
+    maxComments: 3,
+    maxItems: 40,
+    commentSort: "top",
+    scrollTimeout: 60,
+    proxy: { useApifyProxy: true },
+  }, null, 2)},
+  facebook: ${JSON.stringify({
+    startUrls: [],
+    resultsLimit: 30,
+    proxyConfiguration: { useApifyProxy: true },
+  }, null, 2)},
+  html: ${JSON.stringify({
+    enabled: true,
+    fetchTimeoutMs: 30000,
+    userAgent: "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)",
+    minParagraphChars: 30,
+    maxMainTextChars: 30000,
+  }, null, 2)}
+};
+
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function processingHref(importId){
@@ -275,69 +299,29 @@ async function loadSources(){
   }catch(e){root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||e)+'</div>';}
 }
 
-function setCfgInput(section,key,val,type){
-  var el=document.getElementById('cfg-'+section+'-'+key);
-  if(!el)return;
-  if(type==='checkbox'){el.checked=!!val;return;}
-  if(type==='textarea'){
-    if(Array.isArray(val))el.value=val.join('\\n');
-    else el.value=val!=null?String(val):'';
-    return;
-  }
-  if(key==='profileScrapeSections'&&Array.isArray(val)){el.value=val.join(', ');return;}
-  if(key==='extraHashtags'&&Array.isArray(val)){el.value=val.join('\\n');return;}
-  if(key==='extraProfiles'&&Array.isArray(val)){el.value=val.join('\\n');return;}
-  el.value=val!=null?String(val):'';
-}
-function readCfgInput(section,key,type){
-  var el=document.getElementById('cfg-'+section+'-'+key);
-  if(!el)return undefined;
-  if(type==='checkbox')return !!el.checked;
-  if(type==='number'){var n=parseFloat(el.value);return Number.isFinite(n)?n:undefined;}
-  var s=String(el.value||'').trim();
-  if(type==='textarea'){
-    if(key==='extraHashtags'||key==='extraProfiles')return s?s.split(/[\\n,;]+/).map(function(x){return x.trim();}).filter(Boolean):[];
-    return s;
-  }
-  if(key==='profileScrapeSections')return s?s.split(/,+/).map(function(x){return x.trim();}).filter(Boolean):[];
-  return s;
-}
 function populateScraperForm(cfg){
   scraperCfgCache=cfg||{};
-  document.querySelectorAll('[data-cfg-section]').forEach(function(el){
-    var sec=el.getAttribute('data-cfg-section');
-    var key=el.getAttribute('data-cfg-key');
-    var type=el.getAttribute('data-cfg-type')||'text';
-    if(!sec||!key)return;
-    var bucket=sec==='apify'?cfg.apify:(cfg.scrapers&&cfg.scrapers[sec]);
-    setCfgInput(sec,key,bucket?bucket[key]:undefined,type);
-  });
   var extras=cfg.actorInputExtras||{};
-  ['instagram','tiktok','reddit','facebook'].forEach(function(k){
-    var ta=document.getElementById('cfg-extras-'+k);
-    if(ta)ta.value=extras[k]?JSON.stringify(extras[k],null,2):'';
+  CFG_SECTIONS.forEach(function(sec){
+    var ta=document.getElementById('cfg-json-'+sec);
+    if(!ta)return;
+    var json=extras[sec];
+    if(json&&typeof json==='object'&&Object.keys(json).length>0){
+      ta.value=JSON.stringify(json,null,2);
+    }else{
+      ta.value=DEFAULT_ACTOR_JSON[sec]||'{}';
+    }
   });
 }
 function gatherScraperForm(){
   var cfg=scraperCfgCache?JSON.parse(JSON.stringify(scraperCfgCache)):{apify:{},scrapers:{},actorInputExtras:{}};
-  if(!cfg.apify)cfg.apify={};
-  if(!cfg.scrapers)cfg.scrapers={};
   if(!cfg.actorInputExtras)cfg.actorInputExtras={};
-  document.querySelectorAll('[data-cfg-section]').forEach(function(el){
-    var sec=el.getAttribute('data-cfg-section');
-    var key=el.getAttribute('data-cfg-key');
-    var type=el.getAttribute('data-cfg-type')||'text';
-    if(!sec||!key)return;
-    var val=readCfgInput(sec,key,type);
-    if(sec==='apify')cfg.apify[key]=val;
-    else{if(!cfg.scrapers[sec])cfg.scrapers[sec]={};cfg.scrapers[sec][key]=val;}
-  });
-  ['instagram','tiktok','reddit','facebook'].forEach(function(k){
-    var ta=document.getElementById('cfg-extras-'+k);
+  CFG_SECTIONS.forEach(function(sec){
+    var ta=document.getElementById('cfg-json-'+sec);
     if(!ta)return;
     var raw=String(ta.value||'').trim();
-    if(!raw){delete cfg.actorInputExtras[k];return;}
-    try{cfg.actorInputExtras[k]=JSON.parse(raw);}catch(e){throw new Error('Invalid JSON in actorInputExtras.'+k+': '+String(e.message||e));}
+    if(!raw||raw==='{}'){delete cfg.actorInputExtras[sec];return;}
+    try{cfg.actorInputExtras[sec]=JSON.parse(raw);}catch(e){throw new Error('Invalid JSON in '+sec+': '+String(e.message||e));}
   });
   return cfg;
 }
@@ -371,10 +355,10 @@ async function resetScraperConfig(){
   if(!SLUG)return;
   if(!confirm('Reset all scraper options to CAF defaults?'))return;
   try{
-    var r0=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/meta');
-    var d0=await r0.json();
-    if(!r0.ok||!d0.ok)throw new Error(apiErr(d0,'HTTP '+r0.status));
-    populateScraperForm(d0.default_config||{});
+    CFG_SECTIONS.forEach(function(sec){
+      var ta=document.getElementById('cfg-json-'+sec);
+      if(ta)ta.value=DEFAULT_ACTOR_JSON[sec]||'{}';
+    });
     await saveScraperConfig();
   }catch(e){alert(String(e.message||e));}
 }

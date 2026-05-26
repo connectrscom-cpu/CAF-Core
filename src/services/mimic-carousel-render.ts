@@ -322,17 +322,26 @@ export function referenceUrlForSlide(mimic: MimicPayloadV1, slideIndex: number):
   return referenceItemForMimicSlide(mimic, slideIndex)?.vision_fetch_url ?? null;
 }
 
+function resolveSlideGuideline(
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): Record<string, unknown> | null {
+  const vg = asRecord(mimic.visual_guideline);
+  const slides = Array.isArray(vg?.slides) ? vg!.slides : [];
+  return (
+    slides
+      .map((raw) => asRecord(raw))
+      .find((s) => s && Number(s.slide_index) === slideIndex) ??
+    asRecord(slides[slideIndex - 1]) ??
+    null
+  );
+}
+
 export function slideVisionHints(
   mimic: MimicPayloadV1,
   slideIndex: number
 ): { layout?: string; visual?: string } {
-  const vg = asRecord(mimic.visual_guideline);
-  const slides = Array.isArray(vg?.slides) ? vg!.slides : [];
-  const match =
-    slides
-      .map((raw) => asRecord(raw))
-      .find((s) => s && Number(s.slide_index) === slideIndex) ??
-    asRecord(slides[slideIndex - 1]);
+  const match = resolveSlideGuideline(mimic, slideIndex);
   if (!match) return {};
   const layout = String(match.layout_template ?? "").trim();
   const visual = String(match.visual_description ?? "").trim();
@@ -340,6 +349,163 @@ export function slideVisionHints(
     ...(layout ? { layout } : {}),
     ...(visual ? { visual } : {}),
   };
+}
+
+export interface SlideIntentHints {
+  slidePurpose: string | null;
+  brandSpecificity: string | null;
+  referenceTextLength: number;
+}
+
+/**
+ * Read Nemotron intent tags + on-screen text length for a slide.
+ * Used to shape the Qwen prompt at render time.
+ */
+export function slideIntentHints(
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): SlideIntentHints {
+  const match = resolveSlideGuideline(mimic, slideIndex);
+  if (!match) return { slidePurpose: null, brandSpecificity: null, referenceTextLength: 0 };
+  return {
+    slidePurpose: typeof match.slide_purpose === "string" ? match.slide_purpose.trim().toLowerCase() : null,
+    brandSpecificity: typeof match.brand_specificity === "string" ? match.brand_specificity.trim().toLowerCase() : null,
+    referenceTextLength: String(match.on_screen_text_transcript ?? match.on_image_text ?? "").trim().length,
+  };
+}
+
+const FULL_BLEED_TEXT_CAP = 200;
+
+/**
+ * Build a Qwen prompt instruction based on the slide's Nemotron intent tags.
+ * Tells Qwen what kind of slide this is and how to handle text/branding.
+ */
+export function buildSlideIntentInstruction(intent: SlideIntentHints): string {
+  const parts: string[] = [];
+
+  if (intent.referenceTextLength > FULL_BLEED_TEXT_CAP) {
+    parts.push(
+      `The reference slide has dense text (${intent.referenceTextLength} chars). Keep any on-image text to under ${FULL_BLEED_TEXT_CAP} characters total — shorten, summarize, or use placeholder text blocks.`
+    );
+  }
+
+  if (intent.slidePurpose === "cta") {
+    parts.push("This is a call-to-action slide. Replace any brand-specific CTAs with a generic, universally applicable call to action.");
+  } else if (intent.slidePurpose === "hook") {
+    parts.push("This is a hook/cover slide. Keep the bold visual energy but use fresh, original text — not the reference wording.");
+  } else if (intent.slidePurpose === "storytelling" || intent.slidePurpose === "content") {
+    parts.push("This is a content slide. Capture the same narrative energy but do not reproduce the reference text.");
+  }
+
+  if (intent.brandSpecificity === "low") {
+    parts.push("The reference has some brand-specific elements — replace any brand names, handles, or product references with generic equivalents.");
+  }
+
+  return parts.join(" ");
+}
+
+// ─── Promotional / brand-specific slide filter ──────────────────────────────
+
+const PROMO_KEYWORD_PATTERNS = [
+  /\bdownload\b/i,
+  /\bbuy\s+now\b/i,
+  /\border\s+now\b/i,
+  /\bget\s+(your|the|my|our)\b/i,
+  /\bavailable\s+now\b/i,
+  /\blink\s+in\s+bio\b/i,
+  /\bswipe\s+up\b/i,
+  /\buse\s+code\b/i,
+  /\bdiscount\b/i,
+  /\bfree\s+shipping\b/i,
+  /\bcoupon\b/i,
+  /\bpromo\s*code\b/i,
+  /\btake\s+(the|our|my)\s+quiz\b/i,
+  /\bmy\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
+  /\bour\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
+  /\bnew\s+guide\b/i,
+  /\bpre-?order\b/i,
+  /\blaunch(ing|ed)?\b.*\b(guide|book|course|program)\b/i,
+  /\$\d/,
+  /\bpart\s+\d\b/i,
+];
+
+const PROMO_VISUAL_PATTERNS = [
+  /\bproduct\s+mockup/i,
+  /\bbook\s+cover/i,
+  /\bguide\s+cover/i,
+  /\bdevice\s+mockup/i,
+  /\bphone\s+screen/i,
+  /\btablet\s+screen/i,
+  /\bipad\s+mockup/i,
+  /\bebook\s+preview/i,
+];
+
+/**
+ * Detect whether a reference slide should be skipped (promotional / brand-specific).
+ *
+ * Priority:
+ *  1. Nemotron `mimic_evaluation.skip_slide_indices` — deck-level explicit list
+ *  2. Per-slide `slide_purpose` tag (`self_promo`, `product_pitch`)
+ *  3. Per-slide `brand_specificity` tag (`high`)
+ *  4. Regex fallback on `on_screen_text_transcript` + `visual_description` (pre-tagging packs)
+ */
+export function isPromotionalSlide(
+  mimic: MimicPayloadV1,
+  slideIndex: number
+): boolean {
+  const vg = asRecord(mimic.visual_guideline);
+
+  // Level 1: deck-level skip list from mimic_evaluation
+  const mimicEval = asRecord(vg?.mimic_evaluation);
+  if (mimicEval) {
+    const skipIndices = Array.isArray(mimicEval.skip_slide_indices) ? mimicEval.skip_slide_indices : [];
+    if (skipIndices.includes(slideIndex)) return true;
+    const contentIndices = Array.isArray(mimicEval.content_slide_indices) ? mimicEval.content_slide_indices : [];
+    if (contentIndices.length > 0 && contentIndices.includes(slideIndex)) return false;
+  }
+
+  // Level 2-3: per-slide intent tags
+  const slides = Array.isArray(vg?.slides) ? vg!.slides : [];
+  const match =
+    slides
+      .map((raw) => asRecord(raw))
+      .find((s) => s && Number(s.slide_index) === slideIndex) ??
+    asRecord(slides[slideIndex - 1]);
+  if (!match) return false;
+
+  const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
+  const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
+
+  if (purpose === "self_promo" || purpose === "product_pitch") return true;
+  if (brandSpec === "high") return true;
+
+  if (purpose && brandSpec) return false;
+
+  // Level 4: regex fallback for packs without Nemotron tags
+  const transcript = String(
+    match.on_screen_text_transcript ?? match.on_image_text ?? ""
+  ).trim();
+  const visual = String(match.visual_description ?? "").trim();
+
+  if (transcript && PROMO_KEYWORD_PATTERNS.some((rx) => rx.test(transcript))) return true;
+  if (visual && PROMO_VISUAL_PATTERNS.some((rx) => rx.test(visual))) return true;
+
+  return false;
+}
+
+/**
+ * Return 1-based slide indices that should be rendered (non-promotional).
+ * For carousel_visual mode, filters out brand/CTA slides from the reference deck.
+ */
+export function nonPromotionalSlideIndices(
+  mimic: MimicPayloadV1,
+  totalSlides: number
+): number[] {
+  const indices: number[] = [];
+  for (let i = 1; i <= totalSlides; i++) {
+    if (!isPromotionalSlide(mimic, i)) indices.push(i);
+  }
+  return indices.length > 0 ? indices : [1];
 }
 
 /**
@@ -399,7 +565,14 @@ export async function renderMimicCarouselSlideFullBleed(
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
 
-  const hints = slideVisionHints(mimic, slideIndex);
+  const visionHints = slideVisionHints(mimic, slideIndex);
+  const intent = slideIntentHints(mimic, slideIndex);
+
+  let effectiveCopy = String(opts?.onImageCopy ?? "").trim();
+  if (effectiveCopy.length > 200) effectiveCopy = effectiveCopy.slice(0, 200);
+
+  const intentInstruction = buildSlideIntentInstruction(intent);
+
   const buildParams = (usePrevSlide: boolean) => {
     const consistencyHint = usePrevSlide && opts?.previousSlideUrl
       ? "Maintain visual consistency with the previous slide in this carousel: match the same color palette, style, and tonal treatment."
@@ -408,10 +581,11 @@ export async function renderMimicCarouselSlideFullBleed(
       referenceUrl,
       prompt: mimicPromptForMode("carousel_visual", {
         index: slideIndex,
-        layout: hints.layout,
-        visual: hints.visual,
-        onImageCopy: opts?.onImageCopy,
+        layout: visionHints.layout,
+        visual: visionHints.visual,
+        onImageCopy: effectiveCopy || null,
         consistencyHint,
+        intentInstruction,
       }, opts?.promptOverrides),
       size: "1024x1536",
       previousSlideUrl: usePrevSlide ? (opts?.previousSlideUrl || undefined) : undefined,

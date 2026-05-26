@@ -167,6 +167,18 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
     "legal_ethics": "One line: recreate the *pattern*, not copyrighted third-party imagery or logos verbatim."
   },
 
+  "mimic_evaluation": {
+    "recommended_mode": "full_bleed_visual | text_on_template | not_suitable",
+    "mode_reason": "1-2 sentences: why this mode is the best fit for recreating this deck with an image-gen AI (full_bleed_visual = each slide is a standalone image that can be recreated as-is by an AI image model; text_on_template = slides share a repeating background/frame and differ only in overlaid text, so extract the template once and overlay new text; not_suitable = deck is too brand-specific, too complex, or mostly promotional to replicate meaningfully)",
+    "background_replicability": "high | medium | low — can an AI image model convincingly recreate the background/frame of these slides?",
+    "background_description": "short description of the shared background or visual frame (color, gradients, imagery) — empty string if each slide has a unique background",
+    "template_consistency": "uniform | varied | mixed — do slides share one visual template or is each slide unique?",
+    "content_slide_indices": [1, 2, 3],
+    "skip_slide_indices": [],
+    "skip_reason": "why skipped slides should be excluded (e.g. product mockup, branded guide cover, app download CTA) — empty string if none skipped",
+    "replication_difficulty": "easy | moderate | hard"
+  },
+
   "slides": [
     {
       "slide_index": 1,
@@ -189,7 +201,9 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
       },
       "graphic_elements": "borders, shadows, gradients, stickers, icons, underline bars, swipe chevrons — anything layout-affecting",
       "image_or_photo_role": "full-bleed photo | inset card | collage | flat illustration | screenshot-like | none — and dominant subject",
-      "text_density": "low | medium | high"
+      "text_density": "low | medium | high",
+      "slide_purpose": "hook | content | listicle_item | storytelling | cta | self_promo | product_pitch | testimonial | filler",
+      "brand_specificity": "none | low | high — how tied the slide is to the creator's own brand/product (high = names a specific guide, course, app, quiz, download, or branded offering that would not apply to another account)"
     }
   ]
 }

@@ -57,6 +57,7 @@ import {
   renderMimicCarouselSlideFullBleed,
   slideOnImageCopyFromSlides,
   composeMimicSlideOnBackground,
+  isPromotionalSlide,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
@@ -1555,6 +1556,38 @@ async function processCarouselJob(
     // carousel_visual: match the original slide count from reference frames
     if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
       n = mimicPayload.reference_items.length;
+    }
+
+    // Filter out promotional / brand-specific reference slides (product pitches, CTAs,
+    // download promos, branded guides, quizzes). Uses on_screen_text_transcript from
+    // the Nemotron vision analysis stored on visual_guideline.slides.
+    if (mimicPayload.mode === "carousel_visual") {
+      const keptIndices: number[] = [];
+      for (let idx = 1; idx <= n; idx++) {
+        if (!isPromotionalSlide(mimicPayload, idx)) keptIndices.push(idx);
+      }
+      if (keptIndices.length > 0 && keptIndices.length < n) {
+        const filteredItems = keptIndices.map(
+          (refIdx) => mimicPayload!.reference_items[refIdx - 1]
+        ).filter(Boolean);
+        if (filteredItems.length > 0) {
+          logPipelineEvent("info", "render", "Filtered promotional slides from carousel_visual", {
+            task_id: job.task_id,
+            data: {
+              original_slide_count: n,
+              filtered_slide_count: filteredItems.length,
+              removed_indices: Array.from({ length: n }, (_, i) => i + 1).filter(
+                (i) => !keptIndices.includes(i)
+              ),
+            },
+          });
+          mimicPayload = {
+            ...mimicPayload,
+            reference_items: filteredItems.map((item, i) => ({ ...item, index: i + 1 })),
+          };
+          n = filteredItems.length;
+        }
+      }
     }
 
     mimicPayload = {

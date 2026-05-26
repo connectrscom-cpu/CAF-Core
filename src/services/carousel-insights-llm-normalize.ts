@@ -69,6 +69,38 @@ function normalizeTextDensity(raw: unknown): string | null {
   return null;
 }
 
+const VALID_SLIDE_PURPOSE = new Set([
+  "hook", "content", "listicle_item", "storytelling", "cta",
+  "self_promo", "product_pitch", "testimonial", "filler",
+]);
+
+const VALID_BRAND_SPECIFICITY = new Set(["none", "low", "high"]);
+
+function normalizeSlidePurpose(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().toLowerCase().replace(/\s+/g, "_");
+  if (VALID_SLIDE_PURPOSE.has(s)) return s;
+  if (s.includes("promo") || s.includes("self_")) return "self_promo";
+  if (s.includes("product") || s.includes("pitch") || s.includes("sell")) return "product_pitch";
+  if (s.includes("hook") || s.includes("cover")) return "hook";
+  if (s.includes("cta") || s.includes("call_to_action")) return "cta";
+  if (s.includes("list") || s.includes("item")) return "listicle_item";
+  if (s.includes("story") || s.includes("narrative")) return "storytelling";
+  if (s.includes("testimonial") || s.includes("quote") || s.includes("review")) return "testimonial";
+  if (s.includes("filler") || s.includes("spacer") || s.includes("transition")) return "filler";
+  return "content";
+}
+
+function normalizeBrandSpecificity(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().toLowerCase();
+  if (VALID_BRAND_SPECIFICITY.has(s)) return s;
+  if (/\bhigh\b/.test(s)) return "high";
+  if (/\blow\b/.test(s)) return "low";
+  if (/\bnone\b|\bgeneric\b|\bn\/a\b/.test(s)) return "none";
+  return null;
+}
+
 function slideQualityScore(slide: Record<string, unknown>): number {
   const transcript = slideTranscriptText(slide);
   const visual = pickString(slide, "visual_description") ?? "";
@@ -126,6 +158,12 @@ function normalizeSlideRecord(raw: unknown, fallbackIndex: number): Record<strin
     const alt = pickString(s, "on_screen_text", "text_transcript", "ocr_text", "visible_text");
     if (alt) out.on_screen_text_transcript = alt;
   }
+
+  const purpose = normalizeSlidePurpose(s.slide_purpose ?? s.purpose ?? s.slide_type ?? s.slide_role);
+  if (purpose) out.slide_purpose = purpose;
+
+  const brandSpec = normalizeBrandSpecificity(s.brand_specificity ?? s.brand_specific ?? s.brand_tied);
+  if (brandSpec) out.brand_specificity = brandSpec;
 
   return out;
 }
@@ -200,6 +238,43 @@ function sanitizeReplicationBlueprint(raw: unknown): Record<string, unknown> | n
   return Object.keys(out).length > 0 ? out : null;
 }
 
+const VALID_MIMIC_RECOMMENDED_MODE = new Set(["full_bleed_visual", "text_on_template", "not_suitable"]);
+const VALID_MIMIC_BG_REPLICABILITY = new Set(["high", "medium", "low"]);
+const VALID_MIMIC_TEMPLATE_CONSISTENCY = new Set(["uniform", "varied", "mixed"]);
+const VALID_MIMIC_DIFFICULTY = new Set(["easy", "moderate", "hard"]);
+
+function normalizeMimicEvaluation(raw: unknown): Record<string, unknown> | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+
+  const mode = String(obj.recommended_mode ?? obj.mode ?? "").trim().toLowerCase().replace(/\s+/g, "_");
+  const out: Record<string, unknown> = {};
+
+  out.recommended_mode = VALID_MIMIC_RECOMMENDED_MODE.has(mode) ? mode : null;
+  out.mode_reason = typeof obj.mode_reason === "string" ? obj.mode_reason.trim().slice(0, 500) : null;
+
+  const bgr = String(obj.background_replicability ?? "").trim().toLowerCase();
+  out.background_replicability = VALID_MIMIC_BG_REPLICABILITY.has(bgr) ? bgr : null;
+  out.background_description = typeof obj.background_description === "string" ? obj.background_description.trim().slice(0, 400) : null;
+
+  const tc = String(obj.template_consistency ?? "").trim().toLowerCase();
+  out.template_consistency = VALID_MIMIC_TEMPLATE_CONSISTENCY.has(tc) ? tc : null;
+
+  out.content_slide_indices = Array.isArray(obj.content_slide_indices)
+    ? obj.content_slide_indices.filter((v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 1).map(Number)
+    : [];
+  out.skip_slide_indices = Array.isArray(obj.skip_slide_indices)
+    ? obj.skip_slide_indices.filter((v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 1).map(Number)
+    : [];
+  out.skip_reason = typeof obj.skip_reason === "string" ? obj.skip_reason.trim().slice(0, 400) : null;
+
+  const diff = String(obj.replication_difficulty ?? "").trim().toLowerCase();
+  out.replication_difficulty = VALID_MIMIC_DIFFICULTY.has(diff) ? diff : null;
+
+  if (!out.recommended_mode && !out.background_replicability) return null;
+  return out;
+}
+
 function stripGarbageFromCarouselRoot(root: Record<string, unknown>): void {
   if (root.deck_visual_system != null) {
     const cleaned = sanitizeDeckVisualSystem(root.deck_visual_system);
@@ -210,6 +285,11 @@ function stripGarbageFromCarouselRoot(root: Record<string, unknown>): void {
     const cleaned = sanitizeReplicationBlueprint(root.replication_blueprint);
     if (cleaned) root.replication_blueprint = cleaned;
     else delete root.replication_blueprint;
+  }
+  if (root.mimic_evaluation != null) {
+    const cleaned = normalizeMimicEvaluation(root.mimic_evaluation);
+    if (cleaned) root.mimic_evaluation = cleaned;
+    else delete root.mimic_evaluation;
   }
   delete root.mlm_data;
   delete root.classifier_input;
@@ -431,8 +511,13 @@ NVIDIA / Nemotron — strict output contract:
 - Return ONE flat JSON object at the root. Never nest the payload under "deck", "carousel", "analysis", "result", or "output".
 - Never put slides[], mlm_data, or classifier blobs inside deck_visual_system or replication_blueprint.
 - Required root strings: slide_arc, cover_vs_body, visual_consistency, on_screen_text_summary, cta_clarity, format_pattern, why_it_worked, primary_emotion, secondary_emotion, caption_style
+- Required root objects: mimic_evaluation (with recommended_mode, mode_reason, background_replicability, background_description, template_consistency, content_slide_indices, skip_slide_indices, skip_reason, replication_difficulty)
+- mimic_evaluation.recommended_mode MUST be one of: full_bleed_visual, text_on_template, not_suitable
+- mimic_evaluation.content_slide_indices and skip_slide_indices MUST be arrays of integers (slide_index values)
 - Required root arrays: risk_flags (use [] when none), slides (one object per attached image)
-- Each slides[] entry MUST include slide_index (1..N), on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, image_or_photo_role, text_density
+- Each slides[] entry MUST include slide_index (1..N), on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, image_or_photo_role, text_density, slide_purpose, brand_specificity
+- slide_purpose MUST be one of: hook, content, listicle_item, storytelling, cta, self_promo, product_pitch, testimonial, filler
+- brand_specificity MUST be one of: none, low, high (high = slide mentions a specific product, guide, course, app, quiz, or branded offering)
 - format_pattern MUST be one of: educational, listicle, story, before_after, promo, mixed, unknown
 - slides.length MUST exactly equal the number of image attachments in the user message
 - slide_index MUST use the **global** indices stated in the user message (not 1..k per batch)
@@ -468,6 +553,17 @@ Return ONLY flat JSON (no "deck" wrapper, no slides array):
     "asset_sources": ["..."],
     "tooling_notes": "...",
     "legal_ethics": "..."
+  },
+  "mimic_evaluation": {
+    "recommended_mode": "full_bleed_visual | text_on_template | not_suitable",
+    "mode_reason": "...",
+    "background_replicability": "high | medium | low",
+    "background_description": "...",
+    "template_consistency": "uniform | varied | mixed",
+    "content_slide_indices": [1, 2, 3],
+    "skip_slide_indices": [],
+    "skip_reason": "...",
+    "replication_difficulty": "easy | moderate | hard"
   }
 }`;
 
@@ -485,7 +581,9 @@ Return ONLY flat JSON (no "deck" wrapper):
       "color_tokens": { "background": "...", "primary_text": "...", "accent": [] },
       "graphic_elements": "...",
       "image_or_photo_role": "...",
-      "text_density": "low | medium | high"
+      "text_density": "low | medium | high",
+      "slide_purpose": "hook | content | listicle_item | storytelling | cta | self_promo | product_pitch | testimonial | filler",
+      "brand_specificity": "none | low | high"
     }
   ]
 }

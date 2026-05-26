@@ -29,8 +29,23 @@ export interface MimicCarouselSlideGuideline {
   visual_description: string | null;
   text_density: string | null;
   image_or_photo_role: string | null;
+  on_screen_text_transcript: string | null;
+  slide_purpose: string | null;
+  brand_specificity: string | null;
   color_tokens: MimicCarouselSlideColorTokens | null;
   typography: MimicCarouselSlideTypography | null;
+}
+
+export interface MimicEvaluation {
+  recommended_mode: string | null;
+  mode_reason: string | null;
+  background_replicability: string | null;
+  background_description: string | null;
+  template_consistency: string | null;
+  content_slide_indices: number[];
+  skip_slide_indices: number[];
+  skip_reason: string | null;
+  replication_difficulty: string | null;
 }
 
 export interface MimicCarouselVisualGuideline {
@@ -41,6 +56,7 @@ export interface MimicCarouselVisualGuideline {
   visual_consistency: string | null;
   deck_visual_system: Record<string, unknown> | null;
   replication_blueprint: Record<string, unknown> | null;
+  mimic_evaluation: MimicEvaluation | null;
   evidence_post_url: string | null;
   /** Per-slide layout / visual cues from top-performer deep analysis (no signed URLs). */
   slides: MimicCarouselSlideGuideline[] | null;
@@ -131,9 +147,30 @@ function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCaro
     visual_description: String(s.visual_description ?? "").trim() || null,
     text_density: String(s.text_density ?? "").trim() || null,
     image_or_photo_role: String(s.image_or_photo_role ?? "").trim() || null,
+    on_screen_text_transcript: String(s.on_screen_text_transcript ?? s.on_image_text ?? "").trim() || null,
+    slide_purpose: typeof s.slide_purpose === "string" && s.slide_purpose.trim() ? s.slide_purpose.trim() : null,
+    brand_specificity: typeof s.brand_specificity === "string" && s.brand_specificity.trim() ? s.brand_specificity.trim() : null,
     color_tokens: slimColorTokens(s.color_tokens),
     typography: slimTypography(s.typography),
   }));
+}
+
+function slimMimicEvaluation(raw: unknown): MimicEvaluation | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+  const mode = typeof obj.recommended_mode === "string" ? obj.recommended_mode.trim() : null;
+  if (!mode) return null;
+  return {
+    recommended_mode: mode || null,
+    mode_reason: typeof obj.mode_reason === "string" ? obj.mode_reason.trim() : null,
+    background_replicability: typeof obj.background_replicability === "string" ? obj.background_replicability.trim() : null,
+    background_description: typeof obj.background_description === "string" ? obj.background_description.trim() : null,
+    template_consistency: typeof obj.template_consistency === "string" ? obj.template_consistency.trim() : null,
+    content_slide_indices: Array.isArray(obj.content_slide_indices) ? obj.content_slide_indices.filter((v: unknown) => typeof v === "number") : [],
+    skip_slide_indices: Array.isArray(obj.skip_slide_indices) ? obj.skip_slide_indices.filter((v: unknown) => typeof v === "number") : [],
+    skip_reason: typeof obj.skip_reason === "string" ? obj.skip_reason.trim() : null,
+    replication_difficulty: typeof obj.replication_difficulty === "string" ? obj.replication_difficulty.trim() : null,
+  };
 }
 
 export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
@@ -147,6 +184,7 @@ export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): Mi
     visual_consistency: String(entry.visual_consistency ?? "").trim() || null,
     deck_visual_system: asRecord(entry.deck_visual_system),
     replication_blueprint: asRecord(entry.replication_blueprint),
+    mimic_evaluation: slimMimicEvaluation(aes.mimic_evaluation ?? entry.mimic_evaluation),
     evidence_post_url: String(entry.evidence_post_url ?? "").trim() || null,
     slides: slides.length > 0 ? slides : null,
   };
