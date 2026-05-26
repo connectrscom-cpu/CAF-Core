@@ -4,11 +4,13 @@ import type { MimicMode } from "../domain/mimic-payload.js";
 export const MIMIC_PROMPT_NAME_IMAGE_FULL = "RENDER__Mimic_Image_Full_v1";
 export const MIMIC_PROMPT_NAME_TEMPLATE_BG = "RENDER__Mimic_Template_Background_v1";
 export const MIMIC_PROMPT_NAME_CAROUSEL_SLIDE = "RENDER__Mimic_Carousel_Slide_Visual_v1";
+export const MIMIC_PROMPT_NAME_TEMPLATE_BG_COMPOSE = "RENDER__Mimic_Template_Bg_Compose_v1";
 
 export interface MimicPromptOverrides {
   image_full?: string | null;
   template_bg?: string | null;
   carousel_slide_visual?: string | null;
+  template_bg_compose?: string | null;
 }
 
 // ─── Default prompt text (code-defined baselines) ───────────────────────────
@@ -31,14 +33,24 @@ export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
 ].join(" ");
 
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
-  "Recreate this carousel slide faithfully: match the visual style, layout, color palette, spacing, and decorative framing of the reference image.",
+  "Recreate this carousel slide as a near-identical variant: match the visual style, layout, color palette, spacing, composition, and subject matter of the reference image.",
   "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
-  "Remove all original text from the reference.",
+  "Do NOT add decorative frames, borders, ornamental elements, or vignettes that are not in the reference.",
   "{{copy_instruction}}",
-  "Do not add logos, brand marks, or recognizable faces.",
+  "Do not copy logos, brand marks, or recognizable faces verbatim — apply subtle variation.",
   "{{consistency_instruction}}",
   "{{layout_instruction}}",
   "{{visual_instruction}}",
+].join(" ");
+
+export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = [
+  "Place the following text onto this background image with clean, readable typography.",
+  "Match the text positioning, hierarchy, and font style of the reference layout.",
+  "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
+  "Do NOT add decorative frames, borders, or ornamental elements.",
+  "Do NOT alter the background — keep it exactly as provided.",
+  "{{copy_instruction}}",
+  "{{consistency_instruction}}",
 ].join(" ");
 
 // ─── Interpolation helpers ──────────────────────────────────────────────────
@@ -51,14 +63,25 @@ function buildCopyInstructionForImageFull(copy: string): string {
 }
 
 function buildCopyInstructionForSlide(copy: string): string {
-  if (!copy) return "Leave text areas empty or use neutral placeholder blocks.";
+  if (!copy) return "Keep on-image text minimal — reproduce the reference text pattern without adding new text.";
   const lines = copy.split(/\n{2,}/);
   const headline = lines[0]?.trim() ?? "";
   const body = lines.slice(1).join("\n").trim();
   if (headline && body) {
     return `Place this text on the slide using the same text hierarchy and positioning as the reference. Headline: """${headline.slice(0, 400)}""" Body: """${body.slice(0, 800)}""".`;
   }
-  return `Place this text on the slide matching the reference text positioning: """${copy.slice(0, 1200)}""".`;
+  return `Place this short text on the slide matching the reference text positioning: """${copy.slice(0, 400)}""".`;
+}
+
+function buildCopyInstructionForCompose(copy: string): string {
+  if (!copy) return "Leave the background clean — do not add any text.";
+  const lines = copy.split(/\n{2,}/);
+  const headline = lines[0]?.trim() ?? "";
+  const body = lines.slice(1).join("\n").trim();
+  if (headline && body) {
+    return `Headline: """${headline.slice(0, 400)}""" Body text: """${body.slice(0, 1200)}""".`;
+  }
+  return `Text to place: """${copy.slice(0, 1200)}""".`;
 }
 
 function interpolateMimicTemplate(
@@ -127,13 +150,30 @@ export function buildMimicCarouselSlidePrompt(
   });
 }
 
+export function buildMimicTemplateBgComposePrompt(
+  opts: {
+    onImageCopy?: string | null;
+    consistencyHint?: string | null;
+  },
+  overrides?: MimicPromptOverrides | null
+): string {
+  const copy = String(opts.onImageCopy ?? "").trim();
+  const consistencyInstruction = opts.consistencyHint?.trim() || "";
+  const template = overrides?.template_bg_compose?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT;
+  return interpolateMimicTemplate(template, {
+    copy_instruction: buildCopyInstructionForCompose(copy),
+    consistency_instruction: consistencyInstruction,
+  });
+}
+
 export function mimicPromptForMode(
-  mode: MimicMode,
+  mode: MimicMode | "template_bg_compose",
   slide?: { index?: number; layout?: string; visual?: string; onImageCopy?: string | null; consistencyHint?: string | null },
   overrides?: MimicPromptOverrides | null
 ): string {
   if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy }, overrides);
   if (mode === "template_bg") return buildMimicTemplateBackgroundPrompt({ consistencyHint: slide?.consistencyHint }, overrides);
+  if (mode === "template_bg_compose") return buildMimicTemplateBgComposePrompt({ onImageCopy: slide?.onImageCopy, consistencyHint: slide?.consistencyHint }, overrides);
   return buildMimicCarouselSlidePrompt({
     slideIndex: slide?.index ?? 1,
     layoutTemplate: slide?.layout,

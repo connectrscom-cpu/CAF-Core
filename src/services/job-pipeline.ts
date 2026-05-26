@@ -56,6 +56,7 @@ import {
   requireMimicSlideBackgroundPlate,
   renderMimicCarouselSlideFullBleed,
   slideOnImageCopyFromSlides,
+  composeMimicSlideOnBackground,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
@@ -1526,7 +1527,7 @@ async function processCarouselJob(
   }
 
   const renderBase = carouselRenderBaseForPipeline(baseRender, usableSlides);
-  const n = carouselSlideCount(renderBase);
+  let n = carouselSlideCount(renderBase);
   if (!Number.isFinite(n) || n < 1) {
     throw new Error(`Invalid carousel slide count (${String(n)}); check generated_output / structure_variables.slide_count.`);
   }
@@ -1540,6 +1541,12 @@ async function processCarouselJob(
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
     mimicPayload = reconcileMimicPayloadAtRender(job.flow_type, mimicPayload);
+
+    // carousel_visual: match the original slide count from reference frames
+    if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
+      n = mimicPayload.reference_items.length;
+    }
+
     mimicPayload = {
       ...mimicPayload,
       slide_plans: extendSlidePlansForOutputCount(mimicPayload, n),
@@ -1661,7 +1668,8 @@ async function processCarouselJob(
           : null;
 
       if (slideMode === "full_bleed" && mimicPayload) {
-        const onImageCopy = slideOnImageCopyFromSlides(usableSlides, i);
+        // carousel_visual full-bleed: do NOT inject verbose LLM copy — Qwen should
+        // recreate the slide faithfully with only the reference's text pattern.
         const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
           db,
           config,
@@ -1669,7 +1677,6 @@ async function processCarouselJob(
           mimicPayload,
           i,
           {
-            onImageCopy: onImageCopy || undefined,
             promptOverrides: mimicPromptOverrides,
             previousSlideUrl: previousFullBleedSlideUrl,
           }
@@ -1710,10 +1717,40 @@ async function processCarouselJob(
         continue;
       }
 
-      // template_bg (listicle) slides: store background plate directly — no HBS text overlay.
-      // Text compositing will be handled properly in a dedicated pass later.
+      // template_bg (listicle) slides: extract background plate, then ask Qwen to
+      // composite the LLM-generated copy onto the clean background.
       if (slideMode === "hbs" && mimicPayload?.mode === "template_bg") {
-        const slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
+        const slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
+        const onImageCopy = slideOnImageCopyFromSlides(usableSlides, i);
+        const consistencyHint = i > 1
+          ? "Maintain consistent text style, positioning, and formatting with the previous slides in this carousel."
+          : "";
+        const { buffer: composedBuf, mimeType: composedMime } = await composeMimicSlideOnBackground(
+          db,
+          config,
+          job,
+          slideBgUrl,
+          i,
+          {
+            onImageCopy: onImageCopy || undefined,
+            promptOverrides: mimicPromptOverrides,
+            consistencyHint: consistencyHint || undefined,
+            previousSlideUrl: previousFullBleedSlideUrl,
+          }
+        );
+        const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const ext = composedMime.includes("jpeg") ? "jpg" : "png";
+        const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.${ext}`;
+        let publicUrl: string | null = null;
+        let storedPath = objectPath;
+        try {
+          const up = await uploadBuffer(config, objectPath, composedBuf, composedMime);
+          publicUrl = up.public_url;
+          storedPath = up.object_path;
+        } catch {
+          /* Supabase optional */
+        }
         await insertAsset(db, {
           asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
           task_id: job.task_id,
@@ -1721,12 +1758,18 @@ async function processCarouselJob(
           asset_type: "CAROUSEL_SLIDE",
           position: i - 1,
           bucket: config.SUPABASE_ASSETS_BUCKET,
-          object_path: slideBgUrl,
-          public_url: slideBgUrl,
+          object_path: storedPath,
+          public_url: publicUrl,
           provider: mimicImageProviderAssetLabel(config),
-          metadata_json: { slide_index: i, mimic: true, template_bg_only: true },
+          metadata_json: { slide_index: i, mimic: true, template_bg_composed: true },
         });
-        slideResults.push({ index: i, public_url: slideBgUrl, object_path: slideBgUrl });
+        slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
+        try {
+          const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, storedPath, 600);
+          previousFullBleedSlideUrl = "signedUrl" in signed ? signed.signedUrl : (publicUrl || null);
+        } catch {
+          previousFullBleedSlideUrl = publicUrl || null;
+        }
         continue;
       }
 

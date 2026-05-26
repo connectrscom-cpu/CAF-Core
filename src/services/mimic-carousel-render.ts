@@ -343,6 +343,41 @@ export function slideVisionHints(
 }
 
 /**
+ * Compose text onto a clean background plate via Qwen (Pass 2 for template_bg).
+ * The background plate is the reference image; Qwen renders the copy onto it.
+ */
+export async function composeMimicSlideOnBackground(
+  db: Pool,
+  config: AppConfig,
+  job: { task_id: string; project_id: string; run_id: string },
+  backgroundUrl: string,
+  slideIndex: number,
+  opts?: {
+    onImageCopy?: string | null;
+    promptOverrides?: MimicPromptOverrides | null;
+    consistencyHint?: string | null;
+    previousSlideUrl?: string | null;
+  }
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  return editImageFromReference(config, {
+    referenceUrl: backgroundUrl,
+    prompt: mimicPromptForMode("template_bg_compose", {
+      onImageCopy: opts?.onImageCopy,
+      consistencyHint: opts?.consistencyHint,
+    }, opts?.promptOverrides),
+    size: "1024x1536",
+    previousSlideUrl: opts?.previousSlideUrl || undefined,
+    audit: {
+      db,
+      projectId: job.project_id,
+      runId: job.run_id,
+      taskId: job.task_id,
+      step: `mimic_bg_compose_${slideIndex}`,
+    },
+  });
+}
+
+/**
  * Generate a full-bleed mimicked carousel slide PNG.
  * When `previousSlideUrl` is provided, it is sent as additional context to Qwen
  * so the model can maintain color, style, and tonal consistency across the carousel.

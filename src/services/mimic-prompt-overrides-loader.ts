@@ -3,6 +3,7 @@ import {
   MIMIC_PROMPT_NAME_IMAGE_FULL,
   MIMIC_PROMPT_NAME_TEMPLATE_BG,
   MIMIC_PROMPT_NAME_CAROUSEL_SLIDE,
+  MIMIC_PROMPT_NAME_TEMPLATE_BG_COMPOSE,
   type MimicPromptOverrides,
 } from "./mimic-prompt-builder.js";
 
@@ -22,7 +23,7 @@ export async function loadMimicPromptOverrides(db: Pool): Promise<MimicPromptOve
     `SELECT prompt_name, user_prompt_template
      FROM caf_core.prompt_labs_overrides
      WHERE prompt_name = ANY($1)`,
-    [[MIMIC_PROMPT_NAME_IMAGE_FULL, MIMIC_PROMPT_NAME_TEMPLATE_BG, MIMIC_PROMPT_NAME_CAROUSEL_SLIDE]]
+    [[MIMIC_PROMPT_NAME_IMAGE_FULL, MIMIC_PROMPT_NAME_TEMPLATE_BG, MIMIC_PROMPT_NAME_CAROUSEL_SLIDE, MIMIC_PROMPT_NAME_TEMPLATE_BG_COMPOSE]]
   );
 
   if (rows.rows.length === 0) {
@@ -36,6 +37,7 @@ export async function loadMimicPromptOverrides(db: Pool): Promise<MimicPromptOve
     image_full: byName.get(MIMIC_PROMPT_NAME_IMAGE_FULL) || null,
     template_bg: byName.get(MIMIC_PROMPT_NAME_TEMPLATE_BG) || null,
     carousel_slide_visual: byName.get(MIMIC_PROMPT_NAME_CAROUSEL_SLIDE) || null,
+    template_bg_compose: byName.get(MIMIC_PROMPT_NAME_TEMPLATE_BG_COMPOSE) || null,
   };
   _cacheTs = now;
   return _cachedOverrides;

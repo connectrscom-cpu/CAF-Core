@@ -470,7 +470,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   );
 
   const carouselLivePreview = useMemo(() => {
-    if (videoFlow || imageFlow || !carouselTemplate || editedSlides.length === 0) return null;
+    // Mimic carousel slides are final Qwen-generated PNGs — no HBS template to live-preview.
+    if (videoFlow || imageFlow || mimicCarouselFlow || !carouselTemplate || editedSlides.length === 0) return null;
     return {
       template: carouselTemplate,
       taskId: execTaskId,
