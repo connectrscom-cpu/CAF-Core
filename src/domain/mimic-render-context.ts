@@ -46,7 +46,7 @@ export function buildMimicRenderContextForLlm(
     format_pattern: formatPattern,
     render_sequence: copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic",
     operator_note: copyBefore
-      ? "Finalize all slide copy in this step. Render extracts one shared background plate (listicle / text-overlay) and overlays copy via carousel_mimic_bg.hbs — same style frame, new wording per slide."
-      : "Visual-led deck with short on-slide copy: render recreates each whole slide in the reference style and swaps in your new wording only.",
+      ? "Template path: background plates (cover/body/CTA) are extracted before this copy step. Finalize all slide copy here; render will burn text onto those plates via Qwen."
+      : "Full-bleed path: prioritize caption and hashtags; keep on-slide text minimal (≤120 chars/slide). Render recreates each slide visually from reference frames with text-only consistency hints.",
   };
 }

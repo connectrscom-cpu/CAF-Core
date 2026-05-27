@@ -56,7 +56,11 @@ import { extractSpokenScriptText, mergeSceneBundleParsedIntoGeneratedOutput } fr
 import { normalizeVideoLlmParsed } from "./video-output-normalize.js";
 import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
 import { buildVideoScriptInputJsonString } from "./llm-creation-pack-budget.js";
-import { CAROUSEL_COPY_SYSTEM_ADDENDUM } from "./carousel-copy-prompt-policy.js";
+import {
+  mimicCarouselCopyBranch,
+  mimicCarouselCopySystemAddendum,
+  mimicCarouselUsesFullBodyLengthTargets,
+} from "./carousel-mimic-copy-policy.js";
 import {
   buildCarouselBodyLengthSystemBlock,
   parseCarouselBodyCharScale,
@@ -505,8 +509,12 @@ export async function generateForJob(
   }
 
   if (isCarouselFlow(job.flow_type)) {
-    systemPrompt = `${systemPrompt.trim()}\n\n${CAROUSEL_COPY_SYSTEM_ADDENDUM}`.trim();
-    if (carouselBodyTargets) {
+    const mimicCopyBranch =
+      mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)
+        ? mimicCarouselCopyBranch(mimicForCopy, asRecord(templateContext.mimic_render_context))
+        : "default";
+    systemPrompt = `${systemPrompt.trim()}\n\n${mimicCarouselCopySystemAddendum(mimicCopyBranch)}`.trim();
+    if (carouselBodyTargets && mimicCarouselUsesFullBodyLengthTargets(mimicCopyBranch)) {
       systemPrompt = `${systemPrompt.trim()}\n\n${buildCarouselBodyLengthSystemBlock(carouselBodyTargets)}`.trim();
     }
   }

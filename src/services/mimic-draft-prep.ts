@@ -9,6 +9,7 @@ import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
+import { resolveTemplateStorageDecision } from "../domain/mimic-template-library.js";
 import { pickGeneratedOutput } from "../domain/generation-payload-output.js";
 import {
   isTopPerformerMimicCarouselFlow,
@@ -25,6 +26,14 @@ import {
 import { getMimicModeOverridesFromPack } from "../repositories/signal-packs.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
+import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
+import {
+  mimicDeckUsesSlotDeduplication,
+  requireMimicSlideBackgroundPlate,
+  slideIndicesForTemplateBgPrep,
+  templateBackgroundPlatesReady,
+} from "./mimic-carousel-render.js";
+import { targetSlideCountFromReference } from "../domain/mimic-text-heavy.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -164,6 +173,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
 
   const { mimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);
   const renderContext = buildMimicRenderContextForLlm(mimic, resolved.guideline_entry);
+  const templateStorage = resolveTemplateStorageDecision(resolved.guideline_entry, mimic.mode);
 
   const row = await db.query<{ generation_payload: Record<string, unknown> }>(
     `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
@@ -173,6 +183,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
   const merged = {
     ...mergeMimicPayloadSlice(gp, mimic),
     mimic_render_context: renderContext,
+    template_storage_decision: templateStorage,
   };
 
   await persistGenerationPayload(db, job.id, merged);
@@ -186,10 +197,82 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
       copy_before_visual_mimic: renderContext.copy_before_visual_mimic,
       target_slide_count: renderContext.target_slide_count,
       reference_count: mimic.reference_items.length,
+      template_storage_quality: templateStorage.quality,
+      template_library_eligible: templateStorage.eligible_for_library,
     },
   });
 
   return mimic;
+}
+
+/**
+ * For `template_bg` carousels: extract cover/body/CTA background plates **before** OpenAI copy.
+ * Plates are reused at render for Qwen text compositing.
+ */
+export async function ensureMimicTemplateBackgroundsBeforeCopy(
+  db: Pool,
+  config: AppConfig,
+  job: {
+    id: string;
+    task_id: string;
+    project_id: string;
+    run_id: string;
+    flow_type: string;
+    generation_payload: Record<string, unknown>;
+  },
+  runId: string | null
+): Promise<{ prepared: boolean; skipped?: boolean }> {
+  if (!config.MIMIC_IMAGE_ENABLED || !isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    return { prepared: false };
+  }
+
+  const row = await db.query<{ generation_payload: Record<string, unknown> }>(
+    `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+    [job.id]
+  );
+  const gp = row.rows[0]?.generation_payload ?? job.generation_payload;
+  const mimic = pickMimicPayload(gp);
+  if (!mimic || mimic.mode !== "template_bg") {
+    return { prepared: false };
+  }
+
+  const ctx = asRecord(gp.mimic_render_context);
+  const totalSlides =
+    typeof ctx?.target_slide_count === "number" && ctx.target_slide_count > 0
+      ? ctx.target_slide_count
+      : targetSlideCountFromReference(mimic.reference_items.length, mimic.visual_guideline ?? {}) ??
+        mimic.reference_items.length;
+
+  if (await templateBackgroundPlatesReady(db, job.project_id, job.task_id, totalSlides)) {
+    return { prepared: true, skipped: true };
+  }
+
+  const promptOverrides = await loadMimicPromptOverrides(db);
+  const indices = mimicDeckUsesSlotDeduplication(mimic)
+    ? slideIndicesForTemplateBgPrep(totalSlides)
+    : [1];
+
+  for (const slideIndex of indices) {
+    await requireMimicSlideBackgroundPlate(db, config, job, mimic, slideIndex, {
+      promptOverrides,
+      totalSlides,
+    });
+  }
+
+  const merged = {
+    ...gp,
+    template_backgrounds_prepared_at: new Date().toISOString(),
+    template_backgrounds_slide_count: totalSlides,
+  };
+  await persistGenerationPayload(db, job.id, merged);
+
+  logPipelineEvent("info", "generate", "mimic template backgrounds prepared before copy", {
+    run_id: runId ?? undefined,
+    task_id: job.task_id,
+    data: { totalSlides, extracted_slide_indices: indices },
+  });
+
+  return { prepared: true };
 }
 
 /**

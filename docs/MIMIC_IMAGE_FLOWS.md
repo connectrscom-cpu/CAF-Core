@@ -35,10 +35,11 @@ Migration **`061_mimic_flow_prompts.sql`** adds Flow Engine `flow_definitions` +
 ## Operator workflow
 
 1. **Plan run** — mimic flows compete in parallel with regular carousel flows when both enabled
-2. **Resolve reference** (before LLM) — `mimic_v1` + `mimic_render_context` on the job; listicle / ≥200-char on-screen text → `template_bg`
-3. **Generate Jobs** — LLM copy informed by render plan; then `mimic_carousel_package` snapshot; status **GENERATED**
+2. **Resolve reference** (before LLM) — `mimic_v1` + `mimic_render_context` + `template_storage_decision`; `mimic_evaluation.recommended_mode` → `template_bg` or `carousel_visual`
+3. **Template backgrounds** (template_bg only, before LLM) — Qwen extracts cover/body/CTA plates → `MIMIC_BACKGROUND` (+ project library path when `template_storage_quality=reusable`)
+4. **Generate Jobs** — OpenAI copy: **full slide copy** (template) or **caption/hashtags + short hooks** (full bleed); then `mimic_carousel_package` snapshot; status **GENERATED**
 4. **Review** — inspect copy and mimic metadata (no assets yet)
-5. **Render** — Sharp composite on stored background plates (`carousel_composite_templates`) when `CAROUSEL_COMPOSITE_ENABLED` (default on), else gpt-image-1 background extract + `carousel_mimic_bg.hbs`; per-slide full-bleed mimic unchanged; status **IN_REVIEW**
+5. **Render** — **template_bg:** compose LLM copy onto pre-extracted plates (Qwen). **carousel_visual:** per-slide full-bleed mimic (text-only consistency, no prior-slide image stacking). Status **IN_REVIEW**
 
 ## Carousel composite templates (alternative to .hbs)
 

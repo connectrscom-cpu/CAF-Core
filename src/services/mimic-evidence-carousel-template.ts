@@ -3,6 +3,7 @@ import path from "node:path";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import { resolveTemplateStorageFromMimic } from "../domain/mimic-template-library.js";
 import { addProjectCarouselTemplate } from "../repositories/project-config.js";
 import { inferMimicCarouselTheme } from "./mimic-slide-typography.js";
 
@@ -18,6 +19,9 @@ export interface MimicEvidenceTemplateRecord {
   path_written: string;
   created_at: string;
   reused_existing: boolean;
+  template_storage_quality: string;
+  template_storage_reason: string;
+  pinned_to_project: boolean;
 }
 
 const TEMPLATE_BASE_RE = /^[a-zA-Z0-9_-]{3,48}$/;
@@ -106,6 +110,8 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const tplDir = config.CAROUSEL_TEMPLATES_DIR;
   const outPath = path.join(tplDir, templateFileName);
   const reusedExisting = await templateFileExists(outPath);
+  const storage = resolveTemplateStorageFromMimic(mimic);
+  const pinned_to_project = storage.pin_project_template;
 
   const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
 
@@ -132,7 +138,9 @@ export async function ensureMimicEvidenceCarouselTemplate(
     await writeFile(outPath, source, "utf8");
   }
 
-  await addProjectCarouselTemplate(db, projectId, templateFileName);
+  if (pinned_to_project) {
+    await addProjectCarouselTemplate(db, projectId, templateFileName);
+  }
 
   const record: MimicEvidenceTemplateRecord = {
     template_base: templateBase,
@@ -143,6 +151,9 @@ export async function ensureMimicEvidenceCarouselTemplate(
     path_written: outPath,
     created_at: new Date().toISOString(),
     reused_existing: reusedExisting,
+    template_storage_quality: storage.quality,
+    template_storage_reason: storage.reason,
+    pinned_to_project,
   };
 
   await db.query(

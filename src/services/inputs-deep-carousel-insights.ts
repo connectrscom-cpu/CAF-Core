@@ -176,7 +176,9 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
     "content_slide_indices": [1, 2, 3],
     "skip_slide_indices": [],
     "skip_reason": "why skipped slides should be excluded (e.g. product mockup, branded guide cover, app download CTA) — empty string if none skipped",
-    "replication_difficulty": "easy | moderate | hard"
+    "replication_difficulty": "easy | moderate | hard",
+    "template_storage_quality": "reusable | job_only | reject — should clean generic background plates from this deck be saved in the project template library for future carousels? reusable = uniform text-on-template frame, high background_replicability, low brand/promo tie-in, generic (non-themed) plate; job_only = fine for this mimic job but not a reusable library asset; reject = do not store plates (unsuitable frame or too brand-specific)",
+    "template_storage_reason": "1-2 sentences: why this quality rating for library storage (independent of recommended_mode for the current job)"
   },
 
   "slides": [

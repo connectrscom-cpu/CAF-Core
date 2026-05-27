@@ -46,7 +46,11 @@ import {
 } from "../domain/top-performer-mimic-flow-types.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
-import { prepareMimicDraftPackage, ensureMimicReferenceBeforeCopyGeneration } from "./mimic-draft-prep.js";
+import {
+  prepareMimicDraftPackage,
+  ensureMimicReferenceBeforeCopyGeneration,
+  ensureMimicTemplateBackgroundsBeforeCopy,
+} from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
 import { classifyMimicMode, extendSlidePlansForOutputCount, reconcileMimicPayloadAtRender } from "./mimic-mode-classifier.js";
 import {
@@ -278,6 +282,19 @@ async function processJobUpToRender(
             id: preGenJob.id,
             task_id: preGenJob.task_id,
             project_id: preGenJob.project_id,
+            flow_type: preGenJob.flow_type,
+            generation_payload: (preGenJob.generation_payload ?? {}) as Record<string, unknown>,
+          },
+          run?.run_id ?? null
+        );
+        await ensureMimicTemplateBackgroundsBeforeCopy(
+          db,
+          config,
+          {
+            id: preGenJob.id,
+            task_id: preGenJob.task_id,
+            project_id: preGenJob.project_id,
+            run_id: preGenJob.run_id,
             flow_type: preGenJob.flow_type,
             generation_payload: (preGenJob.generation_payload ?? {}) as Record<string, unknown>,
           },

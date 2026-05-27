@@ -28,7 +28,8 @@ export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
   "Keep the background, gradients, borders, layout frame, and decorative elements exactly.",
   "Output a clean background plate suitable for overlaying new text in a carousel template.",
   "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
-  "Do not add new subjects or logos.",
+  "Do not add new subjects, logos, faces, product mockups, or theme-specific imagery (zodiac art, branded covers, app screens).",
+  "The plate must be generic enough to reuse for different topics — neutral abstract or color fields only when stripping themed photos.",
   "{{consistency_instruction}}",
 ].join(" ");
 

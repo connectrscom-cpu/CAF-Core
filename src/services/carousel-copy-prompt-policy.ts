@@ -20,3 +20,22 @@ export const CAROUSEL_COPY_SYSTEM_ADDENDUM = `Carousel copy quality (editorial b
   - Emojis are optional; if used, keep them inline with a sentence. Do **not** output a line that is only an emoji.
   - Do **not** include hashtags inside slide text. Put hashtags only in the dedicated 'hashtags' field (or caption), and only if the schema/platform expects it.
 - **Video-adjacent jobs:** If this pack feeds HeyGen/avatar flows elsewhere, keep spoken or on-screen script **conversational** and aligned with the intended voice (reduces "mechanical" delivery when TTS reads literally).`;
+
+/**
+ * Top-performer mimic — `template_bg` branch. Full slide copy is burned onto stored background plates at render.
+ */
+export const MIMIC_TEMPLATE_BG_COPY_ADDENDUM = `Mimic template carousel (text-on-template):
+- **Primary deliverable:** Complete per-slide copy for every slide in the deck (headline, body, kicker, CTA fields per schema). This copy will be composited onto pre-extracted background plates — write for on-slide reading, not caption-only.
+- **Narrative:** Produce a **fresh variant** of the reference carousel's story arc and list structure. Same pattern and pacing as the top performer, new wording — do not transcribe or lightly paraphrase the reference transcripts in \`mimic_render_context\` / visual guideline.
+- **Slide count:** Match \`mimic_render_context.target_slide_count\` when set; otherwise match the reference deck length.
+- Obey all carousel structure rules above (hook → body slides → CTA, substantive bodies, @handle on CTA when provided).`;
+
+/**
+ * Top-performer mimic — `carousel_visual` / full-bleed branch. Qwen recreates whole slides; LLM supplies caption + light on-image hooks only.
+ */
+export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic full-bleed carousel (visual-led):
+- **Primary deliverable:** A strong **caption** and **hashtags** (when the schema includes them). On-slide slide fields are **secondary** — Qwen will recreate visuals from reference frames with minimal text baked into images.
+- **Slides:** If the output schema requires a \`slides\` array, keep each slide **short** (headline or hook only, ≤120 characters total on-slide per slide). Do **not** write long body paragraphs on slides — put depth in the **caption** instead.
+- **Do not** invent app downloads, product pitches, or brand-locked CTAs unless present in candidate/signal context.
+- Match the reference deck's **slide count** when \`mimic_render_context.target_slide_count\` is set.
+- Caption should stand alone as the post text; hashtags obey platform_constraints.max_hashtags.`;

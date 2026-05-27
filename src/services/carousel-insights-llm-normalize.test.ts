@@ -59,6 +59,23 @@ describe("normalizeCarouselInsightsLlmJson", () => {
     expect(dvs.mlm_data).toBeUndefined();
   });
 
+  it("normalizes mimic_evaluation template_storage_quality", () => {
+    const out = normalizeCarouselInsightsLlmJson({
+      format_pattern: "listicle",
+      mimic_evaluation: {
+        recommended_mode: "text_on_template",
+        background_replicability: "high",
+        template_consistency: "uniform",
+        template_storage_quality: "reusable",
+        template_storage_reason: "Generic flat template suitable for library",
+      },
+      slides: [{ slide_index: 1, on_screen_text_transcript: "Hook" }],
+    });
+    const me = out?.mimic_evaluation as Record<string, unknown>;
+    expect(me.template_storage_quality).toBe("reusable");
+    expect(me.template_storage_reason).toContain("library");
+  });
+
   it("strips garbage from replication_blueprint and root mlm_data", () => {
     const out = normalizeCarouselInsightsLlmJson({
       format_pattern: "promo",

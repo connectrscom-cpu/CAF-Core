@@ -242,6 +242,7 @@ const VALID_MIMIC_RECOMMENDED_MODE = new Set(["full_bleed_visual", "text_on_temp
 const VALID_MIMIC_BG_REPLICABILITY = new Set(["high", "medium", "low"]);
 const VALID_MIMIC_TEMPLATE_CONSISTENCY = new Set(["uniform", "varied", "mixed"]);
 const VALID_MIMIC_DIFFICULTY = new Set(["easy", "moderate", "hard"]);
+const VALID_TEMPLATE_STORAGE_QUALITY = new Set(["reusable", "job_only", "reject"]);
 
 function normalizeMimicEvaluation(raw: unknown): Record<string, unknown> | null {
   const obj = asRecord(raw);
@@ -271,7 +272,15 @@ function normalizeMimicEvaluation(raw: unknown): Record<string, unknown> | null 
   const diff = String(obj.replication_difficulty ?? "").trim().toLowerCase();
   out.replication_difficulty = VALID_MIMIC_DIFFICULTY.has(diff) ? diff : null;
 
-  if (!out.recommended_mode && !out.background_replicability) return null;
+  const tsq = String(obj.template_storage_quality ?? obj.library_quality ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  out.template_storage_quality = VALID_TEMPLATE_STORAGE_QUALITY.has(tsq) ? tsq : null;
+  out.template_storage_reason =
+    typeof obj.template_storage_reason === "string" ? obj.template_storage_reason.trim().slice(0, 500) : null;
+
+  if (!out.recommended_mode && !out.background_replicability && !out.template_storage_quality) return null;
   return out;
 }
 
@@ -513,6 +522,7 @@ NVIDIA / Nemotron — strict output contract:
 - Required root strings: slide_arc, cover_vs_body, visual_consistency, on_screen_text_summary, cta_clarity, format_pattern, why_it_worked, primary_emotion, secondary_emotion, caption_style
 - Required root objects: mimic_evaluation (with recommended_mode, mode_reason, background_replicability, background_description, template_consistency, content_slide_indices, skip_slide_indices, skip_reason, replication_difficulty)
 - mimic_evaluation.recommended_mode MUST be one of: full_bleed_visual, text_on_template, not_suitable
+- mimic_evaluation.template_storage_quality MUST be one of: reusable, job_only, reject
 - mimic_evaluation.content_slide_indices and skip_slide_indices MUST be arrays of integers (slide_index values)
 - Required root arrays: risk_flags (use [] when none), slides (one object per attached image)
 - Each slides[] entry MUST include slide_index (1..N), on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, image_or_photo_role, text_density, slide_purpose, brand_specificity
@@ -563,7 +573,9 @@ Return ONLY flat JSON (no "deck" wrapper, no slides array):
     "content_slide_indices": [1, 2, 3],
     "skip_slide_indices": [],
     "skip_reason": "...",
-    "replication_difficulty": "easy | moderate | hard"
+    "replication_difficulty": "easy | moderate | hard",
+    "template_storage_quality": "reusable | job_only | reject",
+    "template_storage_reason": "..."
   }
 }`;
 

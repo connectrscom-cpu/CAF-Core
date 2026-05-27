@@ -1,6 +1,12 @@
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
 import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
+import {
+  mimicTemplateLibraryObjectPath,
+  referenceIndexForTemplateSlot,
+  resolveTemplateStorageFromMimic,
+} from "../domain/mimic-template-library.js";
+import type { TemplateBgSlot } from "../domain/mimic-template-library.js";
 import type { Pool } from "pg";
 import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
 import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -95,7 +101,7 @@ export function mimicDeckUsesUnifiedBackgroundPlate(mimic: MimicPayloadV1): bool
   return mimicDeckUsesSlotDeduplication(mimic);
 }
 
-export type TemplateBgSlot = "cover" | "body" | "cta";
+export type { TemplateBgSlot };
 
 /** Determine the template slot type for a given slide index. */
 export function templateBgSlotForIndex(slideIndex: number, totalSlides: number): TemplateBgSlot {
@@ -104,15 +110,6 @@ export function templateBgSlotForIndex(slideIndex: number, totalSlides: number):
   return "body";
 }
 
-/**
- * Reference index to extract from for a given slot.
- * Cover → reference 1, Body → reference 2, CTA → last reference.
- */
-function referenceIndexForSlot(slot: TemplateBgSlot, totalRefs: number): number {
-  if (slot === "cover") return 1;
-  if (slot === "cta") return Math.max(1, totalRefs);
-  return Math.min(2, totalRefs);
-}
 
 /**
  * Asset position used for deduplication (stored on MIMIC_BACKGROUND assets).
@@ -141,7 +138,11 @@ export async function resolveMimicSlideBackgroundPlate(
 
   if (usesSlots) {
     const slot = templateBgSlotForIndex(slideIndex, totalSlides);
-    extractIndex = referenceIndexForSlot(slot, mimic.reference_items.length);
+    extractIndex = referenceIndexForTemplateSlot(
+      mimicGuidelineEntry(mimic),
+      slot,
+      mimic.reference_items.length
+    );
     lookupPosition = assetPositionForSlot(slot, totalSlides);
   } else {
     extractIndex = slideIndex;
@@ -164,6 +165,8 @@ export async function resolveMimicSlideBackgroundPlate(
     ...opts,
     consistencyHint,
     assetPosition: lookupPosition,
+    templateSlot: usesSlots ? templateBgSlotForIndex(slideIndex, totalSlides) : undefined,
+    totalSlides,
   });
 }
 
@@ -226,7 +229,13 @@ export async function extractMimicSlideBackground(
   job: { id: string; task_id: string; project_id: string; run_id: string },
   mimic: MimicPayloadV1,
   slideIndex: number,
-  opts?: { promptOverrides?: MimicPromptOverrides | null; consistencyHint?: string; assetPosition?: number }
+  opts?: {
+    promptOverrides?: MimicPromptOverrides | null;
+    consistencyHint?: string;
+    assetPosition?: number;
+    templateSlot?: TemplateBgSlot;
+    totalSlides?: number;
+  }
 ): Promise<string | null> {
   const item = referenceItemForMimicSlide(mimic, slideIndex);
   if (!item) return null;
@@ -262,6 +271,25 @@ export async function extractMimicSlideBackground(
     return null;
   }
 
+  const storageDecision = resolveTemplateStorageFromMimic(mimic);
+  const librarySlot = opts?.templateSlot;
+  let libraryObjectPath: string | null = null;
+
+  if (storageDecision.eligible_for_library && librarySlot && mimic.source_insights_id) {
+    const libPath = mimicTemplateLibraryObjectPath(
+      job.project_id,
+      mimic.source_insights_id,
+      librarySlot,
+      ext === "jpg" ? "jpg" : "png"
+    );
+    try {
+      const libUp = await uploadBuffer(config, libPath, buffer, mimeType);
+      libraryObjectPath = libUp.object_path;
+    } catch {
+      libraryObjectPath = null;
+    }
+  }
+
   await insertAsset(db, {
     asset_id: `${job.task_id}__MIMIC_BACKGROUND_${slideIndex}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
     task_id: job.task_id,
@@ -272,7 +300,14 @@ export async function extractMimicSlideBackground(
     object_path: storedPath,
     public_url: publicUrl,
     provider: mimicImageProviderAssetLabel(config),
-    metadata_json: { role: "template_background", slide_index: slideIndex },
+    metadata_json: {
+      role: "template_background",
+      slide_index: slideIndex,
+      template_library_slot: librarySlot ?? null,
+      template_storage_quality: storageDecision.quality,
+      template_library_object_path: libraryObjectPath,
+      source_insights_id: mimic.source_insights_id,
+    },
   });
 
   if (slideIndex === 1) {
@@ -335,6 +370,67 @@ function resolveSlideGuideline(
     asRecord(slides[slideIndex - 1]) ??
     null
   );
+}
+
+/**
+ * Text-only cross-slide consistency for full-bleed (avoids passing prior slide images to DashScope).
+ */
+export function buildFullBleedConsistencyHint(mimic: MimicPayloadV1, slideIndex: number): string {
+  const parts: string[] = [];
+  const vg = asRecord(mimic.visual_guideline);
+  const consistency = String(vg?.visual_consistency ?? "").trim();
+  if (consistency) {
+    parts.push(`Match this deck-wide visual consistency: ${consistency.slice(0, 450)}`);
+  }
+  const dvs = asRecord(vg?.deck_visual_system);
+  const aesthetic = String(dvs?.overall_aesthetic ?? "").trim();
+  if (aesthetic) parts.push(`Overall aesthetic: ${aesthetic.slice(0, 200)}`);
+  const repeated = String(dvs?.repeated_template ?? "").trim();
+  if (repeated) parts.push(`Repeated layout pattern: ${repeated.slice(0, 200)}`);
+
+  if (slideIndex > 1) {
+    const prev = resolveSlideGuideline(mimic, slideIndex - 1);
+    const ct = asRecord(prev?.color_tokens);
+    if (ct) {
+      const bg = String(ct.background ?? "").trim();
+      const text = String(ct.primary_text ?? "").trim();
+      const grade = String(ct.photo_grade ?? "").trim();
+      const bits = [bg && `background ${bg}`, text && `text ${text}`, grade && `grade ${grade}`].filter(Boolean);
+      if (bits.length) parts.push(`Align with the previous slide palette (${bits.join(", ")})`);
+    }
+  }
+  return parts.join(" ");
+}
+
+/** 1-based slide indices to extract before copy (cover, body, optional CTA). */
+export function slideIndicesForTemplateBgPrep(totalSlides: number): number[] {
+  const n = Math.max(1, totalSlides);
+  const indices = new Set<number>([1]);
+  if (n >= 2) indices.add(2);
+  if (n > 2) indices.add(n);
+  return [...indices].sort((a, b) => a - b);
+}
+
+/** True when required MIMIC_BACKGROUND plate positions exist for template_bg slot mode. */
+export async function templateBackgroundPlatesReady(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  totalSlides: number
+): Promise<boolean> {
+  const assets = await listAssetsByTask(db, projectId, taskId);
+  const bg = assets.filter((a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND");
+  if (bg.length === 0) return false;
+
+  const needed = new Set<number>();
+  needed.add(0);
+  needed.add(1);
+  if (totalSlides > 2) needed.add(totalSlides - 1);
+
+  for (const pos of needed) {
+    if (!bg.some((a) => a.position === pos)) return false;
+  }
+  return true;
 }
 
 export function slideVisionHints(
@@ -572,43 +668,25 @@ export async function renderMimicCarouselSlideFullBleed(
   if (effectiveCopy.length > 200) effectiveCopy = effectiveCopy.slice(0, 200);
 
   const intentInstruction = buildSlideIntentInstruction(intent);
+  const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex);
 
-  const buildParams = (usePrevSlide: boolean) => {
-    const consistencyHint = usePrevSlide && opts?.previousSlideUrl
-      ? "Maintain visual consistency with the previous slide in this carousel: match the same color palette, style, and tonal treatment."
-      : "";
-    return {
-      referenceUrl,
-      prompt: mimicPromptForMode("carousel_visual", {
-        index: slideIndex,
-        layout: visionHints.layout,
-        visual: visionHints.visual,
-        onImageCopy: effectiveCopy || null,
-        consistencyHint,
-        intentInstruction,
-      }, opts?.promptOverrides),
-      size: "1024x1536",
-      previousSlideUrl: usePrevSlide ? (opts?.previousSlideUrl || undefined) : undefined,
-      audit: {
-        db,
-        projectId: job.project_id,
-        runId: job.run_id,
-        taskId: job.task_id,
-        step: `mimic_slide_gen_${slideIndex}`,
-      },
-    };
-  };
-
-  if (opts?.previousSlideUrl) {
-    try {
-      return await editImageFromReference(config, buildParams(true));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/failed to download image|400/i.test(msg)) {
-        return editImageFromReference(config, buildParams(false));
-      }
-      throw err;
-    }
-  }
-  return editImageFromReference(config, buildParams(false));
+  return editImageFromReference(config, {
+    referenceUrl,
+    prompt: mimicPromptForMode("carousel_visual", {
+      index: slideIndex,
+      layout: visionHints.layout,
+      visual: visionHints.visual,
+      onImageCopy: effectiveCopy || null,
+      consistencyHint,
+      intentInstruction,
+    }, opts?.promptOverrides),
+    size: "1024x1536",
+    audit: {
+      db,
+      projectId: job.project_id,
+      runId: job.run_id,
+      taskId: job.task_id,
+      step: `mimic_slide_gen_${slideIndex}`,
+    },
+  });
 }

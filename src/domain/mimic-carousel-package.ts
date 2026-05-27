@@ -36,6 +36,8 @@ export interface MimicCarouselSlideGuideline {
   typography: MimicCarouselSlideTypography | null;
 }
 
+export type TemplateStorageQuality = "reusable" | "job_only" | "reject";
+
 export interface MimicEvaluation {
   recommended_mode: string | null;
   mode_reason: string | null;
@@ -46,6 +48,9 @@ export interface MimicEvaluation {
   skip_slide_indices: number[];
   skip_reason: string | null;
   replication_difficulty: string | null;
+  /** Whether backgrounds should be persisted in the project template library for reuse. */
+  template_storage_quality: TemplateStorageQuality | null;
+  template_storage_reason: string | null;
 }
 
 export interface MimicCarouselVisualGuideline {
@@ -170,6 +175,14 @@ function slimMimicEvaluation(raw: unknown): MimicEvaluation | null {
     skip_slide_indices: Array.isArray(obj.skip_slide_indices) ? obj.skip_slide_indices.filter((v: unknown) => typeof v === "number") : [],
     skip_reason: typeof obj.skip_reason === "string" ? obj.skip_reason.trim() : null,
     replication_difficulty: typeof obj.replication_difficulty === "string" ? obj.replication_difficulty.trim() : null,
+    template_storage_quality:
+      obj.template_storage_quality === "reusable" ||
+      obj.template_storage_quality === "job_only" ||
+      obj.template_storage_quality === "reject"
+        ? obj.template_storage_quality
+        : null,
+    template_storage_reason:
+      typeof obj.template_storage_reason === "string" ? obj.template_storage_reason.trim() : null,
   };
 }
 
