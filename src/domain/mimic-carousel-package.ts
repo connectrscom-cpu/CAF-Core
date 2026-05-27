@@ -263,6 +263,7 @@ export function composeMimicCarouselDraftPackage(
       visual_consistency: null,
       deck_visual_system: null,
       replication_blueprint: null,
+      mimic_evaluation: null,
       evidence_post_url: null,
       slides: null,
     } satisfies MimicCarouselVisualGuideline);
