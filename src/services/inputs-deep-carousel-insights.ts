@@ -24,7 +24,10 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { normalizeCarouselInsightsLlmJson, finalizeCarouselInsightJson } from "./carousel-insights-llm-normalize.js";
+import {
+  buildCarouselAestheticAnalysisJson,
+  finalizeCarouselInsightJson,
+} from "./carousel-insights-llm-normalize.js";
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
@@ -453,27 +456,6 @@ function parseRiskFlags(v: unknown): string[] {
       return !CAROUSEL_RISK_FLAG_NOISE.has(s.toLowerCase());
     })
     .slice(0, 40);
-}
-
-function buildCarouselAestheticAnalysisJson(parsed: Record<string, unknown> | null): Record<string, unknown> {
-  if (!parsed) return {};
-  const out: Record<string, unknown> = {
-    slide_arc: parsed.slide_arc,
-    cover_vs_body: parsed.cover_vs_body,
-    visual_consistency: parsed.visual_consistency,
-    on_screen_text_summary: parsed.on_screen_text_summary,
-    cta_clarity: parsed.cta_clarity,
-    format_pattern: parsed.format_pattern,
-    primary_emotion: parsed.primary_emotion,
-    secondary_emotion: parsed.secondary_emotion,
-    caption_style: parsed.caption_style,
-  };
-  if (Array.isArray(parsed.slides)) out.slides = parsed.slides;
-  if (parsed.deck_as_whole_summary != null) out.deck_as_whole_summary = parsed.deck_as_whole_summary;
-  if (parsed.deck_visual_system != null) out.deck_visual_system = parsed.deck_visual_system;
-  if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
-  if (parsed._slide_coverage != null) out._slide_coverage = parsed._slide_coverage;
-  return out;
 }
 
 function pickInsightString(v: unknown): string | null {

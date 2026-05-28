@@ -494,6 +494,9 @@ export function mergeCarouselInsightChunks(
     if (merged.replication_blueprint == null && part.replication_blueprint != null) {
       merged.replication_blueprint = part.replication_blueprint;
     }
+    if (merged.mimic_evaluation == null && part.mimic_evaluation != null) {
+      merged.mimic_evaluation = part.mimic_evaluation;
+    }
 
     const partSlides = Array.isArray(part.slides) ? part.slides : [];
     for (const raw of partSlides) {
@@ -511,6 +514,31 @@ export function mergeCarouselInsightChunks(
   if (deckSlideCount != null && deckSlideCount > 0) {
     out.slides = sanitizeCarouselSlides(out.slides, deckSlideCount);
   }
+  return out;
+}
+
+/** Persisted `aesthetic_analysis_json` slice for top_performer_carousel insights. */
+export function buildCarouselAestheticAnalysisJson(
+  parsed: Record<string, unknown> | null
+): Record<string, unknown> {
+  if (!parsed) return {};
+  const out: Record<string, unknown> = {
+    slide_arc: parsed.slide_arc,
+    cover_vs_body: parsed.cover_vs_body,
+    visual_consistency: parsed.visual_consistency,
+    on_screen_text_summary: parsed.on_screen_text_summary,
+    cta_clarity: parsed.cta_clarity,
+    format_pattern: parsed.format_pattern,
+    primary_emotion: parsed.primary_emotion,
+    secondary_emotion: parsed.secondary_emotion,
+    caption_style: parsed.caption_style,
+  };
+  if (Array.isArray(parsed.slides)) out.slides = parsed.slides;
+  if (parsed.deck_as_whole_summary != null) out.deck_as_whole_summary = parsed.deck_as_whole_summary;
+  if (parsed.deck_visual_system != null) out.deck_visual_system = parsed.deck_visual_system;
+  if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
+  if (parsed.mimic_evaluation != null) out.mimic_evaluation = parsed.mimic_evaluation;
+  if (parsed._slide_coverage != null) out._slide_coverage = parsed._slide_coverage;
   return out;
 }
 

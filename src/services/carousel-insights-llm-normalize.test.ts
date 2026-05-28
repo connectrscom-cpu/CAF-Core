@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCarouselAestheticAnalysisJson,
   findCarouselSlidesNeedingRetry,
   findMissingCarouselSlideIndices,
   findWeakCarouselSlideIndices,
@@ -250,5 +251,59 @@ describe("mergeCarouselInsightChunks", () => {
     expect(merged.format_pattern).toBe("story");
     expect(merged.why_it_worked).toBe("Relatable hook");
     expect(merged.slides).toHaveLength(2);
+  });
+
+  it("preserves mimic_evaluation from deck summary chunk across slide-only chunks", () => {
+    const merged = mergeCarouselInsightChunks(
+      [
+        {
+          format_pattern: "listicle",
+          mimic_evaluation: {
+            recommended_mode: "text_on_template",
+            background_replicability: "high",
+            template_consistency: "uniform",
+            template_storage_quality: "reusable",
+            content_slide_indices: [1, 2, 3],
+            skip_slide_indices: [12],
+          },
+        },
+        {
+          slides: [
+            { slide_index: 1, on_screen_text_transcript: "One" },
+            { slide_index: 2, on_screen_text_transcript: "Two" },
+          ],
+        },
+        {
+          slides: [
+            { slide_index: 3, on_screen_text_transcript: "Three" },
+            { slide_index: 4, on_screen_text_transcript: "Four" },
+          ],
+        },
+      ],
+      4
+    );
+    const me = merged.mimic_evaluation as Record<string, unknown>;
+    expect(me.recommended_mode).toBe("text_on_template");
+    expect(me.template_storage_quality).toBe("reusable");
+    expect(me.skip_slide_indices).toEqual([12]);
+    expect(merged.slides).toHaveLength(4);
+  });
+});
+
+describe("buildCarouselAestheticAnalysisJson", () => {
+  it("includes mimic_evaluation in persisted aesthetic slice", () => {
+    const aesthetic = buildCarouselAestheticAnalysisJson({
+      format_pattern: "educational",
+      mimic_evaluation: {
+        recommended_mode: "full_bleed_visual",
+        background_replicability: "low",
+        template_storage_quality: "job_only",
+      },
+      slides: [{ slide_index: 1, on_screen_text_transcript: "Hook" }],
+    });
+    const me = aesthetic.mimic_evaluation as Record<string, unknown>;
+    expect(me.recommended_mode).toBe("full_bleed_visual");
+    expect(me.template_storage_quality).toBe("job_only");
+    expect(aesthetic.slides).toHaveLength(1);
   });
 });
