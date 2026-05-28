@@ -20,9 +20,97 @@ const CFG_SECTIONS: Array<{ id: string; title: string }> = [
   { id: "html", title: "HTML / blogs (HTTP, no Apify)" },
 ];
 
+/** Pretty JSON strings for Apify actor input (must stay strings — never assign raw objects to textarea.value). */
+const DEFAULT_ACTOR_JSON: Record<string, string> = {
+  instagram: JSON.stringify(
+    {
+      directUrls: [],
+      resultsType: "posts",
+      resultsLimit: 10,
+      scrapePosts: true,
+      scrapeReels: true,
+      scrapeStories: false,
+      proxyConfiguration: { useApifyProxy: true },
+      searchType: "hashtag",
+      addParentData: false,
+    },
+    null,
+    2
+  ),
+  tiktok: JSON.stringify(
+    {
+      commentsPerPost: 0,
+      excludePinnedPosts: false,
+      maxFollowersPerProfile: 0,
+      maxFollowingPerProfile: 0,
+      maxRepliesPerComment: 0,
+      oldestPostDateUnified: "7 days",
+      profileScrapeSections: ["videos"],
+      profileSorting: "latest",
+      profiles: [],
+      proxyCountryCode: "US",
+      resultsPerPage: 10,
+      scrapeRelatedVideos: false,
+      shouldDownloadAvatars: false,
+      shouldDownloadCovers: true,
+      shouldDownloadMusicCovers: false,
+      shouldDownloadSlideshowImages: true,
+      shouldDownloadVideos: true,
+      videoKvStoreIdOrName: "caf-tiktok-astrology-media",
+      downloadSubtitlesOptions: "DOWNLOAD_AND_TRANSCRIBE_VIDEOS_WITHOUT_SUBTITLES",
+      searchSection: "",
+      maxProfilesPerQuery: 10,
+    },
+    null,
+    2
+  ),
+  reddit: JSON.stringify(
+    {
+      startUrls: [],
+      searchPosts: true,
+      searchComments: true,
+      searchCommunities: false,
+      searchUsers: false,
+      maxPostCount: 30,
+      maxComments: 3,
+      maxItems: 40,
+      commentSort: "top",
+      scrollTimeout: 60,
+      proxy: { useApifyProxy: true },
+    },
+    null,
+    2
+  ),
+  facebook: JSON.stringify(
+    {
+      startUrls: [],
+      resultsLimit: 30,
+      proxyConfiguration: { useApifyProxy: true },
+    },
+    null,
+    2
+  ),
+  html: JSON.stringify(
+    {
+      enabled: true,
+      fetchTimeoutMs: 30000,
+      userAgent: "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)",
+      minParagraphChars: 30,
+      maxMainTextChars: 30000,
+    },
+    null,
+    2
+  ),
+};
+
+function escTextareaContent(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
+
 function scraperConfigFormHtml(): string {
   const sections = CFG_SECTIONS.map((sec) => {
-    return `<details class="scraper-cfg-section" open><summary>${sec.title}</summary><div class="scraper-cfg-grid scraper-cfg-grid--wide"><textarea id="cfg-json-${sec.id}" rows="18" class="mono" style="width:100%;min-height:200px;font-size:12px;line-height:1.5;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);resize:vertical;tab-size:2" spellcheck="false"></textarea></div></details>`;
+    const initial = escTextareaContent(DEFAULT_ACTOR_JSON[sec.id] ?? "{}");
+    return `<details class="scraper-cfg-section" open><summary>${sec.title}</summary><div class="scraper-cfg-grid scraper-cfg-grid--wide"><textarea id="cfg-json-${sec.id}" rows="18" class="mono scraper-cfg-json" spellcheck="false">${initial}</textarea></div></details>`;
   }).join("");
   return sections;
 }
@@ -126,15 +214,17 @@ ${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence"
           <button type="button" class="btn btn-sm" id="btn-run-all-scrapers" style="width:100%">Run all enabled scrapers</button>
           <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Creates one evidence import with all output sheets (InstagramPostData, Tiktok_Videos, …).</p>
         </div>
-        <div class="tp-sidebar-card">
-          <button type="button" class="btn btn-sm" id="btn-save-scraper-config" style="width:100%">Save all scraper config</button>
-          <button type="button" class="btn-ghost btn-sm" id="btn-reset-scraper-config" style="width:100%;margin-top:6px">Reset to defaults</button>
-          <span id="scraper-config-msg" style="font-size:11px;display:block;margin-top:8px"></span>
-        </div>
       </aside>
       <div class="tp-main">
         <div class="card" style="margin-bottom:14px">
-          <div class="card-h">Apify actor options <span style="font-weight:400;color:var(--muted);font-size:11px">— paste the same JSON you'd use on Apify actor input</span></div>
+          <div class="card-h scraper-cfg-head">
+            <span>Apify actor options <span class="scraper-cfg-head-hint">— paste the same JSON you'd use on Apify actor input</span></span>
+            <div class="scraper-cfg-actions">
+              <button type="button" class="btn btn-sm" id="btn-save-scraper-config">Save all</button>
+              <button type="button" class="btn-ghost btn-sm" id="btn-reset-scraper-config">Reset to defaults</button>
+              <span id="scraper-config-msg" class="scraper-cfg-msg"></span>
+            </div>
+          </div>
           <div style="padding:12px 16px" id="scraper-config-form">${scraperConfigFormHtml()}</div>
         </div>
         <div class="card" style="margin-bottom:14px">
@@ -157,70 +247,24 @@ const SLUG=${SLUG};
 const SOURCE_TABS=${JSON.stringify(SOURCE_TABS)};
 const CFG_SECTIONS=${JSON.stringify(CFG_SECTIONS.map((s) => s.id))};
 var scraperCfgCache=null;
-
-var DEFAULT_ACTOR_JSON={
-  instagram: ${JSON.stringify({
-    directUrls: [],
-    resultsType: "posts",
-    resultsLimit: 10,
-    scrapePosts: true,
-    scrapeReels: true,
-    scrapeStories: false,
-    proxyConfiguration: { useApifyProxy: true },
-    searchType: "hashtag",
-    addParentData: false,
-  }, null, 2)},
-  tiktok: ${JSON.stringify({
-    commentsPerPost: 0,
-    excludePinnedPosts: false,
-    maxFollowersPerProfile: 0,
-    maxFollowingPerProfile: 0,
-    maxRepliesPerComment: 0,
-    oldestPostDateUnified: "7 days",
-    profileScrapeSections: ["videos"],
-    profileSorting: "latest",
-    profiles: [],
-    proxyCountryCode: "US",
-    resultsPerPage: 10,
-    scrapeRelatedVideos: false,
-    shouldDownloadAvatars: false,
-    shouldDownloadCovers: true,
-    shouldDownloadMusicCovers: false,
-    shouldDownloadSlideshowImages: true,
-    shouldDownloadVideos: true,
-    videoKvStoreIdOrName: "caf-tiktok-astrology-media",
-    downloadSubtitlesOptions: "DOWNLOAD_AND_TRANSCRIBE_VIDEOS_WITHOUT_SUBTITLES",
-    searchSection: "",
-    maxProfilesPerQuery: 10,
-  }, null, 2)},
-  reddit: ${JSON.stringify({
-    startUrls: [],
-    searchPosts: true,
-    searchComments: true,
-    searchCommunities: false,
-    searchUsers: false,
-    maxPostCount: 30,
-    maxComments: 3,
-    maxItems: 40,
-    commentSort: "top",
-    scrollTimeout: 60,
-    proxy: { useApifyProxy: true },
-  }, null, 2)},
-  facebook: ${JSON.stringify({
-    startUrls: [],
-    resultsLimit: 30,
-    proxyConfiguration: { useApifyProxy: true },
-  }, null, 2)},
-  html: ${JSON.stringify({
-    enabled: true,
-    fetchTimeoutMs: 30000,
-    userAgent: "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)",
-    minParagraphChars: 30,
-    maxMainTextChars: 30000,
-  }, null, 2)}
-};
+var DEFAULT_ACTOR_JSON=${JSON.stringify(DEFAULT_ACTOR_JSON)};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+function defaultActorJsonText(sec){
+  var d=DEFAULT_ACTOR_JSON[sec];
+  return typeof d==='string'?d:'{}';
+}
+function jsonToTextarea(v,sec){
+  if(v==null||v==='')return defaultActorJsonText(sec);
+  if(typeof v==='string'){
+    var t=v.trim();
+    if(!t)return defaultActorJsonText(sec);
+    if(t==='[object Object]')return defaultActorJsonText(sec);
+    try{return JSON.stringify(JSON.parse(t),null,2);}catch(_e){return t;}
+  }
+  if(typeof v==='object')return JSON.stringify(v,null,2);
+  return String(v);
+}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function processingHref(importId){
   var q=new URLSearchParams(window.location.search);
@@ -306,10 +350,12 @@ function populateScraperForm(cfg){
     var ta=document.getElementById('cfg-json-'+sec);
     if(!ta)return;
     var json=extras[sec];
-    if(json&&typeof json==='object'&&Object.keys(json).length>0){
+    if(json&&typeof json==='object'&&!Array.isArray(json)&&Object.keys(json).length>0){
       ta.value=JSON.stringify(json,null,2);
+    }else if(json!=null&&json!==''){
+      ta.value=jsonToTextarea(json,sec);
     }else{
-      ta.value=DEFAULT_ACTOR_JSON[sec]||'{}';
+      ta.value=defaultActorJsonText(sec);
     }
   });
 }
@@ -357,7 +403,7 @@ async function resetScraperConfig(){
   try{
     CFG_SECTIONS.forEach(function(sec){
       var ta=document.getElementById('cfg-json-'+sec);
-      if(ta)ta.value=DEFAULT_ACTOR_JSON[sec]||'{}';
+      if(ta)ta.value=defaultActorJsonText(sec);
     });
     await saveScraperConfig();
   }catch(e){alert(String(e.message||e));}
