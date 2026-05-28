@@ -368,69 +368,73 @@ export function adminProcessingBody(currentSlug: string): string {
               </div>
             </div>
             <div class="broad-panel">
-              <div class="broad-panel-title">3 · Results table <span>Load, sort, and export — no LLM</span></div>
-              <div class="broad-view-grid">
-                <label>Sort
-                  <select id="broad-insight-sort">
-                    <option value="rating_desc">Row rating ↓</option>
-                    <option value="pre_llm_desc">Pre-LLM score ↓</option>
-                    <option value="updated_desc">Updated ↓</option>
-                  </select>
-                </label>
-                <label>Show rows
-                  <select id="broad-insight-limit">
-                    <option value="80">80</option>
-                    <option value="120">120</option>
-                    <option value="200" selected>200</option>
-                  </select>
-                </label>
-              </div>
-              <div class="broad-view-actions">
-                <button type="button" class="btn btn-sm" id="btn-reload-broad">Reload table</button>
-                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy TSV</button>
-                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the filtered insights table">Copy JSON</button>
-                <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
-              </div>
-              <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
-                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Status</div>
-                <div id="broad-state" style="font-size:12px;color:var(--muted);line-height:1.45"></div>
-                <details id="broad-meta-debug" style="margin:8px 0 0">
-                  <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (broad meta JSON)</summary>
-                  <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
-                </details>
-              </div>
-            </div>
-          </div>
-          <div id="broad-table-toolbar" class="broad-panel" style="margin:10px 0">
-            <div class="broad-panel-title">4 · Filter table <span>Client-side filters on loaded rows</span></div>
-            <div class="broad-filter-grid">
-              <label>Search
-                <input id="broad-filter-search" type="search" placeholder="Why, hook, hashtags…" />
-              </label>
-              <label>Display kind
-                <select id="broad-filter-kind">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label>Emotion
-                <select id="broad-filter-emotion">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label>Hook type
-                <select id="broad-filter-hook-type">
-                  <option value="">Any</option>
-                </select>
-              </label>
-              <label>Min pre-LLM
-                <input id="broad-filter-min-prellm" type="number" min="0" max="1" step="0.01" placeholder="any" />
-              </label>
-              <label>Min rating
-                <input id="broad-filter-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" />
-              </label>
-              <div class="broad-filter-actions">
-                <p id="broad-filter-summary" class="runs-ops-hint" style="margin:0;font-size:11px;flex:1">Reload the table first, then filter below.</p>
-                <button type="button" class="btn-ghost btn-sm" id="broad-filter-clear">Clear filters</button>
+              <div class="broad-panel-title">3 · Table <span>Load, export, and filter — no LLM</span></div>
+              <div class="broad-table-2col">
+                <div class="broad-table-col">
+                  <div class="broad-view-grid">
+                    <label>Sort
+                      <select id="broad-insight-sort">
+                        <option value="rating_desc">Row rating ↓</option>
+                        <option value="pre_llm_desc">Pre-LLM score ↓</option>
+                        <option value="updated_desc">Updated ↓</option>
+                      </select>
+                    </label>
+                    <label>Show rows
+                      <select id="broad-insight-limit">
+                        <option value="80">80</option>
+                        <option value="120">120</option>
+                        <option value="200" selected>200</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="broad-view-actions">
+                    <button type="button" class="btn btn-sm" id="btn-reload-broad">Reload table</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-tsv" title="Tab-separated values from the broad insights table">Copy TSV</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-json" title="JSON rows from the filtered insights table">Copy JSON</button>
+                    <button type="button" class="btn-ghost btn-sm" id="btn-copy-broad-debug" style="display:none">Copy last run debug</button>
+                  </div>
+                  <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)">
+                    <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Status</div>
+                    <div id="broad-state" style="font-size:12px;color:var(--muted);line-height:1.45"></div>
+                    <details id="broad-meta-debug" style="margin:8px 0 0">
+                      <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (broad meta JSON)</summary>
+                      <pre id="broad-meta" style="font-size:12px;background:var(--bg);padding:10px;border-radius:8px;margin-top:8px;white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
+                    </details>
+                  </div>
+                </div>
+                <div class="broad-table-col">
+                  <div class="broad-panel-title" style="margin:0 0 10px">Filters <span>Client-side filters on loaded rows</span></div>
+                  <div class="broad-filter-grid" style="margin-top:0">
+                    <label>Search
+                      <input id="broad-filter-search" type="search" placeholder="Why, hook, hashtags…" />
+                    </label>
+                    <label>Display kind
+                      <select id="broad-filter-kind">
+                        <option value="">Any</option>
+                      </select>
+                    </label>
+                    <label>Emotion
+                      <select id="broad-filter-emotion">
+                        <option value="">Any</option>
+                      </select>
+                    </label>
+                    <label>Hook type
+                      <select id="broad-filter-hook-type">
+                        <option value="">Any</option>
+                      </select>
+                    </label>
+                    <label>Min pre-LLM
+                      <input id="broad-filter-min-prellm" type="number" min="0" max="1" step="0.01" placeholder="any" />
+                    </label>
+                    <label>Min rating
+                      <input id="broad-filter-min-rating" type="number" min="0" max="1" step="0.01" placeholder="any" />
+                    </label>
+                    <div class="broad-filter-actions">
+                      <p id="broad-filter-summary" class="runs-ops-hint" style="margin:0;font-size:11px;flex:1">Reload the table first, then filter below.</p>
+                      <button type="button" class="btn-ghost btn-sm" id="broad-filter-clear">Clear filters</button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

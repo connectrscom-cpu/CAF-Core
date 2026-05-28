@@ -272,6 +272,9 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .broad-view-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
 .broad-view-grid select,.broad-view-grid input{font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)}
 .broad-view-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)}
+.broad-table-2col{display:grid;grid-template-columns:1.05fr .95fr;gap:12px;align-items:start}
+.broad-table-col{min-width:0}
+@media (max-width:960px){.broad-table-2col{grid-template-columns:1fr}}
 .broad-filter-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 12px;align-items:end}
 .broad-filter-grid label{font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
 .broad-filter-grid input,.broad-filter-grid select{font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);width:100%}
