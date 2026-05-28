@@ -52,6 +52,18 @@ describe("mimic-text-heavy", () => {
     expect(deckUsesUnifiedBackgroundPlate(entry)).toBe(true);
   });
 
+  it("detects uniform blue backdrop phrasing in visual_consistency", () => {
+    expect(
+      deckUsesUnifiedBackgroundPlate({
+        aesthetic_analysis_json: {
+          format_pattern: "mixed",
+          visual_consistency:
+            "Strong - uniform blue backdrop and medieval color palette across deck",
+        },
+      })
+    ).toBe(true);
+  });
+
   it("flags long on-screen transcripts", () => {
     const longText = "x".repeat(201);
     expect(

@@ -3,6 +3,8 @@ import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
   hasVisualLedDeckCues,
+  isTextOverlayDeckFromGuideline,
+  isVisualLedShortCopyDeck,
   nemotronSuggestsTextOnTemplate,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
@@ -65,6 +67,15 @@ export function classifyMimicMode(
       ? nemotronModeToMimicMode(String(mimicEval.recommended_mode))
       : null;
     effectiveMode = nemotronMode ?? determineAutoMode(entry, slides);
+    if (
+      effectiveMode === "carousel_visual" &&
+      slides.length === 0 &&
+      requiresCopyBeforeVisualMimic(entry) &&
+      !isVisualLedShortCopyDeck(entry) &&
+      (deckUsesUnifiedBackgroundPlate(entry) || isTextOverlayDeckFromGuideline(entry))
+    ) {
+      effectiveMode = "template_bg";
+    }
   }
 
   if (effectiveMode === "template_bg") {
@@ -139,6 +150,17 @@ export function extendSlidePlansForOutputCount(
     plans.push({ slide_index: slideIndex, render_mode, reference_index: refSlot });
   }
   return plans;
+}
+
+/** Drop render plans past the output slide count (e.g. 8 plans but only 7 copy slides). */
+export function clampSlidePlansToOutputCount(
+  slide_plans: MimicSlidePlan[] | undefined,
+  outputSlideCount: number
+): MimicSlidePlan[] {
+  if (outputSlideCount < 1) return [];
+  return (slide_plans ?? []).filter(
+    (p) => p.slide_index >= 1 && p.slide_index <= outputSlideCount
+  );
 }
 
 const PROMO_SLIDE_PURPOSES = new Set(["self_promo", "product_pitch"]);

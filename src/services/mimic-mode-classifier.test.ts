@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyMimicMode, extendSlidePlansForOutputCount } from "./mimic-mode-classifier.js";
+import {
+  classifyMimicMode,
+  clampSlidePlansToOutputCount,
+  extendSlidePlansForOutputCount,
+} from "./mimic-mode-classifier.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
@@ -146,6 +150,42 @@ describe("classifyMimicMode", () => {
     expect(plans[4]?.render_mode).toBe("hbs");
     expect(plans[3]?.reference_index).toBe(1);
     expect(plans[4]?.reference_index).toBe(1);
+  });
+
+  it("returns template_bg when deck has uniform backdrop but no per-slide aesthetic rows", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        visual_consistency: "Strong - uniform blue backdrop and medieval color palette across deck",
+        deck_visual_system: {
+          repeated_template: "mishandled",
+          overall_aesthetic: "vintage_bardic_style",
+        },
+      },
+      stored_inspection_media_json: {
+        items: Array.from({ length: 12 }, (_, i) => ({
+          index: i + 1,
+          vision_fetch_url: `https://x/slide_${i + 1}.jpg`,
+        })),
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(r.mode).toBe("template_bg");
+    expect(r.slide_plans).toHaveLength(12);
+    expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+    expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
+  });
+
+  it("clampSlidePlansToOutputCount drops plans beyond output slide count", () => {
+    const plans = clampSlidePlansToOutputCount(
+      [
+        { slide_index: 1, render_mode: "full_bleed", reference_index: 1 },
+        { slide_index: 8, render_mode: "full_bleed", reference_index: 8 },
+      ],
+      7
+    );
+    expect(plans).toHaveLength(1);
+    expect(plans[0]?.slide_index).toBe(1);
   });
 
   it("extendSlidePlansForOutputCount keeps reference_index 1 for template_bg extras", () => {

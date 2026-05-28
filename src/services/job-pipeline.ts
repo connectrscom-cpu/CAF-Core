@@ -52,7 +52,12 @@ import {
   ensureMimicTemplateBackgroundsBeforeCopy,
 } from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
-import { classifyMimicMode, extendSlidePlansForOutputCount, reconcileMimicPayloadAtRender } from "./mimic-mode-classifier.js";
+import {
+  classifyMimicMode,
+  clampSlidePlansToOutputCount,
+  extendSlidePlansForOutputCount,
+  reconcileMimicPayloadAtRender,
+} from "./mimic-mode-classifier.js";
 import {
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
@@ -1577,9 +1582,12 @@ async function processCarouselJob(
       reference_items: normalizeMimicReferenceItems(mimicPayload.reference_items),
     };
 
-    // carousel_visual: match the original slide count from reference frames
-    if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
-      n = mimicPayload.reference_items.length;
+    if (mimicPayload.mode === "template_bg") {
+      n = usableSlides.length;
+    } else if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
+      n = Math.min(mimicPayload.reference_items.length, usableSlides.length);
+    } else {
+      n = Math.min(n, usableSlides.length);
     }
 
     // Filter out promotional / brand-specific reference slides (product pitches, CTAs,
@@ -1617,7 +1625,10 @@ async function processCarouselJob(
     mimicPayload = reconcileFullBleedSlidePlansAtRender(mimicPayload);
     mimicPayload = {
       ...mimicPayload,
-      slide_plans: extendSlidePlansForOutputCount(mimicPayload, n),
+      slide_plans: clampSlidePlansToOutputCount(
+        extendSlidePlansForOutputCount(mimicPayload, n),
+        n
+      ),
     };
   }
 
