@@ -11,6 +11,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   isTopPerformerMimicCarouselFlow,
   isTopPerformerMimicImageFlow,
+  isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
@@ -104,11 +105,20 @@ export function planningLaneForFlowType(flowType: string): string {
   return bucketForFlowType(flowType);
 }
 
+function sourceEvidenceRowIdFromCandidate(c: ScoredCandidate): string {
+  const p = (c.payload ?? {}) as Record<string, unknown>;
+  return String(p.source_evidence_row_id ?? "").trim();
+}
+
 /** Pass 1: at most one planned job per idea per lane within its declared format family. */
 export function ideaKeyPrimaryPass(c: ScoredCandidate): string {
   const ideaId = ideaIdFromCandidate(c);
   const ideaBucket = bucketForIdeaFormat((c.payload ?? {}).format) ?? "other";
   const lane = planningLaneForFlowType(c.flow_type);
+  if (isTopPerformerMimicRenderableFlow(c.flow_type)) {
+    const rowId = sourceEvidenceRowIdFromCandidate(c);
+    if (rowId) return `mimic_evidence_row:${rowId}|${lane}`;
+  }
   return `${ideaId}|primary:${ideaBucket}:${lane}`;
 }
 

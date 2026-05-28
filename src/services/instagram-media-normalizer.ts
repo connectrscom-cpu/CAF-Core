@@ -112,7 +112,7 @@ export function isRejectedInstagramMediaUrl(url: string): { ok: boolean; reason?
   return { ok: true };
 }
 
-function isVideoishUrl(u: string): boolean {
+export function isVideoishUrl(u: string): boolean {
   return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(u) || /\/video\//i.test(u);
 }
 
@@ -442,6 +442,49 @@ export function extractInstagramVideoSourceUrl(payload: Record<string, unknown>)
     }
   }
   return null;
+}
+
+/** 1-based original deck positions that are video (carousel sidecar / Apify child posts). */
+export function carouselVideoSlideIndicesFromPayload(payload: Record<string, unknown>): number[] {
+  const n = normalizeInstagramEvidenceMedia(payload);
+  const out = new Set<number>();
+  for (const a of n.media_assets) {
+    if (a.media_type !== "video" && a.asset_role !== "video") continue;
+    const idx = a.slide_index;
+    if (idx != null && Number.isFinite(idx) && idx > 0) out.add(idx);
+  }
+  return [...out].sort((a, b) => a - b);
+}
+
+export interface CarouselImageSlideRef {
+  url: string;
+  /** 1-based position in the source Instagram carousel (includes skipped video slots). */
+  source_slide_index: number;
+}
+
+/** Ordered image-only slides with original deck indices (videos omitted). */
+export function carouselImageSlideRefsFromPayload(
+  payload: Record<string, unknown>,
+  maxSlides: number
+): CarouselImageSlideRef[] {
+  const n = normalizeInstagramEvidenceMedia(payload);
+  const out: CarouselImageSlideRef[] = [];
+  const seen = new Set<string>();
+  for (const a of n.media_assets) {
+    if (a.media_type === "video" || a.asset_role === "video") continue;
+    const u = a.source_url.trim();
+    if (!u) continue;
+    const k = u.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const si =
+      a.slide_index != null && Number.isFinite(a.slide_index) && a.slide_index > 0
+        ? a.slide_index
+        : out.length + 1;
+    out.push({ url: u, source_slide_index: si });
+    if (out.length >= maxSlides) break;
+  }
+  return out;
 }
 
 /** Ordered HTTPS image URLs for carousel deck vision (non-video), deduped, ingest priority baked into `media_assets` order. */

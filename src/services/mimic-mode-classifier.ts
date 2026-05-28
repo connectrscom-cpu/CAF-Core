@@ -3,6 +3,7 @@ import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
   hasVisualLedDeckCues,
+  nemotronSuggestsTextOnTemplate,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
@@ -103,9 +104,10 @@ function determineAutoMode(
   entry: Record<string, unknown>,
   slides: Record<string, unknown>[]
 ): MimicMode {
+  if (nemotronSuggestsTextOnTemplate(entry)) return "template_bg";
   if (!requiresCopyBeforeVisualMimic(entry)) return "carousel_visual";
 
-  if (hasVisualLedDeckCues(entry) && slides.length > 0) {
+  if (hasVisualLedDeckCues(entry) && slides.length > 0 && !deckUsesUnifiedBackgroundPlate(entry)) {
     const heavySlides = slides.filter(
       (s) => String(s.text_density ?? "").toLowerCase() === "high"
     );

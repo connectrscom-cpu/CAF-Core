@@ -4,6 +4,7 @@ import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "../domain/signal-pack-top-perf
 import {
   buildSignalPackMimicReferencesForUi,
   mimicKindToFlowType,
+  mimicRenderLabelForMode,
   groupMimicReferencesByTab,
 } from "./signal-pack-mimic-ui.js";
 import { plannerRowsFromMimicPicks } from "./run-candidates-materialize.js";
@@ -45,6 +46,106 @@ describe("buildSignalPackMimicReferencesForUi", () => {
     expect(grouped.get("mimic_image")).toHaveLength(1);
     expect(grouped.get("mimic_carousel")).toHaveLength(1);
     expect(grouped.get("mimic_video")).toHaveLength(0);
+
+    const imageRow = rows.find((r) => r.mimic_kind === "image");
+    expect(imageRow?.predicted_render_label).toBe("Image");
+
+    const carouselRow = rows.find((r) => r.mimic_kind === "carousel");
+    expect(carouselRow?.predicted_render_label).toBeTruthy();
+  });
+
+  it("predicts Template from top-level mimic_evaluation on pack entry", () => {
+    const pack = {
+      derived_globals_json: {
+        [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]: {
+          entries: [
+            {
+              insights_id: "ins_pack_root",
+              analysis_tier: "top_performer_carousel",
+              source_evidence_row_id: "401",
+              evidence_kind: "instagram_post",
+              hook_text_preview: "Tarot-style deck",
+              mimic_evaluation: {
+                recommended_mode: "text_on_template",
+                mode_reason: "Shared plate with centered copy",
+                template_consistency: "uniform",
+              },
+              inspection_media: {
+                items: [{ public_url: "https://x/a.jpg" }, { public_url: "https://x/b.jpg" }],
+              },
+            },
+          ],
+        },
+      },
+    } as unknown as SignalPackRow;
+
+    const rows = buildSignalPackMimicReferencesForUi(pack);
+    expect(rows[0]?.predicted_render_label).toBe("Template");
+    expect(rows[0]?.predicted_mimic_mode).toBe("template_bg");
+  });
+
+  it("predicts Template vs Full bleed from mimic_evaluation", () => {
+    const pack = {
+      derived_globals_json: {
+        [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]: {
+          entries: [
+            {
+              insights_id: "ins_tpl",
+              analysis_tier: "top_performer_carousel",
+              source_evidence_row_id: "301",
+              evidence_kind: "instagram_post",
+              hook_text_preview: "Text deck",
+              aesthetic_analysis_json: {
+                mimic_evaluation: {
+                  recommended_mode: "text_on_template",
+                  mode_reason: "Uniform serif template across slides",
+                  template_consistency: "uniform",
+                },
+                slides: [
+                  { slide_index: 1, text_density: "high", image_or_photo_role: "none" },
+                  { slide_index: 2, text_density: "high", image_or_photo_role: "none" },
+                ],
+              },
+              inspection_media: { items: [{ public_url: "https://x/a.jpg" }, { public_url: "https://x/b.jpg" }] },
+            },
+            {
+              insights_id: "ins_bleed",
+              analysis_tier: "top_performer_carousel",
+              source_evidence_row_id: "302",
+              evidence_kind: "instagram_post",
+              hook_text_preview: "Visual deck",
+              aesthetic_analysis_json: {
+                mimic_evaluation: {
+                  recommended_mode: "full_bleed_visual",
+                  mode_reason: "Illustration-led cover and list slides",
+                },
+                deck_visual_system: { overall_aesthetic: "cartoon illustration" },
+                slides: [
+                  { slide_index: 1, text_density: "low", image_or_photo_role: "hero_illustration" },
+                  { slide_index: 2, text_density: "low", image_or_photo_role: "supporting_visual" },
+                ],
+              },
+              inspection_media: { items: [{ public_url: "https://x/c.jpg" }] },
+            },
+          ],
+        },
+      },
+    } as unknown as SignalPackRow;
+
+    const rows = buildSignalPackMimicReferencesForUi(pack);
+    expect(rows.find((r) => r.insights_id === "ins_tpl")?.predicted_render_label).toBe("Template");
+    expect(rows.find((r) => r.insights_id === "ins_bleed")?.predicted_render_label).toBe("Full bleed");
+  });
+});
+
+describe("mimicRenderLabelForMode", () => {
+  it("labels mixed slide plans", () => {
+    expect(
+      mimicRenderLabelForMode("carousel_visual", [
+        { slide_index: 1, render_mode: "full_bleed", reference_index: 1 },
+        { slide_index: 2, render_mode: "hbs", reference_index: 2 },
+      ])
+    ).toBe("Mixed");
   });
 });
 

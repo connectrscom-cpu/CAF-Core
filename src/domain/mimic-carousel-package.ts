@@ -65,6 +65,8 @@ export interface MimicCarouselVisualGuideline {
   evidence_post_url: string | null;
   /** Per-slide layout / visual cues from top-performer deep analysis (no signed URLs). */
   slides: MimicCarouselSlideGuideline[] | null;
+  /** 1-based source-deck positions that were video clips (always skipped at mimic render). */
+  video_slide_indices?: number[];
 }
 
 export interface MimicCarouselVisualReference {
@@ -186,9 +188,23 @@ function slimMimicEvaluation(raw: unknown): MimicEvaluation | null {
   };
 }
 
+function videoSlideIndicesFromEntry(entry: Record<string, unknown>): number[] {
+  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
+  const raw = aes.video_slide_indices ?? entry.video_slide_indices;
+  const stored = asRecord(entry.stored_inspection_media_json)?.video_slide_indices;
+  const fromStored = Array.isArray(stored) ? stored : null;
+  const src = fromStored ?? raw;
+  if (!Array.isArray(src)) return [];
+  return src
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+}
+
 export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
   const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
   const slides = slimSlideGuidelinesFromEntry(entry);
+  const video_slide_indices = videoSlideIndicesFromEntry(entry);
   return {
     format_pattern: String(aes.format_pattern ?? entry.format_pattern ?? "").trim() || null,
     format_key: String(entry.format_key ?? "").trim() || null,
@@ -200,6 +216,7 @@ export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): Mi
     mimic_evaluation: slimMimicEvaluation(aes.mimic_evaluation ?? entry.mimic_evaluation),
     evidence_post_url: String(entry.evidence_post_url ?? "").trim() || null,
     slides: slides.length > 0 ? slides : null,
+    ...(video_slide_indices.length > 0 ? { video_slide_indices } : {}),
   };
 }
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  carouselImageSlideRefsFromPayload,
+  carouselVideoSlideIndicesFromPayload,
   enrichInstagramApifyPayloadInPlace,
   extractOrderedInstagramCarouselImageUrls,
   finalizeInstagramEvidenceMediaUrl,
@@ -78,6 +80,23 @@ describe("normalizeInstagramEvidenceMedia", () => {
     expect(n.media_assets).toHaveLength(1);
     expect(n.media_assets[0].source_url).toContain("slide_02");
     expect(n.diagnostics.rejected.length).toBeGreaterThan(0);
+  });
+});
+
+describe("carouselVideoSlideIndicesFromPayload", () => {
+  it("returns 1-based deck positions for video child posts", () => {
+    const payload = {
+      childPosts: [
+        { displayUrl: IG1 },
+        { videoUrl: "https://scontent.cdninstagram.com/v/t51/video_01.mp4" },
+        { displayUrl: IG3 },
+      ],
+    };
+    expect(carouselVideoSlideIndicesFromPayload(payload)).toEqual([2]);
+    const refs = carouselImageSlideRefsFromPayload(payload, 8);
+    expect(refs).toHaveLength(2);
+    expect(refs[0]?.source_slide_index).toBe(1);
+    expect(refs[1]?.source_slide_index).toBe(3);
   });
 });
 

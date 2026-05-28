@@ -244,7 +244,7 @@ const VALID_MIMIC_TEMPLATE_CONSISTENCY = new Set(["uniform", "varied", "mixed"])
 const VALID_MIMIC_DIFFICULTY = new Set(["easy", "moderate", "hard"]);
 const VALID_TEMPLATE_STORAGE_QUALITY = new Set(["reusable", "job_only", "reject"]);
 
-function normalizeMimicEvaluation(raw: unknown): Record<string, unknown> | null {
+export function normalizeMimicEvaluation(raw: unknown): Record<string, unknown> | null {
   const obj = asRecord(raw);
   if (!obj) return null;
 

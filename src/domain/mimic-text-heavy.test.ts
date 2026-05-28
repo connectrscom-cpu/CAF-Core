@@ -3,9 +3,12 @@ import {
   deckUsesUnifiedBackgroundPlate,
   isTextOverlayDeckFromGuideline,
   isVisualLedShortCopyDeck,
+  nemotronSuggestsTextOnTemplate,
   referenceHasHeavyOnScreenText,
   requiresCopyBeforeVisualMimic,
 } from "./mimic-text-heavy.js";
+import { classifyMimicMode } from "../services/mimic-mode-classifier.js";
+import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL } from "./top-performer-mimic-flow-types.js";
 import { buildMimicRenderContextForLlm } from "./mimic-render-context.js";
 import type { MimicPayloadV1 } from "./mimic-payload.js";
 
@@ -60,6 +63,22 @@ describe("mimic-text-heavy", () => {
       })
     ).toBe(true);
     expect(referenceHasHeavyOnScreenText([{ on_screen_text_transcript: longText }])).toBe(true);
+  });
+
+  it("honors Nemotron text_on_template without per-slide transcripts", () => {
+    const entry = {
+      format_pattern: "mixed",
+      visual_consistency: "Uniform blue backdrop and medieval palette",
+      mimic_evaluation: {
+        recommended_mode: "text_on_template",
+        template_consistency: "uniform",
+        background_replicability: "high",
+      },
+    };
+    expect(nemotronSuggestsTextOnTemplate(entry)).toBe(true);
+    expect(requiresCopyBeforeVisualMimic(entry)).toBe(true);
+    const { mode } = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
+    expect(mode).toBe("template_bg");
   });
 
   it("flags text-on-background decks from deck_visual_system when slide transcripts are missing", () => {

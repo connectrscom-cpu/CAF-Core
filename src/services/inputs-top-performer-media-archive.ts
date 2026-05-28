@@ -21,6 +21,8 @@ const VISION_ARCHIVE_SIGNED_URL_TTL_SEC = 604800; // 7d
 export interface TopPerformerArchivedMediaItem {
   index: number;
   role: "carousel_slide" | "video_frame" | "source_video";
+  /** 1-based position in the source Instagram carousel (when known). */
+  source_slide_index?: number;
   source_url: string;
   bucket: string;
   object_path: string;
@@ -298,7 +300,7 @@ export async function archiveTopPerformerVisionMedia(
     for (let i = 0; i < args.urls.length; i++) {
       const source_url = args.urls[i];
       const item: TopPerformerArchivedMediaItem = {
-        index: i,
+        index: i + 1,
         role: args.role,
         source_url,
         bucket: config.SUPABASE_ASSETS_BUCKET || "assets",
@@ -341,7 +343,7 @@ export async function archiveTopPerformerVisionMedia(
     if (wantsSourceVideo) {
       const idx = args.urls.length;
       const item: TopPerformerArchivedMediaItem = {
-        index: idx,
+        index: idx + 1,
         role: "source_video",
         source_url: srcUrl,
         bucket: config.SUPABASE_ASSETS_BUCKET || "assets",

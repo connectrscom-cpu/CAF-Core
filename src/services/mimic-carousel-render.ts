@@ -1,6 +1,11 @@
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
-import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
+import {
+  aestheticSlideRecords,
+  deckUsesUnifiedBackgroundPlate,
+  hasVisualLedDeckCues,
+  slideOnScreenTextChars,
+} from "../domain/mimic-text-heavy.js";
 import {
   mimicTemplateLibraryObjectPath,
   referenceIndexForTemplateSlot,
@@ -12,6 +17,7 @@ import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
 import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
+import { isVideoishUrl } from "./instagram-media-normalizer.js";
 import { uploadBuffer } from "./supabase-storage.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -41,7 +47,7 @@ export function slideOnImageCopyFromSlides(
   return [headline, body].filter(Boolean).join("\n\n").trim();
 }
 
-/** Resolve archived reference frame for a 1-based output slide (1-based or 0-based item indexes). */
+/** Resolve archived reference frame for a 1-based output slide. */
 export function referenceItemForMimicSlide(
   mimic: MimicPayloadV1,
   slideIndex: number
@@ -50,8 +56,14 @@ export function referenceItemForMimicSlide(
   if (items.length === 0) return null;
 
   const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
+  const refIdx = plan?.reference_index ?? slideIndex;
+
+  // Per-slide carousel mimic: reference_index tracks output slide (1:1 with deck order).
+  if (refIdx === slideIndex && slideIndex >= 1 && slideIndex <= items.length) {
+    return items[slideIndex - 1] ?? null;
+  }
+
   if (plan?.reference_index != null) {
-    const refIdx = plan.reference_index;
     const exact = items.find((r) => r.index === refIdx);
     if (exact) return exact;
     if (refIdx >= 1 && refIdx <= items.length) {
@@ -350,24 +362,32 @@ export function slideMimicRenderMode(mimic: MimicPayloadV1, slideIndex: number):
   if (mimic.mode === "template_bg") return "hbs";
   if (mimic.mode !== "carousel_visual") return null;
   const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
-  return plan?.render_mode ?? "full_bleed";
+  const mode = plan?.render_mode ?? "full_bleed";
+  if (mode === "full_bleed" && !isFullBleedCandidateSlide(mimic, slideIndex)) return "hbs";
+  return mode;
 }
 
 export function referenceUrlForSlide(mimic: MimicPayloadV1, slideIndex: number): string | null {
   return referenceItemForMimicSlide(mimic, slideIndex)?.vision_fetch_url ?? null;
 }
 
+function slideGuidelineRecords(mimic: MimicPayloadV1): Record<string, unknown>[] {
+  const vg = asRecord(mimic.visual_guideline);
+  const fromSlim = Array.isArray(vg?.slides) ? vg!.slides : [];
+  if (fromSlim.length > 0) {
+    return fromSlim.map((raw) => asRecord(raw)).filter((x): x is Record<string, unknown> => x != null);
+  }
+  return aestheticSlideRecords({ aesthetic_analysis_json: vg, ...vg });
+}
+
 function resolveSlideGuideline(
   mimic: MimicPayloadV1,
   slideIndex: number
 ): Record<string, unknown> | null {
-  const vg = asRecord(mimic.visual_guideline);
-  const slides = Array.isArray(vg?.slides) ? vg!.slides : [];
+  const slides = slideGuidelineRecords(mimic);
   return (
-    slides
-      .map((raw) => asRecord(raw))
-      .find((s) => s && Number(s.slide_index) === slideIndex) ??
-    asRecord(slides[slideIndex - 1]) ??
+    slides.find((s) => Number(s.slide_index) === slideIndex) ??
+    slides[slideIndex - 1] ??
     null
   );
 }
@@ -500,6 +520,63 @@ export function buildSlideIntentInstruction(intent: SlideIntentHints): string {
   return parts.join(" ");
 }
 
+// ─── Video slide filter ─────────────────────────────────────────────────────
+
+function videoSlideIndicesFromMimic(mimic: MimicPayloadV1): number[] {
+  const vg = asRecord(mimic.visual_guideline);
+  const raw = vg?.video_slide_indices ?? vg?.skipped_video_slide_indices;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+}
+
+function referenceItemLooksLikeVideo(item: MimicReferenceItem | null | undefined): boolean {
+  if (!item) return false;
+  if (item.is_video_slide) return true;
+  const role = String(item.role ?? "").toLowerCase();
+  if (role.includes("video")) return true;
+  const ct = String(item.content_type ?? "").toLowerCase();
+  if (ct.startsWith("video/")) return true;
+  for (const p of [item.object_path, item.source_url, item.vision_fetch_url, item.preview_url]) {
+    if (p && isVideoishUrl(p)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when the reference frame for this output slide was a video clip in the source carousel.
+ * Video slides are never mimicked (no full-bleed / HBS generation).
+ */
+export function isCarouselVideoSlide(mimic: MimicPayloadV1, slideIndex: number): boolean {
+  const item = referenceItemForMimicSlide(mimic, slideIndex);
+  if (referenceItemLooksLikeVideo(item)) return true;
+
+  const videoIdx = videoSlideIndicesFromMimic(mimic);
+  if (videoIdx.length === 0) return false;
+
+  const src = item?.source_slide_index;
+  if (src != null && Number.isFinite(src) && src > 0) {
+    return videoIdx.includes(src);
+  }
+
+  const anyMapped = mimic.reference_items.some(
+    (r) => r.source_slide_index != null && Number.isFinite(r.source_slide_index) && r.source_slide_index > 0
+  );
+  if (!anyMapped && videoIdx.includes(slideIndex)) return true;
+
+  const match = resolveSlideGuideline(mimic, slideIndex);
+  if (match) {
+    const role = String(match.image_or_photo_role ?? "").toLowerCase();
+    if (role.includes("video")) return true;
+    const purpose = String(match.slide_purpose ?? "").toLowerCase();
+    if (purpose === "video" || purpose === "video_clip") return true;
+  }
+
+  return false;
+}
+
 // ─── Promotional / brand-specific slide filter ──────────────────────────────
 
 const PROMO_KEYWORD_PATTERNS = [
@@ -508,6 +585,9 @@ const PROMO_KEYWORD_PATTERNS = [
   /\border\s+now\b/i,
   /\bget\s+(your|the|my|our)\b/i,
   /\bavailable\s+now\b/i,
+  /\bdelivered\s+immediately\b/i,
+  /\bas\s+a\s+pdf\b/i,
+  /\bpdf\b/i,
   /\blink\s+in\s+bio\b/i,
   /\bswipe\s+up\b/i,
   /\buse\s+code\b/i,
@@ -519,8 +599,11 @@ const PROMO_KEYWORD_PATTERNS = [
   /\bmy\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
   /\bour\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
   /\bnew\s+guide\b/i,
+  /\bcomplete\s+guide\b/i,
+  /\bblueprint\s+for\b/i,
   /\bpre-?order\b/i,
   /\blaunch(ing|ed)?\b.*\b(guide|book|course|program)\b/i,
+  /\bupdated\s+version\s+will\s+drop\b/i,
   /\$\d/,
   /\bpart\s+\d\b/i,
 ];
@@ -534,6 +617,8 @@ const PROMO_VISUAL_PATTERNS = [
   /\btablet\s+screen/i,
   /\bipad\s+mockup/i,
   /\bebook\s+preview/i,
+  /\blaptop\s+mockup/i,
+  /\bapp\s+screen/i,
 ];
 
 /**
@@ -549,6 +634,8 @@ export function isPromotionalSlide(
   mimic: MimicPayloadV1,
   slideIndex: number
 ): boolean {
+  if (isCarouselVideoSlide(mimic, slideIndex)) return true;
+
   const vg = asRecord(mimic.visual_guideline);
 
   // Level 1: deck-level skip list from mimic_evaluation
@@ -560,33 +647,77 @@ export function isPromotionalSlide(
     if (contentIndices.length > 0 && contentIndices.includes(slideIndex)) return false;
   }
 
-  // Level 2-3: per-slide intent tags
-  const slides = Array.isArray(vg?.slides) ? vg!.slides : [];
-  const match =
-    slides
-      .map((raw) => asRecord(raw))
-      .find((s) => s && Number(s.slide_index) === slideIndex) ??
-    asRecord(slides[slideIndex - 1]);
-  if (!match) return false;
+  const match = resolveSlideGuideline(mimic, slideIndex);
+  if (match) {
+    const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
+    const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
 
-  const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
-  const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
+    const transcript = String(
+      match.on_screen_text_transcript ?? match.on_image_text ?? ""
+    ).trim();
+    const visual = String(match.visual_description ?? "").trim();
 
-  if (purpose === "self_promo" || purpose === "product_pitch") return true;
-  if (brandSpec === "high") return true;
+    if (transcript && PROMO_KEYWORD_PATTERNS.some((rx) => rx.test(transcript))) return true;
+    if (visual && PROMO_VISUAL_PATTERNS.some((rx) => rx.test(visual))) return true;
 
-  if (purpose && brandSpec) return false;
+    if (purpose === "self_promo" || purpose === "product_pitch") return true;
+    if (brandSpec === "high") return true;
 
-  // Level 4: regex fallback for packs without Nemotron tags
-  const transcript = String(
-    match.on_screen_text_transcript ?? match.on_image_text ?? ""
-  ).trim();
-  const visual = String(match.visual_description ?? "").trim();
+    const density = String(match.text_density ?? "").trim().toLowerCase();
+    if (density === "high" && slideOnScreenTextChars(match) >= FULL_BLEED_TEXT_CAP) return true;
 
-  if (transcript && PROMO_KEYWORD_PATTERNS.some((rx) => rx.test(transcript))) return true;
-  if (visual && PROMO_VISUAL_PATTERNS.some((rx) => rx.test(visual))) return true;
+    if (purpose && brandSpec) return false;
+
+    return false;
+  }
+
+  // No per-slide vision row: last frame is often a product/download CTA in mixed decks.
+  const refCount = mimic.reference_items.length;
+  if (refCount > 2 && slideIndex === refCount) {
+    const fp = String(vg?.format_pattern ?? "").toLowerCase();
+    if (fp === "mixed" || fp.includes("mixed")) return true;
+  }
 
   return false;
+}
+
+/**
+ * Full-bleed Qwen mimic only when the reference frame is visual-led with manageable on-slide text.
+ * Without per-slide tags, only the cover (slide 1) may use full_bleed when the deck has visual cues.
+ */
+export function isFullBleedCandidateSlide(mimic: MimicPayloadV1, slideIndex: number): boolean {
+  if (mimic.mode !== "carousel_visual") return false;
+  if (isPromotionalSlide(mimic, slideIndex)) return false;
+
+  const match = resolveSlideGuideline(mimic, slideIndex);
+  if (!match) {
+    if (slideIndex !== 1) return false;
+    const vg = asRecord(mimic.visual_guideline) ?? {};
+    return hasVisualLedDeckCues({ aesthetic_analysis_json: vg, ...vg });
+  }
+
+  const density = String(match.text_density ?? "").trim().toLowerCase();
+  if (density === "high") return false;
+  if (slideOnScreenTextChars(match) >= FULL_BLEED_TEXT_CAP) return false;
+
+  const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
+  if (purpose === "self_promo" || purpose === "product_pitch") return false;
+
+  const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
+  if (brandSpec === "high") return false;
+
+  return true;
+}
+
+/** Downgrade full_bleed plans to hbs when Qwen cannot safely mimic the reference frame. */
+export function reconcileFullBleedSlidePlansAtRender(mimic: MimicPayloadV1): MimicPayloadV1 {
+  if (mimic.mode !== "carousel_visual") return mimic;
+  const plans = (mimic.slide_plans ?? []).map((plan) => {
+    if (plan.render_mode !== "full_bleed") return plan;
+    if (isFullBleedCandidateSlide(mimic, plan.slide_index)) return plan;
+    return { ...plan, render_mode: "hbs" as const };
+  });
+  return { ...mimic, slide_plans: plans };
 }
 
 /**
@@ -654,6 +785,7 @@ export async function renderMimicCarouselSlideFullBleed(
     onImageCopy?: string | null;
     promptOverrides?: MimicPromptOverrides | null;
     previousSlideUrl?: string | null;
+    projectHandle?: string | null;
   }
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const item = referenceItemForMimicSlide(mimic, slideIndex);
@@ -679,6 +811,7 @@ export async function renderMimicCarouselSlideFullBleed(
       onImageCopy: effectiveCopy || null,
       consistencyHint,
       intentInstruction,
+      projectHandle: opts?.projectHandle ?? null,
     }, opts?.promptOverrides),
     size: "1024x1536",
     audit: {

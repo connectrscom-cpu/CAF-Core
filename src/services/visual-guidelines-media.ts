@@ -14,6 +14,10 @@ export interface VisualGuidelineMediaItem {
   public_url: string | null;
   vision_fetch_url: string | null;
   index: number | null;
+  source_slide_index?: number | null;
+  is_video_slide?: boolean;
+  content_type?: string | null;
+  source_url?: string | null;
 }
 
 export interface VisualGuidelineInspectionMedia {
@@ -72,6 +76,10 @@ export function compactStoredInspectionMedia(raw: unknown): VisualGuidelineInspe
       typeof o.vision_fetch_url === "string" && o.vision_fetch_url.trim()
         ? o.vision_fetch_url.trim()
         : null;
+    const sourceSlide =
+      o.source_slide_index != null && Number.isFinite(Number(o.source_slide_index))
+        ? Number(o.source_slide_index)
+        : null;
     items.push({
       role: String(o.role ?? "asset"),
       object_path: objectPath,
@@ -79,6 +87,10 @@ export function compactStoredInspectionMedia(raw: unknown): VisualGuidelineInspe
       public_url: pub,
       vision_fetch_url: vision,
       index: typeof o.index === "number" ? o.index : null,
+      source_slide_index: sourceSlide != null && sourceSlide > 0 ? sourceSlide : null,
+      is_video_slide: o.is_video_slide === true,
+      content_type: typeof o.content_type === "string" ? o.content_type : null,
+      source_url: typeof o.source_url === "string" ? o.source_url : null,
     });
   }
 

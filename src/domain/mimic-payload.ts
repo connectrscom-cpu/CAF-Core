@@ -15,6 +15,12 @@ export interface MimicReferenceItem {
   /** Supabase object key — re-signed at render when signed URLs expire. */
   bucket?: string | null;
   object_path?: string | null;
+  /** 1-based index in the source Instagram carousel (may differ from `index` when videos were omitted). */
+  source_slide_index?: number | null;
+  /** Archived frame was a video clip (should never be mimicked). */
+  is_video_slide?: boolean;
+  content_type?: string | null;
+  source_url?: string | null;
 }
 
 export interface MimicSlidePlan {
@@ -72,6 +78,10 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     if (!o) continue;
     const url = String(o.vision_fetch_url ?? "").trim();
     if (!url) continue;
+    const sourceSlide =
+      o.source_slide_index != null && Number.isFinite(Number(o.source_slide_index))
+        ? Number(o.source_slide_index)
+        : null;
     reference_items.push({
       index: Number(o.index ?? reference_items.length + 1) || reference_items.length + 1,
       role: String(o.role ?? "reference"),
@@ -80,6 +90,10 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       bucket: typeof o.bucket === "string" && o.bucket.trim() ? o.bucket.trim() : null,
       object_path:
         typeof o.object_path === "string" && o.object_path.trim() ? o.object_path.trim() : null,
+      source_slide_index: sourceSlide != null && sourceSlide > 0 ? sourceSlide : null,
+      is_video_slide: o.is_video_slide === true,
+      content_type: typeof o.content_type === "string" ? o.content_type : null,
+      source_url: typeof o.source_url === "string" ? o.source_url : null,
     });
   }
   if (reference_items.length === 0) return null;

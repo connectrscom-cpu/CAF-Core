@@ -19,6 +19,7 @@ import {
   type VisualGuidelineInspectionMedia,
 } from "./visual-guidelines-media.js";
 import { compactCueList } from "./visual-guidelines-cues.js";
+import { normalizeMimicEvaluation } from "./carousel-insights-llm-normalize.js";
 
 const MAX_CUES_PER_FORMAT = 10;
 
@@ -136,6 +137,41 @@ export type VisualGuidelineBuildOpts = {
   evidencePostUrlByRowId?: Map<string, string>;
 };
 
+/** Classifier + mimic prep fields preserved on pack entries (slides capped). */
+function compactAestheticAnalysisForPackEntry(aes: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const fp = aes.format_pattern;
+  if (fp != null) out.format_pattern = fp;
+  const vc = aes.visual_consistency;
+  if (vc != null) out.visual_consistency = vc;
+  if (aes.deck_visual_system != null) out.deck_visual_system = aes.deck_visual_system;
+  if (aes.replication_blueprint != null) out.replication_blueprint = aes.replication_blueprint;
+
+  const mimicEval = normalizeMimicEvaluation(aes.mimic_evaluation);
+  if (mimicEval) out.mimic_evaluation = mimicEval;
+
+  const slidesRaw = Array.isArray(aes.slides) ? aes.slides : [];
+  if (slidesRaw.length > 0) {
+    const slides: Record<string, unknown>[] = [];
+    for (const raw of slidesRaw.slice(0, 24)) {
+      const s = asRecord(raw);
+      if (!s) continue;
+      slides.push({
+        slide_index: s.slide_index,
+        on_screen_text_transcript: stringish(s.on_screen_text_transcript, 400),
+        visual_description: stringish(s.visual_description, 280),
+        layout_template: stringish(s.layout_template, 120),
+        text_density: stringish(s.text_density, 40),
+        image_or_photo_role: stringish(s.image_or_photo_role, 80),
+        slide_purpose: stringish(s.slide_purpose, 40),
+        brand_specificity: stringish(s.brand_specificity, 40),
+      });
+    }
+    if (slides.length > 0) out.slides = slides;
+  }
+  return out;
+}
+
 async function evidencePostUrlMapForRowIds(
   db: Pool,
   projectId: string,
@@ -192,6 +228,9 @@ export function buildVisualGuidelineEntriesFromInsights(
 
     const postUrl = opts?.evidencePostUrlByRowId?.get(r.source_evidence_row_id) ?? null;
 
+    const mimicEvaluation = aes ? normalizeMimicEvaluation(aes.mimic_evaluation) : null;
+    const aestheticSlice = aes ? compactAestheticAnalysisForPackEntry(aes) : null;
+
     const entry: Record<string, unknown> = {
       insights_id: r.insights_id,
       analysis_tier: r.analysis_tier,
@@ -217,6 +256,10 @@ export function buildVisualGuidelineEntriesFromInsights(
       deck_as_whole_summary: stringish(aes?.deck_as_whole_summary, 600),
       video_as_whole_summary: stringish(aes?.video_as_whole_summary ?? aes?.style_summary, 600),
       inspection_media: inspection_media as unknown as Record<string, unknown>,
+      ...(mimicEvaluation ? { mimic_evaluation: mimicEvaluation } : {}),
+      ...(aestheticSlice && Object.keys(aestheticSlice).length > 0
+        ? { aesthetic_analysis_json: aestheticSlice }
+        : {}),
     };
     entries.push(entry);
   }

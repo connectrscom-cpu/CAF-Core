@@ -417,7 +417,8 @@ function buildDashScopeEditBody(
     parameters: {
       n: 1,
       watermark: false,
-      negative_prompt: " ",
+      negative_prompt:
+        "watermark, logo, @handle, instagram handle, brand tag, exact copy, duplicate illustration, landscape, horizontal",
       prompt_extend: false,
       size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
     },
@@ -568,7 +569,10 @@ export async function editImageFromReference(
         fallback_reason: "visual_genai_unavailable",
       });
     }
-    return referencePassthroughResult(config, params, blob, refMime);
+    throw new Error(
+      `${msg} Mimic render cannot passthrough the reference image — configure OPENAI_API_KEY with ` +
+        "MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI=1 or use MIMIC_IMAGE_PROVIDER=dashscope."
+    );
   }
 }
 

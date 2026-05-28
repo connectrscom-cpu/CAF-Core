@@ -34,12 +34,13 @@ export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
 ].join(" ");
 
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
-  "Create a new image inspired by this reference slide.",
-  "Keep the same overall composition, layout structure, and color palette, but change enough visual details (backgrounds, subjects, textures, styling) that it is clearly a distinct original work — not a copy.",
-  "Think of it as: same vibe, same energy, fresh execution.",
+  "Create a new image inspired by this reference slide — target ~80% visual similarity (layout, palette, mood) but NOT a pixel-level copy.",
+  "Redraw subjects with clearly different poses, proportions, and fine details while keeping the same composition slots and text regions.",
+  "Think of it as: same vibe, same energy, fresh execution — a new illustration, not a clone.",
   "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
   "Do NOT add decorative frames, borders, ornamental elements, or vignettes that are not in the reference.",
-  "Do NOT reproduce logos, brand marks, watermarks, product mockups, book/guide covers, or recognizable faces.",
+  "Remove ALL watermarks, @handles, and brand tags from the reference. Do NOT reproduce logos, brand marks, or recognizable faces.",
+  "{{handle_instruction}}",
   "{{copy_instruction}}",
   "{{intent_instruction}}",
   "{{consistency_instruction}}",
@@ -126,6 +127,15 @@ export function buildMimicTemplateBackgroundPrompt(
   });
 }
 
+function buildHandleInstruction(projectHandle: string | null | undefined): string {
+  const handle = String(projectHandle ?? "").trim();
+  if (!handle) {
+    return "Do not add any @handle or watermark on the image.";
+  }
+  const normalized = handle.startsWith("@") ? handle : `@${handle}`;
+  return `If you include a small corner handle, use exactly ${normalized} — never the reference creator's handle.`;
+}
+
 export function buildMimicCarouselSlidePrompt(
   opts: {
     slideIndex: number;
@@ -134,6 +144,7 @@ export function buildMimicCarouselSlidePrompt(
     onImageCopy?: string | null;
     consistencyHint?: string | null;
     intentInstruction?: string | null;
+    projectHandle?: string | null;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
@@ -150,6 +161,7 @@ export function buildMimicCarouselSlidePrompt(
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForSlide(copy),
     on_image_copy: copy,
+    handle_instruction: buildHandleInstruction(opts.projectHandle),
     layout_instruction: layoutInstruction,
     visual_instruction: visualInstruction,
     consistency_instruction: consistencyInstruction,
@@ -175,7 +187,15 @@ export function buildMimicTemplateBgComposePrompt(
 
 export function mimicPromptForMode(
   mode: MimicMode | "template_bg_compose",
-  slide?: { index?: number; layout?: string; visual?: string; onImageCopy?: string | null; consistencyHint?: string | null; intentInstruction?: string | null },
+  slide?: {
+    index?: number;
+    layout?: string;
+    visual?: string;
+    onImageCopy?: string | null;
+    consistencyHint?: string | null;
+    intentInstruction?: string | null;
+    projectHandle?: string | null;
+  },
   overrides?: MimicPromptOverrides | null
 ): string {
   if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy }, overrides);
@@ -188,6 +208,7 @@ export function mimicPromptForMode(
     onImageCopy: slide?.onImageCopy,
     consistencyHint: slide?.consistencyHint,
     intentInstruction: slide?.intentInstruction,
+    projectHandle: slide?.projectHandle,
   }, overrides);
 }
 

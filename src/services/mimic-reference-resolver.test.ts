@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
-import { resolveMimicReferenceFromLineage } from "./mimic-reference-resolver.js";
+import {
+  normalizeMimicReferenceItems,
+  resolveMimicReferenceFromLineage,
+} from "./mimic-reference-resolver.js";
 import type { JobLineageResult } from "../repositories/job-lineage.js";
 
 function lineageWithPack(entries: Record<string, unknown>[]): JobLineageResult {
@@ -41,6 +44,20 @@ const carouselEntry = {
     ],
   },
 };
+
+describe("normalizeMimicReferenceItems", () => {
+  it("reassigns duplicate and 0-based indexes to sequential 1..N", () => {
+    const normalized = normalizeMimicReferenceItems([
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/slide_01.jpg" },
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/slide_02.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/slide_03.jpg" },
+    ]);
+    expect(normalized.map((x) => x.index)).toEqual([1, 2, 3]);
+    expect(normalized[0]?.vision_fetch_url).toContain("slide_01");
+    expect(normalized[1]?.vision_fetch_url).toContain("slide_02");
+    expect(normalized[2]?.vision_fetch_url).toContain("slide_03");
+  });
+});
 
 describe("resolveMimicReferenceFromLineage", () => {
   it("falls back to single-frame top_performer_carousel when image mimic has no deep tier", () => {

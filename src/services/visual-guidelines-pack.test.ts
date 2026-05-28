@@ -99,4 +99,47 @@ describe("buildVisualGuidelineEntriesFromInsights", () => {
     ]);
     expect(entries).toHaveLength(0);
   });
+
+  it("propagates mimic_evaluation and slide slice into pack entries", () => {
+    const { entries } = buildVisualGuidelineEntriesFromInsights([
+      row({
+        insights_id: "ins_tarot",
+        aesthetic_analysis_json: {
+          format_pattern: "mixed",
+          visual_consistency: "Uniform blue backdrop; medieval palette across slides",
+          deck_visual_system: {
+            repeated_template: "centered serif text on shared celestial plate",
+          },
+          mimic_evaluation: {
+            recommended_mode: "text_on_template",
+            mode_reason: "Slides share one frame; only overlaid copy changes",
+            template_consistency: "uniform",
+            background_replicability: "high",
+          },
+          slides: [
+            {
+              slide_index: 1,
+              text_density: "high",
+              image_or_photo_role: "none",
+              on_screen_text_transcript: "Card one copy",
+            },
+            {
+              slide_index: 2,
+              text_density: "high",
+              image_or_photo_role: "none",
+              on_screen_text_transcript: "Card two copy",
+            },
+          ],
+        },
+      }),
+    ]);
+    expect(entries).toHaveLength(1);
+    const e = entries[0]!;
+    const me = e.mimic_evaluation as Record<string, unknown>;
+    expect(me?.recommended_mode).toBe("text_on_template");
+    const aes = e.aesthetic_analysis_json as Record<string, unknown>;
+    expect(aes?.mimic_evaluation).toEqual(me);
+    expect(Array.isArray(aes?.slides)).toBe(true);
+    expect((aes.slides as unknown[]).length).toBe(2);
+  });
 });

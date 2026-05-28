@@ -20,6 +20,7 @@ import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
 import type { MimicMode } from "../domain/mimic-payload.js";
 import { classifyMimicMode } from "./mimic-mode-classifier.js";
 import {
+  normalizeMimicReferenceItems,
   resolveMimicReferenceFromLineage,
   type ResolvedMimicReference,
 } from "./mimic-reference-resolver.js";
@@ -34,6 +35,8 @@ import {
   templateBackgroundPlatesReady,
 } from "./mimic-carousel-render.js";
 import { targetSlideCountFromReference } from "../domain/mimic-text-heavy.js";
+import { carouselVideoSlideIndicesFromPayload } from "./instagram-media-normalizer.js";
+import type { JobLineageResult } from "../repositories/job-lineage.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -53,13 +56,43 @@ function inspectionFolderFromEntry(entry: Record<string, unknown>): {
   };
 }
 
+function evidencePayloadForResolved(
+  lineage: JobLineageResult,
+  resolved: ResolvedMimicReference
+): Record<string, unknown> | null {
+  const insightId = resolved.source_insights_id;
+  const rowId = resolved.source_evidence_row_id;
+  for (const g of lineage.grounding) {
+    const ir = g.insight_row;
+    if (insightId && String(ir.insights_id) === insightId) {
+      const p = g.evidence_row?.payload_json;
+      if (p && typeof p === "object" && !Array.isArray(p)) return p;
+    }
+  }
+  if (rowId) {
+    for (const g of lineage.grounding) {
+      const er = g.evidence_row;
+      if (er && String(er.id) === String(rowId)) {
+        const p = er.payload_json;
+        if (p && typeof p === "object" && !Array.isArray(p)) return p;
+      }
+    }
+  }
+  return null;
+}
+
 function buildMimicPayloadFromResolved(
   flowType: string,
   resolved: ResolvedMimicReference,
-  modeOverride?: MimicMode | null
+  modeOverride?: MimicMode | null,
+  evidencePayload?: Record<string, unknown> | null
 ): { mimic: MimicPayloadV1; visualGuideline: ReturnType<typeof slimVisualGuidelineFromEntry> } {
   const { mode, slide_plans } = classifyMimicMode(flowType, resolved.guideline_entry, modeOverride);
-  const visualGuideline = slimVisualGuidelineFromEntry(resolved.guideline_entry);
+  let visualGuideline = slimVisualGuidelineFromEntry(resolved.guideline_entry);
+  const fromPayload = evidencePayload ? carouselVideoSlideIndicesFromPayload(evidencePayload) : [];
+  if (fromPayload.length > 0 && !(visualGuideline.video_slide_indices?.length)) {
+    visualGuideline = { ...visualGuideline, video_slide_indices: fromPayload };
+  }
   const folder = inspectionFolderFromEntry(resolved.guideline_entry);
 
   const mimic: MimicPayloadV1 = {
@@ -71,7 +104,7 @@ function buildMimicPayloadFromResolved(
     source_evidence_row_id: resolved.source_evidence_row_id,
     analysis_tier: resolved.analysis_tier,
     reference_tier_fallback: resolved.reference_tier_fallback ?? false,
-    reference_items: resolved.reference_items,
+    reference_items: normalizeMimicReferenceItems(resolved.reference_items),
     storage_folder_prefix: folder.storage_folder_prefix,
     storage_folder_label: folder.storage_folder_label,
     visual_guideline: visualGuideline as unknown as Record<string, unknown>,
@@ -121,7 +154,13 @@ async function resolveMimicPayloadForJob(
   // Read any manual mode override set by a reviewer on the signal pack.
   const overrides = getMimicModeOverridesFromPack(lineage.signal_pack);
   const packOverride = overrides[resolved.source_insights_id] as MimicMode | null | undefined;
-  const built = buildMimicPayloadFromResolved(job.flow_type, resolved, packOverride ?? null);
+  const evidencePayload = evidencePayloadForResolved(lineage, resolved);
+  const built = buildMimicPayloadFromResolved(
+    job.flow_type,
+    resolved,
+    packOverride ?? null,
+    evidencePayload
+  );
 
   if (resolved.reference_tier_fallback) {
     logPipelineEvent("warn", "generate", "mimic reference tier fallback", {
@@ -168,7 +207,10 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
 
   const existing = pickMimicPayload(job.generation_payload);
   if (existing?.reference_items?.length) {
-    return existing;
+    return {
+      ...existing,
+      reference_items: normalizeMimicReferenceItems(existing.reference_items),
+    };
   }
 
   const { mimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);

@@ -56,6 +56,10 @@ import {
   archiveTopPerformerVisionMedia,
   resolveTopPerformerArchiveMedia,
 } from "./inputs-top-performer-media-archive.js";
+import {
+  carouselImageSlideRefsFromPayload,
+  carouselVideoSlideIndicesFromPayload,
+} from "./instagram-media-normalizer.js";
 import { getSupabaseStorageClient } from "./supabase-storage.js";
 import {
   capAndSortQualifierPreview,
@@ -830,7 +834,18 @@ ${textBundle}`;
         if (it.ok) mediaArchiveFilesSaved++;
         else if (it.error) mediaArchiveErrors++;
       }
+      const imageRefs = carouselImageSlideRefsFromPayload(c.payload, maxSlides);
+      const videoSlideIndices = carouselVideoSlideIndicesFromPayload(c.payload);
+      for (let i = 0; i < arch.items.length; i++) {
+        const ref = imageRefs[i];
+        if (ref) {
+          arch.items[i]!.source_slide_index = ref.source_slide_index;
+        }
+      }
       storedInspection = JSON.parse(JSON.stringify(arch)) as Record<string, unknown>;
+      if (videoSlideIndices.length > 0) {
+        storedInspection.video_slide_indices = videoSlideIndices;
+      }
       const archivedUrls: string[] = [];
       for (let i = 0; i < visionSlideUrls.length; i++) {
         const it = arch.items[i];

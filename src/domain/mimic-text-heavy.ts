@@ -52,6 +52,12 @@ const REPEATED_TEMPLATE_CUES = [
   "consistent template",
   "uniform layout",
   "same layout",
+  "uniform backdrop",
+  "shared backdrop",
+  "same backdrop",
+  "shared background",
+  "text on template",
+  "text-on-template",
 ];
 
 const VISUAL_LED_DECK_CUES = [
@@ -72,8 +78,33 @@ function formatPatternFromEntry(entry: Record<string, unknown>): string {
   return String(aes.format_pattern ?? entry.format_pattern ?? "").trim();
 }
 
+function pickMimicEvaluationRecord(entry: Record<string, unknown>): Record<string, unknown> | null {
+  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
+  return asRecord(aes.mimic_evaluation) ?? asRecord(entry.mimic_evaluation);
+}
+
+/** Nemotron `mimic_evaluation` on insight or pack entry — strongest template signal. */
+export function nemotronSuggestsTextOnTemplate(entry: Record<string, unknown>): boolean {
+  const eval_ = pickMimicEvaluationRecord(entry);
+  if (!eval_) return false;
+  const mode = String(eval_.recommended_mode ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  if (mode === "text_on_template") return true;
+  const tc = String(eval_.template_consistency ?? "")
+    .trim()
+    .toLowerCase();
+  const bgr = String(eval_.background_replicability ?? "")
+    .trim()
+    .toLowerCase();
+  if (tc === "uniform" && bgr !== "low") return true;
+  return false;
+}
+
 function deckHaystackForCues(entry: Record<string, unknown>): string {
   const haystacks: string[] = [];
+  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
   const dvs = deckVisualSystem(entry);
   if (dvs) {
     for (const key of ["repeated_template", "overall_aesthetic", "motion_or_energy"] as const) {
@@ -81,8 +112,15 @@ function deckHaystackForCues(entry: Record<string, unknown>): string {
       if (v) haystacks.push(v.toLowerCase());
     }
   }
-  const consistency = String(entry.visual_consistency ?? "").trim();
+  const consistency = String(entry.visual_consistency ?? aes.visual_consistency ?? "").trim();
   if (consistency) haystacks.push(consistency.toLowerCase());
+  const mimicEval = pickMimicEvaluationRecord(entry);
+  if (mimicEval) {
+    for (const key of ["mode_reason", "background_description"] as const) {
+      const v = String(mimicEval[key] ?? "").trim();
+      if (v) haystacks.push(v.toLowerCase());
+    }
+  }
   const blueprint = asRecord(entry.replication_blueprint);
   const steps = Array.isArray(blueprint?.steps_to_remake) ? blueprint!.steps_to_remake : [];
   for (const step of steps) {
@@ -154,7 +192,10 @@ function deckVisualSystem(entry: Record<string, unknown>): Record<string, unknow
  * (e.g. "centered text over celestial backgrounds").
  */
 export function isTextOverlayDeckFromGuideline(entry: Record<string, unknown>): boolean {
+  if (nemotronSuggestsTextOnTemplate(entry)) return true;
+
   const haystacks: string[] = [];
+  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
   const dvs = deckVisualSystem(entry);
   if (dvs) {
     for (const key of ["repeated_template", "overall_aesthetic", "motion_or_energy"] as const) {
@@ -162,10 +203,10 @@ export function isTextOverlayDeckFromGuideline(entry: Record<string, unknown>): 
       if (v) haystacks.push(v.toLowerCase());
     }
   }
-  const consistency = String(entry.visual_consistency ?? "").trim();
+  const consistency = String(entry.visual_consistency ?? aes.visual_consistency ?? "").trim();
   if (consistency) haystacks.push(consistency.toLowerCase());
 
-  const blueprint = asRecord(entry.replication_blueprint);
+  const blueprint = asRecord(entry.replication_blueprint) ?? asRecord(aes.replication_blueprint);
   const steps = Array.isArray(blueprint?.steps_to_remake) ? blueprint!.steps_to_remake : [];
   for (const step of steps) {
     const t = String(step ?? "").trim();
@@ -182,6 +223,7 @@ export function isTextOverlayDeckFromGuideline(entry: Record<string, unknown>): 
  * Visual-led short-copy decks → per-slide full mimic (same style, twisted wording).
  */
 export function requiresCopyBeforeVisualMimic(entry: Record<string, unknown>): boolean {
+  if (nemotronSuggestsTextOnTemplate(entry)) return true;
   if (isVisualLedShortCopyDeck(entry)) return false;
 
   const formatPattern = formatPatternFromEntry(entry);
@@ -190,6 +232,7 @@ export function requiresCopyBeforeVisualMimic(entry: Record<string, unknown>): b
   if (isListicleLikeFormatPattern(formatPattern)) return true;
   if (referenceHasHeavyOnScreenText(slides)) return true;
   if (isTextOverlayDeckFromGuideline(entry)) return true;
+  if (deckUsesUnifiedBackgroundPlate(entry)) return true;
   return false;
 }
 

@@ -1,5 +1,6 @@
 import type { MimicCarouselRenderStrategy } from "./mimic-carousel-package.js";
 import {
+  aestheticSlideRecords,
   requiresCopyBeforeVisualMimic,
   targetSlideCountFromReference,
 } from "./mimic-text-heavy.js";
@@ -42,7 +43,13 @@ export function buildMimicRenderContextForLlm(
     reference_frame_count: mimic.reference_items.length,
     target_slide_count: copyBefore
       ? targetSlideCountFromReference(mimic.reference_items.length, guidelineEntry)
-      : null,
+      : mimic.mode === "carousel_visual"
+        ? Math.max(
+            mimic.reference_items.length,
+            aestheticSlideRecords(guidelineEntry).length,
+            1
+          )
+        : null,
     format_pattern: formatPattern,
     render_sequence: copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic",
     operator_note: copyBefore

@@ -62,10 +62,13 @@ import {
   slideOnImageCopyFromSlides,
   composeMimicSlideOnBackground,
   isPromotionalSlide,
+  reconcileFullBleedSlidePlansAtRender,
+  referenceItemForMimicSlide,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
+import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
@@ -1569,6 +1572,10 @@ async function processCarouselJob(
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
     mimicPayload = reconcileMimicPayloadAtRender(job.flow_type, mimicPayload);
+    mimicPayload = {
+      ...mimicPayload,
+      reference_items: normalizeMimicReferenceItems(mimicPayload.reference_items),
+    };
 
     // carousel_visual: match the original slide count from reference frames
     if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
@@ -1584,9 +1591,9 @@ async function processCarouselJob(
         if (!isPromotionalSlide(mimicPayload, idx)) keptIndices.push(idx);
       }
       if (keptIndices.length > 0 && keptIndices.length < n) {
-        const filteredItems = keptIndices.map(
-          (refIdx) => mimicPayload!.reference_items[refIdx - 1]
-        ).filter(Boolean);
+        const filteredItems = keptIndices
+          .map((refIdx) => referenceItemForMimicSlide(mimicPayload!, refIdx))
+          .filter((item): item is NonNullable<typeof item> => item != null);
         if (filteredItems.length > 0) {
           logPipelineEvent("info", "render", "Filtered promotional slides from carousel_visual", {
             task_id: job.task_id,
@@ -1607,6 +1614,7 @@ async function processCarouselJob(
       }
     }
 
+    mimicPayload = reconcileFullBleedSlidePlansAtRender(mimicPayload);
     mimicPayload = {
       ...mimicPayload,
       slide_plans: extendSlidePlansForOutputCount(mimicPayload, n),
@@ -1739,6 +1747,7 @@ async function processCarouselJob(
           i,
           {
             promptOverrides: mimicPromptOverrides,
+            projectHandle: projectInstagramHandle,
           }
         );
         const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");

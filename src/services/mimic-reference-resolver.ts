@@ -42,6 +42,23 @@ function expectedTier(flowType: string): string {
   return "";
 }
 
+/**
+ * Archive rows may use 0-based or 1-based indexes; merges can duplicate index values.
+ * Render plans and slide_plans always use 1-based reference_index aligned to deck order.
+ */
+export function normalizeMimicReferenceItems(items: MimicReferenceItem[]): MimicReferenceItem[] {
+  if (items.length === 0) return items;
+  const sorted = [...items].sort((a, b) => {
+    const ai = typeof a.index === "number" && Number.isFinite(a.index) ? a.index : Number.MAX_SAFE_INTEGER;
+    const bi = typeof b.index === "number" && Number.isFinite(b.index) ? b.index : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    const ap = (a.object_path ?? a.preview_url ?? a.vision_fetch_url ?? "").toLowerCase();
+    const bp = (b.object_path ?? b.preview_url ?? b.vision_fetch_url ?? "").toLowerCase();
+    return ap.localeCompare(bp);
+  });
+  return sorted.map((item, i) => ({ ...item, index: i + 1 }));
+}
+
 function itemsFromInspectionMedia(media: VisualGuidelineInspectionMedia | null): MimicReferenceItem[] {
   if (!media?.items?.length) return [];
   const out: MimicReferenceItem[] = [];
@@ -55,9 +72,14 @@ function itemsFromInspectionMedia(media: VisualGuidelineInspectionMedia | null):
       preview_url: it.public_url,
       bucket: it.bucket,
       object_path: it.object_path,
+      source_slide_index:
+        it.source_slide_index != null && it.source_slide_index > 0 ? it.source_slide_index : null,
+      is_video_slide: it.is_video_slide === true || String(it.role ?? "").toLowerCase().includes("video"),
+      content_type: it.content_type ?? null,
+      source_url: it.source_url ?? null,
     });
   }
-  return out;
+  return normalizeMimicReferenceItems(out);
 }
 
 function findGuidelineEntry(

@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { resolvePromptVersion } from "./prompt_selector.js";
 import { selectRoute } from "./route_selector.js";
 import { isVideoFlow } from "./flow-kind.js";
+import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
 import {
   countsTowardCarouselRunCap,
   ideaKeyFallbackPass,
@@ -90,6 +91,10 @@ export async function selectJobsFromCandidates(
     const ft = c.flow_type;
     const perCandidateCap = opts.maxVariationsPerCandidate ?? ctx.variationCap;
     let varsThisCandidate = Math.min(ctx.variationCap, perCandidateCap, state.remainingSlots);
+    // One mimic job per reference post — v2 duplicates the same evidence deck and wastes render cost.
+    if (isTopPerformerMimicRenderableFlow(ft)) {
+      varsThisCandidate = Math.min(varsThisCandidate, 1);
+    }
 
     const usedFt = state.perFlowPlanned[ft] ?? 0;
     const capFt = ctx.perFlowCaps[ft] ?? 0;

@@ -3,6 +3,7 @@ import {
   isPrimaryFormatMatch,
   partitionCandidatesForPlanningPhases,
   flowTypeMatchesRowFormat,
+  ideaKeyPrimaryPass,
   planningLaneForFlowType,
 } from "./format-routing.js";
 import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
@@ -83,5 +84,20 @@ describe("format-routing", () => {
       payload: { idea_id: "a", format: "post" },
     });
     expect(isPrimaryFormatMatch(c)).toBe(true);
+  });
+
+  it("dedupes mimic carousel planning by source evidence row, not idea id", () => {
+    const a = cand({
+      candidate_id: "idea_a_FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
+      flow_type: FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+      payload: { idea_id: "idea_a", format: "carousel", source_evidence_row_id: "25112" },
+    });
+    const b = cand({
+      candidate_id: "idea_b_FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
+      flow_type: FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+      payload: { idea_id: "idea_b", format: "carousel", source_evidence_row_id: "25112" },
+    });
+    expect(ideaKeyPrimaryPass(a)).toBe(ideaKeyPrimaryPass(b));
+    expect(ideaKeyPrimaryPass(a)).toContain("mimic_evidence_row:25112");
   });
 });
