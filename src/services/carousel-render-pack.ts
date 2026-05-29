@@ -51,6 +51,8 @@ const HEADLINE_KEYS = [
   "hero",
   /** Top-performer mimic carousel copy often uses cover_* on the first slide. */
   "cover_title",
+  /** MIMIC__Top_Performer_Carousel_v1 often uses panel_title per slide. */
+  "panel_title",
 ];
 const BODY_KEYS = [
   "body",
@@ -168,16 +170,27 @@ export function stripLeakedFieldLabelsFromSlideCopy(s: string): string {
 function copyFromNestedTextBlock(val: unknown): { headline: string; body: string } | null {
   if (!val || typeof val !== "object" || Array.isArray(val)) return null;
   const rec = val as Record<string, unknown>;
-  const headline = String(rec.headline ?? rec.title ?? rec.heading ?? rec.kicker ?? "").trim();
-  const body = String(
-    rec.body ?? rec.subtitle ?? rec.content ?? rec.note ?? rec.sub ?? rec.cta_sub ?? ""
-  ).trim();
+  const headline = String(rec.headline ?? rec.title ?? rec.heading ?? rec.kicker ?? rec.panel_title ?? "").trim();
+  const bodyParts = [
+    rec.body,
+    rec.subline,
+    rec.subtitle,
+    rec.content,
+    rec.note,
+    rec.sub,
+    rec.cta_sub,
+  ]
+    .map((v) => (v != null && typeof v !== "object" ? String(v).trim() : ""))
+    .filter((s) => s.length > 0);
+  const body = bodyParts.join("\n").trim();
   if (!headline && !body) return null;
   return { headline, body };
 }
 
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
-  const nestedText = copyFromNestedTextBlock(o.text);
+  const nestedText =
+    copyFromNestedTextBlock(o.text) ??
+    copyFromNestedTextBlock(o.content);
   const headline = nestedText?.headline
     ?? HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && typeof v !== "object" && String(v).trim());
   let body =
@@ -286,17 +299,39 @@ function ensurePanelFields(
 
 /** True if this slide would show meaningful text in the renderer (not just slide_role). */
 export function slideHasRenderableContent(s: Record<string, unknown>): boolean {
-  const { headline, body } = textFromSlide(s);
+  const unwrapped = unwrapMimicSlideRow(s);
+  const { headline, body } = textFromSlide(unwrapped);
   return headline.length > 0 || body.length > 0;
 }
 
+/** Unwrap mimic LLM rows that nest copy under cover / body_slide / cta_slide. */
+function unwrapMimicSlideRow(r: Record<string, unknown>): Record<string, unknown> {
+  for (const [key, role] of [
+    ["cover", "cover"],
+    ["body_slide", "body"],
+    ["cta_slide", "cta"],
+  ] as const) {
+    const wrapped = r[key];
+    if (wrapped && typeof wrapped === "object" && !Array.isArray(wrapped)) {
+      const inner = wrapped as Record<string, unknown>;
+      return {
+        ...inner,
+        slide_number: r.slide_number ?? inner.slide_number,
+        slide_role: inner.slide_role ?? r.slide_role ?? role,
+      };
+    }
+  }
+  return r;
+}
+
 function normalizeItemSlide(r: Record<string, unknown>): Record<string, unknown> {
-  const tf = textFromSlide(r);
+  const unwrapped = unwrapMimicSlideRow(r);
+  const tf = textFromSlide(unwrapped);
   return {
-    ...r,
+    ...unwrapped,
     ...(tf.headline ? { headline: tf.headline } : {}),
     ...(tf.body ? { body: tf.body } : {}),
-    slide_role: r.slide_role ?? "body",
+    slide_role: unwrapped.slide_role ?? r.slide_role ?? "body",
   };
 }
 

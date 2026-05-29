@@ -209,6 +209,13 @@ export function reconcileMimicPayloadAtRender(
       })),
     },
   };
-  const classified = classifyMimicMode(flowType, entry, mimic.mode_override);
+  const hasBgPlate = Boolean(String(mimic.background_image_url ?? "").trim());
+  const shouldForceTemplateBg =
+    hasBgPlate &&
+    mimic.mode === "carousel_visual" &&
+    !isVisualLedShortCopyDeck(entry) &&
+    (deckUsesUnifiedBackgroundPlate(entry) || isTextOverlayDeckFromGuideline(entry));
+  const modeOverride = shouldForceTemplateBg ? "template_bg" : mimic.mode_override;
+  const classified = classifyMimicMode(flowType, entry, modeOverride);
   return { ...mimic, mode: classified.mode, slide_plans: classified.slide_plans ?? mimic.slide_plans };
 }

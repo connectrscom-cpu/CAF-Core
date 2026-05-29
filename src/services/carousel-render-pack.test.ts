@@ -741,3 +741,87 @@ describe("renderer templates guardrails", () => {
     expect(src).toContain("translateX(-50%) rotate(0deg)");
   });
 });
+
+describe("mimic carousel copy shapes", () => {
+  it("extracts headline/body from carousel.slides[].content (hook/story roles)", () => {
+    const gen = {
+      carousel: {
+        slides: [
+          {
+            role: "hook_slide",
+            index: 0,
+            content: { headline: "Reflect on the Cosmos", subline: "What does this month say?" },
+          },
+          {
+            role: "story_slide",
+            index: 1,
+            content: { headline: "Aries Insight", subline: "Dive into new experiences." },
+          },
+        ],
+      },
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    expect(flat.length).toBeGreaterThanOrEqual(2);
+    expect(slideHasRenderableContent(flat[0]!)).toBe(true);
+    expect(slideHasRenderableContent(flat[1]!)).toBe(true);
+    expect(String(flat[0]?.headline ?? "")).toContain("Reflect on the Cosmos");
+    expect(String(flat[0]?.body ?? "")).toContain("What does this month say");
+  });
+
+  it("unwraps per-slide cover/body_slide/cta_slide wrappers", () => {
+    const gen = {
+      slides: [
+        {
+          slide_number: 1,
+          cover: {
+            headline: "What Your Sign Says About Your Love Style",
+            body: "Explore how your zodiac sign influences love.",
+            kicker: "Astro Insight",
+          },
+        },
+        {
+          slide_number: 2,
+          body_slide: {
+            headline: "Aries: The Passionate Pursuer",
+            body: "Aries, your bold and direct energy means you dive into love with enthusiasm.",
+          },
+        },
+        {
+          slide_number: 12,
+          cta_slide: {
+            headline: "Discover More About Your Sign's Love Language",
+            sub: "Dive deeper into astrology.",
+            cta: "Follow @signandsound",
+          },
+        },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    expect(flat.filter((s) => slideHasRenderableContent(s as Record<string, unknown>))).toHaveLength(3);
+    expect(String(flat[0]?.headline ?? "")).toContain("What Your Sign Says");
+    expect(String(flat[1]?.headline ?? "")).toContain("Aries");
+    expect(String(flat[2]?.headline ?? "")).toContain("Discover More");
+  });
+
+  it("treats panel_title + body as renderable mimic copy", () => {
+    const gen = {
+      slides: [
+        {
+          panel_title: "Aries Attraction",
+          body: "Ever wondered what draws an Aries to you?",
+          slide_role: "cover",
+        },
+        {
+          panel_title: "Taurus Values",
+          body: "Uncover the grounding elements that a Taurus cherishes.",
+          slide_role: "body",
+        },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    expect(flat).toHaveLength(2);
+    expect(slideHasRenderableContent(flat[0]!)).toBe(true);
+    expect(String(flat[0]?.headline ?? "")).toBe("Aries Attraction");
+    expect(String(flat[0]?.body ?? "")).toContain("Ever wondered");
+  });
+});

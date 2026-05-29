@@ -35,13 +35,17 @@ export function isListicleLikeFormatPattern(formatPattern: string): boolean {
 const TEXT_OVERLAY_DECK_CUES = [
   "text over",
   "text overlay",
+  "text_on_water",
+  "text on water",
   "centered text",
+  "center-justified",
   "overlay text",
   "layer text",
   "typography overlay",
   "on-screen text",
   "text centrally",
   "text on ",
+  "text on solid",
 ];
 
 const REPEATED_TEMPLATE_CUES = [
@@ -61,6 +65,8 @@ const REPEATED_TEMPLATE_CUES = [
   "shared background",
   "text on template",
   "text-on-template",
+  "text_on_template",
+  "text blocks",
 ];
 
 const VISUAL_LED_DECK_CUES = [

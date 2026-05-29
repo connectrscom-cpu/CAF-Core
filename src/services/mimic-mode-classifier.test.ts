@@ -3,6 +3,7 @@ import {
   classifyMimicMode,
   clampSlidePlansToOutputCount,
   extendSlidePlansForOutputCount,
+  reconcileMimicPayloadAtRender,
 } from "./mimic-mode-classifier.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
@@ -198,6 +199,38 @@ describe("classifyMimicMode", () => {
       4
     );
     expect(plans.every((p) => p.reference_index === 1)).toBe(true);
+  });
+});
+
+describe("reconcileMimicPayloadAtRender", () => {
+  it("coerces carousel_visual to template_bg when background plate + text-overlay deck cues exist", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "carousel_visual" as const,
+      mode_override: "carousel_visual" as const,
+      classified_at: "2026-05-28T00:00:00.000Z",
+      source_insights_id: "ins_x",
+      analysis_tier: "top_performer_carousel" as const,
+      background_image_url: "https://cdn.example/mimic_backgrounds/slide_001_bg_v1.png",
+      reference_items: [
+        { index: 1, role: "carousel_slide" as const, vision_fetch_url: "https://x/1.jpg" },
+      ],
+      visual_guideline: {
+        format_pattern: "educational",
+        deck_visual_system: {
+          repeated_template: "text_on_water",
+          overall_aesthetic: "natural_ocean",
+        },
+      },
+      slide_plans: [
+        { slide_index: 1, render_mode: "full_bleed" as const, reference_index: 1 },
+        { slide_index: 2, render_mode: "full_bleed" as const, reference_index: 2 },
+      ],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const reconciled = reconcileMimicPayloadAtRender(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, mimic);
+    expect(reconciled.mode).toBe("template_bg");
+    expect(reconciled.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
   });
 });
 

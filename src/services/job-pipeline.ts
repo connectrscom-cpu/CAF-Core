@@ -64,8 +64,6 @@ import {
   mimicCarouselNeedsBackgroundPlate,
   requireMimicSlideBackgroundPlate,
   renderMimicCarouselSlideFullBleed,
-  slideOnImageCopyFromSlides,
-  composeMimicSlideOnBackground,
   isPromotionalSlide,
   reconcileFullBleedSlidePlansAtRender,
   referenceItemForMimicSlide,
@@ -1788,70 +1786,6 @@ async function processCarouselJob(
         });
         slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
         // Use signed URL for cross-slide consistency — DashScope may not reach public Supabase URLs
-        try {
-          const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, storedPath, 600);
-          previousFullBleedSlideUrl = "signedUrl" in signed ? signed.signedUrl : (publicUrl || null);
-        } catch {
-          previousFullBleedSlideUrl = publicUrl || null;
-        }
-        continue;
-      }
-
-      // template_bg (listicle) slides: extract background plate, then ask Qwen to
-      // composite the LLM-generated copy onto the clean background.
-      if (slideMode === "hbs" && mimicPayload?.mode === "template_bg") {
-        let slideBgUrl = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
-        // DashScope cannot fetch Supabase public URLs — sign the background plate URL
-        const bgObjectPath = extractObjectPathFromPublicUrl(config, slideBgUrl);
-        if (bgObjectPath) {
-          try {
-            const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, bgObjectPath, 600);
-            if ("signedUrl" in signed) slideBgUrl = signed.signedUrl;
-          } catch { /* fall through to public URL */ }
-        }
-        const onImageCopy = slideOnImageCopyFromSlides(usableSlides, i);
-        const consistencyHint = i > 1
-          ? "Maintain consistent text style, positioning, and formatting with the previous slides in this carousel."
-          : "";
-        const { buffer: composedBuf, mimeType: composedMime } = await composeMimicSlideOnBackground(
-          db,
-          config,
-          job,
-          slideBgUrl,
-          i,
-          {
-            onImageCopy: onImageCopy || undefined,
-            promptOverrides: mimicPromptOverrides,
-            consistencyHint: consistencyHint || undefined,
-            previousSlideUrl: previousFullBleedSlideUrl,
-          }
-        );
-        const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const ext = composedMime.includes("jpeg") ? "jpg" : "png";
-        const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.${ext}`;
-        let publicUrl: string | null = null;
-        let storedPath = objectPath;
-        try {
-          const up = await uploadBuffer(config, objectPath, composedBuf, composedMime);
-          publicUrl = up.public_url;
-          storedPath = up.object_path;
-        } catch {
-          /* Supabase optional */
-        }
-        await insertAsset(db, {
-          asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
-          task_id: job.task_id,
-          project_id: job.project_id,
-          asset_type: "CAROUSEL_SLIDE",
-          position: i - 1,
-          bucket: config.SUPABASE_ASSETS_BUCKET,
-          object_path: storedPath,
-          public_url: publicUrl,
-          provider: mimicImageProviderAssetLabel(config),
-          metadata_json: { slide_index: i, mimic: true, template_bg_composed: true },
-        });
-        slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
         try {
           const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, storedPath, 600);
           previousFullBleedSlideUrl = "signedUrl" in signed ? signed.signedUrl : (publicUrl || null);
