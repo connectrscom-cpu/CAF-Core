@@ -1,9 +1,9 @@
 /**
  * Per-slide layout extraction from Nemotron vision (text blocks, safe zones).
  * Used to route text to HBS/CSS instead of image models.
+ * Lives under `services/` so Review (`@caf-core-carousel`) can bundle it with typography helpers.
  */
-
-import { slideOnScreenTextChars } from "./mimic-text-heavy.js";
+import { slideOnScreenTextChars } from "../domain/mimic-text-heavy.js";
 
 export interface MimicTextBlock {
   text: string;

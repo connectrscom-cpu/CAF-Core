@@ -1,5 +1,5 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
-import { parseMimicTextBlocks, textPlacementFromSlide } from "../domain/mimic-slide-layout.js";
+import { parseMimicTextBlocks, textPlacementFromSlide } from "./mimic-slide-layout.js";
 
 const CANVAS_HEIGHT = 1350;
 
