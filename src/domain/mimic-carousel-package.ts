@@ -4,7 +4,7 @@
  */
 import type { MimicMode, MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "./mimic-payload.js";
 import { pickMimicPayload } from "./mimic-payload.js";
-import { parseMimicTextBlocks } from "../services/mimic-slide-layout.js";
+import { parseMimicTextBlocks } from "../services/mimic-slide-typography.js";
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 
 export type MimicCarouselRenderStrategy = "template_background" | "per_slide_mimic";

@@ -4,7 +4,7 @@ import {
   parseMimicTextBlocks,
   slidePreferHbsTextOverlay,
   textPlacementFromSlide,
-} from "./mimic-slide-layout.js";
+} from "./mimic-slide-typography.js";
 
 describe("mimic-slide-layout", () => {
   it("parseMimicTextBlocks normalizes bbox_norm fractions", () => {

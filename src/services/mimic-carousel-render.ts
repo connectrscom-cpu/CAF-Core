@@ -1,6 +1,6 @@
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
-import { buildArtOnlySafeZoneHint } from "./mimic-slide-layout.js";
+import { buildArtOnlySafeZoneHint } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
