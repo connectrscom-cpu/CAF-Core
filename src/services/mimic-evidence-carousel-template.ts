@@ -5,6 +5,11 @@ import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { resolveTemplateStorageFromMimic } from "../domain/mimic-template-library.js";
 import { addProjectCarouselTemplate } from "../repositories/project-config.js";
+import {
+  injectMimicBackgroundPlateSupport,
+  pickMimicLayoutBaseTemplate,
+  MIMIC_LAYOUT_TEMPLATE_DEFAULT,
+} from "./mimic-carousel-template-layout.js";
 import { inferMimicCarouselTheme } from "./mimic-slide-typography.js";
 
 /** Persisted on `generation_payload` — links render template to top-performer evidence. */
@@ -13,6 +18,8 @@ export const MIMIC_EVIDENCE_TEMPLATE_PAYLOAD_KEY = "mimic_evidence_template";
 export interface MimicEvidenceTemplateRecord {
   template_base: string;
   template_file_name: string;
+  /** Built-in or project `.hbs` forked before palette/bg injection (template_bg only). */
+  layout_base_template: string;
   source_insights_id: string;
   source_evidence_row_id: string | null;
   task_id: string;
@@ -62,12 +69,6 @@ async function templateFileExists(filePath: string): Promise<boolean> {
   }
 }
 
-function syncBackgroundMustache(source: string): string {
-  return source
-    .replace(/url\('\{\{background_image_url\}\}'\)/g, "url('{{{background_image_url}}}')")
-    .replace(/url\('\{\{\.\.\/background_image_url\}\}'\)/g, "url('{{{../background_image_url}}}')");
-}
-
 function injectRootTheme(
   source: string,
   theme: {
@@ -95,7 +96,8 @@ function injectRootTheme(
 }
 
 /**
- * Writes a evidence-specific `.hbs` (from `carousel_mimic_bg.hbs`) and pins it on the project.
+ * Writes an evidence-specific `.hbs` forked from a project/built-in carousel layout
+ * (`template_bg`) or `carousel_mimic_bg` (other mimic modes), with PNG background-plate support.
  * Reuses an existing file when the same evidence was mimicked before.
  */
 export async function ensureMimicEvidenceCarouselTemplate(
@@ -103,7 +105,8 @@ export async function ensureMimicEvidenceCarouselTemplate(
   config: AppConfig,
   projectId: string,
   job: { id: string; task_id: string },
-  mimic: MimicPayloadV1
+  mimic: MimicPayloadV1,
+  opts?: { projectPinnedTemplates?: string[] }
 ): Promise<MimicEvidenceTemplateRecord> {
   const templateBase = mimicEvidenceTemplateBaseName(mimic);
   const templateFileName = `${templateBase}.hbs`;
@@ -114,15 +117,37 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const pinned_to_project = storage.pin_project_template;
 
   const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
+  const layoutBaseTemplate =
+    mimic.mode === "template_bg"
+      ? pickMimicLayoutBaseTemplate(mimic, opts?.projectPinnedTemplates ?? [])
+      : "carousel_mimic_bg";
+
+  const refreshSource = async (): Promise<string> => {
+    const readBase = async (base: string): Promise<string> => {
+      const basePath = path.join(tplDir, `${base}.hbs`);
+      return readFile(basePath, "utf8");
+    };
+    let source: string;
+    try {
+      source = await readBase(layoutBaseTemplate);
+    } catch {
+      source = await readBase(
+        layoutBaseTemplate === "carousel_mimic_bg"
+          ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
+          : "carousel_mimic_bg"
+      );
+    }
+    source = injectMimicBackgroundPlateSupport(source);
+    source = injectRootTheme(source, theme);
+    return source;
+  };
 
   if (!reusedExisting) {
-    const basePath = path.join(tplDir, "carousel_mimic_bg.hbs");
-    let source = await readFile(basePath, "utf8");
-    source = syncBackgroundMustache(source);
-    source = injectRootTheme(source, theme);
+    let source = await refreshSource();
     const traceComment = [
       "<!--",
       "  mimic_evidence_template",
+      `  layout_base_template=${layoutBaseTemplate}`,
       `  source_insights_id=${mimic.source_insights_id}`,
       `  source_evidence_row_id=${mimic.source_evidence_row_id ?? ""}`,
       `  analysis_tier=${mimic.analysis_tier}`,
@@ -132,9 +157,7 @@ export async function ensureMimicEvidenceCarouselTemplate(
     source = source.replace("<!DOCTYPE html>", `<!DOCTYPE html>\n${traceComment}`);
     await writeFile(outPath, source, "utf8");
   } else {
-    let source = await readFile(outPath, "utf8");
-    source = syncBackgroundMustache(source);
-    source = injectRootTheme(source, theme);
+    const source = await refreshSource();
     await writeFile(outPath, source, "utf8");
   }
 
@@ -145,6 +168,7 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const record: MimicEvidenceTemplateRecord = {
     template_base: templateBase,
     template_file_name: templateFileName,
+    layout_base_template: layoutBaseTemplate,
     source_insights_id: mimic.source_insights_id,
     source_evidence_row_id: mimic.source_evidence_row_id ?? null,
     task_id: job.task_id,

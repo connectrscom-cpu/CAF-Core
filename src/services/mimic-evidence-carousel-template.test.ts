@@ -1,6 +1,7 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import {
@@ -67,32 +68,42 @@ describe("pickMimicEvidenceTemplateTheme", () => {
 });
 
 describe("ensureMimicEvidenceCarouselTemplate", () => {
-  it("writes traceable template file with evidence comment", async () => {
+  it("forks a project layout template with background plate support for template_bg", async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), "mimic-tpl-"));
-    const baseTpl = `<!DOCTYPE html>
-<html><head><style>:root{ --paper:#fff; --ink:#000; --body:#111; }</style></head><body></body></html>`;
-    await writeFile(path.join(tmp, "carousel_mimic_bg.hbs"), baseTpl, "utf8");
+    const repoTpl = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../services/renderer/templates"
+    );
+    await copyFile(
+      path.join(repoTpl, "carousel_notes_app_minimal.hbs"),
+      path.join(tmp, "carousel_notes_app_minimal.hbs")
+    );
 
     const { ensureMimicEvidenceCarouselTemplate } = await import("./mimic-evidence-carousel-template.js");
     const db = {
       query: async () => ({ rows: [], rowCount: 0 }),
     } as any;
     const config = { CAROUSEL_TEMPLATES_DIR: tmp } as any;
-    const payload = mimic({});
+    const payload = mimic({
+      visual_guideline: { format_pattern: "listicle" },
+    });
 
     const record = await ensureMimicEvidenceCarouselTemplate(
       db,
       config,
       "proj",
       { id: "j1", task_id: "RUN__IG__MIMIC__row0001__v1" },
-      payload
+      payload,
+      { projectPinnedTemplates: ["carousel_notes_app_minimal.hbs"] }
     );
 
     expect(record.template_base).toBe("mimic_e8842_ins_top_performer_abc123");
+    expect(record.layout_base_template).toBe("carousel_notes_app_minimal");
     expect(record.reused_existing).toBe(false);
     const written = await readFile(record.path_written, "utf8");
+    expect(written).toContain("layout_base_template=carousel_notes_app_minimal");
+    expect(written).toContain("slide-bg");
+    expect(written).toContain("{{{background_image_url}}}");
     expect(written).toContain("source_insights_id=ins_top_performer_abc123");
-    expect(written).toContain("source_evidence_row_id=8842");
-    expect(written).toContain("seeded_by_task_id=RUN__IG__MIMIC__row0001__v1");
   });
 });

@@ -165,6 +165,49 @@ function normalizeSlideRecord(raw: unknown, fallbackIndex: number): Record<strin
   const brandSpec = normalizeBrandSpecificity(s.brand_specificity ?? s.brand_specific ?? s.brand_tied);
   if (brandSpec) out.brand_specificity = brandSpec;
 
+  const textBlocks = normalizeSlideTextBlocks(s.text_blocks);
+  if (textBlocks.length > 0) out.text_blocks = textBlocks;
+
+  const typo = asRecord(s.typography);
+  if (typo) {
+    const enriched = { ...typo };
+    const hPx = Number(typo.font_size_px_headline ?? typo.headline_font_size_px);
+    const bPx = Number(typo.font_size_px_body ?? typo.body_font_size_px);
+    if (Number.isFinite(hPx) && hPx > 0) enriched.font_size_px_headline = Math.round(hPx);
+    if (Number.isFinite(bPx) && bPx > 0) enriched.font_size_px_body = Math.round(bPx);
+    out.typography = enriched;
+  }
+
+  return out;
+}
+
+function normalizeSlideTextBlocks(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const text = String(rec.text ?? rec.content ?? "").trim();
+    if (!text) continue;
+    const block: Record<string, unknown> = { text };
+    const role = String(rec.role ?? rec.semantic_role ?? "").trim();
+    if (role) block.role = role;
+    const align = String(rec.align ?? rec.alignment ?? rec.text_align ?? "").trim();
+    if (align) block.align = align;
+    const bboxNorm = asRecord(rec.bbox_norm);
+    if (bboxNorm) {
+      block.bbox_norm = bboxNorm;
+    } else if (Array.isArray(rec.bbox) && rec.bbox.length >= 4) {
+      block.bbox = rec.bbox;
+    }
+    const fontPx = Number(rec.font_size_px ?? rec.estimated_font_size_px);
+    if (Number.isFinite(fontPx) && fontPx > 0) block.font_size_px = Math.round(fontPx);
+    const weight = String(rec.font_weight ?? rec.weight ?? "").trim();
+    if (weight) block.font_weight = weight;
+    const color = String(rec.color_hex ?? rec.color ?? "").trim();
+    if (/^#[0-9a-fA-F]{3,8}$/.test(color)) block.color_hex = color;
+    out.push(block);
+  }
   return out;
 }
 
@@ -554,6 +597,8 @@ NVIDIA / Nemotron — strict output contract:
 - mimic_evaluation.content_slide_indices and skip_slide_indices MUST be arrays of integers (slide_index values)
 - Required root arrays: risk_flags (use [] when none), slides (one object per attached image)
 - Each slides[] entry MUST include slide_index (1..N), on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, image_or_photo_role, text_density, slide_purpose, brand_specificity
+- typography MUST include: headline_guess, body_guess, relative_scale, text_placement, hierarchy, font_size_px_headline, font_size_px_body (approximate px from visible text height)
+- When on-screen text exists, include text_blocks[]: one object per distinct text region with text, role (title|subtitle|body|caption|cta), align, bbox_norm {x,y,w,h} as fractions 0-1 of the slide, font_size_px, font_weight, color_hex
 - slide_purpose MUST be one of: hook, content, listicle_item, storytelling, cta, self_promo, product_pitch, testimonial, filler
 - brand_specificity MUST be one of: none, low, high (high = slide mentions a specific product, guide, course, app, quiz, or branded offering)
 - format_pattern MUST be one of: educational, listicle, story, before_after, promo, mixed, unknown
@@ -617,7 +662,26 @@ Return ONLY flat JSON (no "deck" wrapper):
       "on_screen_text_transcript": "...",
       "visual_description": "...",
       "layout_template": "...",
-      "typography": { "headline_guess": "...", "body_guess": "...", "hierarchy": "..." },
+      "typography": {
+        "headline_guess": "sans bold",
+        "body_guess": "sans regular",
+        "relative_scale": "lg",
+        "text_placement": "center band",
+        "hierarchy": "headline over body",
+        "font_size_px_headline": 72,
+        "font_size_px_body": 38
+      },
+      "text_blocks": [
+        {
+          "text": "visible line",
+          "role": "title",
+          "align": "center",
+          "bbox_norm": { "x": 0.1, "y": 0.35, "w": 0.8, "h": 0.12 },
+          "font_size_px": 72,
+          "font_weight": "bold",
+          "color_hex": "#FFFFFF"
+        }
+      ],
       "color_tokens": { "background": "...", "primary_text": "...", "accent": [] },
       "graphic_elements": "...",
       "image_or_photo_role": "...",

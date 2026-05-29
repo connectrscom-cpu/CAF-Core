@@ -33,7 +33,7 @@ describe("classifyMimicMode", () => {
     expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
   });
 
-  it("returns carousel_visual full_bleed for visual-led short-copy decks", () => {
+  it("routes slides with on-screen text to hbs overlay (not image-model typography)", () => {
     const entry = {
       aesthetic_analysis_json: {
         format_pattern: "mixed",
@@ -54,6 +54,21 @@ describe("classifyMimicMode", () => {
     };
     const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.mode).toBe("carousel_visual");
+    expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+  });
+
+  it("allows full_bleed only for photo-only slides without on-screen text", () => {
+    const entry = {
+      aesthetic_analysis_json: {
+        format_pattern: "mixed",
+        deck_visual_system: { overall_aesthetic: "cinematic photo carousel" },
+        slides: [
+          { text_density: "low", image_or_photo_role: "full-bleed photo", on_screen_text_transcript: "" },
+          { text_density: "low", image_or_photo_role: "full-bleed photo", on_screen_text_transcript: "" },
+        ],
+      },
+    };
+    const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 

@@ -39,7 +39,7 @@ Migration **`061_mimic_flow_prompts.sql`** adds Flow Engine `flow_definitions` +
 3. **Template backgrounds** (template_bg only, before LLM) — Qwen extracts cover/body/CTA plates → `MIMIC_BACKGROUND` (+ project library path when `template_storage_quality=reusable`)
 4. **Generate Jobs** — OpenAI copy: **full slide copy** (template) or **caption/hashtags + short hooks** (full bleed); then `mimic_carousel_package` snapshot; status **GENERATED**
 4. **Review** — inspect copy and mimic metadata (no assets yet)
-5. **Render** — **template_bg:** compose LLM copy onto pre-extracted plates (Qwen). **carousel_visual:** per-slide full-bleed mimic (text-only consistency, no prior-slide image stacking). Status **IN_REVIEW**
+5. **Render** — **template_bg / hbs slides:** Qwen strips text → background plate → Puppeteer HBS overlays LLM copy (typography from Nemotron `text_blocks` + `typography`). **carousel_visual full_bleed:** art-only Qwen (no on-image copy) for photo-only slides. Slides with any `on_screen_text_transcript` use **hbs**, not image-model typography. Status **IN_REVIEW**
 
 ## Carousel composite templates (alternative to .hbs)
 

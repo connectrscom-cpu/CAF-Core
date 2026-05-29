@@ -1,10 +1,12 @@
 import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
+import { buildArtOnlySafeZoneHint } from "../domain/mimic-slide-layout.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
   hasVisualLedDeckCues,
   slideOnScreenTextChars,
+  slidePreferHbsTextOverlay,
 } from "../domain/mimic-text-heavy.js";
 import {
   mimicTemplateLibraryObjectPath,
@@ -212,9 +214,15 @@ export async function requireMimicSlideBackgroundPlate(
 export function effectiveMimicSlideRenderMode(
   mimic: MimicPayloadV1,
   slideIndex: number,
-  mimicVisualGenAiReachable: boolean
+  mimicVisualGenAiReachable: boolean,
+  opts?: { generatedSlides?: Record<string, unknown>[] }
 ): "full_bleed" | "hbs" | null {
   let mode = slideMimicRenderMode(mimic, slideIndex);
+  const genSlides = opts?.generatedSlides;
+  if (mode === "full_bleed" && genSlides && genSlides.length > 0) {
+    const llmCopy = slideOnImageCopyFromSlides(genSlides, slideIndex);
+    if (llmCopy.trim().length > 0) mode = "hbs";
+  }
   if (mode === "full_bleed" && !mimicVisualGenAiReachable) mode = "hbs";
   return mode;
 }
@@ -696,6 +704,8 @@ export function isFullBleedCandidateSlide(mimic: MimicPayloadV1, slideIndex: num
     return hasVisualLedDeckCues({ aesthetic_analysis_json: vg, ...vg });
   }
 
+  if (slidePreferHbsTextOverlay(match)) return false;
+
   const density = String(match.text_density ?? "").trim().toLowerCase();
   if (density === "high") return false;
   if (slideOnScreenTextChars(match) >= FULL_BLEED_TEXT_CAP) return false;
@@ -794,12 +804,8 @@ export async function renderMimicCarouselSlideFullBleed(
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
 
   const visionHints = slideVisionHints(mimic, slideIndex);
-  const intent = slideIntentHints(mimic, slideIndex);
-
-  let effectiveCopy = String(opts?.onImageCopy ?? "").trim();
-  if (effectiveCopy.length > 200) effectiveCopy = effectiveCopy.slice(0, 200);
-
-  const intentInstruction = buildSlideIntentInstruction(intent);
+  const slideGuideline = resolveSlideGuideline(mimic, slideIndex);
+  const safeZoneInstruction = buildArtOnlySafeZoneHint(slideGuideline);
   const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex);
 
   return editImageFromReference(config, {
@@ -808,9 +814,9 @@ export async function renderMimicCarouselSlideFullBleed(
       index: slideIndex,
       layout: visionHints.layout,
       visual: visionHints.visual,
-      onImageCopy: effectiveCopy || null,
       consistencyHint,
-      intentInstruction,
+      safeZoneInstruction,
+      artOnly: true,
       projectHandle: opts?.projectHandle ?? null,
     }, opts?.promptOverrides),
     size: "1024x1536",

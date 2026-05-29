@@ -22,6 +22,8 @@ export function slideOnScreenTextChars(slide: Record<string, unknown>): number {
   ).trim().length;
 }
 
+export { slidePreferHbsTextOverlay } from "./mimic-slide-layout.js";
+
 export function referenceHasHeavyOnScreenText(slides: Record<string, unknown>[]): boolean {
   return slides.some((s) => slideOnScreenTextChars(s) >= MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD);
 }

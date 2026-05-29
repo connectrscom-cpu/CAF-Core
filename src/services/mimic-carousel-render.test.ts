@@ -160,6 +160,21 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
   });
 });
 
+describe("effectiveMimicSlideRenderMode", () => {
+  it("downgrades full_bleed to hbs when LLM generated copy exists for the slide", () => {
+    const mimic = baseMimic({
+      slides: [{ slide_index: 1, on_screen_text_transcript: "", text_density: "low" }],
+    });
+    mimic.slide_plans = [{ slide_index: 1, reference_index: 1, render_mode: "full_bleed" }];
+    expect(
+      effectiveMimicSlideRenderMode(mimic, 1, true, {
+        generatedSlides: [{ headline: "New hook", body: "Fresh body" }],
+      })
+    ).toBe("hbs");
+    expect(effectiveMimicSlideRenderMode(mimic, 1, true)).toBe("full_bleed");
+  });
+});
+
 describe("referenceItemForMimicSlide", () => {
   it("resolves 0-based archived indexes and cycles for extended decks", () => {
     const mimic = baseMimic({});

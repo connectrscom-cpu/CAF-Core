@@ -33,20 +33,27 @@ export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
   "{{consistency_instruction}}",
 ].join(" ");
 
-export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
+/** Art-only full bleed — final copy is composited via HBS/CSS, not the image model. */
+export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = [
   "Create a new image inspired by this reference slide — target ~80% visual similarity (layout, palette, mood) but NOT a pixel-level copy.",
-  "Redraw subjects with clearly different poses, proportions, and fine details while keeping the same composition slots and text regions.",
+  "Redraw subjects with clearly different poses, proportions, and fine details while keeping the same composition slots.",
   "Think of it as: same vibe, same energy, fresh execution — a new illustration, not a clone.",
   "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
   "Do NOT add decorative frames, borders, ornamental elements, or vignettes that are not in the reference.",
   "Remove ALL watermarks, @handles, and brand tags from the reference. Do NOT reproduce logos, brand marks, or recognizable faces.",
   "{{handle_instruction}}",
-  "{{copy_instruction}}",
-  "{{intent_instruction}}",
+  "{{safe_zone_instruction}}",
   "{{consistency_instruction}}",
   "{{layout_instruction}}",
   "{{visual_instruction}}",
 ].join(" ");
+
+/** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
+export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
+  ...DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT.split(". "),
+  "{{copy_instruction}}",
+  "{{intent_instruction}}",
+].join(". ");
 
 export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = [
   "Place the following text onto this background image with clean, readable typography.",
@@ -136,6 +143,38 @@ function buildHandleInstruction(projectHandle: string | null | undefined): strin
   return `If you include a small corner handle, use exactly ${normalized} — never the reference creator's handle.`;
 }
 
+export function buildMimicCarouselSlideArtOnlyPrompt(
+  opts: {
+    slideIndex: number;
+    layoutTemplate?: string | null;
+    visualDescription?: string | null;
+    safeZoneInstruction?: string | null;
+    consistencyHint?: string | null;
+    projectHandle?: string | null;
+  },
+  overrides?: MimicPromptOverrides | null
+): string {
+  const layoutInstruction = opts.layoutTemplate?.trim()
+    ? `Layout style: ${opts.layoutTemplate.trim()}.`
+    : "";
+  const visualInstruction = opts.visualDescription?.trim()
+    ? `Visual context: ${opts.visualDescription.trim().slice(0, 400)}.`
+    : "";
+  const consistencyInstruction = opts.consistencyHint?.trim() || "";
+  const safeZoneInstruction = opts.safeZoneInstruction?.trim() || "";
+  const template = overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT;
+  return interpolateMimicTemplate(template, {
+    safe_zone_instruction: safeZoneInstruction,
+    handle_instruction: buildHandleInstruction(opts.projectHandle),
+    layout_instruction: layoutInstruction,
+    visual_instruction: visualInstruction,
+    consistency_instruction: consistencyInstruction,
+    copy_instruction: "",
+    intent_instruction: "",
+    on_image_copy: "",
+  });
+}
+
 export function buildMimicCarouselSlidePrompt(
   opts: {
     slideIndex: number;
@@ -145,9 +184,24 @@ export function buildMimicCarouselSlidePrompt(
     consistencyHint?: string | null;
     intentInstruction?: string | null;
     projectHandle?: string | null;
+    artOnly?: boolean;
+    safeZoneInstruction?: string | null;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
+  if (opts.artOnly !== false) {
+    return buildMimicCarouselSlideArtOnlyPrompt(
+      {
+        slideIndex: opts.slideIndex,
+        layoutTemplate: opts.layoutTemplate,
+        visualDescription: opts.visualDescription,
+        safeZoneInstruction: opts.safeZoneInstruction,
+        consistencyHint: opts.consistencyHint,
+        projectHandle: opts.projectHandle,
+      },
+      overrides
+    );
+  }
   const copy = String(opts.onImageCopy ?? "").trim();
   const layoutInstruction = opts.layoutTemplate?.trim()
     ? `Layout style: ${opts.layoutTemplate.trim()}.`
@@ -166,6 +220,7 @@ export function buildMimicCarouselSlidePrompt(
     visual_instruction: visualInstruction,
     consistency_instruction: consistencyInstruction,
     intent_instruction: intentInstruction,
+    safe_zone_instruction: opts.safeZoneInstruction?.trim() || "",
   });
 }
 
@@ -195,6 +250,8 @@ export function mimicPromptForMode(
     consistencyHint?: string | null;
     intentInstruction?: string | null;
     projectHandle?: string | null;
+    artOnly?: boolean;
+    safeZoneInstruction?: string | null;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
@@ -209,6 +266,8 @@ export function mimicPromptForMode(
     consistencyHint: slide?.consistencyHint,
     intentInstruction: slide?.intentInstruction,
     projectHandle: slide?.projectHandle,
+    artOnly: slide?.artOnly,
+    safeZoneInstruction: slide?.safeZoneInstruction,
   }, overrides);
 }
 

@@ -7,6 +7,7 @@ import {
   isVisualLedShortCopyDeck,
   nemotronSuggestsTextOnTemplate,
   requiresCopyBeforeVisualMimic,
+  slidePreferHbsTextOverlay,
 } from "../domain/mimic-text-heavy.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
 import {
@@ -99,7 +100,8 @@ export function classifyMimicMode(
     const s = slides[i] ?? {};
     const density = String(s.text_density ?? "").toLowerCase();
     const role = String(s.image_or_photo_role ?? "").toLowerCase();
-    const fullBleed = role !== "none" && density !== "high";
+    const hasText = slidePreferHbsTextOverlay(s);
+    const fullBleed = !hasText && role !== "none" && density !== "high";
     slide_plans.push({
       slide_index: i + 1,
       render_mode: fullBleed ? "full_bleed" : "hbs",

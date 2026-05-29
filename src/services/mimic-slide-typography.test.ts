@@ -39,6 +39,39 @@ describe("mimic-slide-typography", () => {
     expect(layout.mimic_page_justify).toBe("center");
   });
 
+  it("uses Nemotron text_blocks font_size_px when present", () => {
+    const patch = mimicSlideTypographyPatch(
+      {
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              typography: { relative_scale: "md" },
+              text_blocks: [
+                {
+                  text: "ARIES",
+                  role: "title",
+                  bbox_norm: { x: 0.2, y: 0.35, w: 0.6, h: 0.12 },
+                  font_size_px: 92,
+                },
+                {
+                  text: "Born to roam",
+                  role: "subtitle",
+                  bbox_norm: { x: 0.15, y: 0.5, w: 0.7, h: 0.08 },
+                  font_size_px: 44,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      1,
+      2
+    );
+    expect(patch.carousel_headline_font_px).toBe(92);
+    expect(patch.carousel_body_font_px).toBe(44);
+  });
+
   it("derives typography patch from per-slide vision analysis", () => {
     const patch = mimicSlideTypographyPatch(
       {

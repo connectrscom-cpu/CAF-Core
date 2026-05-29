@@ -4,6 +4,7 @@
  */
 import type { MimicMode, MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "./mimic-payload.js";
 import { pickMimicPayload } from "./mimic-payload.js";
+import { parseMimicTextBlocks } from "./mimic-slide-layout.js";
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 
 export type MimicCarouselRenderStrategy = "template_background" | "per_slide_mimic";
@@ -14,6 +15,19 @@ export interface MimicCarouselSlideColorTokens {
   accent: string[] | null;
 }
 
+export interface MimicCarouselSlideTextBlock {
+  text: string;
+  role: string | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  align: string | null;
+  font_size_px: number | null;
+  font_weight: string | null;
+  color_hex: string | null;
+}
+
 export interface MimicCarouselSlideTypography {
   headline_guess: string | null;
   body_guess: string | null;
@@ -21,6 +35,8 @@ export interface MimicCarouselSlideTypography {
   relative_scale: string | null;
   text_placement: string | null;
   hierarchy: string | null;
+  font_size_px_headline: number | null;
+  font_size_px_body: number | null;
 }
 
 export interface MimicCarouselSlideGuideline {
@@ -34,6 +50,7 @@ export interface MimicCarouselSlideGuideline {
   brand_specificity: string | null;
   color_tokens: MimicCarouselSlideColorTokens | null;
   typography: MimicCarouselSlideTypography | null;
+  text_blocks: MimicCarouselSlideTextBlock[] | null;
 }
 
 export type TemplateStorageQuality = "reusable" | "job_only" | "reject";
@@ -139,10 +156,38 @@ function slimTypography(raw: unknown): MimicCarouselSlideTypography | null {
   const relative_scale = String(t.relative_scale ?? "").trim() || null;
   const text_placement = String(t.text_placement ?? "").trim() || null;
   const hierarchy = String(t.hierarchy ?? "").trim() || null;
-  if (!headline_guess && !body_guess && !relative_scale && !text_placement && !hierarchy) {
+  const hPx = Number(t.font_size_px_headline ?? t.headline_font_size_px);
+  const bPx = Number(t.font_size_px_body ?? t.body_font_size_px);
+  const font_size_px_headline =
+    Number.isFinite(hPx) && hPx > 0 && hPx < 400 ? Math.round(hPx) : null;
+  const font_size_px_body =
+    Number.isFinite(bPx) && bPx > 0 && bPx < 400 ? Math.round(bPx) : null;
+  if (
+    !headline_guess &&
+    !body_guess &&
+    !relative_scale &&
+    !text_placement &&
+    !hierarchy &&
+    font_size_px_headline == null &&
+    font_size_px_body == null
+  ) {
     return null;
   }
-  return { headline_guess, body_guess, accent_guess, relative_scale, text_placement, hierarchy };
+  return {
+    headline_guess,
+    body_guess,
+    accent_guess,
+    relative_scale,
+    text_placement,
+    hierarchy,
+    font_size_px_headline,
+    font_size_px_body,
+  };
+}
+
+function slimTextBlocks(raw: unknown): MimicCarouselSlideTextBlock[] | null {
+  const blocks = parseMimicTextBlocks(raw);
+  return blocks.length > 0 ? blocks : null;
 }
 
 function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCarouselSlideGuideline[] {
@@ -159,6 +204,7 @@ function slimSlideGuidelinesFromEntry(entry: Record<string, unknown>): MimicCaro
     brand_specificity: typeof s.brand_specificity === "string" && s.brand_specificity.trim() ? s.brand_specificity.trim() : null,
     color_tokens: slimColorTokens(s.color_tokens),
     typography: slimTypography(s.typography),
+    text_blocks: slimTextBlocks(s.text_blocks),
   }));
 }
 

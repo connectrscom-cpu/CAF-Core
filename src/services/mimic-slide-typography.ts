@@ -1,4 +1,5 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import { parseMimicTextBlocks, textPlacementFromSlide } from "../domain/mimic-slide-layout.js";
 
 const CANVAS_HEIGHT = 1350;
 
@@ -278,8 +279,7 @@ export function mimicSlideLayoutPatch(
   slideIndex1Based: number
 ): MimicSlideLayoutPatch {
   const slide = slideGuidelineRecord(visualGuideline, slideIndex1Based);
-  const typography = asRecord(slide?.typography);
-  const placement = String(typography?.text_placement ?? "").toLowerCase();
+  const placement = slide ? textPlacementFromSlide(slide).toLowerCase() : "";
   const deck = deckHaystack(visualGuideline);
   const deckCentered = /centered text|center stack|text centrally|text over/.test(deck);
 
@@ -337,12 +337,26 @@ export function mimicSlideTypographyPatch(
   const isCta = totalSlides > 1 && slideIndex1Based === totalSlides;
   const isCover = slideIndex1Based === 1;
 
+  const blocks = slide ? parseMimicTextBlocks(slide.text_blocks) : [];
+  const titleBlock = blocks.find((b) => /title|headline|hook/.test(b.role ?? "")) ?? blocks[0];
+  const bodyBlock =
+    blocks.find((b) => /body|subtitle|caption|paragraph/.test(b.role ?? "")) ??
+    blocks.find((b) => b !== titleBlock);
+
+  const headlineFromPx = Number(typography?.font_size_px_headline);
+  const bodyFromPx = Number(typography?.font_size_px_body);
+
   const headlinePx =
+    (titleBlock?.font_size_px != null ? titleBlock.font_size_px : null) ??
+    (Number.isFinite(headlineFromPx) && headlineFromPx > 0 ? Math.round(headlineFromPx) : null) ??
     parseRelativeScaleHeadlinePx(typography?.relative_scale) ??
     parseRelativeScaleHeadlinePx(typography?.headline_guess) ??
     (isCta ? 72 : 68);
 
-  const bodyPx = typography ? parseBodyFontPxFromTypography(typography, headlinePx) : 38;
+  const bodyPx =
+    (bodyBlock?.font_size_px != null ? bodyBlock.font_size_px : null) ??
+    (Number.isFinite(bodyFromPx) && bodyFromPx > 0 ? Math.round(bodyFromPx) : null) ??
+    (typography ? parseBodyFontPxFromTypography(typography, headlinePx) : 38);
 
   const out: MimicSlideTypographyPatch = {
     ...layout,

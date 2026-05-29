@@ -70,6 +70,7 @@ import {
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
+import { MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
 import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
@@ -1640,7 +1641,7 @@ async function processCarouselJob(
       ? await isNvidiaVisualGenAiReachable(config)
       : true;
   let template = isMimicCarousel
-    ? "carousel_mimic_bg"
+    ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
     : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
         allowedTemplates: projectPinnedTemplates,
         implicitPickSeed: job.task_id,
@@ -1651,7 +1652,8 @@ async function processCarouselJob(
       config,
       job.project_id,
       { id: job.id, task_id: job.task_id },
-      mimicPayload
+      mimicPayload,
+      { projectPinnedTemplates }
     );
     template = evidenceTemplate.template_base;
   }
@@ -1718,7 +1720,9 @@ async function processCarouselJob(
 
     if (isMimicCarousel && mimicPayload && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
       for (let i = 1; i <= n; i++) {
-        const preMode = effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable);
+        const preMode = effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable, {
+          generatedSlides: usableSlides as Record<string, unknown>[],
+        });
         if (preMode === "hbs") {
           await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
         }
@@ -1741,7 +1745,9 @@ async function processCarouselJob(
 
       const slideMode =
         isMimicCarousel && mimicPayload
-          ? effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable)
+          ? effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable, {
+              generatedSlides: usableSlides as Record<string, unknown>[],
+            })
           : null;
 
       if (slideMode === "full_bleed" && mimicPayload) {
