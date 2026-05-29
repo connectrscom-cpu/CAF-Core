@@ -550,6 +550,28 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         })()
       : undefined;
 
+  const debugBundleProps = {
+    taskId: execTaskId,
+    projectSlug: (data?.project ?? projectFromUrl).trim(),
+    workbenchRow: data,
+    fullJob,
+    taskAssets,
+    upstreamLineage,
+    heygenSubmit: submittedHeygenPrompt,
+    fetchMimicAudits: mimicCarouselFlow,
+    reviewerUi: {
+      edited_slides: !videoFlow && !imageFlow && editedSlides.length > 0 ? editedSlides : undefined,
+      edited_caption: editedCaption,
+      edited_title: editedTitle,
+      edited_hook: editedHook,
+      edited_hashtags: editedHashtags,
+      edited_script: heygenWorkbench ? editedScript : undefined,
+      carousel_template: carouselTemplate || undefined,
+      has_unsaved_edits: hasEdits,
+      edits_summary: editsSummary,
+    },
+  };
+
   return (
     <>
       <div className="detail-back">
@@ -559,36 +581,21 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         )}
       </div>
       <h1 className="detail-title">{data?.generated_title || task_id}</h1>
-      <p className="detail-subtitle">
-        {data?.platform && <>{data.platform} · </>}
-        {data?.flow_type && <>{data.flow_type} · </>}
-        {task_id}
-      </p>
-
-      {data && !loading && (
-        <div style={{ padding: "0 28px" }}>
-          <CopyTaskDebugBundleButton
-            taskId={execTaskId}
-            projectSlug={(data.project ?? projectFromUrl).trim()}
-            workbenchRow={data}
-            fullJob={fullJob}
-            taskAssets={taskAssets}
-            upstreamLineage={upstreamLineage}
-            heygenSubmit={submittedHeygenPrompt}
-            fetchMimicAudits={mimicCarouselFlow}
-            reviewerUi={{
-              edited_slides: !videoFlow && !imageFlow && editedSlides.length > 0 ? editedSlides : undefined,
-              edited_caption: editedCaption,
-              edited_title: editedTitle,
-              edited_hook: editedHook,
-              edited_hashtags: editedHashtags,
-              edited_script: heygenWorkbench ? editedScript : undefined,
-              carousel_template: carouselTemplate || undefined,
-              has_unsaved_edits: hasEdits,
-              edits_summary: editsSummary,
-            }}
-          />
+      {data && !loading ? (
+        <div className="detail-header-row">
+          <p className="detail-subtitle">
+            {data.platform && <>{data.platform} · </>}
+            {data.flow_type && <>{data.flow_type} · </>}
+            {task_id}
+          </p>
+          <CopyTaskDebugBundleButton {...debugBundleProps} />
         </div>
+      ) : (
+        <p className="detail-subtitle">
+          {data?.platform && <>{data.platform} · </>}
+          {data?.flow_type && <>{data.flow_type} · </>}
+          {task_id}
+        </p>
       )}
 
       {error && (
@@ -610,6 +617,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               spokenScript={heygenWorkbench ? editedScript : undefined}
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
               carouselLivePreview={carouselLivePreview}
+              previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
             />
 
             <div className="card mt-4 surface-teal">

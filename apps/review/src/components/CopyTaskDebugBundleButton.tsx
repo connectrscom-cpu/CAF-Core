@@ -22,6 +22,8 @@ export interface CopyTaskDebugBundleButtonProps {
   fetchMimicAudits?: boolean;
   reviewerUi?: TaskDebugBundleReviewerUi;
   disabled?: boolean;
+  /** `bar` = header row; `compact` = inline next to preview links (no helper text). */
+  variant?: "bar" | "compact";
 }
 
 export function CopyTaskDebugBundleButton({
@@ -36,6 +38,7 @@ export function CopyTaskDebugBundleButton({
   fetchMimicAudits = false,
   reviewerUi,
   disabled = false,
+  variant = "bar",
 }: CopyTaskDebugBundleButtonProps) {
   const [busy, setBusy] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
@@ -128,23 +131,38 @@ export function CopyTaskDebugBundleButton({
     disabled,
   ]);
 
+  const label = busy ? "Gathering…" : "Copy debug bundle for Cursor";
+
+  const button = (
+    <button
+      type="button"
+      className="btn-primary"
+      style={{ fontSize: variant === "compact" ? 12 : 13, padding: variant === "compact" ? "6px 12px" : "8px 14px" }}
+      disabled={disabled || busy || !taskId.trim()}
+      onClick={() => void onCopy()}
+      title="Copy task_id, asset URLs, generation_payload, draft/mimic packages, validation JSON, lineage, and more for Cursor debugging"
+    >
+      {label}
+    </button>
+  );
+
+  if (variant === "compact") {
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+        {button}
+        {hint ? <span style={{ fontSize: 11, color: "var(--muted)" }}>{hint}</span> : null}
+      </span>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 12 }}>
-      <button
-        type="button"
-        className="btn-primary"
-        style={{ fontSize: 13, padding: "8px 14px" }}
-        disabled={disabled || busy || !taskId.trim()}
-        onClick={() => void onCopy()}
-        title="Copy task_id, asset URLs, generation_payload, draft/mimic packages, validation JSON, lineage, and more for Cursor debugging"
-      >
-        {busy ? "Gathering debug bundle…" : "Copy debug bundle for Cursor"}
-      </button>
+    <div className="debug-bundle-bar">
+      {button}
       {hint ? (
         <span style={{ fontSize: 12, color: "var(--muted)" }}>{hint}</span>
       ) : (
         <span style={{ fontSize: 12, color: "var(--muted)", maxWidth: 420, lineHeight: 1.4 }}>
-          One click: IDs, all asset URLs, generation_payload, draft / mimic packages, QC, reviews, lineage
+          IDs, asset URLs, generation_payload, mimic packages, QC, reviews, lineage
         </span>
       )}
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CarouselSlider } from "@/components/CarouselSlider";
 import type { CarouselLivePreviewOptions, CarouselMediaItem } from "@/components/CarouselSlider";
 import { createSyntheticSlides } from "@/lib/carousel-slides";
@@ -28,6 +28,8 @@ export interface TaskViewerProps {
   onSpokenScriptChange?: (v: string) => void;
   /** Re-render current slide in review (font scale + copy) when template name is known. */
   carouselLivePreview?: CarouselLivePreviewOptions | null;
+  /** e.g. debug-bundle copy — shown beside preview open links. */
+  previewToolbar?: ReactNode;
 }
 
 export function TaskViewer({
@@ -41,6 +43,7 @@ export function TaskViewer({
   spokenScript: spokenScriptProp,
   onSpokenScriptChange,
   carouselLivePreview = null,
+  previewToolbar,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -136,15 +139,15 @@ export function TaskViewer({
   if (showCarouselBlock) {
     return (
       <div>
-        {previewUrl && (
-          <a
-            href={previewUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ fontSize: 13, display: "inline-block", marginBottom: 12 }}
-          >
-            Open link in new tab
-          </a>
+        {(previewUrl || previewToolbar) && (
+          <div className="preview-action-row">
+            {previewUrl ? (
+              <a href={previewUrl} target="_blank" rel="noopener noreferrer">
+                Open link in new tab
+              </a>
+            ) : null}
+            {previewToolbar}
+          </div>
         )}
         <CarouselSlider
           slides={sliderSlides}
@@ -172,7 +175,7 @@ export function TaskViewer({
           style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
           onError={() => setVideoLoadFailed(true)}
         />
-        <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
+        <div className="preview-action-row mt-3">
           <a href={fullBleedVideoUrl} target="_blank" rel="noopener noreferrer">
             Open video in new tab
           </a>
@@ -181,6 +184,7 @@ export function TaskViewer({
               Open content link
             </a>
           )}
+          {previewToolbar}
         </div>
         {heyGenVideoMode && (
           <div style={{ marginTop: 16, padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}>
@@ -230,7 +234,7 @@ export function TaskViewer({
           style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, objectFit: "contain" }}
           referrerPolicy="no-referrer"
         />
-        <div className="flex gap-2 mt-3" style={{ fontSize: 13 }}>
+        <div className="preview-action-row mt-3">
           <a href={singleImageSrc} target="_blank" rel="noopener noreferrer">
             Open image in new tab
           </a>
@@ -239,6 +243,7 @@ export function TaskViewer({
               Open content link
             </a>
           )}
+          {previewToolbar}
         </div>
       </div>
     );

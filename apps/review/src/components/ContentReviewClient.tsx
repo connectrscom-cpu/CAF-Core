@@ -111,13 +111,12 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
         <Link href={navHref("/")}>← Back to Workbench</Link>
       </div>
       <h1 className="detail-title">Content: {task_id}</h1>
-      <p className="detail-subtitle">
-        {data?.platform && <>{data.platform} · </>}
-        {data?.flow_type && <>{data.flow_type}</>}
-      </p>
-
-      {data && !loading && (
-        <div style={{ padding: "0 28px" }}>
+      {data && !loading ? (
+        <div className="detail-header-row">
+          <p className="detail-subtitle">
+            {data.platform && <>{data.platform} · </>}
+            {data.flow_type && <>{data.flow_type}</>}
+          </p>
           <CopyTaskDebugBundleButton
             taskId={task_id}
             projectSlug={(data.project ?? projectFromUrl).trim()}
@@ -128,6 +127,11 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
             fetchMimicAudits={mimicCarouselFlow}
           />
         </div>
+      ) : (
+        <p className="detail-subtitle">
+          {data?.platform && <>{data.platform} · </>}
+          {data?.flow_type && <>{data.flow_type}</>}
+        </p>
       )}
 
       {error && (
@@ -145,6 +149,18 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
             editedSlides={editedSlides.length > 0 ? editedSlides : undefined}
             fallbackPreviewUrl={taskAssets[0]?.public_url}
             readOnly
+            previewToolbar={
+              <CopyTaskDebugBundleButton
+                taskId={task_id}
+                projectSlug={(data.project ?? projectFromUrl).trim()}
+                page="content_review"
+                workbenchRow={data}
+                fullJob={fullJob}
+                taskAssets={taskAssets}
+                fetchMimicAudits={mimicCarouselFlow}
+                variant="compact"
+              />
+            }
           />
 
           <div className="mt-4">
