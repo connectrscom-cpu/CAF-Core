@@ -27,6 +27,7 @@ import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
+import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow } from "@/lib/flow-kind";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
@@ -563,6 +564,32 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         {data?.flow_type && <>{data.flow_type} · </>}
         {task_id}
       </p>
+
+      {data && !loading && (
+        <div style={{ padding: "0 28px" }}>
+          <CopyTaskDebugBundleButton
+            taskId={execTaskId}
+            projectSlug={(data.project ?? projectFromUrl).trim()}
+            workbenchRow={data}
+            fullJob={fullJob}
+            taskAssets={taskAssets}
+            upstreamLineage={upstreamLineage}
+            heygenSubmit={submittedHeygenPrompt}
+            fetchMimicAudits={mimicCarouselFlow}
+            reviewerUi={{
+              edited_slides: !videoFlow && !imageFlow && editedSlides.length > 0 ? editedSlides : undefined,
+              edited_caption: editedCaption,
+              edited_title: editedTitle,
+              edited_hook: editedHook,
+              edited_hashtags: editedHashtags,
+              edited_script: heygenWorkbench ? editedScript : undefined,
+              carousel_template: carouselTemplate || undefined,
+              has_unsaved_edits: hasEdits,
+              edits_summary: editsSummary,
+            }}
+          />
+        </div>
+      )}
 
       {error && (
         <div style={{ margin: "0 28px 16px", padding: 12, background: "var(--red-bg)", color: "var(--red)", borderRadius: 8, fontSize: 13 }}>

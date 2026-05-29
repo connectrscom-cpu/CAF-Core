@@ -11,6 +11,8 @@ import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url"
 import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
+import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
+import { isMimicCarouselFlow } from "@/lib/flow-kind";
 
 interface ContentResponse {
   data: ReviewQueueRow;
@@ -100,6 +102,9 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
 
   useEffect(() => { fetchContent(); }, [fetchContent]);
 
+  const flowTypeStr = (data?.flow_type ?? "").trim();
+  const mimicCarouselFlow = flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false;
+
   return (
     <>
       <div className="detail-back">
@@ -110,6 +115,20 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
         {data?.platform && <>{data.platform} · </>}
         {data?.flow_type && <>{data.flow_type}</>}
       </p>
+
+      {data && !loading && (
+        <div style={{ padding: "0 28px" }}>
+          <CopyTaskDebugBundleButton
+            taskId={task_id}
+            projectSlug={(data.project ?? projectFromUrl).trim()}
+            page="content_review"
+            workbenchRow={data}
+            fullJob={fullJob}
+            taskAssets={taskAssets}
+            fetchMimicAudits={mimicCarouselFlow}
+          />
+        </div>
+      )}
 
       {error && (
         <div style={{ margin: "0 28px 16px", padding: 12, background: "var(--red-bg)", color: "var(--red)", borderRadius: 8, fontSize: 13 }}>
