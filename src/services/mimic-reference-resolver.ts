@@ -5,6 +5,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { JobLineageResult } from "../repositories/job-lineage.js";
+import { enrichGuidelineEntryFromLineageInsight } from "../domain/mimic-job-grounding.js";
 import {
   compactStoredInspectionMedia,
   type VisualGuidelineInspectionMedia,
@@ -246,8 +247,19 @@ export function resolveMimicReferenceFromLineage(
     );
   }
 
+  const sourceId = String(entry.insights_id ?? insightIds[0] ?? "").trim();
+  const groundingMatch = lineage.grounding.find(
+    (g) => String(g.insight_row.insights_id ?? "").trim() === sourceId
+  );
+  if (groundingMatch) {
+    entry = enrichGuidelineEntryFromLineageInsight(entry, {
+      aesthetic_analysis_json: groundingMatch.insight_row.aesthetic_analysis_json,
+      hook_text: groundingMatch.insight_row.hook_text,
+    });
+  }
+
   return {
-    source_insights_id: String(entry.insights_id ?? insightIds[0] ?? ""),
+    source_insights_id: sourceId,
     source_evidence_row_id: entry.source_evidence_row_id != null ? String(entry.source_evidence_row_id) : null,
     analysis_tier: String(entry.analysis_tier ?? resolvedTier),
     reference_tier_fallback: referenceTierFallback,

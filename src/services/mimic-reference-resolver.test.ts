@@ -60,6 +60,54 @@ describe("normalizeMimicReferenceItems", () => {
 });
 
 describe("resolveMimicReferenceFromLineage", () => {
+  it("merges full insight-row aesthetic over compact pack slides", () => {
+    const lineage = lineageWithPack([
+      {
+        insights_id: "ins_target",
+        analysis_tier: "top_performer_carousel",
+        aesthetic_analysis_json: {
+          slides: [{ slide_index: 1, on_screen_text_transcript: "pack short" }],
+        },
+        inspection_media: carouselEntry.inspection_media,
+      },
+    ]);
+    lineage.grounding = [
+      {
+        insight_row: {
+          insights_id: "ins_target",
+          analysis_tier: "top_performer_carousel",
+          source_evidence_row_id: "1",
+          hook_text: "deck_arc",
+          aesthetic_analysis_json: {
+            slides: [
+              {
+                slide_index: 1,
+                on_screen_text_transcript: "full row transcript",
+                text_blocks: [
+                  {
+                    text: "Title",
+                    role: "title",
+                    bbox_norm: { x: 0.1, y: 0.2, w: 0.8, h: 0.1 },
+                  },
+                ],
+              },
+            ],
+          },
+        } as JobLineageResult["grounding"][0]["insight_row"],
+        evidence_row: null,
+      },
+    ];
+    const resolved = resolveMimicReferenceFromLineage(
+      FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
+      lineage,
+      { grounding_insight_ids: ["ins_target"] }
+    );
+    const aes = resolved.guideline_entry.aesthetic_analysis_json as Record<string, unknown>;
+    const slides = aes.slides as Record<string, unknown>[];
+    expect(slides[0]?.on_screen_text_transcript).toBe("full row transcript");
+    expect(slides[0]?.text_blocks).toBeDefined();
+  });
+
   it("falls back to single-frame top_performer_carousel when image mimic has no deep tier", () => {
     const resolved = resolveMimicReferenceFromLineage(
       FLOW_TOP_PERFORMER_MIMIC_IMAGE,

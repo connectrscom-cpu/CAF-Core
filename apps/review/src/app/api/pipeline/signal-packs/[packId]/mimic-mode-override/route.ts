@@ -16,10 +16,15 @@ export async function POST(
   try {
     const { packId } = await context.params;
     const body = await request.json();
+    const url = new URL(request.url);
+    const project = url.searchParams.get("project")?.trim();
     const base = CAF_CORE_URL.replace(/\/$/, "");
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
-    const res = await fetch(`${base}/v1/signal-packs/${encodeURIComponent(packId)}/mimic-mode-override`, {
+    const corePath = project
+      ? `/v1/signal-packs/${encodeURIComponent(project)}/${encodeURIComponent(packId)}/mimic-mode-override`
+      : `/v1/signal-packs/${encodeURIComponent(packId)}/mimic-mode-override`;
+    const res = await fetch(`${base}${corePath}`, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

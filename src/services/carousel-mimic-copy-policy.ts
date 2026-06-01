@@ -21,7 +21,13 @@ export function mimicCarouselCopyBranch(
   const ctx = mimicRenderContext ?? {};
   const seq = String(ctx.render_sequence ?? "").trim();
   if (mimic.mode === "template_bg" || seq === "copy_then_template_overlay") return "template_bg";
-  if (mimic.mode === "carousel_visual" || seq === "per_slide_visual_mimic") return "full_bleed";
+  if (
+    mimic.mode === "carousel_visual" ||
+    seq === "per_slide_visual_mimic" ||
+    seq === "visual_plate_then_hbs_overlay"
+  ) {
+    return "full_bleed";
+  }
   return "default";
 }
 
@@ -38,7 +44,7 @@ export function mimicCarouselCopySystemAddendum(
   return CAROUSEL_COPY_SYSTEM_ADDENDUM;
 }
 
-/** Full-bleed jobs should not use long body-length targets meant for listicle templates. */
+/** Mimic carousel jobs use platform body-length targets for substantive on-slide copy. */
 export function mimicCarouselUsesFullBodyLengthTargets(branch: MimicCarouselCopyBranch): boolean {
-  return branch === "template_bg" || branch === "default";
+  return branch === "template_bg" || branch === "full_bleed" || branch === "default";
 }

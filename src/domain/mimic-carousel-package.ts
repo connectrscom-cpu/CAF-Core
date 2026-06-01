@@ -247,6 +247,98 @@ function videoSlideIndicesFromEntry(entry: Record<string, unknown>): number[] {
     .sort((a, b) => a - b);
 }
 
+const LLM_COPY_SLIDE_TEXT_MAX_CHARS = 420;
+const LLM_COPY_VISUAL_DESC_MAX_CHARS = 720;
+const LLM_COPY_TEXT_BLOCK_CAP = 12;
+
+function truncateSlideTextForLlm(value: string | null, maxChars: number): string | null {
+  if (!value) return null;
+  const t = value.trim();
+  if (!t) return null;
+  if (t.length <= maxChars) return t;
+  return `${t.slice(0, maxChars)}…`;
+}
+
+/** Per-slide layout contract for copy LLM — what text exists, how the slide looks, where text sits. */
+export interface MimicSlideCopyLayoutForLlm {
+  slide_index: number;
+  /** Archived reference wording (for structure/length only — output must be fresh). */
+  reference_on_screen_text: string | null;
+  visual_description: string | null;
+  layout_template: string | null;
+  image_or_photo_role: string | null;
+  text_density: string | null;
+  slide_purpose: string | null;
+  graphic_elements: string | null;
+  color_tokens: MimicCarouselSlideColorTokens | null;
+  typography: MimicCarouselSlideTypography | null;
+  /** Normalized 0–1 boxes + font hints from Nemotron vision. */
+  text_blocks: MimicCarouselSlideTextBlock[] | null;
+}
+
+function slimTextBlocksForLlmCopy(raw: unknown): MimicCarouselSlideTextBlock[] | null {
+  const blocks = parseMimicTextBlocks(raw);
+  if (blocks.length === 0) return null;
+  return blocks.slice(0, LLM_COPY_TEXT_BLOCK_CAP).map((b) => ({
+    ...b,
+    text: b.text.length > 280 ? `${b.text.slice(0, 280)}…` : b.text,
+  }));
+}
+
+function stringFieldForLlm(v: unknown, max: number): string | null {
+  const t = String(v ?? "").trim();
+  if (!t) return null;
+  return t.length > max ? `${t.slice(0, max)}…` : t;
+}
+
+/**
+ * Explicit per-slide layout for mimic copy generation (text + look + placement).
+ * Built from full `aesthetic_analysis_json` when available (DB insight row or enriched entry).
+ */
+export function buildMimicSlideCopyLayoutFromEntry(
+  entry: Record<string, unknown>
+): MimicSlideCopyLayoutForLlm[] {
+  const slides = aestheticSlideRecords(entry);
+  if (slides.length === 0) return [];
+  return slides.map((s, i) => {
+    const slide_index = Number(s.slide_index ?? i + 1) || i + 1;
+    return {
+      slide_index,
+      reference_on_screen_text: stringFieldForLlm(
+        s.on_screen_text_transcript ?? s.on_image_text,
+        LLM_COPY_SLIDE_TEXT_MAX_CHARS
+      ),
+      visual_description: stringFieldForLlm(s.visual_description, LLM_COPY_VISUAL_DESC_MAX_CHARS),
+      layout_template: stringFieldForLlm(s.layout_template, 120),
+      image_or_photo_role: stringFieldForLlm(s.image_or_photo_role, 80),
+      text_density: stringFieldForLlm(s.text_density, 40),
+      slide_purpose: stringFieldForLlm(s.slide_purpose, 40),
+      graphic_elements: stringFieldForLlm(s.graphic_elements, 320),
+      color_tokens: slimColorTokens(s.color_tokens),
+      typography: slimTypography(s.typography),
+      text_blocks: slimTextBlocksForLlmCopy(s.text_blocks),
+    };
+  });
+}
+
+/** Visual guideline for mimic carousel copy prompts — no URLs, capped slide text. */
+export function slimMimicVisualGuidelineForLlmCopy(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
+  const base = slimVisualGuidelineFromEntry(entry);
+  return {
+    ...base,
+    replication_blueprint: null,
+    slides:
+      base.slides?.map((s) => ({
+        ...s,
+        visual_description: truncateSlideTextForLlm(s.visual_description, LLM_COPY_VISUAL_DESC_MAX_CHARS),
+        on_screen_text_transcript: truncateSlideTextForLlm(
+          s.on_screen_text_transcript,
+          LLM_COPY_SLIDE_TEXT_MAX_CHARS
+        ),
+      })) ?? null,
+  };
+}
+
 export function slimVisualGuidelineFromEntry(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
   const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
   const slides = slimSlideGuidelinesFromEntry(entry);

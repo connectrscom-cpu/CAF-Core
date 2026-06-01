@@ -326,46 +326,99 @@ function entryFormatSubtitle(entry: VisualGuidelineEntry): string {
   return humanizeFormatKey(key);
 }
 
+function normalizeModeOverridesMap(raw: Record<string, unknown> | null | undefined): Record<string, string | null> {
+  if (!raw) return {};
+  const out: Record<string, string | null> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === "carousel_visual" || value === "template_bg") out[key] = value;
+    else if (value == null) out[key] = null;
+  }
+  return out;
+}
+
 export function VisualGuidelinesPanel(props: {
   visualPack: VisualGuidelinesPackView;
   ideasFromInsightsMeta: Record<string, unknown> | null;
   importId: string | null;
   navHref: (path: string) => string;
   signalPackId?: string;
+  projectSlug?: string;
+  initialModeOverrides?: Record<string, string | null>;
   onOverrideChanged?: () => void;
 }) {
-  const { visualPack, ideasFromInsightsMeta, importId, navHref, signalPackId, onOverrideChanged } = props;
+  const {
+    visualPack,
+    ideasFromInsightsMeta,
+    importId,
+    navHref,
+    signalPackId,
+    projectSlug,
+    initialModeOverrides,
+    onOverrideChanged,
+  } = props;
   const entries = visualPack.entries ?? [];
   const [expandedFormat, setExpandedFormat] = useState<string | null>(null);
-  const [modeOverrides, setModeOverrides] = useState<Record<string, string | null>>({});
+  const [modeOverrides, setModeOverrides] = useState<Record<string, string | null>>(() =>
+    normalizeModeOverridesMap(initialModeOverrides)
+  );
   const [overrideSaving, setOverrideSaving] = useState<string | null>(null);
+  const [overrideError, setOverrideError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialModeOverrides) {
+      setModeOverrides(normalizeModeOverridesMap(initialModeOverrides));
+    }
+  }, [initialModeOverrides]);
+
+  const mimicOverridesApiQs = useMemo(() => {
+    const slug = projectSlug?.trim();
+    return slug ? `?project=${encodeURIComponent(slug)}` : "";
+  }, [projectSlug]);
 
   useEffect(() => {
     if (!signalPackId) return;
-    fetch(`/api/pipeline/signal-packs/${signalPackId}/mimic-mode-overrides`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (j?.overrides) setModeOverrides(j.overrides as Record<string, string | null>);
+    let cancelled = false;
+    fetch(`/api/pipeline/signal-packs/${encodeURIComponent(signalPackId)}/mimic-mode-overrides${mimicOverridesApiQs}`, {
+      cache: "no-store",
+    })
+      .then(async (r) => {
+        if (!r.ok) return null;
+        const j = (await r.json()) as { ok?: boolean; overrides?: Record<string, string | null> };
+        return j?.ok !== false && j.overrides ? j.overrides : null;
+      })
+      .then((overrides) => {
+        if (!cancelled && overrides) setModeOverrides(normalizeModeOverridesMap(overrides));
       })
       .catch(() => {});
-  }, [signalPackId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [signalPackId, mimicOverridesApiQs]);
 
   const handleModeOverride = useCallback(async (insightsId: string, mode: "carousel_visual" | "template_bg" | null) => {
     if (!signalPackId) return;
     setOverrideSaving(insightsId);
+    setOverrideError(null);
     try {
-      const res = await fetch(`/api/pipeline/signal-packs/${signalPackId}/mimic-mode-override`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ insights_id: insightsId, mode_override: mode }),
-      });
-      if (res.ok) {
-        setModeOverrides((prev) => ({ ...prev, [insightsId]: mode }));
-        onOverrideChanged?.();
+      const res = await fetch(
+        `/api/pipeline/signal-packs/${encodeURIComponent(signalPackId)}/mimic-mode-override${mimicOverridesApiQs}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ insights_id: insightsId, mode_override: mode }),
+        }
+      );
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (!res.ok || json.ok === false) {
+        throw new Error(json.error ?? `Save failed (HTTP ${res.status})`);
       }
-    } catch { /* ignore */ }
+      setModeOverrides((prev) => ({ ...prev, [insightsId]: mode }));
+      onOverrideChanged?.();
+    } catch (e) {
+      setOverrideError(e instanceof Error ? e.message : "Failed to save mimic mode override");
+    }
     setOverrideSaving(null);
-  }, [signalPackId, onOverrideChanged]);
+  }, [signalPackId, mimicOverridesApiQs, onOverrideChanged]);
 
   const cueGroups = useMemo(() => {
     const raw =
@@ -402,7 +455,14 @@ export function VisualGuidelinesPanel(props: {
         <strong>Storage folder</strong> links to inspect archived slides/frames in Supabase (
         <code style={{ fontSize: 12 }}>top_performer_inspection/</code> or{" "}
         <code style={{ fontSize: 12 }}>evidence_media/</code>).
+        Carousel entries: use <strong>Full bleed</strong> / <strong>Template</strong> to pin mimic render mode on this
+        pack (stored in <code style={{ fontSize: 12 }}>derived_globals_json.mimic_mode_overrides</code>).
       </p>
+      {overrideError ? (
+        <p style={{ color: "var(--red)", fontSize: 13, margin: "0 0 12px" }} role="alert">
+          {overrideError}
+        </p>
+      ) : null}
 
       <div
         style={{

@@ -7,7 +7,6 @@ import {
   isVisualLedShortCopyDeck,
   nemotronSuggestsTextOnTemplate,
   requiresCopyBeforeVisualMimic,
-  slidePreferHbsTextOverlay,
 } from "../domain/mimic-text-heavy.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
 import {
@@ -97,14 +96,9 @@ export function classifyMimicMode(
 
   const slide_plans: MimicSlidePlan[] = [];
   for (let i = 0; i < slideCount; i++) {
-    const s = slides[i] ?? {};
-    const density = String(s.text_density ?? "").toLowerCase();
-    const role = String(s.image_or_photo_role ?? "").toLowerCase();
-    const hasText = slidePreferHbsTextOverlay(s);
-    const fullBleed = !hasText && role !== "none" && density !== "high";
     slide_plans.push({
       slide_index: i + 1,
-      render_mode: fullBleed ? "full_bleed" : "hbs",
+      render_mode: "full_bleed",
       reference_index: Math.min(i + 1, refFrames || slides.length || 1),
     });
   }
@@ -195,10 +189,18 @@ export function isDeckMostlyPromotional(entry: Record<string, unknown>): boolean
   return deckPromotionalDensity(entry) > 0.5;
 }
 
+export interface ReconcileMimicPayloadAtRenderOptions {
+  /** Stored `MIMIC_BACKGROUND` assets exist for this task — template overlay path was already started. */
+  hasStoredBackgroundPlates?: boolean;
+  /** `generation_payload.template_backgrounds_prepared_at` is set (pre-copy bg extract ran). */
+  templateBackgroundsPrepared?: boolean;
+}
+
 /** Re-classify from persisted visual_guideline when prep ran before classifier rules improved. */
 export function reconcileMimicPayloadAtRender(
   flowType: string,
-  mimic: MimicPayloadV1
+  mimic: MimicPayloadV1,
+  opts?: ReconcileMimicPayloadAtRenderOptions
 ): MimicPayloadV1 {
   if (flowType !== FLOW_TOP_PERFORMER_MIMIC_CAROUSEL) return mimic;
   const vg = mimic.visual_guideline ?? {};
@@ -211,6 +213,15 @@ export function reconcileMimicPayloadAtRender(
       })),
     },
   };
+
+  if (
+    mimic.mode === "carousel_visual" &&
+    (opts?.hasStoredBackgroundPlates || opts?.templateBackgroundsPrepared)
+  ) {
+    const classified = classifyMimicMode(flowType, entry, "template_bg");
+    return { ...mimic, mode: "template_bg", slide_plans: classified.slide_plans ?? mimic.slide_plans };
+  }
+
   const hasBgPlate = Boolean(String(mimic.background_image_url ?? "").trim());
   const shouldForceTemplateBg =
     hasBgPlate &&

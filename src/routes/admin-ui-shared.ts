@@ -305,6 +305,12 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .caf-manual-pick-render--bleed{background:rgba(168,85,247,.18);color:var(--purple)}
 .caf-manual-pick-render--mixed{background:rgba(234,179,8,.15);color:var(--yellow)}
 .caf-manual-pick-render--image{background:rgba(34,197,94,.15);color:var(--green)}
+.sp-mimic-mode-btns{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}
+.sp-mimic-mode-btn{font-size:11px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text);cursor:pointer;line-height:1.2}
+.sp-mimic-mode-btn:hover:not(:disabled){border-color:var(--accent)}
+.sp-mimic-mode-btn.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.sp-mimic-mode-btn:disabled{opacity:.55;cursor:wait}
+.sp-mimic-mode-btn--auto{font-size:10px;color:var(--muted)}
 .caf-manual-pick-body{flex:1;min-height:200px;overflow:auto;padding:0}
 .caf-manual-pick-table-wrap{overflow:auto;max-height:min(52vh,520px)}
 .caf-manual-pick-table{width:100%;border-collapse:collapse;font-size:14px}
@@ -585,7 +591,7 @@ export function adminManualIdeaPickScript(): string {
   }
   function fmtLabel(tab){return tab==='other'?'Other':tab.charAt(0).toUpperCase()+tab.slice(1);}
   var st={
-    runId:null,ideas:[],mimicRefs:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
+    runId:null,signalPackId:null,ideas:[],mimicRefs:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
     onApplied:null,statusElId:null,busy:false
   };
   function overlay(){return document.getElementById('caf-manual-pick-overlay');}
@@ -704,6 +710,11 @@ export function adminManualIdeaPickScript(): string {
         if(it.predicted_render_detail){
           h+='<div class="pick-detail" style="margin-top:4px;max-width:200px;font-size:11px;color:var(--muted)">'+mpEsc(it.predicted_render_detail)+'</div>';
         }
+        if(it.mimic_kind==='carousel'&&st.signalPackId&&typeof window.cafMimicModeOverrideButtonsHtml==='function'){
+          var mo=it.mode_override;
+          if(mo!=='carousel_visual'&&mo!=='template_bg')mo=null;
+          h+='<div style="margin-top:6px">'+window.cafMimicModeOverrideButtonsHtml(st.signalPackId,id,mo)+'</div>';
+        }
         h+='</td>';
       }
       h+='<td><div class="pick-detail">'+mpEsc(it.detail||'—')+'</div></td>';
@@ -775,6 +786,7 @@ export function adminManualIdeaPickScript(): string {
     if(typeof SLUG==='undefined'||!SLUG){setMsg('Select a project first.',true);return;}
     if(!runId){setMsg('Missing run.',true);return;}
     st.runId=runId;
+    st.signalPackId=null;
     st.onApplied=opts.onApplied||null;
     st.statusElId=opts.statusElId||null;
     st.savedByTab={};
@@ -793,6 +805,7 @@ export function adminManualIdeaPickScript(): string {
       if(!r.ok||!d.ok)throw new Error((d&&d.error)||'Failed to load ideas');
       st.ideas=Array.isArray(d.signal_pack_ideas_ui)?d.signal_pack_ideas_ui:[];
       st.mimicRefs=Array.isArray(d.signal_pack_mimic_references_ui)?d.signal_pack_mimic_references_ui:[];
+      st.signalPackId=(d.signal_pack_meta&&d.signal_pack_meta.id)||(d.run&&d.run.signal_pack_id)||null;
       st.byTab={};
       groupIdeas(st.ideas);
       groupMimicRefs(st.mimicRefs);
@@ -861,6 +874,109 @@ export function adminManualIdeaPickScript(): string {
       window.cafOpenManualIdeaPicker(RUN_ID,{statusElId:'rc-mat-msg',onApplied:function(){if(typeof loadRunTransparency==='function')loadRunTransparency();}});
     }
   };
+  var prevCafMimicModeSaved=window.cafOnSignalPackMimicModeSaved;
+  window.cafOnSignalPackMimicModeSaved=function(insightsId,mode){
+    if(typeof prevCafMimicModeSaved==='function')prevCafMimicModeSaved(insightsId,mode);
+    for(var mi=0;mi<st.mimicRefs.length;mi++){
+      if(String(st.mimicRefs[mi].insights_id||'')===insightsId)st.mimicRefs[mi].mode_override=mode;
+    }
+    var ov=overlay();
+    if(ov&&ov.style.display!=='none')renderTable();
+  };
+})();
+`;
+}
+
+/** Save / display signal-pack mimic mode overrides (Full bleed vs Template) in admin. */
+export function adminSignalPackMimicModeScript(): string {
+  return `
+(function(){
+  function escAttr(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+  function normMode(m){
+    if(m==='carousel_visual'||m==='template_bg')return m;
+    return null;
+  }
+  window.cafMimicModeOverrideButtonsHtml=function(packId,insightsId,currentMode){
+    if(!packId||!insightsId)return '';
+    var cur=normMode(currentMode);
+    var h='<span class="sp-mimic-mode-btns" data-insights-id="'+escAttr(insightsId)+'">';
+    h+='<button type="button" class="sp-mimic-mode-btn'+(cur==='carousel_visual'?' active':'')+'" data-pack-id="'+escAttr(packId)+'" data-insights-id="'+escAttr(insightsId)+'" data-mode="carousel_visual">Full bleed</button>';
+    h+='<button type="button" class="sp-mimic-mode-btn'+(cur==='template_bg'?' active':'')+'" data-pack-id="'+escAttr(packId)+'" data-insights-id="'+escAttr(insightsId)+'" data-mode="template_bg">Template</button>';
+    if(cur)h+='<button type="button" class="sp-mimic-mode-btn sp-mimic-mode-btn--auto" data-pack-id="'+escAttr(packId)+'" data-insights-id="'+escAttr(insightsId)+'" data-mode="">Auto</button>';
+    h+='</span>';
+    return h;
+  };
+  window.cafSignalPackMimicModeOverride=async function(packId,insightsId,mode,statusEl,btnNodes){
+    if(typeof SLUG==='undefined'||!SLUG||!packId||!insightsId){
+      if(statusEl){statusEl.textContent='Missing project, pack, or insights id.';statusEl.style.color='var(--red)';}
+      return false;
+    }
+    var btns=btnNodes||[];
+    for(var bi=0;bi<btns.length;bi++)btns[bi].disabled=true;
+    if(statusEl){statusEl.textContent='Saving…';statusEl.style.color='var(--muted)';}
+    try{
+      var r=await cafFetch('/v1/signal-packs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(packId)+'/mimic-mode-override',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({insights_id:insightsId,mode_override:mode})
+      });
+      var d=await r.json().catch(function(){return {};});
+      if(!r.ok||d.ok===false)throw new Error((d&&d.error)||(d&&d.message)||'HTTP '+r.status);
+      if(statusEl){statusEl.textContent='Saved '+insightsId+' → '+(mode||'auto');statusEl.style.color='var(--green)';}
+      if(typeof window.cafOnSignalPackMimicModeSaved==='function')window.cafOnSignalPackMimicModeSaved(insightsId,mode);
+      return true;
+    }catch(e){
+      if(statusEl){statusEl.textContent=String(e.message||e);statusEl.style.color='var(--red)';}
+      return false;
+    }finally{
+      for(var bj=0;bj<btns.length;bj++)btns[bj].disabled=false;
+    }
+  };
+  window.cafRenderPackMimicOverridesPanel=function(pack,containerId,msgId){
+    var wrap=document.getElementById(containerId||'');
+    var msg=msgId?document.getElementById(msgId):null;
+    if(!wrap)return;
+    var p=pack||{};
+    var packId=String(p.id||'').trim();
+    var dg=(p.derived_globals_json&&typeof p.derived_globals_json==='object'&&!Array.isArray(p.derived_globals_json))?p.derived_globals_json:{};
+    var overrides=(dg.mimic_mode_overrides&&typeof dg.mimic_mode_overrides==='object')?dg.mimic_mode_overrides:{};
+    var vgp=(dg.visual_guidelines_pack_v1&&typeof dg.visual_guidelines_pack_v1==='object')?dg.visual_guidelines_pack_v1:null;
+    var ents=vgp&&Array.isArray(vgp.entries)?vgp.entries:[];
+    var rows=[];
+    for(var i=0;i<ents.length;i++){
+      var e=ents[i]||{};
+      if(String(e.analysis_tier||'')!=='top_performer_carousel')continue;
+      var insId=String(e.insights_id||'').trim();
+      if(!insId)continue;
+      var title=String(e.hook_text_preview||e.why_it_worked||e.format_pattern||insId).slice(0,100);
+      rows.push({insId:insId,title:title,cur:normMode(overrides[insId])});
+    }
+    if(!rows.length){wrap.innerHTML='<p class="runs-ops-hint" style="margin:0">No top-performer carousel entries on this pack.</p>';return;}
+    var h='<p class="runs-ops-hint" style="margin:0 0 10px">Pin mimic render mode before starting a run. Stored on <span class="mono">derived_globals_json.mimic_mode_overrides</span>.</p>';
+    h+='<table class="caf-manual-pick-table"><thead><tr><th>Reference</th><th>insights_id</th><th>Render mode</th></tr></thead><tbody>';
+    for(var ri=0;ri<rows.length;ri++){
+      var row=rows[ri];
+      h+='<tr><td>'+esc(row.title)+'</td><td class="pick-id">'+esc(row.insId)+'</td><td>';
+      if(typeof window.cafMimicModeOverrideButtonsHtml==='function')h+=window.cafMimicModeOverrideButtonsHtml(packId,row.insId,row.cur);
+      h+='</td></tr>';
+    }
+    h+='</tbody></table>';
+    wrap.innerHTML=h;
+    if(msg&&!msg.textContent)msg.textContent='';
+  };
+  document.addEventListener('click',function(ev){
+    var t=ev.target;
+    if(!t||!t.classList||!t.classList.contains('sp-mimic-mode-btn'))return;
+    var packId=t.getAttribute('data-pack-id');
+    var insId=t.getAttribute('data-insights-id');
+    var modeAttr=t.getAttribute('data-mode');
+    var mode=modeAttr===''?null:modeAttr;
+    var status=document.getElementById('pack-inspect-mimic-msg')||document.getElementById('sp-mimic-mode-msg')||document.getElementById('caf-manual-pick-msg');
+    var grp=t.closest? t.closest('.sp-mimic-mode-btns'):null;
+    var btnNodes=grp?Array.prototype.slice.call(grp.querySelectorAll('button')):[];
+    window.cafSignalPackMimicModeOverride(packId,insId,mode,status,btnNodes);
+  });
 })();
 `;
 }

@@ -64,6 +64,7 @@ import {
   adminLlmPromptTitleAttr,
   adminManualIdeaPickModalHtml,
   adminManualIdeaPickScript,
+  adminSignalPackMimicModeScript,
   adminPageHeaderHtml,
   adminPhWithPipelineHtml,
   adminPipelineSketchHtml,
@@ -4544,6 +4545,7 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
   finally{if(btn){btn.disabled=false;btn.textContent='Create Run';}}
 });
 ${adminManualIdeaPickScript()}
+${adminSignalPackMimicModeScript()}
 </script>`;
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -4632,6 +4634,8 @@ async function loadPackView(){
         if(ents.length>24)vb+='<p style="color:var(--muted);font-size:12px">+'+(ents.length-24)+' more entries in raw JSON.</p>';
       }
       vb+='<details style="margin-top:8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Full visual_guidelines_pack_v1 JSON</summary><pre style="font-size:10px;max-height:400px;overflow:auto;margin:8px 0 0">'+esc(pretty(vgp))+'</pre></details>';
+      vb+='<div id="sp-visual-mimic-wrap" style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)"></div>';
+      vb+='<p id="sp-mimic-mode-msg" style="margin:8px 0 0;font-size:12px;color:var(--muted)"></p>';
     }else{
       vb='<p class="runs-ops-hint" style="margin:0">No <span class="mono">visual_guidelines_pack_v1</span> — run top-performer insights, then rebuild the pack.</p>';
     }
@@ -4642,11 +4646,16 @@ async function loadPackView(){
       '<div class="card" style="margin-bottom:16px"><div class="card-h">hashtag_leaderboard_v1 ('+tags.length+')</div><div style="padding:12px 16px 16px">'+hb+'</div></div>'+
       '<div class="card" style="margin-bottom:16px"><div class="card-h">visual_guidelines_pack_v1</div><div style="padding:12px 16px 16px">'+vb+'</div></div>'+
       '<div class="card"><div class="card-h">Other pack fields (IG / TikTok / Reddit / HTML summaries, remaining derived_globals, …)</div><div style="padding:12px 16px 16px"><pre style="font-size:10px;line-height:1.45;max-height:480px;overflow:auto;margin:0">'+esc(pretty(rest))+'</pre></div></div>';
+    if(typeof window.cafRenderPackMimicOverridesPanel==='function'){
+      window.cafRenderPackMimicOverridesPanel(p,'sp-visual-mimic-wrap','sp-mimic-mode-msg');
+    }
   }catch(e){
     root.innerHTML='<div class="empty" style="color:var(--red)">'+esc(e.message||String(e))+'</div>';
   }
 }
+window.cafOnSignalPackMimicModeSaved=function(){loadPackView();};
 loadPackView();
+${adminSignalPackMimicModeScript()}
 </script>`;
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
@@ -5156,6 +5165,7 @@ document.getElementById('rc-btn-llm')?.addEventListener('click',function(){postR
 document.getElementById('rc-btn-manual')?.addEventListener('click',function(){rcOpenManualPicker();});
 loadRunTransparency();
 ${adminManualIdeaPickScript()}
+${adminSignalPackMimicModeScript()}
 </script>`;
     reply
       .header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")

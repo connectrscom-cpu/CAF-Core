@@ -1,6 +1,12 @@
 /** Inner HTML + script for GET /admin/processing — imports, evidence by platform, insights, top-performer passes, profile. */
 
-import { ADMIN_CAF_GLOSSARY, adminCafTermHtml, adminLlmPromptTitleAttr, adminPipelineSketchHtml } from "./admin-ui-shared.js";
+import {
+  ADMIN_CAF_GLOSSARY,
+  adminCafTermHtml,
+  adminLlmPromptTitleAttr,
+  adminPipelineSketchHtml,
+  adminSignalPackMimicModeScript,
+} from "./admin-ui-shared.js";
 
 export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
@@ -712,6 +718,11 @@ export function adminProcessingBody(currentSlug: string): string {
                 <button type="button" class="btn-ghost btn-sm" id="btn-pack-inspect-reload" title="Reload signal packs for this project">Reload</button>
               </div>
               <div id="pack-inspect-msg" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+              <details id="pack-inspect-visual-mimic-details" style="display:none;margin-top:10px">
+                <summary style="cursor:pointer;font-size:14px;color:var(--muted)">Top performers — mimic render mode (Full bleed / Template)</summary>
+                <div id="pack-inspect-visual-mimic" style="margin-top:8px"></div>
+                <p id="pack-inspect-mimic-msg" style="margin:8px 0 0;font-size:12px;color:var(--muted)"></p>
+              </details>
               <details id="pack-inspect-ideas-details" style="display:none;margin-top:10px">
                 <summary style="cursor:pointer;font-size:14px;color:var(--muted)">ideas_json (curated ideas)</summary>
                 <div id="pack-inspect-ideas" style="margin-top:8px;font-size:14px;max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:8px"></div>
@@ -3915,9 +3926,11 @@ async function loadSelectedSignalPack(){
   var rawPre=document.getElementById('pack-inspect-raw');
   if(!sel||!SLUG)return;
   var id=(sel.value||'').trim();
+  var mimicD=document.getElementById('pack-inspect-visual-mimic-details');
   if(!id){
     if(ideasD)ideasD.style.display='none';
     if(rawD)rawD.style.display='none';
+    if(mimicD)mimicD.style.display='none';
     if(msg){msg.textContent='';msg.style.color='';}
     return;
   }
@@ -3933,6 +3946,12 @@ async function loadSelectedSignalPack(){
     if(msg)msg.textContent='Pack loaded — '+String(ideas.length)+' ideas in ideas_json.';
     if(ideasD)ideasD.style.display='block';
     if(rawD)rawD.style.display='block';
+    if(mimicD){
+      mimicD.style.display='block';
+      if(typeof window.cafRenderPackMimicOverridesPanel==='function'){
+        window.cafRenderPackMimicOverridesPanel(pack,'pack-inspect-visual-mimic','pack-inspect-mimic-msg');
+      }
+    }
     if(ideasWrap)ideasWrap.innerHTML=renderInsightTable(ideas.slice(0,120),[
       {key:'idea_id',label:'idea_id'},
       {key:'title',label:'title'},
@@ -3959,8 +3978,17 @@ async function loadSelectedSignalPack(){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
     if(ideasD)ideasD.style.display='none';
     if(rawD)rawD.style.display='none';
+    if(mimicD)mimicD.style.display='none';
   }
 }
+
+(function(){
+  var prevMimicSaved=window.cafOnSignalPackMimicModeSaved;
+  window.cafOnSignalPackMimicModeSaved=function(insightsId,mode){
+    if(typeof prevMimicSaved==='function')prevMimicSaved(insightsId,mode);
+    if(typeof loadSelectedSignalPack==='function')loadSelectedSignalPack();
+  };
+})();
 
 var lastBroadRunDebug=null;
 function setBroadRunDebug(obj){
@@ -4331,5 +4359,6 @@ try{
       '<p style="margin:10px 0 0;font-size:12px;color:var(--muted)">Check <strong>Activity</strong> above (or browser console). A tiny boot script should have shown <strong>Boot OK</strong> before this.</p>';
   }
 }
+${adminSignalPackMimicModeScript()}
 </script>`;
 }

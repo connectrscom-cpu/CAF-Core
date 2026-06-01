@@ -33,7 +33,7 @@ describe("classifyMimicMode", () => {
     expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
   });
 
-  it("routes slides with on-screen text to hbs overlay (not image-model typography)", () => {
+  it("plans carousel_visual slides as full_bleed (visual plate + HBS at render)", () => {
     const entry = {
       aesthetic_analysis_json: {
         format_pattern: "mixed",
@@ -54,10 +54,10 @@ describe("classifyMimicMode", () => {
     };
     const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.mode).toBe("carousel_visual");
-    expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+    expect(r.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 
-  it("allows full_bleed only for photo-only slides without on-screen text", () => {
+  it("plans full_bleed for photo-only slides without on-screen text", () => {
     const entry = {
       aesthetic_analysis_json: {
         format_pattern: "mixed",
@@ -100,8 +100,7 @@ describe("classifyMimicMode", () => {
     };
     const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.mode).toBe("carousel_visual");
-    expect(r.slide_plans?.[0]?.render_mode).toBe("full_bleed");
-    expect(r.slide_plans?.[1]?.render_mode).toBe("hbs");
+    expect(r.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 
   it("defaults missing photo role to full_bleed when text density is not high", () => {
@@ -244,6 +243,30 @@ describe("reconcileMimicPayloadAtRender", () => {
       twist_brief: { visual_only: true as const, legal_note: "pattern only" },
     };
     const reconciled = reconcileMimicPayloadAtRender(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, mimic);
+    expect(reconciled.mode).toBe("template_bg");
+    expect(reconciled.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+  });
+
+  it("coerces carousel_visual to template_bg when MIMIC_BACKGROUND assets already exist", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "carousel_visual" as const,
+      classified_at: "2026-05-28T00:00:00.000Z",
+      source_insights_id: "ins_x",
+      analysis_tier: "top_performer_carousel" as const,
+      reference_items: [
+        { index: 1, role: "carousel_slide" as const, vision_fetch_url: "https://x/1.jpg" },
+      ],
+      visual_guideline: {
+        format_pattern: "listicle",
+        deck_visual_system: { overall_aesthetic: "cartoon illustration" },
+      },
+      slide_plans: [{ slide_index: 1, render_mode: "full_bleed" as const, reference_index: 1 }],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const reconciled = reconcileMimicPayloadAtRender(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, mimic, {
+      hasStoredBackgroundPlates: true,
+    });
     expect(reconciled.mode).toBe("template_bg");
     expect(reconciled.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
   });

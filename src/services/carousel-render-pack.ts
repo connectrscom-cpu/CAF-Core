@@ -1226,31 +1226,56 @@ export function synchronizeCoverRootStringFields(ctx: Record<string, unknown>): 
  * Merge base render context with one slide highlighted for multi-slide templates.
  * `ctaOptions` fills last-slide CTA copy and @handle from project strategy when the LLM omits them.
  */
-export async function inlineRemoteImageUrlForRenderer(url: string): Promise<string> {
+export async function inlineRemoteImageUrlForRenderer(
+  url: string,
+  config?: import("../config.js").AppConfig
+): Promise<string> {
   const trimmed = url.trim();
   if (!trimmed || trimmed.startsWith("data:")) return trimmed;
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
-  const res = await fetch(trimmed, { redirect: "follow" });
-  if (!res.ok) {
-    throw new Error(`Failed to inline carousel background (${res.status}): ${trimmed.slice(0, 120)}`);
+  let buf: Buffer;
+  let mimeType = "image/png";
+  if (config) {
+    const { downloadBufferFromUrl } = await import("./supabase-storage.js");
+    buf = await downloadBufferFromUrl(config, trimmed);
+    if (/\.jpe?g(?:\?|$)/i.test(trimmed)) mimeType = "image/jpeg";
+  } else {
+    const res = await fetch(trimmed, { redirect: "follow" });
+    if (!res.ok) {
+      throw new Error(`Failed to inline carousel background (${res.status}): ${trimmed.slice(0, 120)}`);
+    }
+    mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || mimeType;
+    buf = Buffer.from(await res.arrayBuffer());
   }
-  const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
-  const buf = Buffer.from(await res.arrayBuffer());
   return `data:${mimeType};base64,${buf.toString("base64")}`;
+}
+
+export interface WithInlinedBackgroundImageOptions {
+  /** When set, Supabase public URLs download via service-role storage (not anonymous GET). */
+  config?: import("../config.js").AppConfig;
+  /** Mimic template_bg: refuse plain-paper fallback when inline fails. */
+  strict?: boolean;
 }
 
 /** Puppeteer renderer blocks https:// CSS backgrounds — inline as data: URI before POST /render-binary. */
 export async function withInlinedBackgroundImage(
-  base: Record<string, unknown>
+  base: Record<string, unknown>,
+  opts?: WithInlinedBackgroundImageOptions
 ): Promise<Record<string, unknown>> {
   const bg = typeof base.background_image_url === "string" ? base.background_image_url.trim() : "";
   if (!bg || bg.startsWith("data:")) return base;
   try {
-    return { ...base, background_image_url: await inlineRemoteImageUrlForRenderer(bg) };
+    return { ...base, background_image_url: await inlineRemoteImageUrlForRenderer(bg, opts?.config) };
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts?.strict) {
+      throw new Error(
+        `Mimic background plate inline failed — refusing plain-paper composite: ${msg}`
+      );
+    }
     console.warn(
       "[carousel-render] background inline failed; renderer may show plain paper:",
-      err instanceof Error ? err.message : String(err)
+      msg
     );
     return base;
   }

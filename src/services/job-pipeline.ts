@@ -16,7 +16,12 @@ import {
   finalJobStatusAfterRender,
 } from "./validation-router.js";
 import { uploadBuffer, createSignedUrlForObjectKey } from "./supabase-storage.js";
-import { insertAsset, deleteAssetsForTask, deleteCarouselSlideAssetsForTask } from "../repositories/assets.js";
+import {
+  insertAsset,
+  deleteAssetsForTask,
+  deleteCarouselSlideAssetsForTask,
+  listAssetsByTask,
+} from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
 import { getStrategyDefaults, listProjectCarouselTemplates, resolveProductFlowHeygenMode } from "../repositories/project-config.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
@@ -63,6 +68,7 @@ import {
   effectiveMimicSlideRenderMode,
   mimicCarouselNeedsBackgroundPlate,
   requireMimicSlideBackgroundPlate,
+  persistMimicVisualPlateForSlide,
   renderMimicCarouselSlideFullBleed,
   isPromotionalSlide,
   reconcileFullBleedSlidePlansAtRender,
@@ -1575,7 +1581,20 @@ async function processCarouselJob(
     mimicPayloadRaw
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
-    mimicPayload = reconcileMimicPayloadAtRender(job.flow_type, mimicPayload);
+    const gpForMimicReconcile = job.generation_payload as Record<string, unknown> | null | undefined;
+    const templateBackgroundsPrepared = Boolean(
+      gpForMimicReconcile &&
+        typeof gpForMimicReconcile.template_backgrounds_prepared_at === "string" &&
+        gpForMimicReconcile.template_backgrounds_prepared_at.trim()
+    );
+    const mimicBgAssets = await listAssetsByTask(db, job.project_id, job.task_id).catch(() => []);
+    const hasStoredBackgroundPlates = mimicBgAssets.some(
+      (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND"
+    );
+    mimicPayload = reconcileMimicPayloadAtRender(job.flow_type, mimicPayload, {
+      hasStoredBackgroundPlates,
+      templateBackgroundsPrepared,
+    });
     mimicPayload = {
       ...mimicPayload,
       reference_items: normalizeMimicReferenceItems(mimicPayload.reference_items),
@@ -1732,7 +1751,6 @@ async function processCarouselJob(
     await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
-    let previousFullBleedSlideUrl: string | null = null;
     for (let i = 1; i <= n; i++) {
       await updateJobRenderState(db, job.id, {
         provider: "carousel-renderer",
@@ -1750,10 +1768,11 @@ async function processCarouselJob(
             })
           : null;
 
+      let slideRenderBase = renderBase;
+      const mimicCompositesOnPlate =
+        isMimicCarousel && mimicPayload && (slideMode === "hbs" || slideMode === "full_bleed");
+
       if (slideMode === "full_bleed" && mimicPayload) {
-        // carousel_visual full-bleed: recreate each slide independently from its own
-        // reference frame. Do NOT pass previousSlideUrl — DashScope merges/stacks
-        // multi-image inputs instead of using them for style-only consistency.
         const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
           db,
           config,
@@ -1765,44 +1784,13 @@ async function processCarouselJob(
             projectHandle: projectInstagramHandle,
           }
         );
-        const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const ext = mimeType.includes("jpeg") ? "jpg" : "png";
-        const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(i).padStart(3, "0")}.${ext}`;
-        let publicUrl: string | null = null;
-        let storedPath = objectPath;
-        try {
-          const up = await uploadBuffer(config, objectPath, buffer, mimeType);
-          publicUrl = up.public_url;
-          storedPath = up.object_path;
-        } catch {
-          /* Supabase optional */
-        }
-        await insertAsset(db, {
-          asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
-          task_id: job.task_id,
-          project_id: job.project_id,
-          asset_type: "CAROUSEL_SLIDE",
-          position: i - 1,
-          bucket: config.SUPABASE_ASSETS_BUCKET,
-          object_path: storedPath,
-          public_url: publicUrl,
-          provider: mimicImageProviderAssetLabel(config),
-          metadata_json: { slide_index: i, mimic: true },
+        const plateUrl = await persistMimicVisualPlateForSlide(db, config, job, i, buffer, mimeType);
+        slideRenderBase = { ...renderBase, background_image_url: plateUrl };
+        const mimicTypo = mimicSlideTypographyPatch(mimicPayload, i, n, {
+          skipIfReviewerSet: renderBase as Record<string, unknown>,
         });
-        slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
-        // Use signed URL for cross-slide consistency — DashScope may not reach public Supabase URLs
-        try {
-          const signed = await createSignedUrlForObjectKey(config, config.SUPABASE_ASSETS_BUCKET, storedPath, 600);
-          previousFullBleedSlideUrl = "signedUrl" in signed ? signed.signedUrl : (publicUrl || null);
-        } catch {
-          previousFullBleedSlideUrl = publicUrl || null;
-        }
-        continue;
-      }
-
-      let slideRenderBase = renderBase;
-      if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
+        slideRenderBase = { ...slideRenderBase, ...mimicSlideThemePatch(mimicPayload), ...mimicTypo };
+      } else if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
         const needsBgPlate = mimicCarouselNeedsBackgroundPlate(mimicPayload);
         if (needsBgPlate) {
           const slideBg = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
@@ -1814,14 +1802,30 @@ async function processCarouselJob(
         slideRenderBase = { ...slideRenderBase, ...mimicSlideThemePatch(mimicPayload), ...mimicTypo };
       }
 
-      slideRenderBase = await withInlinedBackgroundImage(slideRenderBase);
-      if (isMimicCarousel && mimicPayload && slideMode === "hbs" && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
+      const mimicStrictBgInline =
+        mimicCompositesOnPlate &&
+        (slideMode === "full_bleed" ||
+          (slideMode === "hbs" && mimicCarouselNeedsBackgroundPlate(mimicPayload!)));
+      slideRenderBase = await withInlinedBackgroundImage(slideRenderBase, {
+        config,
+        strict: Boolean(mimicStrictBgInline),
+      });
+      if (mimicStrictBgInline) {
         assertMimicSlideBackgroundPresent(
           job.task_id,
           i,
           slideRenderBase,
           "Background plate URL missing after inline step — refusing plain-paper composite."
         );
+        const inlinedBg =
+          typeof slideRenderBase.background_image_url === "string"
+            ? slideRenderBase.background_image_url.trim()
+            : "";
+        if (!inlinedBg.startsWith("data:")) {
+          throw new Error(
+            `Mimic background plate for ${job.task_id} slide ${i} must be inlined as data: URI before render`
+          );
+        }
       }
 
       const ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {

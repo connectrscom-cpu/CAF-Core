@@ -139,14 +139,14 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
     expect(isFullBleedCandidateSlide(mimic, 3)).toBe(false);
   });
 
-  it("allows cover full_bleed when deck is visual-led but per-slide tags are missing", () => {
+  it("keeps full_bleed for all non-promotional carousel_visual slides", () => {
     const mimic = baseMimic({
       format_pattern: "mixed",
       deck_visual_system: { overall_aesthetic: "cartoonish illustration with magical effects" },
       slides: null,
     });
     expect(isFullBleedCandidateSlide(mimic, 1)).toBe(true);
-    expect(isFullBleedCandidateSlide(mimic, 2)).toBe(false);
+    expect(isFullBleedCandidateSlide(mimic, 2)).toBe(true);
     const reconciled = reconcileFullBleedSlidePlansAtRender({
       ...mimic,
       slide_plans: [
@@ -155,13 +155,13 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       ],
     });
     expect(slideMimicRenderMode(reconciled, 1)).toBe("full_bleed");
-    expect(slideMimicRenderMode(reconciled, 2)).toBe("hbs");
-    expect(mimicCarouselNeedsBackgroundPlate(reconciled)).toBe(true);
+    expect(slideMimicRenderMode(reconciled, 2)).toBe("full_bleed");
+    expect(mimicCarouselNeedsBackgroundPlate(reconciled)).toBe(false);
   });
 });
 
 describe("effectiveMimicSlideRenderMode", () => {
-  it("downgrades full_bleed to hbs when LLM generated copy exists for the slide", () => {
+  it("keeps full_bleed when LLM copy exists (visual plate + HBS composite)", () => {
     const mimic = baseMimic({
       slides: [{ slide_index: 1, on_screen_text_transcript: "", text_density: "low" }],
     });
@@ -170,8 +170,13 @@ describe("effectiveMimicSlideRenderMode", () => {
       effectiveMimicSlideRenderMode(mimic, 1, true, {
         generatedSlides: [{ headline: "New hook", body: "Fresh body" }],
       })
-    ).toBe("hbs");
-    expect(effectiveMimicSlideRenderMode(mimic, 1, true)).toBe("full_bleed");
+    ).toBe("full_bleed");
+  });
+
+  it("downgrades full_bleed to hbs when visual gen is unreachable", () => {
+    const mimic = baseMimic({});
+    mimic.slide_plans = [{ slide_index: 1, reference_index: 1, render_mode: "full_bleed" }];
+    expect(effectiveMimicSlideRenderMode(mimic, 1, false)).toBe("hbs");
   });
 });
 

@@ -4,9 +4,7 @@ import { buildArtOnlySafeZoneHint } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
-  hasVisualLedDeckCues,
   slideOnScreenTextChars,
-  slidePreferHbsTextOverlay,
 } from "../domain/mimic-text-heavy.js";
 import {
   mimicTemplateLibraryObjectPath,
@@ -20,7 +18,7 @@ import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-im
 import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { isVideoishUrl } from "./instagram-media-normalizer.js";
-import { uploadBuffer } from "./supabase-storage.js";
+import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -215,14 +213,9 @@ export function effectiveMimicSlideRenderMode(
   mimic: MimicPayloadV1,
   slideIndex: number,
   mimicVisualGenAiReachable: boolean,
-  opts?: { generatedSlides?: Record<string, unknown>[] }
+  _opts?: { generatedSlides?: Record<string, unknown>[] }
 ): "full_bleed" | "hbs" | null {
   let mode = slideMimicRenderMode(mimic, slideIndex);
-  const genSlides = opts?.generatedSlides;
-  if (mode === "full_bleed" && genSlides && genSlides.length > 0) {
-    const llmCopy = slideOnImageCopyFromSlides(genSlides, slideIndex);
-    if (llmCopy.trim().length > 0) mode = "hbs";
-  }
   if (mode === "full_bleed" && !mimicVisualGenAiReachable) mode = "hbs";
   return mode;
 }
@@ -696,30 +689,10 @@ export function isPromotionalSlide(
 export function isFullBleedCandidateSlide(mimic: MimicPayloadV1, slideIndex: number): boolean {
   if (mimic.mode !== "carousel_visual") return false;
   if (isPromotionalSlide(mimic, slideIndex)) return false;
-
-  const match = resolveSlideGuideline(mimic, slideIndex);
-  if (!match) {
-    if (slideIndex !== 1) return false;
-    const vg = asRecord(mimic.visual_guideline) ?? {};
-    return hasVisualLedDeckCues({ aesthetic_analysis_json: vg, ...vg });
-  }
-
-  if (slidePreferHbsTextOverlay(match)) return false;
-
-  const density = String(match.text_density ?? "").trim().toLowerCase();
-  if (density === "high") return false;
-  if (slideOnScreenTextChars(match) >= FULL_BLEED_TEXT_CAP) return false;
-
-  const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
-  if (purpose === "self_promo" || purpose === "product_pitch") return false;
-
-  const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
-  if (brandSpec === "high") return false;
-
   return true;
 }
 
-/** Downgrade full_bleed plans to hbs when Qwen cannot safely mimic the reference frame. */
+/** Downgrade full_bleed plans to stripped-template hbs for promotional / skip-listed frames. */
 export function reconcileFullBleedSlidePlansAtRender(mimic: MimicPayloadV1): MimicPayloadV1 {
   if (mimic.mode !== "carousel_visual") return mimic;
   const plans = (mimic.slide_plans ?? []).map((plan) => {
@@ -828,4 +801,54 @@ export async function renderMimicCarouselSlideFullBleed(
       step: `mimic_slide_gen_${slideIndex}`,
     },
   });
+}
+
+/** Upload art-only visual plate and return a fetchable URL for HBS compositing. */
+export async function persistMimicVisualPlateForSlide(
+  db: Pool,
+  config: AppConfig,
+  job: { task_id: string; project_id: string; run_id: string },
+  slideIndex: number,
+  buffer: Buffer,
+  mimeType: string
+): Promise<string> {
+  const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+  const objectPath = `mimic_visual_plates/${safeRun}/${safeTask}/slide_${String(slideIndex).padStart(3, "0")}_v1.${ext}`;
+
+  const up = await uploadBuffer(config, objectPath, buffer, mimeType);
+  const storedPath = up.object_path;
+  let publicUrl = up.public_url?.trim() || null;
+
+  await insertAsset(db, {
+    asset_id: `${job.task_id}__MIMIC_VISUAL_PLATE_${slideIndex}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
+    task_id: job.task_id,
+    project_id: job.project_id,
+    asset_type: "MIMIC_VISUAL_PLATE",
+    position: slideIndex - 1,
+    bucket: config.SUPABASE_ASSETS_BUCKET,
+    object_path: storedPath,
+    public_url: publicUrl,
+    provider: mimicImageProviderAssetLabel(config),
+    metadata_json: { slide_index: slideIndex, mimic: true, role: "visual_plate" },
+  });
+
+  if (storedPath && config.SUPABASE_ASSETS_BUCKET) {
+    try {
+      const signed = await createSignedUrlForObjectKey(
+        config,
+        config.SUPABASE_ASSETS_BUCKET,
+        storedPath,
+        600
+      );
+      if ("signedUrl" in signed && signed.signedUrl.trim()) {
+        return signed.signedUrl.trim();
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  if (publicUrl) return publicUrl;
+  throw new Error(`Mimic visual plate upload failed for ${job.task_id} slide ${slideIndex}`);
 }

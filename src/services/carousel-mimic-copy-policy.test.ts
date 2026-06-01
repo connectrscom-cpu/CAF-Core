@@ -26,18 +26,21 @@ describe("mimicCarouselCopyBranch", () => {
 
   it("returns full_bleed for carousel_visual", () => {
     expect(
-      mimicCarouselCopyBranch(mimic("carousel_visual"), { render_sequence: "per_slide_visual_mimic" })
+      mimicCarouselCopyBranch(mimic("carousel_visual"), {
+        render_sequence: "visual_plate_then_hbs_overlay",
+      })
     ).toBe("full_bleed");
   });
 
-  it("full_bleed addendum skips long body length targets", () => {
-    expect(mimicCarouselUsesFullBodyLengthTargets("full_bleed")).toBe(false);
+  it("full_bleed uses long body length targets", () => {
+    expect(mimicCarouselUsesFullBodyLengthTargets("full_bleed")).toBe(true);
     expect(mimicCarouselUsesFullBodyLengthTargets("template_bg")).toBe(true);
   });
 
-  it("includes caption-first guidance for full_bleed", () => {
+  it("includes visual plate + overlay guidance for full_bleed", () => {
     const text = mimicCarouselCopySystemAddendum("full_bleed");
-    expect(text).toContain("caption");
-    expect(text).toContain("≤120");
+    expect(text).toContain("visual plate");
+    expect(text).toContain("slide_copy_layout");
+    expect(text).not.toContain("≤120");
   });
 });

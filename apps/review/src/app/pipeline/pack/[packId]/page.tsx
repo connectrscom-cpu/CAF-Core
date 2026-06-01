@@ -71,6 +71,17 @@ export default function SignalPackDetailPage() {
 
   const derived = useMemo(() => asRecord(pack?.derived_globals_json), [pack]);
 
+  const mimicModeOverrides = useMemo((): Record<string, string | null> => {
+    const raw = asRecord(derived?.mimic_mode_overrides);
+    if (!raw) return {};
+    const out: Record<string, string | null> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (value === "carousel_visual" || value === "template_bg") out[key] = value;
+      else if (value == null) out[key] = null;
+    }
+    return out;
+  }, [derived]);
+
   const hashtagLeaderboard = useMemo((): HashtagLeaderboardEntry[] => {
     const raw = asArray(derived?.hashtag_leaderboard_v1);
     const out: HashtagLeaderboardEntry[] = [];
@@ -237,6 +248,8 @@ export default function SignalPackDetailPage() {
               importId={importIdForPack}
               navHref={navHref}
               signalPackId={packId}
+              projectSlug={slug}
+              initialModeOverrides={mimicModeOverrides}
               onOverrideChanged={load}
             />
           ) : (

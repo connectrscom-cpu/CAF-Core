@@ -85,6 +85,8 @@ export interface SignalPackMimicReferenceUiRow {
   predicted_mimic_mode: MimicMode | null;
   /** Short reason (Nemotron mode_reason or heuristic note). */
   predicted_render_detail: string;
+  /** Manual override on signal pack (`derived_globals_json.mimic_mode_overrides`). */
+  mode_override: MimicMode | null;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -213,6 +215,7 @@ export function buildSignalPackMimicReferencesForUi(
       predicted_render_label: predicted.label,
       predicted_mimic_mode: predicted.mode,
       predicted_render_detail: predicted.detail,
+      mode_override: modeOverride ?? null,
     });
   }
 

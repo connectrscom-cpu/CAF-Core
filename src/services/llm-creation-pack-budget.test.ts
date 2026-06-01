@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  budgetCreationPackForMimicFlow,
   budgetSignalPackContextForLlm,
   filterSignalPackIdeasForCandidate,
   slimDerivedGlobalsForLlm,
+  slimSignalPackIdeaRowForMimicLlm,
   slimVisualGuidelineEntryForLlm,
 } from "./llm-creation-pack-budget.js";
+import { slimContextForCreationPackJson } from "./llm-generator-helpers.js";
 
 function fakeIdea(id: string): Record<string, unknown> {
   return {
@@ -72,8 +75,7 @@ describe("llm-creation-pack-budget", () => {
     expect((budgeted.ideas_json as Record<string, unknown>[])[0]?.id).toBe("idea_12");
     const dg = budgeted.derived_globals_json as Record<string, unknown>;
     const vgp = dg.visual_guidelines_pack_v1 as Record<string, unknown>;
-    const entry = (vgp.entries as Record<string, unknown>[])[0];
-    expect(entry.inspection_media).toBeUndefined();
+    expect((vgp.entries as unknown[]).length).toBe(0);
     expect(JSON.stringify(budgeted).length).toBeLessThanOrEqual(20_000);
   });
 
@@ -95,5 +97,95 @@ describe("llm-creation-pack-budget", () => {
       hashtag_leaderboard_v1: Array.from({ length: 80 }, (_, i) => ({ hashtag: `#t${i}` })),
     });
     expect((slim?.hashtag_leaderboard_v1 as unknown[]).length).toBe(30);
+  });
+
+  it("slims mimic idea rows and enforces signal pack char cap with a single idea", () => {
+    const longUrl = `https://cdn.example.com/${"z".repeat(4000)}.jpg`;
+    const pack = {
+      ideas_json: [
+        {
+          id: "mimic_ins_x",
+          title: "Hook",
+          aesthetic_analysis_json: {
+            slides: Array.from({ length: 12 }, (_, i) => ({
+              slide_index: i + 1,
+              visual_description: "d".repeat(2000),
+              inspection_media: { vision_fetch_url: longUrl },
+            })),
+          },
+        },
+      ],
+      overall_candidates_json: Array.from({ length: 40 }, (_, i) => ({
+        id: `cand_${i}`,
+        blob: "x".repeat(3000),
+      })),
+      derived_globals_json: {
+        visual_guidelines_pack_v1: {
+          entries: Array.from({ length: 8 }, (_, i) => ({
+            insights_id: `ins_${i}`,
+            aesthetic_analysis_json: { slides: [{ visual_description: "y".repeat(1500) }] },
+          })),
+        },
+      },
+      ig_summary: "summary ".repeat(500),
+    };
+
+    const budgeted = budgetSignalPackContextForLlm(
+      pack,
+      { maxTotalJsonChars: 18_000, maxCandidateRows: 55, maxStringFieldChars: 800 },
+      { candidateData: { idea_id: "mimic_ins_x" }, mimicFlowOnly: true }
+    );
+
+    expect((budgeted.ideas_json as unknown[]).length).toBe(1);
+    const idea = (budgeted.ideas_json as Record<string, unknown>[])[0];
+    expect(idea.aesthetic_analysis_json).toBeUndefined();
+    expect(idea.title).toBe("Hook");
+    expect((budgeted.overall_candidates_json as unknown[]).length).toBe(0);
+    const dg = budgeted.derived_globals_json as Record<string, unknown>;
+    const vgp = dg.visual_guidelines_pack_v1 as Record<string, unknown>;
+    expect((vgp.entries as unknown[]).length).toBe(0);
+    expect(JSON.stringify(budgeted).length).toBeLessThanOrEqual(18_000);
+  });
+
+  it("budgetCreationPackForMimicFlow caps whole pack JSON", () => {
+    const pack = {
+      strategy: { thesis: "s".repeat(20_000) },
+      brand_constraints: { voice: "b".repeat(20_000) },
+      product_profile: { sku: "p".repeat(20_000) },
+      signal_pack: { ideas_json: [{ id: "a", title: "A" }] },
+      candidate: { idea_id: "a", extra: "c".repeat(10_000) },
+      top_performer_mimic_knowledge: { entries: [{ deck: "k".repeat(8000) }] },
+    };
+    const out = budgetCreationPackForMimicFlow(pack, 12_000);
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(12_000);
+    expect(out.top_performer_mimic_knowledge).toBeNull();
+  });
+
+  it("slimContextForCreationPackJson omits duplicate mimic carousel fields", () => {
+    const slim = slimContextForCreationPackJson({
+      strategy: { thesis: "ok" },
+      top_performer_mimic_knowledge: { entries: [{ x: 1 }] },
+      publication_output_contract: "do not duplicate",
+      mimic_visual_guideline_for_copy: { slides: [{ slide_index: 1 }] },
+      mimic_render_context: { target_slide_count: 8 },
+      global_learning_context: "learn",
+    });
+    expect(slim.strategy).toEqual({ thesis: "ok" });
+    expect(slim.top_performer_mimic_knowledge).toBeUndefined();
+    expect(slim.publication_output_contract).toBeUndefined();
+    expect(slim.mimic_visual_guideline_for_copy).toBeUndefined();
+    expect(slim.global_learning_context).toBeUndefined();
+  });
+
+  it("slimSignalPackIdeaRowForMimicLlm drops inspection blobs", () => {
+    const slim = slimSignalPackIdeaRowForMimicLlm({
+      id: "ins_1",
+      title: "T",
+      inspection_media: { items: [] },
+      aesthetic_analysis_json: { slides: [] },
+    });
+    expect(slim.id).toBe("ins_1");
+    expect(slim.inspection_media).toBeUndefined();
+    expect(slim.aesthetic_analysis_json).toBeUndefined();
   });
 });

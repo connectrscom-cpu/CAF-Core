@@ -26,16 +26,16 @@ export const CAROUSEL_COPY_SYSTEM_ADDENDUM = `Carousel copy quality (editorial b
  */
 export const MIMIC_TEMPLATE_BG_COPY_ADDENDUM = `Mimic template carousel (text-on-template):
 - **Primary deliverable:** Complete per-slide copy for every slide in the deck (headline, body, kicker, CTA fields per schema). This copy will be composited onto pre-extracted background plates — write for on-slide reading, not caption-only.
-- **Narrative:** Produce a **fresh variant** of the reference carousel's story arc and list structure. Same pattern and pacing as the top performer, new wording — do not transcribe or lightly paraphrase the reference transcripts in \`mimic_render_context\` / visual guideline.
+- **Narrative:** Produce a **fresh variant** of the reference carousel's story arc and list structure. Match the reference's **roles, pacing, and approximate length per slide** (~80% structural similarity) using \`slide_copy_layout\` — new wording only; do not transcribe reference_on_screen_text.
 - **Slide count:** Match \`mimic_render_context.target_slide_count\` when set; otherwise match the reference deck length.
 - Obey all carousel structure rules above (hook → body slides → CTA, substantive bodies, @handle on CTA when provided).`;
 
 /**
- * Top-performer mimic — `carousel_visual` / full-bleed branch. Qwen recreates whole slides; LLM supplies caption + light on-image hooks only.
+ * Top-performer mimic — `carousel_visual` branch. Art-only visual plate (~80% similarity) + HBS text overlay.
  */
-export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic full-bleed carousel (visual-led):
-- **Primary deliverable:** A strong **caption** and **hashtags** (when the schema includes them). On-slide slide fields are **secondary** — Qwen will recreate visuals from reference frames with minimal text baked into images.
-- **Slides:** If the output schema requires a \`slides\` array, keep each slide **short** (headline or hook only, ≤120 characters total on-slide per slide). Do **not** write long body paragraphs on slides — put depth in the **caption** instead.
-- **Do not** invent app downloads, product pitches, or brand-locked CTAs unless present in candidate/signal context.
-- Match the reference deck's **slide count** when \`mimic_render_context.target_slide_count\` is set.
-- Caption should stand alone as the post text; hashtags obey platform_constraints.max_hashtags.`;
+export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic visual carousel (visual plate + text overlay):
+- **Primary deliverable:** Complete per-slide copy for every slide (headline, body, kicker, CTA per schema). Render generates an art-only visual plate per slide, then composites this copy via HBS at Nemotron \`text_blocks\` / \`typography\` placement — write for on-slide reading.
+- **Narrative:** Fresh variant of the reference story arc and list structure. Match slide roles, line count, and approximate length from \`slide_copy_layout\` (~80% structural similarity to the top performer) — never transcribe reference_on_screen_text verbatim.
+- **Caption / hashtags:** Include when the schema expects them; they are the Instagram post text, separate from on-slide fields.
+- **Slide count:** Match \`mimic_render_context.target_slide_count\` when set.
+- Obey all carousel structure rules above (hook → body slides → CTA, substantive bodies, @handle on CTA when provided).`;

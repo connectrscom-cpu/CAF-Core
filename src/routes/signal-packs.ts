@@ -516,17 +516,55 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
     return { ok: true, updated: n, selected_count: selected.length, selected_idea_ids: selected };
   });
 
+  const mimicModeOverrideBodySchema = z.object({
+    insights_id: z.string().min(1),
+    mode_override: z.enum(["carousel_visual", "template_bg"]).nullable(),
+  });
+
+  async function getPackForMimicOverride(projectSlug: string, packId: string) {
+    const project = await ensureProject(db, projectSlug);
+    const pack = await getSignalPackById(db, packId);
+    if (!pack || pack.project_id !== project.id) return null;
+    return pack;
+  }
+
   /**
-   * POST /v1/signal-packs/:pack_id/mimic-mode-override
+   * POST /v1/signal-packs/:project_slug/:id/mimic-mode-override
    * Body: { insights_id, mode_override: "carousel_visual" | "template_bg" | null }
+   */
+  app.post("/v1/signal-packs/:project_slug/:id/mimic-mode-override", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = mimicModeOverrideBodySchema.safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const pack = await getPackForMimicOverride(params.data.project_slug, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+
+    const n = await setSignalPackMimicModeOverride(
+      db, pack.id, body.data.insights_id, body.data.mode_override
+    );
+    if (!n) return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
+    return { ok: true, insights_id: body.data.insights_id, mode_override: body.data.mode_override };
+  });
+
+  /** GET /v1/signal-packs/:project_slug/:id/mimic-mode-overrides */
+  app.get("/v1/signal-packs/:project_slug/:id/mimic-mode-overrides", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const pack = await getPackForMimicOverride(params.data.project_slug, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    return { ok: true, overrides: getMimicModeOverridesFromPack(pack) };
+  });
+
+  /**
+   * Legacy pack-id-only paths (Review proxies may still call these).
+   * POST /v1/signal-packs/:pack_id/mimic-mode-override
    */
   app.post("/v1/signal-packs/:pack_id/mimic-mode-override", async (request, reply) => {
     const params = z.object({ pack_id: z.string().uuid() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
-    const body = z.object({
-      insights_id: z.string().min(1),
-      mode_override: z.enum(["carousel_visual", "template_bg"]).nullable(),
-    }).safeParse(request.body);
+    const body = mimicModeOverrideBodySchema.safeParse(request.body);
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
 
     const n = await setSignalPackMimicModeOverride(

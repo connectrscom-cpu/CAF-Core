@@ -10,15 +10,20 @@ const CAF_CORE_TOKEN = process.env.CAF_CORE_TOKEN || "";
  * Returns the stored mimic_mode_overrides map for this signal pack.
  */
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ packId: string }> }
 ) {
   try {
     const { packId } = await context.params;
+    const url = new URL(request.url);
+    const project = url.searchParams.get("project")?.trim();
     const base = CAF_CORE_URL.replace(/\/$/, "");
     const headers: Record<string, string> = { Accept: "application/json" };
     if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
-    const res = await fetch(`${base}/v1/signal-packs/${encodeURIComponent(packId)}/mimic-mode-overrides`, {
+    const corePath = project
+      ? `/v1/signal-packs/${encodeURIComponent(project)}/${encodeURIComponent(packId)}/mimic-mode-overrides`
+      : `/v1/signal-packs/${encodeURIComponent(packId)}/mimic-mode-overrides`;
+    const res = await fetch(`${base}${corePath}`, {
       cache: "no-store",
       headers,
     });

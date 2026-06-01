@@ -9,7 +9,10 @@ import {
 import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
-import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  isTopPerformerMimicCarouselFlow,
+  isTopPerformerMimicRenderableFlow,
+} from "../domain/top-performer-mimic-flow-types.js";
 import {
   pickTopPerformerKnowledgeForStep,
   topPerformerKnowledgeStepForFlowType,
@@ -18,7 +21,11 @@ import {
 } from "../domain/signal-pack-top-performer-knowledge.js";
 import { filterSignalPackHashtagCandidates } from "../domain/signal-hashtag-sanitize.js";
 import { loadConfig } from "../config.js";
-import { budgetSignalPackContextForLlm, slimVisualGuidelineEntryForLlm } from "./llm-creation-pack-budget.js";
+import {
+  budgetCreationPackForMimicFlow,
+  budgetSignalPackContextForLlm,
+  slimVisualGuidelineEntryForLlm,
+} from "./llm-creation-pack-budget.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "./publish-metadata-enrich.js";
 
 /** Full research context for prompts (`{{creation_pack_json}}` / `{{signal_pack}}`). */
@@ -319,10 +326,28 @@ export const LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
   "creative_style_guidance",
 ] as const;
 
+/**
+ * Mimic carousel user templates also expand `{{top_performer_mimic_knowledge}}` and job payload
+ * carries `mimic_v1` — omit from `{{creation_pack_json}}` to avoid sending the same text twice.
+ */
+export const MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
+  "top_performer_mimic_knowledge",
+  "publication_output_contract",
+  "mimic_visual_guideline_for_copy",
+  "mimic_render_context",
+] as const;
+
 export function slimContextForCreationPackJson(context: Record<string, unknown>): Record<string, unknown> {
   const out = { ...context };
   for (const k of LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON) {
     delete out[k];
+  }
+  const mimicCarouselCopy =
+    "mimic_visual_guideline_for_copy" in context || "mimic_render_context" in context;
+  if (mimicCarouselCopy) {
+    for (const k of MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON) {
+      delete out[k];
+    }
   }
   return out;
 }
@@ -347,13 +372,18 @@ export async function buildCreationPack(
 
   const cfg = loadConfig();
   const mimicFlowOnly = !!(flowType && isTopPerformerMimicRenderableFlow(flowType));
+  const signalPackJsonMaxChars = mimicFlowOnly
+    ? Math.min(cfg.LLM_SIGNAL_PACK_JSON_MAX_CHARS, cfg.LLM_MIMIC_SIGNAL_PACK_JSON_MAX_CHARS)
+    : cfg.LLM_SIGNAL_PACK_JSON_MAX_CHARS;
   const signal_pack = signalPack
     ? budgetSignalPackContextForLlm(
         structuredClone(signalPackContextForLlm(signalPack)) as Record<string, unknown>,
         {
-          maxTotalJsonChars: cfg.LLM_SIGNAL_PACK_JSON_MAX_CHARS,
-          maxCandidateRows: cfg.LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS,
-          maxStringFieldChars: cfg.LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS,
+          maxTotalJsonChars: signalPackJsonMaxChars,
+          maxCandidateRows: mimicFlowOnly ? 1 : cfg.LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS,
+          maxStringFieldChars: mimicFlowOnly
+            ? Math.min(cfg.LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS, 2_000)
+            : cfg.LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS,
         },
         { candidateData, mimicFlowOnly }
       )
@@ -398,14 +428,30 @@ export async function buildCreationPack(
         : null;
     const step = topPerformerKnowledgeStepForFlowType(flowType);
     if (step) {
-      pack.top_performer_mimic_knowledge = slimTopPerformerKnowledgeForLlm(
-        pickTopPerformerKnowledgeForStep(derivedGlobals, step)
-      );
+      const slice = pickTopPerformerKnowledgeForStep(derivedGlobals, step);
+      if (isTopPerformerMimicCarouselFlow(flowType) && "media_lane" in slice) {
+        const lane = slice as TopPerformerMediaLaneSlice;
+        pack.top_performer_mimic_knowledge = {
+          media_lane: lane.media_lane,
+          visual_guideline_cues: lane.visual_guideline_cues.slice(0, 24),
+          content_format_groups: lane.content_format_groups.slice(0, 6),
+          entry_count: 0,
+          entries: [],
+        };
+      } else {
+        pack.top_performer_mimic_knowledge = slimTopPerformerKnowledgeForLlm(slice);
+      }
     }
+  }
+
+  if (mimicFlowOnly) {
+    return budgetCreationPackForMimicFlow(pack, cfg.LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS);
   }
 
   return pack;
 }
+
+export { appendMimicGroundedReferenceToUserPrompt } from "../domain/mimic-job-grounding.js";
 
 export function interpolateTemplate(template: string, context: Record<string, unknown>): string {
   let result = template;

@@ -17,8 +17,13 @@ import {
   stripHashtagsFromSlideCopy,
   stripNonRenderableDeckFields,
   synchronizeCoverRootStringFields,
+  withInlinedBackgroundImage,
 } from "./carousel-render-pack.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
+
+vi.mock("./supabase-storage.js", () => ({
+  downloadBufferFromUrl: vi.fn(async () => Buffer.from("fakepng")),
+}));
 
 describe("synchronizeCoverRootStringFields", () => {
   it("flattens legacy object cover into headline/subtitle strings", () => {
@@ -525,6 +530,39 @@ describe("carousel template shape (body_slides)", () => {
     const flat = slidesFromGeneratedOutput(gen);
     const ctx = buildSlideRenderContext(gen, flat, 1);
     expect(ctx.carousel_body_font_px).toBe(88);
+  });
+});
+
+describe("withInlinedBackgroundImage", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("inlines Supabase URLs via downloadBufferFromUrl when config is provided", async () => {
+    const { downloadBufferFromUrl } = await import("./supabase-storage.js");
+    const out = await withInlinedBackgroundImage(
+      {
+        background_image_url:
+          "https://proj.supabase.co/storage/v1/object/public/assets/mimic_backgrounds/slide_002_bg_v1.png",
+      },
+      { config: { SUPABASE_URL: "https://proj.supabase.co" } as import("../config.js").AppConfig }
+    );
+    expect(downloadBufferFromUrl).toHaveBeenCalled();
+    expect(String(out.background_image_url)).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("throws in strict mode when inline fails", async () => {
+    const { downloadBufferFromUrl } = await import("./supabase-storage.js");
+    vi.mocked(downloadBufferFromUrl).mockRejectedValueOnce(new Error("403 forbidden"));
+    await expect(
+      withInlinedBackgroundImage(
+        { background_image_url: "https://proj.supabase.co/storage/v1/object/public/assets/bg.png" },
+        {
+          config: { SUPABASE_URL: "https://proj.supabase.co" } as import("../config.js").AppConfig,
+          strict: true,
+        }
+      )
+    ).rejects.toThrow(/refusing plain-paper composite/i);
   });
 });
 

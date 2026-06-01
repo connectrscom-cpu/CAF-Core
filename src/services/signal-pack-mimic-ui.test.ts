@@ -54,6 +54,30 @@ describe("buildSignalPackMimicReferencesForUi", () => {
     expect(carouselRow?.predicted_render_label).toBeTruthy();
   });
 
+  it("includes pack-level mode_override on mimic reference rows", () => {
+    const pack = {
+      derived_globals_json: {
+        mimic_mode_overrides: { ins_car_1: "carousel_visual" },
+        [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]: {
+          entries: [
+            {
+              insights_id: "ins_car_1",
+              analysis_tier: "top_performer_carousel",
+              source_evidence_row_id: "202",
+              evidence_kind: "instagram_post",
+              hook_text_preview: "Deck",
+              inspection_media: { items: [{ public_url: "https://x/b.jpg" }] },
+            },
+          ],
+        },
+      },
+    } as unknown as SignalPackRow;
+
+    const rows = buildSignalPackMimicReferencesForUi(pack);
+    expect(rows[0]?.mode_override).toBe("carousel_visual");
+    expect(rows[0]?.predicted_render_label).toBe("Full bleed");
+  });
+
   it("predicts Template from top-level mimic_evaluation on pack entry", () => {
     const pack = {
       derived_globals_json: {

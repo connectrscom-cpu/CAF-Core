@@ -12,7 +12,14 @@ import { resolveFlowEngineTemplateFlowType } from "../domain/canonical-flow-type
 import { validateAgainstOutputSchema } from "./schema-validator.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { randomUUID } from "node:crypto";
-import { buildCreationPack, interpolateTemplate } from "./llm-generator-helpers.js";
+import { buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
+import {
+  appendMimicGroundedReferenceToUserPrompt,
+  buildCreationPack,
+  interpolateTemplate,
+} from "./llm-generator-helpers.js";
+import { budgetCreationPackForMimicFlow } from "./llm-creation-pack-budget.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import {
   isProductImageFlow,
@@ -35,6 +42,7 @@ import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
+import { slimMimicVisualGuidelineForLlmCopy } from "../domain/mimic-carousel-package.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -104,6 +112,63 @@ function truncateForContext(s: string, maxChars: number, label: string): string 
   const t = (s ?? "").trim();
   if (t.length <= maxChars) return t;
   return `${t.slice(0, maxChars)}\n\n…(truncated ${t.length - maxChars} chars from ${label} for model context)`;
+}
+
+/** Leave room for carousel completion tokens under OpenAI 128k context (chars ≈ tokens × 3.5). */
+const OPENAI_128K_MESSAGE_CHAR_BUDGET = 460_000;
+const MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS = 200_000;
+
+function shrinkMimicCarouselPromptsIfNeeded(opts: {
+  systemPrompt: string;
+  userPrompt: string;
+  userTemplate: string;
+  templateContext: Record<string, unknown>;
+  creationPack: Record<string, unknown>;
+  appCfg: ReturnType<typeof loadConfig>;
+  taskId: string;
+  runId: string;
+}): { systemPrompt: string; userPrompt: string } {
+  let { systemPrompt, userPrompt } = opts;
+  let total = systemPrompt.length + userPrompt.length;
+  if (total <= OPENAI_128K_MESSAGE_CHAR_BUDGET) {
+    return { systemPrompt, userPrompt };
+  }
+
+  logPipelineEvent("warn", "generate", "mimic_carousel_prompt_over_context_budget", {
+    task_id: opts.taskId,
+    run_id: opts.runId,
+    data: { prompt_chars: total, budget_chars: OPENAI_128K_MESSAGE_CHAR_BUDGET },
+  });
+
+  const packCap = Math.max(8_000, Math.floor(opts.appCfg.LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS * 0.45));
+  const emergencyPack = budgetCreationPackForMimicFlow({ ...opts.creationPack }, packCap);
+  const emergencyCtx: Record<string, unknown> = {
+    ...opts.templateContext,
+    ...emergencyPack,
+    global_learning_context: truncateForContext(
+      String(opts.templateContext.global_learning_context ?? ""),
+      Math.min(4_000, opts.appCfg.LLM_LEARNING_GLOBAL_CONTEXT_MAX_CHARS),
+      "global_learning_context"
+    ),
+    project_learning_context: truncateForContext(
+      String(opts.templateContext.project_learning_context ?? ""),
+      Math.min(4_000, opts.appCfg.LLM_LEARNING_PROJECT_CONTEXT_MAX_CHARS),
+      "project_learning_context"
+    ),
+    learning_guidance: truncateForContext(
+      String(opts.templateContext.learning_guidance ?? ""),
+      Math.min(6_000, opts.appCfg.LLM_LEARNING_GUIDANCE_MAX_CHARS),
+      "learning_guidance"
+    ),
+  };
+  userPrompt = interpolateTemplate(opts.userTemplate, emergencyCtx);
+
+  total = systemPrompt.length + userPrompt.length;
+  if (total > OPENAI_128K_MESSAGE_CHAR_BUDGET && systemPrompt.length > MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS) {
+    systemPrompt = `${systemPrompt.slice(0, MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS)}\n\n[Truncated: system prompt exceeded mimic context guard.]`;
+  }
+
+  return { systemPrompt, userPrompt };
 }
 
 /**
@@ -426,7 +491,18 @@ export async function generateForJob(
 
   const mimicForCopy = pickMimicPayload(payload);
   const mimicRenderContextFromPayload = asRecord(payload.mimic_render_context);
+  const mimicJobGrounding = asRecord(payload.mimic_job_grounding);
+  if (mimicJobGrounding) {
+    templateContext.mimic_job_grounding = mimicJobGrounding;
+  }
   if (mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    if (mimicForCopy.visual_guideline) {
+      templateContext.mimic_visual_guideline_for_copy = slimMimicVisualGuidelineForLlmCopy(
+        mimicForCopy.visual_guideline as unknown as Record<string, unknown>
+      );
+    } else if (mimicJobGrounding?.visual_guideline_for_copy) {
+      templateContext.mimic_visual_guideline_for_copy = mimicJobGrounding.visual_guideline_for_copy;
+    }
     templateContext.mimic_render_context =
       mimicRenderContextFromPayload ??
       (mimicForCopy.visual_guideline
@@ -519,6 +595,15 @@ export async function generateForJob(
     }
   }
 
+  if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    userPrompt = appendMimicGroundedReferenceToUserPrompt(userPrompt, {
+      mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
+      mimic_render_context: templateContext.mimic_render_context,
+      mimic_job_grounding: templateContext.mimic_job_grounding,
+      slide_copy_layout: buildSlideCopyLayoutForLlmFromPayload(payload),
+    });
+  }
+
   if (compiledLearning.merged_guidance.trim()) {
     systemPrompt = `${systemPrompt.trim()}\n\nValidated learning context (shape tone, hooks, and structure; do not quote this section verbatim):\n${compiledLearning.merged_guidance}`.trim();
   }
@@ -597,6 +682,28 @@ export async function generateForJob(
     if (bits.length) {
       userPrompt = `${userPrompt.trim()}\n\n---\nEditorial rework for task ${job.task_id}. Address this feedback in the output:\n${bits.join("\n")}`.trim();
     }
+  }
+
+  if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    const shrunk = shrinkMimicCarouselPromptsIfNeeded({
+      systemPrompt,
+      userPrompt,
+      userTemplate: promptTemplate.user_prompt_template ?? "Generate content using: {{creation_pack_json}}",
+      templateContext,
+      creationPack,
+      appCfg,
+      taskId: job.task_id,
+      runId: job.run_id,
+    });
+    systemPrompt = shrunk.systemPrompt;
+    userPrompt = shrunk.userPrompt;
+  }
+
+  if (isCarouselFlow(job.flow_type)) {
+    const estMessageTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 3.5);
+    const modelContext = 128_000;
+    const headroom = 2_000;
+    maxTokens = Math.min(maxTokens, Math.max(2_048, modelContext - estMessageTokens - headroom));
   }
 
   const draftId = `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`;

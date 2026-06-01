@@ -53,7 +53,9 @@ import {
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { shouldSkipMimicFlowExpansion } from "./mimic-planning-guards.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
+import { buildMimicJobPlanningGrounding } from "../domain/mimic-job-grounding.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
+import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
 import {
   assignVideoFlowForPlanningRow,
@@ -309,6 +311,32 @@ export async function startRun(
 
       const candidateData = resolveCandidateDataForPlannedJob(overallCandidates, job.candidate_id);
 
+      const plannedPayload = buildPlannedGenerationPayloadBase({
+        signal_pack_id: run.signal_pack_id,
+        candidate_data: candidateData ?? {},
+        prompt_version_id: job.prompt_version_id,
+        prompt_id: job.prompt_id,
+        prompt_version_label: job.prompt_version_label,
+        variation_index: job.variation_index,
+      });
+      if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
+        const derived =
+          pack.derived_globals_json &&
+          typeof pack.derived_globals_json === "object" &&
+          !Array.isArray(pack.derived_globals_json)
+            ? (pack.derived_globals_json as Record<string, unknown>)
+            : null;
+        const mimicGrounding = await buildMimicJobPlanningGrounding(
+          db,
+          run.project_id,
+          derived,
+          candidateData ?? {}
+        );
+        if (mimicGrounding) {
+          plannedPayload.mimic_job_grounding = mimicGrounding;
+        }
+      }
+
       const result = await upsertContentJob(db, {
         task_id: taskId,
         project_id: run.project_id,
@@ -320,14 +348,7 @@ export async function startRun(
         status: "PLANNED",
         recommended_route: job.recommended_route,
         pre_gen_score: job.pre_gen_score,
-        generation_payload: buildPlannedGenerationPayloadBase({
-          signal_pack_id: run.signal_pack_id,
-          candidate_data: candidateData ?? {},
-          prompt_version_id: job.prompt_version_id,
-          prompt_id: job.prompt_id,
-          prompt_version_label: job.prompt_version_label,
-          variation_index: job.variation_index,
-        }),
+        generation_payload: plannedPayload,
       });
 
       createdJobIds.push(result.id);

@@ -567,3 +567,29 @@ export async function getEvidenceRowInsightById(
     [projectId, id]
   );
 }
+
+/** Full vision row for a single top-performer insight (mimic per-job grounding at plan time). */
+export async function getEvidenceRowInsightByInsightsId(
+  db: Pool,
+  projectId: string,
+  insightsId: string
+): Promise<EvidenceRowInsightRow | null> {
+  const iid = String(insightsId ?? "").trim();
+  if (!iid) return null;
+  return qOne(
+    db,
+    `SELECT id::text, project_id::text, inputs_import_id::text, source_evidence_row_id::text, insights_id, analysis_tier,
+            pre_llm_score::text, llm_model,
+            why_it_worked, primary_emotion, secondary_emotion, hook_type,
+            custom_label_1, custom_label_2, custom_label_3,
+            cta_type, hashtags, caption_style, hook_text,
+            risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
+            evidence_performance_review_json,
+            created_at::text, updated_at::text
+       FROM caf_core.inputs_evidence_row_insights
+      WHERE project_id = $1 AND insights_id = $2
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [projectId, iid]
+  );
+}

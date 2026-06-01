@@ -156,6 +156,8 @@ function compactAestheticAnalysisForPackEntry(aes: Record<string, unknown>): Rec
     for (const raw of slidesRaw.slice(0, 24)) {
       const s = asRecord(raw);
       if (!s) continue;
+      const typo = asRecord(s.typography);
+      const textBlocks = Array.isArray(s.text_blocks) ? s.text_blocks.slice(0, 12) : [];
       slides.push({
         slide_index: s.slide_index,
         on_screen_text_transcript: stringish(s.on_screen_text_transcript, 400),
@@ -165,6 +167,9 @@ function compactAestheticAnalysisForPackEntry(aes: Record<string, unknown>): Rec
         image_or_photo_role: stringish(s.image_or_photo_role, 80),
         slide_purpose: stringish(s.slide_purpose, 40),
         brand_specificity: stringish(s.brand_specificity, 40),
+        graphic_elements: stringish(s.graphic_elements, 200),
+        ...(typo ? { typography: typo } : {}),
+        ...(textBlocks.length > 0 ? { text_blocks: textBlocks } : {}),
       });
     }
     if (slides.length > 0) out.slides = slides;

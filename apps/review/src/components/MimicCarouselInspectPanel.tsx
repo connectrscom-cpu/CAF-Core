@@ -111,14 +111,18 @@ export function MimicCarouselInspectPanel({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/pipeline/signal-packs/${encodeURIComponent(signalPackId)}/mimic-mode-overrides`, { cache: "no-store" });
+        const qs = projectSlug.trim() ? `?project=${encodeURIComponent(projectSlug.trim())}` : "";
+        const res = await fetch(
+          `/api/pipeline/signal-packs/${encodeURIComponent(signalPackId)}/mimic-mode-overrides${qs}`,
+          { cache: "no-store" }
+        );
         if (!res.ok) return;
         const json = await res.json();
         if (!cancelled && json.overrides) setSpOverrides(json.overrides);
       } catch { /* ignore */ }
     })();
     return () => { cancelled = true; };
-  }, [signalPackId]);
+  }, [signalPackId, projectSlug]);
 
   const currentModeOverride = useMemo((): MimicModeOverrideValue => {
     const v = mimicV1?.mode_override;

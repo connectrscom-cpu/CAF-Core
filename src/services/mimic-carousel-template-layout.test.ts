@@ -61,4 +61,12 @@ describe("injectMimicBackgroundPlateSupport", () => {
     expect(out).toContain(".slide > .frame");
     expect(out).toMatch(/<div class="slide">\s*\n\s*\{\{#if background_image_url\}\}/);
   });
+
+  it("injects slide-bg into carousel_sns_cosmic_identity (inner layout)", async () => {
+    const raw = await readFile(path.join(tplDir, "carousel_sns_cosmic_identity.hbs"), "utf8");
+    const out = injectMimicBackgroundPlateSupport(raw);
+    expect(out).toContain(".slide-bg");
+    expect(out).toContain("{{{../background_image_url}}}");
+    expect(out).toMatch(/<div class="slide">\s*\n\s*\{\{#if background_image_url\}\}/);
+  });
 });

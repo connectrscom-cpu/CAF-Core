@@ -130,4 +130,25 @@ describe("buildMimicRenderContextForLlm", () => {
     expect(ctx.target_slide_count).toBe(2);
     expect(ctx.render_sequence).toBe("copy_then_template_overlay");
   });
+
+  it("marks visual_plate_then_hbs_overlay for carousel_visual", () => {
+    const mimic: MimicPayloadV1 = {
+      schema_version: 1,
+      mode: "carousel_visual",
+      classified_at: "2026-01-01T00:00:00.000Z",
+      source_insights_id: "ins_a",
+      analysis_tier: "top_performer_carousel",
+      reference_items: [
+        { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg" },
+        { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg" },
+      ],
+      twist_brief: { visual_only: true, legal_note: "pattern only" },
+    };
+    const ctx = buildMimicRenderContextForLlm(mimic, {
+      aesthetic_analysis_json: { format_pattern: "listicle", slides: [{}, {}] },
+    });
+    expect(ctx.copy_before_visual_mimic).toBe(true);
+    expect(ctx.target_slide_count).toBe(2);
+    expect(ctx.render_sequence).toBe("visual_plate_then_hbs_overlay");
+  });
 });

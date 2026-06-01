@@ -312,6 +312,14 @@ const envSchema = z.object({
   LLM_SIGNAL_PACK_MAX_CANDIDATE_ROWS: z.coerce.number().int().min(1).max(2000).default(55),
   /** Truncate individual string fields in the signal pack context (e.g. embedded HTML blobs). */
   LLM_SIGNAL_PACK_MAX_STRING_FIELD_CHARS: z.coerce.number().int().min(500).max(200_000).default(14_000),
+  /**
+   * Serialized `creation_pack` cap for top-performer mimic flows (signal pack + strategy + brand + hints).
+   * Job-level `mimic_v1.visual_guideline` is injected separately — avoid duplicating full pack entries here.
+   */
+  /** Max JSON size for mimic-flow `{{creation_pack_json}}` (visual structure lives on job `mimic_v1`). */
+  LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(48_000),
+  /** Tighter cap for `signal_pack` inside mimic creation packs (full pack default is too large). */
+  LLM_MIMIC_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
 
   /**
    * Learning contexts are injected both as individual placeholders and inside `{{creation_pack_json}}`.
