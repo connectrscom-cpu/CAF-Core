@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
+  expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
   isFullBleedCandidateSlide,
   isPromotionalSlide,
   mimicCarouselNeedsBackgroundPlate,
   reconcileFullBleedSlidePlansAtRender,
+  reconcileMimicPayloadToOutputSlideCount,
   referenceItemForMimicSlide,
   requireMimicSlideBackgroundPlate,
   slideMimicRenderMode,
@@ -268,6 +270,49 @@ describe("requireMimicSlideBackgroundPlate", () => {
         run_id: "r1",
       }, mimic, 1)
     ).rejects.toThrow(/Mimic carousel render blocked/);
+  });
+});
+
+describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutputSlideCount", () => {
+  it("caps output count to generated copy slides", () => {
+    const mimic = baseMimic({});
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg" },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg" },
+      { index: 4, role: "carousel_slide", vision_fetch_url: "https://example.com/4.jpg" },
+    ];
+    expect(expectedMimicCarouselOutputSlideCount(mimic, 2)).toBe(2);
+    const reconciled = reconcileMimicPayloadToOutputSlideCount(mimic, 2);
+    expect(reconciled.reference_items).toHaveLength(2);
+    expect(reconciled.slide_plans).toHaveLength(2);
+    expect(reconciled.slide_plans?.[1]?.slide_index).toBe(2);
+  });
+
+  it("filters reference items outside content_slide_indices", () => {
+    const mimic = baseMimic({
+      mimic_evaluation: {
+        content_slide_indices: [1, 3],
+        skip_slide_indices: [],
+      },
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "one" },
+        { slide_index: 2, on_screen_text_transcript: "promo" },
+        { slide_index: 3, on_screen_text_transcript: "three" },
+        { slide_index: 4, on_screen_text_transcript: "four" },
+      ],
+    });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg", source_slide_index: 2 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg", source_slide_index: 3 },
+      { index: 4, role: "carousel_slide", vision_fetch_url: "https://example.com/4.jpg", source_slide_index: 4 },
+    ];
+    const { mimic: filtered, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(filtered.reference_items).toHaveLength(2);
+    expect(filtered.reference_items[0]?.source_slide_index).toBe(1);
+    expect(filtered.reference_items[1]?.source_slide_index).toBe(3);
+    expect(removed_slide_indices).toEqual(expect.arrayContaining([2, 4]));
   });
 });
 

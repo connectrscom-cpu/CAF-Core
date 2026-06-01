@@ -322,13 +322,26 @@ export function buildMimicSlideCopyLayoutFromEntry(
 }
 
 /** Visual guideline for mimic carousel copy prompts — no URLs, capped slide text. */
-export function slimMimicVisualGuidelineForLlmCopy(entry: Record<string, unknown>): MimicCarouselVisualGuideline {
+export function slimMimicVisualGuidelineForLlmCopy(
+  entry: Record<string, unknown>,
+  opts?: { content_slide_indices?: number[] }
+): MimicCarouselVisualGuideline {
   const base = slimVisualGuidelineFromEntry(entry);
+  const contentIndices =
+    opts?.content_slide_indices ??
+    (base.mimic_evaluation?.content_slide_indices?.length
+      ? base.mimic_evaluation.content_slide_indices
+      : []);
+  let slides = base.slides;
+  if (slides && contentIndices.length > 0) {
+    const contentSet = new Set(contentIndices);
+    slides = slides.filter((s) => contentSet.has(s.slide_index));
+  }
   return {
     ...base,
     replication_blueprint: null,
     slides:
-      base.slides?.map((s) => ({
+      slides?.map((s) => ({
         ...s,
         visual_description: truncateSlideTextForLlm(s.visual_description, LLM_COPY_VISUAL_DESC_MAX_CHARS),
         on_screen_text_transcript: truncateSlideTextForLlm(

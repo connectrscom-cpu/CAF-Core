@@ -12,6 +12,7 @@ import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js
 import {
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
+  reconcileMimicPayloadToOutputSlideCount,
 } from "./mimic-carousel-render.js";
 import { slideHasRenderableContent, slidesFromGeneratedOutput } from "./carousel-render-pack.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -437,22 +438,40 @@ export async function prepareMimicDraftPackage(
     assertMimicCopyDiffersFromReference(merged, resolvedGuideline);
   }
 
-  if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic?.mode === "carousel_visual") {
-    const expected = expectedMimicCarouselOutputSlideCount(mimic);
+  if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic) {
     const gen = pickGeneratedOutputOrEmpty(merged);
-    const llmSlides = slidesFromGeneratedOutput(gen).filter((s) =>
+    const renderableLlm = slidesFromGeneratedOutput(gen).filter((s) =>
       slideHasRenderableContent(s as Record<string, unknown>)
     );
-    if (expected > 0 && llmSlides.length !== expected) {
-      logPipelineEvent("warn", "generate", "mimic carousel copy slide count mismatch", {
-        run_id: runId ?? undefined,
-        task_id: job.task_id,
-        data: {
-          expected_slides: expected,
-          llm_slides: llmSlides.length,
-          skipped_promotional: asRecord(merged.mimic_render_context)?.skipped_promotional_slide_indices,
-        },
-      });
+    const llmCount = renderableLlm.length;
+    if (llmCount > 0) {
+      const refCountBefore = mimic.reference_items.length;
+      const outputCount = expectedMimicCarouselOutputSlideCount(mimic, llmCount);
+      if (refCountBefore !== outputCount) {
+        mimic = reconcileMimicPayloadToOutputSlideCount(mimic, outputCount);
+        merged = mergeMimicPayloadSlice(merged, mimic);
+        await persistGenerationPayload(db, job.id, merged);
+        logPipelineEvent("info", "generate", "Reconciled mimic_v1 to LLM copy slide count after generation", {
+          run_id: runId ?? undefined,
+          task_id: job.task_id,
+          data: {
+            reference_frames_before: refCountBefore,
+            output_slides: outputCount,
+            llm_slides: llmCount,
+            mode: mimic.mode,
+          },
+        });
+      } else if (refCountBefore > llmCount) {
+        logPipelineEvent("warn", "generate", "mimic carousel copy slide count mismatch", {
+          run_id: runId ?? undefined,
+          task_id: job.task_id,
+          data: {
+            expected_slides: outputCount,
+            llm_slides: llmCount,
+            skipped_promotional: asRecord(merged.mimic_render_context)?.skipped_promotional_slide_indices,
+          },
+        });
+      }
     }
   }
 

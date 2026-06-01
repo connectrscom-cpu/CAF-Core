@@ -72,6 +72,8 @@ import {
   renderMimicCarouselSlideFullBleed,
   filterPromotionalSlidesFromMimicPayload,
   reconcileFullBleedSlidePlansAtRender,
+  reconcileMimicPayloadToOutputSlideCount,
+  expectedMimicCarouselOutputSlideCount,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
@@ -1615,23 +1617,39 @@ async function processCarouselJob(
       }
     }
 
-    if (mimicPayload.mode === "template_bg") {
-      n = usableSlides.length;
-    } else if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
-      n = mimicPayload.reference_items.length;
-      if (usableSlides.length < n) {
-        logPipelineEvent("warn", "render", "LLM copy slide count below reference frame count", {
+    if (mimicPayload.mode === "template_bg" && mimicPayload.reference_items.length > 0) {
+      const llmCount = usableSlides.length;
+      const refFrames = mimicPayload.reference_items.length;
+      const outputCount = expectedMimicCarouselOutputSlideCount(
+        mimicPayload,
+        llmCount > 0 ? llmCount : undefined
+      );
+      if (llmCount > 0 && refFrames !== outputCount) {
+        mimicPayload = reconcileMimicPayloadToOutputSlideCount(mimicPayload, outputCount);
+        logPipelineEvent("info", "render", "Reconciled template_bg mimic to LLM copy slide count", {
           task_id: job.task_id,
           data: {
-            expected_slides: n,
-            llm_slides: usableSlides.length,
-            note: "Rendering all reference frames; short slides reuse nearest copy.",
+            reference_frames: refFrames,
+            output_slides: outputCount,
+            llm_slides: llmCount,
           },
         });
-      } else if (usableSlides.length > n) {
-        logPipelineEvent("info", "render", "LLM copy slide count exceeds reference frames — clamping", {
+      }
+      n = llmCount > 0 ? outputCount : Math.max(usableSlides.length, 1);
+    } else if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
+      const refFrames = mimicPayload.reference_items.length;
+      const llmCount = usableSlides.length;
+      const outputCount = expectedMimicCarouselOutputSlideCount(mimicPayload, llmCount);
+      mimicPayload = reconcileMimicPayloadToOutputSlideCount(mimicPayload, outputCount);
+      n = outputCount;
+      if (llmCount > 0 && (refFrames !== outputCount || llmCount !== outputCount)) {
+        logPipelineEvent("info", "render", "Reconciled mimic output to LLM copy slide count", {
           task_id: job.task_id,
-          data: { expected_slides: n, llm_slides: usableSlides.length },
+          data: {
+            reference_frames: refFrames,
+            output_slides: outputCount,
+            llm_slides: llmCount,
+          },
         });
       }
     } else {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appendMimicGroundedReferenceToUserPrompt,
+  buildContentSlideCopyLayoutFromEntry,
   buildMimicJobPlanningGrounding,
   buildMimicJobPlanningGroundingFromEntry,
   enrichGuidelineEntryFromLineageInsight,
@@ -75,6 +76,32 @@ describe("mimic-job-grounding", () => {
     expect(g?.slide_copy_layout[0]?.reference_on_screen_text).toContain("Hook");
     expect(g?.slide_copy_layout[0]?.visual_description).toContain("Bold");
     expect(g?.slide_copy_layout[0]?.text_blocks?.[0]?.role).toBe("title");
+  });
+
+  it("buildContentSlideCopyLayoutFromEntry filters to mimic_evaluation content slides", () => {
+    const layout = buildContentSlideCopyLayoutFromEntry({
+      aesthetic_analysis_json: {
+        mimic_evaluation: {
+          recommended_mode: "full_bleed_visual",
+          content_slide_indices: [1, 4],
+          skip_slide_indices: [2, 3],
+        },
+        slides: [
+          { slide_index: 1, on_screen_text_transcript: "Aries as food" },
+          { slide_index: 2, on_screen_text_transcript: "Franki app promo" },
+          { slide_index: 3, on_screen_text_transcript: "cash back" },
+          { slide_index: 4, on_screen_text_transcript: "Taurus as food" },
+        ],
+      },
+      stored_inspection_media_json: {
+        items: [{ index: 1 }, { index: 2 }, { index: 3 }, { index: 4 }],
+      },
+    });
+    expect(layout).toHaveLength(2);
+    expect(layout[0]?.slide_index).toBe(1);
+    expect(layout[0]?.reference_on_screen_text).toContain("Aries");
+    expect(layout[1]?.slide_index).toBe(2);
+    expect(layout[1]?.reference_on_screen_text).toContain("Taurus");
   });
 
   it("buildMimicJobPlanningGroundingFromEntry includes slide_copy_layout from full entry", () => {

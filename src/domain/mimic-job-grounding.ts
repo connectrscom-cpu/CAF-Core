@@ -8,6 +8,8 @@ import {
   slimMimicVisualGuidelineForLlmCopy,
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
+import { contentReferenceIndicesForTemplate } from "./mimic-template-library.js";
+import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
 
@@ -115,6 +117,67 @@ export interface MimicJobPlanningGrounding {
   slide_copy_layout: MimicSlideCopyLayoutForLlm[];
 }
 
+function totalReferenceFramesInEntry(entry: Record<string, unknown>): number {
+  const stored = asRecord(entry.stored_inspection_media_json);
+  const items = Array.isArray(stored?.items) ? stored!.items : [];
+  const slides = aestheticSlideRecords(entry);
+  return Math.max(items.length, slides.length, 1);
+}
+
+/**
+ * Per-slide copy contract aligned to content frames only (skips promo/video indices from mimic_evaluation).
+ */
+function contentIndicesForCopyLayout(entry: Record<string, unknown>, totalRefs: number): number[] {
+  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
+  const raw = asRecord(aes.mimic_evaluation) ?? asRecord(entry.mimic_evaluation);
+  const fromEval = Array.isArray(raw?.content_slide_indices)
+    ? raw!.content_slide_indices.filter(
+        (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1
+      )
+    : [];
+  if (fromEval.length > 0) {
+    const skip = new Set(
+      Array.isArray(raw?.skip_slide_indices)
+        ? raw!.skip_slide_indices.filter((v: unknown): v is number => typeof v === "number")
+        : []
+    );
+    return fromEval.filter((i) => i <= totalRefs && !skip.has(i));
+  }
+  return contentReferenceIndicesForTemplate(entry, totalRefs);
+}
+
+export function buildContentSlideCopyLayoutFromEntry(
+  entry: Record<string, unknown>
+): MimicSlideCopyLayoutForLlm[] {
+  const full = buildMimicSlideCopyLayoutFromEntry(entry);
+  if (full.length === 0) return full;
+
+  const totalRefs = totalReferenceFramesInEntry(entry);
+  const contentIndices = contentIndicesForCopyLayout(entry, totalRefs);
+  if (contentIndices.length === 0 || contentIndices.length >= full.length) return full;
+
+  const bySlideIndex = new Map(full.map((row) => [row.slide_index, row]));
+  return contentIndices.map((refIdx, outPos) => {
+    const row = bySlideIndex.get(refIdx) ?? full[refIdx - 1];
+    if (!row) {
+      return {
+        slide_index: outPos + 1,
+        reference_on_screen_text: null,
+        visual_description: null,
+        layout_template: null,
+        image_or_photo_role: null,
+        text_density: null,
+        slide_purpose: null,
+        graphic_elements: null,
+        color_tokens: null,
+        typography: null,
+        text_blocks: null,
+      };
+    }
+    return { ...row, slide_index: outPos + 1 };
+  });
+}
+
 export function buildMimicJobPlanningGroundingFromEntry(
   entry: Record<string, unknown>,
   insightIds: string[]
@@ -124,7 +187,7 @@ export function buildMimicJobPlanningGroundingFromEntry(
     grounding_insight_ids: insightIds,
     source_insights_id: sourceId,
     visual_guideline_for_copy: slimMimicVisualGuidelineForLlmCopy(entry),
-    slide_copy_layout: buildMimicSlideCopyLayoutFromEntry(entry),
+    slide_copy_layout: buildContentSlideCopyLayoutFromEntry(entry),
   };
 }
 

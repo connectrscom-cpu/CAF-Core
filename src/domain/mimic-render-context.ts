@@ -31,7 +31,8 @@ function renderStrategyForMode(mode: MimicMode): MimicCarouselRenderStrategy {
 /** Injected into LLM creation pack after reference resolve — before copy generation. */
 export function buildMimicRenderContextForLlm(
   mimic: MimicPayloadV1,
-  guidelineEntry: Record<string, unknown>
+  guidelineEntry: Record<string, unknown>,
+  opts?: { target_slide_count?: number | null }
 ): MimicRenderContextForLlm {
   const isTemplate = mimic.mode === "template_bg";
   const isCarouselVisual = mimic.mode === "carousel_visual";
@@ -46,10 +47,17 @@ export function buildMimicRenderContextForLlm(
         ""
     ).trim() || null;
 
+  const explicitTarget =
+    opts?.target_slide_count != null &&
+    Number.isFinite(opts.target_slide_count) &&
+    opts.target_slide_count > 0
+      ? Math.floor(opts.target_slide_count)
+      : null;
   const target_slide_count = copyBefore
-    ? isCarouselVisual
-      ? Math.max(mimic.reference_items.length, 1)
-      : targetSlideCountFromReference(mimic.reference_items.length, guidelineEntry)
+    ? explicitTarget ??
+      (isCarouselVisual
+        ? Math.max(mimic.reference_items.length, 1)
+        : targetSlideCountFromReference(mimic.reference_items.length, guidelineEntry))
     : null;
 
   let render_sequence: MimicRenderSequence;

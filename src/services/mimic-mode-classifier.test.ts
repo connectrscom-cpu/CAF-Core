@@ -221,7 +221,6 @@ describe("reconcileMimicPayloadAtRender", () => {
     const mimic = {
       schema_version: 1 as const,
       mode: "carousel_visual" as const,
-      mode_override: "carousel_visual" as const,
       classified_at: "2026-05-28T00:00:00.000Z",
       source_insights_id: "ins_x",
       analysis_tier: "top_performer_carousel" as const,
@@ -247,7 +246,7 @@ describe("reconcileMimicPayloadAtRender", () => {
     expect(reconciled.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
   });
 
-  it("coerces carousel_visual to template_bg when MIMIC_BACKGROUND assets already exist", () => {
+  it("coerces carousel_visual to template_bg when MIMIC_BACKGROUND assets exist on listicle deck", () => {
     const mimic = {
       schema_version: 1 as const,
       mode: "carousel_visual" as const,
@@ -259,7 +258,14 @@ describe("reconcileMimicPayloadAtRender", () => {
       ],
       visual_guideline: {
         format_pattern: "listicle",
-        deck_visual_system: { overall_aesthetic: "cartoon illustration" },
+        aesthetic_analysis_json: {
+          format_pattern: "listicle",
+          slides: [
+            { text_density: "high", image_or_photo_role: "none" },
+            { text_density: "high", image_or_photo_role: "none" },
+          ],
+        },
+        deck_visual_system: { overall_aesthetic: "text list" },
       },
       slide_plans: [{ slide_index: 1, render_mode: "full_bleed" as const, reference_index: 1 }],
       twist_brief: { visual_only: true as const, legal_note: "pattern only" },
@@ -269,6 +275,67 @@ describe("reconcileMimicPayloadAtRender", () => {
     });
     expect(reconciled.mode).toBe("template_bg");
     expect(reconciled.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+  });
+
+  it("keeps carousel_visual when leftover bg assets exist on image-led deck", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "carousel_visual" as const,
+      classified_at: "2026-05-28T00:00:00.000Z",
+      source_insights_id: "ins_x",
+      analysis_tier: "top_performer_carousel" as const,
+      reference_items: [
+        { index: 1, role: "carousel_slide" as const, vision_fetch_url: "https://x/1.jpg" },
+      ],
+      visual_guideline: {
+        format_pattern: "mixed",
+        aesthetic_analysis_json: {
+          format_pattern: "mixed",
+          deck_visual_system: { overall_aesthetic: "cinematic photo carousel" },
+          slides: [
+            {
+              text_density: "low",
+              image_or_photo_role: "full-bleed photo",
+              on_screen_text_transcript: "Taurus as tacos",
+            },
+          ],
+        },
+      },
+      slide_plans: [{ slide_index: 1, render_mode: "full_bleed" as const, reference_index: 1 }],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const reconciled = reconcileMimicPayloadAtRender(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, mimic, {
+      hasStoredBackgroundPlates: true,
+    });
+    expect(reconciled.mode).toBe("carousel_visual");
+    expect(reconciled.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
+  });
+
+  it("honors mode_override carousel_visual even with text-overlay deck cues", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "carousel_visual" as const,
+      mode_override: "carousel_visual" as const,
+      classified_at: "2026-05-28T00:00:00.000Z",
+      source_insights_id: "ins_x",
+      analysis_tier: "top_performer_carousel" as const,
+      background_image_url: "https://cdn.example/mimic_backgrounds/slide_001_bg_v1.png",
+      reference_items: [
+        { index: 1, role: "carousel_slide" as const, vision_fetch_url: "https://x/1.jpg" },
+      ],
+      visual_guideline: {
+        format_pattern: "educational",
+        deck_visual_system: {
+          repeated_template: "text_on_water",
+          overall_aesthetic: "natural_ocean",
+        },
+      },
+      slide_plans: [{ slide_index: 1, render_mode: "full_bleed" as const, reference_index: 1 }],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const reconciled = reconcileMimicPayloadAtRender(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, mimic);
+    expect(reconciled.mode).toBe("carousel_visual");
+    expect(reconciled.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 });
 

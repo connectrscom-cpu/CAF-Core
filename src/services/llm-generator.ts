@@ -44,7 +44,10 @@ import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { slimMimicVisualGuidelineForLlmCopy } from "../domain/mimic-carousel-package.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
-import { filterSlideCopyLayoutForMimic } from "./mimic-carousel-render.js";
+import {
+  contentSlideIndicesFromMimic,
+  filterSlideCopyLayoutForMimic,
+} from "./mimic-carousel-render.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -497,9 +500,15 @@ export async function generateForJob(
     templateContext.mimic_job_grounding = mimicJobGrounding;
   }
   if (mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    const copyLayout = Array.isArray(mimicJobGrounding?.slide_copy_layout)
+      ? mimicJobGrounding!.slide_copy_layout
+      : [];
+    const copyLayoutLen = copyLayout.length;
+    const contentIndices = contentSlideIndicesFromMimic(mimicForCopy);
     if (mimicForCopy.visual_guideline) {
       templateContext.mimic_visual_guideline_for_copy = slimMimicVisualGuidelineForLlmCopy(
-        mimicForCopy.visual_guideline as unknown as Record<string, unknown>
+        mimicForCopy.visual_guideline as unknown as Record<string, unknown>,
+        contentIndices.length > 0 ? { content_slide_indices: contentIndices } : undefined
       );
     } else if (mimicJobGrounding?.visual_guideline_for_copy) {
       templateContext.mimic_visual_guideline_for_copy = mimicJobGrounding.visual_guideline_for_copy;
@@ -507,7 +516,9 @@ export async function generateForJob(
     templateContext.mimic_render_context =
       mimicRenderContextFromPayload ??
       (mimicForCopy.visual_guideline
-        ? buildMimicRenderContextForLlm(mimicForCopy, mimicForCopy.visual_guideline)
+        ? buildMimicRenderContextForLlm(mimicForCopy, mimicForCopy.visual_guideline, {
+            target_slide_count: copyLayoutLen > 0 ? copyLayoutLen : null,
+          })
         : null);
     if (templateContext.mimic_render_context) {
       const ctx = templateContext.mimic_render_context as Record<string, unknown>;

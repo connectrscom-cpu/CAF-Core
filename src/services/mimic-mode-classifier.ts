@@ -209,12 +209,19 @@ export function reconcileMimicPayloadAtRender(
     },
   };
 
+  if (mimic.mode_override === "carousel_visual") {
+    const classified = classifyMimicMode(flowType, entry, "carousel_visual");
+    return { ...mimic, mode: "carousel_visual", slide_plans: classified.slide_plans ?? mimic.slide_plans };
+  }
+
   if (
     mimic.mode === "carousel_visual" &&
     (opts?.hasStoredBackgroundPlates || opts?.templateBackgroundsPrepared)
   ) {
-    const classified = classifyMimicMode(flowType, entry, "template_bg");
-    return { ...mimic, mode: "template_bg", slide_plans: classified.slide_plans ?? mimic.slide_plans };
+    const classified = classifyMimicMode(flowType, entry);
+    if (classified.mode === "template_bg") {
+      return { ...mimic, mode: "template_bg", slide_plans: classified.slide_plans ?? mimic.slide_plans };
+    }
   }
 
   const hasBgPlate = Boolean(String(mimic.background_image_url ?? "").trim());

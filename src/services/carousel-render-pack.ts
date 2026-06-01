@@ -187,14 +187,47 @@ function copyFromNestedTextBlock(val: unknown): { headline: string; body: string
   return { headline, body };
 }
 
+function textFromTextBlocksArray(blocks: unknown): { headline: string; body: string } | null {
+  if (!Array.isArray(blocks)) return null;
+  let headline = "";
+  const bodyParts: string[] = [];
+  for (const block of blocks) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    const role = String(rec.role ?? "").trim().toLowerCase();
+    const text = String(rec.text ?? "").trim();
+    if (!text) continue;
+    if (role === "title" || role === "headline" || role === "kicker") {
+      if (!headline) headline = text;
+    } else if (role === "subtitle" || role === "body" || role === "sub") {
+      bodyParts.push(text);
+    } else if (!headline) {
+      headline = text;
+    } else {
+      bodyParts.push(text);
+    }
+  }
+  const body = bodyParts.join("\n").trim();
+  if (!headline && !body) return null;
+  return { headline, body };
+}
+
 function textFromSlide(o: Record<string, unknown>): { headline: string; body: string } {
+  const fromBlocks =
+    textFromTextBlocksArray(o.text_blocks) ??
+    textFromTextBlocksArray(
+      o.elements && typeof o.elements === "object" && !Array.isArray(o.elements)
+        ? (o.elements as Record<string, unknown>).text_blocks
+        : undefined
+    );
   const nestedText =
     copyFromNestedTextBlock(o.text) ??
     copyFromNestedTextBlock(o.content);
-  const headline = nestedText?.headline
-    ?? HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && typeof v !== "object" && String(v).trim());
+  const headline =
+    (fromBlocks?.headline || nestedText?.headline) ??
+    HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && typeof v !== "object" && String(v).trim());
   let body =
-    nestedText?.body ??
+    (fromBlocks?.body || nestedText?.body) ??
     BODY_KEYS.map((k) => {
       const v = o[k];
       if (v == null) return undefined;

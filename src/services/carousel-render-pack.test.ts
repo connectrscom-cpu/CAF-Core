@@ -206,6 +206,22 @@ describe("slidesFromGeneratedOutput", () => {
     expect(slideHasRenderableContent({ headline: "x", body: "" })).toBe(true);
   });
 
+  it("slideHasRenderableContent accepts mimic text_blocks without top-level headline/body", () => {
+    expect(
+      slideHasRenderableContent({
+        text_blocks: [{ role: "title", text: "Aries and their Admiration" }],
+        visual_description: "figure with swords",
+      })
+    ).toBe(true);
+    expect(
+      slideHasRenderableContent({
+        elements: {
+          text_blocks: [{ role: "subtitle", text: "Born to cast lines" }],
+        },
+      })
+    ).toBe(true);
+  });
+
   it("merges emoji-only paragraph lines into adjacent text", () => {
     const gen = {
       slides: [

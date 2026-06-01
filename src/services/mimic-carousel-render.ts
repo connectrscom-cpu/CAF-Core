@@ -373,9 +373,7 @@ export function slideMimicRenderMode(mimic: MimicPayloadV1, slideIndex: number):
   if (mimic.mode === "template_bg") return "hbs";
   if (mimic.mode !== "carousel_visual") return null;
   const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
-  const mode = plan?.render_mode ?? "full_bleed";
-  if (mode === "full_bleed" && !isFullBleedCandidateSlide(mimic, slideIndex)) return "hbs";
-  return mode;
+  return plan?.render_mode ?? "full_bleed";
 }
 
 export function referenceUrlForSlide(mimic: MimicPayloadV1, slideIndex: number): string | null {
@@ -704,9 +702,6 @@ export function isPromotionalSlide(
     if (purpose === "self_promo" || purpose === "product_pitch") return true;
     if (brandSpec === "high") return true;
 
-    const density = String(match.text_density ?? "").trim().toLowerCase();
-    if (density === "high" && slideOnScreenTextChars(match) >= FULL_BLEED_TEXT_CAP) return true;
-
     if (purpose && brandSpec) return false;
 
     return false;
@@ -732,14 +727,16 @@ export function isFullBleedCandidateSlide(mimic: MimicPayloadV1, slideIndex: num
   return true;
 }
 
-/** Downgrade full_bleed plans to stripped-template hbs for promotional / skip-listed frames. */
+/**
+ * carousel_visual decks use art-only visual plates + HBS for every output slide.
+ * Promo frames are removed earlier via `filterPromotionalSlidesFromMimicPayload`.
+ */
 export function reconcileFullBleedSlidePlansAtRender(mimic: MimicPayloadV1): MimicPayloadV1 {
   if (mimic.mode !== "carousel_visual") return mimic;
-  const plans = (mimic.slide_plans ?? []).map((plan) => {
-    if (plan.render_mode !== "full_bleed") return plan;
-    if (isFullBleedCandidateSlide(mimic, plan.slide_index)) return plan;
-    return { ...plan, render_mode: "hbs" as const };
-  });
+  const plans = (mimic.slide_plans ?? []).map((plan) => ({
+    ...plan,
+    render_mode: "full_bleed" as const,
+  }));
   return { ...mimic, slide_plans: plans };
 }
 
@@ -758,9 +755,75 @@ export function nonPromotionalSlideIndices(
   return indices.length > 0 ? indices : [1];
 }
 
-/** Output slide count for carousel_visual: one rendered slide per kept reference frame. */
-export function expectedMimicCarouselOutputSlideCount(mimic: MimicPayloadV1): number {
-  return Math.max(mimic.reference_items.length, 0);
+/** 1-based content slide indices from mimic_evaluation when the classifier narrowed the deck. */
+export function contentSlideIndicesFromMimic(mimic: MimicPayloadV1): number[] {
+  const vg = asRecord(mimic.visual_guideline);
+  const mimicEval = asRecord(vg?.mimic_evaluation);
+  if (!mimicEval) return [];
+  return Array.isArray(mimicEval.content_slide_indices)
+    ? mimicEval!.content_slide_indices.filter(
+        (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1
+      )
+    : [];
+}
+
+function contentSlideIndexSet(mimic: MimicPayloadV1): Set<number> | null {
+  const indices = contentSlideIndicesFromMimic(mimic);
+  if (indices.length === 0) return null;
+  return new Set(indices);
+}
+
+/**
+ * Output slide count for carousel_visual: reference frames after promo filtering,
+ * optionally capped to generated copy slide count.
+ */
+export function expectedMimicCarouselOutputSlideCount(
+  mimic: MimicPayloadV1,
+  generatedSlideCount?: number
+): number {
+  const refCount = Math.max(mimic.reference_items.length, 0);
+  if (typeof generatedSlideCount === "number" && Number.isFinite(generatedSlideCount) && generatedSlideCount > 0) {
+    return Math.min(refCount, Math.floor(generatedSlideCount));
+  }
+  return refCount;
+}
+
+/**
+ * Trim reference_items and slide_plans so render never exceeds generated copy slides.
+ */
+export function reconcileMimicPayloadToOutputSlideCount(
+  mimic: MimicPayloadV1,
+  outputSlideCount: number
+): MimicPayloadV1 {
+  const refLen = mimic.reference_items.length;
+  if (refLen === 0) return mimic;
+  const cap = Math.max(1, Math.min(Math.floor(outputSlideCount), refLen));
+  if (cap >= refLen) {
+    const slide_plans =
+      mimic.slide_plans && mimic.slide_plans.length > 0
+        ? mimic.slide_plans.map((plan, i) => ({
+            slide_index: i + 1,
+            reference_index: Math.min(plan.reference_index ?? i + 1, cap),
+            render_mode: plan.render_mode ?? "full_bleed",
+          }))
+        : mimic.reference_items.map((_, i) => ({
+            slide_index: i + 1,
+            reference_index: i + 1,
+            render_mode: "full_bleed" as const,
+          }));
+    return { ...mimic, slide_plans };
+  }
+
+  const filteredItems = mimic.reference_items.slice(0, cap).map((item, i) => ({
+    ...item,
+    index: i + 1,
+  }));
+  const slide_plans = filteredItems.map((_, i) => ({
+    slide_index: i + 1,
+    render_mode: "full_bleed" as const,
+    reference_index: i + 1,
+  }));
+  return { ...mimic, reference_items: filteredItems, slide_plans };
 }
 
 /**
@@ -775,6 +838,7 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
     return { mimic, removed_slide_indices: [] };
   }
 
+  const contentSet = contentSlideIndexSet(mimic);
   const kept: MimicReferenceItem[] = [];
   const removed: number[] = [];
 
@@ -783,6 +847,10 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
       item.source_slide_index != null && item.source_slide_index > 0
         ? item.source_slide_index
         : item.index;
+    if (contentSet && !contentSet.has(origIdx)) {
+      removed.push(origIdx);
+      continue;
+    }
     if (isPromotionalSlide(mimic, origIdx)) {
       removed.push(origIdx);
       continue;
@@ -815,9 +883,28 @@ export function filterSlideCopyLayoutForMimic(
   mimic: MimicPayloadV1,
   layout: MimicSlideCopyLayoutForLlm[]
 ): MimicSlideCopyLayoutForLlm[] {
-  if (mimic.mode !== "carousel_visual" || layout.length === 0) return layout;
-  const kept = layout.filter((s) => !isPromotionalSlide(mimic, s.slide_index));
+  if (layout.length === 0) return layout;
+
+  const vg = asRecord(mimic.visual_guideline);
+  const mimicEval = asRecord(vg?.mimic_evaluation);
+  const contentIndices = Array.isArray(mimicEval?.content_slide_indices)
+    ? mimicEval!.content_slide_indices.filter(
+        (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1
+      )
+    : [];
+
+  let kept = layout;
+  if (mimic.mode === "carousel_visual") {
+    if (contentIndices.length > 0) {
+      const contentSet = new Set(contentIndices);
+      kept = layout.filter((s) => contentSet.has(s.slide_index));
+    } else {
+      kept = layout.filter((s) => !isPromotionalSlide(mimic, s.slide_index));
+    }
+  }
+
   if (kept.length === layout.length) return layout;
+  if (kept.length === 0) return layout;
   return kept.map((s, i) => ({ ...s, slide_index: i + 1 }));
 }
 
@@ -884,9 +971,9 @@ export async function renderMimicCarouselSlideFullBleed(
   const safeZoneInstruction = buildArtOnlySafeZoneHint(slideGuideline);
   const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex);
 
-  return editImageFromReference(config, {
-    referenceUrl,
-    prompt: mimicPromptForMode("carousel_visual", {
+  const basePrompt = mimicPromptForMode(
+    "carousel_visual",
+    {
       index: slideIndex,
       layout: visionHints.layout,
       visual: visionHints.visual,
@@ -894,16 +981,39 @@ export async function renderMimicCarouselSlideFullBleed(
       safeZoneInstruction,
       artOnly: true,
       projectHandle: opts?.projectHandle ?? null,
-    }, opts?.promptOverrides),
-    size: "1024x1536",
-    audit: {
-      db,
-      projectId: job.project_id,
-      runId: job.run_id,
-      taskId: job.task_id,
-      step: `mimic_slide_gen_${slideIndex}`,
     },
-  });
+    opts?.promptOverrides
+  );
+
+  const artOnlyRetrySuffix =
+    " CRITICAL REMINDER: output must contain ZERO readable characters — no words, letters, numbers, or gibberish. Art and empty low-detail text zones only.";
+
+  const runEdit = (prompt: string, step: string) =>
+    editImageFromReference(config, {
+      referenceUrl,
+      prompt,
+      size: "1024x1536",
+      audit: {
+        db,
+        projectId: job.project_id,
+        runId: job.run_id,
+        taskId: job.task_id,
+        step,
+      },
+    });
+
+  try {
+    return await runEdit(basePrompt, `mimic_slide_gen_${slideIndex}`);
+  } catch (firstErr) {
+    try {
+      return await runEdit(
+        `${basePrompt}${artOnlyRetrySuffix}`,
+        `mimic_slide_gen_${slideIndex}_retry`
+      );
+    } catch {
+      throw firstErr;
+    }
+  }
 }
 
 /** Upload art-only visual plate and return a fetchable URL for HBS compositing. */
