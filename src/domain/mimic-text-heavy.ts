@@ -1,8 +1,13 @@
+import { parseMimicTextBlocks } from "../services/mimic-slide-typography.js";
+
 /** On-screen transcript length above which copy must be finalized before bg extract + HBS overlay. */
 export const MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD = 200;
 
 /** Slides at or below this length are treated as short punchy copy (whole-slide visual mimic path). */
 export const MIMIC_SHORT_COPY_CHAR_THRESHOLD = 120;
+
+/** Reference frames above this on-screen text length are dropped before mimic copy/render. */
+export const MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS = 300;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -20,6 +25,26 @@ export function slideOnScreenTextChars(slide: Record<string, unknown>): number {
   return String(
     slide.on_screen_text_transcript ?? slide.on_image_text ?? slide.body ?? slide.headline ?? ""
   ).trim().length;
+}
+
+/** Transcript + parsed `text_blocks` length (matches promo / skip heuristics in mimic-carousel-render). */
+export function referenceSlideOnScreenTextCharCount(slide: Record<string, unknown>): number {
+  const parts: string[] = [];
+  const main = String(slide.on_screen_text_transcript ?? slide.on_image_text ?? "").trim();
+  if (main) parts.push(main);
+  for (const b of parseMimicTextBlocks(slide.text_blocks)) {
+    const t = b.text.trim();
+    if (t) parts.push(t);
+  }
+  if (parts.length === 0) return slideOnScreenTextChars(slide);
+  return parts.join("\n").length;
+}
+
+export function referenceSlideExceedsOnScreenTextLimit(
+  slide: Record<string, unknown>,
+  maxChars: number = MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS
+): boolean {
+  return referenceSlideOnScreenTextCharCount(slide) > maxChars;
 }
 
 export { slidePreferHbsTextOverlay } from "../services/mimic-slide-typography.js";

@@ -9,7 +9,7 @@ import {
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
 import { contentReferenceIndicesForTemplate } from "./mimic-template-library.js";
-import { aestheticSlideRecords } from "./mimic-text-heavy.js";
+import { aestheticSlideRecords, referenceSlideExceedsOnScreenTextLimit } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
 
@@ -146,6 +146,13 @@ function contentIndicesForCopyLayout(entry: Record<string, unknown>, totalRefs: 
   return contentReferenceIndicesForTemplate(entry, totalRefs);
 }
 
+function copyLayoutRowWithinTextLimit(row: MimicSlideCopyLayoutForLlm): boolean {
+  return !referenceSlideExceedsOnScreenTextLimit({
+    on_screen_text_transcript: row.reference_on_screen_text,
+    text_blocks: row.text_blocks,
+  });
+}
+
 export function buildContentSlideCopyLayoutFromEntry(
   entry: Record<string, unknown>
 ): MimicSlideCopyLayoutForLlm[] {
@@ -154,28 +161,36 @@ export function buildContentSlideCopyLayoutFromEntry(
 
   const totalRefs = totalReferenceFramesInEntry(entry);
   const contentIndices = contentIndicesForCopyLayout(entry, totalRefs);
-  if (contentIndices.length === 0 || contentIndices.length >= full.length) return full;
+  let layout: MimicSlideCopyLayoutForLlm[];
+  if (contentIndices.length === 0 || contentIndices.length >= full.length) {
+    layout = full;
+  } else {
+    const bySlideIndex = new Map(full.map((row) => [row.slide_index, row]));
+    layout = contentIndices.map((refIdx, outPos) => {
+      const row = bySlideIndex.get(refIdx) ?? full[refIdx - 1];
+      if (!row) {
+        return {
+          slide_index: outPos + 1,
+          reference_on_screen_text: null,
+          visual_description: null,
+          layout_template: null,
+          image_or_photo_role: null,
+          text_density: null,
+          slide_purpose: null,
+          graphic_elements: null,
+          color_tokens: null,
+          typography: null,
+          text_blocks: null,
+        };
+      }
+      return { ...row, slide_index: outPos + 1 };
+    });
+  }
 
-  const bySlideIndex = new Map(full.map((row) => [row.slide_index, row]));
-  return contentIndices.map((refIdx, outPos) => {
-    const row = bySlideIndex.get(refIdx) ?? full[refIdx - 1];
-    if (!row) {
-      return {
-        slide_index: outPos + 1,
-        reference_on_screen_text: null,
-        visual_description: null,
-        layout_template: null,
-        image_or_photo_role: null,
-        text_density: null,
-        slide_purpose: null,
-        graphic_elements: null,
-        color_tokens: null,
-        typography: null,
-        text_blocks: null,
-      };
-    }
-    return { ...row, slide_index: outPos + 1 };
-  });
+  const withinLimit = layout.filter(copyLayoutRowWithinTextLimit);
+  if (withinLimit.length === layout.length) return withinLimit;
+  if (withinLimit.length === 0) return layout;
+  return withinLimit.map((s, i) => ({ ...s, slide_index: i + 1 }));
 }
 
 export function buildMimicJobPlanningGroundingFromEntry(

@@ -265,6 +265,49 @@ describe("slidesFromGeneratedOutput", () => {
     expect(slides[0]?.headline).toBe("A");
   });
 
+  it("preferred_slide_count picks canonical slides[] over richer stale carousel deck", () => {
+    const gen = {
+      slides: [
+        { headline: "Aries", body: "Destined to roam wild, yet spending days in calls" },
+        { headline: "Gemini", body: "Born to cast lines but ends up catching scams" },
+      ],
+      carousel: {
+        slides: [
+          { headline: "Aries", body: "Destined to roam wild, yet spending days in calls" },
+          { headline: "Gemini", body: "Born to cast lines but ends up catching scams" },
+          { headline: "Cancer", body: "Placeholder third slide with extra body copy here." },
+          { headline: "Leo", body: "Placeholder fourth slide with extra body copy here." },
+        ],
+      },
+    };
+    const slides = slidesFromGeneratedOutput(gen, { preferred_slide_count: 2 });
+    expect(slides).toHaveLength(2);
+    expect(slides[0]?.headline).toBe("Aries");
+    expect(slides[1]?.headline).toBe("Gemini");
+  });
+
+  it("normalizeItemSlide keeps positioned text_blocks without duplicating headline/body", () => {
+    const gen = {
+      slides: [
+        {
+          headline: "Aries",
+          body: "Destined to roam wild",
+          elements: {
+            text_blocks: [
+              { role: "title", text: "ARIES", x: 0.68, y: 0.6, w: 0.24, h: 0.12 },
+              { role: "subtitle", text: "Destined to roam wild", x: 0.68, y: 0.7, w: 0.24, h: 0.08 },
+            ],
+          },
+        },
+      ],
+    };
+    const slides = slidesFromGeneratedOutput(gen);
+    expect(slides[0]?.headline).toBeUndefined();
+    expect(slides[0]?.body).toBeUndefined();
+    const blocks = (slides[0] as Record<string, unknown>).elements as Record<string, unknown>;
+    expect(Array.isArray(blocks?.text_blocks)).toBe(true);
+  });
+
   it("reads content.carousel array (alternate LLM nesting)", () => {
     const gen = {
       content: {

@@ -3,8 +3,11 @@ import {
   deckUsesUnifiedBackgroundPlate,
   isTextOverlayDeckFromGuideline,
   isVisualLedShortCopyDeck,
+  MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS,
   nemotronSuggestsTextOnTemplate,
   referenceHasHeavyOnScreenText,
+  referenceSlideExceedsOnScreenTextLimit,
+  referenceSlideOnScreenTextCharCount,
   requiresCopyBeforeVisualMimic,
 } from "./mimic-text-heavy.js";
 import { classifyMimicMode } from "../services/mimic-mode-classifier.js";
@@ -75,6 +78,25 @@ describe("mimic-text-heavy", () => {
       })
     ).toBe(true);
     expect(referenceHasHeavyOnScreenText([{ on_screen_text_transcript: longText }])).toBe(true);
+  });
+
+  it("referenceSlideOnScreenTextCharCount sums transcript and text_blocks", () => {
+    expect(
+      referenceSlideOnScreenTextCharCount({
+        on_screen_text_transcript: "a".repeat(100),
+        text_blocks: [{ text: "b".repeat(201), role: "body", x: 0, y: 0, w: 1, h: 0.1 }],
+      })
+    ).toBe(302);
+    expect(
+      referenceSlideExceedsOnScreenTextLimit({
+        on_screen_text_transcript: "a".repeat(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS),
+      })
+    ).toBe(false);
+    expect(
+      referenceSlideExceedsOnScreenTextLimit({
+        on_screen_text_transcript: "a".repeat(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS + 1),
+      })
+    ).toBe(true);
   });
 
   it("honors Nemotron text_on_template without per-slide transcripts", () => {

@@ -357,8 +357,32 @@ function unwrapMimicSlideRow(r: Record<string, unknown>): Record<string, unknown
   return r;
 }
 
+/** Mimic LLM rows with Nemotron placement boxes — composite via text_blocks only (avoid headline+body stack). */
+function slideHasPositionedTextBlocks(o: Record<string, unknown>): boolean {
+  const elements =
+    o.elements && typeof o.elements === "object" && !Array.isArray(o.elements)
+      ? (o.elements as Record<string, unknown>)
+      : null;
+  const blocks = o.text_blocks ?? elements?.text_blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  return blocks.some((b) => {
+    if (!b || typeof b !== "object") return false;
+    const rec = b as Record<string, unknown>;
+    const text = String(rec.text ?? "").trim();
+    if (!text) return false;
+    return rec.x != null || rec.y != null || rec.w != null || rec.h != null;
+  });
+}
+
 function normalizeItemSlide(r: Record<string, unknown>): Record<string, unknown> {
   const unwrapped = unwrapMimicSlideRow(r);
+  if (slideHasPositionedTextBlocks(unwrapped)) {
+    const { headline: _h, body: _b, title: _t, subtitle: _s, ...rest } = unwrapped;
+    return {
+      ...rest,
+      slide_role: unwrapped.slide_role ?? r.slide_role ?? "body",
+    };
+  }
   const tf = textFromSlide(unwrapped);
   return {
     ...unwrapped,
@@ -684,11 +708,15 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   return out;
 }
 
+function renderableSlideCount(slides: Record<string, unknown>[]): number {
+  return slides.filter((s) => slideHasRenderableContent(s)).length;
+}
+
 /**
  * Prefer much richer copy; when totals are within `TIE_BAND_CHARS`, prefer lower `DECK_PRIORITY`
  * (e.g. `slides_json` over stale merged `slides` after PARTIAL_REWRITE).
  */
-function pickBestSlideDeck(tagged: TaggedSlideDeck[]): Record<string, unknown>[] {
+function pickBestSlideDeckByScore(tagged: TaggedSlideDeck[]): Record<string, unknown>[] {
   let best = tagged[0]!;
   let bestScore = slideDeckTextScore(best.slides);
   for (let i = 1; i < tagged.length; i++) {
@@ -706,6 +734,35 @@ function pickBestSlideDeck(tagged: TaggedSlideDeck[]): Record<string, unknown>[]
     }
   }
   return best.slides;
+}
+
+/**
+ * Prefer much richer copy; when totals are within `TIE_BAND_CHARS`, prefer lower `DECK_PRIORITY`
+ * (e.g. `slides_json` over stale merged `slides` after PARTIAL_REWRITE).
+ * When `preferred_slide_count` is set (mimic jobs), prefer the deck whose renderable slide count matches
+ * the target — avoids picking a stale 4-slide `carousel` over the canonical 2-slide `slides` array.
+ */
+function pickBestSlideDeck(tagged: TaggedSlideDeck[], preferredSlideCount?: number | null): Record<string, unknown>[] {
+  const viable = tagged.filter((t) => renderableSlideCount(t.slides) > 0);
+  const pool = viable.length > 0 ? viable : tagged;
+  if (preferredSlideCount != null && Number.isFinite(preferredSlideCount) && preferredSlideCount > 0) {
+    const target = Math.floor(preferredSlideCount);
+    const exact = pool.filter((t) => renderableSlideCount(t.slides) === target);
+    if (exact.length > 0) return pickBestSlideDeckByScore(exact);
+    const under = pool.filter((t) => {
+      const n = renderableSlideCount(t.slides);
+      return n > 0 && n < target;
+    });
+    if (under.length > 0) {
+      const maxUnder = Math.max(...under.map((t) => renderableSlideCount(t.slides)));
+      return pickBestSlideDeckByScore(
+        under.filter((t) => renderableSlideCount(t.slides) === maxUnder)
+      );
+    }
+    const notOver = pool.filter((t) => renderableSlideCount(t.slides) <= target);
+    if (notOver.length > 0) return pickBestSlideDeckByScore(notOver);
+  }
+  return pickBestSlideDeckByScore(pool);
 }
 
 /** When the cover has body copy but no title, derive a short title so templates are not blank above the fold. */
@@ -833,7 +890,15 @@ export function stripNonRenderableDeckFields(base: Record<string, unknown>): Rec
  * so merged `candidate_data` does not shadow full `generated_output`.
  * Fallback: legacy cover/body/cta keys.
  */
-export function slidesFromGeneratedOutput(gen: Record<string, unknown>): Record<string, unknown>[] {
+export interface SlidesFromGeneratedOutputOptions {
+  /** Mimic / structure_variables: prefer deck with this renderable slide count. */
+  preferred_slide_count?: number | null;
+}
+
+export function slidesFromGeneratedOutput(
+  gen: Record<string, unknown>,
+  opts?: SlidesFromGeneratedOutputOptions
+): Record<string, unknown>[] {
   let base = gen;
   if (gen.package_type === "mimic_carousel_package") {
     const copy =
@@ -844,9 +909,22 @@ export function slidesFromGeneratedOutput(gen: Record<string, unknown>): Record<
       base = { ...copy, package_type: gen.package_type };
     }
   }
+  const preferred =
+    opts?.preferred_slide_count ??
+    (() => {
+      const sv =
+        gen.structure_variables && typeof gen.structure_variables === "object" && !Array.isArray(gen.structure_variables)
+          ? (gen.structure_variables as Record<string, unknown>)
+          : null;
+      const n = sv?.slide_count;
+      return typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    })();
   const candidates = collectRenderableSlideDecks(base);
   if (candidates.length === 0) return legacyCoverBodyCtaSlides(gen);
-  const picked = candidates.length === 1 ? candidates[0]!.slides : pickBestSlideDeck(candidates);
+  const picked =
+    candidates.length === 1
+      ? candidates[0]!.slides
+      : pickBestSlideDeck(candidates, preferred);
   return normalizeSlideRoles(picked);
 }
 
@@ -1345,7 +1423,12 @@ export function buildSlideRenderContext(
       ? -1
       : Math.max(0, Math.min(slides.length - 1, slideIndex1Based - 1));
   const current = idx >= 0 ? (slides[idx] ?? {}) : {};
-  const { headline, body } = textFromSlide(current);
+  const currentRec = current as Record<string, unknown>;
+  let { headline, body } = textFromSlide(currentRec);
+  if (slideHasPositionedTextBlocks(currentRec)) {
+    headline = "";
+    body = "";
+  }
   const templateShape =
     shouldMaterializeCarouselTemplateShape(base) && slides.length > 0 ? splitFlatSlidesToTemplateShape(slides) : {};
   // Some generators provide `cover_slide.name` (or `cover_slide.status`) as whitespace or placeholders.

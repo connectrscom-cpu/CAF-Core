@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertMimicCarouselCopySlideCount,
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
+  isExcessiveOnScreenTextSlide,
   isFullBleedCandidateSlide,
   isPromotionalSlide,
+  MimicCarouselCopySlideCountError,
   mimicCarouselNeedsBackgroundPlate,
   reconcileFullBleedSlidePlansAtRender,
   reconcileMimicPayloadToOutputSlideCount,
@@ -13,6 +16,7 @@ import {
   requireMimicSlideBackgroundPlate,
   slideMimicRenderMode,
   slideVisionHints,
+  targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 
@@ -136,6 +140,50 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       ],
     });
     expect(isPromotionalSlide(mimic, 4)).toBe(true);
+  });
+
+  it("isExcessiveOnScreenTextSlide flags transcript + text_blocks over 300 chars", () => {
+    const short = "x".repeat(300);
+    const long = "y".repeat(301);
+    const mimicShort = baseMimic({
+      slides: [{ slide_index: 1, on_screen_text_transcript: short, slide_purpose: "content" }],
+    });
+    const mimicLong = baseMimic({
+      slides: [
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "hook",
+          text_blocks: [{ text: long, role: "body", x: 0.1, y: 0.5, w: 0.8, h: 0.2 }],
+          slide_purpose: "content",
+        },
+      ],
+    });
+    expect(isExcessiveOnScreenTextSlide(mimicShort, 1)).toBe(false);
+    expect(isExcessiveOnScreenTextSlide(mimicLong, 2)).toBe(true);
+  });
+
+  it("filterPromotionalSlidesFromMimicPayload removes text-heavy frames and renumbers", () => {
+    const mimic = baseMimic({
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "short hook", slide_purpose: "content" },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "a".repeat(301),
+          slide_purpose: "content",
+        },
+        { slide_index: 3, on_screen_text_transcript: "another short", slide_purpose: "content" },
+      ],
+    });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg" },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg" },
+    ];
+    const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(removed_slide_indices).toEqual([2]);
+    expect(out.reference_items).toHaveLength(2);
+    expect(out.reference_items[0]?.source_slide_index).toBe(1);
+    expect(out.reference_items[1]?.source_slide_index).toBe(3);
   });
 
   it("filterPromotionalSlidesFromMimicPayload removes promo frames and renumbers", () => {
@@ -325,5 +373,33 @@ describe("assertMimicSlideBackgroundPresent", () => {
     expect(() =>
       assertMimicSlideBackgroundPresent("TASK_1", 1, { background_image_url: "data:image/png;base64,abc" })
     ).not.toThrow();
+  });
+});
+
+describe("mimic carousel copy slide count", () => {
+  it("targetMimicCarouselCopySlideCount reads mimic_render_context.target_slide_count", () => {
+    const mimic = baseMimic({ slides: [] });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg" },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg" },
+      { index: 4, role: "carousel_slide", vision_fetch_url: "https://example.com/4.jpg" },
+    ];
+    const n = targetMimicCarouselCopySlideCount(
+      { mimic_render_context: { target_slide_count: 4 } },
+      mimic
+    );
+    expect(n).toBe(4);
+  });
+
+  it("assertMimicCarouselCopySlideCount throws when LLM returns too few slides", () => {
+    const payload = { mimic_render_context: { target_slide_count: 4 } };
+    const parsed = {
+      slides: [
+        { headline: "A", body: "First slide body text." },
+        { headline: "B", body: "Second slide body text." },
+      ],
+    };
+    expect(() => assertMimicCarouselCopySlideCount(payload, parsed)).toThrow(MimicCarouselCopySlideCountError);
   });
 });

@@ -46,7 +46,11 @@ import { slimMimicVisualGuidelineForLlmCopy } from "../domain/mimic-carousel-pac
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
   contentSlideIndicesFromMimic,
+  countRenderableMimicCarouselSlides,
   filterSlideCopyLayoutForMimic,
+  mimicCarouselSlideCountRetryFooter,
+  MimicCarouselCopySlideCountError,
+  targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -801,6 +805,59 @@ export async function generateForJob(
     }
 
     let parsed = normalizeLlmParsedForSchemaValidation(job.flow_type, parsedRaw);
+
+    if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
+      const mimicForCount = pickMimicPayload(payload);
+      const targetSlides = targetMimicCarouselCopySlideCount(payload, mimicForCount);
+      if (targetSlides != null && targetSlides > 0) {
+        let got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
+        if (got < targetSlides) {
+          const retryUser = `${userPrompt.trim()}${mimicCarouselSlideCountRetryFooter(targetSlides, got)}`;
+          const llmRetry = await openaiChat(
+            apiKey,
+            {
+              model,
+              system_prompt: systemPrompt,
+              user_prompt: retryUser,
+              max_tokens: maxTokens,
+              response_format: "json_object",
+            },
+            {
+              db,
+              projectId: job.project_id,
+              runId: job.run_id,
+              taskId: job.task_id,
+              signalPackId,
+              step: `llm_primary_${templateFlowType}_mimic_slide_count_retry`,
+            }
+          );
+          const parsedRetryRaw = parseJsonObjectFromLlmText(llmRetry.content);
+          if (parsedRetryRaw) {
+            parsed = normalizeLlmParsedForSchemaValidation(job.flow_type, parsedRetryRaw);
+            llmResult = {
+              content: llmRetry.content,
+              model: llmRetry.model,
+              total_tokens: llmResult.total_tokens + llmRetry.total_tokens,
+            };
+            got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
+          }
+          if (got < targetSlides) {
+            return {
+              draft_id: draftId,
+              task_id: job.task_id,
+              raw_output: llmResult.content,
+              parsed_output: parsed,
+              model_used: llmResult.model,
+              prompt_name: promptTemplate.prompt_name,
+              tokens_used: llmResult.total_tokens,
+              success: false,
+              error: new MimicCarouselCopySlideCountError(targetSlides, got).message,
+            };
+          }
+        }
+      }
+    }
+
     let schemaValidationWarnings: string[] | undefined;
     if (schemaMode !== "skip") {
       const validation = validateAgainstOutputSchema(parsed, outputSchemaRow);

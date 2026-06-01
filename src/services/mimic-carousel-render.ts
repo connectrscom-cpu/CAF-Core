@@ -1,10 +1,12 @@
 import type { AppConfig } from "../config.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
+import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildArtOnlySafeZoneHint, parseMimicTextBlocks } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
+  referenceSlideExceedsOnScreenTextLimit,
   slideOnScreenTextChars,
 } from "../domain/mimic-text-heavy.js";
 import {
@@ -20,6 +22,11 @@ import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-bu
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { isVideoishUrl } from "./instagram-media-normalizer.js";
 import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js";
+import {
+  slidesFromGeneratedOutput,
+  slideHasRenderableContent,
+  type SlidesFromGeneratedOutputOptions,
+} from "./carousel-render-pack.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -662,6 +669,13 @@ function slideTextBlobForPromoCheck(match: Record<string, unknown>): string {
   return parts.join("\n");
 }
 
+/** True when archived reference on-screen text (transcript + text_blocks) exceeds the mimic deck cap. */
+export function isExcessiveOnScreenTextSlide(mimic: MimicPayloadV1, slideIndex: number): boolean {
+  const match = resolveSlideGuideline(mimic, slideIndex);
+  if (!match) return false;
+  return referenceSlideExceedsOnScreenTextLimit(match);
+}
+
 /**
  * Detect whether a reference slide should be skipped (promotional / brand-specific).
  *
@@ -788,6 +802,71 @@ export function expectedMimicCarouselOutputSlideCount(
   return refCount;
 }
 
+/** Required on-screen copy slide count for mimic carousel LLM + render (from planning context). */
+export function targetMimicCarouselCopySlideCount(
+  payload: Record<string, unknown>,
+  mimic?: MimicPayloadV1 | null
+): number | null {
+  const ctx = asRecord(payload.mimic_render_context);
+  const fromCtx = ctx?.target_slide_count;
+  if (typeof fromCtx === "number" && Number.isFinite(fromCtx) && fromCtx > 0) {
+    return Math.floor(fromCtx);
+  }
+  const grounding = asRecord(payload.mimic_job_grounding);
+  const layout = grounding?.slide_copy_layout;
+  if (Array.isArray(layout) && layout.length > 0) return layout.length;
+  if (mimic) {
+    const content = contentSlideIndicesFromMimic(mimic);
+    if (content.length > 0) return content.length;
+    if (mimic.reference_items.length > 0) return mimic.reference_items.length;
+  }
+  return null;
+}
+
+export function countRenderableMimicCarouselSlides(
+  parsed: Record<string, unknown>,
+  opts?: SlidesFromGeneratedOutputOptions
+): number {
+  return slidesFromGeneratedOutput(parsed, opts).filter((s) =>
+    slideHasRenderableContent(s as Record<string, unknown>)
+  ).length;
+}
+
+export class MimicCarouselCopySlideCountError extends Error {
+  readonly target: number;
+  readonly got: number;
+
+  constructor(target: number, got: number) {
+    super(
+      `Mimic carousel copy incomplete: got ${got} renderable slide(s), need ${target}. Regenerate with exactly ${target} slides matching slide_copy_layout (same order, one slide per content frame).`
+    );
+    this.name = "MimicCarouselCopySlideCountError";
+    this.target = target;
+    this.got = got;
+  }
+}
+
+export function assertMimicCarouselCopySlideCount(
+  payload: Record<string, unknown>,
+  parsed: Record<string, unknown>,
+  mimic?: MimicPayloadV1 | null
+): void {
+  const target = targetMimicCarouselCopySlideCount(payload, mimic ?? pickMimicPayload(payload));
+  if (target == null || target < 1) return;
+  const got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: target });
+  if (got < target) throw new MimicCarouselCopySlideCountError(target, got);
+}
+
+export function mimicCarouselSlideCountRetryFooter(target: number, got: number): string {
+  return [
+    "",
+    "---",
+    `CRITICAL: Your JSON had ${got} renderable on-screen slide(s) but this job requires exactly ${target}.`,
+    `Return one complete JSON object with exactly ${target} entries in top-level \`slides[]\` (one per slide_copy_layout row, same order).`,
+    "Each slide must have rephrased on-screen copy (headline+body, or text_blocks with role+text). Do not omit content slides.",
+  ].join("\n");
+}
+
 /**
  * Trim reference_items and slide_plans so render never exceeds generated copy slides.
  */
@@ -827,7 +906,7 @@ export function reconcileMimicPayloadToOutputSlideCount(
 }
 
 /**
- * Drop promotional / brand-locked / video reference frames before copy + render.
+ * Drop promotional / brand-locked / video / text-heavy reference frames before copy + render.
  * Renumbers `reference_items` and rebuilds 1:1 `slide_plans` (all full_bleed).
  */
 export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): {
@@ -852,6 +931,10 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
       continue;
     }
     if (isPromotionalSlide(mimic, origIdx)) {
+      removed.push(origIdx);
+      continue;
+    }
+    if (isExcessiveOnScreenTextSlide(mimic, origIdx)) {
       removed.push(origIdx);
       continue;
     }
@@ -902,6 +985,14 @@ export function filterSlideCopyLayoutForMimic(
       kept = layout.filter((s) => !isPromotionalSlide(mimic, s.slide_index));
     }
   }
+
+  kept = kept.filter(
+    (s) =>
+      !referenceSlideExceedsOnScreenTextLimit({
+        on_screen_text_transcript: s.reference_on_screen_text,
+        text_blocks: s.text_blocks,
+      })
+  );
 
   if (kept.length === layout.length) return layout;
   if (kept.length === 0) return layout;

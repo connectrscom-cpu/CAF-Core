@@ -6,7 +6,11 @@ import type { MimicEvaluation, TemplateStorageQuality } from "./mimic-carousel-p
 
 export type { TemplateStorageQuality };
 import type { MimicPayloadV1 } from "./mimic-payload.js";
-import { aestheticSlideRecords, deckUsesUnifiedBackgroundPlate } from "./mimic-text-heavy.js";
+import {
+  aestheticSlideRecords,
+  deckUsesUnifiedBackgroundPlate,
+  referenceSlideExceedsOnScreenTextLimit,
+} from "./mimic-text-heavy.js";
 
 export interface TemplateStorageDecision {
   quality: TemplateStorageQuality;
@@ -116,6 +120,17 @@ function deckPromotionalDensity(entry: Record<string, unknown>): number {
   return promoCount / slides.length;
 }
 
+function referenceSlideIndexWithinTextLimit(
+  entry: Record<string, unknown>,
+  slideIndex1Based: number
+): boolean {
+  const slides = aestheticSlideRecords(entry);
+  const slide =
+    slides.find((s) => Number(s.slide_index) === slideIndex1Based) ?? slides[slideIndex1Based - 1];
+  if (!slide) return true;
+  return !referenceSlideExceedsOnScreenTextLimit(slide);
+}
+
 /** 1-based slide indices suitable as cover/body/cta extraction sources. */
 export function contentReferenceIndicesForTemplate(
   entry: Record<string, unknown>,
@@ -127,17 +142,23 @@ export function contentReferenceIndicesForTemplate(
     ? eval_.content_slide_indices.filter((i) => i >= 1 && i <= totalRefs && !skip.has(i))
     : [];
 
-  if (content.length > 0) return content;
-
-  const slides = aestheticSlideRecords(entry);
-  const out: number[] = [];
-  for (let i = 1; i <= totalRefs; i++) {
-    if (skip.has(i)) continue;
-    const slide = slides.find((s) => Number(s.slide_index) === i) ?? slides[i - 1];
-    if (slide && slideIsPromotionalForLibrary(slide)) continue;
-    out.push(i);
+  let indices: number[];
+  if (content.length > 0) {
+    indices = content;
+  } else {
+    const slides = aestheticSlideRecords(entry);
+    const out: number[] = [];
+    for (let i = 1; i <= totalRefs; i++) {
+      if (skip.has(i)) continue;
+      const slide = slides.find((s) => Number(s.slide_index) === i) ?? slides[i - 1];
+      if (slide && slideIsPromotionalForLibrary(slide)) continue;
+      out.push(i);
+    }
+    indices = out.length > 0 ? out : Array.from({ length: totalRefs }, (_, i) => i + 1);
   }
-  return out.length > 0 ? out : Array.from({ length: totalRefs }, (_, i) => i + 1);
+
+  const withinTextLimit = indices.filter((i) => referenceSlideIndexWithinTextLimit(entry, i));
+  return withinTextLimit.length > 0 ? withinTextLimit : indices;
 }
 
 export type TemplateBgSlot = "cover" | "body" | "cta";

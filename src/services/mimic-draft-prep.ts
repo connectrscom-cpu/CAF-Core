@@ -10,9 +10,11 @@ import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payloa
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
+  assertMimicCarouselCopySlideCount,
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
   reconcileMimicPayloadToOutputSlideCount,
+  targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
 import { slideHasRenderableContent, slidesFromGeneratedOutput } from "./carousel-render-pack.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
@@ -440,7 +442,10 @@ export async function prepareMimicDraftPackage(
 
   if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic) {
     const gen = pickGeneratedOutputOrEmpty(merged);
-    const renderableLlm = slidesFromGeneratedOutput(gen).filter((s) =>
+    const mimicTarget = targetMimicCarouselCopySlideCount(merged, mimic);
+    const slideOpts = mimicTarget != null ? { preferred_slide_count: mimicTarget } : undefined;
+    assertMimicCarouselCopySlideCount(merged, gen, mimic);
+    const renderableLlm = slidesFromGeneratedOutput(gen, slideOpts).filter((s) =>
       slideHasRenderableContent(s as Record<string, unknown>)
     );
     const llmCount = renderableLlm.length;

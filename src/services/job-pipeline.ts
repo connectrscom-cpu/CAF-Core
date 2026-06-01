@@ -74,6 +74,7 @@ import {
   reconcileFullBleedSlidePlansAtRender,
   reconcileMimicPayloadToOutputSlideCount,
   expectedMimicCarouselOutputSlideCount,
+  targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
@@ -1537,7 +1538,15 @@ async function processCarouselJob(
   }
   baseRender = stripNonRenderableDeckFields(baseRender);
   baseRender = normalizeLlmParsedForSchemaValidation(job.flow_type, baseRender);
-  const slides = slidesFromGeneratedOutput(baseRender);
+  const mimicForSlidePick = pickMimicPayload(job.generation_payload);
+  const mimicSlideTarget =
+    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForSlidePick
+      ? targetMimicCarouselCopySlideCount(job.generation_payload as Record<string, unknown>, mimicForSlidePick)
+      : null;
+  const slides = slidesFromGeneratedOutput(
+    baseRender,
+    mimicSlideTarget != null ? { preferred_slide_count: mimicSlideTarget } : undefined
+  );
   const usableSlides = slides.filter((s) => slideHasRenderableContent(s as Record<string, unknown>));
 
   if (usableSlides.length === 0) {
@@ -1642,6 +1651,9 @@ async function processCarouselJob(
       const outputCount = expectedMimicCarouselOutputSlideCount(mimicPayload, llmCount);
       mimicPayload = reconcileMimicPayloadToOutputSlideCount(mimicPayload, outputCount);
       n = outputCount;
+      if (llmCount > 0) {
+        n = Math.min(n, llmCount);
+      }
       if (llmCount > 0 && (refFrames !== outputCount || llmCount !== outputCount)) {
         logPipelineEvent("info", "render", "Reconciled mimic output to LLM copy slide count", {
           task_id: job.task_id,
