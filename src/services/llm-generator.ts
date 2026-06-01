@@ -44,6 +44,7 @@ import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { slimMimicVisualGuidelineForLlmCopy } from "../domain/mimic-carousel-package.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
+import { filterSlideCopyLayoutForMimic } from "./mimic-carousel-render.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -600,7 +601,13 @@ export async function generateForJob(
       mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
       mimic_render_context: templateContext.mimic_render_context,
       mimic_job_grounding: templateContext.mimic_job_grounding,
-      slide_copy_layout: buildSlideCopyLayoutForLlmFromPayload(payload),
+      slide_copy_layout:
+        mimicForCopy != null
+          ? filterSlideCopyLayoutForMimic(
+              mimicForCopy,
+              buildSlideCopyLayoutForLlmFromPayload(payload)
+            )
+          : buildSlideCopyLayoutForLlmFromPayload(payload),
     });
   }
 

@@ -137,12 +137,7 @@ export function extendSlidePlansForOutputCount(
   for (let slideIndex = plans.length + 1; slideIndex <= outputSlideCount; slideIndex++) {
     const unifiedBg = mimic.mode === "template_bg";
     const refSlot = unifiedBg ? 1 : refCount > 0 ? ((slideIndex - 1) % refCount) + 1 : 1;
-    const render_mode =
-      mimic.mode === "template_bg"
-        ? "hbs"
-        : defaultMode === "full_bleed" && slideIndex > (mimic.slide_plans?.length ?? 0)
-          ? "hbs"
-          : defaultMode;
+    const render_mode = mimic.mode === "template_bg" ? "hbs" : defaultMode;
     plans.push({ slide_index: slideIndex, render_mode, reference_index: refSlot });
   }
   return plans;

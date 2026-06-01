@@ -70,9 +70,8 @@ import {
   requireMimicSlideBackgroundPlate,
   persistMimicVisualPlateForSlide,
   renderMimicCarouselSlideFullBleed,
-  isPromotionalSlide,
+  filterPromotionalSlidesFromMimicPayload,
   reconcileFullBleedSlidePlansAtRender,
-  referenceItemForMimicSlide,
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
@@ -1600,44 +1599,43 @@ async function processCarouselJob(
       reference_items: normalizeMimicReferenceItems(mimicPayload.reference_items),
     };
 
+    if (mimicPayload.mode === "carousel_visual") {
+      const { mimic: filtered, removed_slide_indices } =
+        filterPromotionalSlidesFromMimicPayload(mimicPayload);
+      if (removed_slide_indices.length > 0) {
+        logPipelineEvent("info", "render", "Filtered promotional slides from carousel_visual", {
+          task_id: job.task_id,
+          data: {
+            original_reference_count: mimicPayload.reference_items.length,
+            filtered_slide_count: filtered.reference_items.length,
+            removed_indices: removed_slide_indices,
+          },
+        });
+        mimicPayload = filtered;
+      }
+    }
+
     if (mimicPayload.mode === "template_bg") {
       n = usableSlides.length;
     } else if (mimicPayload.mode === "carousel_visual" && mimicPayload.reference_items.length > 0) {
-      n = Math.min(mimicPayload.reference_items.length, usableSlides.length);
+      n = mimicPayload.reference_items.length;
+      if (usableSlides.length < n) {
+        logPipelineEvent("warn", "render", "LLM copy slide count below reference frame count", {
+          task_id: job.task_id,
+          data: {
+            expected_slides: n,
+            llm_slides: usableSlides.length,
+            note: "Rendering all reference frames; short slides reuse nearest copy.",
+          },
+        });
+      } else if (usableSlides.length > n) {
+        logPipelineEvent("info", "render", "LLM copy slide count exceeds reference frames — clamping", {
+          task_id: job.task_id,
+          data: { expected_slides: n, llm_slides: usableSlides.length },
+        });
+      }
     } else {
       n = Math.min(n, usableSlides.length);
-    }
-
-    // Filter out promotional / brand-specific reference slides (product pitches, CTAs,
-    // download promos, branded guides, quizzes). Uses on_screen_text_transcript from
-    // the Nemotron vision analysis stored on visual_guideline.slides.
-    if (mimicPayload.mode === "carousel_visual") {
-      const keptIndices: number[] = [];
-      for (let idx = 1; idx <= n; idx++) {
-        if (!isPromotionalSlide(mimicPayload, idx)) keptIndices.push(idx);
-      }
-      if (keptIndices.length > 0 && keptIndices.length < n) {
-        const filteredItems = keptIndices
-          .map((refIdx) => referenceItemForMimicSlide(mimicPayload!, refIdx))
-          .filter((item): item is NonNullable<typeof item> => item != null);
-        if (filteredItems.length > 0) {
-          logPipelineEvent("info", "render", "Filtered promotional slides from carousel_visual", {
-            task_id: job.task_id,
-            data: {
-              original_slide_count: n,
-              filtered_slide_count: filteredItems.length,
-              removed_indices: Array.from({ length: n }, (_, i) => i + 1).filter(
-                (i) => !keptIndices.includes(i)
-              ),
-            },
-          });
-          mimicPayload = {
-            ...mimicPayload,
-            reference_items: filteredItems.map((item, i) => ({ ...item, index: i + 1 })),
-          };
-          n = filteredItems.length;
-        }
-      }
     }
 
     mimicPayload = reconcileFullBleedSlidePlansAtRender(mimicPayload);

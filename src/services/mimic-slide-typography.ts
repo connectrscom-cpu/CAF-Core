@@ -33,6 +33,19 @@ function pickNum(raw: unknown): number | null {
 }
 
 function pickBBoxNorm(rec: Record<string, unknown>): { x: number; y: number; w: number; h: number } | null {
+  const directX = pickNum(rec.x);
+  const directY = pickNum(rec.y);
+  const directW = pickNum(rec.w);
+  const directH = pickNum(rec.h);
+  if (directX != null && directY != null && directW != null && directH != null) {
+    return {
+      x: clamp01(directX),
+      y: clamp01(directY),
+      w: clamp01(directW),
+      h: clamp01(directH),
+    };
+  }
+
   const bboxNorm = asRecord(rec.bbox_norm);
   if (bboxNorm) {
     const x = pickNum(bboxNorm.x ?? bboxNorm.left);
@@ -117,13 +130,14 @@ export function textPlacementFromSlide(slide: Record<string, unknown> | null): s
 
 export function buildArtOnlySafeZoneHint(slide: Record<string, unknown> | null | undefined): string {
   if (!slide) {
-    return "Leave generous clean margins suitable for later HTML text overlay. Do not render any letters, numbers, logos, signs, captions, watermarks, symbols, or handwriting.";
+    return "Leave generous clean margins for later HTML text overlay. Never render text blocks, headlines, paragraphs, or placeholder copy — no letters, numbers, logos, signs, captions, watermarks, symbols, or handwriting.";
   }
 
   const blocks = parseMimicTextBlocks(slide.text_blocks);
   const placement = textPlacementFromSlide(slide);
 
   const parts: string[] = [
+    "Never render readable text: no words, headlines, paragraphs, lorem ipsum, or placeholder text blocks.",
     "Do not render any letters, numbers, logos, signs, captions, watermarks, symbols, or handwriting.",
     "Output art/background only — all final copy will be added later via HTML/CSS overlay.",
   ];
@@ -173,27 +187,115 @@ function aestheticSlideRecordsFromGuideline(vg: Record<string, unknown>): Record
   return slides.map((raw) => asRecord(raw)).filter((x): x is Record<string, unknown> => x != null);
 }
 
+/** Nemotron slide index for vision rows (may differ from 1-based output index after promo/video drops). */
+export function guidelineSlideIndexForMimicOutput(
+  mimic: Partial<Pick<MimicPayloadV1, "reference_items" | "slide_plans">>,
+  outputSlideIndex1Based: number
+): number {
+  const items = mimic.reference_items ?? [];
+  if (items.length === 0) return outputSlideIndex1Based;
+
+  const plan = mimic.slide_plans?.find((p) => p.slide_index === outputSlideIndex1Based);
+  const refIdx = plan?.reference_index ?? outputSlideIndex1Based;
+
+  let item = items[outputSlideIndex1Based - 1] ?? null;
+  if (plan?.reference_index != null) {
+    item =
+      items.find((r) => r.index === refIdx) ??
+      (refIdx >= 1 && refIdx <= items.length ? items[refIdx - 1] : undefined) ??
+      item;
+  }
+
+  const src = item?.source_slide_index;
+  if (src != null && Number.isFinite(src) && src > 0) return src;
+  return outputSlideIndex1Based;
+}
+
 function slideGuidelineRecord(
   visualGuideline: Record<string, unknown> | null | undefined,
-  slideIndex1Based: number
+  slideIndex1Based: number,
+  lookupSlideIndex?: number
 ): Record<string, unknown> | null {
+  const lookupIdx = lookupSlideIndex ?? slideIndex1Based;
   const vg = visualGuideline ?? {};
   const fromPackage = Array.isArray(vg.slides) ? vg.slides : [];
   if (fromPackage.length > 0) {
     const match =
       fromPackage
         .map((raw) => asRecord(raw))
-        .find((s) => s && Number(s.slide_index) === slideIndex1Based) ??
-      asRecord(fromPackage[slideIndex1Based - 1]);
+        .find((s) => s && Number(s.slide_index) === lookupIdx) ??
+      asRecord(fromPackage[lookupIdx - 1]);
     if (match) return match;
   }
   const aesSlides = aestheticSlideRecordsFromGuideline(vg);
   if (aesSlides.length === 0) return null;
   return (
-    aesSlides.find((s) => Number(s.slide_index) === slideIndex1Based) ??
-    aesSlides[slideIndex1Based - 1] ??
+    aesSlides.find((s) => Number(s.slide_index) === lookupIdx) ??
+    aesSlides[lookupIdx - 1] ??
     null
   );
+}
+
+function textBlockRegionForLayout(blocks: MimicTextBlock[]): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const xs = blocks.map((b) => b.x);
+  const ys = blocks.map((b) => b.y);
+  const x2 = blocks.map((b) => b.x + b.w);
+  const y2 = blocks.map((b) => b.y + b.h);
+  const pad = 0.02;
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
+  const x1 = Math.max(...x2);
+  const y1 = Math.max(...y2);
+  return {
+    x: clamp01(x0 - pad),
+    y: clamp01(y0 - pad),
+    w: clamp01(x1 - x0 + 2 * pad),
+    h: clamp01(y1 - y0 + 2 * pad),
+  };
+}
+
+/** Map Nemotron normalized text block boxes → flex or absolute overlay region. */
+export function layoutAnchorFromTextBlocks(blocks: MimicTextBlock[]): MimicSlideLayoutPatch & {
+  mimic_use_block_positioning?: boolean;
+  mimic_text_x?: number;
+  mimic_text_y?: number;
+  mimic_text_w?: number;
+} {
+  const region = textBlockRegionForLayout(blocks);
+  const title =
+    blocks.find((b) => /title|headline|hook|cover/.test(b.role ?? "")) ?? blocks[0] ?? null;
+  const anchorY = title ? title.y + title.h / 2 : region.y + region.h / 2;
+  const anchorX = title ? title.x + title.w / 2 : region.x + region.w / 2;
+
+  let mimic_page_justify = "flex-start";
+  if (anchorY >= 0.58) mimic_page_justify = "flex-end";
+  else if (anchorY >= 0.36 && anchorY <= 0.58) mimic_page_justify = "center";
+
+  let mimic_text_align = "left";
+  let mimic_page_align = "stretch";
+  const alignHint = (title?.align ?? "").toLowerCase();
+  if (alignHint === "center" || (anchorX >= 0.38 && anchorX <= 0.62)) {
+    mimic_text_align = "center";
+    mimic_page_align = "center";
+  } else if (alignHint === "right" || anchorX >= 0.64) {
+    mimic_text_align = "right";
+    mimic_page_align = "flex-end";
+  }
+
+  return {
+    mimic_page_justify,
+    mimic_page_align,
+    mimic_text_align,
+    mimic_use_block_positioning: true,
+    mimic_text_x: region.x,
+    mimic_text_y: region.y,
+    mimic_text_w: region.w,
+  };
 }
 
 function deckHaystack(visualGuideline: Record<string, unknown> | null | undefined): string {
@@ -423,9 +525,20 @@ export interface MimicSlideLayoutPatch {
 /** Map vision `text_placement` + deck cues → flex/text alignment for carousel_mimic_bg.hbs. */
 export function mimicSlideLayoutPatch(
   visualGuideline: Record<string, unknown> | null | undefined,
-  slideIndex1Based: number
-): MimicSlideLayoutPatch {
-  const slide = slideGuidelineRecord(visualGuideline, slideIndex1Based);
+  slideIndex1Based: number,
+  lookupSlideIndex?: number
+): MimicSlideLayoutPatch & {
+  mimic_use_block_positioning?: boolean;
+  mimic_text_x?: number;
+  mimic_text_y?: number;
+  mimic_text_w?: number;
+} {
+  const slide = slideGuidelineRecord(visualGuideline, slideIndex1Based, lookupSlideIndex);
+  const blocks = slide ? parseMimicTextBlocks(slide.text_blocks) : [];
+  if (blocks.length > 0) {
+    return layoutAnchorFromTextBlocks(blocks);
+  }
+
   const placement = slide ? textPlacementFromSlide(slide).toLowerCase() : "";
   const deck = deckHaystack(visualGuideline);
   const deckCentered = /centered text|center stack|text centrally|text over/.test(deck);
@@ -465,6 +578,11 @@ export interface MimicSlideTypographyPatch {
   mimic_page_justify?: string;
   mimic_page_align?: string;
   mimic_text_align?: string;
+  /** When true, HBS places copy at Nemotron text_blocks region (not default top stack). */
+  mimic_use_block_positioning?: boolean;
+  mimic_text_x?: number;
+  mimic_text_y?: number;
+  mimic_text_w?: number;
 }
 
 /**
@@ -472,15 +590,17 @@ export interface MimicSlideTypographyPatch {
  * Applied per slide at render time (after Qwen background plates, before HBS composite).
  */
 export function mimicSlideTypographyPatch(
-  mimic: Pick<MimicPayloadV1, "visual_guideline">,
+  mimic: Pick<MimicPayloadV1, "visual_guideline"> &
+    Partial<Pick<MimicPayloadV1, "reference_items" | "slide_plans">>,
   slideIndex1Based: number,
   totalSlides: number,
   opts?: { skipIfReviewerSet?: Record<string, unknown> }
 ): MimicSlideTypographyPatch {
   const vg = mimic.visual_guideline ?? {};
-  const slide = slideGuidelineRecord(vg, slideIndex1Based);
+  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
+  const slide = slideGuidelineRecord(vg, slideIndex1Based, lookupIdx);
   const typography = asRecord(slide?.typography);
-  const layout = mimicSlideLayoutPatch(vg, slideIndex1Based);
+  const layout = mimicSlideLayoutPatch(vg, slideIndex1Based, lookupIdx);
   const isCta = totalSlides > 1 && slideIndex1Based === totalSlides;
   const isCover = slideIndex1Based === 1;
 
@@ -520,6 +640,10 @@ export function mimicSlideTypographyPatch(
     "mimic_page_justify",
     "mimic_page_align",
     "mimic_text_align",
+    "mimic_use_block_positioning",
+    "mimic_text_x",
+    "mimic_text_y",
+    "mimic_text_w",
   ] as const) {
     if (skip[key] != null && String(skip[key]).trim() !== "") {
       delete out[key];

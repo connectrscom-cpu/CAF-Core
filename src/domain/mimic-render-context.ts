@@ -20,6 +20,8 @@ export interface MimicRenderContextForLlm {
   format_pattern: string | null;
   render_sequence: MimicRenderSequence;
   operator_note: string;
+  /** Original reference indices removed as brand/app promos (carousel_visual). */
+  skipped_promotional_slide_indices?: number[];
 }
 
 function renderStrategyForMode(mode: MimicMode): MimicCarouselRenderStrategy {
@@ -45,7 +47,9 @@ export function buildMimicRenderContextForLlm(
     ).trim() || null;
 
   const target_slide_count = copyBefore
-    ? targetSlideCountFromReference(mimic.reference_items.length, guidelineEntry)
+    ? isCarouselVisual
+      ? Math.max(mimic.reference_items.length, 1)
+      : targetSlideCountFromReference(mimic.reference_items.length, guidelineEntry)
     : null;
 
   let render_sequence: MimicRenderSequence;
@@ -57,7 +61,7 @@ export function buildMimicRenderContextForLlm(
   } else if (isCarouselVisual) {
     render_sequence = "visual_plate_then_hbs_overlay";
     operator_note =
-      "Visual mimic path: finalize full per-slide copy here (~same structure/length as slide_copy_layout; fresh wording). Render recreates each slide art-only (~80% visual similarity), then composites your copy via HBS at Nemotron text_blocks / typography positions.";
+      "Visual mimic path: produce exactly target_slide_count slides — one per reference frame in slide_copy_layout (promo/video frames already removed). Same per-slide meaning as reference (rephrase only). Render recreates each slide art-only (~80% visual similarity), then composites copy via HBS.";
   } else {
     render_sequence = copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic";
     operator_note = copyBefore

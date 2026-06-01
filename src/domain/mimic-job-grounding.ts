@@ -11,6 +11,12 @@ import {
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
 
+/** Shared copy contract: rephrase per slide, keep the same subject/claim as the reference. */
+export const MIMIC_SEMANTIC_FIDELITY_COPY_RULES = `Semantic fidelity (mimic copy — required):
+- **Per slide:** For slide index N, on-slide fields must express the **same idea, subject, and list item** as \`slide_copy_layout[N].reference_on_screen_text\` and \`visual_description\`. Rephrase only — do not swap zodiac signs, products, people, stats, or slide-specific entities.
+- **Deck pattern:** Keep the reference format (e.g. "each sign as a food type") across the deck; change surface wording, not the underlying premise per slide.
+- **~80% rule:** Applies to phrasing and structure, **not** permission to change what each slide is about. Wrong: reference "taurus as food" → output about Aries or generic "feisty flavors". Right: a fresh line still clearly about Taurus-as-food.`;
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
   return null;
@@ -187,16 +193,17 @@ export function appendMimicGroundedReferenceToUserPrompt(
   if (layout.length > 0) {
     parts.push(
       "",
-      "slide_copy_layout (per slide: reference_on_screen_text = what the archived post said; visual_description = how it looks; typography.text_placement + text_blocks[].x/y/w/h = where text sits in normalized 0–1 coordinates; match roles/length/placement with fresh wording):",
+      `slide_copy_layout (${layout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject; visual_description = look; typography.text_placement + text_blocks[].x/y/w/h = placement in 0–1 coords; rephrase only):`,
       JSON.stringify(layout)
     );
   }
   if (vg) {
     parts.push("", "mimic_visual_guideline_for_copy:", JSON.stringify(vg));
   }
+  parts.push("", MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
   parts.push(
     "",
-    "Write new copy that fits the same slide structure and text placement as slide_copy_layout — do not transcribe reference_on_screen_text verbatim."
+    "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide."
   );
   return parts.join("\n").trim();
 }

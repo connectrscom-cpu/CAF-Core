@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
+  filterPromotionalSlidesFromMimicPayload,
   isFullBleedCandidateSlide,
   isPromotionalSlide,
   mimicCarouselNeedsBackgroundPlate,
@@ -115,6 +116,51 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       },
     ];
     expect(isPromotionalSlide(videoFile, 1)).toBe(true);
+  });
+
+  it("flags app sponsor slides (cash back, link in bio, app name)", () => {
+    const mimic = baseMimic({
+      slides: [
+        {
+          slide_index: 4,
+          on_screen_text_transcript: "and now for my latest obsession: FRANKI APP",
+          text_blocks: [
+            { text: "earn $$ for going out to eat!", role: "cta" },
+            { text: "use my link in bio to get 10% cash back", role: "cta" },
+          ],
+          slide_purpose: "content",
+          brand_specificity: "low",
+        },
+      ],
+    });
+    expect(isPromotionalSlide(mimic, 4)).toBe(true);
+  });
+
+  it("filterPromotionalSlidesFromMimicPayload removes promo frames and renumbers", () => {
+    const mimic = baseMimic({
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "aries as food", slide_purpose: "content" },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "use my link in bio for cash back",
+          slide_purpose: "self_promo",
+        },
+        { slide_index: 3, on_screen_text_transcript: "taurus as food", slide_purpose: "content" },
+      ],
+    });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg" },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg" },
+    ];
+    const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(removed_slide_indices).toEqual([2]);
+    expect(out.reference_items).toHaveLength(2);
+    expect(out.reference_items[0]?.source_slide_index).toBe(1);
+    expect(out.reference_items[1]?.source_slide_index).toBe(3);
+    expect(out.reference_items).toHaveLength(2);
+    expect(out.slide_plans).toHaveLength(2);
+    expect(out.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
   });
 
   it("flags product-pitch transcript and PDF promos", () => {

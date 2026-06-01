@@ -74,11 +74,39 @@
       box-sizing:border-box;
     }
 
+    .mimic-text-stack{
+      display:flex;
+      flex-direction:column;
+      width:100%;
+      max-width:920px;
+      box-sizing:border-box;
+    }
+
+  .page.mimic-block-positioned{
+      display:block;
+      padding:0;
+    }
+
+    .page.mimic-block-positioned .mimic-text-stack{
+      position:absolute;
+      z-index:2;
+      left:calc(var(--pad-x) + var(--caf-text-x, 0.08) * (100% - 2 * var(--pad-x)));
+      top:calc(var(--pad-y) + var(--caf-text-y, 0.12) * (100% - 2 * var(--pad-y)));
+      width:calc(var(--caf-text-w, 0.84) * (100% - 2 * var(--pad-x)));
+      max-width:none;
+      margin:0;
+    }
+
     .page .headline,
     .page .body,
     .page .sub,
     .page .handle,
-    .page .cta-handle{
+    .page .cta-handle,
+    .mimic-text-stack .headline,
+    .mimic-text-stack .body,
+    .mimic-text-stack .sub,
+    .mimic-text-stack .handle,
+    .mimic-text-stack .cta-handle{
       width:100%;
       max-width:920px;
     }
@@ -151,7 +179,8 @@
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
-    <div class="page">
+    <div class="page{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}">
+      <div class="mimic-text-stack">
       <div class="headline main-headline">
         {{#if cover}}
           {{joinEmojiOrphans cover}}
@@ -171,6 +200,7 @@
           <div class="body main-body">{{joinEmojiOrphans cover_slide.body}}</div>
         {{/if}}
       {{/if}}
+      </div>
     </div>
   </div>
 
@@ -179,9 +209,11 @@
     {{#if ../background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
     {{/if}}
-    <div class="page">
+    <div class="page{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}">
+      <div class="mimic-text-stack">
       <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
       <div class="body main-body">{{joinEmojiOrphans body}}</div>
+      </div>
     </div>
   </div>
   {{/each}}
@@ -191,7 +223,8 @@
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
-    <div class="page">
+    <div class="page{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}">
+      <div class="mimic-text-stack">
       <div class="headline cta-text">
         {{#if cta_text}}
           {{joinEmojiOrphans cta_text}}
@@ -213,6 +246,7 @@
           {{/if}}
         {{/if}}
       {{/if}}
+      </div>
     </div>
   </div>
 </body>

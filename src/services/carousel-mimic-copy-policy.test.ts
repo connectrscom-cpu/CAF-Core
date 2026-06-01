@@ -41,6 +41,14 @@ describe("mimicCarouselCopyBranch", () => {
     const text = mimicCarouselCopySystemAddendum("full_bleed");
     expect(text).toContain("visual plate");
     expect(text).toContain("slide_copy_layout");
+    expect(text).toContain("Semantic fidelity");
+    expect(text).toContain("taurus as food");
     expect(text).not.toContain("≤120");
+  });
+
+  it("template_bg addendum requires per-slide semantic fidelity", () => {
+    const text = mimicCarouselCopySystemAddendum("template_bg");
+    expect(text).toContain("reference_on_screen_text");
+    expect(text).toContain("same subject and claim");
   });
 });

@@ -138,6 +138,13 @@ const CAROUSEL_LAYOUT_CONTEXT_TO_CSS = {
   mimic_text_align: "--caf-text-align",
 };
 
+/** Nemotron normalized 0–1 text region for absolute mimic overlay. */
+const CAROUSEL_BLOCK_POSITION_TO_CSS = {
+  mimic_text_x: "--caf-text-x",
+  mimic_text_y: "--caf-text-y",
+  mimic_text_w: "--caf-text-w",
+};
+
 const CAROUSEL_THEME_CONTEXT_TO_CSS = {
   carousel_paper: "--paper",
   carousel_ink: "--ink",
@@ -160,6 +167,12 @@ function cafCarouselTypographyStyleTag(context) {
     const raw = ctx[key] ?? inner[key];
     if (typeof raw !== "string" || !raw.trim()) continue;
     parts.push(`${cssVar}:${raw.trim()}`);
+  }
+  for (const [key, cssVar] of Object.entries(CAROUSEL_BLOCK_POSITION_TO_CSS)) {
+    const raw = ctx[key] ?? inner[key];
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 1) continue;
+    parts.push(`${cssVar}:${n}`);
   }
   for (const [key, cssVar] of Object.entries(CAROUSEL_THEME_CONTEXT_TO_CSS)) {
     const raw = ctx[key] ?? inner[key];

@@ -147,5 +147,8 @@ describe("mimic-job-grounding", () => {
     expect(out).toContain("text_blocks");
     expect(out).toContain("this job only");
     expect(out).not.toContain("mimic_visual_guideline_for_copy");
+    expect(out).toContain("Semantic fidelity");
+    expect(out).toContain("per-slide meaning");
+    expect(out).toContain("taurus as food");
   });
 });

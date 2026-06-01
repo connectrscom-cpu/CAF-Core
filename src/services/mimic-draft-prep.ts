@@ -9,6 +9,12 @@ import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
+import {
+  expectedMimicCarouselOutputSlideCount,
+  filterPromotionalSlidesFromMimicPayload,
+} from "./mimic-carousel-render.js";
+import { slideHasRenderableContent, slidesFromGeneratedOutput } from "./carousel-render-pack.js";
+import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { resolveTemplateStorageDecision } from "../domain/mimic-template-library.js";
 import { pickGeneratedOutput } from "../domain/generation-payload-output.js";
 import {
@@ -207,14 +213,39 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
 
   const existing = pickMimicPayload(job.generation_payload);
   if (existing?.reference_items?.length) {
-    return {
+    const normalized = {
       ...existing,
       reference_items: normalizeMimicReferenceItems(existing.reference_items),
     };
+    const { mimic: filtered, removed_slide_indices } =
+      filterPromotionalSlidesFromMimicPayload(normalized);
+    const vg = asRecord(filtered.visual_guideline) ?? {};
+    const renderContext = {
+      ...buildMimicRenderContextForLlm(filtered, vg),
+      ...(removed_slide_indices.length > 0
+        ? { skipped_promotional_slide_indices: removed_slide_indices }
+        : {}),
+    };
+    const row = await db.query<{ generation_payload: Record<string, unknown> }>(
+      `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
+      [job.id]
+    );
+    const gp = row.rows[0]?.generation_payload ?? job.generation_payload;
+    await persistGenerationPayload(db, job.id, {
+      ...mergeMimicPayloadSlice(gp, filtered),
+      mimic_render_context: renderContext,
+    });
+    return filtered;
   }
 
-  const { mimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);
-  const renderContext = buildMimicRenderContextForLlm(mimic, resolved.guideline_entry);
+  const { mimic: resolvedMimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);
+  const { mimic, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(resolvedMimic);
+  const renderContext = {
+    ...buildMimicRenderContextForLlm(mimic, resolved.guideline_entry),
+    ...(removed_slide_indices.length > 0
+      ? { skipped_promotional_slide_indices: removed_slide_indices }
+      : {}),
+  };
   const templateStorage = resolveTemplateStorageDecision(resolved.guideline_entry, mimic.mode);
 
   const row = await db.query<{ generation_payload: Record<string, unknown> }>(
@@ -338,9 +369,15 @@ export async function prepareMimicDraftPackage(
 
   if (!mimic?.reference_items?.length) {
     const resolved = await resolveMimicPayloadForJob(db, job, runId);
-    mimic = resolved.mimic;
+    const filtered = filterPromotionalSlidesFromMimicPayload(resolved.mimic);
+    mimic = filtered.mimic;
     resolvedGuideline = resolved.resolved.guideline_entry;
-    const renderContext = buildMimicRenderContextForLlm(mimic, resolved.resolved.guideline_entry);
+    const renderContext = {
+      ...buildMimicRenderContextForLlm(mimic, resolved.resolved.guideline_entry),
+      ...(filtered.removed_slide_indices.length > 0
+        ? { skipped_promotional_slide_indices: filtered.removed_slide_indices }
+        : {}),
+    };
     const row = await db.query<{ generation_payload: Record<string, unknown> }>(
       `SELECT generation_payload FROM caf_core.content_jobs WHERE id = $1`,
       [job.id]
@@ -398,6 +435,25 @@ export async function prepareMimicDraftPackage(
     (isTopPerformerMimicImageFlow(job.flow_type) || isTopPerformerMimicCarouselFlow(job.flow_type))
   ) {
     assertMimicCopyDiffersFromReference(merged, resolvedGuideline);
+  }
+
+  if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic?.mode === "carousel_visual") {
+    const expected = expectedMimicCarouselOutputSlideCount(mimic);
+    const gen = pickGeneratedOutputOrEmpty(merged);
+    const llmSlides = slidesFromGeneratedOutput(gen).filter((s) =>
+      slideHasRenderableContent(s as Record<string, unknown>)
+    );
+    if (expected > 0 && llmSlides.length !== expected) {
+      logPipelineEvent("warn", "generate", "mimic carousel copy slide count mismatch", {
+        run_id: runId ?? undefined,
+        task_id: job.task_id,
+        data: {
+          expected_slides: expected,
+          llm_slides: llmSlides.length,
+          skipped_promotional: asRecord(merged.mimic_render_context)?.skipped_promotional_slide_indices,
+        },
+      });
+    }
   }
 
   logPipelineEvent("info", "generate", "mimic_v1 stored", {

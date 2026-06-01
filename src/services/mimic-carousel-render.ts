@@ -1,6 +1,7 @@
 import type { AppConfig } from "../config.js";
+import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
-import { buildArtOnlySafeZoneHint } from "./mimic-slide-typography.js";
+import { buildArtOnlySafeZoneHint, parseMimicTextBlocks } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
@@ -254,10 +255,19 @@ export async function extractMimicSlideBackground(
   if (!item) return null;
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
+  const visionHints = slideVisionHints(mimic, slideIndex);
 
   const { buffer, mimeType } = await editImageFromReference(config, {
     referenceUrl,
-    prompt: mimicPromptForMode("template_bg", { consistencyHint: opts?.consistencyHint }, opts?.promptOverrides),
+    prompt: mimicPromptForMode(
+      "template_bg",
+      {
+        consistencyHint: opts?.consistencyHint,
+        layout: visionHints.layout,
+        visual: visionHints.visual,
+      },
+      opts?.promptOverrides
+    ),
     size: "1024x1536",
     audit: {
       db,
@@ -386,9 +396,14 @@ function resolveSlideGuideline(
   slideIndex: number
 ): Record<string, unknown> | null {
   const slides = slideGuidelineRecords(mimic);
+  const item = referenceItemForMimicSlide(mimic, slideIndex);
+  const lookupIdx =
+    item?.source_slide_index != null && item.source_slide_index > 0
+      ? item.source_slide_index
+      : slideIndex;
   return (
-    slides.find((s) => Number(s.slide_index) === slideIndex) ??
-    slides[slideIndex - 1] ??
+    slides.find((s) => Number(s.slide_index) === lookupIdx) ??
+    slides[lookupIdx - 1] ??
     null
   );
 }
@@ -502,16 +517,16 @@ export function buildSlideIntentInstruction(intent: SlideIntentHints): string {
 
   if (intent.referenceTextLength > FULL_BLEED_TEXT_CAP) {
     parts.push(
-      `The reference slide has dense text (${intent.referenceTextLength} chars). Keep any on-image text to under ${FULL_BLEED_TEXT_CAP} characters total — shorten, summarize, or use placeholder text blocks.`
+      `The reference slide has dense on-image text (${intent.referenceTextLength} chars). Do not render any text — leave clean low-detail zones where copy will be overlaid later.`
     );
   }
 
   if (intent.slidePurpose === "cta") {
-    parts.push("This is a call-to-action slide. Replace any brand-specific CTAs with a generic, universally applicable call to action.");
+    parts.push("This is a call-to-action slide. Do not render CTA wording on the image — visuals only.");
   } else if (intent.slidePurpose === "hook") {
-    parts.push("This is a hook/cover slide. Keep the bold visual energy but use fresh, original text — not the reference wording.");
+    parts.push("This is a hook/cover slide. Keep bold visual energy with no on-image headline or text blocks.");
   } else if (intent.slidePurpose === "storytelling" || intent.slidePurpose === "content") {
-    parts.push("This is a content slide. Capture the same narrative energy but do not reproduce the reference text.");
+    parts.push("This is a content slide. Match visual narrative energy only — no on-image text.");
   }
 
   if (intent.brandSpecificity === "low") {
@@ -590,12 +605,18 @@ const PROMO_KEYWORD_PATTERNS = [
   /\bas\s+a\s+pdf\b/i,
   /\bpdf\b/i,
   /\blink\s+in\s+bio\b/i,
+  /\buse\s+my\s+link\b/i,
+  /\bin\s+(?:the\s+)?bio\b/i,
   /\bswipe\s+up\b/i,
   /\buse\s+code\b/i,
   /\bdiscount\b/i,
   /\bfree\s+shipping\b/i,
   /\bcoupon\b/i,
   /\bpromo\s*code\b/i,
+  /\bcash\s*back\b/i,
+  /\bearn\s+\$+/i,
+  /\bearn\b.*\b(eat|eating|going\s+out)\b/i,
+  /\b(?:get|save)\s+\d+\s*%/i,
   /\btake\s+(the|our|my)\s+quiz\b/i,
   /\bmy\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
   /\bour\s+(course|book|guide|ebook|e-book|program|masterclass|workshop|webinar|app|tool)\b/i,
@@ -605,6 +626,12 @@ const PROMO_KEYWORD_PATTERNS = [
   /\bpre-?order\b/i,
   /\blaunch(ing|ed)?\b.*\b(guide|book|course|program)\b/i,
   /\bupdated\s+version\s+will\s+drop\b/i,
+  /\blatest\s+obsession\b/i,
+  /\breferral\b/i,
+  /\bsponsored\b/i,
+  /\bpaid\s+partnership\b/i,
+  /\baffiliate\b/i,
+  /\b[A-Z][A-Z0-9]{1,}\s+APP\b/,
   /\$\d/,
   /\bpart\s+\d\b/i,
 ];
@@ -620,7 +647,22 @@ const PROMO_VISUAL_PATTERNS = [
   /\bebook\s+preview/i,
   /\blaptop\s+mockup/i,
   /\bapp\s+screen/i,
+  /\bapp\s+icon/i,
+  /\bapp\s+logo/i,
+  /\bmobile\s+app/i,
+  /\bqr\s+code/i,
 ];
+
+function slideTextBlobForPromoCheck(match: Record<string, unknown>): string {
+  const parts: string[] = [];
+  const main = String(match.on_screen_text_transcript ?? match.on_image_text ?? "").trim();
+  if (main) parts.push(main);
+  for (const b of parseMimicTextBlocks(match.text_blocks)) {
+    const t = b.text.trim();
+    if (t) parts.push(t);
+  }
+  return parts.join("\n");
+}
 
 /**
  * Detect whether a reference slide should be skipped (promotional / brand-specific).
@@ -653,9 +695,7 @@ export function isPromotionalSlide(
     const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
     const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
 
-    const transcript = String(
-      match.on_screen_text_transcript ?? match.on_image_text ?? ""
-    ).trim();
+    const transcript = slideTextBlobForPromoCheck(match);
     const visual = String(match.visual_description ?? "").trim();
 
     if (transcript && PROMO_KEYWORD_PATTERNS.some((rx) => rx.test(transcript))) return true;
@@ -716,6 +756,69 @@ export function nonPromotionalSlideIndices(
     if (!isPromotionalSlide(mimic, i)) indices.push(i);
   }
   return indices.length > 0 ? indices : [1];
+}
+
+/** Output slide count for carousel_visual: one rendered slide per kept reference frame. */
+export function expectedMimicCarouselOutputSlideCount(mimic: MimicPayloadV1): number {
+  return Math.max(mimic.reference_items.length, 0);
+}
+
+/**
+ * Drop promotional / brand-locked / video reference frames before copy + render.
+ * Renumbers `reference_items` and rebuilds 1:1 `slide_plans` (all full_bleed).
+ */
+export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): {
+  mimic: MimicPayloadV1;
+  removed_slide_indices: number[];
+} {
+  if (mimic.mode !== "carousel_visual" || mimic.reference_items.length === 0) {
+    return { mimic, removed_slide_indices: [] };
+  }
+
+  const kept: MimicReferenceItem[] = [];
+  const removed: number[] = [];
+
+  for (const item of mimic.reference_items) {
+    const origIdx =
+      item.source_slide_index != null && item.source_slide_index > 0
+        ? item.source_slide_index
+        : item.index;
+    if (isPromotionalSlide(mimic, origIdx)) {
+      removed.push(origIdx);
+      continue;
+    }
+    kept.push({ ...item, source_slide_index: origIdx });
+  }
+
+  if (removed.length === 0) {
+    return { mimic, removed_slide_indices: [] };
+  }
+  if (kept.length === 0) {
+    return { mimic, removed_slide_indices: removed };
+  }
+
+  const filteredItems = kept.map((item, i) => ({ ...item, index: i + 1 }));
+  const slide_plans = filteredItems.map((_, i) => ({
+    slide_index: i + 1,
+    render_mode: "full_bleed" as const,
+    reference_index: i + 1,
+  }));
+
+  return {
+    mimic: { ...mimic, reference_items: filteredItems, slide_plans },
+    removed_slide_indices: removed,
+  };
+}
+
+/** Exclude promotional reference slides from copy LLM layout; renumber remaining slides 1..N. */
+export function filterSlideCopyLayoutForMimic(
+  mimic: MimicPayloadV1,
+  layout: MimicSlideCopyLayoutForLlm[]
+): MimicSlideCopyLayoutForLlm[] {
+  if (mimic.mode !== "carousel_visual" || layout.length === 0) return layout;
+  const kept = layout.filter((s) => !isPromotionalSlide(mimic, s.slide_index));
+  if (kept.length === layout.length) return layout;
+  return kept.map((s, i) => ({ ...s, slide_index: i + 1 }));
 }
 
 /**
