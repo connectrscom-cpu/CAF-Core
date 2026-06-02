@@ -807,14 +807,14 @@ export function targetMimicCarouselCopySlideCount(
   payload: Record<string, unknown>,
   mimic?: MimicPayloadV1 | null
 ): number | null {
+  const grounding = asRecord(payload.mimic_job_grounding);
+  const layout = grounding?.slide_copy_layout;
+  if (Array.isArray(layout) && layout.length > 0) return layout.length;
   const ctx = asRecord(payload.mimic_render_context);
   const fromCtx = ctx?.target_slide_count;
   if (typeof fromCtx === "number" && Number.isFinite(fromCtx) && fromCtx > 0) {
     return Math.floor(fromCtx);
   }
-  const grounding = asRecord(payload.mimic_job_grounding);
-  const layout = grounding?.slide_copy_layout;
-  if (Array.isArray(layout) && layout.length > 0) return layout.length;
   if (mimic) {
     const content = contentSlideIndicesFromMimic(mimic);
     if (content.length > 0) return content.length;
@@ -863,7 +863,10 @@ export function mimicCarouselSlideCountRetryFooter(target: number, got: number):
     "---",
     `CRITICAL: Your JSON had ${got} renderable on-screen slide(s) but this job requires exactly ${target}.`,
     `Return one complete JSON object with exactly ${target} entries in top-level \`slides[]\` (one per slide_copy_layout row, same order).`,
-    "Each slide must have rephrased on-screen copy (headline+body, or text_blocks with role+text). Do not omit content slides.",
+    "Each slide must contain rephrased on-screen copy (headline+body, or text_blocks with role+text). Do not omit content slides.",
+    "Do NOT leave headline/body empty strings. Every slide must have at least one non-empty text field that will be rendered onto the slide.",
+    "For content slides, keep `body` substantive (target 220–400 chars unless the slide is intentionally a short CTA/hook).",
+    "Output must follow the FLOW_CAROUSEL copy schema (cover/body/cta + caption/hashtags when the schema expects them) — not a visual-only analysis stub.",
   ].join("\n");
 }
 
@@ -913,13 +916,18 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
   mimic: MimicPayloadV1;
   removed_slide_indices: number[];
 } {
-  if (mimic.mode !== "carousel_visual" || mimic.reference_items.length === 0) {
+  // Applies to both mimic carousel modes:
+  // - carousel_visual: per-slide reference frames
+  // - template_bg: deck-level reference frames (covers listicles that end with self-promo/CTA panels)
+  if ((mimic.mode !== "carousel_visual" && mimic.mode !== "template_bg") || mimic.reference_items.length === 0) {
     return { mimic, removed_slide_indices: [] };
   }
 
   const contentSet = contentSlideIndexSet(mimic);
   const kept: MimicReferenceItem[] = [];
   const removed: number[] = [];
+  const keptOrigIndices: number[] = [];
+  let hasDenseTextSlides = false;
 
   for (const item of mimic.reference_items) {
     const origIdx =
@@ -934,14 +942,14 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
       removed.push(origIdx);
       continue;
     }
-    if (isExcessiveOnScreenTextSlide(mimic, origIdx)) {
-      removed.push(origIdx);
-      continue;
-    }
     kept.push({ ...item, source_slide_index: origIdx });
+    keptOrigIndices.push(origIdx);
+    if (isExcessiveOnScreenTextSlide(mimic, origIdx)) hasDenseTextSlides = true;
   }
 
-  if (removed.length === 0) {
+  // If nothing is removed and no dense-text frames exist, keep payload unchanged.
+  // Otherwise, we still rebuild slide_plans so dense-text frames can prefer HBS overlay.
+  if (removed.length === 0 && !hasDenseTextSlides) {
     return { mimic, removed_slide_indices: [] };
   }
   if (kept.length === 0) {
@@ -949,11 +957,17 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
   }
 
   const filteredItems = kept.map((item, i) => ({ ...item, index: i + 1 }));
-  const slide_plans = filteredItems.map((_, i) => ({
-    slide_index: i + 1,
-    render_mode: "full_bleed" as const,
-    reference_index: i + 1,
-  }));
+  const slide_plans = filteredItems.map((_, i) => {
+    const origIdx = keptOrigIndices[i] ?? (i + 1);
+    const denseText = isExcessiveOnScreenTextSlide(mimic, origIdx);
+    return {
+      slide_index: i + 1,
+      // Dense reference text should not remove the slide; it just means we should
+      // prefer a clean plate + copy overlay (HBS) instead of per-slide full-bleed mimic.
+      render_mode: (mimic.mode === "template_bg" || denseText ? "hbs" : "full_bleed") as "hbs" | "full_bleed",
+      reference_index: i + 1,
+    };
+  });
 
   return {
     mimic: { ...mimic, reference_items: filteredItems, slide_plans },
@@ -977,7 +991,7 @@ export function filterSlideCopyLayoutForMimic(
     : [];
 
   let kept = layout;
-  if (mimic.mode === "carousel_visual") {
+  if (mimic.mode === "carousel_visual" || mimic.mode === "template_bg") {
     if (contentIndices.length > 0) {
       const contentSet = new Set(contentIndices);
       kept = layout.filter((s) => contentSet.has(s.slide_index));

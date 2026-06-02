@@ -142,9 +142,9 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
     expect(isPromotionalSlide(mimic, 4)).toBe(true);
   });
 
-  it("isExcessiveOnScreenTextSlide flags transcript + text_blocks over 300 chars", () => {
-    const short = "x".repeat(300);
-    const long = "y".repeat(301);
+  it("isExcessiveOnScreenTextSlide flags transcript + text_blocks over 600 chars", () => {
+    const short = "x".repeat(600);
+    const long = "y".repeat(601);
     const mimicShort = baseMimic({
       slides: [{ slide_index: 1, on_screen_text_transcript: short, slide_purpose: "content" }],
     });
@@ -168,7 +168,7 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
         { slide_index: 1, on_screen_text_transcript: "short hook", slide_purpose: "content" },
         {
           slide_index: 2,
-          on_screen_text_transcript: "a".repeat(301),
+          on_screen_text_transcript: "a".repeat(601),
           slide_purpose: "content",
         },
         { slide_index: 3, on_screen_text_transcript: "another short", slide_purpose: "content" },
@@ -180,10 +180,11 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg" },
     ];
     const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
-    expect(removed_slide_indices).toEqual([2]);
-    expect(out.reference_items).toHaveLength(2);
-    expect(out.reference_items[0]?.source_slide_index).toBe(1);
-    expect(out.reference_items[1]?.source_slide_index).toBe(3);
+    // Dense on-screen text should not remove the slide; it should force HBS overlay for that frame.
+    expect(removed_slide_indices).toEqual([]);
+    expect(out.reference_items).toHaveLength(3);
+    expect(out.slide_plans).toHaveLength(3);
+    expect(out.slide_plans?.[1]?.render_mode).toBe("hbs");
   });
 
   it("filterPromotionalSlidesFromMimicPayload removes promo frames and renumbers", () => {
@@ -211,6 +212,35 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
     expect(out.reference_items).toHaveLength(2);
     expect(out.slide_plans).toHaveLength(2);
     expect(out.slide_plans?.every((p) => p.render_mode === "full_bleed")).toBe(true);
+  });
+
+  it("filterPromotionalSlidesFromMimicPayload removes promo frames for template_bg decks too", () => {
+    const mimic = baseMimic({
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "aries as food", slide_purpose: "content" },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "Available now & delivered immediately as a PDF",
+          slide_purpose: "product_pitch",
+          brand_specificity: "high",
+        },
+        { slide_index: 3, on_screen_text_transcript: "taurus as food", slide_purpose: "content" },
+      ],
+    });
+    mimic.mode = "template_bg";
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg" },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg" },
+    ];
+
+    const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(removed_slide_indices).toEqual([2]);
+    expect(out.reference_items).toHaveLength(2);
+    expect(out.reference_items[0]?.source_slide_index).toBe(1);
+    expect(out.reference_items[1]?.source_slide_index).toBe(3);
+    expect(out.slide_plans).toHaveLength(2);
+    expect(out.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
   });
 
   it("flags product-pitch transcript and PDF promos", () => {

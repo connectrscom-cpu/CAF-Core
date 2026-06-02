@@ -498,6 +498,23 @@ describe("carousel template shape (body_slides)", () => {
     expect(ctx.cta_handle).toBe("@brand");
   });
 
+  it("treats non-CTA last slide as content-style CTA (headline + sub)", () => {
+    const gen = {
+      slides: [
+        { headline: "ARIES", body: "Born to explore the wild, yet managing office politics." },
+        { headline: "GEMINI", body: "Born to enjoy serene fishing, now navigating the digital traps." },
+        { headline: "CAPRICORN", body: "Intended to soar on dragons, but climbing corporate ladders instead." },
+        { headline: "LIBRA", body: "Nature's balance keeper, balancing spreadsheets daily." },
+      ],
+    };
+    const flat = slidesFromGeneratedOutput(gen);
+    const ctx = buildSlideRenderContext(gen, flat, 4);
+    expect(ctx.cta_text).toBe("LIBRA");
+    expect(String((ctx.cta_slide as { sub?: string }).sub ?? "")).toContain("Nature's balance keeper");
+    // Should not inject the generic CTA default copy for listicle closers.
+    expect(String((ctx.cta_slide as { sub?: string }).sub ?? "")).not.toContain("Follow");
+  });
+
   it("injects per-slide micro-action panel fields when missing", () => {
     const gen = {
       slides: [

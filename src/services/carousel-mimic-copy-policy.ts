@@ -46,5 +46,13 @@ export function mimicCarouselCopySystemAddendum(
 
 /** Mimic carousel jobs use platform body-length targets for substantive on-slide copy. */
 export function mimicCarouselUsesFullBodyLengthTargets(branch: MimicCarouselCopyBranch): boolean {
-  return branch === "template_bg" || branch === "full_bleed" || branch === "default";
+  /**
+   * Mimic carousel copy must stay close to the reference on-screen text.
+   * The generic carousel "body length" policy pushes long, explanatory paragraphs that
+   * often causes the model to drift away from the per-slide reference claim.
+   *
+   * For mimic branches we prefer length/line-count similarity to `slide_copy_layout`
+   * over global min/max character targets.
+   */
+  return branch === "default";
 }

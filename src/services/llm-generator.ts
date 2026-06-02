@@ -841,6 +841,49 @@ export async function generateForJob(
             };
             got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
           }
+          // Second-chance repair: some models return the right array length but empty strings,
+          // or return an analysis stub instead of FLOW_CAROUSEL copy. Use a stricter footer.
+          if (got < targetSlides) {
+            const hardFooter = [
+              "",
+              "---",
+              "FINAL RETRY (STRICT):",
+              `Return exactly ${targetSlides} slides in \`slides[]\`. Do not include \`slide_count\` as a substitute.`,
+              "Every slide MUST have non-empty renderable copy. Do not output empty strings for headline/body.",
+              "Use this minimal per-slide shape unless the schema demands more fields:",
+              `{"headline":"<non-empty>","body":"<non-empty>"}`,
+              "Keep body copy substantive on content slides (aim 220–400 chars).",
+              "Return JSON only.",
+            ].join("\n");
+            const llmRetry2 = await openaiChat(
+              apiKey,
+              {
+                model,
+                system_prompt: systemPrompt,
+                user_prompt: `${retryUser.trim()}\n${hardFooter}`,
+                max_tokens: maxTokens,
+                response_format: "json_object",
+              },
+              {
+                db,
+                projectId: job.project_id,
+                runId: job.run_id,
+                taskId: job.task_id,
+                signalPackId,
+                step: `llm_primary_${templateFlowType}_mimic_slide_count_retry_2`,
+              }
+            );
+            const parsedRetry2Raw = parseJsonObjectFromLlmText(llmRetry2.content);
+            if (parsedRetry2Raw) {
+              parsed = normalizeLlmParsedForSchemaValidation(job.flow_type, parsedRetry2Raw);
+              llmResult = {
+                content: llmRetry2.content,
+                model: llmRetry2.model,
+                total_tokens: llmResult.total_tokens + llmRetry2.total_tokens,
+              };
+              got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
+            }
+          }
           if (got < targetSlides) {
             return {
               draft_id: draftId,

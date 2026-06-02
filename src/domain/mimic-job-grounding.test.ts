@@ -104,6 +104,27 @@ describe("mimic-job-grounding", () => {
     expect(layout[1]?.reference_on_screen_text).toContain("Taurus");
   });
 
+  it("buildContentSlideCopyLayoutFromEntry ignores undercounted content_slide_indices when most slides have text", () => {
+    const layout = buildContentSlideCopyLayoutFromEntry({
+      aesthetic_analysis_json: {
+        mimic_evaluation: {
+          recommended_mode: "full_bleed_visual",
+          // Bad eval: says only 4 content slides in a 12-slide text deck.
+          content_slide_indices: [1, 3, 5, 9],
+          skip_slide_indices: [],
+        },
+        slides: Array.from({ length: 12 }).map((_, i) => ({
+          slide_index: i + 1,
+          on_screen_text_transcript: `SIGN_${i + 1}`,
+        })),
+      },
+      stored_inspection_media_json: { items: Array.from({ length: 12 }).map((_, i) => ({ index: i + 1 })) },
+    });
+    expect(layout).toHaveLength(12);
+    expect(layout[0]?.reference_on_screen_text).toContain("SIGN_1");
+    expect(layout[11]?.reference_on_screen_text).toContain("SIGN_12");
+  });
+
   it("buildMimicJobPlanningGroundingFromEntry includes slide_copy_layout from full entry", () => {
     const g = buildMimicJobPlanningGroundingFromEntry(
       {

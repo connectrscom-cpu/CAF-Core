@@ -7,7 +7,7 @@ export const MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD = 200;
 export const MIMIC_SHORT_COPY_CHAR_THRESHOLD = 120;
 
 /** Reference frames above this on-screen text length are dropped before mimic copy/render. */
-export const MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS = 300;
+export const MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS = 600;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;

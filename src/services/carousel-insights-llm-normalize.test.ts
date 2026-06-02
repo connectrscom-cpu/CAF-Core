@@ -92,6 +92,48 @@ describe("normalizeCarouselInsightsLlmJson", () => {
     expect(bp.steps_to_remake).toEqual(["step"]);
     expect(bp.classifier_input).toBeUndefined();
   });
+
+  it("sanitizes slides[].composition_blueprint with bbox_pct clamping", () => {
+    const out = normalizeCarouselInsightsLlmJson({
+      format_pattern: "listicle",
+      slides: [
+        {
+          slide_index: 1,
+          on_screen_text_transcript: "Hook",
+          composition_blueprint: {
+            canvas_description: "9:16 portrait",
+            layout_structure: "Headline top, subject center, CTA bottom",
+            elements: [
+              {
+                element_id: "headline_1",
+                element_type: "headline",
+                description: "Big headline text",
+                bbox_pct: [-10, 5, 140, 18],
+                prominence: "primary",
+                position_confidence: "high",
+                extra_noise: "drop",
+              },
+            ],
+            text_blocks: [
+              {
+                role: "headline",
+                text: "Hook",
+                bbox_pct: [10, 12, 80, 18],
+                alignment: "center",
+                typography_notes: "bold sans",
+                position_confidence: "medium",
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const slide = (out?.slides as Record<string, unknown>[])[0]!;
+    const bp = slide.composition_blueprint as Record<string, unknown>;
+    expect(bp.canvas_description).toBe("9:16 portrait");
+    expect((bp.elements as Record<string, unknown>[])[0]?.bbox_pct).toEqual([0, 5, 100, 18]);
+    expect((bp.elements as Record<string, unknown>[])[0]?.extra_noise).toBeUndefined();
+  });
 });
 
 describe("sanitizeCarouselSlides", () => {

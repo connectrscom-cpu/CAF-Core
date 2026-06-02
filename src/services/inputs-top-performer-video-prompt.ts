@@ -20,6 +20,12 @@ Return ONLY valid JSON with **video-wide summary fields** plus **per-frame repro
   "why_it_worked": "why this may perform (short)",
 
   "video_as_whole_summary": "2–5 sentences: story, vibe, pacing, what makes it watchable",
+  "video_composition_system": {
+    "recurring_layout_pattern": "Recurring spatial pattern across frames (short)",
+    "repeated_element_positions": ["Captions usually top 10–20%", "Creator face centered", "CTA sticker bottom-right"],
+    "safe_margin_pattern": "Text safe area / margins pattern",
+    "visual_hierarchy_pattern": "Captions first, face second, product/CTA third"
+  },
   "video_visual_system": {
     "overall_aesthetic": "e.g. lo-fi UGC / polished studio / meme edit",
     "canvas_aspect": "portrait_9_16 | square | landscape | unknown",
@@ -42,6 +48,37 @@ Return ONLY valid JSON with **video-wide summary fields** plus **per-frame repro
       "on_screen_text_transcript": "Every readable on-screen word in reading order; use \\n between lines; [illegible] when needed",
       "visual_description": "Subjects, framing, background, props — concrete enough to brief an editor",
       "layout_template": "talking_head_center | split_screen | full_bleed_broll | text_card | unknown",
+      "composition_blueprint": {
+        "canvas_description": "Short: aspect/orientation + safe margins if visible",
+        "layout_structure": "Short: where captions/subject/CTA sit spatially",
+        "visual_hierarchy": "What draws attention first → last",
+        "elements": [
+          {
+            "element_id": "caption_1",
+            "element_type": "headline | body_text | cta | logo | person | product | background | shape | icon | screenshot | decorative_element | other",
+            "description": "what it is",
+            "bbox_pct": [10, 12, 80, 18],
+            "anchor": "top_left | top_center | top_right | center_left | center | center_right | bottom_left | bottom_center | bottom_right",
+            "layer_order": 3,
+            "prominence": "primary | secondary | tertiary | background",
+            "style_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "text_blocks": [
+          {
+            "role": "headline | subheadline | body | cta | logo | other",
+            "text": "visible line",
+            "bbox_pct": [10, 12, 80, 18],
+            "alignment": "left | center | right",
+            "typography_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "background": "Short: background plate description",
+        "spacing_notes": "Short: margins, negative space, caption-safe zones",
+        "qwen_prompt_notes": "Preserve spatial layout + relative positions; use reference image for composition, not copyrighted details."
+      },
       "typography": {
         "headline_guess": "font class + weight/case",
         "body_guess": "or none",
@@ -109,6 +146,7 @@ export function buildVideoAestheticAnalysisJson(parsed: Record<string, unknown> 
   };
   if (Array.isArray(parsed.frames)) out.frames = parsed.frames;
   if (parsed.video_as_whole_summary != null) out.video_as_whole_summary = parsed.video_as_whole_summary;
+  if (parsed.video_composition_system != null) out.video_composition_system = parsed.video_composition_system;
   if (parsed.video_visual_system != null) out.video_visual_system = parsed.video_visual_system;
   if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
   if (parsed._inference_limits != null) out._inference_limits = parsed._inference_limits;

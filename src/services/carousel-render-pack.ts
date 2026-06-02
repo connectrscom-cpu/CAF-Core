@@ -1161,8 +1161,44 @@ function resolveCarouselCtaFields(
         : null;
   const fromShape = rawShapeCta ? { ...rawShapeCta } : ({} as Record<string, unknown>);
 
+  /**
+   * Some decks (notably mimic/listicle carousels) do not have a real CTA frame.
+   * In those cases, the template still renders a terminal "CTA" DOM node, but the
+   * desired UX is "last content slide" (headline + one supporting line), not a
+   * generic "Follow / Save / Share" CTA.
+   *
+   * When the last slide looks like content (no CTA verbs, no @handle), prefer:
+   * - CTA headline = last slide headline/title
+   * - CTA sub line  = last slide body/subtitle
+   */
+  const contentStyleCtaFromShape = (() => {
+    const t = textFromSlide(fromShape);
+    const h = t.headline.trim();
+    const b = t.body.trim();
+    if (!h || !b) return null;
+    const combined = `${h}\n${b}`.trim();
+    if (looksLikeCarouselCtaSlideText(combined)) return null;
+    // Treat short, uppercase headings as content titles (e.g. "LIBRA", "TIP 7").
+    // Avoid triggering on normal sentence-case headings ("How to X") where templates expect CTA behavior.
+    const words = h.split(/\s+/).filter(Boolean);
+    const looksLikeLabel =
+      h.length >= 3 &&
+      h.length <= 18 &&
+      words.length <= 2 &&
+      /[A-Z]/.test(h) &&
+      h === h.toUpperCase() &&
+      !/[.!?]$/.test(h) &&
+      !/\d/.test(h);
+    if (!looksLikeLabel) return null;
+    return { headline: stripAirQuotesFromSlideCopy(h), body: stripAirQuotesFromSlideCopy(b) };
+  })();
+
   // Prefer CTA copy from the last slide object (review UI edits this), then fall back to legacy `cta_text`.
-  let ctaText = coerceText(fromShape.body) || textFromSlide(fromShape).headline.trim();
+  let ctaText =
+    contentStyleCtaFromShape?.headline ??
+    (coerceText(fromShape.body) ||
+      textFromSlide(fromShape).body.trim() ||
+      textFromSlide(fromShape).headline.trim());
   if (!ctaText) ctaText = coerceText(base.cta_text);
   // With a single usable row, the DOM is still cover + CTA panel; that row is the cover — do not reuse it as CTA copy.
   if (!ctaText && allSlides.length > 1) {
@@ -1239,8 +1275,12 @@ function resolveCarouselCtaFields(
   // Templates should render `cta_slide.sub` as the CTA body line.
   let subText = coerceText(fromShape.sub);
   if (!subText) {
+    if (contentStyleCtaFromShape?.body) {
+      subText = contentStyleCtaFromShape.body;
+    } else {
     // When we shortened the CTA headline, preserve the full copy here; otherwise use the default CTA copy.
-    subText = originalCtaText && originalCtaText !== ctaText ? originalCtaText : defaultCopy;
+      subText = originalCtaText && originalCtaText !== ctaText ? originalCtaText : defaultCopy;
+    }
   }
   subText = stripAirQuotesFromSlideCopy(subText);
   subText = stripHandleFromText(subText, ctaHandle);

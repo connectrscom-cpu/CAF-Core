@@ -19,3 +19,6 @@ services/video-assembly/workdir/
 .idea/
 .cursor/
 .vercel
+
+# Local debug artifacts
+tmp-slide-review/

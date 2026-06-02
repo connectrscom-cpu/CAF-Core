@@ -84,6 +84,39 @@ describe("normalizeVideoInsightsLlmJson", () => {
     expect(merged.format_pattern).toBe("talking_head");
     expect(merged.frames).toHaveLength(3);
   });
+
+  it("sanitizes frames[].composition_blueprint with bbox_pct clamping", () => {
+    const out = normalizeVideoInsightsLlmJson({
+      format_pattern: "mixed",
+      why_it_worked: "Retention captions",
+      frames: [
+        {
+          frame_index: 1,
+          on_screen_text_transcript: "Hello",
+          composition_blueprint: {
+            canvas_description: "portrait 9:16",
+            layout_structure: "Top caption, centered subject",
+            elements: [
+              {
+                element_id: "caption_1",
+                element_type: "body_text",
+                description: "Top caption bar",
+                bbox_pct: [5, -2, 95, 18],
+                prominence: "primary",
+                position_confidence: "high",
+                junk: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const frame = (out?.frames as Record<string, unknown>[])[0]!;
+    const bp = frame.composition_blueprint as Record<string, unknown>;
+    expect(bp.canvas_description).toBe("portrait 9:16");
+    expect((bp.elements as Record<string, unknown>[])[0]?.bbox_pct).toEqual([5, 0, 95, 18]);
+    expect((bp.elements as Record<string, unknown>[])[0]?.junk).toBeUndefined();
+  });
 });
 
 describe("isGibberishInsightText", () => {

@@ -32,7 +32,20 @@ export function groundingInsightIdsFromCandidate(
   const raw = candidateData.grounding_insight_ids;
   if (!Array.isArray(raw)) {
     const single = String(candidateData.source_insights_id ?? "").trim();
-    return single ? [single] : [];
+    if (single) return [single];
+
+    // Fallback: some mimic candidates only carry the insights id inside `candidate_id`.
+    // Example: "mimic_ins_3320c73faa_25109_cdeep_FLOW_TOP_PERFORMER_MIMIC_CAROUSEL"
+    const cid = String(candidateData.candidate_id ?? candidateData.id ?? "").trim();
+    if (cid) {
+      const m =
+        cid.match(/\bins_[a-zA-Z0-9]+_[0-9]+_cdeep\b/) ??
+        cid.match(/\bins_[a-zA-Z0-9]+_[0-9]+\b/) ??
+        cid.match(/\bins_[a-zA-Z0-9]+\b/);
+      if (m?.[0]) return [m[0]];
+    }
+
+    return [];
   }
   return raw
     .map((x) => String(x ?? "").trim())
@@ -141,7 +154,37 @@ function contentIndicesForCopyLayout(entry: Record<string, unknown>, totalRefs: 
         ? raw!.skip_slide_indices.filter((v: unknown): v is number => typeof v === "number")
         : []
     );
-    return fromEval.filter((i) => i <= totalRefs && !skip.has(i));
+    const filtered = fromEval.filter((i) => i <= totalRefs && !skip.has(i));
+
+    /**
+     * Guardrail: sometimes mimic_evaluation undercounts "content" slides in listicle decks
+     * (e.g. horoscope/zodiac decks where each frame is a short labeled content slide).
+     *
+     * If the evaluation yields a tiny subset but many slides clearly have on-screen text,
+     * treat those as content for copy generation so we keep the original deck length.
+     */
+    const slides = aestheticSlideRecords(entry)
+      .map((s) => asRecord(s))
+      .filter((s): s is Record<string, unknown> => s != null);
+    const textful = slides
+      .map((s) => {
+        const idx = Number(s.slide_index);
+        const t = String(s.on_screen_text_transcript ?? "").trim();
+        return { idx, hasText: t.length > 0 };
+      })
+      .filter((x) => Number.isFinite(x.idx) && x.idx >= 1 && x.idx <= totalRefs && x.hasText)
+      .map((x) => x.idx);
+    const uniqueTextful = Array.from(new Set(textful)).sort((a, b) => a - b);
+    const keptTextful = uniqueTextful.filter((i) => !skip.has(i));
+    const looksSeverelyUndercounted =
+      filtered.length > 0 &&
+      keptTextful.length >= 8 &&
+      filtered.length <= Math.max(3, Math.floor(keptTextful.length * 0.5));
+    if (looksSeverelyUndercounted) {
+      return keptTextful;
+    }
+
+    return filtered;
   }
   return contentReferenceIndicesForTemplate(entry, totalRefs);
 }

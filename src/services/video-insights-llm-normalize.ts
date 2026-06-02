@@ -79,6 +79,42 @@ const SINGLE_FRAME_HONEST = {
 
 const MAX_ROOT_STRING_CHARS = 4_000;
 
+const COMPOSITION_BLUEPRINT_KEYS = new Set([
+  "canvas_description",
+  "layout_structure",
+  "visual_hierarchy",
+  "elements",
+  "text_blocks",
+  "background",
+  "spacing_notes",
+  "qwen_prompt_notes",
+]);
+
+const COMPOSITION_ELEMENT_KEYS = new Set([
+  "element_id",
+  "element_type",
+  "description",
+  "bbox_pct",
+  "anchor",
+  "layer_order",
+  "prominence",
+  "style_notes",
+  "position_confidence",
+]);
+
+const COMPOSITION_TEXT_BLOCK_KEYS = new Set([
+  "role",
+  "text",
+  "bbox_pct",
+  "alignment",
+  "typography_notes",
+  "position_confidence",
+]);
+
+const VALID_COMPOSITION_PROMINENCE = new Set(["primary", "secondary", "tertiary", "background"]);
+const VALID_COMPOSITION_TEXT_ALIGN = new Set(["left", "center", "right"]);
+const VALID_COMPOSITION_CONFIDENCE = new Set(["low", "medium", "high"]);
+
 export interface VideoInsightQualityResult {
   ok: boolean;
   score: number;
@@ -196,6 +232,130 @@ function truncateInsightString(s: string, max = MAX_ROOT_STRING_CHARS): string {
   const t = s.trim();
   if (t.length <= max) return t;
   return `${t.slice(0, max)}…`;
+}
+
+function clampPct(n: number): number {
+  if (!Number.isFinite(n)) return NaN;
+  return Math.max(0, Math.min(100, n));
+}
+
+function normalizeBboxPct(raw: unknown): [number, number, number, number] | null {
+  if (!Array.isArray(raw) || raw.length < 4) return null;
+  const nums = raw.slice(0, 4).map((v) => clampPct(Number(v)));
+  if (nums.some((n) => !Number.isFinite(n))) return null;
+  return [nums[0]!, nums[1]!, nums[2]!, nums[3]!];
+}
+
+function normalizeCompositionElements(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const cleaned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rec)) {
+      if (!COMPOSITION_ELEMENT_KEYS.has(k)) continue;
+      cleaned[k] = v;
+    }
+    const id = String(cleaned.element_id ?? "").trim();
+    const type = String(cleaned.element_type ?? "").trim();
+    const desc = String(cleaned.description ?? "").trim();
+    if (!id || !type || !desc) continue;
+    cleaned.element_id = id.slice(0, 80);
+    cleaned.element_type = type.slice(0, 40);
+    cleaned.description = desc.slice(0, 400);
+
+    const bbox = normalizeBboxPct(cleaned.bbox_pct);
+    if (bbox) cleaned.bbox_pct = bbox;
+    else delete cleaned.bbox_pct;
+
+    const anchor = String(cleaned.anchor ?? "").trim();
+    if (anchor) cleaned.anchor = anchor.slice(0, 24);
+    else delete cleaned.anchor;
+
+    const layer = Number(cleaned.layer_order);
+    if (Number.isFinite(layer)) cleaned.layer_order = Math.max(0, Math.min(100, Math.round(layer)));
+    else delete cleaned.layer_order;
+
+    const prom = String(cleaned.prominence ?? "").trim().toLowerCase();
+    if (VALID_COMPOSITION_PROMINENCE.has(prom)) cleaned.prominence = prom;
+    else if (prom) cleaned.prominence = "secondary";
+    else delete cleaned.prominence;
+
+    const style = String(cleaned.style_notes ?? "").trim();
+    if (style) cleaned.style_notes = style.slice(0, 500);
+    else delete cleaned.style_notes;
+
+    const conf = String(cleaned.position_confidence ?? "").trim().toLowerCase();
+    if (VALID_COMPOSITION_CONFIDENCE.has(conf)) cleaned.position_confidence = conf;
+    else delete cleaned.position_confidence;
+
+    out.push(cleaned);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+function normalizeCompositionTextBlocks(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const cleaned: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(rec)) {
+      if (!COMPOSITION_TEXT_BLOCK_KEYS.has(k)) continue;
+      cleaned[k] = v;
+    }
+    const role = String(cleaned.role ?? "").trim();
+    const text = String(cleaned.text ?? "").trim();
+    if (!role || !text) continue;
+    cleaned.role = role.slice(0, 24);
+    cleaned.text = text.slice(0, 220);
+
+    const bbox = normalizeBboxPct(cleaned.bbox_pct);
+    if (bbox) cleaned.bbox_pct = bbox;
+    else delete cleaned.bbox_pct;
+
+    const align = String(cleaned.alignment ?? "").trim().toLowerCase();
+    if (VALID_COMPOSITION_TEXT_ALIGN.has(align)) cleaned.alignment = align;
+    else delete cleaned.alignment;
+
+    const typo = String(cleaned.typography_notes ?? "").trim();
+    if (typo) cleaned.typography_notes = typo.slice(0, 320);
+    else delete cleaned.typography_notes;
+
+    const conf = String(cleaned.position_confidence ?? "").trim().toLowerCase();
+    if (VALID_COMPOSITION_CONFIDENCE.has(conf)) cleaned.position_confidence = conf;
+    else delete cleaned.position_confidence;
+
+    out.push(cleaned);
+    if (out.length >= 24) break;
+  }
+  return out;
+}
+
+function sanitizeCompositionBlueprint(raw: unknown): Record<string, unknown> | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!COMPOSITION_BLUEPRINT_KEYS.has(k)) continue;
+    out[k] = v;
+  }
+  for (const key of ["canvas_description", "layout_structure", "visual_hierarchy", "background", "spacing_notes", "qwen_prompt_notes"] as const) {
+    if (out[key] == null) continue;
+    const s = String(out[key] ?? "").trim();
+    if (!s) delete out[key];
+    else out[key] = s.slice(0, key === "qwen_prompt_notes" ? 900 : 500);
+  }
+  const elems = normalizeCompositionElements(out.elements);
+  if (elems.length > 0) out.elements = elems;
+  else delete out.elements;
+  const tbs = normalizeCompositionTextBlocks(out.text_blocks);
+  if (tbs.length > 0) out.text_blocks = tbs;
+  else delete out.text_blocks;
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function stripDegenerateRootFields(root: Record<string, unknown>): void {
@@ -410,6 +570,12 @@ function normalizeFrameRecord(raw: unknown, fallbackIndex: number): Record<strin
     if (alt) out.on_screen_text_transcript = alt;
   }
 
+  if (f.composition_blueprint != null) {
+    const cleaned = sanitizeCompositionBlueprint(f.composition_blueprint);
+    if (cleaned) out.composition_blueprint = cleaned;
+    else delete out.composition_blueprint;
+  }
+
   return out;
 }
 
@@ -497,6 +663,28 @@ export function normalizeVideoInsightsLlmJson(
     root.risk_flags = Array.isArray(risks) ? risks : [];
   }
 
+  if (root.video_composition_system != null) {
+    const sys = asRecord(root.video_composition_system);
+    if (!sys) {
+      delete root.video_composition_system;
+    } else {
+      const out: Record<string, unknown> = {};
+      const recurring = pickString(sys, "recurring_layout_pattern");
+      if (recurring) out.recurring_layout_pattern = truncateInsightString(recurring, 700);
+      const safe = pickString(sys, "safe_margin_pattern");
+      if (safe) out.safe_margin_pattern = truncateInsightString(safe, 500);
+      const hier = pickString(sys, "visual_hierarchy_pattern");
+      if (hier) out.visual_hierarchy_pattern = truncateInsightString(hier, 500);
+      const rep = sys.repeated_element_positions;
+      if (Array.isArray(rep)) {
+        const items = rep.map((x) => String(x).trim()).filter(Boolean).slice(0, 40);
+        if (items.length > 0) out.repeated_element_positions = items;
+      }
+      if (Object.keys(out).length > 0) root.video_composition_system = out;
+      else delete root.video_composition_system;
+    }
+  }
+
   for (const key of ROOT_STRING_FIELDS) {
     const v = root[key];
     if (v != null && typeof v !== "string") {
@@ -544,6 +732,15 @@ NVIDIA / Nemotron — strict output contract:
 - Required root strings: hook_visual, message_clarity, video_arc, on_screen_text_summary, cta_clarity, format_pattern, why_it_worked
 - Required root arrays: risk_flags (use [] when none), frames (one object per attached frame image)
 - Each frames[] entry MUST include frame_index, on_screen_text_transcript, visual_description, layout_template, typography, color_tokens, shot_type, text_density
+- Each frames[] entry MUST also include composition_blueprint (compact, model-neutral, for regeneration):
+  - composition_blueprint.canvas_description
+  - composition_blueprint.layout_structure
+  - composition_blueprint.visual_hierarchy
+  - composition_blueprint.elements[] (element_id, element_type, description, bbox_pct [x,y,w,h] in 0-100, anchor, layer_order, prominence, style_notes, position_confidence low|medium|high)
+  - composition_blueprint.text_blocks[] (role, text, bbox_pct, alignment, typography_notes, position_confidence)
+  - composition_blueprint.background
+  - composition_blueprint.spacing_notes
+  - composition_blueprint.qwen_prompt_notes
 - format_pattern MUST be one of: talking_head, b_roll, text_on_screen, ugc, product_demo, mixed, unknown
 - When only ONE frame is attached: do NOT invent cuts, body frames, or motion. State honestly that progression is not observable.
 - Never emit extra research/meta keys (e.g. research_questions, concrete_examples, alternative_tsla_*).`;
@@ -566,6 +763,37 @@ Return ONLY flat JSON (no wrappers):
       "on_screen_text_transcript": "...",
       "visual_description": "...",
       "layout_template": "...",
+      "composition_blueprint": {
+        "canvas_description": "short, include aspect + orientation if inferable",
+        "layout_structure": "short: e.g. top captions, central subject, lower thirds",
+        "visual_hierarchy": "what draws attention first → last",
+        "elements": [
+          {
+            "element_id": "caption_1",
+            "element_type": "headline | body_text | cta | logo | person | product | background | shape | icon | screenshot | decorative_element | other",
+            "description": "what it is",
+            "bbox_pct": [10, 12, 80, 18],
+            "anchor": "top_left | top_center | top_right | center_left | center | center_right | bottom_left | bottom_center | bottom_right",
+            "layer_order": 3,
+            "prominence": "primary | secondary | tertiary | background",
+            "style_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "text_blocks": [
+          {
+            "role": "headline | subheadline | body | cta | logo | other",
+            "text": "visible line",
+            "bbox_pct": [10, 12, 80, 18],
+            "alignment": "left | center | right",
+            "typography_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "background": "short",
+        "spacing_notes": "short, include safe margins",
+        "qwen_prompt_notes": "Preserve spatial layout + relative positions; use reference image for composition, not copyrighted details."
+      },
       "typography": { "headline_guess": "...", "body_guess": "...", "hierarchy": "..." },
       "color_tokens": { "background": "...", "primary_text": "...", "accent": [] },
       "shot_type": "...",

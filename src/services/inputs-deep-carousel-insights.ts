@@ -159,6 +159,17 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
   "caption_style": "how the post caption pairs with the carousel (short)",
 
   "deck_as_whole_summary": "2–5 sentences: overall story, brand/persona vibe, pacing, what makes the deck cohesive + swipe-worthy",
+  "deck_composition_system": {
+    "recurring_layout_pattern": "Recurring spatial pattern across slides (short)",
+    "repeated_element_positions": [
+      "Logo consistently top-right",
+      "Headline usually top 15–25% of canvas",
+      "Primary subject centered or lower-center",
+      "CTA appears bottom 10–15%"
+    ],
+    "safe_margin_pattern": "Text safe area / margins pattern (short)",
+    "visual_hierarchy_pattern": "Headline first, central object second, CTA third (short)"
+  },
   "deck_visual_system": {
     "overall_aesthetic": "e.g. soft editorial / bold meme grid / luxury minimal",
     "canvas_aspect": "portrait 4:5 guess | square | unknown",
@@ -194,6 +205,37 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
       "on_screen_text_transcript": "Every readable word on the slide in visual reading order. Separate lines with JSON escape \\n (backslash then n). Include emojis and hashtags. If partially unreadable, mark [illegible] and continue.",
       "visual_description": "What is shown beyond text: subjects, framing, background, props, memes (describe meme archetype, not specific IP). Be concrete enough to brief a designer.",
       "layout_template": "e.g. center stack, split image top / text bottom, grid 2x2, quote card, listicle row — note alignment (left/center/right)",
+      "composition_blueprint": {
+        "canvas_description": "Short: aspect/orientation + safe margins if visible",
+        "layout_structure": "Short: where headline/body/CTA/subject sit (spatially)",
+        "visual_hierarchy": "What draws attention first → last",
+        "elements": [
+          {
+            "element_id": "headline_1",
+            "element_type": "headline | body_text | cta | logo | person | product | background | shape | icon | screenshot | decorative_element | other",
+            "description": "what it is",
+            "bbox_pct": [10, 12, 80, 18],
+            "anchor": "top_left | top_center | top_right | center_left | center | center_right | bottom_left | bottom_center | bottom_right",
+            "layer_order": 3,
+            "prominence": "primary | secondary | tertiary | background",
+            "style_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "text_blocks": [
+          {
+            "role": "headline | subheadline | body | cta | logo | other",
+            "text": "visible line",
+            "bbox_pct": [10, 12, 80, 18],
+            "alignment": "left | center | right",
+            "typography_notes": "optional",
+            "position_confidence": "low | medium | high"
+          }
+        ],
+        "background": "Short: background plate description",
+        "spacing_notes": "Short: margins, gutters, negative space intent",
+        "qwen_prompt_notes": "Preserve spatial layout + relative positions; use reference image for composition, not copyrighted details."
+      },
       "typography": {
         "headline_guess": "e.g. heavy geometric sans, ALL CAPS, tight tracking",
         "body_guess": "e.g. humanist sans sentence case",

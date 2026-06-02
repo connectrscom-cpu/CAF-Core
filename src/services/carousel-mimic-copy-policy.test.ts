@@ -32,9 +32,9 @@ describe("mimicCarouselCopyBranch", () => {
     ).toBe("full_bleed");
   });
 
-  it("full_bleed uses long body length targets", () => {
-    expect(mimicCarouselUsesFullBodyLengthTargets("full_bleed")).toBe(true);
-    expect(mimicCarouselUsesFullBodyLengthTargets("template_bg")).toBe(true);
+  it("mimic branches do not use long body length targets", () => {
+    expect(mimicCarouselUsesFullBodyLengthTargets("full_bleed")).toBe(false);
+    expect(mimicCarouselUsesFullBodyLengthTargets("template_bg")).toBe(false);
   });
 
   it("includes visual plate + overlay guidance for full_bleed", () => {
