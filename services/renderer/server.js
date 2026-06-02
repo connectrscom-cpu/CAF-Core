@@ -8,6 +8,7 @@ const { joinEmojiOrphanLines } = require("./join-emoji-orphans.js");
 Handlebars.registerHelper("joinEmojiOrphans", (v) => joinEmojiOrphanLines(v));
 
 const PORT = parseInt(process.env.PORT || "3333", 10);
+const HOST = (process.env.HOST || "0.0.0.0").trim();
 const RENDERERS_BEFORE_RESET = parseInt(process.env.RENDERERS_BEFORE_RESET || "12", 10);
 const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || "90000", 10);
 const CAF_TEMPLATE_API_URL = process.env.CAF_TEMPLATE_API_URL || "";
@@ -488,7 +489,7 @@ app.get("/render/status/:requestId", (req, res) => {
   res.json({ ok: true, request_id: req.params.requestId, ...job });
 });
 
-app.listen(PORT, () => console.log(`Renderer listening on :${PORT}`));
+app.listen(PORT, HOST, () => console.log(`Renderer listening on ${HOST}:${PORT}`));
 
 process.on("SIGTERM", async () => { if (browser) await browser.close(); process.exit(0); });
 process.on("SIGINT", async () => { if (browser) await browser.close(); process.exit(0); });
