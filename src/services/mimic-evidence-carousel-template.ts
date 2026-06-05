@@ -8,7 +8,7 @@ import { addProjectCarouselTemplate } from "../repositories/project-config.js";
 import {
   injectMimicBackgroundPlateSupport,
   pickMimicLayoutBaseTemplate,
-  MIMIC_LAYOUT_TEMPLATE_DEFAULT,
+  MIMIC_FULL_BLEED_RENDER_TEMPLATE,
 } from "./mimic-carousel-template-layout.js";
 import { inferMimicCarouselTheme } from "./mimic-slide-typography.js";
 
@@ -96,9 +96,8 @@ function injectRootTheme(
 }
 
 /**
- * Writes an evidence-specific `.hbs` forked from a project/built-in carousel layout
- * (`template_bg`) or `carousel_mimic_bg` (other mimic modes), with PNG background-plate support.
- * Reuses an existing file when the same evidence was mimicked before.
+ * Writes an evidence-specific `.hbs` fork for **template_bg** mimic only.
+ * Full-bleed (`carousel_visual`) uses shared `carousel_mimic_bg.hbs` + runtime Document AI positioning.
  */
 export async function ensureMimicEvidenceCarouselTemplate(
   db: Pool,
@@ -108,6 +107,11 @@ export async function ensureMimicEvidenceCarouselTemplate(
   mimic: MimicPayloadV1,
   opts?: { projectPinnedTemplates?: string[] }
 ): Promise<MimicEvidenceTemplateRecord> {
+  if (mimic.mode !== "template_bg") {
+    throw new Error(
+      `ensureMimicEvidenceCarouselTemplate is template_bg only (got ${mimic.mode}); full-bleed uses ${MIMIC_FULL_BLEED_RENDER_TEMPLATE}.`
+    );
+  }
   const templateBase = mimicEvidenceTemplateBaseName(mimic);
   const templateFileName = `${templateBase}.hbs`;
   const tplDir = config.CAROUSEL_TEMPLATES_DIR;
@@ -117,10 +121,7 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const pinned_to_project = storage.pin_project_template;
 
   const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
-  const layoutBaseTemplate =
-    mimic.mode === "template_bg"
-      ? pickMimicLayoutBaseTemplate(mimic, opts?.projectPinnedTemplates ?? [])
-      : "carousel_mimic_bg";
+  const layoutBaseTemplate = pickMimicLayoutBaseTemplate(mimic, opts?.projectPinnedTemplates ?? []);
 
   const refreshSource = async (): Promise<string> => {
     const readBase = async (base: string): Promise<string> => {
@@ -131,11 +132,7 @@ export async function ensureMimicEvidenceCarouselTemplate(
     try {
       source = await readBase(layoutBaseTemplate);
     } catch {
-      source = await readBase(
-        layoutBaseTemplate === "carousel_mimic_bg"
-          ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
-          : "carousel_mimic_bg"
-      );
+      source = await readBase("carousel_mimic_bg");
     }
     source = injectMimicBackgroundPlateSupport(source);
     source = injectRootTheme(source, theme);

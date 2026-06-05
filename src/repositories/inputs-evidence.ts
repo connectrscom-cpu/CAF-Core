@@ -255,6 +255,25 @@ export async function listTopRatedRowsForSynth(
   );
 }
 
+/** All rows for an import (pack merge). Hard cap avoids runaway memory. */
+export async function listAllInputsEvidenceRowsForImport(
+  db: Pool,
+  projectId: string,
+  importId: string,
+  maxRows = 50_000
+): Promise<EvidenceRowListItem[]> {
+  const lim = Math.min(Math.max(maxRows, 1), 50_000);
+  return q(
+    db,
+    `SELECT id::text, sheet_name, row_index, evidence_kind, dedupe_key, payload_json
+       FROM caf_core.inputs_evidence_rows
+      WHERE import_id = $1 AND project_id = $2
+      ORDER BY sheet_name ASC, row_index ASC
+      LIMIT $3`,
+    [importId, projectId, lim]
+  );
+}
+
 export async function listInputsEvidenceRows(
   db: Pool,
   projectId: string,

@@ -5,6 +5,13 @@
 
 const APIFY_BASE = "https://api.apify.com/v2";
 
+/** Apify Console — all actor runs (operator inspect link). */
+export const APIFY_CONSOLE_RUNS_URL = "https://console.apify.com/actors/runs";
+
+export function apifyConsoleRunUrl(runId: string): string {
+  return `${APIFY_CONSOLE_RUNS_URL}/${encodeURIComponent(runId)}`;
+}
+
 export class ApifyError extends Error {
   constructor(
     message: string,
@@ -39,11 +46,26 @@ export interface ApifyRunResult {
   defaultDatasetId: string;
 }
 
+export async function abortApifyRun(token: string, runId: string): Promise<void> {
+  const res = await apifyFetch(token, `/actor-runs/${encodeURIComponent(runId)}/abort`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApifyError(`Apify abort failed: HTTP ${res.status}`, res.status, body);
+  }
+}
+
 export async function runApifyActor(
   token: string,
   actorId: string,
   input: Record<string, unknown>,
-  opts?: { waitForFinishSec?: number }
+  opts?: {
+    waitForFinishSec?: number;
+    shouldAbort?: () => boolean;
+    onRunStarted?: (run: ApifyRunResult) => void;
+  }
 ): Promise<ApifyRunResult> {
   const wait = opts?.waitForFinishSec ?? 300;
   const res = await apifyFetch(token, `/acts/${encodeURIComponent(actorId)}/runs`, {
@@ -58,12 +80,21 @@ export async function runApifyActor(
   const data = (await res.json()) as { data?: ApifyRunResult };
   const run = data.data;
   if (!run?.id) throw new ApifyError("Apify run response missing id");
+  opts?.onRunStarted?.(run);
 
   if (wait <= 0) return run;
 
   const deadline = Date.now() + wait * 1000;
   let current = run;
   while (Date.now() < deadline) {
+    if (opts?.shouldAbort?.()) {
+      try {
+        await abortApifyRun(token, current.id);
+      } catch {
+        /* best-effort */
+      }
+      throw new ApifyError("Apify run aborted by operator", undefined, current.id);
+    }
     const terminal = ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"];
     if (terminal.includes(current.status)) break;
     await sleep(3000);

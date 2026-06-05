@@ -40,6 +40,8 @@ import { computeHashtagLeaderboardForEvidenceImport } from "../services/hashtag-
 import { runDeepImageInsightsForImport } from "../services/inputs-deep-image-insights.js";
 import { runDeepVideoInsightsForImport } from "../services/inputs-deep-video-insights.js";
 import { runDeepCarouselInsightsForImport } from "../services/inputs-deep-carousel-insights.js";
+import { runCarouselDocumentAiOcrForImport } from "../services/inputs-carousel-document-ai-ocr.js";
+import { getProcessingPassProgress } from "../services/processing-pass-progress.js";
 import { deriveEvidenceDisplayKind } from "../services/inputs-evidence-post-format.js";
 import { postUrlForTopPerformerPreview } from "../services/inputs-top-performer-qualifying-preview.js";
 import { getRtpSummaryForProject } from "../services/rtp-metrics.js";
@@ -731,6 +733,18 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     }
   });
 
+  app.get("/v1/inputs-processing/pass-progress/:progress_id", async (request, reply) => {
+    const params = z.object({ progress_id: z.string().min(8).max(80) }).safeParse(request.params);
+    if (!params.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    const snap = getProcessingPassProgress(params.data.progress_id);
+    if (!snap) {
+      return reply.code(404).send({ ok: false, error: "progress_not_found" });
+    }
+    return { ok: true, progress: snap };
+  });
+
   app.post("/v1/inputs-processing/:project_slug/import/:import_id/run-deep-carousel-insights", async (request, reply) => {
     const params = z
       .object({ project_slug: z.string(), import_id: z.string() })
@@ -743,6 +757,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         rescan: z.boolean().optional(),
         rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
         disable_rating_percentile_gate: z.boolean().optional(),
+        progress_id: z.string().min(8).max(80).optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -756,6 +771,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         rescan: body.data.rescan,
         rating_top_fraction: body.data.rating_top_fraction,
         disable_rating_percentile_gate: body.data.disable_rating_percentile_gate,
+        progress_id: body.data.progress_id,
       });
       return { ok: true, ...result };
     } catch (e) {
@@ -763,6 +779,46 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       return reply.code(500).send({ ok: false, error: "deep_carousel_insights_failed", message: msg });
     }
   });
+
+  app.post(
+    "/v1/inputs-processing/:project_slug/import/:import_id/run-carousel-document-ai-ocr",
+    async (request, reply) => {
+      const params = z
+        .object({ project_slug: z.string(), import_id: z.string() })
+        .safeParse(request.params);
+      const body = z
+        .object({
+          max_rows: z.number().int().min(1).max(40).optional(),
+          max_slides: z.number().int().min(2).max(12).optional(),
+          merge_into_insights: z.boolean().optional(),
+          progress_id: z.string().min(8).max(80).optional(),
+          source_evidence_row_ids: z.array(z.string().min(1)).max(40).optional(),
+        })
+        .safeParse(request.body ?? {});
+      if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
+        return reply.code(400).send({ ok: false, error: "bad_params" });
+      }
+      try {
+        const result = await runCarouselDocumentAiOcrForImport(
+          db,
+          config,
+          params.data.project_slug,
+          params.data.import_id,
+          {
+            max_rows: body.data.max_rows,
+            max_slides: body.data.max_slides,
+            merge_into_insights: body.data.merge_into_insights,
+            progress_id: body.data.progress_id,
+            source_evidence_row_ids: body.data.source_evidence_row_ids,
+          }
+        );
+        return { ok: true, ...result };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(500).send({ ok: false, error: "carousel_document_ai_ocr_failed", message: msg });
+      }
+    }
+  );
 
   const evidenceInsightTierSchema = z.enum([
     "broad_llm",

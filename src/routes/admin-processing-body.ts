@@ -484,7 +484,9 @@ export function adminProcessingBody(currentSlug: string): string {
                 <div class="tp-pass-card" data-tp-pass="carousel">
                   <div class="tp-pass-head"><strong>Carousel</strong><span id="tp-badge-carousel" class="badge badge-b">idle</span></div>
                   <button type="button" class="btn btn-sm tp-pass-run" id="btn-run-deep-carousel-insights" title="${PL("INSIGHTS__Top_Performer_Carousel_v1", "Processing")}">Run carousel pass</button>
+                  <button type="button" class="btn-ghost btn-sm tp-pass-run" id="btn-run-carousel-document-ai" title="Google Document AI OCR only — merges into existing top_performer_carousel insights (no Nemotron)">Document AI OCR</button>
                   <div id="tp-st-carousel" class="tp-pass-status">Multi-slide deck vision — needs ≥2 HTTPS slide URLs in evidence.</div>
+                  <pre id="tp-st-carousel-log" class="tp-pass-log" aria-live="polite" style="display:none"></pre>
                   <div id="tp-qualify-carousel-wrap" style="display:none" class="tp-qualify-compact">
                     <div data-tp-qualify-title="1" style="font-weight:600;color:var(--text)">Qualifying rows</div>
                     <ul id="tp-qualify-carousel-list"></ul>
@@ -1351,8 +1353,7 @@ function tpSetTabCount(which,n){
 function tpSetRunning(which,on){
   var card=document.querySelector('[data-tp-pass="'+which+'"]');
   if(!card)return;
-  var btn=card.querySelector('.tp-pass-run');
-  if(btn)btn.disabled=!!on;
+  card.querySelectorAll('.tp-pass-run').forEach(function(btn){btn.disabled=!!on;});
 }
 function tpCompactPercentile(d){
   if(!d||typeof d!=='object')return '';
@@ -1369,6 +1370,11 @@ function tpCompactCarouselStatus(d){
   var z=d.deep_carousel_zero_work_summary;
   if(z)s+=' · '+String(z).slice(0,72)+(String(z).length>72?'…':'');
   return s;
+}
+function tpCompactDocumentAiStatus(d){
+  return 'Document AI · '+String(d.rows_merged||0)+' merged · '+String(d.total_ocr_slides_ok||0)+' slide OCR ok'+
+    (Number(d.total_ocr_slides_failed||0)>0?' · '+String(d.total_ocr_slides_failed)+' failed':'')+
+    (Number(d.rows_skipped_no_urls||0)>0?' · '+String(d.rows_skipped_no_urls)+' skipped (no URLs)':'');
 }
 function tpCompactVideoStatus(d){
   var s='Analyzed '+String(d.rows_analyzed||0)+' · frames '+String(d.candidates_with_frames||0)+' · total '+String(d.video_insights_total||0)+tpCompactPercentile(d);
@@ -1387,6 +1393,65 @@ function setTpStatus(which,text,isErr,mode){
     el.title=String(text||'').length>140?String(text):'';
   }
   if(st==='ok'&&!isErr)tpSelectTab(which);
+}
+var tpCarouselProgressTimer=null;
+var tpCarouselProgressSeen=0;
+function tpCarouselProgressId(){
+  try{if(window.crypto&&crypto.randomUUID)return crypto.randomUUID();}catch(_a){}
+  return 'carousel-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
+}
+function tpFmtProgressAt(iso){
+  try{return String(iso||'').replace('T',' ').slice(11,19)||'';}catch(_b){return '';}
+}
+function renderTpCarouselProgressLog(lines){
+  var logEl=document.getElementById('tp-st-carousel-log');
+  if(!logEl)return;
+  if(!Array.isArray(lines)||!lines.length){
+    logEl.style.display='none';
+    logEl.textContent='';
+    return;
+  }
+  logEl.style.display='block';
+  logEl.textContent=lines.map(function(ln){
+    return tpFmtProgressAt(ln.at)+'  '+String(ln.message||'');
+  }).join('\\n');
+  try{logEl.scrollTop=logEl.scrollHeight;}catch(_c){}
+}
+function stopTpCarouselProgressPoll(){
+  if(tpCarouselProgressTimer){clearInterval(tpCarouselProgressTimer);tpCarouselProgressTimer=null;}
+  tpCarouselProgressSeen=0;
+}
+async function pollTpCarouselProgress(progressId){
+  if(!progressId)return;
+  try{
+    var r=await cafFetch('/v1/inputs-processing/pass-progress/'+encodeURIComponent(progressId));
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok||!d.progress)return;
+    var lines=d.progress.lines||[];
+    if(lines.length>tpCarouselProgressSeen){
+      var fresh=lines.slice(tpCarouselProgressSeen);
+      tpCarouselProgressSeen=lines.length;
+      fresh.forEach(function(ln){
+        try{pushProcessingActivity(cafTs()+' carousel: '+String(ln.message||''),false);}catch(_d){}
+      });
+    }
+    renderTpCarouselProgressLog(lines);
+    var last=lines.length?lines[lines.length-1]:null;
+    if(last&&last.message)setTpStatus('carousel',String(last.message),false,'running');
+    if(d.progress.finished_at){
+      stopTpCarouselProgressPoll();
+      if(d.progress.ok===false)setTpStatus('carousel',String(last&&last.message||'Failed'),true,'err');
+    }
+  }catch(_e){}
+}
+function startTpCarouselProgressPoll(progressId){
+  stopTpCarouselProgressPoll();
+  tpCarouselProgressSeen=0;
+  renderTpCarouselProgressLog([]);
+  var logEl=document.getElementById('tp-st-carousel-log');
+  if(logEl){logEl.style.display='block';logEl.textContent='Waiting for server…';}
+  pollTpCarouselProgress(progressId);
+  tpCarouselProgressTimer=setInterval(function(){pollTpCarouselProgress(progressId);},1500);
 }
 
 /** After carousel or video top-performer runs: renders API qualifying_carousel_rows / qualifying_video_rows. */
@@ -1604,6 +1669,8 @@ async function loadImports(){
       var x=rows[i];
       var when=String(x.created_at||'').slice(0,19).replace('T',' ');
       var fn=String(x.upload_filename||'-');
+      if(x.sheet_stats_json&&x.sheet_stats_json.source==='evidence_pack')fn='[Evidence pack] '+fn;
+      else if(x.sheet_stats_json&&x.sheet_stats_json.source==='scraper')fn='[Scraper] '+fn;
       var label=when+' · '+fn+' ('+String(x.stored_row_count||0)+' rows)';
       h+='<option value="'+esc(x.id)+'"'+(x.id===selectedImportId?' selected':'')+'>'+esc(label)+'</option>';
     }
@@ -2682,8 +2749,10 @@ bind('btn-run-deep-carousel-insights','click',async function(){
   if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
   renderTpQualifyingList('carousel',[]);
   tpSetRunning('carousel',true);
-  setTpStatus('carousel','Running carousel vision…',false,'running');
-  var body=Object.assign({max_rows:12,max_slides:12,rescan:chk('tp-vision-rescan')},tpRatingGateRequestFields());
+  setTpStatus('carousel','Starting carousel pass…',false,'running');
+  var progressId=tpCarouselProgressId();
+  startTpCarouselProgressPoll(progressId);
+  var body=Object.assign({max_rows:12,max_slides:12,rescan:chk('tp-vision-rescan'),progress_id:progressId},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
   var d=null;
@@ -2691,6 +2760,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     d=await r.json().catch(function(){return {};});
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    await pollTpCarouselProgress(progressId);
     var maCar=tpMediaArchiveFromResponse(d,'top_performer_carousel');
     setTopPerfRunLog('carousel',{
       at:new Date().toISOString(),
@@ -2724,7 +2794,59 @@ bind('btn-run-deep-carousel-insights','click',async function(){
     setTpStatus('carousel',String(e.message||e),true,'err');
     renderTpQualifyingList('carousel',[]);
     try{pushProcessingActivity(cafTs()+' top-performer (carousel): '+String(e.message||e),true);}catch(_d){}
-  }finally{tpSetRunning('carousel',false);}
+  }finally{
+    stopTpCarouselProgressPoll();
+    tpSetRunning('carousel',false);
+  }
+});
+
+bind('btn-run-carousel-document-ai','click',async function(){
+  if(!SLUG||!selectedImportId){setTpStatus('carousel','Select an import first.',true);return;}
+  tpSetRunning('carousel',true);
+  setTpStatus('carousel','Starting Document AI OCR…',false,'running');
+  var progressId=tpCarouselProgressId();
+  startTpCarouselProgressPoll(progressId);
+  var body={max_rows:20,max_slides:12,merge_into_insights:true,progress_id:progressId};
+  var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-carousel-document-ai-ocr';
+  var r=null;
+  var d=null;
+  try{
+    r=await cafFetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    await pollTpCarouselProgress(progressId);
+    setTopPerfRunLog('carousel',{
+      at:new Date().toISOString(),
+      pass:'carousel_document_ai_ocr',
+      success:true,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r.status,
+      endpoint:endpoint,
+      request_body:body,
+      response:d,
+    });
+    setTpStatus('carousel',tpCompactDocumentAiStatus(d),false,'ok');
+    loadDeepCarouselTable();
+  }catch(e){
+    setTopPerfRunLog('carousel',{
+      at:new Date().toISOString(),
+      pass:'carousel_document_ai_ocr',
+      success:false,
+      project_slug:SLUG,
+      import_id:selectedImportId,
+      http_status:r?r.status:null,
+      endpoint:endpoint,
+      request_body:body,
+      error:String(e.message||e),
+      response_json:d,
+    });
+    setTpStatus('carousel',String(e.message||e),true,'err');
+    try{pushProcessingActivity(cafTs()+' Document AI OCR: '+String(e.message||e),true);}catch(_e){}
+  }finally{
+    stopTpCarouselProgressPoll();
+    tpSetRunning('carousel',false);
+  }
 });
 
 bind('btn-delete-carousel-insights-import','click',async function(){

@@ -213,6 +213,9 @@ export function mergeScraperConfig(stored: Record<string, unknown> | null | unde
   };
 }
 
+/** CAF injects these at run time from Sources — empty arrays in saved JSON must not wipe them. */
+const ACTOR_INJECT_ARRAY_KEYS = new Set(["directUrls", "profiles", "startUrls"]);
+
 function deepMergeActorInput(
   base: Record<string, unknown>,
   extras: Record<string, unknown> | undefined
@@ -220,6 +223,7 @@ function deepMergeActorInput(
   if (!extras) return base;
   const out = { ...base };
   for (const [k, v] of Object.entries(extras)) {
+    if (Array.isArray(v) && v.length === 0 && ACTOR_INJECT_ARRAY_KEYS.has(k)) continue;
     if (v != null && typeof v === "object" && !Array.isArray(v) && typeof out[k] === "object" && out[k] != null && !Array.isArray(out[k])) {
       out[k] = { ...(out[k] as Record<string, unknown>), ...(v as Record<string, unknown>) };
     } else {

@@ -14,11 +14,14 @@ import {
   upsertSourceRow,
 } from "../repositories/inputs-sources.js";
 import { syncSourcesFromWorkbookBuffer } from "../services/inputs-source-sync.js";
+import { estimateInputsScraperRun } from "../services/inputs-scraper-cost-estimate.js";
 import {
+  abortInputsScraperRun,
   defaultScraperConfig,
   getProjectScraperConfig,
-  runInputsScraper,
+  startInputsScraperRun,
   SCRAPER_KEYS,
+  type ScraperKey,
 } from "../services/inputs-scraper-orchestrator.js";
 import {
   DEFAULT_ACTOR_IDS,
@@ -172,23 +175,76 @@ export function registerInputsScraperRoutes(
     }
   });
 
+  app.get("/v1/inputs-sources/:project_slug/scraper-estimate", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const query = z
+      .object({
+        scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "all"]).default("all"),
+        max_sources: z.coerce.number().int().min(0).max(500).optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ ok: false, error: "bad_query" });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const maxSources =
+      query.data.max_sources != null && query.data.max_sources > 0 ? query.data.max_sources : null;
+    const estimate = await estimateInputsScraperRun(
+      db,
+      project.id,
+      query.data.scraper as ScraperKey,
+      maxSources
+    );
+    return { ok: true, estimate };
+  });
+
   app.post("/v1/inputs-sources/:project_slug/run-scraper", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const body = z
-      .object({ scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "all"]) })
+      .object({
+        scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "all"]),
+        max_sources: z.number().int().min(1).max(500).optional(),
+      })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ ok: false, error: "bad_body" });
 
     const project = await ensureProject(db, params.data.project_slug);
     try {
-      const result = await runInputsScraper(db, config, project.id, body.data.scraper);
+      const result = await startInputsScraperRun(db, config, project.id, body.data.scraper, {
+        maxSources: body.data.max_sources ?? null,
+      });
       return { ok: true, ...result };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return reply.code(500).send({ ok: false, error: "scraper_failed", message: msg });
     }
   });
+
+  app.post(
+    "/v1/inputs-sources/:project_slug/scraper-runs/:run_id/abort",
+    async (request, reply) => {
+      const params = z
+        .object({ project_slug: z.string(), run_id: z.string() })
+        .safeParse(request.params);
+      if (!params.success || !UUID_RE.test(params.data.run_id)) {
+        return reply.code(400).send({ ok: false, error: "bad_params" });
+      }
+
+      const project = await ensureProject(db, params.data.project_slug);
+      const result = await abortInputsScraperRun(
+        db,
+        config,
+        project.id,
+        params.data.run_id
+      );
+      if (!result.ok) {
+        const code = result.error === "not_found" ? 404 : 409;
+        return reply.code(code).send({ ok: false, error: result.error });
+      }
+      return { ok: true, apify_aborted: result.apify_aborted };
+    }
+  );
 
   app.get("/v1/inputs-sources/:project_slug/scraper-runs", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);

@@ -128,6 +128,7 @@ export function normalizeStorageObjectPath(bucket: string, objectPath: string): 
 
 /** Match Supabase Storage public object URLs: /storage/v1/object/public/{bucket}/{objectPath} */
 const SUPABASE_PUBLIC_OBJECT_RE = /^\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/;
+const SUPABASE_SIGNED_OBJECT_RE = /^\/storage\/v1\/object\/sign\/([^/]+)\/(.+)$/;
 
 /** Try keys oldest-first: URL path, then with in-bucket root, then without root (legacy flat). */
 export function storageDownloadKeyCandidates(bucket: string, objectPath: string): string[] {
@@ -155,6 +156,22 @@ export function tryParseSupabasePublicObjectUrl(url: string): { bucket: string; 
   const m = parsed.pathname.match(SUPABASE_PUBLIC_OBJECT_RE);
   if (!m?.[1] || !m[2]) return null;
   return { bucket: m[1], objectPath: decodeURIComponent(m[2]) };
+}
+
+export function tryParseSupabaseSignedObjectUrl(url: string): { bucket: string; objectPath: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url.trim());
+  } catch {
+    return null;
+  }
+  const m = parsed.pathname.match(SUPABASE_SIGNED_OBJECT_RE);
+  if (!m?.[1] || !m[2]) return null;
+  return { bucket: m[1], objectPath: decodeURIComponent(m[2]) };
+}
+
+function tryParseSupabaseStorageObjectUrl(url: string): { bucket: string; objectPath: string } | null {
+  return tryParseSupabasePublicObjectUrl(url) ?? tryParseSupabaseSignedObjectUrl(url);
 }
 
 /**
@@ -211,7 +228,7 @@ async function storageDownloadWithTimeout(
 export async function downloadBufferFromUrl(config: AppConfig, url: string): Promise<Buffer> {
   const u = url.trim();
   const fetchInit = fetchInitWithOptionalTimeout(config);
-  const parsed = tryParseSupabasePublicObjectUrl(u);
+  const parsed = tryParseSupabaseStorageObjectUrl(u);
   const base = config.SUPABASE_URL?.trim();
   if (parsed && base) {
     try {

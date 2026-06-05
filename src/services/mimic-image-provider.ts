@@ -2,7 +2,7 @@ import type { AppConfig } from "../config.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import type { Pool } from "pg";
 
-export type MimicImageProvider = "openai" | "nvidia" | "dashscope";
+export type MimicImageProvider = "openai" | "nvidia" | "dashscope" | "bfl";
 
 export interface MimicImageEditParams {
   referenceUrl: string;
@@ -76,9 +76,41 @@ export function nvidiaImageEditModelId(model: string): string {
   return trimmed;
 }
 
-/** Resolve mimic render provider (DashScope Qwen, NVIDIA NIM, or OpenAI gpt-image-1). */
+function bflSubmitEndpoint(apiBase: string, model: string): string {
+  const base = apiBaseUrl(apiBase);
+  const slug = model.trim().replace(/^\//, "");
+  return `${base}/v1/${slug}`;
+}
+
+/** CAF `1024x1536` → BFL width/height (0 = model default per API docs). */
+export function bflFluxDimensions(size: string | undefined): { width: number; height: number } {
+  const trimmed = (size ?? "1024x1536").trim();
+  if (!trimmed || trimmed === "auto") return { width: 1024, height: 1536 };
+  const match = /^(\d+)x(\d+)$/i.exec(trimmed);
+  if (!match) return { width: 1024, height: 1536 };
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
+function bflOutputMimeType(format: string): string {
+  if (format === "jpeg") return "image/jpeg";
+  if (format === "webp") return "image/webp";
+  return "image/png";
+}
+
+/** Resolve mimic render provider (BFL FLUX, DashScope Qwen, NVIDIA NIM, or OpenAI gpt-image-1). */
 export function resolveMimicImageCall(config: AppConfig): MimicImageCallConfig {
   const provider = config.MIMIC_IMAGE_PROVIDER;
+
+  if (provider === "bfl") {
+    const model = config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b";
+    return {
+      provider: "bfl",
+      model,
+      apiKey: config.BFL_API_KEY?.trim() ?? "",
+      editsEndpoint: bflSubmitEndpoint(config.BFL_API_BASE, model),
+      providerLabel: mimicProviderLabel("bfl", model),
+    };
+  }
 
   if (provider === "dashscope") {
     const model = config.MIMIC_IMAGE_DASHSCOPE_MODEL.trim() || "qwen-image-edit-max";
@@ -119,6 +151,9 @@ export function mimicImageProviderAssetLabel(config: AppConfig): string {
 export function assertMimicImageProviderConfigured(config: AppConfig): MimicImageCallConfig {
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) {
+    if (call.provider === "bfl") {
+      throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
+    }
     if (call.provider === "dashscope") {
       throw new Error("DASHSCOPE_API_KEY is required when MIMIC_IMAGE_PROVIDER=dashscope");
     }
@@ -294,6 +329,7 @@ async function auditImageEditCall(args: {
 }
 
 function providerErrorLabel(provider: MimicImageProvider): string {
+  if (provider === "bfl") return "BFL FLUX image edit";
   if (provider === "dashscope") return "DashScope Qwen image edit";
   if (provider === "nvidia") return "NVIDIA NIM Qwen image edit";
   return "OpenAI image edit";
@@ -534,6 +570,191 @@ async function editViaDashScope(config: AppConfig, params: MimicImageEditParams)
   throw lastError ?? new Error("DashScope image edit: max retries exceeded");
 }
 
+const BFL_TERMINAL_FAILURE = new Set(["Error", "Failed", "Task not found", "Request Moderated", "Content Moderated"]);
+
+function bflResultSampleUrl(result: Record<string, unknown>): string | null {
+  const resultObj = asRecord(result.result);
+  const sample = resultObj?.sample;
+  return typeof sample === "string" && sample.trim() ? sample.trim() : null;
+}
+
+async function pollBflFluxTask(args: {
+  config: AppConfig;
+  call: MimicImageCallConfig;
+  pollingUrl: string;
+  taskId: string;
+  startedMs: number;
+}): Promise<Record<string, unknown>> {
+  const deadline = args.startedMs + args.config.MIMIC_IMAGE_BFL_POLL_MAX_MS;
+  const interval = args.config.MIMIC_IMAGE_BFL_POLL_INTERVAL_MS;
+
+  while (Date.now() < deadline) {
+    await sleep(interval);
+    const res = await fetch(args.pollingUrl, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "x-key": args.call.apiKey,
+      },
+    });
+    const rawText = await res.text();
+    let parsed: Record<string, unknown> = {};
+    try {
+      parsed = JSON.parse(rawText) as Record<string, unknown>;
+    } catch {
+      parsed = { raw: rawText.slice(0, 500) };
+    }
+
+    if (!res.ok) {
+      const detail =
+        typeof parsed.detail === "string"
+          ? parsed.detail
+          : JSON.stringify(parsed.detail ?? parsed).slice(0, 300);
+      throw new Error(`${providerErrorLabel("bfl")} poll failed (${res.status}): ${detail}`);
+    }
+
+    const status = typeof parsed.status === "string" ? parsed.status : "";
+    if (status === "Ready") return parsed;
+    if (BFL_TERMINAL_FAILURE.has(status)) {
+      throw new Error(
+        `${providerErrorLabel("bfl")} task ${args.taskId} failed (${status}): ${JSON.stringify(parsed).slice(0, 400)}`
+      );
+    }
+  }
+
+  throw new Error(
+    `${providerErrorLabel("bfl")} timed out after ${args.config.MIMIC_IMAGE_BFL_POLL_MAX_MS}ms (task ${args.taskId})`
+  );
+}
+
+async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+  const call = resolveMimicImageCall(config);
+  if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
+
+  const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
+  const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
+  const body: Record<string, unknown> = {
+    prompt: params.prompt,
+    input_image: params.referenceUrl,
+    width,
+    height,
+    safety_tolerance: config.MIMIC_IMAGE_BFL_SAFETY_TOLERANCE,
+    output_format: outputFormat,
+  };
+  if (params.previousSlideUrl?.trim()) {
+    body.input_image_2 = params.previousSlideUrl.trim();
+  }
+
+  const started = Date.now();
+  const submitRes = await fetch(call.editsEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "x-key": call.apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const submitLatencyMs = Math.max(0, Date.now() - started);
+  const submitRaw = await submitRes.text();
+  let submitParsed: Record<string, unknown> = {};
+  try {
+    submitParsed = JSON.parse(submitRaw) as Record<string, unknown>;
+  } catch {
+    submitParsed = { raw: submitRaw.slice(0, 500) };
+  }
+
+  if (!submitRes.ok) {
+    const detail =
+      typeof submitParsed.detail === "string"
+        ? submitParsed.detail
+        : JSON.stringify(submitParsed.detail ?? submitParsed).slice(0, 300);
+    if (params.audit) {
+      await tryInsertApiCallAudit(params.audit.db, {
+        projectId: params.audit.projectId,
+        runId: params.audit.runId,
+        taskId: params.audit.taskId,
+        step: params.audit.step,
+        provider: call.provider,
+        model: call.model,
+        ok: false,
+        requestJson: {
+          endpoint: call.editsEndpoint,
+          mimic_provider: call.provider,
+          prompt: params.prompt,
+          reference_url: params.referenceUrl,
+          previous_slide_url: params.previousSlideUrl ?? null,
+          width,
+          height,
+          output_format: outputFormat,
+        },
+        responseJson: submitParsed,
+        latencyMs: submitLatencyMs,
+      });
+    }
+    throw new Error(`${providerErrorLabel("bfl")} submit failed (${submitRes.status}): ${detail}`);
+  }
+
+  const taskId = typeof submitParsed.id === "string" ? submitParsed.id : "";
+  const pollingUrl = typeof submitParsed.polling_url === "string" ? submitParsed.polling_url : "";
+  if (!taskId || !pollingUrl) {
+    throw new Error(`${providerErrorLabel("bfl")} submit returned no id/polling_url`);
+  }
+
+  const pollStarted = Date.now();
+  const pollResult = await pollBflFluxTask({
+    config,
+    call,
+    pollingUrl,
+    taskId,
+    startedMs: pollStarted,
+  });
+  const sampleUrl = bflResultSampleUrl(pollResult);
+  if (!sampleUrl) {
+    throw new Error(`${providerErrorLabel("bfl")} task ${taskId} ready but missing result.sample URL`);
+  }
+
+  const dl = await fetch(sampleUrl, { redirect: "follow" });
+  if (!dl.ok) {
+    throw new Error(`${providerErrorLabel("bfl")} failed to download result (${dl.status})`);
+  }
+  const mimeType = dl.headers.get("content-type")?.split(";")[0]?.trim() || bflOutputMimeType(outputFormat);
+  const buffer = Buffer.from(await dl.arrayBuffer());
+  const latencyMs = Math.max(0, Date.now() - started);
+
+  if (params.audit) {
+    await tryInsertApiCallAudit(params.audit.db, {
+      projectId: params.audit.projectId,
+      runId: params.audit.runId,
+      taskId: params.audit.taskId,
+      step: params.audit.step,
+      provider: call.provider,
+      model: call.model,
+      ok: true,
+      requestJson: {
+        endpoint: call.editsEndpoint,
+        mimic_provider: call.provider,
+        prompt: params.prompt,
+        reference_url: params.referenceUrl,
+        previous_slide_url: params.previousSlideUrl ?? null,
+        width,
+        height,
+        output_format: outputFormat,
+        bfl_task_id: taskId,
+      },
+      responseJson: {
+        status: pollResult.status,
+        sample_url: sampleUrl,
+        bytes: buffer.length,
+      },
+      latencyMs,
+    });
+  }
+
+  return { buffer, mimeType };
+}
+
 /**
  * Reference-conditioned image edit/generate for mimic flows.
  * Downloads archived inspection media (signed Supabase URL) and sends it to the configured provider.
@@ -543,6 +764,10 @@ export async function editImageFromReference(
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
   assertMimicImageProviderConfigured(config);
+
+  if (config.MIMIC_IMAGE_PROVIDER === "bfl") {
+    return editViaBfl(config, params);
+  }
 
   if (config.MIMIC_IMAGE_PROVIDER === "dashscope") {
     return editViaDashScope(config, params);

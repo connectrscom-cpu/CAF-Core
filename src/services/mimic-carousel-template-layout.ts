@@ -8,6 +8,9 @@ import {
 /** Default layout when no project pin matches — same cover/body/cta contract as most SNS templates. */
 export const MIMIC_LAYOUT_TEMPLATE_DEFAULT = "carousel_notes_app_minimal";
 
+/** Shared HBS for full-bleed mimic — runtime Document AI block positioning, no per-job template fork. */
+export const MIMIC_FULL_BLEED_RENDER_TEMPLATE = "carousel_mimic_bg";
+
 /** Built-in carousel layouts safe for mimic background injection (cover / body_slides / CTA shape). */
 export const MIMIC_LAYOUT_BUILTIN_BASES = [
   "carousel_notes_app_minimal",

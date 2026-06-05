@@ -10,6 +10,7 @@ import { registerProjectConfigRoutes } from "./routes/project-config.js";
 import { registerSignalPackRoutes } from "./routes/signal-packs.js";
 import { registerInputsEvidenceRoutes } from "./routes/inputs-evidence.js";
 import { registerInputsScraperRoutes } from "./routes/inputs-scrapers.js";
+import { registerInputsEvidencePackRoutes } from "./routes/inputs-evidence-packs.js";
 import { registerEvidenceInsightsReadRoutes } from "./routes/evidence-insights-read.js";
 import { registerInputsProcessingRoutes } from "./routes/inputs-processing.js";
 import { registerRunRoutes } from "./routes/runs.js";
@@ -79,6 +80,7 @@ async function main() {
   registerSignalPackRoutes(app, { db, config });
   registerInputsEvidenceRoutes(app, { db });
   registerInputsScraperRoutes(app, { db, config });
+  registerInputsEvidencePackRoutes(app, { db });
   registerEvidenceInsightsReadRoutes(app, { db });
   registerInputsProcessingRoutes(app, { db, config });
   registerRunRoutes(app, { db, config });

@@ -7,11 +7,19 @@ import {
   isNvidiaVisualGenAiUnavailable,
   isVisualGenAiUnavailableError,
   dashScopeSizeParam,
+  bflFluxDimensions,
 } from "./mimic-image-provider.js";
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     MIMIC_IMAGE_PROVIDER: "nvidia",
+    BFL_API_KEY: "bfl-test",
+    BFL_API_BASE: "https://api.bfl.ai",
+    MIMIC_IMAGE_BFL_MODEL: "flux-2-klein-4b",
+    MIMIC_IMAGE_BFL_POLL_INTERVAL_MS: 500,
+    MIMIC_IMAGE_BFL_POLL_MAX_MS: 180_000,
+    MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: 2,
+    MIMIC_IMAGE_BFL_OUTPUT_FORMAT: "png",
     OPENAI_API_KEY: "sk-openai",
     OPENAI_API_BASE: "https://api.openai.com/v1",
     OPENAI_IMAGE_MODEL: "gpt-image-1",
@@ -30,6 +38,14 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 }
 
 describe("resolveMimicImageCall", () => {
+  it("routes to BFL FLUX Klein when configured", () => {
+    const call = resolveMimicImageCall(baseConfig({ MIMIC_IMAGE_PROVIDER: "bfl" }));
+    expect(call.provider).toBe("bfl");
+    expect(call.model).toBe("flux-2-klein-4b");
+    expect(call.editsEndpoint).toBe("https://api.bfl.ai/v1/flux-2-klein-4b");
+    expect(call.providerLabel).toBe("bfl-flux-2-klein-4b");
+  });
+
   it("routes to DashScope Qwen image edit when configured", () => {
     const call = resolveMimicImageCall(baseConfig({ MIMIC_IMAGE_PROVIDER: "dashscope" }));
     expect(call.provider).toBe("dashscope");
@@ -58,6 +74,14 @@ describe("resolveMimicImageCall", () => {
 });
 
 describe("assertMimicImageProviderConfigured", () => {
+  it("requires BFL_API_KEY for bfl provider", () => {
+    expect(() =>
+      assertMimicImageProviderConfigured(
+        baseConfig({ MIMIC_IMAGE_PROVIDER: "bfl", BFL_API_KEY: "" })
+      )
+    ).toThrow(/BFL_API_KEY/);
+  });
+
   it("requires OPENAI_API_KEY for openai provider", () => {
     expect(() =>
       assertMimicImageProviderConfigured(
@@ -92,6 +116,14 @@ describe("assertMimicImageProviderConfigured", () => {
     );
     expect(call.provider).toBe("openai");
     expect(call.model).toBe("gpt-image-1");
+  });
+});
+
+describe("bflFluxDimensions", () => {
+  it("maps CAF WxH to BFL width/height", () => {
+    expect(bflFluxDimensions("1024x1536")).toEqual({ width: 1024, height: 1536 });
+    expect(bflFluxDimensions("auto")).toEqual({ width: 1024, height: 1536 });
+    expect(bflFluxDimensions(undefined)).toEqual({ width: 1024, height: 1536 });
   });
 });
 

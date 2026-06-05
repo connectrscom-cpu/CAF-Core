@@ -26,6 +26,8 @@ import {
 import { getRunOutputReview, upsertRunOutputReview } from "../repositories/run-output-reviews.js";
 import { buildRunExportData, renderRunExportMarkdown } from "../services/run-export.js";
 import { buildRunContentLogExport } from "../repositories/run-content-log-export.js";
+import { runCarouselOutputAnalysisForRun } from "../services/run-carousel-output-analysis.js";
+import { CAROUSEL_RUN_OUTPUT_ANALYSIS_SCHEMA } from "../domain/carousel-slide-analysis.js";
 
 export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -139,6 +141,54 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
         : null,
       materialize_error,
     };
+  });
+
+  // ── Carousel output analysis (Document AI text + Nemotron visual) ───
+  app.get("/v1/runs/:project_slug/:run_id/output-analysis", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    let run = await getRunByRunId(db, project.id, params.data.run_id);
+    if (!run) run = await getRunById(db, params.data.run_id);
+    if (!run || run.project_id !== project.id) {
+      return reply.code(404).send({ ok: false, error: "run_not_found" });
+    }
+    const meta = (run.metadata_json ?? {}) as Record<string, unknown>;
+    const cached = meta[CAROUSEL_RUN_OUTPUT_ANALYSIS_SCHEMA];
+    return { ok: true, run_id: run.run_id, analysis: cached ?? null, analyzed_at: meta.run_output_analysis_at ?? null };
+  });
+
+  app.post("/v1/runs/:project_slug/:run_id/output-analysis", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
+    const body = z
+      .object({
+        statuses: z.array(z.string()).optional(),
+        persist: z.boolean().optional(),
+      })
+      .safeParse(request.body ?? {});
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    let run = await getRunByRunId(db, project.id, params.data.run_id);
+    if (!run) run = await getRunById(db, params.data.run_id);
+    if (!run || run.project_id !== project.id) {
+      return reply.code(404).send({ ok: false, error: "run_not_found" });
+    }
+
+    try {
+      const analysis = await runCarouselOutputAnalysisForRun(
+        db,
+        config,
+        project.id,
+        params.data.project_slug,
+        run.run_id,
+        { statuses: body.success ? body.data.statuses : undefined, persist: body.success ? body.data.persist : true }
+      );
+      return { ok: true, run_id: run.run_id, analysis };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(500).send({ ok: false, error: "output_analysis_failed", message });
+    }
   });
 
   // ── Run output review (holistic; editorial analysis ingests this) ────

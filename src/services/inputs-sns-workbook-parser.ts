@@ -44,6 +44,7 @@ export function sheetNameToEvidenceKind(sheetName: string): string {
     tiktokaccounts: "source_registry",
     igaccounts: "source_registry",
     facebook: "source_registry",
+    hashtags: "source_registry",
     // "INPUTS_Example.xlsx" naming (exported from current inputs pipeline)
     fbaccounts: "source_registry",
     knowledge_pool: "reference_pool",

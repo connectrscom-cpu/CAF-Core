@@ -78,7 +78,7 @@ import {
 } from "./mimic-carousel-render.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
-import { MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
+import { MIMIC_FULL_BLEED_RENDER_TEMPLATE, MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
 import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
@@ -1694,15 +1694,20 @@ async function processCarouselJob(
         implicitPickSeed: job.task_id,
       });
   if (isMimicCarousel && mimicPayload) {
-    const evidenceTemplate = await ensureMimicEvidenceCarouselTemplate(
-      db,
-      config,
-      job.project_id,
-      { id: job.id, task_id: job.task_id },
-      mimicPayload,
-      { projectPinnedTemplates }
-    );
-    template = evidenceTemplate.template_base;
+    if (mimicPayload.mode === "template_bg") {
+      const evidenceTemplate = await ensureMimicEvidenceCarouselTemplate(
+        db,
+        config,
+        job.project_id,
+        { id: job.id, task_id: job.task_id },
+        mimicPayload,
+        { projectPinnedTemplates }
+      );
+      template = evidenceTemplate.template_base;
+    } else {
+      // carousel_visual / full_bleed: shared HBS + Document AI block vars at render time — no new .hbs fork.
+      template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
+    }
   }
   const strategyRow = await getStrategyDefaults(db, job.project_id);
   const projectRow = await getProjectById(db, job.project_id);

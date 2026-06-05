@@ -21,6 +21,16 @@ describe("buildInstagramApifyInput", () => {
     expect(input.scrapeStories).toBe(false);
     expect(input.proxyConfiguration).toEqual({ useApifyProxy: true });
   });
+
+  it("keeps injected directUrls when saved actor JSON has directUrls: []", () => {
+    const cfg = defaultScraperConfig();
+    cfg.actorInputExtras = {
+      instagram: { directUrls: [], resultsLimit: 5 },
+    };
+    const input = buildInstagramApifyInput(cfg, ["https://www.instagram.com/foo/"]);
+    expect(input.directUrls).toEqual(["https://www.instagram.com/foo/"]);
+    expect(input.resultsLimit).toBe(5);
+  });
 });
 
 describe("buildTiktokApifyInput", () => {

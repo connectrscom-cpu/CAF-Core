@@ -15,63 +15,22 @@ export interface MimicPromptOverrides {
 
 // ─── Default prompt text (code-defined baselines) ───────────────────────────
 
-/** Hard rule for Qwen/DashScope mimic plates — copy is composited via HBS, not the image model. */
+/** Temporary minimal Qwen instruction — text strip only; copy is composited via HBS later. */
+export const DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT =
+  "Remove all on-image text, typography, watermarks, and @handles. Keep everything else the same.";
+
+/** @deprecated Long-form guard — restore when re-enabling rich mimic prompts. */
 export const MIMIC_IMAGE_NO_ON_IMAGE_TEXT_RULE =
   "NEVER render readable text on the image: no words, letters, numbers, headlines, subheads, paragraphs, bullet lists, captions, lorem ipsum, placeholder copy, UI labels, CTA buttons with words, watermarks with text, or gibberish text blocks. Leave text regions as clean, low-detail areas only — all final copy is added later via HTML/CSS overlay.";
 
-export const DEFAULT_MIMIC_IMAGE_FULL_PROMPT = [
-  "Recreate this image's visual design only: composition, layout, color grade, background, and decorative elements.",
-  "Preserve framing, spacing, and design energy.",
-  "Remove all original on-image text from the reference.",
-  "{{copy_instruction}}",
-  "Apply subtle visual variation — do not copy logos, brand marks, or recognizable faces verbatim.",
-].join(" ");
-
-export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = [
-  MIMIC_IMAGE_NO_ON_IMAGE_TEXT_RULE,
-  "Remove ALL on-image text, typography, watermarks, and @handles from this reference slide.",
-  "Output a clean full-bleed background plate: the photograph, gradient, or texture must extend edge-to-edge to all four corners.",
-  "Do NOT add decorative frames, borders, corner flourishes, mats, inset panels, or carousel-template ornaments unless the reference already has that exact border — when unsure, use plain full-bleed only.",
-  "Preserve the reference palette, lighting, grain, and scene composition; only delete text layers — do not replace the image with a different subject.",
-  "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
-  "Do not add new logos, faces, product mockups, or topic-specific art (zodiac wheels, app screens, branded covers).",
-  "{{visual_instruction}}",
-  "{{consistency_instruction}}",
-].join(" ");
-
-/** Art-only full bleed — final copy is composited via HBS/CSS, not the image model. */
-export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = [
-  MIMIC_IMAGE_NO_ON_IMAGE_TEXT_RULE,
-  "Create a new image inspired by this reference slide — target ~80% visual similarity (layout, palette, mood) but NOT a pixel-level copy.",
-  "Redraw subjects with clearly different poses, proportions, and fine details while keeping the same composition slots.",
-  "Think of it as: same vibe, same energy, fresh execution — a new illustration, not a clone.",
-  "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
-  "Fill the entire canvas edge-to-edge: main artwork/photo must reach all four corners — no letterboxing, pillarboxing, inset panels, mats, or centered smaller rectangles on black.",
-  "Do NOT add decorative frames, borders, ornamental elements, or vignettes that are not in the reference.",
-  "Remove ALL watermarks, @handles, and brand tags from the reference. Do NOT reproduce logos, brand marks, or recognizable faces.",
-  "{{handle_instruction}}",
-  "{{safe_zone_instruction}}",
-  "{{consistency_instruction}}",
-  "{{layout_instruction}}",
-  "{{visual_instruction}}",
-].join(" ");
+export const DEFAULT_MIMIC_IMAGE_FULL_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
+export const DEFAULT_MIMIC_TEMPLATE_BG_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
+export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
 /** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
-export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = [
-  ...DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT.split(". "),
-  "{{copy_instruction}}",
-  "{{intent_instruction}}",
-].join(". ");
+export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
-export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = [
-  "Place the following text onto this background image with clean, readable typography.",
-  "Match the text positioning, hierarchy, and font style of the reference layout.",
-  "Output MUST be portrait or square orientation (4:5 or 1:1 aspect ratio) — never landscape or horizontal.",
-  "Do NOT add decorative frames, borders, or ornamental elements.",
-  "Do NOT alter the background — keep it exactly as provided.",
-  "{{copy_instruction}}",
-  "{{consistency_instruction}}",
-].join(" ");
+export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
 // ─── Interpolation helpers ──────────────────────────────────────────────────
 
@@ -123,8 +82,9 @@ export function buildMimicImageFullPrompt(
   opts?: { onImageCopy?: string | null },
   overrides?: MimicPromptOverrides | null
 ): string {
-  const copy = String(opts?.onImageCopy ?? "").trim();
   const template = overrides?.image_full?.trim() || DEFAULT_MIMIC_IMAGE_FULL_PROMPT;
+  if (!overrides?.image_full?.trim()) return template;
+  const copy = String(opts?.onImageCopy ?? "").trim();
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForImageFull(copy),
     on_image_copy: copy,
@@ -139,6 +99,8 @@ export function buildMimicTemplateBackgroundPrompt(
   },
   overrides?: MimicPromptOverrides | null
 ): string {
+  const template = overrides?.template_bg?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_PROMPT;
+  if (!overrides?.template_bg?.trim()) return template;
   const consistencyInstruction = opts?.consistencyHint?.trim() || "";
   const layoutInstruction = opts?.layoutTemplate?.trim()
     ? `Reference layout: ${opts.layoutTemplate.trim()}.`
@@ -146,7 +108,6 @@ export function buildMimicTemplateBackgroundPrompt(
   const visualInstruction = opts?.visualDescription?.trim()
     ? `Reference look: ${opts.visualDescription.trim().slice(0, 400)}.`
     : "";
-  const template = overrides?.template_bg?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_PROMPT;
   return interpolateMimicTemplate(template, {
     visual_instruction: [layoutInstruction, visualInstruction].filter(Boolean).join(" "),
     consistency_instruction: consistencyInstruction,
@@ -173,6 +134,8 @@ export function buildMimicCarouselSlideArtOnlyPrompt(
   },
   overrides?: MimicPromptOverrides | null
 ): string {
+  const template = overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT;
+  if (!overrides?.carousel_slide_visual?.trim()) return template;
   const layoutInstruction = opts.layoutTemplate?.trim()
     ? `Layout style: ${opts.layoutTemplate.trim()}.`
     : "";
@@ -181,7 +144,6 @@ export function buildMimicCarouselSlideArtOnlyPrompt(
     : "";
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
   const safeZoneInstruction = opts.safeZoneInstruction?.trim() || "";
-  const template = overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT;
   return interpolateMimicTemplate(template, {
     safe_zone_instruction: safeZoneInstruction,
     handle_instruction: buildHandleInstruction(opts.projectHandle),
@@ -250,9 +212,10 @@ export function buildMimicTemplateBgComposePrompt(
   },
   overrides?: MimicPromptOverrides | null
 ): string {
+  const template = overrides?.template_bg_compose?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT;
+  if (!overrides?.template_bg_compose?.trim()) return template;
   const copy = String(opts.onImageCopy ?? "").trim();
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
-  const template = overrides?.template_bg_compose?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT;
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForCompose(copy),
     consistency_instruction: consistencyInstruction,

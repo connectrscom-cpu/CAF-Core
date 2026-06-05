@@ -2,7 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1, MimicReferenceItem } from "../domain/mimic-payload.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
-import { buildArtOnlySafeZoneHint, parseMimicTextBlocks } from "./mimic-slide-typography.js";
+import { parseMimicTextBlocks } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
@@ -178,12 +178,8 @@ export async function resolveMimicSlideBackgroundPlate(
     if (url) return url;
   }
 
-  const consistencyHint = usesSlots
-    ? "Maintain consistent color palette, gradients, and visual style with the other slides in this carousel."
-    : "";
   return extractMimicSlideBackground(db, config, job, mimic, extractIndex, {
     ...opts,
-    consistencyHint,
     assetPosition: lookupPosition,
     templateSlot: usesSlots ? templateBgSlotForIndex(slideIndex, totalSlides) : undefined,
     totalSlides,
@@ -262,19 +258,10 @@ export async function extractMimicSlideBackground(
   if (!item) return null;
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
-  const visionHints = slideVisionHints(mimic, slideIndex);
 
   const { buffer, mimeType } = await editImageFromReference(config, {
     referenceUrl,
-    prompt: mimicPromptForMode(
-      "template_bg",
-      {
-        consistencyHint: opts?.consistencyHint,
-        layout: visionHints.layout,
-        visual: visionHints.visual,
-      },
-      opts?.promptOverrides
-    ),
+    prompt: mimicPromptForMode("template_bg", undefined, opts?.promptOverrides),
     size: "1024x1536",
     audit: {
       db,
@@ -1071,54 +1058,24 @@ export async function renderMimicCarouselSlideFullBleed(
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
 
-  const visionHints = slideVisionHints(mimic, slideIndex);
-  const slideGuideline = resolveSlideGuideline(mimic, slideIndex);
-  const safeZoneInstruction = buildArtOnlySafeZoneHint(slideGuideline);
-  const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex);
-
   const basePrompt = mimicPromptForMode(
     "carousel_visual",
-    {
-      index: slideIndex,
-      layout: visionHints.layout,
-      visual: visionHints.visual,
-      consistencyHint,
-      safeZoneInstruction,
-      artOnly: true,
-      projectHandle: opts?.projectHandle ?? null,
-    },
+    { index: slideIndex, artOnly: true },
     opts?.promptOverrides
   );
 
-  const artOnlyRetrySuffix =
-    " CRITICAL REMINDER: output must contain ZERO readable characters — no words, letters, numbers, or gibberish. Art and empty low-detail text zones only.";
-
-  const runEdit = (prompt: string, step: string) =>
-    editImageFromReference(config, {
-      referenceUrl,
-      prompt,
-      size: "1024x1536",
-      audit: {
-        db,
-        projectId: job.project_id,
-        runId: job.run_id,
-        taskId: job.task_id,
-        step,
-      },
-    });
-
-  try {
-    return await runEdit(basePrompt, `mimic_slide_gen_${slideIndex}`);
-  } catch (firstErr) {
-    try {
-      return await runEdit(
-        `${basePrompt}${artOnlyRetrySuffix}`,
-        `mimic_slide_gen_${slideIndex}_retry`
-      );
-    } catch {
-      throw firstErr;
-    }
-  }
+  return editImageFromReference(config, {
+    referenceUrl,
+    prompt: basePrompt,
+    size: "1024x1536",
+    audit: {
+      db,
+      projectId: job.project_id,
+      runId: job.run_id,
+      taskId: job.task_id,
+      step: `mimic_slide_gen_${slideIndex}`,
+    },
+  });
 }
 
 /** Upload art-only visual plate and return a fetchable URL for HBS compositing. */

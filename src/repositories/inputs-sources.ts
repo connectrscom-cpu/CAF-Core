@@ -233,6 +233,30 @@ export async function listScraperRuns(
   );
 }
 
+export async function listCompletedScraperRunsForPlatform(
+  db: Pool,
+  projectId: string,
+  scraperKey: string,
+  limit: number
+): Promise<ScraperRunRow[]> {
+  const lim = Math.min(Math.max(limit, 1), 50);
+  return q(
+    db,
+    `SELECT id::text, project_id::text, scraper_key, status,
+            started_at::text, finished_at::text,
+            config_snapshot_json, stats_json, error_message,
+            evidence_import_id::text, created_at::text
+       FROM caf_core.inputs_scraper_runs
+      WHERE project_id = $1
+        AND scraper_key = $2
+        AND status = 'completed'
+        AND evidence_import_id IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT $3`,
+    [projectId, scraperKey, lim]
+  );
+}
+
 export async function getScraperRun(
   db: Pool,
   projectId: string,

@@ -770,6 +770,7 @@ export function buildCarouselAestheticAnalysisJson(
   if (parsed.replication_blueprint != null) out.replication_blueprint = parsed.replication_blueprint;
   if (parsed.mimic_evaluation != null) out.mimic_evaluation = parsed.mimic_evaluation;
   if (parsed._slide_coverage != null) out._slide_coverage = parsed._slide_coverage;
+  if (parsed.document_ai_deck_v1 != null) out.document_ai_deck_v1 = parsed.document_ai_deck_v1;
   return out;
 }
 

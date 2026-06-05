@@ -29,6 +29,19 @@ import {
   finalizeCarouselInsightJson,
 } from "./carousel-insights-llm-normalize.js";
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
+import { documentAiEnabled } from "./document-ai-auth.js";
+import { resolveProcessingVisionCall } from "./processing-vision-client.js";
+import {
+  appendProcessingPassProgress,
+  beginProcessingPassProgress,
+  finishProcessingPassProgress,
+} from "./processing-pass-progress.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
+import { processCarouselSlideUrlsWithDocumentAi } from "./document-ai-enterprise-ocr.js";
+import {
+  mergeCarouselReferenceAnalysis,
+  TOP_PERFORMER_CAROUSEL_WITH_DOCUMENT_AI_NEMOTRON_APPENDIX,
+} from "./carousel-reference-layout-merge.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { summarizePayloadForLlm, extractEvidenceDisplayFields } from "./inputs-evidence-display.js";
@@ -286,6 +299,8 @@ export interface RunDeepCarouselInsightsOptions {
   rating_top_fraction?: number;
   /** When true, rating percentile gate is off for this run only (same as profile `disable_rating_percentile_gate`). */
   disable_rating_percentile_gate?: boolean;
+  /** Admin UI poll id — live step log via GET /v1/inputs-processing/pass-progress/:progress_id */
+  progress_id?: string;
 }
 
 export interface RunDeepCarouselInsightsResult {
@@ -569,6 +584,16 @@ export async function runDeepCarouselInsightsForImport(
   importId: string,
   opts: RunDeepCarouselInsightsOptions = {}
 ): Promise<RunDeepCarouselInsightsResult> {
+  const progressId = opts.progress_id?.trim() || null;
+  const logStep = (message: string, stage?: string) => {
+    if (progressId) appendProcessingPassProgress(progressId, message, stage);
+    logPipelineEvent("info", "other", message, { data: { import_id: importId, step: STEP, pass_stage: stage } });
+  };
+
+  if (progressId) beginProcessingPassProgress(progressId, "top_performer_carousel");
+
+  let progressOk = false;
+  try {
   if (config.PROCESSING_VISION_PROVIDER === "openai" && !config.OPENAI_API_KEY?.trim()) {
     throw new Error("OPENAI_API_KEY is required for carousel insights");
   }
@@ -586,6 +611,13 @@ export async function runDeepCarouselInsightsForImport(
   }
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
   const model = carouselModel(profile);
+  const visionCall = resolveProcessingVisionCall(config, model);
+  const docAiOn = documentAiEnabled(config);
+  logStep(
+    `Init · vision ${visionCall.provider}/${visionCall.model}` +
+      (docAiOn ? " · Document AI OCR on" : " · Document AI off"),
+    "init"
+  );
   const maxRows = carouselMaxRows(criteria, opts.max_rows);
   const percentileConfig = resolveTopPerformerPercentileConfig(
     criteria,
@@ -626,6 +658,7 @@ export async function runDeepCarouselInsightsForImport(
   let instagramEmbedHttpProxyActive = false;
 
   if (embedCarouselFetchEnabled && maxEmbedNetworkFetches > 0) {
+    logStep(`Prefetching Instagram embed slides (cap ${maxEmbedNetworkFetches})…`, "embed_prefetch");
     const embedProxyAgent = tryCreateInstagramEmbedProxyAgent(embedHttpProxyCfg.url);
     instagramEmbedHttpProxyActive = Boolean(embedProxyAgent);
     try {
@@ -695,6 +728,10 @@ export async function runDeepCarouselInsightsForImport(
         /* ignore */
       }
     }
+    logStep(
+      `Embed prefetch done · ${instagramEmbedFetchAttempts} fetch(es), ${embedSlideOverrideByRowId.size} row(s) with ≥2 slides`,
+      "embed_prefetch"
+    );
   }
 
   type Cand = ScoredTopPerformerRow & {
@@ -795,6 +832,13 @@ export async function runDeepCarouselInsightsForImport(
 
   const top = percentileSelected.filter((c) => !existing.has(c.id));
   skippedExistingCarouselInsight = percentileSelected.filter((c) => existing.has(c.id)).length;
+  logStep(
+    `Selected ${top.length} deck(s) to analyze (${carouselDeckRows} IG decks, ${skippedExistingCarouselInsight} skipped — already have insight)`,
+    "selection"
+  );
+  if (top.length === 0) {
+    logStep("Nothing to analyze — check percentile gate, broad gate, or rescan setting", "selection");
+  }
   const broadMechanismByRow = await listEvidenceRowInsightMechanismByRowIds(
     db,
     importId,
@@ -821,7 +865,15 @@ export async function runDeepCarouselInsightsForImport(
   };
 
   let analyzed = 0;
+  const totalRows = top.length;
+  let rowIndex = 0;
   for (const c of top) {
+    rowIndex++;
+    const rowLabel = c.id.slice(0, 8);
+    logStep(
+      `Row ${rowIndex}/${totalRows} · ${rowLabel}… · ${c.slide_urls.length} slide(s)`,
+      "row_start"
+    );
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2200);
     const system = TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT;
 
@@ -842,6 +894,7 @@ ${textBundle}`;
       visionSlideUrls.some((u) => shouldRelayImageUrlForOpenAi(u)) ||
       carouselSlideUrlsLookStale(visionSlideUrls);
     if (embedCarouselFetchEnabled && postUrlForRefresh && needsFreshSlides) {
+      logStep(`Row ${rowIndex}/${totalRows} · refreshing stale slide URLs from Instagram embed…`, "embed_refresh");
       const rowEmbedAgent = tryCreateInstagramEmbedProxyAgent(embedHttpProxyCfg.url);
       try {
         const fresh = await fetchInstagramCarouselUrlsFromEmbedDetailed(postUrlForRefresh, {
@@ -863,6 +916,7 @@ ${textBundle}`;
     }
 
     if (mediaArchiveRequested && mediaSupabaseConfigured) {
+      logStep(`Row ${rowIndex}/${totalRows} · archiving ${visionSlideUrls.length} slide(s) to Supabase…`, "archive");
       const arch = await archiveTopPerformerVisionMedia(config, {
         projectSlug,
         inputsImportId: importId,
@@ -916,13 +970,52 @@ ${textBundle}`;
     visionSlideUrls = slideRelay.urls;
     if (slideRelay.errors.length > 0) {
       mediaArchiveErrors += slideRelay.errors.length;
+      logStep(
+        `Row ${rowIndex}/${totalRows} · vision URL relay: ${slideRelay.errors.length} warning(s)`,
+        "relay"
+      );
     }
     assertVisionImageUrlsSafeForRemoteFetch(visionSlideUrls);
 
+    let ocrBySlide = new Map<number, import("../domain/carousel-slide-analysis.js").CarouselDocumentAiSlideOcr>();
+    let documentAiSlidesOk = 0;
+    let documentAiSlidesFailed = 0;
+    if (documentAiEnabled(config)) {
+      logStep(
+        `Row ${rowIndex}/${totalRows} · Document AI OCR on ${visionSlideUrls.length} slide(s)…`,
+        "document_ai"
+      );
+      const ocrBatch = await processCarouselSlideUrlsWithDocumentAi(config, visionSlideUrls);
+      ocrBySlide = ocrBatch.ocrBySlide;
+      documentAiSlidesOk = ocrBySlide.size;
+      documentAiSlidesFailed = ocrBatch.errors.length;
+      if (ocrBatch.errors.length > 0) {
+        console.error(`[${STEP}] Document AI partial failures for row ${c.id}:`, ocrBatch.errors.join("; "));
+        logStep(
+          `Row ${rowIndex}/${totalRows} · Document AI partial: ${documentAiSlidesOk} ok, ${documentAiSlidesFailed} failed`,
+          "document_ai"
+        );
+      } else {
+        logStep(
+          `Row ${rowIndex}/${totalRows} · Document AI done · ${documentAiSlidesOk} slide(s)`,
+          "document_ai"
+        );
+      }
+    }
+
+    const systemForVision =
+      documentAiEnabled(config) && ocrBySlide.size > 0
+        ? `${system}${TOP_PERFORMER_CAROUSEL_WITH_DOCUMENT_AI_NEMOTRON_APPENDIX}`
+        : system;
+
+    logStep(
+      `Row ${rowIndex}/${totalRows} · ${visionCall.provider} vision (${visionCall.model}) on ${visionSlideUrls.length} slide(s)…`,
+      "nemotron_vision"
+    );
     const visionOut = await runCarouselDeckVisionAnalysis({
       config,
       profileModel: model,
-      systemPrompt: system,
+      systemPrompt: systemForVision,
       userText,
       visionSlideUrls,
       deckSlideCount: c.slide_urls.length,
@@ -931,7 +1024,10 @@ ${textBundle}`;
       auditStep: STEP,
     });
 
-    const parsed = finalizeCarouselInsightJson(visionOut.parsed, c.slide_urls.length);
+    let parsed = finalizeCarouselInsightJson(visionOut.parsed, c.slide_urls.length);
+    if (parsed && ocrBySlide.size > 0) {
+      parsed = mergeCarouselReferenceAnalysis(parsed, ocrBySlide) ?? parsed;
+    }
     const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
     const mechanism = resolveCarouselMechanismFields({
       parsed,
@@ -954,7 +1050,6 @@ ${textBundle}`;
         items: [],
       };
     }
-
     await upsertEvidenceRowInsight(db, {
       project_id: project.id,
       inputs_import_id: importId,
@@ -981,6 +1076,10 @@ ${textBundle}`;
       ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
     });
     analyzed++;
+    logStep(
+      `Row ${rowIndex}/${totalRows} · saved (${visionOut.model || model})`,
+      "row_done"
+    );
   }
 
   const carouselTotal = await countEvidenceRowInsightsByImportTier(db, importId, "top_performer_carousel");
@@ -1009,6 +1108,8 @@ ${textBundle}`;
       ? "No rating_score on this import; top-% uses pre_llm_score. Run Rate import to rank by performance metrics instead."
       : null;
 
+  logStep(`Done · analyzed ${analyzed} deck(s) · ${carouselTotal} insight row(s) total`, "done");
+  progressOk = true;
   return {
     import_id: importId,
     model,
@@ -1066,4 +1167,11 @@ ${textBundle}`;
     deep_carousel_zero_work_summary: zeroWorkSummary,
     ...(ratingGateNote != null ? { rating_gate_note: ratingGateNote } : {}),
   };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logStep(`Failed: ${msg}`, "error");
+    throw e;
+  } finally {
+    if (progressId) finishProcessingPassProgress(progressId, progressOk);
+  }
 }

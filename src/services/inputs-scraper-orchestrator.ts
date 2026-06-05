@@ -6,24 +6,21 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import {
   getScraperConfig,
+  getScraperRun,
   insertScraperRun,
   listSourceRows,
   updateScraperRun,
 } from "../repositories/inputs-sources.js";
-import {
-  insertInputsEvidenceImport,
-  insertInputsEvidenceRowsBatch,
-} from "../repositories/inputs-evidence.js";
-import { insertEvidenceMediaAssetsPending } from "../repositories/inputs-evidence-media.js";
-import { computeInputHealth, flagSparseEvidenceRows, persistImportHealth } from "./input-health.js";
-import { normalizeGenericVideoEvidenceMedia } from "./inputs-evidence-media-normalizer.js";
-import { isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
-import { normalizeInstagramEvidenceMedia, enrichInstagramApifyPayloadInPlace } from "./instagram-media-normalizer.js";
+import { enrichInstagramApifyPayloadInPlace } from "./instagram-media-normalizer.js";
 import {
   computeDedupeKey,
   sheetNameToEvidenceKind,
   type ParsedInputsEvidenceRow,
 } from "./inputs-sns-workbook-parser.js";
+import {
+  buildSheetStatsFromRows,
+  writeInputsEvidenceImport,
+} from "./inputs-evidence-import-write.js";
 import { SCRAPER_OUTPUT_SHEETS } from "./inputs-source-sync.js";
 import {
   apifyWaitSec,
@@ -50,11 +47,74 @@ import {
   transformRedditApifyDataset,
   transformTiktokApifyItem,
 } from "./inputs-scraper-transforms.js";
-import { getApifyDatasetItems, hasApifyToken, runApifyActor } from "./apify-client.js";
+import {
+  ApifyError,
+  abortApifyRun,
+  getApifyDatasetItems,
+  hasApifyToken,
+  runApifyActor,
+  apifyConsoleRunUrl,
+  type ApifyRunResult,
+} from "./apify-client.js";
+import { applySourceCap } from "./inputs-scraper-cost-estimate.js";
+import {
+  assertScraperRunNotAborted,
+  clearScraperRun,
+  isScraperRunAborted,
+  isScraperRunActive,
+  registerScraperRun,
+  requestScraperRunAbort,
+  ScraperRunAbortedError,
+  trackApifyRun,
+} from "./inputs-scraper-run-registry.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+
+export interface ScraperAbortContext {
+  projectId: string;
+  cafRunId: string;
+}
+
+export interface RunInputsScraperOptions {
+  /** Max source rows per scraper (IG accounts, TikTok profiles, pages, etc.). Omit = no cap. */
+  maxSources?: number | null;
+  /** When set, run checks registry for operator abort (API async path). */
+  abortContext?: ScraperAbortContext;
+}
+
+function apifyAbortHooks(ctx?: ScraperAbortContext): {
+  shouldAbort?: () => boolean;
+  onRunStarted?: (run: ApifyRunResult) => void;
+} {
+  if (!ctx) return {};
+  return {
+    shouldAbort: () => isScraperRunAborted(ctx.projectId, ctx.cafRunId),
+    onRunStarted: (run) => trackApifyRun(ctx.projectId, ctx.cafRunId, run.id),
+  };
+}
+
+function checkScraperAbort(ctx?: ScraperAbortContext): void {
+  if (ctx) assertScraperRunNotAborted(ctx.projectId, ctx.cafRunId);
+}
+
+function isAbortError(e: unknown): boolean {
+  if (e instanceof ScraperRunAbortedError) return true;
+  if (e instanceof ApifyError && /aborted/i.test(e.message)) return true;
+  return false;
+}
 
 export const SCRAPER_KEYS = ["instagram", "tiktok", "html", "facebook", "reddit", "all"] as const;
 export type ScraperKey = (typeof SCRAPER_KEYS)[number];
+
+export interface ScraperApifyRunRef {
+  scraper_key: string;
+  run_id: string;
+  console_url: string;
+}
+
+interface ScrapePayloadResult {
+  payloads: Record<string, unknown>[];
+  apifyRunIds: string[];
+}
 
 export { defaultScraperConfig, mergeScraperConfig, type ScraperProjectConfig };
 
@@ -98,124 +158,76 @@ async function persistEvidenceImport(
     .update(JSON.stringify({ scraper_run: opts.scraperRunId, rows: opts.rows.length }))
     .digest("hex");
 
-  const sheetCounts = new Map<string, number>();
-  for (const r of opts.rows) {
-    sheetCounts.set(r.sheet_name, (sheetCounts.get(r.sheet_name) ?? 0) + 1);
-  }
-  const sheets = [...sheetCounts.entries()].map(([sheet_name, row_count]) => ({
-    sheet_name,
-    evidence_kind: sheetNameToEvidenceKind(sheet_name),
-    row_count,
-    truncated: false,
-    columns: Object.keys(opts.rows.find((x) => x.sheet_name === sheet_name)?.payload_json ?? {}),
-  }));
-
-  const sheet_stats_json = {
-    version: 1,
+  const sheet_stats_json = buildSheetStatsFromRows(opts.rows, {
     source: "scraper",
     scraper_run_id: opts.scraperRunId,
-    sheets,
-    total_rows: opts.rows.length,
     workbook_sha256,
-  };
-
-  const imp = await insertInputsEvidenceImport(db, {
-    project_id: projectId,
-    upload_filename: opts.filename,
-    workbook_sha256,
-    sheet_stats_json,
-    notes: opts.notes,
   });
 
-  const BATCH = 250;
-  for (let i = 0; i < opts.rows.length; i += BATCH) {
-    const slice = opts.rows.slice(i, i + BATCH);
-    const rowIds = await insertInputsEvidenceRowsBatch(db, projectId, imp.id, slice);
-    for (let j = 0; j < slice.length; j++) {
-      const payload = slice[j]!.payload_json;
-      if (slice[j]!.evidence_kind === "instagram_post") {
-        const norm = normalizeInstagramEvidenceMedia(payload);
-        if (norm.media_assets.length > 0) {
-          await insertEvidenceMediaAssetsPending(
-            db,
-            projectId,
-            rowIds[j]!,
-            norm.post_url,
-            norm.post_id,
-            norm.owner_username,
-            norm.media_assets,
-            "instagram"
-          );
-        }
-      } else if (
-        slice[j]!.evidence_kind === "tiktok_video" ||
-        (slice[j]!.evidence_kind === "facebook_post" && isVideoLikeEvidence(slice[j]!.evidence_kind, payload))
-      ) {
-        const norm = normalizeGenericVideoEvidenceMedia(slice[j]!.evidence_kind, payload);
-        if (norm && norm.media_assets.length > 0) {
-          await insertEvidenceMediaAssetsPending(
-            db,
-            projectId,
-            rowIds[j]!,
-            norm.post_url,
-            norm.post_id,
-            norm.owner_username,
-            norm.media_assets,
-            norm.source_platform
-          );
-        }
-      }
-    }
-  }
-
-  const health = await computeInputHealth(db, projectId, imp.id, sheet_stats_json);
-  await persistImportHealth(db, projectId, imp.id, health);
-  await flagSparseEvidenceRows(db, projectId, imp.id);
-
-  return { importId: imp.id, totalRows: opts.rows.length };
+  return writeInputsEvidenceImport(db, projectId, {
+    filename: opts.filename,
+    notes: opts.notes,
+    workbook_sha256,
+    sheet_stats_json,
+    rows: opts.rows,
+  });
 }
 
 async function scrapeInstagram(
   token: string,
   cfg: ScraperProjectConfig,
-  sources: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> {
-  const prepared = prepareInstagramSources(sources);
+  sources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
+  checkScraperAbort(abortCtx);
+  const prepared = applySourceCap(prepareInstagramSources(sources), maxSources);
   const ig = cfg.scrapers?.instagram ?? {};
   const actorId = resolveActorId("instagram", ig);
   const wait = apifyWaitSec(cfg);
   const limit = datasetLimitFor(cfg, "instagram");
   const out: Record<string, unknown>[] = [];
+  const apifyRunIds: string[] = [];
 
   if (ig.runMode === "batch") {
     const urls = prepared.map((s) => String(s.instagramUrl ?? "")).filter(Boolean);
-    if (urls.length === 0) return [];
-    const run = await runApifyActor(token, actorId, buildInstagramApifyInput(cfg, urls), { waitForFinishSec: wait });
+    if (urls.length === 0) return { payloads: [], apifyRunIds };
+    const run = await runApifyActor(token, actorId, buildInstagramApifyInput(cfg, urls), {
+      waitForFinishSec: wait,
+      ...apifyAbortHooks(abortCtx),
+    });
+    apifyRunIds.push(run.id);
     const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
     const ctx = prepared[0] ?? {};
     for (const item of items) out.push(transformInstagramApifyPost(item, ctx));
-    return out;
+    return { payloads: out, apifyRunIds };
   }
 
   for (const src of prepared) {
+    checkScraperAbort(abortCtx);
     const url = String(src.instagramUrl ?? "");
     if (!url) continue;
     const run = await runApifyActor(token, actorId, buildInstagramApifyInput(cfg, [url]), {
       waitForFinishSec: wait,
+      ...apifyAbortHooks(abortCtx),
     });
+    apifyRunIds.push(run.id);
     const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
     for (const item of items) out.push(transformInstagramApifyPost(item, src));
   }
-  return out;
+  return { payloads: out, apifyRunIds };
 }
 
 async function scrapeTiktok(
   token: string,
   cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[],
-  hashtagSources: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> {
-  const profiles = tiktokProfilesFromSources(sources);
+  hashtagSources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
+  checkScraperAbort(abortCtx);
+  const profiles = applySourceCap(tiktokProfilesFromSources(sources), maxSources);
   const tt = cfg.scrapers?.tiktok ?? {};
   const extraProfiles = parseHashtagList(
     Array.isArray(tt.extraProfiles) ? tt.extraProfiles.join("\n") : String(tt.extraProfiles ?? "")
@@ -225,7 +237,7 @@ async function scrapeTiktok(
   );
   const useSourceHashtags = tt.useHashtagsFromSources !== false && hashtagSources.length > 0;
   if (profiles.length === 0 && extraProfiles.length === 0 && !useSourceHashtags && extraHashtags.length === 0) {
-    return [];
+    return { payloads: [], apifyRunIds: [] };
   }
 
   const actorId = resolveActorId("tiktok", tt);
@@ -234,74 +246,93 @@ async function scrapeTiktok(
   const input = buildTiktokApifyInput(cfg, profiles, hashtagSources);
   if (!Array.isArray(input.profiles) || (input.profiles as string[]).length === 0) {
     if (!Array.isArray(input.hashtags) || (input.hashtags as string[]).length === 0) {
-      return [];
+      return { payloads: [], apifyRunIds: [] };
     }
   }
 
-  const run = await runApifyActor(token, actorId, input, { waitForFinishSec: wait });
+  const run = await runApifyActor(token, actorId, input, {
+    waitForFinishSec: wait,
+    ...apifyAbortHooks(abortCtx),
+  });
   const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
   const out: Record<string, unknown>[] = [];
   for (const item of items) {
     const row = transformTiktokApifyItem(item);
     if (row) out.push(row);
   }
-  return out;
+  return { payloads: out, apifyRunIds: [run.id] };
 }
 
 async function scrapeReddit(
   token: string,
   cfg: ScraperProjectConfig,
-  sources: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> {
-  const links = subredditLinksFromSources(sources);
-  if (links.length === 0) return [];
+  sources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
+  checkScraperAbort(abortCtx);
+  const links = applySourceCap(subredditLinksFromSources(sources), maxSources);
+  if (links.length === 0) return { payloads: [], apifyRunIds: [] };
   const rd = cfg.scrapers?.reddit ?? {};
   const actorId = resolveActorId("reddit", rd);
   const wait = apifyWaitSec(cfg);
   const limit = datasetLimitFor(cfg, "reddit");
   const input = buildRedditApifyInputFromConfig(cfg, links);
-  const run = await runApifyActor(token, actorId, input, { waitForFinishSec: wait });
+  const run = await runApifyActor(token, actorId, input, {
+    waitForFinishSec: wait,
+    ...apifyAbortHooks(abortCtx),
+  });
   const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
-  return transformRedditApifyDataset(items);
+  return { payloads: transformRedditApifyDataset(items), apifyRunIds: [run.id] };
 }
 
 async function scrapeFacebook(
   token: string,
   cfg: ScraperProjectConfig,
-  sources: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> {
-  const urls = facebookUrlsFromSources(sources);
-  if (urls.length === 0) return [];
+  sources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
+  checkScraperAbort(abortCtx);
+  const urls = applySourceCap(facebookUrlsFromSources(sources), maxSources);
+  if (urls.length === 0) return { payloads: [], apifyRunIds: [] };
   const fb = cfg.scrapers?.facebook ?? {};
   const actorId = resolveActorId("facebook", fb);
   const wait = apifyWaitSec(cfg);
   const limit = datasetLimitFor(cfg, "facebook");
   const filterOpts = { minLikes: fb.minLikes ?? 5, requireCaption: fb.requireCaption !== false };
   const out: Record<string, unknown>[] = [];
+  const apifyRunIds: string[] = [];
   for (const startUrl of urls) {
+    checkScraperAbort(abortCtx);
     const run = await runApifyActor(token, actorId, buildFacebookApifyInput(cfg, startUrl), {
       waitForFinishSec: wait,
+      ...apifyAbortHooks(abortCtx),
     });
+    apifyRunIds.push(run.id);
     const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
     for (const item of items) {
       const row = transformFacebookApifyPost(item, filterOpts);
       if (row) out.push(row);
     }
   }
-  return out;
+  return { payloads: out, apifyRunIds };
 }
 
 async function scrapeHtml(
   cfg: ScraperProjectConfig,
-  sources: Record<string, unknown>[]
-): Promise<Record<string, unknown>[]> {
+  sources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
   const htmlCfg = cfg.scrapers?.html ?? {};
-  const sites = enabledWebsiteSources(sources);
+  const sites = applySourceCap(enabledWebsiteSources(sources), maxSources);
   const timeout = htmlCfg.fetchTimeoutMs ?? 30_000;
   const ua = htmlCfg.userAgent ?? "Mozilla/5.0 (compatible; CAF-Core/1.0; +https://caf.local)";
   const out: Record<string, unknown>[] = [];
 
   for (const site of sites) {
+    checkScraperAbort(abortCtx);
     try {
       const res = await fetch(site.url, {
         headers: { "User-Agent": ua },
@@ -323,7 +354,15 @@ async function scrapeHtml(
       });
     }
   }
-  return out;
+  return { payloads: out, apifyRunIds: [] };
+}
+
+function apifyRunRefs(scraperKey: string, runIds: string[]): ScraperApifyRunRef[] {
+  return runIds.map((run_id) => ({
+    scraper_key: scraperKey,
+    run_id,
+    console_url: apifyConsoleRunUrl(run_id),
+  }));
 }
 
 const SCRAPER_SOURCE_TAB: Record<string, string> = {
@@ -339,8 +378,11 @@ async function runOneScraper(
   config: AppConfig,
   projectId: string,
   scraperKey: Exclude<ScraperKey, "all">,
-  projectConfig: ScraperProjectConfig
-): Promise<ParsedInputsEvidenceRow[]> {
+  projectConfig: ScraperProjectConfig,
+  runOpts?: RunInputsScraperOptions
+): Promise<{ rows: ParsedInputsEvidenceRow[]; apifyRuns: ScraperApifyRunRef[] }> {
+  const maxSources = runOpts?.maxSources;
+  const abortCtx = runOpts?.abortContext;
   const tab = SCRAPER_SOURCE_TAB[scraperKey];
   const sources = await loadEnabledSources(db, projectId, tab);
   if (sources.length === 0 && scraperKey !== "tiktok") {
@@ -352,121 +394,325 @@ async function runOneScraper(
     throw new Error(`Scraper ${scraperKey} is disabled in config`);
   }
 
-  let payloads: Record<string, unknown>[] = [];
+  let scrapeResult: ScrapePayloadResult = { payloads: [], apifyRunIds: [] };
   if (scraperKey === "html") {
-    payloads = await scrapeHtml(projectConfig, sources);
+    scrapeResult = await scrapeHtml(projectConfig, sources, maxSources, abortCtx);
   } else {
     const token = config.APIFY_API_TOKEN?.trim();
     if (!hasApifyToken(token)) throw new Error("APIFY_API_TOKEN not configured");
     switch (scraperKey) {
       case "instagram":
-        payloads = await scrapeInstagram(token!, projectConfig, sources);
+        scrapeResult = await scrapeInstagram(token!, projectConfig, sources, maxSources, abortCtx);
         break;
       case "tiktok": {
         const hashtagSources = await loadEnabledSources(db, projectId, "hashtags");
-        payloads = await scrapeTiktok(token!, projectConfig, sources, hashtagSources);
+        scrapeResult = await scrapeTiktok(token!, projectConfig, sources, hashtagSources, maxSources, abortCtx);
         break;
       }
       case "reddit":
-        payloads = await scrapeReddit(token!, projectConfig, sources);
+        scrapeResult = await scrapeReddit(token!, projectConfig, sources, maxSources, abortCtx);
         break;
       case "facebook":
-        payloads = await scrapeFacebook(token!, projectConfig, sources);
+        scrapeResult = await scrapeFacebook(token!, projectConfig, sources, maxSources, abortCtx);
         break;
     }
   }
 
   const sheetName = SCRAPER_OUTPUT_SHEETS[scraperKey]!;
-  return rowsToEvidence(sheetName, payloads);
+  return {
+    rows: rowsToEvidence(sheetName, scrapeResult.payloads),
+    apifyRuns: apifyRunRefs(scraperKey, scrapeResult.apifyRunIds),
+  };
 }
 
-export async function runInputsScraper(
-  db: Pool,
-  config: AppConfig,
-  projectId: string,
-  scraperKey: ScraperKey
-): Promise<{
+export interface InputsScraperRunResult {
   scraper_run_id: string;
   evidence_import_id: string;
   total_rows: number;
   scrapers_run: string[];
   rows_by_scraper: Record<string, number>;
-}> {
+  apify_runs?: ScraperApifyRunRef[];
+}
+
+async function executeInputsScraperRunCore(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  runId: string,
+  scraperKey: ScraperKey,
+  projectConfig: ScraperProjectConfig,
+  maxSources: number | null,
+  runOpts?: RunInputsScraperOptions
+): Promise<InputsScraperRunResult> {
+  const abortContext: ScraperAbortContext = runOpts?.abortContext ?? {
+    projectId,
+    cafRunId: runId,
+  };
+  const optsWithAbort: RunInputsScraperOptions = { ...runOpts, abortContext };
+
+  await updateScraperRun(db, runId, projectId, { status: "running", started_at: true });
+  checkScraperAbort(abortContext);
+
+  const keys: Array<Exclude<ScraperKey, "all">> =
+    scraperKey === "all" ? ["instagram", "tiktok", "html", "facebook", "reddit"] : [scraperKey];
+
+  const allRows: ParsedInputsEvidenceRow[] = [];
+  const rowsByScraper: Record<string, number> = {};
+  const scrapersRun: string[] = [];
+  const apifyRuns: ScraperApifyRunRef[] = [];
+
+  for (const key of keys) {
+    checkScraperAbort(abortContext);
+    const cfg = projectConfig.scrapers?.[key];
+    if (cfg?.enabled === false) continue;
+    try {
+      const result = await runOneScraper(db, config, projectId, key, projectConfig, optsWithAbort);
+      allRows.push(...result.rows);
+      apifyRuns.push(...result.apifyRuns);
+      rowsByScraper[key] = result.rows.length;
+      scrapersRun.push(key);
+      logPipelineEvent("info", "other", `inputs scraper ${key} completed`, {
+        data: { row_count: result.rows.length },
+      });
+    } catch (e) {
+      if (isAbortError(e)) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      logPipelineEvent("warn", "other", `inputs scraper ${key} skipped`, { data: { error: msg } });
+      rowsByScraper[key] = 0;
+    }
+  }
+
+  if (allRows.length === 0) {
+    throw new Error("No scraper produced rows (check sources, APIFY_API_TOKEN, and scraper config)");
+  }
+
+  const label =
+    scraperKey === "all"
+      ? `scraper-all-${new Date().toISOString().slice(0, 10)}.xlsx`
+      : `scraper-${scraperKey}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+  checkScraperAbort(abortContext);
+  const preComplete = await getScraperRun(db, projectId, runId);
+  if (preComplete?.status === "cancelled") {
+    throw new ScraperRunAbortedError();
+  }
+
+  const { importId, totalRows } = await persistEvidenceImport(db, projectId, {
+    filename: label,
+    notes: `Apify/Core scraper run ${runId}`,
+    rows: allRows,
+    scraperRunId: runId,
+  });
+
+  const stillActive = await getScraperRun(db, projectId, runId);
+  if (stillActive?.status === "cancelled") {
+    throw new ScraperRunAbortedError();
+  }
+
+  await updateScraperRun(db, runId, projectId, {
+    status: "completed",
+    finished_at: true,
+    evidence_import_id: importId,
+    stats_json: {
+      total_rows: totalRows,
+      scrapers_run: scrapersRun,
+      rows_by_scraper: rowsByScraper,
+      apify_runs: apifyRuns,
+      max_sources: maxSources,
+    },
+  });
+
+  return {
+    scraper_run_id: runId,
+    evidence_import_id: importId,
+    total_rows: totalRows,
+    scrapers_run: scrapersRun,
+    rows_by_scraper: rowsByScraper,
+    apify_runs: apifyRuns,
+  };
+}
+
+/** Background worker for API — registers run, executes, handles abort/failure cleanup. */
+export async function executeInputsScraperRun(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  runId: string,
+  scraperKey: ScraperKey,
+  runOpts?: RunInputsScraperOptions
+): Promise<void> {
+  const existing = await getScraperRun(db, projectId, runId);
+  if (!existing || existing.status === "cancelled") return;
+
+  registerScraperRun(projectId, runId);
   const stored = await getScraperConfig(db, projectId);
   const projectConfig = mergeScraperConfig(stored?.config_json);
+  const maxSources =
+    runOpts?.maxSources != null && runOpts.maxSources > 0 ? Math.floor(runOpts.maxSources) : null;
+
+  try {
+    checkScraperAbort({ projectId, cafRunId: runId });
+    await executeInputsScraperRunCore(
+      db,
+      config,
+      projectId,
+      runId,
+      scraperKey,
+      projectConfig,
+      maxSources,
+      { ...runOpts, abortContext: { projectId, cafRunId: runId } }
+    );
+  } catch (e) {
+    if (isAbortError(e)) {
+      const current = await getScraperRun(db, projectId, runId);
+      if (current?.status === "running" || current?.status === "pending") {
+        await updateScraperRun(db, runId, projectId, {
+          status: "cancelled",
+          finished_at: true,
+          error_message: "Aborted by operator",
+        });
+      }
+      return;
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    const current = await getScraperRun(db, projectId, runId);
+    if (current?.status === "running" || current?.status === "pending") {
+      await updateScraperRun(db, runId, projectId, {
+        status: "failed",
+        finished_at: true,
+        error_message: msg,
+      });
+    }
+    logPipelineEvent("error", "other", "inputs scraper run failed", {
+      data: { scraper_run_id: runId, error: msg },
+    });
+  } finally {
+    clearScraperRun(projectId, runId);
+  }
+}
+
+/** Start a scraper run and return immediately (work continues in background). */
+export async function startInputsScraperRun(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  scraperKey: ScraperKey,
+  runOpts?: RunInputsScraperOptions
+): Promise<{ scraper_run_id: string; status: "running" }> {
+  const stored = await getScraperConfig(db, projectId);
+  const projectConfig = mergeScraperConfig(stored?.config_json);
+  const maxSources =
+    runOpts?.maxSources != null && runOpts.maxSources > 0 ? Math.floor(runOpts.maxSources) : null;
 
   const runRow = await insertScraperRun(db, {
     project_id: projectId,
     scraper_key: scraperKey,
-    config_snapshot_json: projectConfig as unknown as Record<string, unknown>,
+    config_snapshot_json: {
+      ...(projectConfig as unknown as Record<string, unknown>),
+      run_options: { max_sources: maxSources },
+    },
   });
 
-  await updateScraperRun(db, runRow.id, projectId, { status: "running", started_at: true });
+  void executeInputsScraperRun(db, config, projectId, runRow.id, scraperKey, runOpts);
 
-  try {
-    const keys: Array<Exclude<ScraperKey, "all">> =
-      scraperKey === "all" ? ["instagram", "tiktok", "html", "facebook", "reddit"] : [scraperKey];
+  return { scraper_run_id: runRow.id, status: "running" };
+}
 
-    const allRows: ParsedInputsEvidenceRow[] = [];
-    const rowsByScraper: Record<string, number> = {};
-    const scrapersRun: string[] = [];
+export async function abortInputsScraperRun(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  runId: string
+): Promise<{ ok: true; apify_aborted: number } | { ok: false; error: string }> {
+  const run = await getScraperRun(db, projectId, runId);
+  if (!run) return { ok: false, error: "not_found" };
+  if (run.status !== "running" && run.status !== "pending") {
+    return { ok: false, error: "not_running" };
+  }
 
-    for (const key of keys) {
-      const cfg = projectConfig.scrapers?.[key];
-      if (cfg?.enabled === false) continue;
+  const apifyIds = requestScraperRunAbort(projectId, runId);
+  const token = config.APIFY_API_TOKEN?.trim();
+  let apifyAborted = 0;
+  if (hasApifyToken(token)) {
+    for (const apifyRunId of apifyIds) {
       try {
-        const rows = await runOneScraper(db, config, projectId, key, projectConfig);
-        allRows.push(...rows);
-        rowsByScraper[key] = rows.length;
-        scrapersRun.push(key);
-        logPipelineEvent("info", "other", `inputs scraper ${key} completed`, {
-          data: { row_count: rows.length },
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        logPipelineEvent("warn", "other", `inputs scraper ${key} skipped`, { data: { error: msg } });
-        rowsByScraper[key] = 0;
+        await abortApifyRun(token!, apifyRunId);
+        apifyAborted++;
+      } catch {
+        /* best-effort */
       }
     }
+  }
 
-    if (allRows.length === 0) {
-      throw new Error("No scraper produced rows (check sources, APIFY_API_TOKEN, and scraper config)");
+  if (!isScraperRunActive(projectId, runId)) {
+    const current = await getScraperRun(db, projectId, runId);
+    if (current?.status === "running" || current?.status === "pending") {
+      await updateScraperRun(db, runId, projectId, {
+        status: "cancelled",
+        finished_at: true,
+        error_message: "Aborted by operator",
+      });
     }
+  }
 
-    const label =
-      scraperKey === "all"
-        ? `scraper-all-${new Date().toISOString().slice(0, 10)}.xlsx`
-        : `scraper-${scraperKey}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  return { ok: true, apify_aborted: apifyAborted };
+}
 
-    const { importId, totalRows } = await persistEvidenceImport(db, projectId, {
-      filename: label,
-      notes: `Apify/Core scraper run ${runRow.id}`,
-      rows: allRows,
-      scraperRunId: runRow.id,
-    });
+/** Synchronous run (CLI) — blocks until finished. */
+export async function runInputsScraper(
+  db: Pool,
+  config: AppConfig,
+  projectId: string,
+  scraperKey: ScraperKey,
+  runOpts?: RunInputsScraperOptions
+): Promise<InputsScraperRunResult> {
+  const stored = await getScraperConfig(db, projectId);
+  const projectConfig = mergeScraperConfig(stored?.config_json);
+  const maxSources =
+    runOpts?.maxSources != null && runOpts.maxSources > 0 ? Math.floor(runOpts.maxSources) : null;
 
-    await updateScraperRun(db, runRow.id, projectId, {
-      status: "completed",
-      finished_at: true,
-      evidence_import_id: importId,
-      stats_json: { total_rows: totalRows, scrapers_run: scrapersRun, rows_by_scraper: rowsByScraper },
-    });
+  const runRow = await insertScraperRun(db, {
+    project_id: projectId,
+    scraper_key: scraperKey,
+    config_snapshot_json: {
+      ...(projectConfig as unknown as Record<string, unknown>),
+      run_options: { max_sources: maxSources },
+    },
+  });
 
-    return {
-      scraper_run_id: runRow.id,
-      evidence_import_id: importId,
-      total_rows: totalRows,
-      scrapers_run: scrapersRun,
-      rows_by_scraper: rowsByScraper,
-    };
+  registerScraperRun(projectId, runRow.id);
+  try {
+    return await executeInputsScraperRunCore(
+      db,
+      config,
+      projectId,
+      runRow.id,
+      scraperKey,
+      projectConfig,
+      maxSources,
+      { ...runOpts, abortContext: { projectId, cafRunId: runRow.id } }
+    );
   } catch (e) {
+    if (isAbortError(e)) {
+      await updateScraperRun(db, runRow.id, projectId, {
+        status: "cancelled",
+        finished_at: true,
+        error_message: "Aborted by operator",
+      });
+      throw e;
+    }
     const msg = e instanceof Error ? e.message : String(e);
-    await updateScraperRun(db, runRow.id, projectId, {
-      status: "failed",
-      finished_at: true,
-      error_message: msg,
-    });
+    const current = await getScraperRun(db, projectId, runRow.id);
+    if (current?.status === "running" || current?.status === "pending") {
+      await updateScraperRun(db, runRow.id, projectId, {
+        status: "failed",
+        finished_at: true,
+        error_message: msg,
+      });
+    }
     throw e;
+  } finally {
+    clearScraperRun(projectId, runRow.id);
   }
 }
 

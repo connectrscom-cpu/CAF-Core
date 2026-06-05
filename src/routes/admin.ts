@@ -2263,9 +2263,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         active: true,
         labs_readonly: true,
         labs_short_description:
-          "Qwen prompt for single-image full-bleed mimic (FLOW_TOP_PERFORMER_MIMIC_IMAGE). Sent to DashScope image-edit API with reference image. Supports {{on_image_copy}} and {{copy_instruction}} placeholders.",
-        labs_flow_description: "Render: Mimic image (full bleed) → Qwen/DashScope image edit.",
-        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Not a system/user pair — entire text below is the image-edit instruction.",
+          "Mimic prompt for single-image full bleed (FLOW_TOP_PERFORMER_MIMIC_IMAGE). Sent to MIMIC_IMAGE_PROVIDER (BFL FLUX, DashScope, etc.) with reference image.",
+        labs_flow_description: "Render: Mimic image (full bleed) → configured image-edit provider.",
+        system_prompt: "Single prompt sent as `prompt` to the mimic image-edit API. Not a system/user pair — entire text below is the image-edit instruction.",
         user_prompt_template: DEFAULT_MIMIC_IMAGE_FULL_PROMPT,
       },
       {
@@ -2275,9 +2275,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         active: true,
         labs_readonly: true,
         labs_short_description:
-          "Qwen prompt for background plate extraction (text removal) used by template_bg carousels. Sent to DashScope image-edit API with reference slide.",
-        labs_flow_description: "Render: Mimic carousel background plate extraction → Qwen/DashScope.",
-        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Strips text from reference slide to produce clean background for HBS overlay.",
+          "Mimic prompt for background plate extraction (text removal) used by template_bg carousels.",
+        labs_flow_description: "Render: Mimic carousel background plate extraction.",
+        system_prompt: "Single prompt sent as `prompt` to the mimic image-edit API. Strips text from reference slide to produce clean background for HBS overlay.",
         user_prompt_template: DEFAULT_MIMIC_TEMPLATE_BG_PROMPT,
       },
       {
@@ -2287,9 +2287,9 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         active: true,
         labs_readonly: true,
         labs_short_description:
-          "Qwen prompt for full-bleed carousel slide recreation (carousel_visual mode). Sent once per slide to DashScope image-edit API. Supports {{on_image_copy}}, {{copy_instruction}}, {{layout_instruction}}, {{visual_instruction}} placeholders.",
-        labs_flow_description: "Render: Mimic carousel slide (visual full-bleed) → Qwen/DashScope.",
-        system_prompt: "Single prompt sent as `prompt` to DashScope image-edit endpoint. Recreates the reference slide with new text. Uses per-slide interpolation.",
+          "Mimic prompt for full-bleed carousel slide recreation (carousel_visual mode). Sent once per slide.",
+        labs_flow_description: "Render: Mimic carousel slide (visual full-bleed).",
+        system_prompt: "Single prompt sent as `prompt` to the mimic image-edit API.",
         user_prompt_template: DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT,
       },
     ];
@@ -3730,6 +3730,23 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
     </div>
   </div>
 
+  <div id="run-carousel-analysis-modal" class="sp-modal-overlay" onclick="if(event.target===this)closeRunCarouselAnalysis()">
+    <div class="card sp-modal-card" onclick="event.stopPropagation()" style="max-width:1100px">
+      <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <span>Carousel output analysis (Document AI + Nemotron)</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button type="button" class="btn-ghost" id="rca-copy-btn" onclick="copyRunCarouselAnalysisJson()" style="display:none">Copy JSON</button>
+          <button type="button" class="btn-ghost" onclick="closeRunCarouselAnalysis()">Close</button>
+        </div>
+      </div>
+      <div id="run-carousel-analysis-body" style="padding:16px 20px 20px;max-height:75vh;overflow:auto">
+        <p class="runs-ops-hint" style="margin:0 0 12px">Analyzes <strong>IN_REVIEW</strong> and <strong>APPROVED</strong> carousel jobs with image assets. Document AI checks on-slide text; Nemotron checks visual mimic fidelity. Requires <span class="mono">DOCUMENT_AI_ENABLED=1</span> and Nemotron/OpenAI vision keys.</p>
+        <p id="rca-status" class="runs-ops-hint" style="margin:0 0 12px"></p>
+        <pre id="rca-json" class="mono" style="font-size:11px;white-space:pre-wrap;word-break:break-word;margin:0;padding:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;display:none"></pre>
+      </div>
+    </div>
+  </div>
+
   <div id="run-output-review-modal" class="sp-modal-overlay" onclick="if(event.target===this)closeRunOutputReview()">
     <div class="card sp-modal-card" onclick="event.stopPropagation()" style="max-width:640px">
       <div class="card-h" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
@@ -3892,6 +3909,43 @@ function closeRunContentLog(){
   if(m)m.style.display='none';
   try{delete window._runContentLogRows;}catch(_e){window._runContentLogRows=undefined;}
   try{delete window._runContentLogExport;}catch(_e){window._runContentLogExport=undefined;}
+}
+function closeRunCarouselAnalysis(){
+  const m=document.getElementById('run-carousel-analysis-modal');
+  if(m)m.style.display='none';
+  try{delete window._runCarouselAnalysisJson;}catch(_e){window._runCarouselAnalysisJson=undefined;}
+}
+function copyRunCarouselAnalysisJson(){
+  const ex=window._runCarouselAnalysisJson;
+  if(!ex){showToast('Nothing to copy',false);return;}
+  copyTextToClipboard(prettyObj(ex),'carousel output analysis');
+}
+async function runCarouselOutputAnalysis(runId){
+  if(!SLUG){showToast('Pick a project in the sidebar first.',false);return;}
+  const modal=document.getElementById('run-carousel-analysis-modal');
+  const statusEl=document.getElementById('rca-status');
+  const pre=document.getElementById('rca-json');
+  const copyBtn=document.getElementById('rca-copy-btn');
+  if(modal)modal.style.display='flex';
+  if(statusEl)statusEl.textContent='Running analysis (Document AI per slide + Nemotron visual) — may take several minutes…';
+  if(pre){pre.style.display='none';pre.textContent='';}
+  if(copyBtn)copyBtn.style.display='none';
+  try{
+    const r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(runId)+'/output-analysis',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({statuses:['IN_REVIEW','APPROVED'],persist:true})});
+    const raw=await r.text();
+    let d;try{d=JSON.parse(raw);}catch(e){throw new Error(r.ok?'Invalid JSON':'HTTP '+r.status+' '+raw.slice(0,200));}
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,d.message||'Analysis failed'));
+    window._runCarouselAnalysisJson=d.analysis||d;
+    const a=d.analysis||{};
+    const s=a.summary||{};
+    if(statusEl)statusEl.textContent='Done in '+(a.duration_ms||'?')+'ms — jobs '+String(s.jobs_analyzed||0)+', assets '+String(s.assets_analyzed||0)+', text pass '+String(s.text_pass||0)+', text fail '+String(s.text_fail||0)+', visual warn '+String(s.visual_warn||0);
+    if(pre){pre.style.display='block';pre.textContent=prettyObj(d.analysis);}
+    if(copyBtn)copyBtn.style.display='inline-block';
+    showToast('Carousel output analysis complete',true,12000);
+  }catch(err){
+    if(statusEl)statusEl.textContent='Failed: '+(err.message||String(err));
+    showToast(err.message||String(err),false,16000);
+  }
 }
 function closeRunOutputReview(){
   var m=document.getElementById('run-output-review-modal');
@@ -4154,6 +4208,7 @@ async function loadRuns(p,silent){
     h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/run-jobs?project='+encodeURIComponent(SLUG)+'&run_id='+encodeURIComponent(run.run_id)+'">Planned jobs</a> ';
     h+='<a class="btn btn-sm" style="font-size:11px;padding:4px 10px;text-decoration:none;margin-left:4px" href="/admin/jobs?run_id='+encodeURIComponent(run.run_id)+'&project='+encodeURIComponent(SLUG)+'">View jobs</a> ';
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunContentLog("+JSON.stringify(run.run_id)+")' title='Carousel slide counts + copy preview; video script preview + assets'>Content log</button> ";
+    h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='runCarouselOutputAnalysis("+JSON.stringify(run.run_id)+")' title='Document AI text QA + Nemotron visual QA on rendered carousel assets (IN_REVIEW / APPROVED)'>Analyze outputs</button> ";
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";

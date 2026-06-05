@@ -183,6 +183,7 @@ span.caf-pipeline-stage{cursor:default}
 .tp-pass-status{font-size:11px;line-height:1.45;color:var(--muted);margin-top:8px;min-height:2.6em}
 .tp-pass-status.is-err{color:var(--red)}
 .tp-pass-status.is-run{color:var(--accent)}
+.tp-pass-log{display:block;margin-top:6px;max-height:min(28vh,180px);overflow:auto;white-space:pre-wrap;font-size:10px;line-height:1.4;font-family:ui-monospace,monospace;background:var(--bg);color:var(--text);padding:8px;border-radius:6px;border:1px solid var(--border)}
 .tp-pass-run{width:100%;margin-top:2px}
 .tp-setting-grid{display:flex;flex-direction:column;gap:10px;font-size:12px}
 .tp-setting-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -202,6 +203,16 @@ span.caf-pipeline-stage{cursor:default}
 .scraper-cfg-msg{font-size:11px;color:var(--muted);min-width:4ch}
 .scraper-cfg-section{border:1px solid var(--border);border-radius:10px;padding:0 12px 12px;margin-bottom:10px;background:var(--surface-2)}
 .scraper-cfg-section>summary{cursor:pointer;font-size:13px;font-weight:600;padding:10px 0;list-style-position:inside}
+.scraper-cfg-summary{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px;list-style:none}
+.scraper-cfg-summary::-webkit-details-marker{display:none}
+.scraper-cfg-run-wrap{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-left:auto}
+.scraper-cfg-run-wrap .btn-run-scraper{white-space:nowrap}
+.scraper-cap-field{display:block;font-size:11px;color:var(--muted)}
+.scraper-estimate-actions{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.scraper-estimate-out{font-size:11px;line-height:1.45;color:var(--muted);margin-top:4px}
+.scraper-estimate-out table{width:100%;border-collapse:collapse;margin-top:6px;font-size:10px}
+.scraper-estimate-out th,.scraper-estimate-out td{padding:4px 6px;border-bottom:1px solid var(--border);text-align:left}
+.scraper-estimate-out .est-total{color:var(--fg);font-weight:600;margin-top:6px}
 .scraper-cfg-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px 14px;margin-top:8px}
 .scraper-cfg-grid--wide{grid-template-columns:1fr}
 .scraper-cfg-json{width:100%;min-height:200px;font-size:12px;line-height:1.5;padding:12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);resize:vertical;tab-size:2;font-family:ui-monospace,monospace}

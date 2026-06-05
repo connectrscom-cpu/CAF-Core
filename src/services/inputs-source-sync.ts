@@ -14,6 +14,7 @@ const SOURCE_TAB_MAP: Record<string, string> = {
   tiktokaccounts: "tiktokaccounts",
   subreddits: "subreddits",
   facebook: "facebook",
+  hashtags: "hashtags",
 };
 
 function normSheetKey(name: string): string {

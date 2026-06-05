@@ -194,8 +194,17 @@ const envSchema = z.object({
       const s = v.trim().toLowerCase();
       return s === "1" || s === "true" || s === "yes";
     }),
-  /** Mimic render pixels: DashScope Qwen (default), NVIDIA NIM, or OpenAI gpt-image-1. */
-  MIMIC_IMAGE_PROVIDER: z.enum(["openai", "nvidia", "dashscope"]).default("dashscope"),
+  /** Mimic render pixels: BFL FLUX Klein (default), DashScope Qwen, NVIDIA NIM, or OpenAI gpt-image-1. */
+  MIMIC_IMAGE_PROVIDER: z.enum(["openai", "nvidia", "dashscope", "bfl"]).default("bfl"),
+  /** Black Forest Labs API key (https://api.bfl.ai) when MIMIC_IMAGE_PROVIDER=bfl. */
+  BFL_API_KEY: z.string().optional(),
+  BFL_API_BASE: z.string().default("https://api.bfl.ai"),
+  /** Endpoint slug, e.g. flux-2-klein-4b, flux-2-klein-9b, flux-2-pro. */
+  MIMIC_IMAGE_BFL_MODEL: z.string().default("flux-2-klein-4b"),
+  MIMIC_IMAGE_BFL_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(10_000).default(500),
+  MIMIC_IMAGE_BFL_POLL_MAX_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
+  MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: z.coerce.number().int().min(0).max(5).default(2),
+  MIMIC_IMAGE_BFL_OUTPUT_FORMAT: z.enum(["jpeg", "png", "webp"]).default("png"),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
@@ -241,6 +250,29 @@ const envSchema = z.object({
   PROCESSING_VISION_NVIDIA_MODEL: z.string().default("nvidia/nemotron-nano-12b-v2-vl"),
   /** Nemotron VL accepts up to 4 images per request; carousel/video frames are trimmed. */
   PROCESSING_VISION_NVIDIA_MAX_IMAGES: z.coerce.number().int().min(1).max(8).default(4),
+
+  /**
+   * Google Document AI Enterprise OCR for carousel reference + output text analysis.
+   * @see https://docs.cloud.google.com/document-ai/docs/enterprise-document-ocr
+   */
+  DOCUMENT_AI_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return false;
+      const s = v.trim().toLowerCase();
+      return s === "1" || s === "true" || s === "yes";
+    }),
+  DOCUMENT_AI_PROJECT_ID: z.string().optional(),
+  DOCUMENT_AI_LOCATION: z.string().default("us"),
+  /** Enterprise Document OCR processor id (from Cloud Console). */
+  DOCUMENT_AI_PROCESSOR_ID: z.string().optional(),
+  /** Optional frozen processor version, e.g. pretrained-ocr-v2.1-2024-08-07 */
+  DOCUMENT_AI_PROCESSOR_VERSION: z.string().optional(),
+  /** Inline service account JSON (preferred on Fly). */
+  DOCUMENT_AI_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+
   OPENAI_MODEL: z.string().default("gpt-4o"),
   /** Vision-capable model for post-approval content review (images + text). */
   OPENAI_APPROVAL_REVIEW_MODEL: z.string().default("gpt-4o"),
