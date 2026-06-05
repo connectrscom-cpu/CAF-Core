@@ -28,8 +28,13 @@ describe("document-ai-auth", () => {
     expect(resolveDocumentAiCredentialMode(config)).toBe("inline");
   });
 
-  it("labels ADC mode for local dev", () => {
-    const config = { ...base, NODE_ENV: "development" } as AppConfig;
-    expect(documentAiAuthModeLabel(config)).toMatch(/ADC/);
+  it("allows Cloud Run proxy in production without service account JSON", () => {
+    const config = {
+      ...base,
+      DOCUMENT_AI_PROXY_URL: "https://caf-document-ai-proxy.example.run.app",
+      DOCUMENT_AI_PROXY_TOKEN: "secret",
+    } as AppConfig;
+    expect(() => assertDocumentAiRuntimeAuth(config)).not.toThrow();
+    expect(documentAiAuthModeLabel(config)).toMatch(/Cloud Run proxy/);
   });
 });

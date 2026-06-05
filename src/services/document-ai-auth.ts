@@ -12,6 +12,10 @@ export function documentAiEnabled(config: AppConfig): boolean {
   return Boolean(config.DOCUMENT_AI_PROJECT_ID?.trim() && config.DOCUMENT_AI_PROCESSOR_ID?.trim());
 }
 
+export function documentAiUsesProxy(config: AppConfig): boolean {
+  return Boolean(config.DOCUMENT_AI_PROXY_URL?.trim() && config.DOCUMENT_AI_PROXY_TOKEN?.trim());
+}
+
 export function resolveDocumentAiCredentialMode(config: AppConfig): "inline" | "file" | "adc" {
   const inline = config.DOCUMENT_AI_SERVICE_ACCOUNT_JSON?.trim();
   if (inline) return "inline";
@@ -25,6 +29,9 @@ export function documentAiUsesApplicationDefaultCredentials(config: AppConfig): 
 }
 
 export function documentAiAuthModeLabel(config: AppConfig): string {
+  if (documentAiUsesProxy(config)) {
+    return `Cloud Run proxy (${config.DOCUMENT_AI_PROXY_URL?.trim()})`;
+  }
   const mode = resolveDocumentAiCredentialMode(config);
   if (mode === "inline") return "service account (DOCUMENT_AI_SERVICE_ACCOUNT_JSON)";
   if (mode === "file") return `service account file (${config.GOOGLE_APPLICATION_CREDENTIALS?.trim()})`;
@@ -35,8 +42,9 @@ export function assertDocumentAiConfigured(config: AppConfig): void {
   if (!documentAiEnabled(config)) {
     throw new Error(
       "Document AI Enterprise OCR is not configured. Set DOCUMENT_AI_ENABLED=1, DOCUMENT_AI_PROJECT_ID, " +
-        "and DOCUMENT_AI_PROCESSOR_ID. Auth: GOOGLE_APPLICATION_CREDENTIALS, DOCUMENT_AI_SERVICE_ACCOUNT_JSON, " +
-        "or run `gcloud auth application-default login` (Application Default Credentials)."
+        "and DOCUMENT_AI_PROCESSOR_ID. Auth: DOCUMENT_AI_PROXY_URL + DOCUMENT_AI_PROXY_TOKEN (Cloud Run, no keys), " +
+        "DOCUMENT_AI_SERVICE_ACCOUNT_JSON, GOOGLE_APPLICATION_CREDENTIALS, " +
+        "or run `gcloud auth application-default login` (local ADC only)."
     );
   }
 }
@@ -63,16 +71,17 @@ export function resolveDocumentAiCredentials(config: AppConfig): Record<string, 
   return null;
 }
 
-/** Fly/production cannot use gcloud ADC — require inline JSON or a credentials file. */
+/** Fly/production cannot use gcloud ADC — require proxy, inline JSON, or a credentials file. */
 export function assertDocumentAiRuntimeAuth(config: AppConfig): void {
   assertDocumentAiConfigured(config);
+  if (documentAiUsesProxy(config)) return;
   const mode = resolveDocumentAiCredentialMode(config);
   if (config.NODE_ENV === "production" && mode === "adc") {
     throw new Error(
-      "Document AI on Fly/production requires DOCUMENT_AI_SERVICE_ACCOUNT_JSON (GCP service account key JSON). " +
-        "ADC from `gcloud auth application-default login` works locally only. " +
-        "Create a key in GCP Console → IAM → Service Accounts → Keys, then: " +
-        "fly secrets set DOCUMENT_AI_SERVICE_ACCOUNT_JSON='{\"type\":\"service_account\",...}' -a caf-core"
+      "Document AI on Fly/production requires auth without gcloud ADC. Options: " +
+        "(1) DOCUMENT_AI_PROXY_URL + DOCUMENT_AI_PROXY_TOKEN — deploy services/document-ai-proxy on Cloud Run " +
+        "(works when org policy blocks service account keys); " +
+        "(2) DOCUMENT_AI_SERVICE_ACCOUNT_JSON if your org allows key creation."
     );
   }
 }

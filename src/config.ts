@@ -269,9 +269,16 @@ const envSchema = z.object({
   DOCUMENT_AI_PROCESSOR_ID: z.string().optional(),
   /** Optional frozen processor version, e.g. pretrained-ocr-v2.1-2024-08-07 */
   DOCUMENT_AI_PROCESSOR_VERSION: z.string().optional(),
-  /** Inline service account JSON (preferred on Fly). */
+  /** Inline service account JSON (preferred on Fly when org policy allows keys). */
   DOCUMENT_AI_SERVICE_ACCOUNT_JSON: z.string().optional(),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+  /**
+   * Cloud Run proxy URL when org policy blocks service account keys (iam.disableServiceAccountKeyCreation).
+   * Deploy services/document-ai-proxy on Cloud Run — it uses the runtime service account (no JSON key).
+   */
+  DOCUMENT_AI_PROXY_URL: z.string().optional(),
+  /** Shared bearer token for DOCUMENT_AI_PROXY_URL (set same value on Cloud Run). */
+  DOCUMENT_AI_PROXY_TOKEN: z.string().optional(),
 
   OPENAI_MODEL: z.string().default("gpt-4o"),
   /** Vision-capable model for post-approval content review (images + text). */

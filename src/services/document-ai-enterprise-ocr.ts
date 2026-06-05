@@ -6,6 +6,7 @@ import type { AppConfig } from "../config.js";
 import {
   assertDocumentAiConfigured,
   documentAiProcessUrl,
+  documentAiUsesProxy,
   getDocumentAiAccessToken,
 } from "./document-ai-auth.js";
 import { parseDocumentAiResponseToSlideOcr } from "./document-ai-response-parse.js";
@@ -52,6 +53,11 @@ export async function processImageWithDocumentAiEnterpriseOcr(
   slideIndex: number
 ): Promise<CarouselDocumentAiSlideOcr> {
   assertDocumentAiConfigured(config);
+
+  if (documentAiUsesProxy(config)) {
+    return processImageViaDocumentAiProxy(config, imageBytes, mimeType, slideIndex);
+  }
+
   const token = await getDocumentAiAccessToken(config);
   const endpoint = documentAiProcessUrl(config);
 
@@ -91,6 +97,44 @@ export async function processImageWithDocumentAiEnterpriseOcr(
       throw new Error("Document AI response missing document");
     }
     return parseDocumentAiResponseToSlideOcr(doc, slideIndex);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function processImageViaDocumentAiProxy(
+  config: AppConfig,
+  imageBytes: Buffer,
+  mimeType: string,
+  slideIndex: number
+): Promise<CarouselDocumentAiSlideOcr> {
+  const base = config.DOCUMENT_AI_PROXY_URL!.trim().replace(/\/+$/, "");
+  const proxyToken = config.DOCUMENT_AI_PROXY_TOKEN!.trim();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROCESS_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}/v1/ocr/slide`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${proxyToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        content_base64: imageBytes.toString("base64"),
+        mime_type: mimeType,
+        slide_index: slideIndex,
+      }),
+      signal: controller.signal,
+    });
+    const rawText = await res.text();
+    if (!res.ok) {
+      throw new Error(`Document AI proxy failed (${res.status}): ${rawText.slice(0, 800)}`);
+    }
+    const parsed = JSON.parse(rawText) as { document?: Record<string, unknown>; error?: string };
+    if (!parsed.document || typeof parsed.document !== "object") {
+      throw new Error(parsed.error || "Document AI proxy response missing document");
+    }
+    return parseDocumentAiResponseToSlideOcr(parsed.document, slideIndex);
   } finally {
     clearTimeout(timer);
   }

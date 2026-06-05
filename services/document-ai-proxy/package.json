@@ -1,0 +1,16 @@
+{
+  "name": "caf-document-ai-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run proxy for Document AI OCR — uses runtime SA, no JSON keys",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.15.1"
+  }
+}
