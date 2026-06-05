@@ -26,11 +26,16 @@ function processUrl() {
   return `${base}/projects/${PROJECT_ID}/locations/${LOCATION}/processors/${PROCESSOR_ID}:process`;
 }
 
-function assertConfig() {
+function configMissingEnv(): string[] {
   const missing = [];
   if (!PROXY_TOKEN) missing.push("DOCUMENT_AI_PROXY_TOKEN");
   if (!PROJECT_ID) missing.push("DOCUMENT_AI_PROJECT_ID");
   if (!PROCESSOR_ID) missing.push("DOCUMENT_AI_PROCESSOR_ID");
+  return missing;
+}
+
+function assertConfig() {
+  const missing = configMissingEnv();
   if (missing.length) {
     throw new Error(`Missing env: ${missing.join(", ")}`);
   }
@@ -66,6 +71,7 @@ function sendJson(res, status, body) {
 }
 
 async function handleOcrSlide(body) {
+  assertConfig();
   const content = String(body?.content_base64 ?? "").trim();
   const mimeType = String(body?.mime_type ?? "image/jpeg").trim();
   if (!content) throw new Error("content_base64 is required");
@@ -103,7 +109,8 @@ async function handleOcrSlide(body) {
 const server = createServer(async (req, res) => {
   try {
     if (req.method === "GET" && req.url === "/healthz") {
-      return sendJson(res, 200, { ok: true });
+      const missing = configMissingEnv();
+      return sendJson(res, 200, { ok: true, ready: missing.length === 0, missing_env: missing });
     }
     if (req.method !== "POST" || req.url !== "/v1/ocr/slide") {
       return sendJson(res, 404, { ok: false, error: "not_found" });
@@ -124,7 +131,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-assertConfig();
 server.listen(PORT, () => {
   console.log(`document-ai-proxy listening on :${PORT}`);
 });
