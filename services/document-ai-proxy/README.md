@@ -6,6 +6,19 @@ Cloud Run attaches a service account at runtime — **no JSON key file** is need
 
 ## Deploy
 
+**Branch:** CAF-Core uses `master` (not `main`). In Cloud Build trigger, set branch pattern to `^master$`.
+
+### Cloud Console (continuous deploy from GitHub)
+
+1. Cloud Run → service → **Edit & deploy new revision** → **Continuous deployment** tab, or fix trigger in **Cloud Build → Triggers**.
+2. Repository: `connectrscom-cpu/CAF-Core`, branch: **`master`**
+3. **Source / build directory:** `services/document-ai-proxy`
+4. **Dockerfile:** `services/document-ai-proxy/Dockerfile` (if asked)
+5. Service account: `document-ai-ocr@caf-core...`, allow unauthenticated
+6. Env vars below
+
+If you see the [placeholder unicorn page](https://cafcoredocai-521585232450.europe-west1.run.app), the trigger never built — fix branch to `master`, then **Run trigger** manually in Cloud Build.
+
 ```bash
 # Pick a strong random token (same value goes on Fly as DOCUMENT_AI_PROXY_TOKEN)
 export PROXY_TOKEN="$(openssl rand -hex 32)"
