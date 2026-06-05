@@ -131,6 +131,6 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`document-ai-proxy listening on :${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`document-ai-proxy listening on 0.0.0.0:${PORT}`);
 });
