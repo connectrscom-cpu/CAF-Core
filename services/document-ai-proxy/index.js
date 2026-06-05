@@ -26,7 +26,7 @@ function processUrl() {
   return `${base}/projects/${PROJECT_ID}/locations/${LOCATION}/processors/${PROCESSOR_ID}:process`;
 }
 
-function configMissingEnv(): string[] {
+function configMissingEnv() {
   const missing = [];
   if (!PROXY_TOKEN) missing.push("DOCUMENT_AI_PROXY_TOKEN");
   if (!PROJECT_ID) missing.push("DOCUMENT_AI_PROJECT_ID");
