@@ -12,8 +12,23 @@ export function documentAiEnabled(config: AppConfig): boolean {
   return Boolean(config.DOCUMENT_AI_PROJECT_ID?.trim() && config.DOCUMENT_AI_PROCESSOR_ID?.trim());
 }
 
+export function resolveDocumentAiCredentialMode(config: AppConfig): "inline" | "file" | "adc" {
+  const inline = config.DOCUMENT_AI_SERVICE_ACCOUNT_JSON?.trim();
+  if (inline) return "inline";
+  const path = config.GOOGLE_APPLICATION_CREDENTIALS?.trim();
+  if (path && existsSync(path)) return "file";
+  return "adc";
+}
+
 export function documentAiUsesApplicationDefaultCredentials(config: AppConfig): boolean {
   return resolveDocumentAiCredentialMode(config) === "adc";
+}
+
+export function documentAiAuthModeLabel(config: AppConfig): string {
+  const mode = resolveDocumentAiCredentialMode(config);
+  if (mode === "inline") return "service account (DOCUMENT_AI_SERVICE_ACCOUNT_JSON)";
+  if (mode === "file") return `service account file (${config.GOOGLE_APPLICATION_CREDENTIALS?.trim()})`;
+  return "ADC (gcloud application-default login)";
 }
 
 export function assertDocumentAiConfigured(config: AppConfig): void {
@@ -48,12 +63,18 @@ export function resolveDocumentAiCredentials(config: AppConfig): Record<string, 
   return null;
 }
 
-function resolveDocumentAiCredentialMode(config: AppConfig): "inline" | "file" | "adc" {
-  const inline = config.DOCUMENT_AI_SERVICE_ACCOUNT_JSON?.trim();
-  if (inline) return "inline";
-  const path = config.GOOGLE_APPLICATION_CREDENTIALS?.trim();
-  if (path && existsSync(path)) return "file";
-  return "adc";
+/** Fly/production cannot use gcloud ADC — require inline JSON or a credentials file. */
+export function assertDocumentAiRuntimeAuth(config: AppConfig): void {
+  assertDocumentAiConfigured(config);
+  const mode = resolveDocumentAiCredentialMode(config);
+  if (config.NODE_ENV === "production" && mode === "adc") {
+    throw new Error(
+      "Document AI on Fly/production requires DOCUMENT_AI_SERVICE_ACCOUNT_JSON (GCP service account key JSON). " +
+        "ADC from `gcloud auth application-default login` works locally only. " +
+        "Create a key in GCP Console → IAM → Service Accounts → Keys, then: " +
+        "fly secrets set DOCUMENT_AI_SERVICE_ACCOUNT_JSON='{\"type\":\"service_account\",...}' -a caf-core"
+    );
+  }
 }
 
 function googleAuthForConfig(config: AppConfig): GoogleAuth {

@@ -14,6 +14,8 @@ import { getInputsEvidenceImport, listEvidenceRowsByIds } from "../repositories/
 import { buildCarouselAestheticAnalysisJson } from "./carousel-insights-llm-normalize.js";
 import {
   assertDocumentAiConfigured,
+  assertDocumentAiRuntimeAuth,
+  documentAiAuthModeLabel,
   documentAiEnabled,
   documentAiUsesApplicationDefaultCredentials,
 } from "./document-ai-auth.js";
@@ -154,6 +156,7 @@ export async function runCarouselDocumentAiOcrForImport(
     if (!documentAiEnabled(config)) {
       throw new Error("Document AI is not enabled (DOCUMENT_AI_ENABLED=1, project + processor required)");
     }
+    assertDocumentAiRuntimeAuth(config);
 
     const project = await ensureProject(db, projectSlug);
     const imp = await getInputsEvidenceImport(db, project.id, importId);
@@ -163,10 +166,7 @@ export async function runCarouselDocumentAiOcrForImport(
     const criteria = (profile?.criteria_json ?? {}) as Record<string, unknown>;
     const embedHttpProxyCfg = resolveInstagramEmbedHttpProxy(config, criteria);
 
-    logStep(
-      `Init · Document AI OCR only · auth ${documentAiUsesApplicationDefaultCredentials(config) ? "ADC" : "service account"}`,
-      "init"
-    );
+    logStep(`Init · Document AI OCR only · auth ${documentAiAuthModeLabel(config)}`, "init");
 
     let insights = await listEvidenceRowInsights(db, project.id, importId, "top_performer_carousel", 200, 0);
     const filterIds = opts.source_evidence_row_ids?.map((id) => id.trim()).filter(Boolean);
