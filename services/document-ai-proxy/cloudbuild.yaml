@@ -24,6 +24,7 @@ steps:
       - --platform=managed
       - --image=$_AR_HOSTNAME/$_AR_PROJECT_ID/$_AR_REPOSITORY/$REPO_NAME/$_SERVICE_NAME:$COMMIT_SHA
       - --region=$_DEPLOY_REGION
+      - --port=8080
       - --quiet
 
 images:

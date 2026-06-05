@@ -108,9 +108,15 @@ async function handleOcrSlide(body) {
 
 const server = createServer(async (req, res) => {
   try {
-    if (req.method === "GET" && req.url === "/healthz") {
+    const pathname = (req.url ?? "/").split("?")[0] ?? "/";
+    if (req.method === "GET" && (pathname === "/healthz" || pathname === "/")) {
       const missing = configMissingEnv();
-      return sendJson(res, 200, { ok: true, ready: missing.length === 0, missing_env: missing });
+      return sendJson(res, 200, {
+        ok: true,
+        service: "caf-document-ai-proxy",
+        ready: missing.length === 0,
+        missing_env: missing,
+      });
     }
     if (req.method !== "POST" || req.url !== "/v1/ocr/slide") {
       return sendJson(res, 404, { ok: false, error: "not_found" });
