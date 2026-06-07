@@ -551,6 +551,13 @@ export function adminProcessingBody(currentSlug: string): string {
                   <button type="button" class="btn-ghost btn-sm" id="btn-reload-deep-carousel">Reload</button>
                   <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-carousel-tsv">Copy table</button>
                   <button type="button" class="btn-ghost btn-sm" id="btn-copy-deep-carousel-json">Copy JSON</button>
+                  <div class="tp-col-toggles" role="group" aria-label="Carousel table column groups">
+                    <strong>Columns</strong>
+                    <label class="tp-col-toggle"><input type="checkbox" id="carousel-col-base" checked /> Base</label>
+                    <label class="tp-col-toggle tp-col-toggle--nemotron"><input type="checkbox" id="carousel-col-nemotron" checked /> Nemotron</label>
+                    <label class="tp-col-toggle tp-col-toggle--docai"><input type="checkbox" id="carousel-col-docai" checked /> Document AI</label>
+                    <label class="tp-col-toggle"><input type="checkbox" id="carousel-col-raw" /> Raw JSON</label>
+                  </div>
                 </div>
                 <div id="deep-carousel-table" class="tp-insights-table-wrap"></div>
               </div>
@@ -1288,6 +1295,201 @@ var INSIGHT_COL_WIDTHS={
   aesthetic_analysis_json:160,
   raw_llm_json:120
 };
+var CAROUSEL_INSIGHT_COL_DEFS=[
+  {key:'source_evidence_row_id',label:'Row ID',group:'base'},
+  {key:'evidence_post_url',label:'Post URL',group:'base'},
+  {key:'insights_id',label:'Insight ID',group:'base'},
+  {key:'llm_model',label:'Model',group:'base'},
+  {key:'updated_at',label:'Updated',group:'base'},
+  {key:'pre_llm_score',label:'Pre-LLM',group:'base'},
+  {key:'evidence_rating_score',label:'Rating',group:'base'},
+  {key:'custom_label_1',label:'Label 1',group:'base'},
+  {key:'custom_label_2',label:'Label 2',group:'base'},
+  {key:'custom_label_3',label:'Label 3',group:'base'},
+  {key:'risk_flags_json',label:'Risk flags',group:'base'},
+  {key:'why_it_worked',label:'Why it worked',group:'nemotron'},
+  {key:'hook_type',label:'Format',group:'nemotron'},
+  {key:'primary_emotion',label:'Emotion',group:'nemotron'},
+  {key:'secondary_emotion',label:'Emotion (2)',group:'nemotron'},
+  {key:'caption_style',label:'Caption style',group:'nemotron'},
+  {key:'hashtags',label:'Hashtags',group:'nemotron'},
+  {key:'nm_slide_arc',label:'Slide arc',group:'nemotron'},
+  {key:'nm_cover_vs_body',label:'Cover vs body',group:'nemotron'},
+  {key:'nm_visual_consistency',label:'Visual consistency',group:'nemotron'},
+  {key:'nm_text_summary',label:'On-screen text (Nemotron)',group:'nemotron'},
+  {key:'nm_cta_clarity',label:'CTA clarity',group:'nemotron'},
+  {key:'nm_deck_summary',label:'Deck summary',group:'nemotron'},
+  {key:'nm_mimic_mode',label:'Mimic mode',group:'nemotron'},
+  {key:'nm_mimic_reason',label:'Mimic reason',group:'nemotron'},
+  {key:'nm_slide_count',label:'Slides',group:'nemotron'},
+  {key:'nm_slides_detail',label:'Slides (Nemotron)',group:'nemotron'},
+  {key:'doc_ocr_status',label:'OCR status',group:'docai'},
+  {key:'doc_slide_count',label:'OCR slides',group:'docai'},
+  {key:'doc_avg_confidence',label:'OCR confidence',group:'docai'},
+  {key:'doc_text_summary',label:'On-screen text (Doc AI)',group:'docai'},
+  {key:'doc_slides_detail',label:'Slides (Doc AI)',group:'docai'},
+  {key:'aesthetic_analysis_json',label:'Aesthetic JSON',group:'raw'},
+  {key:'raw_llm_json',label:'Raw LLM JSON',group:'raw'}
+];
+var CAROUSEL_COL_WIDTHS=Object.assign({},INSIGHT_COL_WIDTHS,{
+  nm_slide_arc:168,
+  nm_cover_vs_body:168,
+  nm_visual_consistency:160,
+  nm_text_summary:220,
+  nm_cta_clarity:140,
+  nm_deck_summary:200,
+  nm_mimic_mode:120,
+  nm_mimic_reason:200,
+  nm_slide_count:64,
+  nm_slides_detail:280,
+  doc_ocr_status:108,
+  doc_slide_count:72,
+  doc_avg_confidence:96,
+  doc_text_summary:240,
+  doc_slides_detail:280
+});
+var lastCarouselInsightRows=null;
+function carouselColToggleKey(){
+  return 'caf.carousel_col_groups.'+String(SLUG||'default');
+}
+function readCarouselColToggles(){
+  var defaults={base:true,nemotron:true,docai:true,raw:false};
+  try{
+    var raw=localStorage.getItem(carouselColToggleKey());
+    if(!raw)return defaults;
+    var obj=JSON.parse(raw);
+    return {
+      base:obj.base!==false,
+      nemotron:obj.nemotron!==false,
+      docai:obj.docai!==false,
+      raw:!!obj.raw
+    };
+  }catch(_e){return defaults;}
+}
+function saveCarouselColToggles(t){
+  try{localStorage.setItem(carouselColToggleKey(),JSON.stringify(t||{}));}catch(_e){}
+}
+function syncCarouselColToggleUi(){
+  var t=readCarouselColToggles();
+  var b=document.getElementById('carousel-col-base');
+  var n=document.getElementById('carousel-col-nemotron');
+  var d=document.getElementById('carousel-col-docai');
+  var r=document.getElementById('carousel-col-raw');
+  if(b)b.checked=!!t.base;
+  if(n)n.checked=!!t.nemotron;
+  if(d)d.checked=!!t.docai;
+  if(r)r.checked=!!t.raw;
+}
+function activeCarouselInsightCols(){
+  var t=readCarouselColToggles();
+  return CAROUSEL_INSIGHT_COL_DEFS.filter(function(c){
+    if(c.group==='base')return t.base;
+    if(c.group==='nemotron')return t.nemotron;
+    if(c.group==='docai')return t.docai;
+    if(c.group==='raw')return t.raw;
+    return true;
+  });
+}
+function carouselColWidth(key){
+  return CAROUSEL_COL_WIDTHS[key]||INSIGHT_COL_WIDTHS[key]||120;
+}
+function carouselJsonBundle(row){
+  var aes=row&&row.aesthetic_analysis_json;
+  if(aes&&typeof aes==='object'&&!Array.isArray(aes))return aes;
+  var raw=row&&row.raw_llm_json;
+  if(raw&&typeof raw==='object'&&!Array.isArray(raw))return raw;
+  return {};
+}
+function fmtCarouselSlidesNemotron(bundle){
+  var slides=Array.isArray(bundle.slides)?bundle.slides:[];
+  if(!slides.length)return '';
+  return slides.map(function(s){
+    var idx=s&&s.slide_index!=null?s.slide_index:'?';
+    var pur=typeof s.slide_purpose==='string'?s.slide_purpose.trim():'';
+    var vis=typeof s.visual_description==='string'?s.visual_description.trim():'';
+    var line='#'+idx+(pur?' · '+pur:'');
+    if(vis)line+=': '+vis;
+    return line;
+  }).join('\\n');
+}
+function fmtCarouselSlidesDocAi(bundle){
+  var deck=bundle.document_ai_deck_v1;
+  if(deck&&Array.isArray(deck.slides)&&deck.slides.length){
+    return deck.slides.map(function(s){
+      var txt=typeof s.full_text==='string'?s.full_text.trim().replace(/\\s+/g,' '):'';
+      var layers=s.text_layer_count!=null?(' · '+String(s.text_layer_count)+' layers'):'';
+      var conf=s.ocr_confidence_mean!=null?(' · conf '+String(Math.round(Number(s.ocr_confidence_mean)*1000)/1000):'');
+      return '#'+String(s.slide_index||'?')+layers+conf+(txt?('\\n'+txt):'');
+    }).join('\\n\\n');
+  }
+  var slides=Array.isArray(bundle.slides)?bundle.slides:[];
+  var lines=[];
+  for(var i=0;i<slides.length;i++){
+    var ocr=slides[i]&&slides[i].document_ai_ocr_v1;
+    if(!ocr)continue;
+    var txt=typeof ocr.full_text==='string'?ocr.full_text.trim().replace(/\\s+/g,' '):'';
+    lines.push('#'+String(slides[i].slide_index||'?')+(txt?('\\n'+txt):''));
+  }
+  return lines.join('\\n\\n');
+}
+function fmtDocAiFullTextSummary(bundle){
+  var deck=bundle.document_ai_deck_v1;
+  if(deck&&Array.isArray(deck.slides)&&deck.slides.length){
+    return deck.slides.map(function(s){
+      return typeof s.full_text==='string'?s.full_text.trim():'';
+    }).filter(Boolean).join(' · ');
+  }
+  var slides=Array.isArray(bundle.slides)?bundle.slides:[];
+  var parts=[];
+  for(var i=0;i<slides.length;i++){
+    var ocr=slides[i]&&slides[i].document_ai_ocr_v1;
+    if(ocr&&typeof ocr.full_text==='string'&&ocr.full_text.trim())parts.push(ocr.full_text.trim());
+  }
+  return parts.join(' · ');
+}
+function enrichCarouselInsightRow(row){
+  var b=carouselJsonBundle(row);
+  var mimic=b.mimic_evaluation;
+  var mimRec=null;
+  var mimReason=null;
+  if(mimic&&typeof mimic==='object'){
+    mimRec=typeof mimic.recommended_mode==='string'?mimic.recommended_mode:null;
+    mimReason=typeof mimic.mode_reason==='string'?mimic.mode_reason:null;
+  }
+  var slides=Array.isArray(b.slides)?b.slides:[];
+  var ocrSlides=0;
+  var confSum=0;
+  var confN=0;
+  for(var i=0;i<slides.length;i++){
+    var ocr=slides[i]&&slides[i].document_ai_ocr_v1;
+    if(!ocr)continue;
+    ocrSlides++;
+    if(typeof ocr.ocr_confidence_mean==='number'&&Number.isFinite(ocr.ocr_confidence_mean)){
+      confSum+=ocr.ocr_confidence_mean;
+      confN++;
+    }
+  }
+  var deck=b.document_ai_deck_v1;
+  var deckCount=(deck&&typeof deck.slide_count==='number')?deck.slide_count:ocrSlides;
+  var slideTotal=slides.length||(deck&&Array.isArray(deck.slides)?deck.slides.length:0);
+  return Object.assign({},row,{
+    nm_slide_arc:b.slide_arc,
+    nm_cover_vs_body:b.cover_vs_body,
+    nm_visual_consistency:b.visual_consistency,
+    nm_text_summary:b.on_screen_text_summary,
+    nm_cta_clarity:b.cta_clarity,
+    nm_deck_summary:b.deck_as_whole_summary,
+    nm_mimic_mode:mimRec,
+    nm_mimic_reason:mimReason,
+    nm_slide_count:slides.length||null,
+    nm_slides_detail:fmtCarouselSlidesNemotron(b),
+    doc_ocr_status:deckCount?('Yes · '+deckCount+'/'+slideTotal+' slides'):'Missing',
+    doc_slide_count:deckCount||null,
+    doc_text_summary:fmtDocAiFullTextSummary(b),
+    doc_slides_detail:fmtCarouselSlidesDocAi(b),
+    doc_avg_confidence:confN?Math.round(confSum/confN*1000)/1000:null
+  });
+}
 var lastOpLensPayload=null;
 var lastInspectBody='';
 async function runInspectApi(label,url,needImport){
@@ -3537,6 +3739,117 @@ bind('pack-idea-list-select','change',function(){
   updatePackSummary();
 });
 
+function renderCarouselInsightTable(rows,cols){
+  if(!rows.length)return '<div class="empty" style="padding:12px">No rows yet — run the pass on the left.</div>';
+  if(!cols.length)return '<div class="empty" style="padding:12px">Enable at least one column group above.</div>';
+  var totalW=0;
+  var cg='<colgroup>';
+  for(var c0=0;c0<cols.length;c0++){
+    var w=carouselColWidth(cols[c0].key);
+    totalW+=w;
+    cg+='<col style="width:'+w+'px" />';
+  }
+  cg+='</colgroup>';
+  var minW=Math.max(980,totalW);
+  var groupLabels={base:'Base',nemotron:'Nemotron',docai:'Google Document AI',raw:'Raw JSON'};
+  var gh='<thead><tr class="carousel-col-group-row">';
+  var gi=0;
+  while(gi<cols.length){
+    var g=cols[gi].group||'base';
+    var span=1;
+    while(gi+span<cols.length&&cols[gi+span].group===g)span++;
+    gh+='<th colspan="'+span+'" class="grp-'+esc(g)+'">'+esc(groupLabels[g]||g)+'</th>';
+    gi+=span;
+  }
+  gh+='</tr><tr>';
+  for(var hc=0;hc<cols.length;hc++)gh+='<th scope="col">'+esc(cols[hc].label)+'</th>';
+  gh+='</tr></thead>';
+  var jsonKeys={risk_flags_json:1,aesthetic_analysis_json:1,raw_llm_json:1};
+  var shortKeys={hook_type:1,cta_type:1,primary_emotion:1,secondary_emotion:1,llm_model:1,nm_mimic_mode:1};
+  var tb='<table class="insights-data-table carousel-insights-table" style="min-width:'+minW+'px">'+cg+gh+'<tbody>';
+  for(var i=0;i<rows.length;i++){
+    var x=enrichCarouselInsightRow(rows[i]);
+    tb+='<tr>';
+    for(var j=0;j<cols.length;j++){
+      var col=cols[j];
+      var k=col.key;
+      var g=col.group||'';
+      var v=x[k];
+      var cell;
+      var tdCls=g?' grp-'+g:'';
+      if(k==='source_evidence_row_id'){
+        tdCls+=' insight-cell-mono';
+        cell='<a href="#" class="broad-ev-link" data-row-id="'+esc(String(v||''))+'">'+esc(String(v||''))+'</a>';
+      }else if(k==='evidence_post_url'){
+        tdCls+=' insight-cell-mono';
+        var pu=typeof v==='string'?v.trim():'';
+        if(pu)cell='<a href="'+esc(pu)+'" target="_blank" rel="noopener noreferrer" class="mono" style="font-size:11px" title="'+escAttr(pu)+'">'+esc(pu.length>48?pu.slice(0,45)+'…':pu)+'</a>';
+        else cell='<span class="insight-cell-empty">—</span>';
+      }else if(k==='pre_llm_score'||k==='evidence_rating_score'||k==='confidence_score'||k==='doc_avg_confidence'){
+        tdCls+=' insight-cell-score';
+        cell=fmtInsightScore(v);
+      }else if(k==='updated_at'||k==='created_at'){
+        tdCls+=' insight-cell-mono';
+        cell=fmtInsightDate(v);
+      }else if(k==='hashtags'){
+        tdCls+=' insight-cell-tags';
+        cell=fmtHashtagsCell(v);
+      }else if(k==='doc_ocr_status'){
+        tdCls+=' insight-cell-mono';
+        var st=String(v||'');
+        cell=st.indexOf('Yes')===0?('<span class="doc-ocr-ok">'+esc(st)+'</span>'):('<span class="doc-ocr-miss">'+esc(st||'Missing')+'</span>');
+      }else if(k==='nm_slides_detail'||k==='doc_slides_detail'){
+        tdCls+=' insight-cell-long';
+        var det=typeof v==='string'?v.trim():'';
+        cell=det?('<div class="carousel-slide-lines" title="'+escAttr(det)+'">'+esc(det)+'</div>'):'<span class="insight-cell-empty">—</span>';
+      }else if(k==='why_it_worked'||k==='caption_style'||k==='nm_slide_arc'||k==='nm_cover_vs_body'||k==='nm_visual_consistency'||k==='nm_text_summary'||k==='nm_cta_clarity'||k==='nm_deck_summary'||k==='nm_mimic_reason'||k==='doc_text_summary'){
+        tdCls+=' insight-cell-long';
+        cell=fmtInsightLongText(v,4);
+      }else if(k==='custom_label_1'||k==='custom_label_2'||k==='custom_label_3'){
+        tdCls+=' insight-cell-long';
+        cell=fmtInsightLongText(v,2);
+      }else if(jsonKeys[k]){
+        tdCls+=' insight-cell-long';
+        var js=v!==undefined&&v!==null?JSON.stringify(v):'';
+        var full=js;
+        if(js.length>96)js=js.slice(0,93)+'…';
+        cell=js?('<span class="mono" style="font-size:10px" title="'+escAttr(full)+'">'+esc(js)+'</span>'):'<span class="insight-cell-empty">—</span>';
+      }else if(shortKeys[k]||k==='insights_id'||k==='nm_slide_count'||k==='doc_slide_count'){
+        tdCls+=' insight-cell-mono';
+        var sv=typeof v==='string'?v.trim():String(v!=null?v:'');
+        cell=sv?esc(sv):'<span class="insight-cell-empty">—</span>';
+      }else{
+        tdCls+=' insight-cell-mono';
+        cell=esc(typeof v==='string'?v:JSON.stringify(v!==undefined&&v!==null?v:''));
+      }
+      tb+='<td'+(tdCls?' class="'+tdCls.trim()+'"':'')+'>'+cell+'</td>';
+    }
+    tb+='</tr>';
+  }
+  tb+='</tbody></table>';
+  return tb;
+}
+function rerenderCarouselTableFromCache(){
+  var el=document.getElementById('deep-carousel-table');
+  if(!el||!lastCarouselInsightRows)return;
+  var cols=activeCarouselInsightCols();
+  el.innerHTML=renderCarouselInsightTable(lastCarouselInsightRows,cols);
+}
+function onCarouselColToggleChange(){
+  var t={
+    base:!!(document.getElementById('carousel-col-base')&&document.getElementById('carousel-col-base').checked),
+    nemotron:!!(document.getElementById('carousel-col-nemotron')&&document.getElementById('carousel-col-nemotron').checked),
+    docai:!!(document.getElementById('carousel-col-docai')&&document.getElementById('carousel-col-docai').checked),
+    raw:!!(document.getElementById('carousel-col-raw')&&document.getElementById('carousel-col-raw').checked)
+  };
+  if(!t.base&&!t.nemotron&&!t.docai&&!t.raw){
+    t.base=true;
+    syncCarouselColToggleUi();
+  }
+  saveCarouselColToggles(t);
+  rerenderCarouselTableFromCache();
+}
+
 function renderInsightTable(rows,cols,opts){
   opts=opts||{};
   if(!rows.length)return '<div class="empty" style="padding:12px">'+(opts.emptyMsg||'No rows.')+'</div>';
@@ -4199,10 +4512,31 @@ async function loadDeepVideoTable(){
   return loadDeepInsightTable('deep-video-table','top_performer_video','video');
 }
 async function loadDeepCarouselTable(){
-  return loadDeepInsightTable('deep-carousel-table','top_performer_carousel','carousel');
+  var el=document.getElementById('deep-carousel-table');
+  if(!SLUG||!selectedImportId||!el)return;
+  syncCarouselColToggleUi();
+  el.innerHTML='<div class="empty" style="padding:12px">Loading…</div>';
+  try{
+    var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/evidence-insights?tier=top_performer_carousel&limit=200&offset=0&sort=rating_desc');
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    var rows=d.insights||[];
+    lastCarouselInsightRows=rows;
+    tpSetTabCount('carousel',rows.length);
+    var cols=activeCarouselInsightCols();
+    el.innerHTML=rows.length?renderCarouselInsightTable(rows,cols):'<div class="empty" style="padding:12px">No rows yet — run the pass on the left.</div>';
+  }catch(e){
+    lastCarouselInsightRows=null;
+    tpSetTabCount('carousel','!');
+    el.innerHTML='<div class="empty" style="padding:12px;color:var(--red)">'+esc(String(e.message||e))+'</div>';
+  }
 }
 bind('btn-reload-deep-image','click',loadDeepImageTable);
 bind('btn-reload-deep-carousel','click',loadDeepCarouselTable);
+bind('carousel-col-base','change',onCarouselColToggleChange);
+bind('carousel-col-nemotron','change',onCarouselColToggleChange);
+bind('carousel-col-docai','change',onCarouselColToggleChange);
+bind('carousel-col-raw','change',onCarouselColToggleChange);
 bind('btn-reload-deep-video','click',loadDeepVideoTable);
 document.querySelectorAll('.tp-tab').forEach(function(btn){
   btn.addEventListener('click',function(){

@@ -196,7 +196,23 @@ span.caf-pipeline-stage{cursor:default}
 .tp-tab-panel{display:none}
 .tp-tab-panel.active{display:block}
 .tp-table-toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+.tp-col-toggles{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;margin-left:auto;padding:4px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);font-size:11px;color:var(--muted)}
+.tp-col-toggles strong{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--fg2);margin-right:4px}
+.tp-col-toggle{display:inline-flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;color:var(--fg2)}
+.tp-col-toggle input{margin:0;accent-color:var(--accent)}
+.tp-col-toggle--nemotron input{accent-color:var(--purple)}
+.tp-col-toggle--docai input{accent-color:var(--green)}
 .tp-insights-table-wrap{font-size:12px;width:100%;max-height:min(68vh,560px);overflow-x:auto;overflow-y:auto;border:1px solid rgba(59,130,246,.22);border-radius:8px;-webkit-overflow-scrolling:touch;background:linear-gradient(180deg,var(--surface-2) 0%,var(--card) 100%)}
+.processing-workbench .carousel-insights-table thead tr.carousel-col-group-row th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:6px 10px;border-bottom:1px solid var(--border);text-align:center}
+.processing-workbench .carousel-insights-table thead tr.carousel-col-group-row th.grp-base{background:rgba(59,130,246,.12);color:var(--accent)}
+.processing-workbench .carousel-insights-table thead tr.carousel-col-group-row th.grp-nemotron{background:rgba(168,85,247,.12);color:var(--purple)}
+.processing-workbench .carousel-insights-table thead tr.carousel-col-group-row th.grp-docai{background:rgba(34,197,94,.12);color:var(--green)}
+.processing-workbench .carousel-insights-table thead tr.carousel-col-group-row th.grp-raw{background:rgba(234,179,8,.1);color:var(--yellow)}
+.processing-workbench .carousel-insights-table td.grp-nemotron{background:rgba(168,85,247,.04)}
+.processing-workbench .carousel-insights-table td.grp-docai{background:rgba(34,197,94,.04)}
+.processing-workbench .carousel-insights-table .carousel-slide-lines{font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:8.5em;overflow:auto}
+.processing-workbench .carousel-insights-table .doc-ocr-ok{color:var(--green);font-weight:600;font-size:11px}
+.processing-workbench .carousel-insights-table .doc-ocr-miss{color:var(--muted);font-size:11px}
 .scraper-cfg-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 14px}
 .scraper-cfg-head-hint{font-weight:400;color:var(--muted);font-size:11px}
 .scraper-cfg-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-left:auto}
