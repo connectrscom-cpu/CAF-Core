@@ -1418,7 +1418,7 @@ function fmtCarouselSlidesDocAi(bundle){
     return deck.slides.map(function(s){
       var txt=typeof s.full_text==='string'?s.full_text.trim().replace(/\\s+/g,' '):'';
       var layers=s.text_layer_count!=null?(' · '+String(s.text_layer_count)+' layers'):'';
-      var conf=s.ocr_confidence_mean!=null?(' · conf '+String(Math.round(Number(s.ocr_confidence_mean)*1000)/1000):'');
+      var conf=s.ocr_confidence_mean!=null?(' · conf '+String(Math.round(Number(s.ocr_confidence_mean)*1000)/1000)):'';
       return '#'+String(s.slide_index||'?')+layers+conf+(txt?('\\n'+txt):'');
     }).join('\\n\\n');
   }
