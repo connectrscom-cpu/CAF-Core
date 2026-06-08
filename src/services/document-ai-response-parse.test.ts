@@ -46,7 +46,7 @@ describe("document-ai-response-parse", () => {
     expect(layers[0]?.font.size_px).toBe(48);
   });
 
-  it("parses minimal Document AI page", () => {
+  it("parses minimal Document AI page with normalizedVertices", () => {
     const ocr = parseDocumentAiResponseToSlideOcr(
       {
         text: "Hook line\nBody line",
@@ -83,6 +83,142 @@ describe("document-ai-response-parse", () => {
     expect(ocr.slide_index).toBe(1);
     expect(ocr.full_text).toContain("Hook");
     expect(ocr.text_layers.length).toBeGreaterThan(0);
+    expect(ocr.token_count).toBe(1);
+    expect(ocr.text_layers[0]?.bbox_pct.x).toBeCloseTo(0.1, 2);
     expect(ocr.canvas_width_px).toBe(1080);
+  });
+
+  it("parses tokens with pixel vertices normalized by page dimension", () => {
+    const ocr = parseDocumentAiResponseToSlideOcr(
+      {
+        text: "Aries in June",
+        pages: [
+          {
+            dimension: { width: 1080, height: 1350 },
+            tokens: [
+              {
+                layout: {
+                  textAnchor: {
+                    textSegments: [{ startIndex: 0, endIndex: 13 }],
+                  },
+                  boundingPoly: {
+                    vertices: [
+                      { x: 108, y: 135 },
+                      { x: 972, y: 135 },
+                      { x: 972, y: 270 },
+                      { x: 108, y: 270 },
+                    ],
+                  },
+                  confidence: 0.93,
+                },
+                styleInfo: {
+                  pixelFontSize: 48,
+                  fontType: "SANS_SERIF",
+                  bold: true,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      1
+    );
+    expect(ocr.token_count).toBe(1);
+    expect(ocr.text_layers.length).toBe(1);
+    expect(ocr.text_layers[0]?.text).toBe("Aries in June");
+    expect(ocr.text_layers[0]?.bbox_pct).toEqual({
+      x: 0.1,
+      y: 0.1,
+      w: 0.8,
+      h: 0.1,
+    });
+  });
+
+  it("falls back to lines when tokens are missing", () => {
+    const ocr = parseDocumentAiResponseToSlideOcr(
+      {
+        text: "Line one\nLine two",
+        pages: [
+          {
+            dimension: { width: 1080, height: 1350 },
+            lines: [
+              {
+                layout: {
+                  textAnchor: {
+                    textSegments: [{ startIndex: 0, endIndex: 8 }],
+                  },
+                  boundingPoly: {
+                    vertices: [
+                      { x: 100, y: 200 },
+                      { x: 500, y: 200 },
+                      { x: 500, y: 260 },
+                      { x: 100, y: 260 },
+                    ],
+                  },
+                  confidence: 0.91,
+                },
+              },
+              {
+                layout: {
+                  textAnchor: {
+                    textSegments: [{ startIndex: 9, endIndex: 17 }],
+                  },
+                  boundingPoly: {
+                    vertices: [
+                      { x: 100, y: 300 },
+                      { x: 500, y: 300 },
+                      { x: 500, y: 360 },
+                      { x: 100, y: 360 },
+                    ],
+                  },
+                  confidence: 0.89,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      2
+    );
+    expect(ocr.token_count).toBe(2);
+    expect(ocr.text_layers.length).toBe(2);
+    expect(ocr.text_layers[0]?.text).toBe("Line one");
+    expect(ocr.text_layers[1]?.text).toBe("Line two");
+    expect(ocr.text_layers[0]?.bbox_pct.y).toBeCloseTo(200 / 1350, 3);
+  });
+
+  it("falls back to paragraphs when tokens and lines are missing", () => {
+    const ocr = parseDocumentAiResponseToSlideOcr(
+      {
+        text: "Paragraph body",
+        pages: [
+          {
+            dimension: { width: 1080, height: 1350 },
+            paragraphs: [
+              {
+                layout: {
+                  textAnchor: {
+                    textSegments: [{ startIndex: 0, endIndex: 14 }],
+                  },
+                  boundingPoly: {
+                    normalizedVertices: [
+                      { x: 0.15, y: 0.4 },
+                      { x: 0.85, y: 0.4 },
+                      { x: 0.85, y: 0.55 },
+                      { x: 0.15, y: 0.55 },
+                    ],
+                  },
+                  confidence: 0.88,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      3
+    );
+    expect(ocr.token_count).toBe(1);
+    expect(ocr.text_layers[0]?.text).toBe("Paragraph body");
+    expect(ocr.text_layers[0]?.bbox_pct.w).toBeCloseTo(0.7, 2);
   });
 });

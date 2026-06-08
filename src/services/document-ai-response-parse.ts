@@ -28,30 +28,18 @@ function rgbaToHex(color: Record<string, unknown> | null): string | null {
   return `#${[r, g, b].map((x) => x.toString(16).padStart(2, "0")).join("")}`;
 }
 
-function bboxFromLayout(layout: Record<string, unknown> | null): BboxPct | null {
-  if (!layout) return null;
-  const poly = asRecord(layout.boundingPoly) ?? asRecord(layout.bounding_poly);
-  const norm = (poly?.normalizedVertices ?? poly?.normalized_vertices) as unknown;
-  const verts = Array.isArray(norm) ? norm : null;
-  if (!verts || verts.length < 2) {
-    const box = verts?.[0] ? null : null;
-    void box;
-    return null;
-  }
+function bboxFromPoints(points: Array<{ x: number; y: number }>): BboxPct | null {
+  if (points.length < 2) return null;
   let minX = 1;
   let minY = 1;
   let maxX = 0;
   let maxY = 0;
-  for (const v of verts) {
-    const p = asRecord(v);
-    if (!p) continue;
-    const x = Number(p.x ?? 0);
-    const y = Number(p.y ?? 0);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
+  for (const p of points) {
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) continue;
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
   }
   if (maxX <= minX || maxY <= minY) return null;
   return {
@@ -60,6 +48,54 @@ function bboxFromLayout(layout: Record<string, unknown> | null): BboxPct | null 
     w: clamp01(maxX - minX),
     h: clamp01(maxY - minY),
   };
+}
+
+function bboxFromPoly(
+  poly: Record<string, unknown> | null,
+  pageWidth: number | null,
+  pageHeight: number | null
+): BboxPct | null {
+  if (!poly) return null;
+
+  const norm = (poly.normalizedVertices ?? poly.normalized_vertices) as unknown;
+  if (Array.isArray(norm) && norm.length >= 2) {
+    const points = norm.map((v) => {
+      const p = asRecord(v);
+      return { x: Number(p?.x ?? 0), y: Number(p?.y ?? 0) };
+    });
+    return bboxFromPoints(points);
+  }
+
+  const verts = poly.vertices as unknown;
+  if (
+    Array.isArray(verts) &&
+    verts.length >= 2 &&
+    pageWidth != null &&
+    pageHeight != null &&
+    pageWidth > 0 &&
+    pageHeight > 0
+  ) {
+    const points = verts.map((v) => {
+      const p = asRecord(v);
+      return {
+        x: Number(p?.x ?? 0) / pageWidth,
+        y: Number(p?.y ?? 0) / pageHeight,
+      };
+    });
+    return bboxFromPoints(points);
+  }
+
+  return null;
+}
+
+function bboxFromLayout(
+  layout: Record<string, unknown> | null,
+  pageWidth: number | null,
+  pageHeight: number | null
+): BboxPct | null {
+  if (!layout) return null;
+  const poly = asRecord(layout.boundingPoly) ?? asRecord(layout.bounding_poly);
+  return bboxFromPoly(poly, pageWidth, pageHeight);
 }
 
 function styleFromToken(style: Record<string, unknown> | null): CarouselTextLayerFont {
@@ -97,23 +133,55 @@ interface ParsedToken {
   centerX: number;
 }
 
-function parseTokensFromPage(page: Record<string, unknown>): ParsedToken[] {
+function extractTextFromAnchor(fullText: string, layout: Record<string, unknown> | null): string {
+  const anchor = asRecord(layout?.textAnchor) ?? asRecord(layout?.text_anchor);
+  const inline = String(anchor?.content ?? "").trim();
+  if (inline) return inline;
+
+  const segments = anchor?.textSegments ?? anchor?.text_segments;
+  if (!Array.isArray(segments) || segments.length === 0) return "";
+  let slice = "";
+  for (const seg of segments) {
+    const s = asRecord(seg);
+    if (!s) continue;
+    const start = Number(s.startIndex ?? s.start_index ?? 0);
+    const end = Number(s.endIndex ?? s.end_index ?? 0);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      slice += fullText.slice(start, end);
+    }
+  }
+  return slice.trim();
+}
+
+type PageElementKey = "tokens" | "lines" | "paragraphs" | "blocks";
+
+function parsePageElements(
+  page: Record<string, unknown>,
+  fullText: string,
+  elementKey: PageElementKey,
+  pageWidth: number | null,
+  pageHeight: number | null
+): ParsedToken[] {
   const layoutRec = asRecord(page.layout);
-  const tokens = page.tokens ?? layoutRec?.tokens;
-  if (!Array.isArray(tokens)) return [];
+  const elements = page[elementKey] ?? layoutRec?.[elementKey];
+  if (!Array.isArray(elements)) return [];
+
   const out: ParsedToken[] = [];
-  for (const raw of tokens) {
-    const t = asRecord(raw);
-    if (!t) continue;
-    const layout = asRecord(t.layout);
-    const bbox = bboxFromLayout(layout);
+  for (const raw of elements) {
+    const el = asRecord(raw);
+    if (!el) continue;
+    const layout = asRecord(el.layout);
+    const bbox = bboxFromLayout(layout, pageWidth, pageHeight);
     if (!bbox) continue;
-    const textAnchor = layout ? asRecord(layout.textAnchor) ?? asRecord(layout.text_anchor) : null;
+
     const text =
-      String(textAnchor?.content ?? t.text ?? "").trim() || extractTextFromAnchor(page, layout);
+      String(el.text ?? "").trim() ||
+      extractTextFromAnchor(fullText, layout) ||
+      extractTextFromAnchor(fullText, el);
     if (!text) continue;
-    const styleRaw = asRecord(t.styleInfo) ?? asRecord(t.style_info);
-    const conf = Number(t.confidence ?? layout?.confidence);
+
+    const styleRaw = asRecord(el.styleInfo) ?? asRecord(el.style_info);
+    const conf = Number(el.confidence ?? layout?.confidence);
     out.push({
       text,
       confidence: Number.isFinite(conf) ? conf : null,
@@ -126,22 +194,18 @@ function parseTokensFromPage(page: Record<string, unknown>): ParsedToken[] {
   return out;
 }
 
-function extractTextFromAnchor(page: Record<string, unknown>, layout: Record<string, unknown> | null): string {
-  const anchor = asRecord(layout?.textAnchor) ?? asRecord(layout?.text_anchor);
-  const segments = anchor?.textSegments ?? anchor?.text_segments;
-  if (!Array.isArray(segments) || segments.length === 0) return "";
-  const full = String(page.text ?? "");
-  let slice = "";
-  for (const seg of segments) {
-    const s = asRecord(seg);
-    if (!s) continue;
-    const start = Number(s.startIndex ?? s.start_index ?? 0);
-    const end = Number(s.endIndex ?? s.end_index ?? 0);
-    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
-      slice += full.slice(start, end);
-    }
+/** Prefer token-level geometry; fall back to lines then paragraphs. */
+function parseTextElementsFromPage(
+  page: Record<string, unknown>,
+  fullText: string,
+  pageWidth: number | null,
+  pageHeight: number | null
+): ParsedToken[] {
+  for (const key of ["tokens", "lines", "paragraphs", "blocks"] as const) {
+    const parsed = parsePageElements(page, fullText, key, pageWidth, pageHeight);
+    if (parsed.length > 0) return parsed;
   }
-  return slice.trim();
+  return [];
 }
 
 function inferAlignment(tokens: ParsedToken[]): "left" | "center" | "right" | "unknown" {
@@ -231,19 +295,23 @@ export function groupTokensIntoTextLayers(tokens: ParsedToken[]): CarouselDetect
 }
 
 export function parseDocumentAiResponseToSlideOcr(
-  doc: Record<string, unknown>,
+  doc: Record<string, unknown> | null | undefined,
   slideIndex: number
 ): CarouselDocumentAiSlideOcr {
-  const pages = Array.isArray(doc.pages) ? doc.pages : [];
+  const safeDoc = doc && typeof doc === "object" ? doc : {};
+  const pages = Array.isArray(safeDoc.pages) ? safeDoc.pages : [];
   const page = (pages[0] && asRecord(pages[0])) || null;
   const dim = page ? asRecord(page.dimension) : null;
-  const width = dim ? Number(dim.width ?? dim.widthPixels) : null;
-  const height = dim ? Number(dim.height ?? dim.heightPixels) : null;
+  const width = dim ? Number(dim.width ?? dim.widthPixels ?? dim.width_pixels) : null;
+  const height = dim ? Number(dim.height ?? dim.heightPixels ?? dim.height_pixels) : null;
+  const pageWidth = width != null && Number.isFinite(width) && width > 0 ? width : null;
+  const pageHeight = height != null && Number.isFinite(height) && height > 0 ? height : null;
 
-  const tokens = page ? parseTokensFromPage(page) : [];
+  const fullTextDoc = String(safeDoc.text ?? "");
+  const tokens = page ? parseTextElementsFromPage(page, fullTextDoc, pageWidth, pageHeight) : [];
   const text_layers = groupTokensIntoTextLayers(tokens);
   const full_text =
-    String(doc.text ?? "").trim() ||
+    fullTextDoc.trim() ||
     text_layers
       .map((l) => l.text)
       .join("\n")
@@ -255,8 +323,8 @@ export function parseDocumentAiResponseToSlideOcr(
   return {
     schema_version: CAROUSEL_REFERENCE_OCR_SCHEMA,
     slide_index: slideIndex,
-    canvas_width_px: width != null && Number.isFinite(width) && width > 0 ? width : null,
-    canvas_height_px: height != null && Number.isFinite(height) && height > 0 ? height : null,
+    canvas_width_px: pageWidth,
+    canvas_height_px: pageHeight,
     full_text,
     ocr_confidence_mean,
     text_layers,
