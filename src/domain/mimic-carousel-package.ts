@@ -413,6 +413,10 @@ export function slimMimicVisualGuidelineForLlmCopy(
         slide_purpose: s.slide_purpose,
         text_density: s.text_density,
         typography: s.typography,
+        image_or_photo_role: null,
+        brand_specificity: null,
+        color_tokens: null,
+        text_blocks: null,
       })) ?? null,
   };
 }
