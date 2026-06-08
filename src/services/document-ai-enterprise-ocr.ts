@@ -7,12 +7,16 @@ import {
   assertDocumentAiConfigured,
   documentAiProcessUrl,
   documentAiUsesProxy,
+  findNonLatin1HeaderChar,
   getDocumentAiAccessToken,
+  normalizeDocumentAiProxyToken,
+  normalizeDocumentAiProxyUrl,
 } from "./document-ai-auth.js";
 import { parseDocumentAiResponseToSlideOcr } from "./document-ai-response-parse.js";
 import type { CarouselDocumentAiSlideOcr } from "../domain/carousel-slide-analysis.js";
 import { sniffImageMedia } from "./inputs-top-performer-media-archive.js";
 import { downloadBufferFromUrl } from "./supabase-storage.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 
 const PROCESS_TIMEOUT_MS = 120_000;
 
@@ -108,8 +112,20 @@ async function processImageViaDocumentAiProxy(
   mimeType: string,
   slideIndex: number
 ): Promise<CarouselDocumentAiSlideOcr> {
-  const base = config.DOCUMENT_AI_PROXY_URL!.trim().replace(/\/+$/, "");
-  const proxyToken = config.DOCUMENT_AI_PROXY_TOKEN!.trim();
+  const rawUrl = config.DOCUMENT_AI_PROXY_URL!.trim();
+  const rawToken = config.DOCUMENT_AI_PROXY_TOKEN!.trim();
+  const base = normalizeDocumentAiProxyUrl(rawUrl);
+  const proxyToken = normalizeDocumentAiProxyToken(rawToken);
+  const badTokenChar = findNonLatin1HeaderChar(rawToken);
+  if (badTokenChar) {
+    logPipelineEvent("warn", "other", "DOCUMENT_AI_PROXY_TOKEN contained non-ASCII characters; stripped for HTTP headers", {
+      data: {
+        code_point: `U+${badTokenChar.codePoint.toString(16).toUpperCase()}`,
+        index: badTokenChar.index,
+        hint: "Re-set Fly + Cloud Run secrets with plain ASCII (openssl rand -hex 32) to avoid mismatch.",
+      },
+    });
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PROCESS_TIMEOUT_MS);
   try {

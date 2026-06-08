@@ -11,11 +11,24 @@ import { createServer } from "node:http";
 import { GoogleAuth } from "google-auth-library";
 
 const PORT = Number(process.env.PORT || 8080);
-const PROXY_TOKEN = process.env.DOCUMENT_AI_PROXY_TOKEN?.trim() || "";
-const PROJECT_ID = process.env.DOCUMENT_AI_PROJECT_ID?.trim() || "";
-const LOCATION = process.env.DOCUMENT_AI_LOCATION?.trim() || "us";
-const PROCESSOR_ID = process.env.DOCUMENT_AI_PROCESSOR_ID?.trim() || "";
-const PROCESSOR_VERSION = process.env.DOCUMENT_AI_PROCESSOR_VERSION?.trim() || "";
+
+/** Fetch/undici require ISO-8859-1 header values — strip smart punctuation from copy-pasted env vars. */
+function normalizeHttpHeaderValue(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/[^\x00-\xFF]/g, "");
+}
+
+const PROXY_TOKEN = normalizeHttpHeaderValue(process.env.DOCUMENT_AI_PROXY_TOKEN);
+if (process.env.DOCUMENT_AI_PROXY_TOKEN && PROXY_TOKEN !== process.env.DOCUMENT_AI_PROXY_TOKEN.trim()) {
+  console.warn(
+    "document-ai-proxy: DOCUMENT_AI_PROXY_TOKEN contained non-ASCII characters; stripped for HTTP headers"
+  );
+}
+const PROJECT_ID = normalizeHttpHeaderValue(process.env.DOCUMENT_AI_PROJECT_ID);
+const LOCATION = normalizeHttpHeaderValue(process.env.DOCUMENT_AI_LOCATION) || "us";
+const PROCESSOR_ID = normalizeHttpHeaderValue(process.env.DOCUMENT_AI_PROCESSOR_ID);
+const PROCESSOR_VERSION = normalizeHttpHeaderValue(process.env.DOCUMENT_AI_PROCESSOR_VERSION);
 const TIMEOUT_MS = 120_000;
 
 function processUrl() {
@@ -122,7 +135,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 404, { ok: false, error: "not_found" });
     }
 
-    const authHeader = req.headers.authorization || "";
+    const authHeader = normalizeHttpHeaderValue(req.headers.authorization || "");
     const expected = `Bearer ${PROXY_TOKEN}`;
     if (!PROXY_TOKEN || authHeader !== expected) {
       return sendJson(res, 401, { ok: false, error: "unauthorized" });

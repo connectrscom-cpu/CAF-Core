@@ -4,6 +4,28 @@ import type { AppConfig } from "../config.js";
 
 const DOCUMENT_AI_SCOPE = "https://www.googleapis.com/auth/cloud-platform";
 
+/** Fetch/undici headers must be ISO-8859-1 (code points 0–255). Smart dashes from copy-paste break Bearer auth. */
+export function normalizeHttpHeaderValue(value: string): string {
+  return value.trim().replace(/[^\x00-\xFF]/g, "");
+}
+
+export function findNonLatin1HeaderChar(value: string): { index: number; codePoint: number } | null {
+  const trimmed = value.trim();
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i);
+    if (code > 255) return { index: i, codePoint: code };
+  }
+  return null;
+}
+
+export function normalizeDocumentAiProxyUrl(url: string): string {
+  return normalizeHttpHeaderValue(url).replace(/\/+$/, "");
+}
+
+export function normalizeDocumentAiProxyToken(token: string): string {
+  return normalizeHttpHeaderValue(token);
+}
+
 let cachedAuth: GoogleAuth | null = null;
 let cachedAuthMode: "inline" | "file" | "adc" | null = null;
 

@@ -21,7 +21,8 @@ Cloud Run attaches a service account at runtime — **no JSON key file** is need
 If you see the [placeholder unicorn page](https://cafcoredocai-521585232450.europe-west1.run.app), the trigger never built — fix branch to `master`, then **Run trigger** manually in Cloud Build.
 
 ```bash
-# Pick a strong random token (same value goes on Fly as DOCUMENT_AI_PROXY_TOKEN)
+# Pick a strong random token (same value goes on Fly as DOCUMENT_AI_PROXY_TOKEN).
+# Use ASCII only — smart dashes (—) from copy-paste break Node fetch Authorization headers.
 export PROXY_TOKEN="$(openssl rand -hex 32)"
 
 gcloud run deploy caf-document-ai-proxy \

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   assertDocumentAiRuntimeAuth,
   documentAiAuthModeLabel,
+  findNonLatin1HeaderChar,
+  normalizeDocumentAiProxyToken,
   resolveDocumentAiCredentialMode,
 } from "./document-ai-auth.js";
 import type { AppConfig } from "../config.js";
@@ -26,6 +28,13 @@ describe("document-ai-auth", () => {
     } as AppConfig;
     expect(() => assertDocumentAiRuntimeAuth(config)).not.toThrow();
     expect(resolveDocumentAiCredentialMode(config)).toBe("inline");
+  });
+
+  it("detects em dash in proxy token (ByteString fetch failure)", () => {
+    const token = "a".repeat(35) + "\u2014" + "b";
+    expect(findNonLatin1HeaderChar(token)?.codePoint).toBe(0x2014);
+    expect(findNonLatin1HeaderChar(token)?.index).toBe(35);
+    expect(normalizeDocumentAiProxyToken(token)).toBe("a".repeat(35) + "b");
   });
 
   it("allows Cloud Run proxy in production without service account JSON", () => {
