@@ -305,7 +305,7 @@ export function serializeSlideCopyLayoutForLlmPrompt(
   layout_template: string | null;
   slide_purpose: string | null;
   text_density: string | null;
-  typography: MimicCarouselSlideTypography | null;
+  typography: Pick<MimicCarouselSlideTypography, "text_placement" | "headline_guess" | "relative_scale"> | null;
   text_blocks: Array<{ role: string | null; text: string }> | null;
 }> {
   return layout.map((row) => ({
@@ -315,9 +315,20 @@ export function serializeSlideCopyLayoutForLlmPrompt(
     layout_template: row.layout_template,
     slide_purpose: row.slide_purpose,
     text_density: row.text_density,
-    typography: row.typography,
+    typography: slimTypographyForLlmPrompt(row.typography),
     text_blocks: slimTextBlocksForLlmPrompt(row.text_blocks),
   }));
+}
+
+function slimTypographyForLlmPrompt(
+  typography: MimicCarouselSlideTypography | null
+): Pick<MimicCarouselSlideTypography, "text_placement" | "headline_guess" | "relative_scale"> | null {
+  if (!typography) return null;
+  const text_placement = typography.text_placement ?? null;
+  const headline_guess = typography.headline_guess ?? null;
+  const relative_scale = typography.relative_scale ?? null;
+  if (!text_placement && !headline_guess && !relative_scale) return null;
+  return { text_placement, headline_guess, relative_scale };
 }
 
 /** Deck-level mimic metadata for copy LLM when per-slide layout is already attached. */

@@ -768,6 +768,11 @@ function isBflModerationError(err: unknown): boolean {
   );
 }
 
+function isDashScopeAuthError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("(403)") && /not authenticated|invalid api|unauthorized/i.test(msg);
+}
+
 export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
@@ -781,7 +786,15 @@ export async function editImageFromReference(
       const canFallback =
         config.MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE && Boolean(config.DASHSCOPE_API_KEY?.trim());
       if (canFallback && isBflModerationError(err)) {
-        return editViaDashScope(config, params);
+        try {
+          return await editViaDashScope(config, params);
+        } catch (dashErr) {
+          if (isDashScopeAuthError(dashErr) && config.OPENAI_API_KEY?.trim()) {
+            const { blob, mimeType: refMime } = await downloadReferenceAsBlob(params.referenceUrl);
+            return editViaOpenAi(config, params, blob, refMime);
+          }
+          throw dashErr;
+        }
       }
       throw err;
     }

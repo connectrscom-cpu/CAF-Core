@@ -168,12 +168,14 @@ describe("llm-creation-pack-budget", () => {
       publication_output_contract: "do not duplicate",
       mimic_visual_guideline_for_copy: { slides: [{ slide_index: 1 }] },
       mimic_render_context: { target_slide_count: 8 },
+      mimic_job_grounding: { slide_copy_layout: [{ slide_index: 1, text_blocks: [{ x: 0.1 }] }] },
       global_learning_context: "learn",
     });
     expect(slim.strategy).toEqual({ thesis: "ok" });
     expect(slim.top_performer_mimic_knowledge).toBeUndefined();
     expect(slim.publication_output_contract).toBeUndefined();
     expect(slim.mimic_visual_guideline_for_copy).toBeUndefined();
+    expect(slim.mimic_job_grounding).toBeUndefined();
     expect(slim.global_learning_context).toBeUndefined();
   });
 

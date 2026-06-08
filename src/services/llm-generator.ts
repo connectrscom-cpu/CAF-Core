@@ -122,9 +122,9 @@ function truncateForContext(s: string, maxChars: number, label: string): string 
   return `${t.slice(0, maxChars)}\n\n…(truncated ${t.length - maxChars} chars from ${label} for model context)`;
 }
 
-/** Leave room for carousel completion tokens under OpenAI 128k context (chars ≈ tokens × 3.5). */
-const OPENAI_128K_MESSAGE_CHAR_BUDGET = 460_000;
-const MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS = 200_000;
+/** Leave room for carousel completion tokens under OpenAI 128k context (dense JSON ≈ 2.8 chars/token). */
+const OPENAI_128K_MESSAGE_CHAR_BUDGET = 340_000;
+const MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS = 120_000;
 
 function shrinkMimicCarouselPromptsIfNeeded(opts: {
   systemPrompt: string;
@@ -132,6 +132,8 @@ function shrinkMimicCarouselPromptsIfNeeded(opts: {
   userTemplate: string;
   templateContext: Record<string, unknown>;
   creationPack: Record<string, unknown>;
+  mimicGroundingBlocks?: Parameters<typeof appendMimicGroundedReferenceToUserPrompt>[1];
+  maxGroundingJsonChars?: number;
   appCfg: ReturnType<typeof loadConfig>;
   taskId: string;
   runId: string;
@@ -153,6 +155,9 @@ function shrinkMimicCarouselPromptsIfNeeded(opts: {
   const emergencyCtx: Record<string, unknown> = {
     ...opts.templateContext,
     ...emergencyPack,
+    mimic_job_grounding: undefined,
+    mimic_visual_guideline_for_copy: opts.templateContext.mimic_visual_guideline_for_copy,
+    mimic_render_context: opts.templateContext.mimic_render_context,
     global_learning_context: truncateForContext(
       String(opts.templateContext.global_learning_context ?? ""),
       Math.min(4_000, opts.appCfg.LLM_LEARNING_GLOBAL_CONTEXT_MAX_CHARS),
@@ -169,7 +174,17 @@ function shrinkMimicCarouselPromptsIfNeeded(opts: {
       "learning_guidance"
     ),
   };
+  delete emergencyCtx.mimic_job_grounding;
   userPrompt = interpolateTemplate(opts.userTemplate, emergencyCtx);
+  if (opts.mimicGroundingBlocks) {
+    const groundingCap = Math.max(
+      12_000,
+      Math.floor((opts.maxGroundingJsonChars ?? opts.appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS) * 0.55)
+    );
+    userPrompt = appendMimicGroundedReferenceToUserPrompt(userPrompt, opts.mimicGroundingBlocks, {
+      maxGroundingJsonChars: groundingCap,
+    });
+  }
 
   total = systemPrompt.length + userPrompt.length;
   if (total > OPENAI_128K_MESSAGE_CHAR_BUDGET && systemPrompt.length > MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS) {
@@ -710,6 +725,18 @@ export async function generateForJob(
     }
   }
 
+  const mimicGroundingBlocks =
+    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForCopy != null
+      ? {
+          mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
+          mimic_render_context: templateContext.mimic_render_context,
+          slide_copy_layout: filterSlideCopyLayoutForMimic(
+            mimicForCopy,
+            buildSlideCopyLayoutForLlmFromPayload(payload)
+          ),
+        }
+      : undefined;
+
   if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
     const shrunk = shrinkMimicCarouselPromptsIfNeeded({
       systemPrompt,
@@ -717,6 +744,8 @@ export async function generateForJob(
       userTemplate: promptTemplate.user_prompt_template ?? "Generate content using: {{creation_pack_json}}",
       templateContext,
       creationPack,
+      mimicGroundingBlocks,
+      maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS,
       appCfg,
       taskId: job.task_id,
       runId: job.run_id,

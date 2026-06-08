@@ -335,6 +335,8 @@ export const MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
   "publication_output_contract",
   "mimic_visual_guideline_for_copy",
   "mimic_render_context",
+  /** Appended separately in slim form via `appendMimicGroundedReferenceToUserPrompt` — full row has OCR geometry. */
+  "mimic_job_grounding",
 ] as const;
 
 export function slimContextForCreationPackJson(context: Record<string, unknown>): Record<string, unknown> {
