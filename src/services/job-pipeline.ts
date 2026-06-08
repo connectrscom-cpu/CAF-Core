@@ -79,7 +79,13 @@ import {
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { MIMIC_FULL_BLEED_RENDER_TEMPLATE, MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
-import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "./mimic-slide-typography.js";
+import {
+  buildMimicDocAiRenderTextLayers,
+  inferMimicCarouselTheme,
+  mimicPayloadHasDocAiTextLayout,
+  mimicSlideTypographyPatch,
+  mimicSlideThemePatch,
+} from "./mimic-slide-typography.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -1693,8 +1699,12 @@ async function processCarouselJob(
         allowedTemplates: projectPinnedTemplates,
         implicitPickSeed: job.task_id,
       });
+  const mimicUsesDocAiTextLayout = Boolean(isMimicCarousel && mimicPayload && mimicPayloadHasDocAiTextLayout(mimicPayload));
   if (isMimicCarousel && mimicPayload) {
-    if (mimicPayload.mode === "template_bg") {
+    if (mimicUsesDocAiTextLayout) {
+      // Per-block Document AI geometry → carousel_mimic_bg absolute text layers.
+      template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
+    } else if (mimicPayload.mode === "template_bg") {
       const evidenceTemplate = await ensureMimicEvidenceCarouselTemplate(
         db,
         config,
@@ -1705,7 +1715,7 @@ async function processCarouselJob(
       );
       template = evidenceTemplate.template_base;
     } else {
-      // carousel_visual / full_bleed: shared HBS + Document AI block vars at render time — no new .hbs fork.
+      // carousel_visual / full_bleed: shared HBS + coarse block vars at render time.
       template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
     }
   }
@@ -1861,10 +1871,38 @@ async function processCarouselJob(
         }
       }
 
-      const ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {
+      let ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {
         instagramHandle: projectInstagramHandle,
         projectDisplayName,
       });
+      if (mimicUsesDocAiTextLayout && mimicPayload) {
+        const theme = inferMimicCarouselTheme(mimicPayload.visual_guideline);
+        const llmSlide: Record<string, unknown> = {
+          ...(ctx.current_slide && typeof ctx.current_slide === "object" && !Array.isArray(ctx.current_slide)
+            ? (ctx.current_slide as Record<string, unknown>)
+            : {}),
+          headline: ctx.headline,
+          body: ctx.body,
+          cover: ctx.cover,
+          cover_subtitle: ctx.cover_subtitle,
+          cover_slide: ctx.cover_slide,
+          cta_text: ctx.cta_text,
+          cta_handle: ctx.cta_handle,
+          cta_slide: ctx.cta_slide,
+          intro_title: ctx.intro_title,
+        };
+        const docAiLayers = buildMimicDocAiRenderTextLayers(mimicPayload, i, llmSlide, {
+          ink: theme.ink,
+          body: theme.body,
+        });
+        if (docAiLayers.length > 0) {
+          ctx = {
+            ...ctx,
+            mimic_render_text_layers: docAiLayers,
+            mimic_use_docai_layers: true,
+          };
+        }
+      }
       const body = {
         task_id: job.task_id,
         run_id: job.run_id,

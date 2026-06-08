@@ -20,6 +20,8 @@ export interface MimicTextBlock {
   font_size_px: number | null;
   font_weight: string | null;
   color_hex: string | null;
+  font_family: string | null;
+  source: string | null;
 }
 
 function clamp01(n: number): number {
@@ -90,6 +92,8 @@ export function parseMimicTextBlocks(raw: unknown): MimicTextBlock[] {
     if (!box) continue;
     const fontPx = pickNum(rec.font_size_px ?? rec.estimated_font_size_px ?? rec.font_size);
     const color = String(rec.color_hex ?? rec.color ?? "").trim();
+    const family = String(rec.font_family ?? rec.font_family_detected ?? "").trim();
+    const source = String(rec.source ?? "").trim().toLowerCase() || null;
     out.push({
       text,
       role: String(rec.role ?? rec.semantic_role ?? "").trim().toLowerCase() || null,
@@ -101,6 +105,8 @@ export function parseMimicTextBlocks(raw: unknown): MimicTextBlock[] {
       font_size_px: fontPx != null && fontPx > 0 && fontPx < 400 ? Math.round(fontPx) : null,
       font_weight: String(rec.font_weight ?? rec.weight ?? "").trim().toLowerCase() || null,
       color_hex: /^#[0-9a-fA-F]{3,8}$/.test(color) ? color : null,
+      font_family: family || null,
+      source,
     });
   }
   return out;
@@ -651,4 +657,192 @@ export function mimicSlideTypographyPatch(
   }
 
   return out;
+}
+
+/** True when reference slides carry Document AI OCR geometry (merged `text_blocks` or `document_ai_ocr_v1`). */
+export function mimicPayloadHasDocAiTextLayout(
+  mimic: Pick<MimicPayloadV1, "visual_guideline">
+): boolean {
+  const vg = mimic.visual_guideline ?? {};
+  const fromPackage = Array.isArray(vg.slides) ? vg.slides : [];
+  const aesSlides = aestheticSlideRecordsFromGuideline(vg);
+  const slides = fromPackage.length > 0 ? fromPackage : aesSlides;
+  for (const raw of slides) {
+    const slide = asRecord(raw);
+    if (!slide) continue;
+    if (slide.document_ai_ocr_v1) return true;
+    const blocks = slide.text_blocks;
+    if (Array.isArray(blocks)) {
+      for (const b of blocks) {
+        const rec = asRecord(b);
+        if (rec && String(rec.source ?? "").trim().toLowerCase() === "document_ai") return true;
+      }
+    }
+    if (parseMimicTextBlocks(slide.text_blocks).some((b) => b.source === "document_ai")) return true;
+  }
+  return false;
+}
+
+export interface MimicDocAiRenderTextLayer {
+  text: string;
+  role: string;
+  x_pct: number;
+  y_pct: number;
+  w_pct: number;
+  h_pct: number;
+  font_size_px: number | null;
+  font_weight: number | null;
+  color_hex: string | null;
+  text_align: string;
+  css_style: string;
+}
+
+function roleBucket(role: string | null): "headline" | "body" | "cta" | "other" {
+  const r = (role ?? "").toLowerCase();
+  if (/title|headline|hook|cover|kicker/.test(r)) return "headline";
+  if (/cta|handle/.test(r)) return "cta";
+  if (/body|subtitle|caption|paragraph|sub/.test(r)) return "body";
+  return "other";
+}
+
+function webFontFamilyFromDetected(detected: string | null): string | null {
+  if (!detected?.trim()) return null;
+  const d = detected.trim().toUpperCase();
+  if (d.includes("MONO")) return "ui-monospace, SFMono-Regular, Menlo, monospace";
+  if (d.includes("SERIF") && !d.includes("SANS")) return "Georgia, 'Times New Roman', serif";
+  if (d.includes("HAND") || d.includes("SCRIPT")) return "'Segoe Script', 'Brush Script MT', cursive";
+  return "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+}
+
+function cssFontWeight(raw: string | null): number | null {
+  const s = (raw ?? "").trim().toLowerCase();
+  if (!s) return null;
+  const n = Number(s);
+  if (Number.isFinite(n) && n >= 100 && n <= 900) return Math.round(n / 100) * 100;
+  if (s === "bold" || s === "700") return 700;
+  if (s === "semibold" || s === "600") return 600;
+  if (s === "medium" || s === "500") return 500;
+  if (s === "regular" || s === "normal" || s === "400") return 400;
+  return null;
+}
+
+function pct01(n: number): number {
+  return Math.round(clamp01(n) * 10000) / 100;
+}
+
+function llmTextPoolForSlide(slide: Record<string, unknown>): Array<{ bucket: string; text: string }> {
+  const pool: Array<{ bucket: string; text: string }> = [];
+  if (Array.isArray(slide.text_blocks) && slide.text_blocks.length > 0) {
+    for (const item of slide.text_blocks) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      const text = String(rec.text ?? "").trim();
+      if (!text) continue;
+      pool.push({ bucket: roleBucket(String(rec.role ?? "")), text });
+    }
+    if (pool.length > 0) return pool;
+  }
+  const headline = String(slide.headline ?? slide.title ?? "").trim();
+  const body = String(slide.body ?? slide.subtitle ?? "").trim();
+  const cover = asRecord(slide.cover_slide);
+  const cta = asRecord(slide.cta_slide);
+  const h = headline || String(cover?.headline ?? slide.cover ?? slide.intro_title ?? "").trim();
+  const b = body || String(cover?.body ?? slide.cover_subtitle ?? "").trim();
+  const ctaText = String(slide.cta_text ?? cta?.body ?? "").trim();
+  const ctaSub = String(cta?.sub ?? slide.cta_handle ?? cta?.handle ?? "").trim();
+  if (h) pool.push({ bucket: "headline", text: h });
+  if (b) {
+    const parts = b.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+    for (const part of parts.length > 0 ? parts : [b]) {
+      pool.push({ bucket: "body", text: part });
+    }
+  }
+  if (ctaText) pool.push({ bucket: "cta", text: ctaText });
+  if (ctaSub) pool.push({ bucket: "body", text: ctaSub });
+  return pool;
+}
+
+function takeLlmTextForRefBlock(
+  pool: Array<{ bucket: string; text: string }>,
+  refRole: string | null,
+  refIndex: number
+): { text: string; pool: Array<{ bucket: string; text: string }> } {
+  const bucket = roleBucket(refRole);
+  const matchIdx = pool.findIndex((p) => p.bucket === bucket);
+  if (matchIdx >= 0) {
+    const text = pool[matchIdx]!.text;
+    const next = [...pool.slice(0, matchIdx), ...pool.slice(matchIdx + 1)];
+    return { text, pool: next };
+  }
+  if (refIndex < pool.length) {
+    const text = pool[refIndex]!.text;
+    return { text, pool: [...pool.slice(0, refIndex), ...pool.slice(refIndex + 1)] };
+  }
+  return { text: "", pool };
+}
+
+/**
+ * Map Document AI reference `text_blocks` (geometry + typography) to LLM rephrased copy for HBS absolute layers.
+ */
+export function buildMimicDocAiRenderTextLayers(
+  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
+  slideIndex1Based: number,
+  llmSlide: Record<string, unknown>,
+  theme?: { ink: string; body: string }
+): MimicDocAiRenderTextLayer[] {
+  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
+  const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
+  const refBlocks = refSlide ? parseMimicTextBlocks(refSlide.text_blocks) : [];
+  const docAiBlocks = refBlocks.filter((b) => b.source === "document_ai");
+  const layoutBlocks = docAiBlocks.length > 0 ? docAiBlocks : refBlocks;
+  if (layoutBlocks.length === 0) return [];
+
+  let pool = llmTextPoolForSlide(llmSlide);
+  const sortedRef = [...layoutBlocks].sort((a, b) => a.y - b.y || a.x - b.x);
+  const layers: MimicDocAiRenderTextLayer[] = [];
+
+  for (let i = 0; i < sortedRef.length; i++) {
+    const ref = sortedRef[i]!;
+    const { text, pool: nextPool } = takeLlmTextForRefBlock(pool, ref.role, i);
+    pool = nextPool;
+    if (!text.trim()) continue;
+
+    const bucket = roleBucket(ref.role);
+    const color =
+      ref.color_hex ??
+      (bucket === "headline" || bucket === "cta" ? theme?.ink : theme?.body) ??
+      null;
+    const fontWeight = cssFontWeight(ref.font_weight);
+    const textAlign =
+      ref.align && ref.align !== "unknown" ? ref.align : bucket === "cta" ? "center" : "left";
+    const fontFamily = webFontFamilyFromDetected(ref.font_family);
+
+    const cssParts = [
+      `left:${pct01(ref.x)}%`,
+      `top:${pct01(ref.y)}%`,
+      `width:${pct01(ref.w)}%`,
+      `min-height:${pct01(ref.h)}%`,
+      `text-align:${textAlign}`,
+    ];
+    if (ref.font_size_px) cssParts.push(`font-size:${ref.font_size_px}px`);
+    if (fontWeight) cssParts.push(`font-weight:${fontWeight}`);
+    if (color) cssParts.push(`color:${color}`);
+    if (fontFamily) cssParts.push(`font-family:${fontFamily}`);
+
+    layers.push({
+      text,
+      role: ref.role ?? bucket,
+      x_pct: pct01(ref.x),
+      y_pct: pct01(ref.y),
+      w_pct: pct01(ref.w),
+      h_pct: pct01(ref.h),
+      font_size_px: ref.font_size_px,
+      font_weight: fontWeight,
+      color_hex: color,
+      text_align: textAlign,
+      css_style: cssParts.join(";"),
+    });
+  }
+
+  return layers;
 }

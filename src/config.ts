@@ -205,6 +205,8 @@ const envSchema = z.object({
   MIMIC_IMAGE_BFL_POLL_MAX_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
   MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: z.coerce.number().int().min(0).max(5).default(2),
   MIMIC_IMAGE_BFL_OUTPUT_FORMAT: z.enum(["jpeg", "png", "webp"]).default("png"),
+  /** When BFL edit is moderated or fails, retry via DashScope if DASHSCOPE_API_KEY is set. */
+  MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE: z.coerce.boolean().default(true),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
@@ -359,6 +361,8 @@ const envSchema = z.object({
   LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(48_000),
   /** Tighter cap for `signal_pack` inside mimic creation packs (full pack default is too large). */
   LLM_MIMIC_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
+  /** Max JSON chars for per-job mimic grounding (`slide_copy_layout` + deck metadata) appended to copy prompts. */
+  LLM_MIMIC_GROUNDING_JSON_MAX_CHARS: z.coerce.number().int().min(4000).max(200_000).default(80_000),
 
   /**
    * Learning contexts are injected both as individual placeholders and inside `{{creation_pack_json}}`.

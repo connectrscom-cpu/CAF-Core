@@ -759,6 +759,15 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
  * Reference-conditioned image edit/generate for mimic flows.
  * Downloads archived inspection media (signed Supabase URL) and sends it to the configured provider.
  */
+function isBflModerationError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("Request Moderated") ||
+    msg.includes("Content Moderated") ||
+    msg.includes("Content Policy Violation")
+  );
+}
+
 export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
@@ -766,7 +775,16 @@ export async function editImageFromReference(
   assertMimicImageProviderConfigured(config);
 
   if (config.MIMIC_IMAGE_PROVIDER === "bfl") {
-    return editViaBfl(config, params);
+    try {
+      return await editViaBfl(config, params);
+    } catch (err) {
+      const canFallback =
+        config.MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE && Boolean(config.DASHSCOPE_API_KEY?.trim());
+      if (canFallback && isBflModerationError(err)) {
+        return editViaDashScope(config, params);
+      }
+      throw err;
+    }
   }
 
   if (config.MIMIC_IMAGE_PROVIDER === "dashscope") {

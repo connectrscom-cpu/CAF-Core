@@ -221,4 +221,54 @@ describe("document-ai-response-parse", () => {
     expect(ocr.text_layers[0]?.text).toBe("Paragraph body");
     expect(ocr.text_layers[0]?.bbox_pct.w).toBeCloseTo(0.7, 2);
   });
+
+  it("parses real API string indices on textSegments", () => {
+    const ocr = parseDocumentAiResponseToSlideOcr(
+      {
+        text: "how it feels to be an\naries (without context)\n@glossy_zodiac\nrage is consuming me\n",
+        pages: [
+          {
+            dimension: { width: 1080, height: 1350, unit: "pixels" },
+            tokens: [
+              {
+                layout: {
+                  textAnchor: { textSegments: [{ endIndex: "4" }] },
+                  confidence: 0.9785707,
+                  boundingPoly: {
+                    normalizedVertices: [
+                      { x: 0.2638889, y: 0.4437037 },
+                      { x: 0.36666667, y: 0.4437037 },
+                      { x: 0.36666667, y: 0.48222223 },
+                      { x: 0.2638889, y: 0.48222223 },
+                    ],
+                  },
+                },
+                styleInfo: { pixelFontSize: 53, fontType: "SANS_SERIF", fontWeight: 453 },
+              },
+              {
+                layout: {
+                  textAnchor: { textSegments: [{ startIndex: "4", endIndex: "7" }] },
+                  confidence: 0.98534894,
+                  boundingPoly: {
+                    normalizedVertices: [
+                      { x: 0.38333333, y: 0.4437037 },
+                      { x: 0.41111112, y: 0.4437037 },
+                      { x: 0.41111112, y: 0.48222223 },
+                      { x: 0.38333333, y: 0.48222223 },
+                    ],
+                  },
+                },
+                styleInfo: { pixelFontSize: 53, fontType: "SANS_SERIF" },
+              },
+            ],
+          },
+        ],
+      },
+      1
+    );
+    expect(ocr.token_count).toBe(2);
+    expect(ocr.text_layers.length).toBeGreaterThan(0);
+    expect(ocr.text_layers[0]?.text).toContain("how");
+    expect(ocr.text_layers[0]?.bbox_pct.x).toBeCloseTo(0.26, 2);
+  });
 });

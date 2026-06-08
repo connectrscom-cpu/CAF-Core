@@ -285,6 +285,67 @@ function slimTextBlocksForLlmCopy(raw: unknown): MimicCarouselSlideTextBlock[] |
   }));
 }
 
+/** Copy-prompt text blocks: role + truncated text only (no geometry — saves tokens). */
+function slimTextBlocksForLlmPrompt(raw: unknown): Array<{ role: string | null; text: string }> | null {
+  const blocks = slimTextBlocksForLlmCopy(raw);
+  if (!blocks || blocks.length === 0) return null;
+  return blocks.map((b) => ({
+    role: b.role,
+    text: b.text,
+  }));
+}
+
+/** Slim layout rows for mimic copy LLM — drops bbox/color geometry duplicated in job `mimic_v1`. */
+export function serializeSlideCopyLayoutForLlmPrompt(
+  layout: MimicSlideCopyLayoutForLlm[]
+): Array<{
+  slide_index: number;
+  reference_on_screen_text: string | null;
+  visual_description: string | null;
+  layout_template: string | null;
+  slide_purpose: string | null;
+  text_density: string | null;
+  typography: MimicCarouselSlideTypography | null;
+  text_blocks: Array<{ role: string | null; text: string }> | null;
+}> {
+  return layout.map((row) => ({
+    slide_index: row.slide_index,
+    reference_on_screen_text: row.reference_on_screen_text,
+    visual_description: row.visual_description,
+    layout_template: row.layout_template,
+    slide_purpose: row.slide_purpose,
+    text_density: row.text_density,
+    typography: row.typography,
+    text_blocks: slimTextBlocksForLlmPrompt(row.text_blocks),
+  }));
+}
+
+/** Deck-level mimic metadata for copy LLM when per-slide layout is already attached. */
+export function slimMimicDeckMetadataForLlmCopy(
+  vg: MimicCarouselVisualGuideline | Record<string, unknown>
+): Record<string, unknown> {
+  const src = vg as MimicCarouselVisualGuideline;
+  const meta: Record<string, unknown> = {};
+  const pick = (k: keyof MimicCarouselVisualGuideline) => {
+    const v = src[k];
+    if (v === undefined || v === null) return;
+    if (typeof v === "string" && !v.trim()) return;
+    meta[k] = v;
+  };
+  pick("format_pattern");
+  pick("format_key");
+  pick("hook_text_preview");
+  pick("deck_as_whole_summary");
+  pick("visual_consistency");
+  pick("deck_visual_system");
+  pick("mimic_evaluation");
+  pick("evidence_post_url");
+  if (Array.isArray(src.video_slide_indices) && src.video_slide_indices.length > 0) {
+    meta.video_slide_indices = src.video_slide_indices;
+  }
+  return meta;
+}
+
 function stringFieldForLlm(v: unknown, max: number): string | null {
   const t = String(v ?? "").trim();
   if (!t) return null;
@@ -342,12 +403,16 @@ export function slimMimicVisualGuidelineForLlmCopy(
     replication_blueprint: null,
     slides:
       slides?.map((s) => ({
-        ...s,
+        slide_index: s.slide_index,
+        layout_template: s.layout_template,
         visual_description: truncateSlideTextForLlm(s.visual_description, LLM_COPY_VISUAL_DESC_MAX_CHARS),
         on_screen_text_transcript: truncateSlideTextForLlm(
           s.on_screen_text_transcript,
           LLM_COPY_SLIDE_TEXT_MAX_CHARS
         ),
+        slide_purpose: s.slide_purpose,
+        text_density: s.text_density,
+        typography: s.typography,
       })) ?? null,
   };
 }

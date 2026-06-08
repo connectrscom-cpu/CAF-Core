@@ -193,6 +193,9 @@ describe("mimic-job-grounding", () => {
     expect(out).toContain("slide_copy_layout");
     expect(out).toContain("reference_on_screen_text");
     expect(out).toContain("text_blocks");
+    expect(out).toContain('"role":"title"');
+    expect(out).not.toContain('"x":');
+    expect(out).not.toContain("color_hex");
     expect(out).toContain("this job only");
     expect(out).not.toContain("mimic_visual_guideline_for_copy");
     expect(out).toContain("Semantic fidelity");

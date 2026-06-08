@@ -100,7 +100,17 @@ export async function processImageWithDocumentAiEnterpriseOcr(
     if (!doc || typeof doc !== "object") {
       throw new Error("Document AI response missing document");
     }
-    return parseDocumentAiResponseToSlideOcr(doc, slideIndex);
+    const ocr = parseDocumentAiResponseToSlideOcr(doc, slideIndex);
+    if (ocr.full_text && ocr.token_count === 0) {
+      logPipelineEvent("warn", "other", "Document AI returned text but no token geometry", {
+        data: {
+          slide_index: slideIndex,
+          full_text_chars: ocr.full_text.length,
+          hint: "Check processor version and raw document.pages[0] tokens/lines arrays.",
+        },
+      });
+    }
+    return ocr;
   } finally {
     clearTimeout(timer);
   }
@@ -150,7 +160,16 @@ async function processImageViaDocumentAiProxy(
     if (!parsed.document || typeof parsed.document !== "object") {
       throw new Error(parsed.error || "Document AI proxy response missing document");
     }
-    return parseDocumentAiResponseToSlideOcr(parsed.document, slideIndex);
+    const ocr = parseDocumentAiResponseToSlideOcr(parsed.document, slideIndex);
+    if (ocr.full_text && ocr.token_count === 0) {
+      logPipelineEvent("warn", "other", "Document AI proxy returned text but no token geometry", {
+        data: {
+          slide_index: slideIndex,
+          full_text_chars: ocr.full_text.length,
+        },
+      });
+    }
+    return ocr;
   } finally {
     clearTimeout(timer);
   }

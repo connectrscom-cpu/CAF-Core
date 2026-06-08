@@ -31,6 +31,7 @@ function textBlockFromLayer(layer: CarouselDetectedTextLayer, role: string | nul
   if (layer.font.size_px != null) block.font_size_px = layer.font.size_px;
   if (layer.font.weight != null) block.font_weight = layer.font.weight;
   if (layer.font.color_hex) block.color_hex = layer.font.color_hex;
+  if (layer.font.family_detected) block.font_family = layer.font.family_detected;
   if (layer.font.bold != null) block.bold = layer.font.bold;
   if (layer.font.italic != null) block.italic = layer.font.italic;
   return block;

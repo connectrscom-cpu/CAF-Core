@@ -24,8 +24,8 @@ export const STEP_IDEAS_FROM_INSIGHTS = "inputs_ideas_from_insights_llm";
 export const IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE = `You are a senior social content strategist for an automated content pipeline.
 You receive an INSIGHT CONTEXT array; each item is one evidence row with:
 - "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
-- optional "top_performer_styles" (richer analysis for standout posts)
-- optional "evidence_performance_review_json" inside top_performer_styles when the evidence row was rated (LLM components + rationale snapshot)
+- optional "top_performer_styles" when the row has a top-performer insight: core insight fields (hook, emotion, why it worked) plus "nemotron_analysis" (Nemotron VL output only — no Document AI OCR, mimic evaluation, or render blueprints)
+- optional "evidence_performance_review" inside top_performer_styles (rating score + rationale when the evidence row was rated)
 - "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
 Your job: propose EXACTLY {{TARGET_IDEAS}} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.
@@ -196,7 +196,212 @@ function dedupeIdeas<T extends { title: string; thesis: string; key_points: stri
   return out;
 }
 
-function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, unknown> | null {
+/** ~60k tokens of insight JSON leaves headroom for system prompt + model output on 128k models. */
+export const IDEAS_LLM_MAX_CONTEXT_JSON_CHARS = 240_000;
+export const IDEAS_LLM_MIN_CONTEXT_ROWS = 20;
+const IDEAS_LLM_MAX_STRING_FIELD_CHARS = 800;
+
+export type IdeasLlmInsightContextRow = {
+  source_evidence_row_id: string;
+  evidence_kind: string;
+  evidence_rating: number | null;
+  grounding_insight_ids: string[];
+  broad: Record<string, unknown> | null;
+  top_performer_styles: Record<string, unknown> | null;
+};
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
+
+function stringCap(v: unknown, maxLen: number): string | null {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+  return s.length <= maxLen ? s : `${s.slice(0, maxLen)}…`;
+}
+
+function trimDeepStrings(v: unknown, maxLen: number, depth = 0): unknown {
+  if (depth > 10) return v;
+  if (typeof v === "string") {
+    return v.length <= maxLen ? v : `${v.slice(0, maxLen)}…`;
+  }
+  if (Array.isArray(v)) return v.map((x) => trimDeepStrings(x, maxLen, depth + 1));
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(o)) {
+      out[k] = trimDeepStrings(val, maxLen, depth + 1);
+    }
+    return out;
+  }
+  return v;
+}
+
+/** Non-Nemotron blobs merged into aesthetic JSON after the VL pass — omit from idea synthesis. */
+const NEMOTRON_AESTHETIC_DROP_KEYS = new Set([
+  "document_ai_deck_v1",
+  "deck_visual_system",
+  "deck_composition_system",
+  "replication_blueprint",
+  "mimic_evaluation",
+  "_slide_coverage",
+  "_inference_limits",
+  "video_visual_system",
+  "video_composition_system",
+  "insight_quality",
+]);
+
+function parseRiskFlags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((x) => String(x).trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function compactNemotronSlideForIdeas(slide: unknown): Record<string, unknown> | null {
+  const s = asRecord(slide);
+  if (!s) return null;
+  const out: Record<string, unknown> = {};
+  if (s.slide_index != null) out.slide_index = s.slide_index;
+  const purpose = stringCap(s.slide_purpose, 40);
+  if (purpose) out.slide_purpose = purpose;
+  const transcript = stringCap(s.on_screen_text_transcript ?? s.on_screen_text, 280);
+  if (transcript) out.on_screen_text = transcript;
+  const vis = stringCap(s.visual_description, 280);
+  if (vis) out.visual_description = vis;
+  const layout = stringCap(s.layout_template, 120);
+  if (layout) out.layout_template = layout;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function compactNemotronFrameForIdeas(frame: unknown): Record<string, unknown> | null {
+  const f = asRecord(frame);
+  if (!f) return null;
+  const out: Record<string, unknown> = {};
+  if (f.frame_index != null) out.frame_index = f.frame_index;
+  const purpose = stringCap(f.frame_purpose ?? f.slide_purpose, 40);
+  if (purpose) out.frame_purpose = purpose;
+  const vis = stringCap(f.visual_description, 280);
+  if (vis) out.visual_description = vis;
+  const spoken = stringCap(f.spoken_text ?? f.on_screen_text, 280);
+  if (spoken) out.spoken_text = spoken;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * Nemotron VL analysis only — fields useful for content ideation.
+ * Strips Document AI OCR, mimic evaluation, and render/replication blueprints.
+ */
+export function extractNemotronAnalysisForIdeasLlm(
+  aes: Record<string, unknown>,
+  analysisTier?: string
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const tier = String(analysisTier ?? "").trim();
+
+  for (const k of [
+    "format_pattern",
+    "slide_arc",
+    "cover_vs_body",
+    "visual_consistency",
+    "on_screen_text_summary",
+    "cta_clarity",
+    "deck_as_whole_summary",
+    "video_arc",
+    "opening_vs_body",
+    "hook_visual",
+    "message_clarity",
+    "pacing_notes",
+    "spoken_hook",
+    "video_as_whole_summary",
+    "style_summary",
+    "primary_emotion",
+    "secondary_emotion",
+    "caption_style",
+  ] as const) {
+    if (NEMOTRON_AESTHETIC_DROP_KEYS.has(k)) continue;
+    const s = stringCap(aes[k], tier === "top_performer_video" ? 600 : 500);
+    if (s) out[k] = s;
+  }
+
+  const whisper = stringCap(aes.spoken_transcript_whisper, 800);
+  if (whisper) out.spoken_transcript_whisper = whisper;
+
+  for (const k of ["palette", "layout", "on_screen_text"] as const) {
+    const v = aes[k];
+    if (typeof v === "string") {
+      const s = stringCap(v, 400);
+      if (s) out[k] = s;
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      out[k] = trimDeepStrings(v, 200);
+    }
+  }
+
+  const typo = asRecord(aes.typography);
+  if (typo) {
+    const slim: Record<string, unknown> = {};
+    for (const tk of ["headline_guess", "body_guess", "hierarchy", "relative_scale"] as const) {
+      const s = stringCap(typo[tk], 120);
+      if (s) slim[tk] = s;
+    }
+    if (Object.keys(slim).length > 0) out.typography = slim;
+  }
+
+  const risks = parseRiskFlags(aes.risk_flags);
+  if (risks.length > 0) out.risk_flags = risks;
+
+  const slidesRaw = Array.isArray(aes.slides) ? aes.slides : [];
+  if (slidesRaw.length > 0) {
+    const slides = slidesRaw
+      .slice(0, 16)
+      .map(compactNemotronSlideForIdeas)
+      .filter((x): x is Record<string, unknown> => x != null);
+    if (slides.length > 0) out.slides = slides;
+  }
+
+  const framesRaw = Array.isArray(aes.frames) ? aes.frames : [];
+  if (framesRaw.length > 0) {
+    const frames = framesRaw
+      .slice(0, 12)
+      .map(compactNemotronFrameForIdeas)
+      .filter((x): x is Record<string, unknown> => x != null);
+    if (frames.length > 0) out.frames = frames;
+  }
+
+  // Belt-and-suspenders: never leak Document AI or mimic keys if nested oddly.
+  for (const drop of NEMOTRON_AESTHETIC_DROP_KEYS) {
+    delete out[drop];
+  }
+  delete out.document_ai_deck_v1;
+
+  return out;
+}
+
+export function compactEvidencePerformanceReviewForIdeasLlm(
+  perf: unknown
+): Record<string, unknown> | null {
+  const rec = asRecord(perf);
+  if (!rec) return null;
+  const scoreRaw = rec.rating_score;
+  const score = typeof scoreRaw === "number" ? scoreRaw : parseFloat(String(scoreRaw ?? ""));
+  if (Number.isNaN(score)) return null;
+  const components = asRecord(rec.rating_components_json) ?? {};
+  const slimComponents: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(components).slice(0, 12)) {
+    slimComponents[k] = typeof v === "number" ? v : stringCap(v, 120);
+  }
+  return {
+    rating_score: score,
+    rating_components_json: slimComponents,
+    rating_rationale: stringCap(rec.rating_rationale, 400),
+  };
+}
+
+export function compactTopPerformerStylesForIdeasLlm(
+  tops: EvidenceRowInsightEnrichedRow[]
+): Record<string, unknown> | null {
   if (!tops.length) return null;
   let best = tops[0]!;
   for (const t of tops) {
@@ -213,32 +418,64 @@ function mergeTopTiers(tops: EvidenceRowInsightEnrichedRow[]): Record<string, un
       }
     }
   }
+  const aes = asRecord(best.aesthetic_analysis_json);
+  const nemotronAnalysis = aes ? extractNemotronAnalysisForIdeasLlm(aes, best.analysis_tier) : null;
+  const rowRisks = parseRiskFlags(best.risk_flags_json);
   return {
+    insights_id: best.insights_id,
     analysis_tier: best.analysis_tier,
-    hook_type: best.hook_type,
-    hook_text: best.hook_text,
-    why_it_worked: best.why_it_worked,
-    aesthetic_analysis_json: best.aesthetic_analysis_json,
-    cta_type: best.cta_type,
-    caption_style: best.caption_style,
-    primary_emotion: best.primary_emotion,
-    secondary_emotion: best.secondary_emotion,
-    evidence_performance_review_json: perf ?? null,
+    why_it_worked: stringCap(best.why_it_worked, 600),
+    hook_type: stringCap(best.hook_type, 80),
+    hook_text: stringCap(best.hook_text, 400),
+    primary_emotion: stringCap(best.primary_emotion, 80),
+    secondary_emotion: stringCap(best.secondary_emotion, 80),
+    cta_type: stringCap(best.cta_type, 80),
+    caption_style: stringCap(best.caption_style, 200),
+    hashtags: stringCap(best.hashtags, 300),
+    custom_label_1: stringCap(best.custom_label_1, 120),
+    custom_label_2: stringCap(best.custom_label_2, 120),
+    custom_label_3: stringCap(best.custom_label_3, 120),
+    ...(rowRisks.length > 0 ? { risk_flags: rowRisks } : {}),
+    ...(nemotronAnalysis && Object.keys(nemotronAnalysis).length > 0
+      ? { nemotron_analysis: nemotronAnalysis }
+      : {}),
+    evidence_performance_review: compactEvidencePerformanceReviewForIdeasLlm(perf),
   };
+}
+
+/**
+ * Shrink insight context to fit model limits: trim long strings, then drop lowest-priority rows
+ * (context is already ordered: top-performer first, then highest-rated broad rows).
+ */
+export function budgetInsightContextForIdeasLlm(
+  context: IdeasLlmInsightContextRow[],
+  opts?: { maxJsonChars?: number; minRows?: number; maxStringFieldChars?: number }
+): IdeasLlmInsightContextRow[] {
+  const maxJsonChars = opts?.maxJsonChars ?? IDEAS_LLM_MAX_CONTEXT_JSON_CHARS;
+  const minRows = Math.max(1, opts?.minRows ?? IDEAS_LLM_MIN_CONTEXT_ROWS);
+  const maxStringFieldChars = opts?.maxStringFieldChars ?? IDEAS_LLM_MAX_STRING_FIELD_CHARS;
+
+  let rows = trimDeepStrings(context, maxStringFieldChars) as IdeasLlmInsightContextRow[];
+  let json = JSON.stringify(rows);
+  while (json.length > maxJsonChars && rows.length > minRows) {
+    rows = rows.slice(0, rows.length - 1);
+    json = JSON.stringify(rows);
+  }
+  return rows;
 }
 
 function compactBroad(b: BroadInsightWithRating): Record<string, unknown> {
   return {
-    why_it_worked: b.why_it_worked,
-    hook_text: b.hook_text,
-    hook_type: b.hook_type,
-    primary_emotion: b.primary_emotion,
-    secondary_emotion: b.secondary_emotion,
-    cta_type: b.cta_type,
-    caption_style: b.caption_style,
-    custom_label_1: b.custom_label_1,
-    custom_label_2: b.custom_label_2,
-    custom_label_3: b.custom_label_3,
+    why_it_worked: stringCap(b.why_it_worked, 600),
+    hook_text: stringCap(b.hook_text, 400),
+    hook_type: stringCap(b.hook_type, 80),
+    primary_emotion: stringCap(b.primary_emotion, 80),
+    secondary_emotion: stringCap(b.secondary_emotion, 80),
+    cta_type: stringCap(b.cta_type, 80),
+    caption_style: stringCap(b.caption_style, 200),
+    custom_label_1: stringCap(b.custom_label_1, 120),
+    custom_label_2: stringCap(b.custom_label_2, 120),
+    custom_label_3: stringCap(b.custom_label_3, 120),
     pre_llm_score: b.pre_llm_score,
   };
 }
@@ -351,7 +588,7 @@ export function selectInsightContextForIdeasLlm(
       evidence_rating: rating,
       grounding_insight_ids,
       broad: br ? compactBroad(br) : null,
-      top_performer_styles: mergeTopTiers(tops),
+      top_performer_styles: compactTopPerformerStylesForIdeasLlm(tops),
     });
   }
 
@@ -377,12 +614,13 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
     return { ideas: [], context_insights_used: 0, top_performer_rows_in_context: 0 };
   }
 
-  const context = selectInsightContextForIdeasLlm(
+  const rawContext = selectInsightContextForIdeasLlm(
     broad,
     topRows,
     opts.contextInsightCap,
     opts.minTopPerformerInContext
   );
+  const context = budgetInsightContextForIdeasLlm(rawContext);
 
   const topInCtx = context.filter((c) => c.top_performer_styles != null).length;
 
@@ -391,8 +629,8 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
   const system = `You are a senior social content strategist for an automated content pipeline.
 You receive an INSIGHT CONTEXT array; each item is one evidence row with:
 - "broad" (mechanism fields like why_it_worked, emotions, hook_type, hook_text, cta_type, caption_style)
-- optional "top_performer_styles" (richer analysis for standout posts)
-- optional "evidence_performance_review_json" inside top_performer_styles when the evidence row was rated (LLM components + rationale snapshot)
+- optional "top_performer_styles" when the row has a top-performer insight: core insight fields (hook, emotion, why it worked) plus "nemotron_analysis" (Nemotron VL output only — no Document AI OCR, mimic evaluation, or render blueprints)
+- optional "evidence_performance_review" inside top_performer_styles (rating score + rationale when the evidence row was rated)
 - "grounding_insight_ids": a list of allowed insight IDs for traceability (strings). Use ONLY these IDs.
 
 Your job: propose EXACTLY ${target} DISTINCT, job-ready IDEAS that we can execute downstream without guessing.

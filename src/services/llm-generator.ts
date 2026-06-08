@@ -612,18 +612,22 @@ export async function generateForJob(
   }
 
   if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
-    userPrompt = appendMimicGroundedReferenceToUserPrompt(userPrompt, {
-      mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
-      mimic_render_context: templateContext.mimic_render_context,
-      mimic_job_grounding: templateContext.mimic_job_grounding,
-      slide_copy_layout:
-        mimicForCopy != null
-          ? filterSlideCopyLayoutForMimic(
-              mimicForCopy,
-              buildSlideCopyLayoutForLlmFromPayload(payload)
-            )
-          : buildSlideCopyLayoutForLlmFromPayload(payload),
-    });
+    userPrompt = appendMimicGroundedReferenceToUserPrompt(
+      userPrompt,
+      {
+        mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
+        mimic_render_context: templateContext.mimic_render_context,
+        mimic_job_grounding: templateContext.mimic_job_grounding,
+        slide_copy_layout:
+          mimicForCopy != null
+            ? filterSlideCopyLayoutForMimic(
+                mimicForCopy,
+                buildSlideCopyLayoutForLlmFromPayload(payload)
+              )
+            : buildSlideCopyLayoutForLlmFromPayload(payload),
+      },
+      { maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS }
+    );
   }
 
   if (compiledLearning.merged_guidance.trim()) {

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildMimicDocAiRenderTextLayers,
   inferMimicCarouselTheme,
   isDarkCelestialDeck,
   isDarkVisualDeck,
+  mimicPayloadHasDocAiTextLayout,
   mimicSlideLayoutPatch,
   mimicSlideThemePatch,
   mimicSlideTypographyPatch,
@@ -131,5 +133,66 @@ describe("mimic-slide-typography", () => {
     });
     expect(patch.carousel_ink).toBe("#f5f5f7");
     expect(patch.carousel_text_shadow_headline).toContain("rgba(0,0,0");
+  });
+
+  it("detects Document AI layout on reference slides", () => {
+    expect(
+      mimicPayloadHasDocAiTextLayout({
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              text_blocks: [{ text: "Hi", role: "title", source: "document_ai", bbox_norm: { x: 0.1, y: 0.2, w: 0.8, h: 0.1 } }],
+            },
+          ],
+        },
+      })
+    ).toBe(true);
+    expect(mimicPayloadHasDocAiTextLayout({ visual_guideline: { slides: [{ slide_index: 1 }] } })).toBe(false);
+  });
+
+  it("buildMimicDocAiRenderTextLayers maps LLM copy onto Document AI geometry", () => {
+    const layers = buildMimicDocAiRenderTextLayers(
+      {
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              text_blocks: [
+                {
+                  text: "OLD TITLE",
+                  role: "headline",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.12, y: 0.18, w: 0.76, h: 0.14 },
+                  font_size_px: 88,
+                  color_hex: "#ffffff",
+                  font_weight: "700",
+                  font_family: "SANS_SERIF",
+                },
+                {
+                  text: "old body line",
+                  role: "body",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+                  font_size_px: 40,
+                  color_hex: "#eeeeee",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      1,
+      { headline: "Fresh headline", body: "Fresh body copy" },
+      { ink: "#ffffff", body: "#e8e8ed" }
+    );
+    expect(layers).toHaveLength(2);
+    expect(layers[0]?.text).toBe("Fresh headline");
+    expect(layers[0]?.font_size_px).toBe(88);
+    expect(layers[0]?.color_hex).toBe("#ffffff");
+    expect(layers[0]?.css_style).toContain("left:12%");
+    expect(layers[0]?.css_style).toContain("font-size:88px");
+    expect(layers[1]?.text).toBe("Fresh body copy");
+    expect(layers[1]?.font_size_px).toBe(40);
   });
 });

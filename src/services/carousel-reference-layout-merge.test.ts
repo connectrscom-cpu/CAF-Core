@@ -60,5 +60,6 @@ describe("mergeCarouselReferenceAnalysis", () => {
     expect(blocks?.[0]?.text).toBe("Exact OCR line");
     expect(blocks?.[0]?.role).toBe("headline");
     expect(blocks?.[0]?.source).toBe("document_ai");
+    expect(blocks?.[0]?.font_family).toBe("SANS_SERIF");
   });
 });
