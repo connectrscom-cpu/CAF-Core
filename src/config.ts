@@ -205,8 +205,8 @@ const envSchema = z.object({
   MIMIC_IMAGE_BFL_POLL_MAX_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
   MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: z.coerce.number().int().min(0).max(5).default(2),
   MIMIC_IMAGE_BFL_OUTPUT_FORMAT: z.enum(["jpeg", "png", "webp"]).default("png"),
-  /** When BFL edit is moderated or fails, retry via DashScope if DASHSCOPE_API_KEY is set. */
-  MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE: z.coerce.boolean().default(true),
+  /** When BFL edit is moderated, optionally retry via DashScope (off by default — BFL-only). */
+  MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE: z.coerce.boolean().default(false),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
