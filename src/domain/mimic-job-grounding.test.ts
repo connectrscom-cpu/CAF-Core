@@ -170,9 +170,10 @@ describe("mimic-job-grounding", () => {
     expect(out.hook_text_preview).toBe("zodiac_arc");
   });
 
-  it("appendMimicGroundedReferenceToUserPrompt adds slide_copy_layout with placement hints", () => {
+  it("appendMimicGroundedReferenceToUserPrompt adds minimal slide_copy_layout for copy generation", () => {
     const out = appendMimicGroundedReferenceToUserPrompt("Base prompt", {
-      mimic_render_context: { target_slide_count: 8 },
+      mimic_render_context: { target_slide_count: 8, copy_before_visual_mimic: true },
+      hook_text_preview: "zodiac listicle hook",
       slide_copy_layout: [
         {
           slide_index: 1,
@@ -192,11 +193,11 @@ describe("mimic-job-grounding", () => {
     expect(out).toContain("Base prompt");
     expect(out).toContain("slide_copy_layout");
     expect(out).toContain("reference_on_screen_text");
-    expect(out).toContain("text_blocks");
-    expect(out).toContain('"role":"title"');
+    expect(out).toContain("mimic_copy_job_brief");
+    expect(out).toContain("reference_hook_preview");
+    expect(out).not.toContain("text_blocks");
     expect(out).not.toContain('"x":');
-    expect(out).not.toContain("color_hex");
-    expect(out).toContain("this job only");
+    expect(out).not.toContain("mimic_render_context");
     expect(out).not.toContain("mimic_visual_guideline_for_copy");
     expect(out).toContain("Semantic fidelity");
     expect(out).toContain("per-slide meaning");

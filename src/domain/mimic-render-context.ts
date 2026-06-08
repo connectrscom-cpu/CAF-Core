@@ -88,3 +88,23 @@ export function buildMimicRenderContextForLlm(
     operator_note,
   };
 }
+
+/** Minimal job-start hints for copy LLM — not the full render plan. */
+export function buildMimicCopyJobBriefForLlm(
+  ctx: MimicRenderContextForLlm | Record<string, unknown> | null | undefined
+): Record<string, unknown> | null {
+  if (!ctx || typeof ctx !== "object") return null;
+  const r = ctx as Record<string, unknown>;
+  const target = r.target_slide_count;
+  const brief: Record<string, unknown> = {
+    copy_before_visual_mimic: r.copy_before_visual_mimic === true,
+  };
+  if (typeof target === "number" && Number.isFinite(target) && target > 0) {
+    brief.target_slide_count = Math.floor(target);
+  }
+  const mode = String(r.mode ?? "").trim();
+  if (mode) brief.mode = mode;
+  const format = String(r.format_pattern ?? "").trim();
+  if (format) brief.format_pattern = format;
+  return brief;
+}

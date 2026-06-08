@@ -24,8 +24,10 @@ import { loadConfig } from "../config.js";
 import {
   budgetCreationPackForMimicFlow,
   budgetSignalPackContextForLlm,
+  slimCandidateForMimicLlm,
   slimVisualGuidelineEntryForLlm,
 } from "./llm-creation-pack-budget.js";
+import { buildMimicCopyJobBriefForLlm } from "../domain/mimic-render-context.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "./publish-metadata-enrich.js";
 
 /** Full research context for prompts (`{{creation_pack_json}}` / `{{signal_pack}}`). */
@@ -339,19 +341,74 @@ export const MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON = [
   "mimic_job_grounding",
 ] as const;
 
+function isMimicCarouselCopyContext(context: Record<string, unknown>): boolean {
+  return (
+    "mimic_visual_guideline_for_copy" in context ||
+    "mimic_render_context" in context ||
+    "mimic_job_grounding" in context
+  );
+}
+
 export function slimContextForCreationPackJson(context: Record<string, unknown>): Record<string, unknown> {
   const out = { ...context };
   for (const k of LEARNING_KEYS_OMITTED_FROM_CREATION_PACK_JSON) {
     delete out[k];
   }
-  const mimicCarouselCopy =
-    "mimic_visual_guideline_for_copy" in context || "mimic_render_context" in context;
-  if (mimicCarouselCopy) {
+  if (isMimicCarouselCopyContext(context)) {
     for (const k of MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON) {
       delete out[k];
     }
   }
   return out;
+}
+
+/**
+ * Mimic carousel copy generation: only brand/platform/candidate/hints needed to write slides.
+ * Full signal pack, product profile, and per-slide OCR geometry live on the job for render.
+ */
+export function slimContextForMimicCopyGeneration(context: Record<string, unknown>): Record<string, unknown> {
+  const renderCtx = context.mimic_render_context;
+  const twistBrief = context.mimic_twist_brief;
+  const slimmed = slimContextForCreationPackJson(context);
+  const brand = asRecord(slimmed.brand_constraints) ?? {};
+  const strategy = asRecord(slimmed.strategy) ?? {};
+  const slimBrand: Record<string, unknown> = {};
+  for (const k of ["banned_words", "tone", "voice", "voice_tone", "cta_style", "handle"] as const) {
+    if (k in brand) slimBrand[k] = brand[k];
+  }
+  const slimStrategy: Record<string, unknown> = {};
+  for (const k of ["thesis", "content_pillars", "positioning", "hook_style"] as const) {
+    if (k in strategy) slimStrategy[k] = strategy[k];
+  }
+  const out: Record<string, unknown> = {
+    brand_constraints: slimBrand,
+    platform_constraints: slimmed.platform_constraints ?? {},
+    strategy: slimStrategy,
+    candidate: slimCandidateForMimicLlm(asRecord(slimmed.candidate) ?? {}),
+    signal_pack_publication_hints: slimmed.signal_pack_publication_hints ?? {},
+  };
+  const rawTpm = asRecord(slimmed.top_performer_mimic_knowledge);
+  if (rawTpm) {
+    out.top_performer_mimic_knowledge = {
+      visual_guideline_cues: Array.isArray(rawTpm.visual_guideline_cues)
+        ? (rawTpm.visual_guideline_cues as unknown[]).slice(0, 10)
+        : [],
+      content_format_groups: Array.isArray(rawTpm.content_format_groups)
+        ? (rawTpm.content_format_groups as unknown[]).slice(0, 3)
+        : [],
+    };
+  }
+  const brief = buildMimicCopyJobBriefForLlm(asRecord(renderCtx));
+  if (brief) out.mimic_copy_job_brief = brief;
+  if (twistBrief && typeof twistBrief === "object") out.mimic_twist_brief = twistBrief;
+  return out;
+}
+
+function creationPackJsonForTemplate(context: Record<string, unknown>): string {
+  const slim = isMimicCarouselCopyContext(context)
+    ? slimContextForMimicCopyGeneration(context)
+    : slimContextForCreationPackJson(context);
+  return JSON.stringify(slim);
 }
 
 export async function buildCreationPack(
@@ -457,18 +514,29 @@ export { appendMimicGroundedReferenceToUserPrompt } from "../domain/mimic-job-gr
 
 export function interpolateTemplate(template: string, context: Record<string, unknown>): string {
   let result = template;
-  const packJson = JSON.stringify(slimContextForCreationPackJson(context));
+  const mimicCopy = isMimicCarouselCopyContext(context);
+  const packJson = creationPackJsonForTemplate(context);
   result = result.replace(/\{\{creation_pack_json\}\}/g, packJson);
   result = result.replace(/\{\{creation_pack\}\}/g, packJson);
 
   for (const [key, value] of Object.entries(context)) {
     const placeholder = `{{${key}}}`;
-    if (result.includes(placeholder)) {
+    if (!result.includes(placeholder)) continue;
+    if (mimicCopy && key === "top_performer_mimic_knowledge") {
+      const tpm = asRecord(slimContextForMimicCopyGeneration(context).top_performer_mimic_knowledge);
       result = result.replace(
         new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
-        typeof value === "string" ? value : JSON.stringify(value)
+        tpm ? JSON.stringify(tpm) : "{}"
       );
+      continue;
     }
+    if (mimicCopy && (MIMIC_CAROUSEL_KEYS_OMITTED_FROM_CREATION_PACK_JSON as readonly string[]).includes(key)) {
+      continue;
+    }
+    result = result.replace(
+      new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"),
+      typeof value === "string" ? value : JSON.stringify(value)
+    );
   }
   return result;
 }

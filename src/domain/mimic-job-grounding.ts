@@ -5,12 +5,11 @@
 import type { Pool } from "pg";
 import {
   buildMimicSlideCopyLayoutFromEntry,
-  serializeSlideCopyLayoutForLlmPrompt,
-  slimMimicDeckMetadataForLlmCopy,
+  serializeSlideCopyLayoutMinimalForCopyGeneration,
   slimMimicVisualGuidelineForLlmCopy,
-  type MimicCarouselVisualGuideline,
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
+import { buildMimicCopyJobBriefForLlm } from "./mimic-render-context.js";
 import { contentReferenceIndicesForTemplate } from "./mimic-template-library.js";
 import { aestheticSlideRecords, referenceSlideExceedsOnScreenTextLimit } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
@@ -299,52 +298,44 @@ export function appendMimicGroundedReferenceToUserPrompt(
   blocks: {
     mimic_visual_guideline_for_copy?: unknown;
     mimic_render_context?: unknown;
-    mimic_job_grounding?: unknown;
     slide_copy_layout?: MimicSlideCopyLayoutForLlm[];
+    hook_text_preview?: string | null;
   },
   opts?: { maxGroundingJsonChars?: number }
 ): string {
-  const maxGroundingJsonChars = opts?.maxGroundingJsonChars ?? 80_000;
-  const vgRaw =
-    blocks.mimic_visual_guideline_for_copy ??
-    asRecord(blocks.mimic_job_grounding)?.visual_guideline_for_copy;
-  const ctx = blocks.mimic_render_context;
+  const maxGroundingJsonChars = opts?.maxGroundingJsonChars ?? 24_000;
+  const vgRaw = blocks.mimic_visual_guideline_for_copy;
   const layout =
     blocks.slide_copy_layout && blocks.slide_copy_layout.length > 0
       ? blocks.slide_copy_layout
       : vgRaw
         ? buildMimicSlideCopyLayoutFromEntry(vgRaw as Record<string, unknown>)
         : [];
-  if (!vgRaw && !ctx && layout.length === 0) return userPrompt;
+  const copyBrief = buildMimicCopyJobBriefForLlm(
+    blocks.mimic_render_context as Record<string, unknown> | null | undefined
+  );
+  if (!copyBrief && layout.length === 0) return userPrompt;
 
   const parts: string[] = [userPrompt.trim(), "", "Grounded top-performer reference (this job only):"];
-  if (ctx) {
-    parts.push("", "mimic_render_context:", JSON.stringify(ctx));
+  if (copyBrief) {
+    parts.push("", "mimic_copy_job_brief:", JSON.stringify(copyBrief));
   }
-  const slimLayout = serializeSlideCopyLayoutForLlmPrompt(layout);
+  const hook = String(blocks.hook_text_preview ?? "").trim();
+  if (hook) {
+    parts.push("", `reference_hook_preview: ${hook.length > 200 ? `${hook.slice(0, 200)}…` : hook}`);
+  }
+  const slimLayout = serializeSlideCopyLayoutMinimalForCopyGeneration(layout);
   if (slimLayout.length > 0) {
     parts.push(
       "",
-      `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject; visual_description = look; typography.text_placement = placement hint; text_blocks = role+text only; rephrase only):`,
+      `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject to rephrase; visual_description = look; rephrase only):`,
       trimMimicGroundingJson(JSON.stringify(slimLayout), maxGroundingJsonChars)
     );
-    const deckMeta = vgRaw
-      ? slimMimicDeckMetadataForLlmCopy(vgRaw as MimicCarouselVisualGuideline)
-      : {};
-    if (Object.keys(deckMeta).length > 0) {
-      parts.push(
-        "",
-        "mimic_deck_metadata (deck-level only — do not duplicate per-slide text from slide_copy_layout):",
-        trimMimicGroundingJson(JSON.stringify(deckMeta), Math.min(maxGroundingJsonChars, 12_000))
-      );
-    }
   } else if (vgRaw) {
-    const slimVg = slimMimicVisualGuidelineForLlmCopy(vgRaw as Record<string, unknown>);
-    parts.push(
-      "",
-      "mimic_visual_guideline_for_copy:",
-      trimMimicGroundingJson(JSON.stringify(slimVg), maxGroundingJsonChars)
-    );
+    const hookOnly = String(asRecord(vgRaw)?.hook_text_preview ?? "").trim();
+    if (hookOnly) {
+      parts.push("", `reference_hook_preview: ${hookOnly.length > 200 ? `${hookOnly.slice(0, 200)}…` : hookOnly}`);
+    }
   }
   parts.push("", MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
   parts.push(

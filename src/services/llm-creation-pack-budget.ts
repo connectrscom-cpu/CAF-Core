@@ -314,7 +314,7 @@ export function budgetSignalPackContextForLlm(
   return o;
 }
 
-function slimCandidateForMimicLlm(candidate: Record<string, unknown>): Record<string, unknown> {
+export function slimCandidateForMimicLlm(candidate: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const k of [
     "idea_id",

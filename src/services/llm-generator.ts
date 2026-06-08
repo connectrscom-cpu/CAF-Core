@@ -42,10 +42,8 @@ import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
-import { slimMimicVisualGuidelineForLlmCopy } from "../domain/mimic-carousel-package.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
-  contentSlideIndicesFromMimic,
   countRenderableMimicCarouselSlides,
   filterSlideCopyLayoutForMimic,
   mimicCarouselSlideCountRetryFooter,
@@ -123,7 +121,8 @@ function truncateForContext(s: string, maxChars: number, label: string): string 
 }
 
 /** Leave room for carousel completion tokens under OpenAI 128k context (dense JSON ≈ 2.8 chars/token). */
-const OPENAI_128K_MESSAGE_CHAR_BUDGET = 340_000;
+/** ~128k tokens ≈ 90–110k chars for JSON-heavy mimic prompts (340k allowed 200k+ tokens). */
+const OPENAI_128K_MESSAGE_CHAR_BUDGET = 96_000;
 const MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS = 120_000;
 
 function shrinkMimicCarouselPromptsIfNeeded(opts: {
@@ -515,23 +514,18 @@ export async function generateForJob(
   const mimicForCopy = pickMimicPayload(payload);
   const mimicRenderContextFromPayload = asRecord(payload.mimic_render_context);
   const mimicJobGrounding = asRecord(payload.mimic_job_grounding);
-  if (mimicJobGrounding) {
-    templateContext.mimic_job_grounding = mimicJobGrounding;
-  }
+  let mimicHookPreview: string | null = null;
   if (mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)) {
     const copyLayout = Array.isArray(mimicJobGrounding?.slide_copy_layout)
       ? mimicJobGrounding!.slide_copy_layout
       : [];
     const copyLayoutLen = copyLayout.length;
-    const contentIndices = contentSlideIndicesFromMimic(mimicForCopy);
-    if (mimicForCopy.visual_guideline) {
-      templateContext.mimic_visual_guideline_for_copy = slimMimicVisualGuidelineForLlmCopy(
-        mimicForCopy.visual_guideline as unknown as Record<string, unknown>,
-        contentIndices.length > 0 ? { content_slide_indices: contentIndices } : undefined
-      );
-    } else if (mimicJobGrounding?.visual_guideline_for_copy) {
-      templateContext.mimic_visual_guideline_for_copy = mimicJobGrounding.visual_guideline_for_copy;
+    const vgForHook = mimicForCopy.visual_guideline ?? mimicJobGrounding?.visual_guideline_for_copy;
+    mimicHookPreview = String(asRecord(vgForHook)?.hook_text_preview ?? "").trim() || null;
+    if (mimicForCopy.twist_brief) {
+      templateContext.mimic_twist_brief = mimicForCopy.twist_brief;
     }
+    /** Flags for slim `{{creation_pack_json}}` — full grounding is appended separately, minimally. */
     templateContext.mimic_render_context =
       mimicRenderContextFromPayload ??
       (mimicForCopy.visual_guideline
@@ -548,6 +542,9 @@ export async function generateForJob(
           slide_count: targetSlides,
         };
       }
+    }
+    if (mimicForCopy.visual_guideline) {
+      templateContext.mimic_visual_guideline_for_copy = { hook_text_preview: mimicHookPreview };
     }
   }
   if (isVideoFlow(job.flow_type)) {
@@ -626,20 +623,20 @@ export async function generateForJob(
     }
   }
 
+  const mimicSlideCopyLayout =
+    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForCopy != null
+      ? filterSlideCopyLayoutForMimic(mimicForCopy, buildSlideCopyLayoutForLlmFromPayload(payload))
+      : isTopPerformerMimicCarouselFlow(job.flow_type)
+        ? buildSlideCopyLayoutForLlmFromPayload(payload)
+        : [];
+
   if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
     userPrompt = appendMimicGroundedReferenceToUserPrompt(
       userPrompt,
       {
-        mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
         mimic_render_context: templateContext.mimic_render_context,
-        mimic_job_grounding: templateContext.mimic_job_grounding,
-        slide_copy_layout:
-          mimicForCopy != null
-            ? filterSlideCopyLayoutForMimic(
-                mimicForCopy,
-                buildSlideCopyLayoutForLlmFromPayload(payload)
-              )
-            : buildSlideCopyLayoutForLlmFromPayload(payload),
+        hook_text_preview: mimicHookPreview,
+        slide_copy_layout: mimicSlideCopyLayout,
       },
       { maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS }
     );
@@ -728,12 +725,9 @@ export async function generateForJob(
   const mimicGroundingBlocks =
     isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForCopy != null
       ? {
-          mimic_visual_guideline_for_copy: templateContext.mimic_visual_guideline_for_copy,
           mimic_render_context: templateContext.mimic_render_context,
-          slide_copy_layout: filterSlideCopyLayoutForMimic(
-            mimicForCopy,
-            buildSlideCopyLayoutForLlmFromPayload(payload)
-          ),
+          hook_text_preview: mimicHookPreview,
+          slide_copy_layout: mimicSlideCopyLayout,
         }
       : undefined;
 

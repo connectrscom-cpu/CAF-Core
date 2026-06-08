@@ -295,6 +295,21 @@ function slimTextBlocksForLlmPrompt(raw: unknown): Array<{ role: string | null; 
   }));
 }
 
+/** Copy-generation only: per-slide meaning + short look — no placement geometry (render uses `mimic_v1`). */
+export function serializeSlideCopyLayoutMinimalForCopyGeneration(
+  layout: MimicSlideCopyLayoutForLlm[]
+): Array<{
+  slide_index: number;
+  reference_on_screen_text: string | null;
+  visual_description: string | null;
+}> {
+  return layout.map((row) => ({
+    slide_index: row.slide_index,
+    reference_on_screen_text: truncateSlideTextForLlm(row.reference_on_screen_text, 320),
+    visual_description: truncateSlideTextForLlm(row.visual_description, 180),
+  }));
+}
+
 /** Slim layout rows for mimic copy LLM — drops bbox/color geometry duplicated in job `mimic_v1`. */
 export function serializeSlideCopyLayoutForLlmPrompt(
   layout: MimicSlideCopyLayoutForLlm[]

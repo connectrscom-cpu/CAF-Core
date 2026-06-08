@@ -161,6 +161,39 @@ describe("llm-creation-pack-budget", () => {
     expect(out.top_performer_mimic_knowledge).toBeNull();
   });
 
+  it("slimContextForMimicCopyGeneration keeps only copy-start essentials", async () => {
+    const { slimContextForMimicCopyGeneration } = await import("./llm-generator-helpers.js");
+    const slim = slimContextForMimicCopyGeneration({
+      brand_constraints: { banned_words: ["bad"], voice: "warm", extra_blob: "x".repeat(5000) },
+      platform_constraints: { slide_min: 5, slide_max: 12 },
+      strategy: { thesis: "test thesis", unused: "y".repeat(4000) },
+      product_profile: { sku: "p".repeat(4000) },
+      signal_pack: { ideas_json: [{ id: "a", title: "big idea", aesthetic_analysis_json: { slides: [] } }] },
+      candidate: { idea_id: "a", title: "Hook", aesthetic_analysis_json: { slides: [] } },
+      signal_pack_publication_hints: { signal_pack_filtered_hashtags: ["#tag"] },
+      top_performer_mimic_knowledge: {
+        visual_guideline_cues: ["cue1", "cue2"],
+        content_format_groups: ["listicle"],
+        entries: [{ deck: "k".repeat(8000) }],
+      },
+      mimic_render_context: {
+        target_slide_count: 10,
+        copy_before_visual_mimic: true,
+        operator_note: "long note".repeat(200),
+      },
+      mimic_job_grounding: { slide_copy_layout: [{ slide_index: 1, text_blocks: [{ x: 0.1 }] }] },
+    });
+    expect(slim.brand_constraints).toEqual({ banned_words: ["bad"], voice: "warm" });
+    expect(slim.candidate).toEqual({ idea_id: "a", title: "Hook" });
+    expect(slim.signal_pack).toBeUndefined();
+    expect(slim.product_profile).toBeUndefined();
+    expect(slim.mimic_copy_job_brief).toEqual({
+      copy_before_visual_mimic: true,
+      target_slide_count: 10,
+    });
+    expect(JSON.stringify(slim).length).toBeLessThan(4_000);
+  });
+
   it("slimContextForCreationPackJson omits duplicate mimic carousel fields", () => {
     const slim = slimContextForCreationPackJson({
       strategy: { thesis: "ok" },

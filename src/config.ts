@@ -358,11 +358,11 @@ const envSchema = z.object({
    * Job-level `mimic_v1.visual_guideline` is injected separately — avoid duplicating full pack entries here.
    */
   /** Max JSON size for mimic-flow `{{creation_pack_json}}` (visual structure lives on job `mimic_v1`). */
-  LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(48_000),
+  LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(16_000),
   /** Tighter cap for `signal_pack` inside mimic creation packs (full pack default is too large). */
   LLM_MIMIC_SIGNAL_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(200_000).default(28_000),
   /** Max JSON chars for per-job mimic grounding (`slide_copy_layout` + deck metadata) appended to copy prompts. */
-  LLM_MIMIC_GROUNDING_JSON_MAX_CHARS: z.coerce.number().int().min(4000).max(200_000).default(80_000),
+  LLM_MIMIC_GROUNDING_JSON_MAX_CHARS: z.coerce.number().int().min(4000).max(200_000).default(24_000),
 
   /**
    * Learning contexts are injected both as individual placeholders and inside `{{creation_pack_json}}`.
