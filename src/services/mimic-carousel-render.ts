@@ -1051,16 +1051,26 @@ export async function renderMimicCarouselSlideFullBleed(
     promptOverrides?: MimicPromptOverrides | null;
     previousSlideUrl?: string | null;
     projectHandle?: string | null;
+    /** When true, Flux bakes on-image copy (skips art-only plate + HBS overlay). */
+    bakeTextOnImage?: boolean;
   }
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const item = referenceItemForMimicSlide(mimic, slideIndex);
   if (!item?.vision_fetch_url) throw new Error(`No reference URL for mimic slide ${slideIndex}`);
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
+  const hints = slideVisionHints(mimic, slideIndex);
 
   const basePrompt = mimicPromptForMode(
     "carousel_visual",
-    { index: slideIndex, artOnly: true },
+    {
+      index: slideIndex,
+      artOnly: opts?.bakeTextOnImage !== true,
+      onImageCopy: opts?.onImageCopy,
+      layout: hints.layout,
+      visual: hints.visual,
+      projectHandle: opts?.projectHandle,
+    },
     opts?.promptOverrides
   );
 
@@ -1068,14 +1078,56 @@ export async function renderMimicCarouselSlideFullBleed(
     referenceUrl,
     prompt: basePrompt,
     size: "1024x1536",
+    previousSlideUrl: opts?.previousSlideUrl || undefined,
     audit: {
       db,
       projectId: job.project_id,
       runId: job.run_id,
       taskId: job.task_id,
-      step: `mimic_slide_gen_${slideIndex}`,
+      step: opts?.bakeTextOnImage ? `mimic_slide_flux_text_${slideIndex}` : `mimic_slide_gen_${slideIndex}`,
     },
   });
+}
+
+/** Persist a finished carousel slide PNG (Flux or renderer) as CAROUSEL_SLIDE asset. */
+export async function persistCarouselSlidePng(
+  db: Pool,
+  config: AppConfig,
+  job: { task_id: string; project_id: string; run_id: string },
+  slideIndex: number,
+  buffer: Buffer,
+  mimeType: string,
+  provider: string
+): Promise<{ public_url: string | null; object_path: string }> {
+  const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const ext = mimeType.includes("jpeg") ? "jpg" : "png";
+  const objectPath = `carousels/${safeRun}/${safeTask}/slide_${String(slideIndex).padStart(3, "0")}.${ext}`;
+
+  let publicUrl: string | null = null;
+  let storedPath = objectPath;
+  try {
+    const up = await uploadBuffer(config, objectPath, buffer, mimeType);
+    publicUrl = up.public_url;
+    storedPath = up.object_path;
+  } catch {
+    // Supabase optional
+  }
+
+  await insertAsset(db, {
+    asset_id: `${job.task_id}__CAROUSEL_SLIDE_${slideIndex}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
+    task_id: job.task_id,
+    project_id: job.project_id,
+    asset_type: "CAROUSEL_SLIDE",
+    position: slideIndex - 1,
+    bucket: config.SUPABASE_ASSETS_BUCKET,
+    object_path: storedPath,
+    public_url: publicUrl,
+    provider,
+    metadata_json: { slide_index: slideIndex },
+  });
+
+  return { public_url: publicUrl, object_path: storedPath };
 }
 
 /** Upload art-only visual plate and return a fetchable URL for HBS compositing. */

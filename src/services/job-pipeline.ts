@@ -67,9 +67,12 @@ import {
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
   mimicCarouselNeedsBackgroundPlate,
+  composeMimicSlideOnBackground,
+  persistCarouselSlidePng,
   requireMimicSlideBackgroundPlate,
   persistMimicVisualPlateForSlide,
   renderMimicCarouselSlideFullBleed,
+  slideOnImageCopyFromSlides,
   filterPromotionalSlidesFromMimicPayload,
   reconcileFullBleedSlidePlansAtRender,
   reconcileMimicPayloadToOutputSlideCount,
@@ -1693,6 +1696,7 @@ async function processCarouselJob(
     isMimicCarousel && config.MIMIC_IMAGE_PROVIDER === "nvidia"
       ? await isNvidiaVisualGenAiReachable(config)
       : true;
+  const mimicCarouselTextViaFlux = Boolean(isMimicCarousel && config.MIMIC_CAROUSEL_TEXT_VIA_FLUX);
   let template = isMimicCarousel
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
     : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
@@ -1815,7 +1819,7 @@ async function processCarouselJob(
       const mimicCompositesOnPlate =
         isMimicCarousel && mimicPayload && (slideMode === "hbs" || slideMode === "full_bleed");
 
-      if (slideMode === "full_bleed" && mimicPayload) {
+      if (slideMode === "full_bleed" && mimicPayload && !mimicCarouselTextViaFlux) {
         const { buffer, mimeType } = await renderMimicCarouselSlideFullBleed(
           db,
           config,
@@ -1839,13 +1843,16 @@ async function processCarouselJob(
           const slideBg = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
           slideRenderBase = { ...renderBase, background_image_url: slideBg };
         }
-        const mimicTypo = mimicSlideTypographyPatch(mimicPayload, i, n, {
-          skipIfReviewerSet: renderBase as Record<string, unknown>,
-        });
-        slideRenderBase = { ...slideRenderBase, ...mimicSlideThemePatch(mimicPayload), ...mimicTypo };
+        if (!mimicCarouselTextViaFlux) {
+          const mimicTypo = mimicSlideTypographyPatch(mimicPayload, i, n, {
+            skipIfReviewerSet: renderBase as Record<string, unknown>,
+          });
+          slideRenderBase = { ...slideRenderBase, ...mimicSlideThemePatch(mimicPayload), ...mimicTypo };
+        }
       }
 
       const mimicStrictBgInline =
+        !mimicCarouselTextViaFlux &&
         mimicCompositesOnPlate &&
         (slideMode === "full_bleed" ||
           (slideMode === "hbs" && mimicCarouselNeedsBackgroundPlate(mimicPayload!)));
@@ -1871,11 +1878,76 @@ async function processCarouselJob(
         }
       }
 
+      if (mimicCarouselTextViaFlux && mimicPayload && slideMode) {
+        const onImageCopy = slideOnImageCopyFromSlides(usableSlides as Record<string, unknown>[], i);
+        const prevSlideUrl =
+          slideResults.length > 0 ? slideResults[slideResults.length - 1]?.public_url ?? null : null;
+        let fluxBuf: Buffer;
+        let fluxMime: string;
+        const fluxStarted = Date.now();
+        if (slideMode === "hbs") {
+          const bgUrl =
+            typeof slideRenderBase.background_image_url === "string"
+              ? slideRenderBase.background_image_url.trim()
+              : "";
+          if (!bgUrl) {
+            throw new Error(
+              `Mimic Flux compose requires background plate for ${job.task_id} slide ${i} (template_bg / hbs path)`
+            );
+          }
+          const composed = await composeMimicSlideOnBackground(db, config, job, bgUrl, i, {
+            onImageCopy,
+            promptOverrides: mimicPromptOverrides,
+            previousSlideUrl: prevSlideUrl,
+          });
+          fluxBuf = composed.buffer;
+          fluxMime = composed.mimeType;
+        } else {
+          const rendered = await renderMimicCarouselSlideFullBleed(db, config, job, mimicPayload, i, {
+            onImageCopy,
+            promptOverrides: mimicPromptOverrides,
+            previousSlideUrl: prevSlideUrl,
+            projectHandle: projectInstagramHandle,
+            bakeTextOnImage: true,
+          });
+          fluxBuf = rendered.buffer;
+          fluxMime = rendered.mimeType;
+        }
+        const fluxLatencyMs = Math.max(0, Date.now() - fluxStarted);
+        await tryInsertApiCallAudit(db, {
+          projectId: job.project_id,
+          runId: job.run_id,
+          taskId: job.task_id,
+          step: `mimic_flux_carousel_slide_${i}`,
+          provider: mimicImageProviderAssetLabel(config),
+          model: null,
+          ok: true,
+          requestJson: {
+            slide_index: i,
+            slide_mode: slideMode,
+            on_image_copy_chars: onImageCopy.length,
+          },
+          responseJson: { png_bytes: fluxBuf.length, latency_ms: fluxLatencyMs },
+          latencyMs: fluxLatencyMs,
+        });
+        const stored = await persistCarouselSlidePng(
+          db,
+          config,
+          job,
+          i,
+          fluxBuf,
+          fluxMime,
+          mimicImageProviderAssetLabel(config)
+        );
+        slideResults.push({ index: i, public_url: stored.public_url, object_path: stored.object_path });
+        continue;
+      }
+
       let ctx = buildSlideRenderContext(slideRenderBase, usableSlides, i, {
         instagramHandle: projectInstagramHandle,
         projectDisplayName,
       });
-      if (mimicUsesDocAiTextLayout && mimicPayload) {
+      if (mimicUsesDocAiTextLayout && mimicPayload && !mimicCarouselTextViaFlux) {
         const theme = inferMimicCarouselTheme(mimicPayload.visual_guideline);
         const llmSlide: Record<string, unknown> = {
           ...(ctx.current_slide && typeof ctx.current_slide === "object" && !Array.isArray(ctx.current_slide)
@@ -1992,10 +2064,10 @@ async function processCarouselJob(
        WHERE id = $2`,
       [
         JSON.stringify({
-          render_type: "template",
+          render_type: mimicCarouselTextViaFlux ? "mimic_flux" : "template",
           asset_type: "carousel",
-          template,
-          renderer: "carousel-renderer",
+          template: mimicCarouselTextViaFlux ? null : template,
+          renderer: mimicCarouselTextViaFlux ? mimicImageProviderAssetLabel(config) : "carousel-renderer",
           slide_count: n,
           slides: slideResults.map((s) => ({
             index: s.index,

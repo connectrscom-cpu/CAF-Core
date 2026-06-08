@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMimicCarouselSlideArtOnlyPrompt,
+  buildMimicCarouselSlidePrompt,
   buildMimicTemplateBackgroundPrompt,
+  buildMimicTemplateBgComposePrompt,
   DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT,
 } from "./mimic-prompt-builder.js";
 
@@ -27,5 +29,24 @@ describe("buildMimicTemplateBackgroundPrompt", () => {
     );
     expect(prompt).toContain("sunset hill");
     expect(prompt).toContain("text on photo");
+  });
+});
+
+describe("flux text-on-image prompts", () => {
+  it("compose prompt includes LLM copy by default", () => {
+    const prompt = buildMimicTemplateBgComposePrompt({ onImageCopy: "Aries loves change" });
+    expect(prompt).toContain("Aries loves change");
+    expect(prompt).not.toBe(DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT);
+  });
+
+  it("full-bleed with bakeText includes copy when artOnly is false", () => {
+    const prompt = buildMimicCarouselSlidePrompt({
+      slideIndex: 2,
+      artOnly: false,
+      onImageCopy: "Taurus steady",
+      layoutTemplate: "center stack",
+    });
+    expect(prompt).toContain("Taurus steady");
+    expect(prompt).toContain("center stack");
   });
 });

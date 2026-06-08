@@ -30,6 +30,14 @@ export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = DEFAULT_MIMIC_TEXT_R
 /** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
+/** Flux composes LLM copy onto a clean background plate (replaces HBS overlay). */
+export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT =
+  "This image is a clean background plate with text removed. Add the following on-image copy with legible typography matching the reference layout and hierarchy: {{copy_instruction}} {{consistency_instruction}} Keep background art unchanged outside text regions. Single polished 4:5 slide output.";
+
+export const DEFAULT_MIMIC_CAROUSEL_SLIDE_WITH_COPY_PROMPT =
+  "Recreate this carousel slide with strong visual similarity to the reference (~80%). {{layout_instruction}} {{visual_instruction}} {{consistency_instruction}} {{copy_instruction}} {{handle_instruction}} Render all on-image copy legibly; match text hierarchy and placement from the reference. Single polished 4:5 slide output.";
+
+/** @deprecated HBS overlay path — art-only plate extract. */
 export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
 // ─── Interpolation helpers ──────────────────────────────────────────────────
@@ -192,7 +200,8 @@ export function buildMimicCarouselSlidePrompt(
     : "";
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
   const intentInstruction = opts.intentInstruction?.trim() || "";
-  const template = overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT;
+  const template =
+    overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_WITH_COPY_PROMPT;
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForSlide(copy),
     on_image_copy: copy,
@@ -212,10 +221,16 @@ export function buildMimicTemplateBgComposePrompt(
   },
   overrides?: MimicPromptOverrides | null
 ): string {
-  const template = overrides?.template_bg_compose?.trim() || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT;
-  if (!overrides?.template_bg_compose?.trim()) return template;
+  const custom = overrides?.template_bg_compose?.trim();
+  const template = custom || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT;
   const copy = String(opts.onImageCopy ?? "").trim();
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
+  if (!custom) {
+    return interpolateMimicTemplate(template, {
+      copy_instruction: buildCopyInstructionForCompose(copy),
+      consistency_instruction: consistencyInstruction,
+    });
+  }
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForCompose(copy),
     consistency_instruction: consistencyInstruction,

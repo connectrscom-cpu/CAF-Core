@@ -207,6 +207,11 @@ const envSchema = z.object({
   MIMIC_IMAGE_BFL_OUTPUT_FORMAT: z.enum(["jpeg", "png", "webp"]).default("png"),
   /** When BFL edit is moderated, optionally retry via DashScope (off by default — BFL-only). */
   MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE: z.coerce.boolean().default(false),
+  /**
+   * When true, mimic carousel slides get on-image copy from the image model (BFL FLUX / configured provider)
+   * instead of Puppeteer HBS text overlay. template_bg still extracts a clean plate first, then composes copy via Flux.
+   */
+  MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(true),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
