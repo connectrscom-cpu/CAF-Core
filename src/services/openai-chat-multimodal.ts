@@ -2,7 +2,13 @@
  * OpenAI chat with multimodal user message (text + image_url parts) for vision models.
  */
 import type { Pool } from "pg";
+import { loadConfig } from "../config.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
+import {
+  buildGenericOpenAiMultimodalPlaceholderContent,
+  isOpenAiPlaceholderMode,
+  OPENAI_PLACEHOLDER_MODEL,
+} from "./openai-generation-placeholder.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import type { OpenAiAuditContext } from "./openai-chat.js";
 import {
@@ -50,6 +56,14 @@ export async function openaiChatMultimodal(
   audit?: OpenAiAuditContext | null,
   transport?: OpenAiMultimodalTransportOptions
 ): Promise<{ content: string; model: string; total_tokens: number }> {
+  if (isOpenAiPlaceholderMode(loadConfig())) {
+    return {
+      content: buildGenericOpenAiMultimodalPlaceholderContent(params.response_format),
+      model: OPENAI_PLACEHOLDER_MODEL,
+      total_tokens: 0,
+    };
+  }
+
   const apiUrl = transport?.endpoint?.trim() || OPENAI_API_URL;
   const auditProvider = transport?.provider?.trim() || "openai";
   const body: Record<string, unknown> = {

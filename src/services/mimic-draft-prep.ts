@@ -114,6 +114,7 @@ function buildMimicPayloadFromResolved(
     analysis_tier: resolved.analysis_tier,
     reference_tier_fallback: resolved.reference_tier_fallback ?? false,
     reference_items: normalizeMimicReferenceItems(resolved.reference_items),
+    archive_reference_items: normalizeMimicReferenceItems(resolved.reference_items),
     storage_folder_prefix: folder.storage_folder_prefix,
     storage_folder_label: folder.storage_folder_label,
     visual_guideline: visualGuideline as unknown as Record<string, unknown>,
@@ -186,6 +187,31 @@ async function resolveMimicPayloadForJob(
   return { ...built, resolved };
 }
 
+/** Restore full archived frames for jobs persisted before archive_reference_items existed. */
+export async function backfillMimicArchiveReferenceItems(
+  db: Pool,
+  job: {
+    project_id: string;
+    task_id: string;
+    flow_type: string;
+    generation_payload: Record<string, unknown>;
+  },
+  mimic: MimicPayloadV1
+): Promise<MimicPayloadV1> {
+  if (mimic.archive_reference_items?.length) return mimic;
+  try {
+    const lineage = await getJobLineageByTaskId(db, job.project_id, job.task_id);
+    if (!lineage) return mimic;
+    const candidateData = asRecord(job.generation_payload.candidate_data);
+    const resolved = resolveMimicReferenceFromLineage(job.flow_type, lineage, candidateData);
+    const archive = normalizeMimicReferenceItems(resolved.reference_items);
+    if (archive.length === 0) return mimic;
+    return { ...mimic, archive_reference_items: archive };
+  } catch {
+    return mimic;
+  }
+}
+
 async function persistGenerationPayload(
   db: Pool,
   jobId: string,
@@ -216,9 +242,13 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
 
   const existing = pickMimicPayload(job.generation_payload);
   if (existing?.reference_items?.length) {
+    const archive = existing.archive_reference_items?.length
+      ? normalizeMimicReferenceItems(existing.archive_reference_items)
+      : normalizeMimicReferenceItems(existing.reference_items);
     const normalized = {
       ...existing,
       reference_items: normalizeMimicReferenceItems(existing.reference_items),
+      archive_reference_items: archive,
     };
     const { mimic: filtered, removed_slide_indices } =
       filterPromotionalSlidesFromMimicPayload(normalized);

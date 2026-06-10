@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  CarouselSlideReworkPicker,
+  slideIndicesFromEditsSummary,
+} from "@/components/CarouselSlideReworkPicker";
 import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import type { DecisionValue } from "@/lib/types";
 
@@ -67,6 +71,12 @@ export interface DecisionPanelProps {
   showCarouselTemplateControl?: boolean;
   /** From last NEEDS_EDIT: true = “different template”; false/undefined = keep current (default). */
   existingCarouselReworkChangeTemplate?: boolean;
+  /** Carousel flows: number of slides in the deck (for partial rework picker). */
+  carouselSlideCount?: number;
+  /** Show per-slide re-render picker on Needs Edit. */
+  showCarouselSlideRework?: boolean;
+  /** Restored from last NEEDS_EDIT `slide_rework_indices`. */
+  existingSlideReworkIndices?: number[];
 }
 
 export function DecisionPanel({
@@ -95,6 +105,9 @@ export function DecisionPanel({
   existingRegenerate,
   showCarouselTemplateControl = false,
   existingCarouselReworkChangeTemplate,
+  carouselSlideCount = 0,
+  showCarouselSlideRework = false,
+  existingSlideReworkIndices,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
@@ -110,6 +123,18 @@ export function DecisionPanel({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedMessage, setSubmittedMessage] = useState<string | null>(null);
+  const [slideReworkPartial, setSlideReworkPartial] = useState(true);
+  const [slideReworkIndices, setSlideReworkIndices] = useState<number[]>([]);
+
+  const defaultEditedSlideIndices = slideIndicesFromEditsSummary(editsSummary);
+
+  const handleSlideReworkChange = useCallback(
+    (state: { partialRework: boolean; selectedIndices: number[] }) => {
+      setSlideReworkPartial(state.partialRework);
+      setSlideReworkIndices(state.selectedIndices);
+    },
+    []
+  );
 
   useEffect(() => {
     setRewriteCopy(existingRewriteCopy !== false);
@@ -142,6 +167,16 @@ export function DecisionPanel({
         const s = String(t).toLowerCase().trim();
         return s !== "carousel_template_change" && s !== "change_template";
       });
+    }
+    if (
+      effectiveDecision === "NEEDS_EDIT" &&
+      showCarouselSlideRework &&
+      slideReworkPartial &&
+      slideReworkIndices.length === 0
+    ) {
+      setError("Select at least one slide to re-render, or turn off “Re-render selected slides only”.");
+      setSubmitting(false);
+      return;
     }
     try {
       const res = await fetch("/api/task/decision", {
@@ -179,6 +214,12 @@ export function DecisionPanel({
           regenerate: regenerateAssets,
           ...(showCarouselTemplateControl && effectiveDecision === "NEEDS_EDIT"
             ? { carousel_rework_change_template: carouselReworkChangeTemplate }
+            : {}),
+          ...(effectiveDecision === "NEEDS_EDIT" &&
+          showCarouselSlideRework &&
+          slideReworkPartial &&
+          slideReworkIndices.length > 0
+            ? { slide_rework_indices: slideReworkIndices }
             : {}),
         }),
       });
@@ -220,6 +261,9 @@ export function DecisionPanel({
     regenerateAssets,
     showCarouselTemplateControl,
     carouselReworkChangeTemplate,
+    showCarouselSlideRework,
+    slideReworkPartial,
+    slideReworkIndices,
   ]);
 
   const toggleTag = (tag: string) => {
@@ -352,6 +396,18 @@ export function DecisionPanel({
           </div>
         </div>
       </div>
+
+      {showCarouselSlideRework &&
+        carouselSlideCount > 0 &&
+        (decision === "NEEDS_EDIT" || hasEdits) && (
+          <CarouselSlideReworkPicker
+            slideCount={carouselSlideCount}
+            defaultSelectedIndices={defaultEditedSlideIndices}
+            existingSelectedIndices={existingSlideReworkIndices}
+            onChange={handleSlideReworkChange}
+            disabled={submitting || !!submittedMessage}
+          />
+        )}
 
       {showCarouselTemplateControl && (decision === "NEEDS_EDIT" || hasEdits) && (
         <div

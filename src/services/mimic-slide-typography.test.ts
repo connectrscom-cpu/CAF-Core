@@ -151,7 +151,7 @@ describe("mimic-slide-typography", () => {
     expect(mimicPayloadHasDocAiTextLayout({ visual_guideline: { slides: [{ slide_index: 1 }] } })).toBe(false);
   });
 
-  it("buildMimicDocAiRenderTextLayers maps LLM copy onto Document AI geometry", () => {
+  it("buildMimicDocAiRenderTextLayers maps LLM copy onto Document AI geometry with px coords", () => {
     const layers = buildMimicDocAiRenderTextLayers(
       {
         visual_guideline: {
@@ -188,11 +188,54 @@ describe("mimic-slide-typography", () => {
     );
     expect(layers).toHaveLength(2);
     expect(layers[0]?.text).toBe("Fresh headline");
-    expect(layers[0]?.font_size_px).toBe(88);
+    expect(layers[0]?.x_px).toBe(130);
+    expect(layers[0]?.y_px).toBe(243);
+    expect(layers[0]?.w_px).toBe(821);
+    expect(layers[0]?.h_px).toBe(189);
+    expect(layers[0]?.layout_mode).toBe("single_line");
+    expect(layers[0]?.css_style).toContain("left:130px");
+    expect(layers[0]?.css_style).toContain("height:189px");
+    expect(layers[0]?.css_style).toContain("font-size:");
     expect(layers[0]?.color_hex).toBe("#ffffff");
-    expect(layers[0]?.css_style).toContain("left:12%");
-    expect(layers[0]?.css_style).toContain("font-size:88px");
     expect(layers[1]?.text).toBe("Fresh body copy");
-    expect(layers[1]?.font_size_px).toBe(40);
+    expect(layers[1]?.y_px).toBe(743);
+    expect(layers[1]?.layout_mode).toBe("single_line");
+  });
+
+  it("prefers document_ai_ocr_v1 text_layers geometry over text_blocks", () => {
+    const layers = buildMimicDocAiRenderTextLayers(
+      {
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              text_blocks: [
+                {
+                  text: "OLD",
+                  role: "headline",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.5, y: 0.5, w: 0.2, h: 0.1 },
+                },
+              ],
+              document_ai_ocr_v1: {
+                text_layers: [
+                  {
+                    text: "OLD",
+                    bbox_pct: { x: 0.1, y: 0.2, w: 0.8, h: 0.12 },
+                    font: { size_px: 72, color_hex: "#ff0000" },
+                    alignment: "center",
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+      1,
+      { headline: "New headline" }
+    );
+    expect(layers[0]?.x_px).toBe(108);
+    expect(layers[0]?.text_align).toBe("center");
+    expect(layers[0]?.color_hex).toBe("#ff0000");
   });
 });

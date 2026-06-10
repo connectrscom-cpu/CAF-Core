@@ -10,8 +10,8 @@ import {
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
 import { buildMimicCopyJobBriefForLlm } from "./mimic-render-context.js";
-import { contentReferenceIndicesForTemplate } from "./mimic-template-library.js";
-import { aestheticSlideRecords, referenceSlideExceedsOnScreenTextLimit } from "./mimic-text-heavy.js";
+import { resolveEffectiveContentSlideIndices } from "./mimic-content-slide-indices.js";
+import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
 
@@ -143,59 +143,7 @@ function totalReferenceFramesInEntry(entry: Record<string, unknown>): number {
  * Per-slide copy contract aligned to content frames only (skips promo/video indices from mimic_evaluation).
  */
 function contentIndicesForCopyLayout(entry: Record<string, unknown>, totalRefs: number): number[] {
-  const aes = asRecord(entry.aesthetic_analysis_json) ?? entry;
-  const raw = asRecord(aes.mimic_evaluation) ?? asRecord(entry.mimic_evaluation);
-  const fromEval = Array.isArray(raw?.content_slide_indices)
-    ? raw!.content_slide_indices.filter(
-        (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1
-      )
-    : [];
-  if (fromEval.length > 0) {
-    const skip = new Set(
-      Array.isArray(raw?.skip_slide_indices)
-        ? raw!.skip_slide_indices.filter((v: unknown): v is number => typeof v === "number")
-        : []
-    );
-    const filtered = fromEval.filter((i) => i <= totalRefs && !skip.has(i));
-
-    /**
-     * Guardrail: sometimes mimic_evaluation undercounts "content" slides in listicle decks
-     * (e.g. horoscope/zodiac decks where each frame is a short labeled content slide).
-     *
-     * If the evaluation yields a tiny subset but many slides clearly have on-screen text,
-     * treat those as content for copy generation so we keep the original deck length.
-     */
-    const slides = aestheticSlideRecords(entry)
-      .map((s) => asRecord(s))
-      .filter((s): s is Record<string, unknown> => s != null);
-    const textful = slides
-      .map((s) => {
-        const idx = Number(s.slide_index);
-        const t = String(s.on_screen_text_transcript ?? "").trim();
-        return { idx, hasText: t.length > 0 };
-      })
-      .filter((x) => Number.isFinite(x.idx) && x.idx >= 1 && x.idx <= totalRefs && x.hasText)
-      .map((x) => x.idx);
-    const uniqueTextful = Array.from(new Set(textful)).sort((a, b) => a - b);
-    const keptTextful = uniqueTextful.filter((i) => !skip.has(i));
-    const looksSeverelyUndercounted =
-      filtered.length > 0 &&
-      keptTextful.length >= 8 &&
-      filtered.length <= Math.max(3, Math.floor(keptTextful.length * 0.5));
-    if (looksSeverelyUndercounted) {
-      return keptTextful;
-    }
-
-    return filtered;
-  }
-  return contentReferenceIndicesForTemplate(entry, totalRefs);
-}
-
-function copyLayoutRowWithinTextLimit(row: MimicSlideCopyLayoutForLlm): boolean {
-  return !referenceSlideExceedsOnScreenTextLimit({
-    on_screen_text_transcript: row.reference_on_screen_text,
-    text_blocks: row.text_blocks,
-  });
+  return resolveEffectiveContentSlideIndices(entry, totalRefs);
 }
 
 export function buildContentSlideCopyLayoutFromEntry(
@@ -232,10 +180,7 @@ export function buildContentSlideCopyLayoutFromEntry(
     });
   }
 
-  const withinLimit = layout.filter(copyLayoutRowWithinTextLimit);
-  if (withinLimit.length === layout.length) return withinLimit;
-  if (withinLimit.length === 0) return layout;
-  return withinLimit.map((s, i) => ({ ...s, slide_index: i + 1 }));
+  return layout;
 }
 
 export function buildMimicJobPlanningGroundingFromEntry(

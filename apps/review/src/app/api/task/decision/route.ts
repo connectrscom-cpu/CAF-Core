@@ -75,6 +75,12 @@ export async function POST(request: NextRequest) {
       ...(typeof body.carousel_rework_change_template === "boolean" && {
         carousel_rework_change_template: body.carousel_rework_change_template,
       }),
+      ...(Array.isArray(body.slide_rework_indices) &&
+        body.slide_rework_indices.length > 0 && {
+          slide_rework_indices: body.slide_rework_indices
+            .map((v: unknown) => Math.floor(Number(v)))
+            .filter((n: number) => Number.isFinite(n) && n >= 1),
+        }),
     });
     if (!result.ok) {
       const st =

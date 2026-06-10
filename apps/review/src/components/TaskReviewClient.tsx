@@ -24,7 +24,7 @@ import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
 import { VideoReviewEdits } from "@/components/VideoReviewEdits";
 import { ImageReviewEdits } from "@/components/ImageReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
-import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
+import { isCarouselFlow, isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
@@ -332,6 +332,38 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     () => (flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false),
     [flowTypeStr]
   );
+  const carouselFlow = useMemo(
+    () => (flowTypeStr ? isCarouselFlow(flowTypeStr) : false),
+    [flowTypeStr]
+  );
+
+  const carouselSlideCount = useMemo(() => {
+    const fromCopy = Math.max(editedSlides.length, initialSlides.length);
+    const fromAssets = taskAssets.length;
+    const gp = fullJob?.generation_payload;
+    const manifest =
+      gp && typeof gp === "object" && !Array.isArray(gp)
+        ? (gp as Record<string, unknown>).render_manifest
+        : null;
+    const manifestCount =
+      manifest && typeof manifest === "object" && !Array.isArray(manifest)
+        ? Number((manifest as Record<string, unknown>).slide_count)
+        : 0;
+    const fromManifestSlides = Array.isArray((manifest as Record<string, unknown> | null)?.slides)
+      ? ((manifest as Record<string, unknown>).slides as unknown[]).length
+      : 0;
+    return Math.max(fromCopy, fromAssets, manifestCount, fromManifestSlides, 0);
+  }, [editedSlides.length, initialSlides.length, taskAssets.length, fullJob]);
+
+  const existingSlideReworkIndices = useMemo(() => {
+    const raw = (data?.slide_rework_indices ?? "").trim();
+    if (!raw) return undefined;
+    const parsed = raw
+      .split(/[,\s]+/)
+      .map((s) => Math.floor(Number(s)))
+      .filter((n) => Number.isFinite(n) && n >= 1);
+    return parsed.length > 0 ? parsed : undefined;
+  }, [data?.slide_rework_indices]);
   const mediaPrompt = (data?.generated_video_prompt ?? "").trim();
   const videoPromptLabel = heygenWorkbench ? "HeyGen" : "Video";
   const imagePromptLabel = "Image";
@@ -792,7 +824,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
               skipImageRegeneration={imageFlow ? skipImageRegeneration : undefined}
-              showCarouselTemplateControl={!videoFlow && !imageFlow}
+              showCarouselTemplateControl={carouselFlow && !videoFlow && !imageFlow}
+              showCarouselSlideRework={carouselFlow && !videoFlow && !imageFlow}
+              carouselSlideCount={carouselSlideCount}
+              existingSlideReworkIndices={existingSlideReworkIndices}
               existingCarouselReworkChangeTemplate={
                 data.carousel_rework_change_template === "true"
                   ? true

@@ -184,6 +184,26 @@ function cafCarouselTypographyStyleTag(context) {
   return `<style id="caf-carousel-typography">:root{${parts.join(";")}}</style>`;
 }
 
+async function fitDocAiTextLayersToBoxes(page) {
+  await page.evaluate(() => {
+    const layers = document.querySelectorAll(".mimic-docai-layer");
+    for (const el of layers) {
+      const style = el.style;
+      const maxH = parseFloat(style.height);
+      const maxW = parseFloat(style.width);
+      if (!Number.isFinite(maxH) || !Number.isFinite(maxW) || maxH <= 0 || maxW <= 0) continue;
+      let fs = parseFloat(getComputedStyle(el).fontSize);
+      if (!Number.isFinite(fs) || fs <= 0) continue;
+      const minFs = 10;
+      let guard = 0;
+      while (guard++ < 140 && fs > minFs && (el.scrollHeight > maxH + 2 || el.scrollWidth > maxW + 2)) {
+        fs -= 1;
+        style.fontSize = `${fs}px`;
+      }
+    }
+  });
+}
+
 async function hardenPageForFastRendering(page) {
   // Many templates are fully self-contained; when they are not, external resources can cause long hangs.
   // Block http(s) requests to keep render time bounded and reduce Chromium flakiness.
@@ -243,6 +263,15 @@ async function renderSlide(b, slideIndex) {
         RENDER_TIMEOUT_MS + 5_000,
         "page.setContent"
       );
+
+      const renderCtx =
+        context?.render && typeof context.render === "object" && !Array.isArray(context.render)
+          ? context.render
+          : {};
+      const useDocAiLayers = Boolean(context?.mimic_use_docai_layers ?? renderCtx.mimic_use_docai_layers);
+      if (useDocAiLayers) {
+        await fitDocAiTextLayersToBoxes(page);
+      }
 
       const slides = await page.$$(".slide");
       const idx = (slideIndex ?? 1) - 1;

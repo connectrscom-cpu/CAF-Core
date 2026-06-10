@@ -12,6 +12,7 @@ import {
   mimicCarouselNeedsBackgroundPlate,
   reconcileFullBleedSlidePlansAtRender,
   reconcileMimicPayloadToOutputSlideCount,
+  contentSourceSlideIndicesForMimic,
   referenceItemForMimicSlide,
   requireMimicSlideBackgroundPlate,
   slideMimicRenderMode,
@@ -162,7 +163,7 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
     expect(isExcessiveOnScreenTextSlide(mimicLong, 2)).toBe(true);
   });
 
-  it("filterPromotionalSlidesFromMimicPayload removes text-heavy frames and renumbers", () => {
+  it("filterPromotionalSlidesFromMimicPayload keeps nemotron-only dense text but switches to hbs", () => {
     const mimic = baseMimic({
       slides: [
         { slide_index: 1, on_screen_text_transcript: "short hook", slide_purpose: "content" },
@@ -180,11 +181,40 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg" },
     ];
     const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
-    // Dense on-screen text should not remove the slide; it should force HBS overlay for that frame.
     expect(removed_slide_indices).toEqual([]);
     expect(out.reference_items).toHaveLength(3);
     expect(out.slide_plans).toHaveLength(3);
     expect(out.slide_plans?.[1]?.render_mode).toBe("hbs");
+  });
+
+  it("filterPromotionalSlidesFromMimicPayload drops Document AI-confirmed excessive text slides", () => {
+    const mimic = baseMimic({
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "short hook", slide_purpose: "content" },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "short nemotron stub",
+          slide_purpose: "content",
+          document_ai_ocr_v1: {
+            schema_version: "document_ai_ocr_v1",
+            slide_index: 2,
+            full_text: "p".repeat(601),
+            text_layers: [],
+            token_count: 12,
+          },
+        },
+        { slide_index: 3, on_screen_text_transcript: "another short", slide_purpose: "content" },
+      ],
+    });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg", source_slide_index: 2 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg", source_slide_index: 3 },
+    ];
+    const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(removed_slide_indices).toEqual([2]);
+    expect(out.reference_items).toHaveLength(2);
+    expect(out.reference_items[1]?.source_slide_index).toBe(3);
   });
 
   it("filterPromotionalSlidesFromMimicPayload removes promo frames and renumbers", () => {
@@ -352,7 +382,48 @@ describe("requireMimicSlideBackgroundPlate", () => {
 });
 
 describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutputSlideCount", () => {
-  it("caps output count to generated copy slides", () => {
+  it("maps expanded slides through content source indices when promo frame is omitted", () => {
+    const mimic = baseMimic({
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "aries", slide_purpose: "content" },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "use my link in bio for cash back",
+          slide_purpose: "self_promo",
+        },
+        { slide_index: 3, on_screen_text_transcript: "taurus", slide_purpose: "content" },
+      ],
+    });
+    mimic.archive_reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2promo.jpg", source_slide_index: 2 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg", source_slide_index: 3 },
+    ];
+    mimic.reference_items = [mimic.archive_reference_items[0]!];
+    expect(contentSourceSlideIndicesForMimic(mimic, 2)).toEqual([1, 3]);
+    const reconciled = reconcileMimicPayloadToOutputSlideCount(mimic, 2);
+    expect(reconciled.reference_items[1]?.vision_fetch_url).toContain("/3.jpg");
+    expect(reconciled.reference_items[1]?.source_slide_index).toBe(3);
+    expect(reconciled.slide_plans?.[1]?.source_slide_index).toBe(3);
+  });
+
+  it("expands reference items when LLM copy exceeds stored references", () => {
+    const mimic = baseMimic({});
+    mimic.archive_reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg", source_slide_index: 2 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg", source_slide_index: 3 },
+      { index: 4, role: "carousel_slide", vision_fetch_url: "https://example.com/4.jpg", source_slide_index: 4 },
+    ];
+    mimic.reference_items = [mimic.archive_reference_items[0]!];
+    expect(expectedMimicCarouselOutputSlideCount(mimic, 4)).toBe(4);
+    const reconciled = reconcileMimicPayloadToOutputSlideCount(mimic, 4);
+    expect(reconciled.reference_items).toHaveLength(4);
+    expect(reconciled.reference_items[3]?.vision_fetch_url).toContain("/4.jpg");
+    expect(reconciled.slide_plans).toHaveLength(4);
+  });
+
+  it("trims reference items when LLM copy is shorter than references", () => {
     const mimic = baseMimic({});
     mimic.reference_items = [
       { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg" },
@@ -367,7 +438,7 @@ describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutpu
     expect(reconciled.slide_plans?.[1]?.slide_index).toBe(2);
   });
 
-  it("filters reference items outside content_slide_indices", () => {
+  it("keeps all text slides when content_slide_indices is a narrow subset", () => {
     const mimic = baseMimic({
       mimic_evaluation: {
         content_slide_indices: [1, 3],
@@ -387,10 +458,8 @@ describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutpu
       { index: 4, role: "carousel_slide", vision_fetch_url: "https://example.com/4.jpg", source_slide_index: 4 },
     ];
     const { mimic: filtered, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
-    expect(filtered.reference_items).toHaveLength(2);
-    expect(filtered.reference_items[0]?.source_slide_index).toBe(1);
-    expect(filtered.reference_items[1]?.source_slide_index).toBe(3);
-    expect(removed_slide_indices).toEqual(expect.arrayContaining([2, 4]));
+    expect(filtered.reference_items).toHaveLength(4);
+    expect(removed_slide_indices).toEqual([]);
   });
 });
 

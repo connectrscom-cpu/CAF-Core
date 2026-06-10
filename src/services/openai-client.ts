@@ -2,7 +2,9 @@
  * Shared OpenAI HTTP helpers for CAF services (chat + JSON).
  */
 
+import { loadConfig } from "../config.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
+import { isOpenAiPlaceholderMode, openAiPlaceholderChatResult } from "./openai-generation-placeholder.js";
 
 const OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -21,6 +23,16 @@ export async function openaiChatCompletion(params: {
   max_tokens?: number;
   jsonObject?: boolean;
 }): Promise<{ content: string; model: string; total_tokens: number }> {
+  if (isOpenAiPlaceholderMode(loadConfig())) {
+    return openAiPlaceholderChatResult({
+      model: params.model,
+      system_prompt: params.system,
+      user_prompt: params.user,
+      max_tokens: params.max_tokens ?? 4000,
+      response_format: params.jsonObject ? "json_object" : "text",
+    });
+  }
+
   const body: Record<string, unknown> = {
     model: params.model,
     messages: [

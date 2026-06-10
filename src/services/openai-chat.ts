@@ -2,7 +2,9 @@
  * Shared OpenAI chat.completions call for CAF generators.
  */
 import type { Pool } from "pg";
+import { loadConfig } from "../config.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
+import { isOpenAiPlaceholderMode, openAiPlaceholderChatResult } from "./openai-generation-placeholder.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
@@ -46,6 +48,10 @@ export async function openaiChat(
   params: OpenAiChatParams,
   audit?: OpenAiAuditContext | null
 ): Promise<{ content: string; model: string; total_tokens: number }> {
+  if (isOpenAiPlaceholderMode(loadConfig())) {
+    return openAiPlaceholderChatResult(params);
+  }
+
   const body: Record<string, unknown> = {
     model: params.model,
     messages: [

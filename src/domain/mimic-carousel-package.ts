@@ -5,7 +5,10 @@
 import type { MimicMode, MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "./mimic-payload.js";
 import { pickMimicPayload } from "./mimic-payload.js";
 import { parseMimicTextBlocks } from "../services/mimic-slide-typography.js";
-import { aestheticSlideRecords } from "./mimic-text-heavy.js";
+import {
+  aestheticSlideRecords,
+  shouldDropReferenceSlideForDocumentAiText,
+} from "./mimic-text-heavy.js";
 
 export type MimicCarouselRenderStrategy = "template_background" | "per_slide_mimic";
 
@@ -385,7 +388,9 @@ function stringFieldForLlm(v: unknown, max: number): string | null {
 export function buildMimicSlideCopyLayoutFromEntry(
   entry: Record<string, unknown>
 ): MimicSlideCopyLayoutForLlm[] {
-  const slides = aestheticSlideRecords(entry);
+  const slides = aestheticSlideRecords(entry).filter(
+    (s) => !shouldDropReferenceSlideForDocumentAiText(s)
+  );
   if (slides.length === 0) return [];
   return slides.map((s, i) => {
     const slide_index = Number(s.slide_index ?? i + 1) || i + 1;

@@ -6,6 +6,7 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
+import { isOpenAiPlaceholderMode } from "./openai-generation-placeholder.js";
 import { extractSpokenScriptText } from "./video-gen-fields.js";
 import {
   countWords,

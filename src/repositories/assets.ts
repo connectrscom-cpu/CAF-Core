@@ -78,3 +78,23 @@ export async function deleteCarouselSlideAssetsForTask(
     [projectId, taskId]
   );
 }
+
+/** Drop only carousel slide PNGs at the given 1-based slide indices (partial rework). */
+export async function deleteCarouselSlideAssetsAtPositions(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  slideIndices1Based: number[]
+): Promise<void> {
+  const positions = slideIndices1Based
+    .map((i) => Math.floor(i) - 1)
+    .filter((p) => Number.isFinite(p) && p >= 0);
+  if (positions.length === 0) return;
+  await db.query(
+    `DELETE FROM caf_core.assets
+     WHERE project_id = $1 AND task_id = $2
+       AND UPPER(COALESCE(asset_type, '')) = 'CAROUSEL_SLIDE'
+       AND position = ANY($3::int[])`,
+    [projectId, taskId, positions]
+  );
+}

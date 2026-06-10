@@ -199,8 +199,12 @@ const envSchema = z.object({
   /** Black Forest Labs API key (https://api.bfl.ai) when MIMIC_IMAGE_PROVIDER=bfl. */
   BFL_API_KEY: z.string().optional(),
   BFL_API_BASE: z.string().default("https://api.bfl.ai"),
-  /** Endpoint slug, e.g. flux-2-klein-4b, flux-2-klein-9b, flux-2-pro. */
+  /** Endpoint slug, e.g. flux-2-flex (typography), flux-2-klein-4b, flux-2-pro. */
   MIMIC_IMAGE_BFL_MODEL: z.string().default("flux-2-klein-4b"),
+  /** FLUX.2 [flex] only — inference steps (1–50); higher improves legible on-image text. */
+  MIMIC_IMAGE_BFL_STEPS: z.coerce.number().int().min(1).max(50).default(45),
+  /** FLUX.2 [flex] only — guidance scale (1.5–10); higher adheres to quoted copy. */
+  MIMIC_IMAGE_BFL_GUIDANCE: z.coerce.number().min(1.5).max(10).default(7),
   MIMIC_IMAGE_BFL_POLL_INTERVAL_MS: z.coerce.number().int().min(100).max(10_000).default(500),
   MIMIC_IMAGE_BFL_POLL_MAX_MS: z.coerce.number().int().min(5_000).max(600_000).default(180_000),
   MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: z.coerce.number().int().min(0).max(5).default(2),
@@ -208,10 +212,15 @@ const envSchema = z.object({
   /** When BFL edit is moderated, optionally retry via DashScope (off by default — BFL-only). */
   MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE: z.coerce.boolean().default(false),
   /**
-   * When true, mimic carousel slides get on-image copy from the image model (BFL FLUX / configured provider)
-   * instead of Puppeteer HBS text overlay. template_bg still extracts a clean plate first, then composes copy via Flux.
+   * When true, mimic carousel slides use a single-pass image edit from the reference frame with baked copy
+   * (BFL FLUX / configured provider) instead of Puppeteer HBS overlay or separate bg-extract + compose passes.
    */
   MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(true),
+  /**
+   * Full-bleed mimic copy length vs each slide's `reference_on_screen_text` (default 2/3).
+   * Lower = shorter on-image copy for Flux-baked text (e.g. 0.5 = half reference length).
+   */
+  MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE: z.coerce.number().min(0.2).max(1.5).default(0.5),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
@@ -240,6 +249,11 @@ const envSchema = z.object({
   MIMIC_IMAGE_DEFAULT_SIZE: z.enum(["1024x1024", "1536x1024", "1024x1536", "auto"]).default("1024x1536"),
 
   OPENAI_API_KEY: z.string().optional(),
+  /**
+   * `live` — call OpenAI chat/vision APIs when OPENAI_API_KEY is set.
+   * `placeholder` — skip all OpenAI text/vision generation; return deterministic stub copy (no network).
+   */
+  OPENAI_GENERATION_MODE: z.enum(["live", "placeholder"]).default("live"),
 
   /** Apify token for INPUTS scrapers (same as n8n Apify credentials / APIFY_API_TOKEN in .env). */
   APIFY_API_TOKEN: z.string().optional(),

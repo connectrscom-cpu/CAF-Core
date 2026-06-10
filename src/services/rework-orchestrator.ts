@@ -14,9 +14,11 @@ import {
   prepareContentJobForCaptionsOnlyRerun,
   processContentJobById,
   rerenderCarouselAfterEditorialOverride,
+  rerenderCarouselSlidesAtIndices,
   RenderNotReadyError,
 } from "./job-pipeline.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
   reviewRequestsCarouselTemplateChange,
@@ -47,7 +49,22 @@ import { runHeygenForContentJob } from "./heygen-renderer.js";
  *  - PARTIAL_REWRITE: full LLM re-run + render (same task_id, assets replaced).
  *  - FULL_REWORK: same as PARTIAL_REWRITE today (kept for auditing / future divergence).
  */
-export type ReworkMode = "OVERRIDE_ONLY" | "PARTIAL_NO_VIDEO" | "FULL_REWORK" | "PARTIAL_REWRITE";
+export type ReworkMode =
+  | "OVERRIDE_ONLY"
+  | "PARTIAL_NO_VIDEO"
+  | "FULL_REWORK"
+  | "PARTIAL_REWRITE"
+  | "SLIDE_PARTIAL_RENDER";
+
+/** 1-based carousel slide indices for partial re-render (mimic Flux / carousel renderer). */
+export function parseSlideReworkIndices(overrides: Record<string, unknown> | null | undefined): number[] {
+  if (!overrides || typeof overrides !== "object") return [];
+  const raw = overrides.slide_rework_indices ?? overrides.slide_rework_slides;
+  if (!Array.isArray(raw)) return [];
+  return [...new Set(raw.map((v) => Math.floor(Number(v))).filter((n) => Number.isFinite(n) && n >= 1))].sort(
+    (a, b) => a - b
+  );
+}
 
 export function inferReworkMode(review: {
   rejection_tags?: unknown;
@@ -198,8 +215,16 @@ export async function executeRework(
     };
   }
 
+  const slideReworkIndices = parseSlideReworkIndices(rev.overrides_json);
   let mode = inferReworkMode(rev);
-  if (mode === "OVERRIDE_ONLY" && !hasMeaningfulOverrides(rev.overrides_json)) {
+  if (
+    slideReworkIndices.length > 0 &&
+    job.flow_type &&
+    isCarouselFlow(job.flow_type) &&
+    !isOfflinePipelineFlow(job.flow_type)
+  ) {
+    mode = "SLIDE_PARTIAL_RENDER";
+  } else if (mode === "OVERRIDE_ONLY" && !hasMeaningfulOverrides(rev.overrides_json)) {
     mode = "PARTIAL_REWRITE";
   }
   /** Editorial “change template” requires a full carousel regen; override-only cannot swap `.hbs`. */
@@ -210,6 +235,72 @@ export async function executeRework(
     reviewRequestsCarouselTemplateChange(rev)
   ) {
     mode = "PARTIAL_REWRITE";
+  }
+
+  if (mode === "SLIDE_PARTIAL_RENDER") {
+    const gp: Record<string, unknown> = { ...(job.generation_payload ?? {}) };
+    const overrides = rev.overrides_json ?? {};
+    const gen = pickGeneratedOutputOrEmpty(gp);
+    const { structural, flat } = partitionEditorialOverrides(overrides);
+    const carouselOverride = Boolean(job.flow_type && isCarouselFlow(job.flow_type));
+    const platformRows = carouselOverride ? await listPlatformConstraints(db, projectId) : [];
+    const platformSlice = carouselOverride
+      ? resolvePlatformConstraintsForPack(platformRows, job.platform, job.flow_type)
+      : undefined;
+    let mergedOutput = applyEditorialFlatOverridesToGeneratedOutput(
+      { ...gen, ...structural },
+      flat,
+      platformSlice
+    );
+    appendReworkHistory(gp, {
+      kind: "before_slide_partial_rework",
+      draft_id: gp.draft_id ?? null,
+      generated_output: gen,
+      qc_result: gp.qc_result ?? null,
+      slide_rework_indices: slideReworkIndices,
+    });
+    gp.generated_output = mergedOutput;
+    gp.generation_reason = "REWORK_SLIDE_PARTIAL_RENDER";
+    await db.query(
+      `UPDATE caf_core.content_jobs SET
+        generation_payload = generation_payload || $1::jsonb,
+        status = 'RENDERING',
+        updated_at = now()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          generated_output: mergedOutput,
+          generation_reason: "REWORK_SLIDE_PARTIAL_RENDER",
+          rework_history: gp.rework_history,
+          human_feedback: {
+            notes: rev.notes,
+            rejection_tags: rev.rejection_tags,
+            editorial_overrides_json: overrides,
+            slide_rework_indices: slideReworkIndices,
+          },
+        }),
+        job.id,
+      ]
+    );
+    try {
+      await rerenderCarouselSlidesAtIndices(db, config, job.id, slideReworkIndices);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, mode, error: `Slide partial rework failed: ${msg}`, task_id: job.task_id };
+    }
+    await db.query(`UPDATE caf_core.content_jobs SET status = 'IN_REVIEW', updated_at = now() WHERE id = $1`, [
+      job.id,
+    ]);
+    await insertJobStateTransition(db, {
+      task_id: job.task_id,
+      project_id: projectId,
+      from_state: "NEEDS_EDIT",
+      to_state: "IN_REVIEW",
+      triggered_by: "human",
+      actor: "rework-orchestrator",
+    });
+    await insertReworkSupersedingReview(db, projectId, job, mode);
+    return { ok: true, mode, task_id: job.task_id };
   }
 
   if (mode === "OVERRIDE_ONLY") {

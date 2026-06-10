@@ -6,6 +6,7 @@ import type { MimicEvaluation, TemplateStorageQuality } from "./mimic-carousel-p
 
 export type { TemplateStorageQuality };
 import type { MimicPayloadV1 } from "./mimic-payload.js";
+import { resolveEffectiveContentSlideIndices } from "./mimic-content-slide-indices.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
@@ -136,29 +137,7 @@ export function contentReferenceIndicesForTemplate(
   entry: Record<string, unknown>,
   totalRefs: number
 ): number[] {
-  const eval_ = pickMimicEvaluationFromEntry(entry);
-  const skip = new Set(eval_?.skip_slide_indices ?? []);
-  const content = eval_?.content_slide_indices?.length
-    ? eval_.content_slide_indices.filter((i) => i >= 1 && i <= totalRefs && !skip.has(i))
-    : [];
-
-  let indices: number[];
-  if (content.length > 0) {
-    indices = content;
-  } else {
-    const slides = aestheticSlideRecords(entry);
-    const out: number[] = [];
-    for (let i = 1; i <= totalRefs; i++) {
-      if (skip.has(i)) continue;
-      const slide = slides.find((s) => Number(s.slide_index) === i) ?? slides[i - 1];
-      if (slide && slideIsPromotionalForLibrary(slide)) continue;
-      out.push(i);
-    }
-    indices = out.length > 0 ? out : Array.from({ length: totalRefs }, (_, i) => i + 1);
-  }
-
-  const withinTextLimit = indices.filter((i) => referenceSlideIndexWithinTextLimit(entry, i));
-  return withinTextLimit.length > 0 ? withinTextLimit : indices;
+  return resolveEffectiveContentSlideIndices(entry, totalRefs);
 }
 
 export type TemplateBgSlot = "cover" | "body" | "cta";

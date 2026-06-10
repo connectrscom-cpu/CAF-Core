@@ -163,6 +163,7 @@ import {
   DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP,
   type PlanCapGroupDef,
 } from "../decision_engine/default-plan-caps.js";
+import { parseProjectMimicBflModel } from "../domain/mimic-bfl-model.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
   LEGACY_FLOW_TYPE_TO_CANONICAL,
@@ -745,15 +746,30 @@ function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
       </div>`;
 }
 
-function renderPlanCapColumnsHtml(): string {
+function renderMimicBflModelPickerHtml(serverDefault: string): string {
+  return `
+      <div class="plan-cap-row plan-cap-row--select">
+        <label for="plan-cap-mimic-bfl-model">BFL image model</label>
+        <select id="plan-cap-mimic-bfl-model" title="Per-project BFL FLUX endpoint for mimic carousel + image renders. Empty uses server env default.">
+          <option value="">Server default (${esc(serverDefault)})</option>
+          <option value="flux-2-klein-4b">4b (Klein — fast)</option>
+          <option value="flux-2-flex">Flex (typography / on-image text)</option>
+        </select>
+      </div>`;
+}
+
+function renderPlanCapColumnsHtml(serverMimicBflModel: string): string {
   return PLAN_CAP_UI_CATEGORIES.map((cat) => {
     const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
     const rows = groups.map((g) => renderPlanCapRowHtml(g)).join("");
+    const mimicModelPicker =
+      cat.id === "top_performer_mimic" ? renderMimicBflModelPickerHtml(serverMimicBflModel) : "";
     return `
     <div class="plan-cap-col" data-plan-cap-cat="${esc(cat.id)}">
       <div class="plan-cap-col-title">${esc(cat.label)}</div>
       <p class="plan-cap-col-hint">${esc(cat.hint)}</p>
       ${rows}
+      ${mimicModelPicker}
     </div>`;
   }).join("");
 }
@@ -1799,6 +1815,16 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     };
     if ("max_jobs_per_flow_type" in body) {
       patch.max_jobs_per_flow_type = body.max_jobs_per_flow_type;
+    }
+    if ("mimic_image_bfl_model" in body) {
+      const raw = body.mimic_image_bfl_model;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.mimic_image_bfl_model = null;
+      } else {
+        const parsed = parseProjectMimicBflModel(raw);
+        if (!parsed) return { ok: false, error: "invalid mimic_image_bfl_model (use flux-2-klein-4b or flux-2-flex)" };
+        patch.mimic_image_bfl_model = parsed;
+      }
     }
     await upsertConstraints(db, project.id, mergeConstraintUpdate(existing, patch));
     return { ok: true };
@@ -3625,7 +3651,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
-    const planCapColumnsHtml = renderPlanCapColumnsHtml();
+    const planCapColumnsHtml = renderPlanCapColumnsHtml(config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b");
     const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
     const llmJobGenTitle = adminLlmPromptTitleAttr(
       "(per job) active flow template",
@@ -3665,6 +3691,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;margin-top:8px}
 .plan-cap-row label{font-size:12px;line-height:1.35;color:var(--text);cursor:pointer}
 .plan-cap-row input{width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text)}
+.plan-cap-row select{width:100%;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--card2);color:var(--text);font-size:12px}
 .sp-modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:2000;align-items:center;justify-content:center;padding:24px}
 .sp-modal-card{max-width:920px;max-height:90vh;overflow:auto;width:100%;position:relative}
 .sp-modal-table{width:100%;border-collapse:collapse;font-size:13px;margin:8px 0}
@@ -4313,6 +4340,7 @@ async function loadPlanningCaps(){
   const mHint=document.getElementById('plan-cap-mimic-hint');
   const vBtn=document.getElementById('plan-cap-video-save');
   const mBtn=document.getElementById('plan-cap-mimic-save');
+  const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
@@ -4335,6 +4363,7 @@ async function loadPlanningCaps(){
     CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=true;});
     VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
     TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=true;});
+    if(mModelSel)mModelSel.disabled=true;
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
     if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
     return;
@@ -4345,6 +4374,7 @@ async function loadPlanningCaps(){
   CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=false;});
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=false;});
+  if(mModelSel)mModelSel.disabled=false;
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
   if(mHint)mHint.textContent='Loading…';
@@ -4407,6 +4437,11 @@ async function loadPlanningCaps(){
       });
       if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Requires allowed flow types + MIMIC_IMAGE_ENABLED for carousel/image.';
     }
+    if(mModelSel){
+      const savedModel=d.constraints&&d.constraints.mimic_image_bfl_model;
+      const parsed=String(savedModel||'').trim();
+      mModelSel.value=(parsed==='flux-2-klein-4b'||parsed==='flux-2-flex')?parsed:'';
+    }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));
     if(chint)chint.textContent=msg;
@@ -4467,6 +4502,7 @@ async function saveVideoPlanningCaps(){
 async function saveMimicPlanningCaps(){
   if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
   const mBtn=document.getElementById('plan-cap-mimic-save');
+  const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
     var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
     var minp=document.getElementById('plan-cap-mimic-'+mg.id);
@@ -4493,6 +4529,9 @@ async function saveMimicPlanningCaps(){
       }
     }
     var body={_project:SLUG,max_jobs_per_flow_type:merged};
+    if(mModelSel){
+      body.mimic_image_bfl_model=(mModelSel.value||'').trim();
+    }
     var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var rawText=await r.text();
     var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}

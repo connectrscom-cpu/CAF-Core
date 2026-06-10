@@ -27,6 +27,8 @@ export interface MimicSlidePlan {
   slide_index: number;
   render_mode: MimicSlideRenderMode;
   reference_index: number;
+  /** 1-based index in the source Instagram deck (stable across promo/video drops). */
+  source_slide_index?: number | null;
 }
 
 export interface MimicPayloadV1 {
@@ -41,6 +43,8 @@ export interface MimicPayloadV1 {
   /** True when carousel/image tier was used as fallback for missing deep tier. */
   reference_tier_fallback?: boolean;
   reference_items: MimicReferenceItem[];
+  /** Full archived inspection frames before promo filtering — used to expand back to deck length at render. */
+  archive_reference_items?: MimicReferenceItem[];
   /** Supabase folder for archived inspection media (when present on guideline entry). */
   storage_folder_prefix?: string | null;
   storage_folder_label?: string | null;
@@ -97,6 +101,40 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     });
   }
   if (reference_items.length === 0) return null;
+
+  const parseRefList = (rawList: unknown): MimicReferenceItem[] => {
+    if (!Array.isArray(rawList)) return [];
+    const out: MimicReferenceItem[] = [];
+    for (const r of rawList) {
+      const o = asRecord(r);
+      if (!o) continue;
+      const url = String(o.vision_fetch_url ?? "").trim();
+      if (!url) continue;
+      const sourceSlide =
+        o.source_slide_index != null && Number.isFinite(Number(o.source_slide_index))
+          ? Number(o.source_slide_index)
+          : null;
+      out.push({
+        index: Number(o.index ?? out.length + 1) || out.length + 1,
+        role: String(o.role ?? "reference"),
+        vision_fetch_url: url,
+        preview_url: typeof o.preview_url === "string" ? o.preview_url : null,
+        bucket: typeof o.bucket === "string" && o.bucket.trim() ? o.bucket.trim() : null,
+        object_path:
+          typeof o.object_path === "string" && o.object_path.trim() ? o.object_path.trim() : null,
+        source_slide_index: sourceSlide != null && sourceSlide > 0 ? sourceSlide : null,
+        is_video_slide: o.is_video_slide === true,
+        content_type: typeof o.content_type === "string" ? o.content_type : null,
+        source_url: typeof o.source_url === "string" ? o.source_url : null,
+      });
+    }
+    return out;
+  };
+
+  const archive_reference_items = (() => {
+    const parsed = parseRefList(rec.archive_reference_items);
+    return parsed.length > 0 ? parsed : undefined;
+  })();
   const slide_plans: MimicSlidePlan[] | undefined = Array.isArray(rec.slide_plans)
     ? rec.slide_plans
         .map((s) => {
@@ -128,6 +166,7 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     analysis_tier: String(rec.analysis_tier ?? ""),
     reference_tier_fallback: rec.reference_tier_fallback === true,
     reference_items,
+    archive_reference_items,
     storage_folder_prefix:
       typeof rec.storage_folder_prefix === "string" && rec.storage_folder_prefix.trim()
         ? rec.storage_folder_prefix.trim()

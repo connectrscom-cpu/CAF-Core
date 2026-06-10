@@ -48,5 +48,8 @@ describe("flux text-on-image prompts", () => {
     });
     expect(prompt).toContain("Taurus steady");
     expect(prompt).toContain("center stack");
+    expect(prompt).toContain("~70%");
+    expect(prompt).toContain("variant");
+    expect(prompt).toContain("verbatim");
   });
 });

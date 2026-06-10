@@ -40,6 +40,11 @@ import {
 } from "./video-content-policy.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
+import {
+  buildJobGenerationPlaceholderOutput,
+  isOpenAiPlaceholderMode,
+  OPENAI_PLACEHOLDER_MODEL,
+} from "./openai-generation-placeholder.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
@@ -80,6 +85,10 @@ import {
   parseCarouselBodyCharScale,
   resolveCarouselBodyCharTargets,
 } from "./carousel-body-length.js";
+import {
+  buildMimicFullBleedCopyLengthSystemBlock,
+  parseMimicFullBleedCopyReferenceScale,
+} from "./mimic-full-bleed-copy-length.js";
 import {
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
   mergeCarouselTypographyFromHumanFeedback,
@@ -284,10 +293,10 @@ export async function generateForJob(
   const templateFlowType = resolveFlowEngineTemplateFlowType(job.flow_type);
   const wantSceneBundle = prefersVideoSceneBundleTemplate(templateFlowType, job.flow_type);
 
-  if (wantSceneBundle && apiKey.trim()) {
-    const appCfg = loadConfig();
+  const appCfgEarly = loadConfig();
+  if (wantSceneBundle && apiKey.trim() && !isOpenAiPlaceholderMode(appCfgEarly)) {
     /** Script-first scene assembly: spoken_script / video_script in payload before scene_bundle LLM. */
-    await ensureVideoScriptInPayload(db, appCfg, jobId).catch(() => {});
+    await ensureVideoScriptInPayload(db, appCfgEarly, jobId).catch(() => {});
     const refreshed = await qOne<{
       id: string;
       task_id: string;
@@ -640,6 +649,14 @@ export async function generateForJob(
       },
       { maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS }
     );
+    const mimicCopyBranchForLength =
+      mimicForCopy != null
+        ? mimicCarouselCopyBranch(mimicForCopy, asRecord(templateContext.mimic_render_context))
+        : "default";
+    if (mimicCopyBranchForLength === "full_bleed" && mimicSlideCopyLayout.length > 0) {
+      const scale = parseMimicFullBleedCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE);
+      systemPrompt = `${systemPrompt.trim()}\n\n${buildMimicFullBleedCopyLengthSystemBlock(mimicSlideCopyLayout, scale)}`.trim();
+    }
   }
 
   if (compiledLearning.merged_guidance.trim()) {
@@ -758,29 +775,55 @@ export async function generateForJob(
   const draftId = `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
   try {
-    let llmResult = await openaiChat(
-      apiKey,
-      {
-        model,
-        system_prompt: systemPrompt,
-        user_prompt: userPrompt,
-        max_tokens: maxTokens,
-        response_format:
-          outputSchemaRow || isCarouselFlow(job.flow_type) || wantSceneBundle ? "json_object" : "text",
-      },
-      {
-        db,
-        projectId: job.project_id,
-        runId: job.run_id,
-        taskId: job.task_id,
-        signalPackId,
-        step: `llm_primary_${templateFlowType}`,
-      }
-    );
+    const placeholderMode = isOpenAiPlaceholderMode(appCfg);
+    let llmResult: { content: string; model: string; total_tokens: number };
+    let parsedRaw: Record<string, unknown> | null;
 
-    let parsedRaw = parseJsonObjectFromLlmText(llmResult.content);
+    if (placeholderMode) {
+      parsedRaw = buildJobGenerationPlaceholderOutput({
+        flowType: job.flow_type,
+        payload,
+        mimicSlideCopyLayout,
+        wantSceneBundle,
+        sceneCount: {
+          min: appCfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MIN,
+          max: appCfg.SCENE_ASSEMBLY_TARGET_SCENE_COUNT_MAX,
+        },
+      });
+      llmResult = {
+        content: JSON.stringify(parsedRaw),
+        model: OPENAI_PLACEHOLDER_MODEL,
+        total_tokens: 0,
+      };
+      logPipelineEvent("info", "generate", "OpenAI placeholder copy (OPENAI_GENERATION_MODE=placeholder)", {
+        run_id: job.run_id,
+        task_id: job.task_id,
+        data: { flow_type: job.flow_type, want_scene_bundle: wantSceneBundle },
+      });
+    } else {
+      llmResult = await openaiChat(
+        apiKey,
+        {
+          model,
+          system_prompt: systemPrompt,
+          user_prompt: userPrompt,
+          max_tokens: maxTokens,
+          response_format:
+            outputSchemaRow || isCarouselFlow(job.flow_type) || wantSceneBundle ? "json_object" : "text",
+        },
+        {
+          db,
+          projectId: job.project_id,
+          runId: job.run_id,
+          taskId: job.task_id,
+          signalPackId,
+          step: `llm_primary_${templateFlowType}`,
+        }
+      );
+      parsedRaw = parseJsonObjectFromLlmText(llmResult.content);
+    }
 
-    if (!parsedRaw && wantSceneBundle) {
+    if (!parsedRaw && wantSceneBundle && !placeholderMode) {
       const appCfg = loadConfig();
       const strictSys = withSceneAssemblyPolicy(
         "You are a video scene planner. Return only one JSON object. No markdown or commentary.",
@@ -838,8 +881,30 @@ export async function generateForJob(
       const targetSlides = targetMimicCarouselCopySlideCount(payload, mimicForCount);
       if (targetSlides != null && targetSlides > 0) {
         let got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
-        if (got < targetSlides) {
-          const retryUser = `${userPrompt.trim()}${mimicCarouselSlideCountRetryFooter(targetSlides, got)}`;
+        if (got < targetSlides && placeholderMode) {
+          parsed = normalizeLlmParsedForSchemaValidation(
+            job.flow_type,
+            buildJobGenerationPlaceholderOutput({
+              flowType: job.flow_type,
+              payload,
+              mimicSlideCopyLayout,
+            })
+          );
+          got = countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: targetSlides });
+          llmResult = {
+            content: JSON.stringify(parsed),
+            model: OPENAI_PLACEHOLDER_MODEL,
+            total_tokens: llmResult.total_tokens,
+          };
+        }
+        if (got < targetSlides && !placeholderMode) {
+          const mimicBranch =
+            mimicForCount != null
+              ? mimicCarouselCopyBranch(mimicForCount, asRecord(payload.mimic_render_context))
+              : "default";
+          const retryUser = `${userPrompt.trim()}${mimicCarouselSlideCountRetryFooter(targetSlides, got, {
+            full_bleed_mimic: mimicBranch === "full_bleed",
+          })}`;
           const llmRetry = await openaiChat(
             apiKey,
             {
@@ -1020,7 +1085,8 @@ export async function generateForJob(
       appCfg.HEYGEN_ENFORCE_SPOKEN_SCRIPT_WORD_BOUNDS &&
       isVideoFlow(job.flow_type) &&
       shouldEnforceSpokenScriptWordLawOnFlow(job.flow_type) &&
-      apiKey.trim()
+      apiKey.trim() &&
+      !placeholderMode
     ) {
       const fe = await enforceSpokenScriptWordLawOnParsedOutput(
         db,

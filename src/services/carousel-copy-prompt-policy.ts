@@ -39,7 +39,7 @@ ${MIMIC_SEMANTIC_FIDELITY_COPY_RULES}
 /**
  * Top-performer mimic — `carousel_visual` branch. Art-only visual plate (~80% similarity) + HBS text overlay.
  */
-export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic visual carousel (visual plate + text overlay):
+export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic visual carousel (full-bleed / Flux-baked on-image text):
 - **Primary deliverable:** Complete per-slide copy for every slide (headline, body, kicker, CTA per schema). Render generates an art-only visual plate per slide, then composites this copy via HBS at the same screen region as Nemotron \`text_blocks\` / \`typography.text_placement\` (not a default top stack) — write for on-slide reading.
 - **Narrative:** Rephrase the reference deck slide-by-slide using \`slide_copy_layout\`. Match slide roles, line count, and approximate length (~80% structural similarity). Each slide's on-screen copy must preserve the **same meaning** as that slide's \`reference_on_screen_text\` and \`visual_description\` — rephrase only; never transcribe verbatim and never substitute a different sign, product, or topic on that slide.
 - **Do not inflate copy length:** Prefer *tight* rewrites that match the reference slide's reading length. If the reference slide is 1–2 short lines, keep your output to ~1–2 short lines; do not expand into a long paragraph that changes the “feel” of the slide.
@@ -48,4 +48,5 @@ ${MIMIC_SEMANTIC_FIDELITY_COPY_RULES}
 - **Caption / hashtags:** Include when the schema expects them; they are the Instagram post text, separate from on-slide fields.
 - **Slide count (required):** Output **exactly** \`mimic_render_context.target_slide_count\` slides — one per row in \`slide_copy_layout\` (same order). This is every content slide from the original post except promo/video frames in \`skipped_promotional_slide_indices\`. Do not skip or invent slides.
 - **No brand/app promo slides:** Do not write copy for sponsor frames, app download CTAs, cash-back offers, or "link in bio" promos — those reference slides are omitted from \`slide_copy_layout\`.
-- Obey all carousel structure rules above (hook → body slides → CTA, substantive bodies, @handle on CTA when provided).`;
+- **Ignore generic carousel "depth bar" / slide_min_chars** — obey the per-slide length caps block when present; short reference bubbles must stay short.
+- Obey carousel CTA / @handle rules when the schema expects them; do not inflate body slides beyond reference reading length.`;

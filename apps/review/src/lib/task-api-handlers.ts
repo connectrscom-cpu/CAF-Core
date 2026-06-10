@@ -79,6 +79,13 @@ export async function jsonTaskDetailResponse(
     ) {
       carouselReworkChangeTemplateStr = "true";
     }
+    const slideReworkRaw = latestOv.slide_rework_indices ?? latestOv.slide_rework_slides;
+    const slideReworkIndicesStr = Array.isArray(slideReworkRaw)
+      ? slideReworkRaw
+          .map((v) => Math.floor(Number(v)))
+          .filter((n) => Number.isFinite(n) && n >= 1)
+          .join(",")
+      : undefined;
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -112,6 +119,7 @@ export async function jsonTaskDetailResponse(
       regenerate:
         typeof latestOv.regenerate === "boolean" ? (latestOv.regenerate ? "true" : "false") : undefined,
       carousel_rework_change_template: carouselReworkChangeTemplateStr,
+      slide_rework_indices: slideReworkIndicesStr || undefined,
       overrides_from_last_review:
         overrideKeysTouched.length > 0
           ? overrideKeysTouched.map((k) => k.replace(/^final_/, "").replace(/_override$/, "")).join(", ")

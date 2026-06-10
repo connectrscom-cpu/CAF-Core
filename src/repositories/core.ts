@@ -24,6 +24,8 @@ export interface ConstraintRow {
   max_jobs_per_flow_type: Record<string, unknown>;
   /** Video router: script_avatar | prompt_avatar | no_avatar (migration 059). */
   video_routing?: unknown;
+  /** BFL FLUX slug override for mimic image edits (migration 066). */
+  mimic_image_bfl_model?: string | null;
 }
 
 export interface SuppressionRuleRow {
@@ -140,7 +142,8 @@ export async function getConstraints(db: Pool, projectId: string): Promise<Const
     db,
     `SELECT max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap,
             auto_validation_pass_threshold,
-            max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type
+            max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type,
+            mimic_image_bfl_model
      FROM caf_core.project_system_constraints WHERE project_id = $1`,
     [projectId]
   );
@@ -176,6 +179,7 @@ export type ConstraintsPatch = {
   max_carousel_jobs_per_run?: number | null;
   max_video_jobs_per_run?: number | null;
   max_jobs_per_flow_type?: unknown;
+  mimic_image_bfl_model?: string | null;
 };
 
 export function mergeConstraintUpdate(
@@ -190,6 +194,7 @@ export function mergeConstraintUpdate(
   max_carousel_jobs_per_run: number | null;
   max_video_jobs_per_run: number | null;
   max_jobs_per_flow_type: Record<string, number>;
+  mimic_image_bfl_model: string | null;
 } {
   return {
     max_daily_jobs:
@@ -226,6 +231,10 @@ export function mergeConstraintUpdate(
       patch.max_jobs_per_flow_type !== undefined
         ? normalizePerFlowCaps(patch.max_jobs_per_flow_type)
         : normalizePerFlowCaps(existing?.max_jobs_per_flow_type),
+    mimic_image_bfl_model:
+      patch.mimic_image_bfl_model !== undefined
+        ? patch.mimic_image_bfl_model
+        : existing?.mimic_image_bfl_model ?? null,
   };
 }
 
@@ -241,13 +250,14 @@ export async function upsertConstraints(
     max_carousel_jobs_per_run: number | null;
     max_video_jobs_per_run: number | null;
     max_jobs_per_flow_type: Record<string, number>;
+    mimic_image_bfl_model: string | null;
   }
 ): Promise<void> {
   await db.query(
     `INSERT INTO caf_core.project_system_constraints
       (project_id, max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap, auto_validation_pass_threshold,
-       max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+       max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type, mimic_image_bfl_model)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
      ON CONFLICT (project_id) DO UPDATE SET
        max_daily_jobs = EXCLUDED.max_daily_jobs,
        min_score_to_generate = EXCLUDED.min_score_to_generate,
@@ -257,6 +267,7 @@ export async function upsertConstraints(
        max_carousel_jobs_per_run = EXCLUDED.max_carousel_jobs_per_run,
        max_video_jobs_per_run = EXCLUDED.max_video_jobs_per_run,
        max_jobs_per_flow_type = EXCLUDED.max_jobs_per_flow_type,
+       mimic_image_bfl_model = EXCLUDED.mimic_image_bfl_model,
        updated_at = now()`,
     [
       projectId,
@@ -268,6 +279,7 @@ export async function upsertConstraints(
       row.max_carousel_jobs_per_run,
       row.max_video_jobs_per_run,
       JSON.stringify(row.max_jobs_per_flow_type),
+      row.mimic_image_bfl_model,
     ]
   );
 }

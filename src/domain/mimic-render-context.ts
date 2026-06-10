@@ -69,7 +69,7 @@ export function buildMimicRenderContextForLlm(
   } else if (isCarouselVisual) {
     render_sequence = "visual_plate_then_hbs_overlay";
     operator_note =
-      "Visual mimic path: produce exactly target_slide_count slides — one per reference frame in slide_copy_layout (promo/video frames already removed). Same per-slide meaning as reference (rephrase only). Render recreates each slide art-only (~80% visual similarity), then composites copy via HBS.";
+      "Visual mimic path: produce exactly target_slide_count slides — one per reference frame in slide_copy_layout (promo/video frames already removed). Same per-slide meaning as reference (rephrase only). Single-pass Flux edit (~70% visual similarity variant) bakes LLM copy onto each slide when MIMIC_CAROUSEL_TEXT_VIA_FLUX=1; otherwise art-only plate + HBS overlay.";
   } else {
     render_sequence = copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic";
     operator_note = copyBefore

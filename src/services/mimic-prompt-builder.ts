@@ -30,12 +30,17 @@ export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = DEFAULT_MIMIC_TEXT_R
 /** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
-/** Flux composes LLM copy onto a clean background plate (replaces HBS overlay). */
-export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT =
-  "This image is a clean background plate with text removed. Add the following on-image copy with legible typography matching the reference layout and hierarchy: {{copy_instruction}} {{consistency_instruction}} Keep background art unchanged outside text regions. Single polished 4:5 slide output.";
+/** ~70% visual match — same narrative role, clearly a variant not a clone. */
+export const MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION =
+  "Recreate this carousel slide as a creative variant (~70% visual similarity to the reference): keep the same narrative role and layout structure, but change art direction enough that it reads as a fresh post in the same series — alternate composition, palette, or styling; not a pixel-match clone.";
 
+/** @deprecated Two-pass template_bg compose — single-pass reference edit preferred when MIMIC_CAROUSEL_TEXT_VIA_FLUX=1. */
+export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT =
+  `${MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{consistency_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
+
+/** Single-pass Flux edit: mimic reference visuals + bake LLM copy (replaces HBS overlay). */
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_WITH_COPY_PROMPT =
-  "Recreate this carousel slide with strong visual similarity to the reference (~80%). {{layout_instruction}} {{visual_instruction}} {{consistency_instruction}} {{copy_instruction}} {{handle_instruction}} Render all on-image copy legibly; match text hierarchy and placement from the reference. Single polished 4:5 slide output.";
+  `${MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION} {{layout_instruction}} {{visual_instruction}} {{consistency_instruction}} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{handle_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
 
 /** @deprecated HBS overlay path — art-only plate extract. */
 export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
@@ -55,9 +60,9 @@ function buildCopyInstructionForSlide(copy: string): string {
   const headline = lines[0]?.trim() ?? "";
   const body = lines.slice(1).join("\n").trim();
   if (headline && body) {
-    return `Place this text on the slide using the same text hierarchy and positioning as the reference. Headline: """${headline.slice(0, 400)}""" Body: """${body.slice(0, 800)}""".`;
+    return `Render this exact new copy verbatim with legible typography and the same hierarchy/positioning as the reference. Headline: """${headline.slice(0, 400)}""" Body: """${body.slice(0, 800)}""".`;
   }
-  return `Place this short text on the slide matching the reference text positioning: """${copy.slice(0, 400)}""".`;
+  return `Render this exact new copy verbatim, legibly, matching reference text positioning: """${copy.slice(0, 400)}""".`;
 }
 
 function buildCopyInstructionForCompose(copy: string): string {

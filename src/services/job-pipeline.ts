@@ -20,6 +20,7 @@ import {
   insertAsset,
   deleteAssetsForTask,
   deleteCarouselSlideAssetsForTask,
+  deleteCarouselSlideAssetsAtPositions,
   listAssetsByTask,
 } from "../repositories/assets.js";
 import { getProjectById } from "../repositories/core.js";
@@ -55,6 +56,7 @@ import {
   prepareMimicDraftPackage,
   ensureMimicReferenceBeforeCopyGeneration,
   ensureMimicTemplateBackgroundsBeforeCopy,
+  backfillMimicArchiveReferenceItems,
 } from "./mimic-draft-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
 import {
@@ -67,7 +69,6 @@ import {
   assertMimicSlideBackgroundPresent,
   effectiveMimicSlideRenderMode,
   mimicCarouselNeedsBackgroundPlate,
-  composeMimicSlideOnBackground,
   persistCarouselSlidePng,
   requireMimicSlideBackgroundPlate,
   persistMimicVisualPlateForSlide,
@@ -75,6 +76,7 @@ import {
   slideOnImageCopyFromSlides,
   filterPromotionalSlidesFromMimicPayload,
   reconcileFullBleedSlidePlansAtRender,
+  alignMimicSlidePlansToReferences,
   reconcileMimicPayloadToOutputSlideCount,
   expectedMimicCarouselOutputSlideCount,
   targetMimicCarouselCopySlideCount,
@@ -92,6 +94,7 @@ import {
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
+import { loadProjectMimicBflModel } from "./mimic-project-config.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -283,6 +286,7 @@ async function processJobUpToRender(
 
   const openaiKey = config.OPENAI_API_KEY;
   const openaiModel = config.OPENAI_MODEL ?? "gpt-4o";
+  const openAiPlaceholder = config.OPENAI_GENERATION_MODE === "placeholder";
 
   if (job.status === "PLANNED") {
     await advanceToGenerating(db, job, run);
@@ -295,7 +299,7 @@ async function processJobUpToRender(
   );
   const hasGenerated = Boolean(payloadSnap?.generation_payload?.generated_output);
 
-  if (openaiKey && !hasGenerated) {
+  if ((openaiKey || openAiPlaceholder) && !hasGenerated) {
     if (isTopPerformerMimicRenderableFlow(job.flow_type) && config.MIMIC_IMAGE_ENABLED) {
       const preGenJob = await reloadJobRow(db, job.id);
       if (preGenJob) {
@@ -327,7 +331,7 @@ async function processJobUpToRender(
       }
     }
 
-    const genResult = await generateForJob(db, job.id, openaiKey, openaiModel, {
+    const genResult = await generateForJob(db, job.id, openaiKey ?? "", openaiModel, {
       schemaValidationMode: resolveOutputSchemaValidationMode(config),
     });
     if (!genResult.success) {
@@ -966,10 +970,15 @@ const REWORK_HISTORY_MAX_ENTRIES = 25;
 
 export interface ReworkHistoryEntry {
   archived_at: string;
-  kind: "full_rerun_reset" | "before_override_rework" | "captions_only_rerun_reset";
+  kind:
+    | "full_rerun_reset"
+    | "before_override_rework"
+    | "before_slide_partial_rework"
+    | "captions_only_rerun_reset";
   draft_id?: unknown;
   generated_output?: unknown;
   qc_result?: unknown;
+  slide_rework_indices?: number[];
 }
 
 export function appendReworkHistory(
@@ -984,6 +993,7 @@ export function appendReworkHistory(
     draft_id: entry.draft_id,
     generated_output: entry.generated_output,
     qc_result: entry.qc_result,
+    slide_rework_indices: entry.slide_rework_indices,
   };
   list.push(next);
   while (list.length > REWORK_HISTORY_MAX_ENTRIES) list.shift();
@@ -1505,13 +1515,19 @@ async function postCarouselRenderBinary(
   throw new Error(lastErrMsg);
 }
 
+export type CarouselRenderOpts = {
+  /** 1-based slide indices to re-render only (partial NEEDS_EDIT rework). */
+  onlySlideIndices?: number[];
+};
+
 async function processCarouselJob(
   db: Pool,
   config: AppConfig,
   pipeConfig: PipelineConfig,
   job: JobRow,
   run: RunRow | null,
-  recommendedRoute: string | null
+  recommendedRoute: string | null,
+  renderOpts?: CarouselRenderOpts
 ) {
   const priorStatus = job.status;
   await warnIfRendererBaseUrlIsCafCore(pipeConfig.rendererBaseUrl, console.warn);
@@ -1618,8 +1634,9 @@ async function processCarouselJob(
       ...mimicPayload,
       reference_items: normalizeMimicReferenceItems(mimicPayload.reference_items),
     };
+    mimicPayload = await backfillMimicArchiveReferenceItems(db, job, mimicPayload);
 
-    if (mimicPayload.mode === "carousel_visual") {
+    if (mimicPayload.mode === "carousel_visual" || mimicPayload.mode === "template_bg") {
       const { mimic: filtered, removed_slide_indices } =
         filterPromotionalSlidesFromMimicPayload(mimicPayload);
       if (removed_slide_indices.length > 0) {
@@ -1660,9 +1677,6 @@ async function processCarouselJob(
       const outputCount = expectedMimicCarouselOutputSlideCount(mimicPayload, llmCount);
       mimicPayload = reconcileMimicPayloadToOutputSlideCount(mimicPayload, outputCount);
       n = outputCount;
-      if (llmCount > 0) {
-        n = Math.min(n, llmCount);
-      }
       if (llmCount > 0 && (refFrames !== outputCount || llmCount !== outputCount)) {
         logPipelineEvent("info", "render", "Reconciled mimic output to LLM copy slide count", {
           task_id: job.task_id,
@@ -1685,6 +1699,7 @@ async function processCarouselJob(
         n
       ),
     };
+    mimicPayload = alignMimicSlidePlansToReferences(mimicPayload);
   }
 
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
@@ -1697,6 +1712,10 @@ async function processCarouselJob(
       ? await isNvidiaVisualGenAiReachable(config)
       : true;
   const mimicCarouselTextViaFlux = Boolean(isMimicCarousel && config.MIMIC_CAROUSEL_TEXT_VIA_FLUX);
+  const mimicBflModelOverride = isMimicCarousel
+    ? await loadProjectMimicBflModel(db, job.project_id)
+    : null;
+  const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarousel
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
     : await pickCarouselTemplateForRender(pipeConfig.rendererBaseUrl, job.generation_payload, {
@@ -1784,21 +1803,46 @@ async function processCarouselJob(
   try {
     const mimicPromptOverrides = isMimicCarousel ? await loadMimicPromptOverrides(db) : null;
 
-    if (isMimicCarousel && mimicPayload && mimicCarouselNeedsBackgroundPlate(mimicPayload)) {
+    if (
+      isMimicCarousel &&
+      mimicPayload &&
+      mimicCarouselNeedsBackgroundPlate(mimicPayload) &&
+      !mimicCarouselTextViaFlux
+    ) {
       for (let i = 1; i <= n; i++) {
         const preMode = effectiveMimicSlideRenderMode(mimicPayload, i, mimicVisualGenAiReachable, {
           generatedSlides: usableSlides as Record<string, unknown>[],
         });
         if (preMode === "hbs") {
-          await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, { promptOverrides: mimicPromptOverrides, totalSlides: n });
+          await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, {
+            promptOverrides: mimicPromptOverrides,
+            totalSlides: n,
+            bflModelOverride: mimicBflModelOverride,
+          });
         }
       }
     }
 
-    await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
+    const partialIndices = (renderOpts?.onlySlideIndices ?? [])
+      .map((i) => Math.floor(i))
+      .filter((i) => Number.isFinite(i) && i >= 1 && i <= n);
+    const uniquePartial = [...new Set(partialIndices)].sort((a, b) => a - b);
+    const slideIndicesToRender =
+      uniquePartial.length > 0 ? uniquePartial : Array.from({ length: n }, (_, j) => j + 1);
+
+    if (uniquePartial.length > 0) {
+      await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, uniquePartial);
+    } else {
+      await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
+    }
+
+    const existingCarouselAssets =
+      uniquePartial.length > 0
+        ? await listAssetsByTask(db, job.project_id, job.task_id)
+        : [];
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
-    for (let i = 1; i <= n; i++) {
+    for (const i of slideIndicesToRender) {
       await updateJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "pending",
@@ -1829,6 +1873,7 @@ async function processCarouselJob(
           {
             promptOverrides: mimicPromptOverrides,
             projectHandle: projectInstagramHandle,
+            bflModelOverride: mimicBflModelOverride,
           }
         );
         const plateUrl = await persistMimicVisualPlateForSlide(db, config, job, i, buffer, mimeType);
@@ -1840,7 +1885,9 @@ async function processCarouselJob(
       } else if (isMimicCarousel && mimicPayload && slideMode === "hbs") {
         const needsBgPlate = mimicCarouselNeedsBackgroundPlate(mimicPayload);
         if (needsBgPlate) {
-          const slideBg = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i);
+          const slideBg = await requireMimicSlideBackgroundPlate(db, config, job, mimicPayload, i, {
+            bflModelOverride: mimicBflModelOverride,
+          });
           slideRenderBase = { ...renderBase, background_image_url: slideBg };
         }
         if (!mimicCarouselTextViaFlux) {
@@ -1880,46 +1927,23 @@ async function processCarouselJob(
 
       if (mimicCarouselTextViaFlux && mimicPayload && slideMode) {
         const onImageCopy = slideOnImageCopyFromSlides(usableSlides as Record<string, unknown>[], i);
-        const prevSlideUrl =
-          slideResults.length > 0 ? slideResults[slideResults.length - 1]?.public_url ?? null : null;
-        let fluxBuf: Buffer;
-        let fluxMime: string;
         const fluxStarted = Date.now();
-        if (slideMode === "hbs") {
-          const bgUrl =
-            typeof slideRenderBase.background_image_url === "string"
-              ? slideRenderBase.background_image_url.trim()
-              : "";
-          if (!bgUrl) {
-            throw new Error(
-              `Mimic Flux compose requires background plate for ${job.task_id} slide ${i} (template_bg / hbs path)`
-            );
-          }
-          const composed = await composeMimicSlideOnBackground(db, config, job, bgUrl, i, {
-            onImageCopy,
-            promptOverrides: mimicPromptOverrides,
-            previousSlideUrl: prevSlideUrl,
-          });
-          fluxBuf = composed.buffer;
-          fluxMime = composed.mimeType;
-        } else {
-          const rendered = await renderMimicCarouselSlideFullBleed(db, config, job, mimicPayload, i, {
-            onImageCopy,
-            promptOverrides: mimicPromptOverrides,
-            previousSlideUrl: prevSlideUrl,
-            projectHandle: projectInstagramHandle,
-            bakeTextOnImage: true,
-          });
-          fluxBuf = rendered.buffer;
-          fluxMime = rendered.mimeType;
-        }
+        const rendered = await renderMimicCarouselSlideFullBleed(db, config, job, mimicPayload, i, {
+          onImageCopy,
+          promptOverrides: mimicPromptOverrides,
+          projectHandle: projectInstagramHandle,
+          bakeTextOnImage: true,
+          bflModelOverride: mimicBflModelOverride,
+        });
+        const fluxBuf = rendered.buffer;
+        const fluxMime = rendered.mimeType;
         const fluxLatencyMs = Math.max(0, Date.now() - fluxStarted);
         await tryInsertApiCallAudit(db, {
           projectId: job.project_id,
           runId: job.run_id,
           taskId: job.task_id,
           step: `mimic_flux_carousel_slide_${i}`,
-          provider: mimicImageProviderAssetLabel(config),
+          provider: mimicImageProviderLabel(),
           model: null,
           ok: true,
           requestJson: {
@@ -1937,7 +1961,7 @@ async function processCarouselJob(
           i,
           fluxBuf,
           fluxMime,
-          mimicImageProviderAssetLabel(config)
+          mimicImageProviderLabel()
         );
         slideResults.push({ index: i, public_url: stored.public_url, object_path: stored.object_path });
         continue;
@@ -2051,6 +2075,25 @@ async function processCarouselJob(
       slides: slideResults,
     });
 
+    const manifestSlides = slideResults.map((s) => ({
+      index: s.index,
+      object_path: s.object_path,
+      public_url: s.public_url,
+    }));
+    if (uniquePartial.length > 0) {
+      for (const a of existingCarouselAssets) {
+        if ((a.asset_type ?? "").toUpperCase() !== "CAROUSEL_SLIDE") continue;
+        const idx = a.position + 1;
+        if (manifestSlides.some((s) => s.index === idx)) continue;
+        manifestSlides.push({
+          index: idx,
+          object_path: a.object_path ?? "",
+          public_url: a.public_url,
+        });
+      }
+      manifestSlides.sort((a, b) => a.index - b.index);
+    }
+
     // 5B render manifest (additive): stable “what we produced” snapshot for downstream audit/review/learning.
     await db.query(
       `UPDATE caf_core.content_jobs SET
@@ -2067,13 +2110,10 @@ async function processCarouselJob(
           render_type: mimicCarouselTextViaFlux ? "mimic_flux" : "template",
           asset_type: "carousel",
           template: mimicCarouselTextViaFlux ? null : template,
-          renderer: mimicCarouselTextViaFlux ? mimicImageProviderAssetLabel(config) : "carousel-renderer",
+          renderer: mimicCarouselTextViaFlux ? mimicImageProviderLabel() : "carousel-renderer",
           slide_count: n,
-          slides: slideResults.map((s) => ({
-            index: s.index,
-            object_path: s.object_path,
-            public_url: s.public_url,
-          })),
+          partial_rework: uniquePartial.length > 0 ? uniquePartial : undefined,
+          slides: manifestSlides,
           finished_at: new Date().toISOString(),
         }),
         job.id,
@@ -2183,6 +2223,30 @@ export async function rerenderCarouselAfterEditorialOverride(db: Pool, config: A
   const run = await getRunByRunId(db, job.project_id, job.run_id);
   const pipeConfig = getPipelineConfig(config);
   await processCarouselJob(db, config, pipeConfig, job, run, null);
+}
+
+/**
+ * Re-render only selected carousel slides (1-based indices). Other slide assets are kept.
+ * Used by partial NEEDS_EDIT rework for mimic / carousel flows.
+ */
+export async function rerenderCarouselSlidesAtIndices(
+  db: Pool,
+  config: AppConfig,
+  jobId: string,
+  slideIndices1Based: number[]
+): Promise<void> {
+  const job = await reloadJobRow(db, jobId);
+  if (!job || !isCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
+    throw new Error("carousel_slide_rework_requires_carousel_job");
+  }
+  const indices = [...new Set(slideIndices1Based.map((i) => Math.floor(i)).filter((i) => i >= 1))].sort(
+    (a, b) => a - b
+  );
+  if (indices.length === 0) throw new Error("slide_rework_indices_required");
+
+  const run = await getRunByRunId(db, job.project_id, job.run_id);
+  const pipeConfig = getPipelineConfig(config);
+  await processCarouselJob(db, config, pipeConfig, job, run, null, { onlySlideIndices: indices });
 }
 
 async function processVideoJob(

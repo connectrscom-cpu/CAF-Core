@@ -568,6 +568,8 @@ export async function submitDecision(
     carousel_body_char_scale?: number | string;
     /** Carousel NEEDS_EDIT: true = allow different `.hbs` on rework; false = keep current (default in UI). */
     carousel_rework_change_template?: boolean;
+    /** 1-based slide indices for partial carousel rework (Flux / renderer per slide). */
+    slide_rework_indices?: number[];
   }
 ): Promise<SubmitDecisionResult> {
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -610,6 +612,10 @@ export async function submitDecision(
         ...(typeof body.carousel_rework_change_template === "boolean" && {
           carousel_rework_change_template: body.carousel_rework_change_template,
         }),
+        ...(Array.isArray(body.slide_rework_indices) &&
+          body.slide_rework_indices.length > 0 && {
+            slide_rework_indices: body.slide_rework_indices,
+          }),
       }),
     });
   } catch (e) {

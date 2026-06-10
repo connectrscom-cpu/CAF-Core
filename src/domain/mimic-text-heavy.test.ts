@@ -6,9 +6,12 @@ import {
   MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS,
   nemotronSuggestsTextOnTemplate,
   referenceHasHeavyOnScreenText,
+  documentAiReferenceSlideText,
   referenceSlideExceedsOnScreenTextLimit,
+  referenceSlideHasDocumentAiOcr,
   referenceSlideOnScreenTextCharCount,
   requiresCopyBeforeVisualMimic,
+  shouldDropReferenceSlideForDocumentAiText,
 } from "./mimic-text-heavy.js";
 import { classifyMimicMode } from "../services/mimic-mode-classifier.js";
 import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL } from "./top-performer-mimic-flow-types.js";
@@ -97,6 +100,27 @@ describe("mimic-text-heavy", () => {
         on_screen_text_transcript: "a".repeat(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS + 1),
       })
     ).toBe(true);
+  });
+
+  it("prefers Document AI full_text for char count and drop decisions", () => {
+    const slide = {
+      on_screen_text_transcript: "short nemotron",
+      document_ai_ocr_v1: {
+        schema_version: "document_ai_ocr_v1",
+        slide_index: 1,
+        full_text: "x".repeat(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS + 40),
+        text_layers: [],
+        token_count: 10,
+      },
+    };
+    expect(referenceSlideHasDocumentAiOcr(slide)).toBe(true);
+    expect(documentAiReferenceSlideText(slide).length).toBe(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS + 40);
+    expect(shouldDropReferenceSlideForDocumentAiText(slide)).toBe(true);
+    expect(
+      shouldDropReferenceSlideForDocumentAiText({
+        on_screen_text_transcript: "x".repeat(MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS + 40),
+      })
+    ).toBe(false);
   });
 
   it("honors Nemotron text_on_template without per-slide transcripts", () => {

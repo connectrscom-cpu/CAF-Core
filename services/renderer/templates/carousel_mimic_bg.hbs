@@ -171,10 +171,17 @@
       font-size: var(--caf-carousel-cta-size, 72px) !important;
     }
 
-    /* Document AI per-block text overlay (reference bbox + typography, LLM copy) */
+    /* Document AI per-block text overlay — px coords from OCR bbox on 1080×1350 canvas */
+    .slide.mimic-docai-slide .slide-bg{
+      background-size:100% 100%;
+      background-position:top left;
+    }
+
     .page.mimic-docai-layers{
       display:block;
       padding:0;
+      width:1080px;
+      height:1350px;
     }
 
     .mimic-docai-layer{
@@ -183,12 +190,18 @@
       margin:0;
       padding:0;
       box-sizing:border-box;
-      line-height:1.12;
-      letter-spacing:-0.02em;
-      overflow-wrap:anywhere;
-      word-break:break-word;
-      white-space:pre-wrap;
+      text-rendering:geometricPrecision;
+      -webkit-font-smoothing:antialiased;
       text-shadow: var(--text-shadow-headline, 0 1px 12px rgba(255,254,249,0.85));
+    }
+
+    .mimic-docai-layer--single-line{
+      display:flex;
+      align-items:center;
+    }
+
+    .mimic-docai-layer--multi-line{
+      display:block;
     }
 
     .mimic-docai-layer--body,
@@ -196,7 +209,6 @@
     .mimic-docai-layer--caption,
     .mimic-docai-layer--paragraph,
     .mimic-docai-layer--sub{
-      line-height:1.45;
       text-shadow: var(--text-shadow-body, 0 1px 10px rgba(255,254,249,0.8));
     }
   </style>
@@ -204,14 +216,14 @@
 
 <body>
   <!-- Cover -->
-  <div class="slide cover">
+  <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -240,14 +252,14 @@
   </div>
 
   {{#each body_slides}}
-  <div class="slide body-slide">
+  <div class="slide body-slide{{#if ../mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if ../background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
     {{/if}}
     <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if ../mimic_render_text_layers}}
         {{#each ../mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -260,14 +272,14 @@
   {{/each}}
 
   <!-- CTA -->
-  <div class="slide cta">
+  <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">

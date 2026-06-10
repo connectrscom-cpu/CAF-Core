@@ -173,7 +173,11 @@ export function buildArtOnlySafeZoneHint(slide: Record<string, unknown> | null |
   return parts.join(" ");
 }
 
-const CANVAS_HEIGHT = 1350;
+/** Fixed carousel render canvas — must match services/renderer (1080×1350). */
+export const CAROUSEL_RENDER_WIDTH_PX = 1080;
+export const CAROUSEL_RENDER_HEIGHT_PX = 1350;
+
+const CANVAS_HEIGHT = CAROUSEL_RENDER_HEIGHT_PX;
 
 const HEADLINE_TIER_PX: Record<string, number> = {
   xs: 44,
@@ -686,10 +690,18 @@ export function mimicPayloadHasDocAiTextLayout(
 export interface MimicDocAiRenderTextLayer {
   text: string;
   role: string;
+  /** Normalized 0–1 (legacy consumers). */
   x_pct: number;
   y_pct: number;
   w_pct: number;
   h_pct: number;
+  /** Absolute px on 1080×1350 render canvas. */
+  x_px: number;
+  y_px: number;
+  w_px: number;
+  h_px: number;
+  layout_mode: "single_line" | "multi_line";
+  layout_class: string;
   font_size_px: number | null;
   font_weight: number | null;
   color_hex: string | null;
@@ -728,6 +740,180 @@ function cssFontWeight(raw: string | null): number | null {
 
 function pct01(n: number): number {
   return Math.round(clamp01(n) * 10000) / 100;
+}
+
+function bboxNormToRenderPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  canvasW = CAROUSEL_RENDER_WIDTH_PX,
+  canvasH = CAROUSEL_RENDER_HEIGHT_PX
+): { x: number; y: number; w: number; h: number } {
+  return {
+    x: Math.round(clamp01(x) * canvasW),
+    y: Math.round(clamp01(y) * canvasH),
+    w: Math.max(1, Math.round(clamp01(w) * canvasW)),
+    h: Math.max(1, Math.round(clamp01(h) * canvasH)),
+  };
+}
+
+type DocAiLayoutBlock = MimicTextBlock & { ref_text: string };
+
+/** Prefer OCR `text_layers` geometry merged with Nemotron roles from `text_blocks`. */
+function extractDocAiLayoutBlocks(refSlide: Record<string, unknown>): DocAiLayoutBlock[] {
+  const parsed = parseMimicTextBlocks(refSlide.text_blocks);
+  const docBlocks = parsed.filter((b) => b.source === "document_ai");
+  const layoutBlocks = docBlocks.length > 0 ? docBlocks : parsed;
+  if (layoutBlocks.length === 0) return [];
+
+  const ocr = asRecord(refSlide.document_ai_ocr_v1);
+  const ocrLayers = Array.isArray(ocr?.text_layers) ? ocr.text_layers : [];
+  if (ocrLayers.length === 0) {
+    return layoutBlocks.map((b) => ({ ...b, ref_text: b.text }));
+  }
+
+  const out: DocAiLayoutBlock[] = [];
+  const pairCount = Math.max(layoutBlocks.length, ocrLayers.length);
+  for (let i = 0; i < pairCount; i++) {
+    const block = layoutBlocks[i] ?? layoutBlocks[layoutBlocks.length - 1]!;
+    const layer = asRecord(ocrLayers[i]);
+    if (!layer) {
+      out.push({ ...block, ref_text: block.text });
+      continue;
+    }
+    const text = String(layer.text ?? block.text ?? "").trim();
+    if (!text) continue;
+    const bbox = asRecord(layer.bbox_pct);
+    const font = asRecord(layer.font);
+    const box =
+      bbox &&
+      Number.isFinite(Number(bbox.x)) &&
+      Number.isFinite(Number(bbox.y)) &&
+      Number.isFinite(Number(bbox.w)) &&
+      Number.isFinite(Number(bbox.h))
+        ? {
+            x: clamp01(Number(bbox.x)),
+            y: clamp01(Number(bbox.y)),
+            w: clamp01(Number(bbox.w)),
+            h: clamp01(Number(bbox.h)),
+          }
+        : { x: block.x, y: block.y, w: block.w, h: block.h };
+    const fontPx = pickNum(font?.size_px);
+    out.push({
+      ...block,
+      text,
+      ref_text: text,
+      x: box.x,
+      y: box.y,
+      w: box.w,
+      h: box.h,
+      align: String(layer.alignment ?? block.align ?? "").trim().toLowerCase() || block.align,
+      font_size_px:
+        fontPx != null && fontPx > 0 && fontPx < 400 ? Math.round(fontPx) : block.font_size_px,
+      font_weight:
+        font?.weight != null ? String(font.weight) : block.font_weight,
+      color_hex:
+        typeof font?.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(font.color_hex)
+          ? font.color_hex
+          : block.color_hex,
+      font_family:
+        typeof font?.family_detected === "string" && font.family_detected.trim()
+          ? font.family_detected.trim()
+          : block.font_family,
+      source: "document_ai",
+    });
+  }
+  return out;
+}
+
+function isSingleLineLayoutBlock(refText: string, hNorm: number, wNorm: number): boolean {
+  if (refText.includes("\n")) return false;
+  if (refText.split(/\s+/).length <= 1 && refText.length <= 24) return true;
+  return hNorm < 0.09 || hNorm / Math.max(wNorm, 0.01) < 0.38;
+}
+
+/** Estimate initial font size before Puppeteer shrink-to-fit. */
+export function estimateDocAiFitFontSizePx(opts: {
+  text: string;
+  refText: string;
+  refFontPx: number | null;
+  boxWPx: number;
+  boxHPx: number;
+}): number {
+  const refLen = Math.max(1, opts.refText.trim().length);
+  const newLen = Math.max(1, opts.text.trim().length);
+  let size =
+    opts.refFontPx != null && opts.refFontPx > 0
+      ? opts.refFontPx
+      : Math.max(12, Math.round(opts.boxHPx * 0.82));
+
+  if (newLen > refLen) {
+    size = Math.max(10, Math.round(size * Math.sqrt(refLen / newLen)));
+  }
+
+  size = Math.min(size, Math.max(10, Math.round(opts.boxHPx * 0.96)));
+
+  const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
+  const maxByHeight = Math.floor(opts.boxHPx / (lineCount * 1.12));
+  if (maxByHeight > 0) size = Math.min(size, maxByHeight);
+
+  const approxCharW = size * 0.52;
+  const charsPerLine = Math.max(1, Math.floor(opts.boxWPx / approxCharW));
+  const wrappedLines = Math.max(lineCount, Math.ceil(newLen / charsPerLine));
+  const maxByWrap = Math.floor(opts.boxHPx / (wrappedLines * 1.12));
+  if (maxByWrap > 0) size = Math.min(size, maxByWrap);
+
+  return Math.max(10, Math.min(512, size));
+}
+
+export function buildDocAiLayerCssStyle(opts: {
+  px: { x: number; y: number; w: number; h: number };
+  text: string;
+  refText: string;
+  refFontPx: number | null;
+  fontWeight: number | null;
+  color: string | null;
+  fontFamily: string | null;
+  textAlign: string;
+  singleLine: boolean;
+}): { css_style: string; font_size_px: number; layout_mode: "single_line" | "multi_line"; layout_class: string } {
+  const fontSize = estimateDocAiFitFontSizePx({
+    text: opts.text,
+    refText: opts.refText,
+    refFontPx: opts.refFontPx,
+    boxWPx: opts.px.w,
+    boxHPx: opts.px.h,
+  });
+  const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
+  const lineHeight = opts.singleLine
+    ? Math.min(1.15, Math.max(0.92, opts.px.h / fontSize))
+    : Math.min(1.4, Math.max(1.02, opts.px.h / (fontSize * lineCount)));
+
+  const cssParts = [
+    `left:${opts.px.x}px`,
+    `top:${opts.px.y}px`,
+    `width:${opts.px.w}px`,
+    `height:${opts.px.h}px`,
+    `font-size:${fontSize}px`,
+    `line-height:${lineHeight.toFixed(3)}`,
+    `text-align:${opts.textAlign}`,
+  ];
+
+  if (opts.singleLine) {
+    cssParts.push("white-space:nowrap", "overflow:hidden", "text-overflow:clip");
+  } else {
+    cssParts.push("white-space:pre-line", "overflow:hidden");
+  }
+
+  if (opts.fontWeight) cssParts.push(`font-weight:${opts.fontWeight}`);
+  if (opts.color) cssParts.push(`color:${opts.color}`);
+  if (opts.fontFamily) cssParts.push(`font-family:${opts.fontFamily}`);
+
+  const layout_mode = opts.singleLine ? "single_line" : "multi_line";
+  const layout_class = opts.singleLine ? "mimic-docai-layer--single-line" : "mimic-docai-layer--multi-line";
+
+  return { css_style: cssParts.join(";"), font_size_px: fontSize, layout_mode, layout_class };
 }
 
 function llmTextPoolForSlide(slide: Record<string, unknown>): Array<{ bucket: string; text: string }> {
@@ -782,7 +968,8 @@ function takeLlmTextForRefBlock(
 }
 
 /**
- * Map Document AI reference `text_blocks` (geometry + typography) to LLM rephrased copy for HBS absolute layers.
+ * Map Document AI reference geometry to LLM copy as absolute px layers on the 1080×1350 canvas.
+ * Puppeteer performs a second shrink-to-fit pass (see services/renderer/server.js).
  */
 export function buildMimicDocAiRenderTextLayers(
   mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
@@ -792,9 +979,9 @@ export function buildMimicDocAiRenderTextLayers(
 ): MimicDocAiRenderTextLayer[] {
   const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
   const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
-  const refBlocks = refSlide ? parseMimicTextBlocks(refSlide.text_blocks) : [];
-  const docAiBlocks = refBlocks.filter((b) => b.source === "document_ai");
-  const layoutBlocks = docAiBlocks.length > 0 ? docAiBlocks : refBlocks;
+  if (!refSlide) return [];
+
+  const layoutBlocks = extractDocAiLayoutBlocks(refSlide);
   if (layoutBlocks.length === 0) return [];
 
   let pool = llmTextPoolForSlide(llmSlide);
@@ -816,18 +1003,19 @@ export function buildMimicDocAiRenderTextLayers(
     const textAlign =
       ref.align && ref.align !== "unknown" ? ref.align : bucket === "cta" ? "center" : "left";
     const fontFamily = webFontFamilyFromDetected(ref.font_family);
-
-    const cssParts = [
-      `left:${pct01(ref.x)}%`,
-      `top:${pct01(ref.y)}%`,
-      `width:${pct01(ref.w)}%`,
-      `min-height:${pct01(ref.h)}%`,
-      `text-align:${textAlign}`,
-    ];
-    if (ref.font_size_px) cssParts.push(`font-size:${ref.font_size_px}px`);
-    if (fontWeight) cssParts.push(`font-weight:${fontWeight}`);
-    if (color) cssParts.push(`color:${color}`);
-    if (fontFamily) cssParts.push(`font-family:${fontFamily}`);
+    const px = bboxNormToRenderPx(ref.x, ref.y, ref.w, ref.h);
+    const singleLine = isSingleLineLayoutBlock(ref.ref_text, ref.h, ref.w);
+    const styled = buildDocAiLayerCssStyle({
+      px,
+      text,
+      refText: ref.ref_text,
+      refFontPx: ref.font_size_px,
+      fontWeight,
+      color,
+      fontFamily,
+      textAlign,
+      singleLine,
+    });
 
     layers.push({
       text,
@@ -836,11 +1024,17 @@ export function buildMimicDocAiRenderTextLayers(
       y_pct: pct01(ref.y),
       w_pct: pct01(ref.w),
       h_pct: pct01(ref.h),
-      font_size_px: ref.font_size_px,
+      x_px: px.x,
+      y_px: px.y,
+      w_px: px.w,
+      h_px: px.h,
+      layout_mode: styled.layout_mode,
+      layout_class: styled.layout_class,
+      font_size_px: styled.font_size_px,
       font_weight: fontWeight,
       color_hex: color,
       text_align: textAlign,
-      css_style: cssParts.join(";"),
+      css_style: styled.css_style,
     });
   }
 

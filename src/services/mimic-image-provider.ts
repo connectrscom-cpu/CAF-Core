@@ -1,6 +1,9 @@
 import type { AppConfig } from "../config.js";
+import type { MimicBflModelSlug } from "../domain/mimic-bfl-model.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import type { Pool } from "pg";
+import { appConfigWithMimicBflModel } from "./mimic-project-config.js";
+import { downloadBufferFromUrl } from "./supabase-storage.js";
 
 export type MimicImageProvider = "openai" | "nvidia" | "dashscope" | "bfl";
 
@@ -10,8 +13,8 @@ export interface MimicImageEditParams {
   size?: string;
   inputFidelity?: "high" | "low";
   quality?: string;
-  /** Second image for cross-slide consistency (DashScope multi-image input). */
-  previousSlideUrl?: string;
+  /** Project-level BFL model override (flux-2-klein-4b | flux-2-flex). */
+  bflModelOverride?: MimicBflModelSlug | null;
   /** Optional audit context */
   audit?: {
     db: Pool;
@@ -82,6 +85,22 @@ function bflSubmitEndpoint(apiBase: string, model: string): string {
   return `${base}/v1/${slug}`;
 }
 
+/** True when the configured BFL slug is FLUX.2 [flex] (typography-tuned; accepts steps/guidance). */
+export function isBflFlexModel(model: string): boolean {
+  const slug = model.trim().toLowerCase().replace(/^\//, "");
+  return slug === "flux-2-flex" || slug.endsWith("-flex");
+}
+
+/** Optional FLUX.2 [flex] tuning params for BFL edit requests. */
+export function bflFlexTuningParams(config: AppConfig): { steps: number; guidance: number } | null {
+  const model = config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-flex";
+  if (!isBflFlexModel(model)) return null;
+  return {
+    steps: config.MIMIC_IMAGE_BFL_STEPS,
+    guidance: config.MIMIC_IMAGE_BFL_GUIDANCE,
+  };
+}
+
 /** CAF `1024x1536` → BFL width/height (0 = model default per API docs). */
 export function bflFluxDimensions(size: string | undefined): { width: number; height: number } {
   const trimmed = (size ?? "1024x1536").trim();
@@ -102,7 +121,7 @@ export function resolveMimicImageCall(config: AppConfig): MimicImageCallConfig {
   const provider = config.MIMIC_IMAGE_PROVIDER;
 
   if (provider === "bfl") {
-    const model = config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b";
+    const model = config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-flex";
     return {
       provider: "bfl",
       model,
@@ -144,8 +163,11 @@ export function resolveMimicImageCall(config: AppConfig): MimicImageCallConfig {
   };
 }
 
-export function mimicImageProviderAssetLabel(config: AppConfig): string {
-  return resolveMimicImageCall(config).providerLabel;
+export function mimicImageProviderAssetLabel(
+  config: AppConfig,
+  bflModelOverride?: MimicBflModelSlug | null
+): string {
+  return resolveMimicImageCall(appConfigWithMimicBflModel(config, bflModelOverride)).providerLabel;
 }
 
 export function assertMimicImageProviderConfigured(config: AppConfig): MimicImageCallConfig {
@@ -439,11 +461,7 @@ function buildDashScopeEditBody(
   config: AppConfig,
   params: MimicImageEditParams
 ): Record<string, unknown> {
-  const content: Array<Record<string, string>> = [{ image: params.referenceUrl }];
-  if (params.previousSlideUrl) {
-    content.push({ image: params.previousSlideUrl });
-  }
-  content.push({ text: params.prompt });
+  const content: Array<Record<string, string>> = [{ image: params.referenceUrl }, { text: params.prompt }];
 
   return {
     model: call.model,
@@ -572,6 +590,33 @@ async function editViaDashScope(config: AppConfig, params: MimicImageEditParams)
 
 const BFL_TERMINAL_FAILURE = new Set(["Error", "Failed", "Task not found", "Request Moderated", "Content Moderated"]);
 
+/** True when buffer magic bytes look like a raster image BFL can consume. */
+export function isReadableImageBuffer(buf: Buffer): boolean {
+  if (buf.length < 12) return false;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true;
+  const sig6 = buf.subarray(0, 6).toString("ascii");
+  if (sig6 === "GIF87a" || sig6 === "GIF89a") return true;
+  return buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP";
+}
+
+/**
+ * BFL fetches `input_image` URLs from their servers — private Supabase buckets and signed URLs often
+ * return HTML/403, which surfaces as poll Error "Invalid or corrupted image input". Download via CAF
+ * (service-role) and send base64 instead.
+ */
+async function bflImageInputFromUrl(config: AppConfig, imageUrl: string, label: string): Promise<string> {
+  const trimmed = imageUrl.trim();
+  if (!trimmed) throw new Error(`${providerErrorLabel("bfl")} ${label}: empty image URL`);
+  const buf = await downloadBufferFromUrl(config, trimmed);
+  if (!isReadableImageBuffer(buf)) {
+    throw new Error(
+      `${providerErrorLabel("bfl")} ${label}: downloaded ${buf.length} bytes but not a valid JPEG/PNG/GIF/WebP`
+    );
+  }
+  return buf.toString("base64");
+}
+
 function bflResultSampleUrl(result: Record<string, unknown>): string | null {
   const resultObj = asRecord(result.result);
   const sample = resultObj?.sample;
@@ -633,16 +678,19 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
 
   const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
   const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
+  const inputImage = await bflImageInputFromUrl(config, params.referenceUrl, "reference");
   const body: Record<string, unknown> = {
     prompt: params.prompt,
-    input_image: params.referenceUrl,
+    input_image: inputImage,
     width,
     height,
     safety_tolerance: config.MIMIC_IMAGE_BFL_SAFETY_TOLERANCE,
     output_format: outputFormat,
   };
-  if (params.previousSlideUrl?.trim()) {
-    body.input_image_2 = params.previousSlideUrl.trim();
+  const flexTuning = bflFlexTuningParams(config);
+  if (flexTuning) {
+    body.steps = flexTuning.steps;
+    body.guidance = flexTuning.guidance;
   }
 
   const started = Date.now();
@@ -684,7 +732,6 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
           mimic_provider: call.provider,
           prompt: params.prompt,
           reference_url: params.referenceUrl,
-          previous_slide_url: params.previousSlideUrl ?? null,
           width,
           height,
           output_format: outputFormat,
@@ -737,7 +784,6 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
         mimic_provider: call.provider,
         prompt: params.prompt,
         reference_url: params.referenceUrl,
-        previous_slide_url: params.previousSlideUrl ?? null,
         width,
         height,
         output_format: outputFormat,
@@ -777,21 +823,23 @@ export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
-  assertMimicImageProviderConfigured(config);
+  const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
+  assertMimicImageProviderConfigured(effectiveConfig);
 
-  if (config.MIMIC_IMAGE_PROVIDER === "bfl") {
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "bfl") {
     try {
-      return await editViaBfl(config, params);
+      return await editViaBfl(effectiveConfig, params);
     } catch (err) {
       const canFallback =
-        config.MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE && Boolean(config.DASHSCOPE_API_KEY?.trim());
+        effectiveConfig.MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE &&
+        Boolean(effectiveConfig.DASHSCOPE_API_KEY?.trim());
       if (canFallback && isBflModerationError(err)) {
         try {
-          return await editViaDashScope(config, params);
+          return await editViaDashScope(effectiveConfig, params);
         } catch (dashErr) {
-          if (isDashScopeAuthError(dashErr) && config.OPENAI_API_KEY?.trim()) {
+          if (isDashScopeAuthError(dashErr) && effectiveConfig.OPENAI_API_KEY?.trim()) {
             const { blob, mimeType: refMime } = await downloadReferenceAsBlob(params.referenceUrl);
-            return editViaOpenAi(config, params, blob, refMime);
+            return editViaOpenAi(effectiveConfig, params, blob, refMime);
           }
           throw dashErr;
         }
@@ -800,27 +848,27 @@ export async function editImageFromReference(
     }
   }
 
-  if (config.MIMIC_IMAGE_PROVIDER === "dashscope") {
-    return editViaDashScope(config, params);
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "dashscope") {
+    return editViaDashScope(effectiveConfig, params);
   }
 
   const { blob, mimeType: refMime } = await downloadReferenceAsBlob(params.referenceUrl);
 
-  if (config.MIMIC_IMAGE_PROVIDER !== "nvidia") {
-    return editViaOpenAi(config, params, blob, refMime);
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER !== "nvidia") {
+    return editViaOpenAi(effectiveConfig, params, blob, refMime);
   }
 
   try {
-    return await editViaNvidia(config, params, blob, refMime);
+    return await editViaNvidia(effectiveConfig, params, blob, refMime);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!isVisualGenAiUnavailableError(msg)) {
       throw err;
     }
     const canFallback =
-      config.MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI && Boolean(config.OPENAI_API_KEY?.trim());
+      effectiveConfig.MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI && Boolean(effectiveConfig.OPENAI_API_KEY?.trim());
     if (canFallback) {
-      return editViaOpenAi(config, params, blob, refMime, {
+      return editViaOpenAi(effectiveConfig, params, blob, refMime, {
         fallback_from: "nvidia",
         fallback_reason: "visual_genai_unavailable",
       });

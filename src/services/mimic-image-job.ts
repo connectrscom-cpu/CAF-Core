@@ -6,6 +6,7 @@ import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligi
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
 import { editImageFromReference, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
+import { loadProjectMimicBflModel } from "./mimic-project-config.js";
 import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { refreshMimicPayloadReferenceUrls, refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
@@ -64,7 +65,8 @@ export async function processImageMimicJob(
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, ref);
 
-  const imageProvider = mimicImageProviderAssetLabel(config);
+  const mimicBflModelOverride = await loadProjectMimicBflModel(db, job.project_id);
+  const imageProvider = mimicImageProviderAssetLabel(config, mimicBflModelOverride);
 
   await db.query(`UPDATE caf_core.content_jobs SET status = 'RENDERING', updated_at = now() WHERE id = $1`, [
     job.id,
@@ -94,6 +96,7 @@ export async function processImageMimicJob(
   const { buffer, mimeType } = await editImageFromReference(config, {
     referenceUrl,
     prompt: mimicPromptForMode("image_full", { onImageCopy }, promptOverrides),
+    bflModelOverride: mimicBflModelOverride,
     audit: {
       db,
       projectId: job.project_id,

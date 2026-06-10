@@ -102,6 +102,11 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
      * Review UI sends explicitly so legacy issue tags do not imply a template swap by default.
      */
     carousel_rework_change_template: z.boolean().optional(),
+    /**
+     * Carousel / mimic: re-render only these 1-based slide indices (partial Flux/renderer billing).
+     * Routes rework to `SLIDE_PARTIAL_RENDER` instead of full-deck regen.
+     */
+    slide_rework_indices: z.array(z.number().int().positive()).optional(),
   });
 
   function mergeEditorialDecideOverrides(body: z.infer<typeof reviewDecideBodySchema>): Record<string, unknown> {
@@ -125,6 +130,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     put("regenerate", "regenerate");
     put("carousel_body_char_scale", "carousel_body_char_scale");
     put("carousel_rework_change_template", "carousel_rework_change_template");
+    if (Array.isArray(body.slide_rework_indices) && body.slide_rework_indices.length > 0) {
+      out.slide_rework_indices = body.slide_rework_indices;
+    }
     return out;
   }
 
@@ -458,6 +466,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         heygen_api_base: config.HEYGEN_API_BASE,
         supabase_assets_configured: supabaseAssets,
         openai_api_key_configured: Boolean(config.OPENAI_API_KEY?.trim()),
+        openai_generation_mode: config.OPENAI_GENERATION_MODE,
       },
     };
   });

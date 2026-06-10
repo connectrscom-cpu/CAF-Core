@@ -7,6 +7,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { resolveOutputSchemaValidationMode, type AppConfig } from "../config.js";
+import { isOpenAiPlaceholderMode } from "../services/openai-generation-placeholder.js";
 import { generateForJob } from "../services/llm-generator.js";
 import { runQcForJob } from "../services/qc-runtime.js";
 import { runDiagnosticAudit } from "../services/diagnostic-runner.js";
@@ -28,7 +29,10 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
     "/v1/pipeline/:project_slug/:task_id/generate",
     async (req, reply) => {
       const apiKey = config.OPENAI_API_KEY;
-      if (!apiKey) return reply.code(500).send({ ok: false, error: "OPENAI_API_KEY not configured" });
+      const placeholder = isOpenAiPlaceholderMode(config);
+      if (!apiKey && !placeholder) {
+        return reply.code(500).send({ ok: false, error: "OPENAI_API_KEY not configured" });
+      }
 
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
@@ -39,7 +43,7 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
       if (!job) return reply.code(404).send({ ok: false, error: "job not found" });
 
       const model = (req.body as Record<string, unknown>)?.model as string ?? config.OPENAI_MODEL;
-      const result = await generateForJob(db, job.id, apiKey, model, {
+      const result = await generateForJob(db, job.id, apiKey ?? "", model, {
         schemaValidationMode: resolveOutputSchemaValidationMode(config),
       });
 
@@ -116,12 +120,13 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
 
       const body = (req.body ?? {}) as Record<string, unknown>;
       const apiKey = config.OPENAI_API_KEY;
+      const placeholder = isOpenAiPlaceholderMode(config);
       const model = (body.model as string) ?? config.OPENAI_MODEL;
 
       // Step 1: Generate
       let genResult = null;
-      if (apiKey && (job.status === "PLANNED" || job.status === "GENERATING")) {
-        genResult = await generateForJob(db, job.id, apiKey, model, {
+      if ((apiKey || placeholder) && (job.status === "PLANNED" || job.status === "GENERATING")) {
+        genResult = await generateForJob(db, job.id, apiKey ?? "", model, {
           schemaValidationMode: resolveOutputSchemaValidationMode(config),
         });
         if (genResult.success) {
@@ -199,12 +204,13 @@ export function registerPipelineRoutes(app: FastifyInstance, { db, config }: Dep
 
       const results: Array<{ task_id: string; ok: boolean; status?: string; error?: string }> = [];
       const apiKey = config.OPENAI_API_KEY;
+      const placeholder = isOpenAiPlaceholderMode(config);
       const model = (body.model as string) ?? config.OPENAI_MODEL;
 
       for (const job of jobs) {
         try {
-          if (apiKey) {
-            const genResult = await generateForJob(db, job.id, apiKey, model, {
+          if (apiKey || placeholder) {
+            const genResult = await generateForJob(db, job.id, apiKey ?? "", model, {
               schemaValidationMode: resolveOutputSchemaValidationMode(config),
             });
             if (!genResult.success) {

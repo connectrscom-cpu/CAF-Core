@@ -8,6 +8,9 @@ import {
   isVisualGenAiUnavailableError,
   dashScopeSizeParam,
   bflFluxDimensions,
+  isBflFlexModel,
+  bflFlexTuningParams,
+  isReadableImageBuffer,
 } from "./mimic-image-provider.js";
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -15,7 +18,9 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     MIMIC_IMAGE_PROVIDER: "nvidia",
     BFL_API_KEY: "bfl-test",
     BFL_API_BASE: "https://api.bfl.ai",
-    MIMIC_IMAGE_BFL_MODEL: "flux-2-klein-4b",
+    MIMIC_IMAGE_BFL_MODEL: "flux-2-flex",
+    MIMIC_IMAGE_BFL_STEPS: 45,
+    MIMIC_IMAGE_BFL_GUIDANCE: 7,
     MIMIC_IMAGE_BFL_POLL_INTERVAL_MS: 500,
     MIMIC_IMAGE_BFL_POLL_MAX_MS: 180_000,
     MIMIC_IMAGE_BFL_SAFETY_TOLERANCE: 2,
@@ -38,12 +43,20 @@ function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 }
 
 describe("resolveMimicImageCall", () => {
-  it("routes to BFL FLUX Klein when configured", () => {
+  it("routes to BFL FLUX flex when configured", () => {
     const call = resolveMimicImageCall(baseConfig({ MIMIC_IMAGE_PROVIDER: "bfl" }));
     expect(call.provider).toBe("bfl");
+    expect(call.model).toBe("flux-2-flex");
+    expect(call.editsEndpoint).toBe("https://api.bfl.ai/v1/flux-2-flex");
+    expect(call.providerLabel).toBe("bfl-flux-2-flex");
+  });
+
+  it("routes to BFL FLUX Klein when model slug is set explicitly", () => {
+    const call = resolveMimicImageCall(
+      baseConfig({ MIMIC_IMAGE_PROVIDER: "bfl", MIMIC_IMAGE_BFL_MODEL: "flux-2-klein-4b" })
+    );
     expect(call.model).toBe("flux-2-klein-4b");
     expect(call.editsEndpoint).toBe("https://api.bfl.ai/v1/flux-2-klein-4b");
-    expect(call.providerLabel).toBe("bfl-flux-2-klein-4b");
   });
 
   it("routes to DashScope Qwen image edit when configured", () => {
@@ -116,6 +129,31 @@ describe("assertMimicImageProviderConfigured", () => {
     );
     expect(call.provider).toBe("openai");
     expect(call.model).toBe("gpt-image-1");
+  });
+});
+
+describe("bfl flex tuning", () => {
+  it("detects flex model slugs", () => {
+    expect(isBflFlexModel("flux-2-flex")).toBe(true);
+    expect(isBflFlexModel("flux-2-klein-4b")).toBe(false);
+  });
+
+  it("returns steps/guidance only for flex", () => {
+    expect(bflFlexTuningParams(baseConfig({ MIMIC_IMAGE_BFL_MODEL: "flux-2-flex" }))).toEqual({
+      steps: 45,
+      guidance: 7,
+    });
+    expect(bflFlexTuningParams(baseConfig({ MIMIC_IMAGE_BFL_MODEL: "flux-2-klein-4b" }))).toBeNull();
+  });
+});
+
+describe("isReadableImageBuffer", () => {
+  it("accepts JPEG and PNG magic bytes", () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+    expect(isReadableImageBuffer(jpeg)).toBe(true);
+    expect(isReadableImageBuffer(png)).toBe(true);
+    expect(isReadableImageBuffer(Buffer.from("<html>"))).toBe(false);
   });
 });
 

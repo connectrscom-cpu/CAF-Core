@@ -6,7 +6,10 @@ export const MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD = 200;
 /** Slides at or below this length are treated as short punchy copy (whole-slide visual mimic path). */
 export const MIMIC_SHORT_COPY_CHAR_THRESHOLD = 120;
 
-/** Reference frames above this on-screen text length are dropped before mimic copy/render. */
+/**
+ * When Document AI OCR is present on a slide, frames above this on-screen text length are
+ * dropped from mimic copy + reference frames (Nemotron-only transcripts are not char-filtered).
+ */
 export const MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS = 600;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -27,8 +30,38 @@ export function slideOnScreenTextChars(slide: Record<string, unknown>): number {
   ).trim().length;
 }
 
-/** Transcript + parsed `text_blocks` length (matches promo / skip heuristics in mimic-carousel-render). */
+/** True when persisted slide analysis includes Google Document AI OCR (geometry or full_text). */
+export function referenceSlideHasDocumentAiOcr(slide: Record<string, unknown>): boolean {
+  if (slide.document_ai_ocr_v1) return true;
+  return parseMimicTextBlocks(slide.text_blocks).some(
+    (b) => String(b.source ?? "").trim().toLowerCase() === "document_ai"
+  );
+}
+
+/** Canonical on-screen text from Document AI when available (full_text or document_ai text_blocks). */
+export function documentAiReferenceSlideText(slide: Record<string, unknown>): string {
+  const ocr = asRecord(slide.document_ai_ocr_v1);
+  const full = String(ocr?.full_text ?? "").trim();
+  if (full) return full;
+  const blocks = parseMimicTextBlocks(slide.text_blocks).filter(
+    (b) => String(b.source ?? "").trim().toLowerCase() === "document_ai"
+  );
+  if (blocks.length === 0) return "";
+  return blocks
+    .map((b) => b.text.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/**
+ * On-screen character count for promo / skip heuristics.
+ * Prefers Document AI text when present; otherwise transcript + text_blocks.
+ */
 export function referenceSlideOnScreenTextCharCount(slide: Record<string, unknown>): number {
+  if (referenceSlideHasDocumentAiOcr(slide)) {
+    const doc = documentAiReferenceSlideText(slide);
+    if (doc) return doc.length;
+  }
   const parts: string[] = [];
   const main = String(slide.on_screen_text_transcript ?? slide.on_image_text ?? "").trim();
   if (main) parts.push(main);
@@ -38,6 +71,15 @@ export function referenceSlideOnScreenTextCharCount(slide: Record<string, unknow
   }
   if (parts.length === 0) return slideOnScreenTextChars(slide);
   return parts.join("\n").length;
+}
+
+/** Drop reference frame when Document AI confirms on-screen text exceeds the mimic cap. */
+export function shouldDropReferenceSlideForDocumentAiText(
+  slide: Record<string, unknown>,
+  maxChars: number = MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS
+): boolean {
+  if (!referenceSlideHasDocumentAiOcr(slide)) return false;
+  return referenceSlideOnScreenTextCharCount(slide) > maxChars;
 }
 
 export function referenceSlideExceedsOnScreenTextLimit(

@@ -78,7 +78,25 @@ describe("mimic-job-grounding", () => {
     expect(g?.slide_copy_layout[0]?.text_blocks?.[0]?.role).toBe("title");
   });
 
-  it("buildContentSlideCopyLayoutFromEntry filters to mimic_evaluation content slides", () => {
+  it("buildContentSlideCopyLayoutFromEntry expands [1,7,12] on a 12-slide deck", () => {
+    const layout = buildContentSlideCopyLayoutFromEntry({
+      aesthetic_analysis_json: {
+        mimic_evaluation: {
+          recommended_mode: "text_on_template",
+          content_slide_indices: [1, 7, 12],
+          skip_slide_indices: [],
+        },
+        slides: Array.from({ length: 12 }).map((_, i) => ({
+          slide_index: i + 1,
+          on_screen_text_transcript: `SIGN_${i + 1}`,
+        })),
+      },
+      stored_inspection_media_json: { items: Array.from({ length: 12 }).map((_, i) => ({ index: i + 1 })) },
+    });
+    expect(layout).toHaveLength(12);
+  });
+
+  it("buildContentSlideCopyLayoutFromEntry filters to mimic_evaluation content slides when skip marks promos", () => {
     const layout = buildContentSlideCopyLayoutFromEntry({
       aesthetic_analysis_json: {
         mimic_evaluation: {
@@ -102,6 +120,32 @@ describe("mimic-job-grounding", () => {
     expect(layout[0]?.reference_on_screen_text).toContain("Aries");
     expect(layout[1]?.slide_index).toBe(2);
     expect(layout[1]?.reference_on_screen_text).toContain("Taurus");
+  });
+
+  it("buildContentSlideCopyLayoutFromEntry drops slides when Document AI confirms excessive on-screen text", () => {
+    const layout = buildContentSlideCopyLayoutFromEntry({
+      aesthetic_analysis_json: {
+        slides: [
+          { slide_index: 1, on_screen_text_transcript: "Aries" },
+          {
+            slide_index: 2,
+            on_screen_text_transcript: "nemotron stub",
+            document_ai_ocr_v1: {
+              schema_version: "document_ai_ocr_v1",
+              slide_index: 2,
+              full_text: "z".repeat(601),
+              text_layers: [],
+              token_count: 8,
+            },
+          },
+          { slide_index: 3, on_screen_text_transcript: "Gemini" },
+        ],
+      },
+      stored_inspection_media_json: { items: [{ index: 1 }, { index: 2 }, { index: 3 }] },
+    });
+    expect(layout).toHaveLength(2);
+    expect(layout[0]?.reference_on_screen_text).toContain("Aries");
+    expect(layout[1]?.reference_on_screen_text).toContain("Gemini");
   });
 
   it("buildContentSlideCopyLayoutFromEntry ignores undercounted content_slide_indices when most slides have text", () => {
