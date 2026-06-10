@@ -52,4 +52,14 @@ describe("flux text-on-image prompts", () => {
     expect(prompt).toContain("variant");
     expect(prompt).toContain("verbatim");
   });
+
+  it("uses configured visual similarity pct in bakeText prompt", () => {
+    const prompt = buildMimicCarouselSlidePrompt({
+      slideIndex: 1,
+      artOnly: false,
+      onImageCopy: "Hook",
+      visualSimilarityPct: 75,
+    });
+    expect(prompt).toContain("~75%");
+  });
 });

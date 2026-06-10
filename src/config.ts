@@ -216,6 +216,8 @@ const envSchema = z.object({
    * (BFL FLUX / configured provider) instead of Puppeteer HBS overlay or separate bg-extract + compose passes.
    */
   MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(true),
+  /** Target visual similarity for full-bleed mimic variants (50–95). Per-project override in Runs tab. */
+  MIMIC_VISUAL_SIMILARITY_PCT: z.coerce.number().int().min(50).max(95).default(70),
   /**
    * Full-bleed mimic copy length vs each slide's `reference_on_screen_text` (default 2/3).
    * Lower = shorter on-image copy for Flux-baked text (e.g. 0.5 = half reference length).

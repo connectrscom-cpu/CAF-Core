@@ -94,7 +94,7 @@ import {
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
-import { loadProjectMimicBflModel } from "./mimic-project-config.js";
+import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -1711,10 +1711,13 @@ async function processCarouselJob(
     isMimicCarousel && config.MIMIC_IMAGE_PROVIDER === "nvidia"
       ? await isNvidiaVisualGenAiReachable(config)
       : true;
-  const mimicCarouselTextViaFlux = Boolean(isMimicCarousel && config.MIMIC_CAROUSEL_TEXT_VIA_FLUX);
-  const mimicBflModelOverride = isMimicCarousel
-    ? await loadProjectMimicBflModel(db, job.project_id)
+  const mimicProjectRender = isMimicCarousel
+    ? await loadProjectMimicRenderSettings(db, job.project_id, config)
     : null;
+  const mimicCarouselTextViaFlux = Boolean(isMimicCarousel && mimicProjectRender?.carouselTextViaFlux);
+  const mimicBflModelOverride = mimicProjectRender?.bflModel ?? null;
+  const mimicVisualSimilarityPct =
+    mimicProjectRender?.visualSimilarityPct ?? config.MIMIC_VISUAL_SIMILARITY_PCT;
   const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarousel
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
@@ -1874,6 +1877,7 @@ async function processCarouselJob(
             promptOverrides: mimicPromptOverrides,
             projectHandle: projectInstagramHandle,
             bflModelOverride: mimicBflModelOverride,
+            visualSimilarityPct: mimicVisualSimilarityPct,
           }
         );
         const plateUrl = await persistMimicVisualPlateForSlide(db, config, job, i, buffer, mimeType);
@@ -1934,6 +1938,7 @@ async function processCarouselJob(
           projectHandle: projectInstagramHandle,
           bakeTextOnImage: true,
           bflModelOverride: mimicBflModelOverride,
+          visualSimilarityPct: mimicVisualSimilarityPct,
         });
         const fluxBuf = rendered.buffer;
         const fluxMime = rendered.mimeType;

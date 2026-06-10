@@ -1,4 +1,12 @@
 import type { MimicMode } from "../domain/mimic-payload.js";
+import {
+  buildVisualVariantSimilarityInstruction,
+  DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT,
+} from "../domain/mimic-render-settings.js";
+
+export interface MimicRenderPromptSettings {
+  visualSimilarityPct?: number;
+}
 
 // ─── Prompt Labs prompt names (keyed in prompt_labs_overrides) ───────────────
 export const MIMIC_PROMPT_NAME_IMAGE_FULL = "RENDER__Mimic_Image_Full_v1";
@@ -30,17 +38,18 @@ export const DEFAULT_MIMIC_CAROUSEL_SLIDE_ART_ONLY_PROMPT = DEFAULT_MIMIC_TEXT_R
 /** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 
-/** ~70% visual match — same narrative role, clearly a variant not a clone. */
-export const MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION =
-  "Recreate this carousel slide as a creative variant (~70% visual similarity to the reference): keep the same narrative role and layout structure, but change art direction enough that it reads as a fresh post in the same series — alternate composition, palette, or styling; not a pixel-match clone.";
+/** @deprecated Use buildVisualVariantSimilarityInstruction() — kept for tests/docs. */
+export const MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION = buildVisualVariantSimilarityInstruction(
+  DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT
+);
 
-/** @deprecated Two-pass template_bg compose — single-pass reference edit preferred when MIMIC_CAROUSEL_TEXT_VIA_FLUX=1. */
-export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT =
-  `${MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{consistency_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
+function defaultTemplateBgComposeWithCopyPrompt(pct: number): string {
+  return `${buildVisualVariantSimilarityInstruction(pct)} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{consistency_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
+}
 
-/** Single-pass Flux edit: mimic reference visuals + bake LLM copy (replaces HBS overlay). */
-export const DEFAULT_MIMIC_CAROUSEL_SLIDE_WITH_COPY_PROMPT =
-  `${MIMIC_VISUAL_VARIANT_SIMILARITY_INSTRUCTION} {{layout_instruction}} {{visual_instruction}} {{consistency_instruction}} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{handle_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
+function defaultCarouselSlideWithCopyPrompt(pct: number): string {
+  return `${buildVisualVariantSimilarityInstruction(pct)} {{layout_instruction}} {{visual_instruction}} {{consistency_instruction}} Replace all on-image text with this new copy (do not reproduce reference wording): {{copy_instruction}} {{handle_instruction}} Render copy legibly with clear typography; match text hierarchy and placement from the reference. Single polished 4:5 slide output.`;
+}
 
 /** @deprecated HBS overlay path — art-only plate extract. */
 export const DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
@@ -180,6 +189,7 @@ export function buildMimicCarouselSlidePrompt(
     projectHandle?: string | null;
     artOnly?: boolean;
     safeZoneInstruction?: string | null;
+    visualSimilarityPct?: number;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
@@ -205,8 +215,9 @@ export function buildMimicCarouselSlidePrompt(
     : "";
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
   const intentInstruction = opts.intentInstruction?.trim() || "";
+  const similarityPct = opts.visualSimilarityPct ?? DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT;
   const template =
-    overrides?.carousel_slide_visual?.trim() || DEFAULT_MIMIC_CAROUSEL_SLIDE_WITH_COPY_PROMPT;
+    overrides?.carousel_slide_visual?.trim() || defaultCarouselSlideWithCopyPrompt(similarityPct);
   return interpolateMimicTemplate(template, {
     copy_instruction: buildCopyInstructionForSlide(copy),
     on_image_copy: copy,
@@ -223,11 +234,13 @@ export function buildMimicTemplateBgComposePrompt(
   opts: {
     onImageCopy?: string | null;
     consistencyHint?: string | null;
+    visualSimilarityPct?: number;
   },
   overrides?: MimicPromptOverrides | null
 ): string {
   const custom = overrides?.template_bg_compose?.trim();
-  const template = custom || DEFAULT_MIMIC_TEMPLATE_BG_COMPOSE_WITH_COPY_PROMPT;
+  const similarityPct = opts.visualSimilarityPct ?? DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT;
+  const template = custom || defaultTemplateBgComposeWithCopyPrompt(similarityPct);
   const copy = String(opts.onImageCopy ?? "").trim();
   const consistencyInstruction = opts.consistencyHint?.trim() || "";
   if (!custom) {
@@ -255,8 +268,11 @@ export function mimicPromptForMode(
     artOnly?: boolean;
     safeZoneInstruction?: string | null;
   },
-  overrides?: MimicPromptOverrides | null
+  overrides?: MimicPromptOverrides | null,
+  renderSettings?: MimicRenderPromptSettings | null
 ): string {
+  const visualSimilarityPct =
+    renderSettings?.visualSimilarityPct ?? slide?.visualSimilarityPct ?? DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT;
   if (mode === "image_full") return buildMimicImageFullPrompt({ onImageCopy: slide?.onImageCopy }, overrides);
   if (mode === "template_bg") {
     return buildMimicTemplateBackgroundPrompt(
@@ -268,17 +284,30 @@ export function mimicPromptForMode(
       overrides
     );
   }
-  if (mode === "template_bg_compose") return buildMimicTemplateBgComposePrompt({ onImageCopy: slide?.onImageCopy, consistencyHint: slide?.consistencyHint }, overrides);
-  return buildMimicCarouselSlidePrompt({
-    slideIndex: slide?.index ?? 1,
-    layoutTemplate: slide?.layout,
-    visualDescription: slide?.visual,
-    onImageCopy: slide?.onImageCopy,
-    consistencyHint: slide?.consistencyHint,
-    intentInstruction: slide?.intentInstruction,
-    projectHandle: slide?.projectHandle,
-    artOnly: slide?.artOnly,
-    safeZoneInstruction: slide?.safeZoneInstruction,
-  }, overrides);
+  if (mode === "template_bg_compose") {
+    return buildMimicTemplateBgComposePrompt(
+      {
+        onImageCopy: slide?.onImageCopy,
+        consistencyHint: slide?.consistencyHint,
+        visualSimilarityPct,
+      },
+      overrides
+    );
+  }
+  return buildMimicCarouselSlidePrompt(
+    {
+      slideIndex: slide?.index ?? 1,
+      layoutTemplate: slide?.layout,
+      visualDescription: slide?.visual,
+      onImageCopy: slide?.onImageCopy,
+      consistencyHint: slide?.consistencyHint,
+      intentInstruction: slide?.intentInstruction,
+      projectHandle: slide?.projectHandle,
+      artOnly: slide?.artOnly,
+      safeZoneInstruction: slide?.safeZoneInstruction,
+      visualSimilarityPct,
+    },
+    overrides
+  );
 }
 

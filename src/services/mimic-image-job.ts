@@ -6,7 +6,7 @@ import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligi
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
 import { editImageFromReference, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
-import { loadProjectMimicBflModel } from "./mimic-project-config.js";
+import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { refreshMimicPayloadReferenceUrls, refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
@@ -65,7 +65,8 @@ export async function processImageMimicJob(
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, ref);
 
-  const mimicBflModelOverride = await loadProjectMimicBflModel(db, job.project_id);
+  const mimicProjectRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
+  const mimicBflModelOverride = mimicProjectRender.bflModel;
   const imageProvider = mimicImageProviderAssetLabel(config, mimicBflModelOverride);
 
   await db.query(`UPDATE caf_core.content_jobs SET status = 'RENDERING', updated_at = now() WHERE id = $1`, [

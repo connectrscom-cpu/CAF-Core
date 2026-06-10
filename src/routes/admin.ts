@@ -164,6 +164,10 @@ import {
   type PlanCapGroupDef,
 } from "../decision_engine/default-plan-caps.js";
 import { parseProjectMimicBflModel } from "../domain/mimic-bfl-model.js";
+import {
+  parseProjectMimicCarouselTextViaFlux,
+  parseProjectMimicVisualSimilarityPct,
+} from "../domain/mimic-render-settings.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
   LEGACY_FLOW_TYPE_TO_CANONICAL,
@@ -746,24 +750,47 @@ function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
       </div>`;
 }
 
-function renderMimicBflModelPickerHtml(serverDefault: string): string {
+function renderMimicRenderSettingsHtml(opts: {
+  serverBflModel: string;
+  serverVisualSimilarityPct: number;
+  serverCarouselTextViaFlux: boolean;
+}): string {
+  const fluxDefaultLabel = opts.serverCarouselTextViaFlux
+    ? "image model bakes copy"
+    : "HTML/CSS overlay (HBS)";
   return `
       <div class="plan-cap-row plan-cap-row--select">
         <label for="plan-cap-mimic-bfl-model">BFL image model</label>
         <select id="plan-cap-mimic-bfl-model" title="Per-project BFL FLUX endpoint for mimic carousel + image renders. Empty uses server env default.">
-          <option value="">Server default (${esc(serverDefault)})</option>
+          <option value="">Server default (${esc(opts.serverBflModel)})</option>
           <option value="flux-2-klein-4b">4b (Klein — fast)</option>
           <option value="flux-2-flex">Flex (typography / on-image text)</option>
+        </select>
+      </div>
+      <div class="plan-cap-row">
+        <label for="plan-cap-mimic-visual-sim" title="How closely full-bleed mimic slides should match the reference visual — lower reads as a more distinct variant.">Visual similarity %</label>
+        <input type="number" id="plan-cap-mimic-visual-sim" min="50" max="95" step="1" placeholder="${opts.serverVisualSimilarityPct}" />
+      </div>
+      <div class="plan-cap-row plan-cap-row--select">
+        <label for="plan-cap-mimic-text-flux" title="On: single-pass image edit bakes LLM copy onto the slide. Off: art-only plate + Puppeteer HTML/CSS text overlay.">On-image text</label>
+        <select id="plan-cap-mimic-text-flux">
+          <option value="">Server default (${esc(fluxDefaultLabel)})</option>
+          <option value="1">Image model (Flux / provider)</option>
+          <option value="0">HTML/CSS overlay (HBS)</option>
         </select>
       </div>`;
 }
 
-function renderPlanCapColumnsHtml(serverMimicBflModel: string): string {
+function renderPlanCapColumnsHtml(opts: {
+  serverBflModel: string;
+  serverVisualSimilarityPct: number;
+  serverCarouselTextViaFlux: boolean;
+}): string {
   return PLAN_CAP_UI_CATEGORIES.map((cat) => {
     const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
     const rows = groups.map((g) => renderPlanCapRowHtml(g)).join("");
     const mimicModelPicker =
-      cat.id === "top_performer_mimic" ? renderMimicBflModelPickerHtml(serverMimicBflModel) : "";
+      cat.id === "top_performer_mimic" ? renderMimicRenderSettingsHtml(opts) : "";
     return `
     <div class="plan-cap-col" data-plan-cap-cat="${esc(cat.id)}">
       <div class="plan-cap-col-title">${esc(cat.label)}</div>
@@ -1824,6 +1851,30 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         const parsed = parseProjectMimicBflModel(raw);
         if (!parsed) return { ok: false, error: "invalid mimic_image_bfl_model (use flux-2-klein-4b or flux-2-flex)" };
         patch.mimic_image_bfl_model = parsed;
+      }
+    }
+    if ("mimic_visual_similarity_pct" in body) {
+      const raw = body.mimic_visual_similarity_pct;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.mimic_visual_similarity_pct = null;
+      } else {
+        const parsed = parseProjectMimicVisualSimilarityPct(raw);
+        if (parsed == null) {
+          return { ok: false, error: "invalid mimic_visual_similarity_pct (use integer 50–95 or empty for server default)" };
+        }
+        patch.mimic_visual_similarity_pct = parsed;
+      }
+    }
+    if ("mimic_carousel_text_via_flux" in body) {
+      const raw = body.mimic_carousel_text_via_flux;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.mimic_carousel_text_via_flux = null;
+      } else {
+        const parsed = parseProjectMimicCarouselTextViaFlux(raw);
+        if (parsed == null) {
+          return { ok: false, error: "invalid mimic_carousel_text_via_flux (use true/false or empty for server default)" };
+        }
+        patch.mimic_carousel_text_via_flux = parsed;
       }
     }
     await upsertConstraints(db, project.id, mergeConstraintUpdate(existing, patch));
@@ -3651,7 +3702,11 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
     const project = await resolveProject(db, query.project);
     const currentSlug = project?.slug ?? "";
     const pqJs = currentSlug ? `+'&project=${encodeURIComponent(currentSlug)}'` : "";
-    const planCapColumnsHtml = renderPlanCapColumnsHtml(config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b");
+    const planCapColumnsHtml = renderPlanCapColumnsHtml({
+      serverBflModel: config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b",
+      serverVisualSimilarityPct: config.MIMIC_VISUAL_SIMILARITY_PCT,
+      serverCarouselTextViaFlux: config.MIMIC_CAROUSEL_TEXT_VIA_FLUX,
+    });
     const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
     const llmJobGenTitle = adminLlmPromptTitleAttr(
       "(per job) active flow template",
@@ -3844,6 +3899,8 @@ const CAROUSEL_PLAN_CAP_GROUPS=${JSON.stringify(CAROUSEL_PLAN_CAP_GROUPS)};
 const VIDEO_PLAN_CAP_GROUPS=${JSON.stringify(VIDEO_PLAN_CAP_GROUPS)};
 const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS)};
 const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
+const SERVER_MIMIC_VISUAL_SIM=${config.MIMIC_VISUAL_SIMILARITY_PCT};
+const SERVER_MIMIC_TEXT_FLUX=${config.MIMIC_CAROUSEL_TEXT_VIA_FLUX ? "1" : "0"};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+action;}
@@ -4341,6 +4398,8 @@ async function loadPlanningCaps(){
   const vBtn=document.getElementById('plan-cap-video-save');
   const mBtn=document.getElementById('plan-cap-mimic-save');
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
+  const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
+  const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
@@ -4364,6 +4423,8 @@ async function loadPlanningCaps(){
     VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
     TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=true;});
     if(mModelSel)mModelSel.disabled=true;
+    if(mSimInp)mSimInp.disabled=true;
+    if(mFluxSel)mFluxSel.disabled=true;
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
     if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
     return;
@@ -4375,6 +4436,8 @@ async function loadPlanningCaps(){
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=false;});
   if(mModelSel)mModelSel.disabled=false;
+  if(mSimInp){mSimInp.disabled=false;mSimInp.placeholder=String(SERVER_MIMIC_VISUAL_SIM);}
+  if(mFluxSel)mFluxSel.disabled=false;
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
   if(mHint)mHint.textContent='Loading…';
@@ -4435,12 +4498,27 @@ async function loadPlanningCaps(){
         var meff=mset?mval:DEFAULT_MAX_MIMIC_PER_FLOW;
         mParts.push(g.label.replace(' (not wired)','')+': '+meff);
       });
-      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Requires allowed flow types + MIMIC_IMAGE_ENABLED for carousel/image.';
+      var simSaved=d.constraints&&d.constraints.mimic_visual_similarity_pct;
+      var simHas=simSaved!=null&&simSaved!=='';
+      var simEff=simHas?Number(simSaved):SERVER_MIMIC_VISUAL_SIM;
+      var fluxSaved=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
+      var fluxHas=fluxSaved===true||fluxSaved===false;
+      var fluxEff=fluxHas?(fluxSaved===true):SERVER_MIMIC_TEXT_FLUX==='1';
+      var fluxLabel=fluxEff?'image model bakes copy':'HTML/CSS overlay (HBS)';
+      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Render: ~'+simEff+'% visual variant; on-image text via '+fluxLabel+(fluxHas?' (saved)':(' (server default)'))+'. Requires MIMIC_IMAGE_ENABLED.';
     }
     if(mModelSel){
       const savedModel=d.constraints&&d.constraints.mimic_image_bfl_model;
       const parsed=String(savedModel||'').trim();
       mModelSel.value=(parsed==='flux-2-klein-4b'||parsed==='flux-2-flex')?parsed:'';
+    }
+    if(mSimInp){
+      const simRaw=d.constraints&&d.constraints.mimic_visual_similarity_pct;
+      mSimInp.value=(simRaw!=null&&simRaw!=='')?String(simRaw):'';
+    }
+    if(mFluxSel){
+      const fluxRaw=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
+      mFluxSel.value=(fluxRaw===true)?'1':(fluxRaw===false)?'0':'';
     }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));
@@ -4503,6 +4581,13 @@ async function saveMimicPlanningCaps(){
   if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
   const mBtn=document.getElementById('plan-cap-mimic-save');
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
+  const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
+  const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const simRaw=(mSimInp&&mSimInp.value||'').trim();
+  if(simRaw!==''){
+    var simN=parseInt(simRaw,10);
+    if(!Number.isFinite(simN)||simN<50||simN>95){showToast('Visual similarity: enter an integer 50–95 or leave empty for server default.',false);return;}
+  }
   for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
     var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
     var minp=document.getElementById('plan-cap-mimic-'+mg.id);
@@ -4532,11 +4617,18 @@ async function saveMimicPlanningCaps(){
     if(mModelSel){
       body.mimic_image_bfl_model=(mModelSel.value||'').trim();
     }
+    if(mSimInp){
+      body.mimic_visual_similarity_pct=simRaw===''?'':parseInt(simRaw,10);
+    }
+    if(mFluxSel){
+      const fluxPick=(mFluxSel.value||'').trim();
+      body.mimic_carousel_text_via_flux=fluxPick===''?'':fluxPick==='1';
+    }
     var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var rawText=await r.text();
     var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
     if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
-    showToast('Mimic planning caps saved.',true);
+    showToast('Mimic planning caps and render settings saved.',true);
     await loadPlanningCaps();
   }catch(err){showToast(err.message,false);}
   finally{if(mBtn)mBtn.disabled=false;}

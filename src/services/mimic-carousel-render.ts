@@ -23,7 +23,11 @@ import type { Pool } from "pg";
 import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
 import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
-import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
+import {
+  mimicPromptForMode,
+  type MimicPromptOverrides,
+  type MimicRenderPromptSettings,
+} from "./mimic-prompt-builder.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { isVideoishUrl } from "./instagram-media-normalizer.js";
 import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js";
@@ -1248,14 +1252,22 @@ export async function composeMimicSlideOnBackground(
     onImageCopy?: string | null;
     promptOverrides?: MimicPromptOverrides | null;
     consistencyHint?: string | null;
+    visualSimilarityPct?: number;
   } & MimicRenderImageOpts
 ): Promise<{ buffer: Buffer; mimeType: string }> {
+  const renderSettings: MimicRenderPromptSettings | undefined =
+    opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : undefined;
   return editImageFromReference(config, {
     referenceUrl: backgroundUrl,
-    prompt: mimicPromptForMode("template_bg_compose", {
-      onImageCopy: opts?.onImageCopy,
-      consistencyHint: opts?.consistencyHint,
-    }, opts?.promptOverrides),
+    prompt: mimicPromptForMode(
+      "template_bg_compose",
+      {
+        onImageCopy: opts?.onImageCopy,
+        consistencyHint: opts?.consistencyHint,
+      },
+      opts?.promptOverrides,
+      renderSettings
+    ),
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
     audit: {
@@ -1281,6 +1293,7 @@ export async function renderMimicCarouselSlideFullBleed(
     projectHandle?: string | null;
     /** When true, Flux bakes on-image copy (skips art-only plate + HBS overlay). */
     bakeTextOnImage?: boolean;
+    visualSimilarityPct?: number;
   } & MimicRenderImageOpts
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const item = referenceItemForMimicSlide(mimic, slideIndex);
@@ -1289,6 +1302,8 @@ export async function renderMimicCarouselSlideFullBleed(
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
   const hints = slideVisionHints(mimic, slideIndex);
 
+  const renderSettings: MimicRenderPromptSettings | undefined =
+    opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : undefined;
   const basePrompt = mimicPromptForMode(
     "carousel_visual",
     {
@@ -1299,7 +1314,8 @@ export async function renderMimicCarouselSlideFullBleed(
       visual: hints.visual,
       projectHandle: opts?.projectHandle,
     },
-    opts?.promptOverrides
+    opts?.promptOverrides,
+    renderSettings
   );
 
   return editImageFromReference(config, {
