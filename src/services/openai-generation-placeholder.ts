@@ -18,13 +18,45 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
-/** True when OpenAI chat/vision must not call the network (env wins over parsed config). */
-export function isOpenAiPlaceholderMode(config?: Pick<AppConfig, "OPENAI_GENERATION_MODE">): boolean {
+export type OpenAiGenerationMode = "live" | "placeholder";
+
+/** Parse per-project override from constraints row. */
+export function parseProjectOpenAiGenerationMode(raw: unknown): OpenAiGenerationMode | null {
+  const m = String(raw ?? "").trim().toLowerCase();
+  if (m === "live" || m === "placeholder") return m;
+  return null;
+}
+
+/** Server default: env OPENAI_GENERATION_MODE wins over parsed config when env is explicit. */
+export function serverOpenAiGenerationMode(
+  config?: Pick<AppConfig, "OPENAI_GENERATION_MODE">
+): OpenAiGenerationMode {
   const raw = process.env.OPENAI_GENERATION_MODE?.trim().toLowerCase();
-  if (raw === "placeholder") return true;
-  if (raw === "live") return false;
+  if (raw === "placeholder") return "placeholder";
+  if (raw === "live") return "live";
   const mode = config?.OPENAI_GENERATION_MODE ?? loadConfig().OPENAI_GENERATION_MODE;
-  return mode === "placeholder";
+  return mode === "placeholder" ? "placeholder" : "live";
+}
+
+/** True when OpenAI chat/vision must not call the network (server default only). */
+export function isOpenAiPlaceholderMode(config?: Pick<AppConfig, "OPENAI_GENERATION_MODE">): boolean {
+  return serverOpenAiGenerationMode(config) === "placeholder";
+}
+
+/** Project override when set; otherwise server default. */
+export function effectiveOpenAiGenerationMode(
+  projectMode: OpenAiGenerationMode | null | undefined,
+  config?: Pick<AppConfig, "OPENAI_GENERATION_MODE">
+): OpenAiGenerationMode {
+  if (projectMode === "live" || projectMode === "placeholder") return projectMode;
+  return serverOpenAiGenerationMode(config);
+}
+
+export function isOpenAiPlaceholderModeForProject(
+  projectMode: OpenAiGenerationMode | null | undefined,
+  config?: Pick<AppConfig, "OPENAI_GENERATION_MODE">
+): boolean {
+  return effectiveOpenAiGenerationMode(projectMode, config) === "placeholder";
 }
 
 function firstTextLine(text: string): string {

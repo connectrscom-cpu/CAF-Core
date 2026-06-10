@@ -168,6 +168,7 @@ import {
   parseProjectMimicCarouselTextViaFlux,
   parseProjectMimicVisualSimilarityPct,
 } from "../domain/mimic-render-settings.js";
+import { parseProjectOpenAiGenerationMode } from "../services/openai-generation-placeholder.js";
 import { isOfflinePipelineFlow } from "../services/offline-flow-types.js";
 import {
   LEGACY_FLOW_TYPE_TO_CANONICAL,
@@ -1875,6 +1876,18 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           return { ok: false, error: "invalid mimic_carousel_text_via_flux (use true/false or empty for server default)" };
         }
         patch.mimic_carousel_text_via_flux = parsed;
+      }
+    }
+    if ("openai_generation_mode" in body) {
+      const raw = body.openai_generation_mode;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.openai_generation_mode = null;
+      } else {
+        const parsed = parseProjectOpenAiGenerationMode(raw);
+        if (!parsed) {
+          return { ok: false, error: "invalid openai_generation_mode (use live, placeholder, or empty for server default)" };
+        }
+        patch.openai_generation_mode = parsed;
       }
     }
     await upsertConstraints(db, project.id, mergeConstraintUpdate(existing, patch));
@@ -3767,6 +3780,18 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
       <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Planning caps</div>
       <div class="plan-cap-toolbar">
         <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-openai-gen-mode" style="font-size:13px;white-space:nowrap">Copy generation</label>
+          <select id="plan-cap-openai-gen-mode" style="min-width:200px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Placeholder = deterministic stub copy (no OpenAI spend). Live = real LLM. Empty uses server OPENAI_GENERATION_MODE.">
+            <option value="">Server default</option>
+            <option value="placeholder">Placeholder (no OpenAI)</option>
+            <option value="live">Live (OpenAI)</option>
+          </select>
+          <button type="button" class="btn-ghost" id="plan-cap-openai-gen-save" onclick="saveOpenAiGenerationMode()" style="border:1px solid var(--border)">Save copy mode</button>
+        </div>
+        <p id="plan-cap-openai-gen-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      </div>
+      <div class="plan-cap-toolbar">
+        <div class="plan-cap-toolbar-block">
           <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max regular carousel jobs / run</label>
           <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap for FLOW_CAROUSEL only — top-performer mimic carousels are capped separately."/>
           <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save carousel caps</button>
@@ -3901,6 +3926,7 @@ const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_P
 const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 const SERVER_MIMIC_VISUAL_SIM=${config.MIMIC_VISUAL_SIMILARITY_PCT};
 const SERVER_MIMIC_TEXT_FLUX=${config.MIMIC_CAROUSEL_TEXT_VIA_FLUX ? "1" : "0"};
+const SERVER_OPENAI_GEN_MODE=${JSON.stringify(config.OPENAI_GENERATION_MODE)};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+action;}
@@ -4400,6 +4426,9 @@ async function loadPlanningCaps(){
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
   const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
+  const genModeHint=document.getElementById('plan-cap-openai-gen-hint');
+  const genModeBtn=document.getElementById('plan-cap-openai-gen-save');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
@@ -4425,6 +4454,9 @@ async function loadPlanningCaps(){
     if(mModelSel)mModelSel.disabled=true;
     if(mSimInp)mSimInp.disabled=true;
     if(mFluxSel)mFluxSel.disabled=true;
+    if(genModeSel)genModeSel.disabled=true;
+    if(genModeBtn)genModeBtn.disabled=true;
+    if(genModeHint)genModeHint.textContent='Pick a project to set copy generation mode.';
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
     if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
     return;
@@ -4438,6 +4470,9 @@ async function loadPlanningCaps(){
   if(mModelSel)mModelSel.disabled=false;
   if(mSimInp){mSimInp.disabled=false;mSimInp.placeholder=String(SERVER_MIMIC_VISUAL_SIM);}
   if(mFluxSel)mFluxSel.disabled=false;
+  if(genModeSel)genModeSel.disabled=false;
+  if(genModeBtn)genModeBtn.disabled=false;
+  if(genModeHint)genModeHint.textContent='Loading…';
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
   if(mHint)mHint.textContent='Loading…';
@@ -4449,7 +4484,20 @@ async function loadPlanningCaps(){
       if(chint)chint.textContent=errMsg;
       if(vHint)vHint.textContent=errMsg;
       if(mHint)mHint.textContent=errMsg;
+      if(genModeHint)genModeHint.textContent=errMsg;
       return;
+    }
+    if(genModeSel){
+      const savedGen=d.constraints&&d.constraints.openai_generation_mode;
+      const parsedGen=String(savedGen||'').trim();
+      genModeSel.value=(parsedGen==='live'||parsedGen==='placeholder')?parsedGen:'';
+    }
+    if(genModeHint){
+      const savedGen=d.constraints&&d.constraints.openai_generation_mode;
+      const hasGen=savedGen==='live'||savedGen==='placeholder';
+      const eff=hasGen?savedGen:SERVER_OPENAI_GEN_MODE;
+      const label=eff==='placeholder'?'placeholder stub (no OpenAI API)':'live OpenAI LLM';
+      genModeHint.textContent='Job copy generation: '+label+(hasGen?' (saved for this project)':(' (server default: '+SERVER_OPENAI_GEN_MODE+')'))+'. Placeholder is useful for render-only testing.';
     }
     var ov=normalizePerFlowCapsClient(d.constraints&&d.constraints.max_jobs_per_flow_type);
     if(cinp){
@@ -4525,7 +4573,26 @@ async function loadPlanningCaps(){
     if(chint)chint.textContent=msg;
     if(vHint)vHint.textContent=msg;
     if(mHint)mHint.textContent=msg;
+    if(genModeHint)genModeHint.textContent=msg;
   }
+}
+
+async function saveOpenAiGenerationMode(){
+  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
+  const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
+  const genModeBtn=document.getElementById('plan-cap-openai-gen-save');
+  const pick=(genModeSel&&genModeSel.value||'').trim();
+  if(pick!==''&&pick!=='live'&&pick!=='placeholder'){showToast('Copy mode: live, placeholder, or empty for server default.',false);return;}
+  if(genModeBtn)genModeBtn.disabled=true;
+  try{
+    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,openai_generation_mode:pick})});
+    var rawText=await r.text();
+    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
+    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
+    showToast('Copy generation mode saved.',true);
+    await loadPlanningCaps();
+  }catch(err){showToast(err.message,false);}
+  finally{if(genModeBtn)genModeBtn.disabled=false;}
 }
 
 async function saveVideoPlanningCaps(){

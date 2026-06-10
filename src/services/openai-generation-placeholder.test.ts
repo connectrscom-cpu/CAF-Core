@@ -3,6 +3,7 @@ import {
   buildJobGenerationPlaceholderOutput,
   buildGenericOpenAiPlaceholderContent,
   isOpenAiPlaceholderMode,
+  isOpenAiPlaceholderModeForProject,
 } from "./openai-generation-placeholder.js";
 import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL } from "../domain/top-performer-mimic-flow-types.js";
 import { slideOnImageCopyFromSlides } from "./mimic-carousel-render.js";
@@ -18,6 +19,26 @@ describe("openai-generation-placeholder", () => {
       expect(isOpenAiPlaceholderMode({ OPENAI_GENERATION_MODE: "live" })).toBe(true);
       process.env.OPENAI_GENERATION_MODE = "live";
       expect(isOpenAiPlaceholderMode({ OPENAI_GENERATION_MODE: "placeholder" })).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.OPENAI_GENERATION_MODE;
+      else process.env.OPENAI_GENERATION_MODE = prev;
+    }
+  });
+
+  it("isOpenAiPlaceholderModeForProject uses project override over server env", () => {
+    const prev = process.env.OPENAI_GENERATION_MODE;
+    try {
+      process.env.OPENAI_GENERATION_MODE = "placeholder";
+      expect(isOpenAiPlaceholderModeForProject("live", { OPENAI_GENERATION_MODE: "placeholder" })).toBe(
+        false
+      );
+      expect(isOpenAiPlaceholderModeForProject("placeholder", { OPENAI_GENERATION_MODE: "live" })).toBe(
+        true
+      );
+      delete process.env.OPENAI_GENERATION_MODE;
+      expect(isOpenAiPlaceholderModeForProject(null, { OPENAI_GENERATION_MODE: "live" })).toBe(false);
+      process.env.OPENAI_GENERATION_MODE = "placeholder";
+      expect(isOpenAiPlaceholderModeForProject(null, { OPENAI_GENERATION_MODE: "live" })).toBe(true);
     } finally {
       if (prev === undefined) delete process.env.OPENAI_GENERATION_MODE;
       else process.env.OPENAI_GENERATION_MODE = prev;

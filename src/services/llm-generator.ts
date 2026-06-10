@@ -42,9 +42,10 @@ import { openAiMaxTokens } from "./openai-coerce.js";
 import { openaiChat } from "./openai-chat.js";
 import {
   buildJobGenerationPlaceholderOutput,
-  isOpenAiPlaceholderMode,
+  isOpenAiPlaceholderModeForProject,
   OPENAI_PLACEHOLDER_MODEL,
 } from "./openai-generation-placeholder.js";
+import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
@@ -261,6 +262,11 @@ export async function generateForJob(
 
   if (!job) throw new Error(`Job not found: ${jobId}`);
 
+  const appCfgEarly = loadConfig();
+  const projectGenMode = await loadProjectOpenAiGenerationMode(db, job.project_id);
+  const placeholderForProject = (cfg = appCfgEarly) =>
+    isOpenAiPlaceholderModeForProject(projectGenMode, cfg);
+
   if (isProductImageFlow(job.flow_type)) {
     return {
       draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
@@ -275,7 +281,7 @@ export async function generateForJob(
     };
   }
 
-  if (isTopPerformerMimicRenderableFlow(job.flow_type) && !apiKey?.trim()) {
+  if (isTopPerformerMimicRenderableFlow(job.flow_type) && !apiKey?.trim() && !placeholderForProject()) {
     return {
       draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
       task_id: job.task_id,
@@ -293,8 +299,7 @@ export async function generateForJob(
   const templateFlowType = resolveFlowEngineTemplateFlowType(job.flow_type);
   const wantSceneBundle = prefersVideoSceneBundleTemplate(templateFlowType, job.flow_type);
 
-  const appCfgEarly = loadConfig();
-  if (wantSceneBundle && apiKey.trim() && !isOpenAiPlaceholderMode(appCfgEarly)) {
+  if (wantSceneBundle && apiKey.trim() && !placeholderForProject(appCfgEarly)) {
     /** Script-first scene assembly: spoken_script / video_script in payload before scene_bundle LLM. */
     await ensureVideoScriptInPayload(db, appCfgEarly, jobId).catch(() => {});
     const refreshed = await qOne<{
@@ -775,7 +780,7 @@ export async function generateForJob(
   const draftId = `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
 
   try {
-    const placeholderMode = isOpenAiPlaceholderMode(appCfg);
+    const placeholderMode = placeholderForProject(appCfg);
     let llmResult: { content: string; model: string; total_tokens: number };
     let parsedRaw: Record<string, unknown> | null;
 

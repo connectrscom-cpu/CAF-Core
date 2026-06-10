@@ -95,6 +95,8 @@ import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
+import { isOpenAiPlaceholderModeForProject } from "./openai-generation-placeholder.js";
+import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
@@ -286,7 +288,8 @@ async function processJobUpToRender(
 
   const openaiKey = config.OPENAI_API_KEY;
   const openaiModel = config.OPENAI_MODEL ?? "gpt-4o";
-  const openAiPlaceholder = config.OPENAI_GENERATION_MODE === "placeholder";
+  const projectGenMode = await loadProjectOpenAiGenerationMode(db, job.project_id);
+  const openAiPlaceholder = isOpenAiPlaceholderModeForProject(projectGenMode, config);
 
   if (job.status === "PLANNED") {
     await advanceToGenerating(db, job, run);
