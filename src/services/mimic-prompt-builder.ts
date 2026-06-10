@@ -267,6 +267,7 @@ export function mimicPromptForMode(
     projectHandle?: string | null;
     artOnly?: boolean;
     safeZoneInstruction?: string | null;
+    visualSimilarityPct?: number;
   },
   overrides?: MimicPromptOverrides | null,
   renderSettings?: MimicRenderPromptSettings | null
