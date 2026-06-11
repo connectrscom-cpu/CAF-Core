@@ -1,0 +1,40 @@
+{
+  "description": "Document AI text_layers bbox takes priority over text_blocks (geometry mismatch on purpose).",
+  "slide_index": 1,
+  "background_image_url": null,
+  "llm_slide": {
+    "headline": "New headline from copy LLM"
+  },
+  "mimic": {
+    "visual_guideline": {
+      "slides": [
+        {
+          "slide_index": 1,
+          "text_blocks": [
+            {
+              "text": "OLD",
+              "role": "headline",
+              "source": "document_ai",
+              "bbox_norm": { "x": 0.5, "y": 0.5, "w": 0.2, "h": 0.1 }
+            }
+          ],
+          "document_ai_ocr_v1": {
+            "schema_version": "document_ai_ocr_v1",
+            "slide_index": 1,
+            "full_text": "OLD",
+            "text_layers": [
+              {
+                "text": "OLD",
+                "bbox_pct": { "x": 0.1, "y": 0.2, "w": 0.8, "h": 0.12 },
+                "font": { "size_px": 72, "color_hex": "#ffcc00", "weight": "700" },
+                "alignment": "center"
+              }
+            ],
+            "token_count": 1
+          }
+        }
+      ]
+    },
+    "reference_items": [{ "index": 1, "source_slide_index": 1 }]
+  }
+}

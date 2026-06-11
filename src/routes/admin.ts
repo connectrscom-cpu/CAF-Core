@@ -78,6 +78,7 @@ import { buildTransparencyTraceView } from "../services/planning-transparency.js
 import { buildSignalPackIdeasForUi } from "../services/signal-pack-ideas-ui.js";
 import { buildSignalPackMimicReferencesForUi } from "../services/signal-pack-mimic-ui.js";
 import { runSceneAssemblyLabNew, runSceneAssemblyLabRegenerate } from "../services/scene-assembly-lab.js";
+import { registerMimicTextOverlayLabRoutes } from "./mimic-text-overlay-lab-routes.js";
 import {
   runSceneAssemblyMergeClipsFromStorage,
   runSceneAssemblyResumePipelineFromJobPayload,
@@ -617,6 +618,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     { href: `/admin/flow-engine${gq}`, label: "Flow Engine", key: "flow-engine" },
     { href: `/admin/prompt-labs${gq}`, label: "Prompt labs", key: "prompt-labs" },
     { href: `/admin/carousel-templates${gq}`, label: "Carousel templates", key: "carousel-templates" },
+    { href: `/admin/mimic-text-overlay-lab${gq}`, label: "Mimic text overlay lab", key: "mimic-text-overlay-lab" },
   ];
 
   const LEARNING_CHILD_KEYS = new Set(["engine", "learning-prompts"]);
@@ -8062,5 +8064,14 @@ async function baSyncHeygen(id){
 loadConfig();
 </script>`;
     reply.type("text/html").send(page(currentSlug + " — Config", "config", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  registerMimicTextOverlayLabRoutes(app, {
+    db,
+    config,
+    wrapAdminPage: (title, active, body, projects, slug) =>
+      page(title, active, body, projects, slug, adminHeadTokenScript(config)),
+    listProjects,
+    resolveProject,
   });
 }

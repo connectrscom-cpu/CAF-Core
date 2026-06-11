@@ -967,6 +967,46 @@ function takeLlmTextForRefBlock(
   return { text: "", pool };
 }
 
+/** Reference OCR/Nemotron layout blocks for a slide (px + normalized bbox). Used by overlay lab + QA. */
+export function referenceDocAiLayoutBlocksForMimicSlide(
+  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
+  slideIndex1Based: number
+): Array<{
+  text: string;
+  role: string | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  x_px: number;
+  y_px: number;
+  w_px: number;
+  h_px: number;
+  font_size_px: number | null;
+  color_hex: string | null;
+}> {
+  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
+  const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
+  if (!refSlide) return [];
+  return extractDocAiLayoutBlocks(refSlide).map((b) => {
+    const px = bboxNormToRenderPx(b.x, b.y, b.w, b.h);
+    return {
+      text: b.ref_text,
+      role: b.role,
+      x: b.x,
+      y: b.y,
+      w: b.w,
+      h: b.h,
+      x_px: px.x,
+      y_px: px.y,
+      w_px: px.w,
+      h_px: px.h,
+      font_size_px: b.font_size_px,
+      color_hex: b.color_hex,
+    };
+  });
+}
+
 /**
  * Map Document AI reference geometry to LLM copy as absolute px layers on the 1080×1350 canvas.
  * Puppeteer performs a second shrink-to-fit pass (see services/renderer/server.js).

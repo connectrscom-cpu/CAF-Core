@@ -1,0 +1,45 @@
+{
+  "description": "Headline + body with Nemotron text_blocks bbox (no OCR v1). Dark deck theme.",
+  "slide_index": 1,
+  "background_image_url": null,
+  "llm_slide": {
+    "headline": "Your Aries friend",
+    "body": "Always planning the next adventure before finishing the last one."
+  },
+  "mimic": {
+    "visual_guideline": {
+      "deck_visual_system": {
+        "overall_aesthetic": "dark, celestial, reflective",
+        "repeated_template": "centered text over celestial backgrounds"
+      },
+      "slides": [
+        {
+          "slide_index": 1,
+          "text_blocks": [
+            {
+              "text": "YOUR ARIES FRIEND",
+              "role": "headline",
+              "source": "document_ai",
+              "bbox_norm": { "x": 0.12, "y": 0.18, "w": 0.76, "h": 0.14 },
+              "font_size_px": 88,
+              "color_hex": "#ffffff",
+              "font_weight": "700",
+              "font_family": "SANS_SERIF",
+              "alignment": "center"
+            },
+            {
+              "text": "always planning the next trip",
+              "role": "body",
+              "source": "document_ai",
+              "bbox_norm": { "x": 0.1, "y": 0.55, "w": 0.8, "h": 0.2 },
+              "font_size_px": 40,
+              "color_hex": "#e8e8ed"
+            }
+          ]
+        }
+      ]
+    },
+    "reference_items": [{ "index": 1, "source_slide_index": 1 }],
+    "slide_plans": [{ "slide_index": 1, "reference_index": 1, "render_mode": "hbs" }]
+  }
+}
