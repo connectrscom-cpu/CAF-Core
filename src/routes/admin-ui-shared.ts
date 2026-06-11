@@ -981,6 +981,15 @@ export function adminSignalPackMimicModeScript(): string {
     }
     if(!rows.length){wrap.innerHTML='<p class="runs-ops-hint" style="margin:0">No top-performer carousel entries on this pack.</p>';return;}
     var h='<p class="runs-ops-hint" style="margin:0 0 10px">Pin mimic render mode before starting a run. Stored on <span class="mono">derived_globals_json.mimic_mode_overrides</span>.</p>';
+    h+='<div class="plan-cap-row plan-cap-row--select" style="margin:0 0 12px;max-width:520px">';
+    h+='<label for="sp-mimic-text-flux" style="font-size:12px">Mimic text rendering (project)</label>';
+    h+='<select id="sp-mimic-text-flux" style="width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">';
+    h+='<option value="">Server / project default</option>';
+    h+='<option value="0">Generate copy + HTML/CSS overlay (strip ref text)</option>';
+    h+='<option value="1">Image model bakes copy</option>';
+    h+='</select>';
+    h+='<button type="button" class="btn btn-sm" id="sp-mimic-text-flux-save" style="margin-top:8px">Save text rendering</button>';
+    h+='</div>';
     h+='<table class="caf-manual-pick-table"><thead><tr><th>Reference</th><th>insights_id</th><th>Render mode</th></tr></thead><tbody>';
     for(var ri=0;ri<rows.length;ri++){
       var row=rows[ri];
@@ -991,6 +1000,32 @@ export function adminSignalPackMimicModeScript(): string {
     h+='</tbody></table>';
     wrap.innerHTML=h;
     if(msg&&!msg.textContent)msg.textContent='';
+    if(typeof SLUG!=='undefined'&&SLUG){
+      cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG)).then(function(r){return r.json();}).then(function(d){
+        if(!d.ok)return;
+        var sel=document.getElementById('sp-mimic-text-flux');
+        if(!sel)return;
+        var fluxRaw=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
+        sel.value=(fluxRaw===true)?'1':(fluxRaw===false)?'0':'';
+      }).catch(function(){});
+    }
+    var saveBtn=document.getElementById('sp-mimic-text-flux-save');
+    if(saveBtn){
+      saveBtn.addEventListener('click',async function(){
+        if(typeof SLUG==='undefined'||!SLUG){if(msg){msg.textContent='Pick a project.';msg.style.color='var(--red)';}return;}
+        var sel=document.getElementById('sp-mimic-text-flux');
+        var pick=sel?(sel.value||'').trim():'';
+        if(msg){msg.textContent='Saving text rendering…';msg.style.color='var(--muted)';}
+        try{
+          var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,mimic_carousel_text_via_flux:pick===''?'':pick==='1'})});
+          var d=await r.json().catch(function(){return {};});
+          if(!r.ok||!d.ok)throw new Error((d&&d.error)||'Save failed');
+          if(msg){msg.textContent='Saved mimic text rendering for project.';msg.style.color='var(--green)';}
+        }catch(e){
+          if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+        }
+      });
+    }
   };
   document.addEventListener('click',function(ev){
     var t=ev.target;

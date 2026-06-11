@@ -219,10 +219,12 @@ const envSchema = z.object({
   /** Target visual similarity for full-bleed mimic variants (50–95). Per-project override in Runs tab. */
   MIMIC_VISUAL_SIMILARITY_PCT: z.coerce.number().int().min(50).max(95).default(70),
   /**
-   * Full-bleed mimic copy length vs each slide's `reference_on_screen_text` (default 2/3).
-   * Lower = shorter on-image copy for Flux-baked text (e.g. 0.5 = half reference length).
+   * Mimic copy length vs each reference text line (default 1× reference length).
+   * Use with MIMIC_COPY_CHAR_SLACK for ± few characters tolerance.
    */
-  MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE: z.coerce.number().min(0.2).max(1.5).default(0.5),
+  MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE: z.coerce.number().min(0.2).max(1.5).default(1),
+  /** ± characters allowed vs each reference on-screen line (template_bg + full_bleed). */
+  MIMIC_COPY_CHAR_SLACK: z.coerce.number().int().min(0).max(32).default(4),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),

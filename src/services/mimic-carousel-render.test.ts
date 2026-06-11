@@ -5,6 +5,7 @@ import {
   effectiveMimicSlideRenderMode,
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
+  filterSlideCopyLayoutForMimic,
   isExcessiveOnScreenTextSlide,
   isFullBleedCandidateSlide,
   isPromotionalSlide,
@@ -378,6 +379,38 @@ describe("requireMimicSlideBackgroundPlate", () => {
         run_id: "r1",
       }, mimic, 1)
     ).rejects.toThrow(/Mimic carousel render blocked/);
+  });
+});
+
+describe("filterSlideCopyLayoutForMimic", () => {
+  it("keeps first output row when source slide 1 is skipped (no source/output index mix-up)", () => {
+    const mimic = baseMimic({
+      mimic_evaluation: {
+        content_slide_indices: [2, 3, 4, 5],
+        skip_slide_indices: [1],
+      },
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "your aries friend" },
+        { slide_index: 2, on_screen_text_transcript: "your taurus friend" },
+        { slide_index: 3, on_screen_text_transcript: "your gemini friend" },
+        { slide_index: 4, on_screen_text_transcript: "your cancer friend" },
+      ],
+    });
+    mimic.mode = "carousel_visual";
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg", source_slide_index: 2 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg", source_slide_index: 3 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/4.jpg", source_slide_index: 4 },
+    ];
+    const layout = [
+      { slide_index: 1, reference_on_screen_text: "your taurus friend" },
+      { slide_index: 2, reference_on_screen_text: "your gemini friend" },
+      { slide_index: 3, reference_on_screen_text: "your cancer friend" },
+    ];
+    const filtered = filterSlideCopyLayoutForMimic(mimic, layout);
+    expect(filtered).toHaveLength(3);
+    expect(filtered[0]?.reference_on_screen_text).toContain("taurus");
+    expect(filtered[1]?.reference_on_screen_text).toContain("gemini");
   });
 });
 

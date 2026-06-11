@@ -377,7 +377,7 @@ export function slimContextForMimicCopyGeneration(context: Record<string, unknow
     if (k in brand) slimBrand[k] = brand[k];
   }
   const slimStrategy: Record<string, unknown> = {};
-  for (const k of ["thesis", "content_pillars", "positioning", "hook_style"] as const) {
+  for (const k of ["thesis", "content_pillars", "positioning", "hook_style", "instagram_handle"] as const) {
     if (k in strategy) slimStrategy[k] = strategy[k];
   }
   const out: Record<string, unknown> = {

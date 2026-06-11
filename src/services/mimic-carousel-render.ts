@@ -1212,25 +1212,26 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
   };
 }
 
-/** Exclude promotional reference slides from copy LLM layout; renumber remaining slides 1..N. */
+/**
+ * Exclude promotional reference slides from copy LLM layout; renumber remaining slides 1..N.
+ *
+ * `slide_copy_layout` rows use **output** indices (1..N) after plan-time content filtering.
+ * `resolveEffectiveContentSlideIndices` returns **source-deck** indices — never compare those
+ * directly to `row.slide_index` or the first output row is dropped when source slide 1 is skipped.
+ */
 export function filterSlideCopyLayoutForMimic(
   mimic: MimicPayloadV1,
   layout: MimicSlideCopyLayoutForLlm[]
 ): MimicSlideCopyLayoutForLlm[] {
   if (layout.length === 0) return layout;
 
-  const entry = mimicGuidelineEntry(mimic);
-  const totalRefs = Math.max(
-    mimic.archive_reference_items?.length ?? 0,
-    mimic.reference_items.length,
-    layout.length,
-    aestheticSlideRecords(entry).length
-  );
-  const effective = new Set(resolveEffectiveContentSlideIndices(entry, totalRefs));
-
   let kept = layout;
   if (mimic.mode === "carousel_visual" || mimic.mode === "template_bg") {
-    kept = layout.filter((s) => effective.has(s.slide_index) && !isPromotionalSlide(mimic, s.slide_index));
+    const contentSources = contentSourceSlideIndicesForMimic(mimic, layout.length);
+    kept = layout.filter((_, i) => {
+      const sourceIdx = contentSources[i] ?? i + 1;
+      return !isPromotionalSourceSlide(mimic, sourceIdx);
+    });
   }
 
   if (kept.length === layout.length) return layout;

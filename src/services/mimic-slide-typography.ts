@@ -1,4 +1,6 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
+import { isHandleTextBlock, looksLikeInstagramHandleText } from "./mimic-reference-copy-budget.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -1030,7 +1032,8 @@ export function buildMimicDocAiRenderTextLayers(
   mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
   slideIndex1Based: number,
   llmSlide: Record<string, unknown>,
-  theme?: { ink: string; body: string }
+  theme?: { ink: string; body: string },
+  opts?: { projectHandle?: string | null }
 ): MimicDocAiRenderTextLayer[] {
   const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
   const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
@@ -1045,8 +1048,15 @@ export function buildMimicDocAiRenderTextLayers(
 
   for (let i = 0; i < sortedRef.length; i++) {
     const ref = sortedRef[i]!;
-    const { text, pool: nextPool } = takeLlmTextForRefBlock(pool, ref.role, i);
+    const { text: rawText, pool: nextPool } = takeLlmTextForRefBlock(pool, ref.role, i);
     pool = nextPool;
+    const projectHandle = opts?.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+    let text = rawText;
+    if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
+      text = projectHandle;
+    } else if (projectHandle && looksLikeInstagramHandleText(rawText)) {
+      text = projectHandle;
+    }
     if (!text.trim()) continue;
 
     const bucket = roleBucket(ref.role);

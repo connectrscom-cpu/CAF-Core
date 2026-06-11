@@ -1998,7 +1998,7 @@ async function processCarouselJob(
         const docAiLayers = buildMimicDocAiRenderTextLayers(mimicPayload, i, llmSlide, {
           ink: theme.ink,
           body: theme.body,
-        });
+        }, { projectHandle: projectInstagramHandle });
         if (docAiLayers.length > 0) {
           ctx = {
             ...ctx,

@@ -272,4 +272,32 @@ describe("mimic-slide-typography", () => {
     expect(layers[0]?.text_align).toBe("center");
     expect(layers[0]?.color_hex).toBe("#ff0000");
   });
+
+  it("substitutes project handle on reference handle blocks", () => {
+    const layers = buildMimicDocAiRenderTextLayers(
+      {
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              text_blocks: [
+                {
+                  text: "@oldcreator",
+                  role: "handle",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.1, y: 0.9, w: 0.4, h: 0.05 },
+                  font_size_px: 24,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      1,
+      { body: "@wrong" },
+      undefined,
+      { projectHandle: "mybrand" }
+    );
+    expect(layers[0]?.text).toBe("@mybrand");
+  });
 });

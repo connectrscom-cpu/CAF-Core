@@ -87,9 +87,12 @@ import {
   resolveCarouselBodyCharTargets,
 } from "./carousel-body-length.js";
 import {
-  buildMimicFullBleedCopyLengthSystemBlock,
-  parseMimicFullBleedCopyReferenceScale,
-} from "./mimic-full-bleed-copy-length.js";
+  buildMimicReferenceCopyBudgetSystemBlock,
+  enforceMimicCopyBudgetOnParsedOutput,
+  parseMimicCopyCharSlack,
+  parseMimicCopyReferenceScale,
+} from "./mimic-reference-copy-budget.js";
+import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
 import {
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
   mergeCarouselTypographyFromHumanFeedback,
@@ -658,9 +661,17 @@ export async function generateForJob(
       mimicForCopy != null
         ? mimicCarouselCopyBranch(mimicForCopy, asRecord(templateContext.mimic_render_context))
         : "default";
-    if (mimicCopyBranchForLength === "full_bleed" && mimicSlideCopyLayout.length > 0) {
-      const scale = parseMimicFullBleedCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE);
-      systemPrompt = `${systemPrompt.trim()}\n\n${buildMimicFullBleedCopyLengthSystemBlock(mimicSlideCopyLayout, scale)}`.trim();
+    if (
+      (mimicCopyBranchForLength === "full_bleed" || mimicCopyBranchForLength === "template_bg") &&
+      mimicSlideCopyLayout.length > 0
+    ) {
+      const scale = parseMimicCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE);
+      const charSlack = parseMimicCopyCharSlack(appCfg.MIMIC_COPY_CHAR_SLACK);
+      systemPrompt = `${systemPrompt.trim()}\n\n${buildMimicReferenceCopyBudgetSystemBlock(mimicSlideCopyLayout, {
+        scale,
+        charSlack,
+        branch: mimicCopyBranchForLength,
+      })}`.trim();
     }
   }
 
@@ -941,17 +952,28 @@ export async function generateForJob(
           // Second-chance repair: some models return the right array length but empty strings,
           // or return an analysis stub instead of FLOW_CAROUSEL copy. Use a stricter footer.
           if (got < targetSlides) {
-            const hardFooter = [
-              "",
-              "---",
-              "FINAL RETRY (STRICT):",
-              `Return exactly ${targetSlides} slides in \`slides[]\`. Do not include \`slide_count\` as a substitute.`,
-              "Every slide MUST have non-empty renderable copy. Do not output empty strings for headline/body.",
-              "Use this minimal per-slide shape unless the schema demands more fields:",
-              `{"headline":"<non-empty>","body":"<non-empty>"}`,
-              "Keep body copy substantive on content slides (aim 220–400 chars).",
-              "Return JSON only.",
-            ].join("\n");
+            const hardFooter =
+              mimicBranch === "full_bleed" || mimicBranch === "template_bg"
+                ? [
+                    "",
+                    "---",
+                    "FINAL RETRY (STRICT):",
+                    `Return exactly ${targetSlides} slides in \`slides[]\`.`,
+                    "Every slide MUST have non-empty on-screen copy matching per-block character caps from the system prompt.",
+                    "Use `text_blocks[]` when the reference has multiple lines per slide.",
+                    "Return JSON only.",
+                  ].join("\n")
+                : [
+                    "",
+                    "---",
+                    "FINAL RETRY (STRICT):",
+                    `Return exactly ${targetSlides} slides in \`slides[]\`. Do not include \`slide_count\` as a substitute.`,
+                    "Every slide MUST have non-empty renderable copy. Do not output empty strings for headline/body.",
+                    "Use this minimal per-slide shape unless the schema demands more fields:",
+                    `{"headline":"<non-empty>","body":"<non-empty>"}`,
+                    "Keep body copy substantive on content slides (aim 220–400 chars).",
+                    "Return JSON only.",
+                  ].join("\n");
             const llmRetry2 = await openaiChat(
               apiKey,
               {
@@ -996,6 +1018,21 @@ export async function generateForJob(
           }
         }
       }
+    }
+
+    if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimicSlideCopyLayout.length > 0) {
+      const strategy = asRecord(creationPack.strategy);
+      const igRaw =
+        typeof strategy?.instagram_handle === "string" ? strategy.instagram_handle.trim() : "";
+      parsed = enforceMimicCopyBudgetOnParsedOutput(parsed, mimicSlideCopyLayout, {
+        scale: parseMimicCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE),
+        charSlack: parseMimicCopyCharSlack(appCfg.MIMIC_COPY_CHAR_SLACK),
+        projectHandle: igRaw ? formatInstagramHandleForCta(igRaw) : null,
+      });
+      llmResult = {
+        ...llmResult,
+        content: JSON.stringify(parsed),
+      };
     }
 
     let schemaValidationWarnings: string[] | undefined;

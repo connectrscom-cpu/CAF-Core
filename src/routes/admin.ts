@@ -775,11 +775,11 @@ function renderMimicRenderSettingsHtml(opts: {
         <input type="number" id="plan-cap-mimic-visual-sim" min="50" max="95" step="1" placeholder="${opts.serverVisualSimilarityPct}" />
       </div>
       <div class="plan-cap-row plan-cap-row--select">
-        <label for="plan-cap-mimic-text-flux" title="On: single-pass image edit bakes LLM copy onto the slide. Off: art-only plate + Puppeteer HTML/CSS text overlay.">On-image text</label>
+        <label for="plan-cap-mimic-text-flux" title="Strip reference text from images, then either composite your LLM copy via precise HTML/CSS (Document AI bboxes) or bake copy in the image model.">Mimic text rendering</label>
         <select id="plan-cap-mimic-text-flux">
           <option value="">Server default (${esc(fluxDefaultLabel)})</option>
-          <option value="1">Image model (Flux / provider)</option>
-          <option value="0">HTML/CSS overlay (HBS)</option>
+          <option value="0">Generate copy + HTML/CSS overlay (precise bbox)</option>
+          <option value="1">Image model bakes copy (Flux / provider)</option>
         </select>
       </div>`;
 }
@@ -3906,6 +3906,15 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
           </label>
         </div>
       </fieldset>
+      <div class="form-group" id="create-mimic-text-wrap">
+        <label for="create-mimic-text-mode">Mimic on-image text (top-performer carousels)</label>
+        <select id="create-mimic-text-mode" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+          <option value="">Use project default (Runs → planning caps)</option>
+          <option value="0">Generate copy + HTML/CSS overlay (strip reference text, precise bbox)</option>
+          <option value="1">Image model bakes copy (single-pass Flux edit)</option>
+        </select>
+        <p class="runs-ops-hint" style="margin:8px 0 0">Reference slides always have text removed for backgrounds. This chooses how <strong>your</strong> generated copy is rendered. Saved to project mimic settings when you create the run.</p>
+      </div>
       <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('create-panel')">Cancel</button><span id="create-msg" class="form-msg"></span></div>
     </form>
   </div>
@@ -4570,6 +4579,10 @@ async function loadPlanningCaps(){
       const fluxRaw=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
       mFluxSel.value=(fluxRaw===true)?'1':(fluxRaw===false)?'0':'';
     }
+    var createMimicText=document.getElementById('create-mimic-text-mode');
+    if(createMimicText&&mFluxSel){
+      createMimicText.value=mFluxSel.value||'';
+    }
   }catch(err){
     var msg='Could not load constraints: '+esc(err.message||String(err));
     if(chint)chint.textContent=msg;
@@ -4766,6 +4779,13 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
       if(v)body[k]=v;
     }
     if(!body.idea_picking_mode)body.idea_picking_mode='rules';
+    const createMimicText=document.getElementById('create-mimic-text-mode');
+    const mimicTextPick=createMimicText?(createMimicText.value||'').trim():'';
+    if(mimicTextPick==='0'||mimicTextPick==='1'){
+      var capR=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,mimic_carousel_text_via_flux:mimicTextPick==='1'})});
+      var capD=await capR.json().catch(function(){return {};});
+      if(!capR.ok||!capD.ok)throw new Error((capD&&capD.error)||(capD&&capD.message)||'Could not save mimic text rendering setting');
+    }
     const r=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const raw=await r.text();
     let d;try{d=JSON.parse(raw);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
