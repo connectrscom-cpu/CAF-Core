@@ -1,6 +1,9 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
-import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
-import { isHandleTextBlock, looksLikeInstagramHandleText } from "./mimic-reference-copy-budget.js";
+import {
+  formatInstagramHandleForCta,
+  isHandleTextBlock,
+  looksLikeInstagramHandleText,
+} from "../domain/instagram-handle.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;

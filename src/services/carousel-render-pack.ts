@@ -9,6 +9,9 @@
  */
 
 import { randomInt } from "node:crypto";
+import { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
+
+export { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
 
 /** Mirrors `pickCarouselTypographyPatch` in `domain/carousel-render-typography.ts` (local copy so Review/Next can bundle this module without resolving `../domain`). */
 function pickCarouselTypographyPatchForRender(source: Record<string, unknown> | null | undefined): Record<string, number> {
@@ -1114,18 +1117,6 @@ export type CarouselRenderCtaOptions = {
   /** `caf_core.projects.display_name` or slug — injected as `project_display_name` for cover branding. */
   projectDisplayName?: string | null;
 };
-
-/** Normalize handle for carousel overlays (always leading @ when non-empty). */
-export function formatInstagramHandleForCta(raw: string | null | undefined): string {
-  if (raw == null) return "";
-  let s = String(raw).trim();
-  if (!s) return "";
-  const m = s.match(/instagram\.com\/([^/?#]+)/i);
-  if (m?.[1]) s = m[1]!;
-  s = s.replace(/^@+/, "").replace(/\s+/g, "");
-  if (!s) return "";
-  return `@${s}`;
-}
 
 function resolveCarouselCtaFields(
   base: Record<string, unknown>,

@@ -3,7 +3,13 @@
  * Caps derive from Document AI / Nemotron reference `text_blocks` on each slide.
  */
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
-import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
+import { formatInstagramHandleForCta, isHandleTextBlock, looksLikeInstagramHandleText } from "../domain/instagram-handle.js";
+
+export {
+  formatInstagramHandleForCta,
+  isHandleTextBlock,
+  looksLikeInstagramHandleText,
+} from "../domain/instagram-handle.js";
 
 export const DEFAULT_MIMIC_COPY_CHAR_SLACK = 4;
 export const DEFAULT_MIMIC_COPY_REFERENCE_SCALE = 1;
@@ -35,20 +41,6 @@ export function parseMimicCopyReferenceScale(raw: unknown): number {
   const n = Number(s.replace(/x$/i, "").trim());
   if (Number.isFinite(n) && n > 0 && n <= 1.5) return n;
   return DEFAULT_MIMIC_COPY_REFERENCE_SCALE;
-}
-
-export function looksLikeInstagramHandleText(text: string): boolean {
-  const t = String(text ?? "").trim();
-  if (!t) return false;
-  if (/^@[\w.]{2,30}$/.test(t.replace(/\s+/g, ""))) return true;
-  if (/instagram\.com\/[\w.]+/i.test(t)) return true;
-  return /^@[\w.]{2,30}$/.test(t.split(/\s+/).pop() ?? "");
-}
-
-export function isHandleTextBlock(role: string | null, referenceText: string): boolean {
-  const r = (role ?? "").trim().toLowerCase();
-  if (/handle|watermark|username|@/.test(r)) return true;
-  return looksLikeInstagramHandleText(referenceText);
 }
 
 export type MimicCopyBlockBudget = {
