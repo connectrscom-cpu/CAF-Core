@@ -134,6 +134,25 @@ const DOC_AI_PREVIEW_CSS = `
     border: 1px solid #2c2c36;
     border-radius: 12px;
     padding: 16px;
+    max-width: 100%;
+  }
+  .lab-scale-control {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: #a1a1aa;
+  }
+  .lab-scale-control input[type="range"] { flex: 1; max-width: 220px; }
+  .lab-canvas-scaler {
+    width: calc(${CAROUSEL_RENDER_WIDTH_PX}px * var(--lab-preview-scale, 0.4));
+    height: calc(${CAROUSEL_RENDER_HEIGHT_PX}px * var(--lab-preview-scale, 0.4));
+    overflow: hidden;
+  }
+  .lab-canvas-scaler .slide {
+    transform: scale(var(--lab-preview-scale, 0.4));
+    transform-origin: top left;
   }
   .slide {
     width: ${CAROUSEL_RENDER_WIDTH_PX}px;
@@ -209,7 +228,11 @@ const DOC_AI_PREVIEW_CSS = `
 `;
 
 function layerHtml(layer: MimicDocAiRenderTextLayer): string {
-  return `<div class="mimic-docai-layer mimic-docai-layer--${escapeHtml(layer.role)} ${layer.layout_class}" style="${layer.css_style}">${escapeHtml(layer.text)}</div>`;
+  const refFs =
+    layer.ref_font_size_px != null && layer.ref_font_size_px > 0
+      ? ` data-ref-font-size="${layer.ref_font_size_px}"`
+      : "";
+  return `<div class="mimic-docai-layer mimic-docai-layer--${escapeHtml(layer.role)} ${layer.layout_class}"${refFs} style="${layer.css_style}">${escapeHtml(layer.text)}</div>`;
 }
 
 function referenceBoxHtml(
@@ -271,6 +294,7 @@ export function renderMimicTextOverlayLabHtml(
       w_px: l.w_px,
       h_px: l.h_px,
       font_size_px: l.font_size_px,
+      ref_font_size_px: l.ref_font_size_px,
       layout_mode: l.layout_mode,
     })),
     null,
@@ -281,6 +305,12 @@ export function renderMimicTextOverlayLabHtml(
 
   const fitScript = interactive
     ? `
+  function applyLabPreviewScale() {
+    var scale = Number(document.getElementById("lab-preview-scale")?.value || 40) / 100;
+    document.documentElement.style.setProperty("--lab-preview-scale", String(scale));
+    var label = document.getElementById("lab-preview-scale-label");
+    if (label) label.textContent = Math.round(scale * 100) + "%";
+  }
   function fitDocAiTextLayersToBoxes() {
     const layers = document.querySelectorAll(".mimic-docai-layer");
     for (const el of layers) {
@@ -288,8 +318,10 @@ export function renderMimicTextOverlayLabHtml(
       const maxH = parseFloat(style.height);
       const maxW = parseFloat(style.width);
       if (!Number.isFinite(maxH) || !Number.isFinite(maxW) || maxH <= 0 || maxW <= 0) continue;
-      let fs = parseFloat(getComputedStyle(el).fontSize);
+      const refFs = Number(el.getAttribute("data-ref-font-size"));
+      let fs = Number.isFinite(refFs) && refFs > 0 ? refFs : parseFloat(getComputedStyle(el).fontSize);
       if (!Number.isFinite(fs) || fs <= 0) continue;
+      style.fontSize = fs + "px";
       const minFs = 10;
       let guard = 0;
       while (guard++ < 140 && fs > minFs && (el.scrollHeight > maxH + 2 || el.scrollWidth > maxW + 2)) {
@@ -298,7 +330,9 @@ export function renderMimicTextOverlayLabHtml(
       }
     }
   }
+  applyLabPreviewScale();
   fitDocAiTextLayersToBoxes();
+  document.getElementById("lab-preview-scale")?.addEventListener("input", applyLabPreviewScale);
   document.getElementById("btn-refit")?.addEventListener("click", fitDocAiTextLayersToBoxes);
   document.getElementById("chk-boxes")?.addEventListener("change", (e) => {
     document.querySelectorAll(".ref-debug-box").forEach((n) => {
@@ -340,6 +374,11 @@ export function renderMimicTextOverlayLabHtml(
       <h2>Debug</h2>
       <label><input type="checkbox" id="chk-boxes" checked> Reference OCR boxes (red)</label>
       <label><input type="checkbox" id="chk-ghost"> Reference text ghost (faded)</label>
+      <div class="lab-scale-control">
+        <label for="lab-preview-scale">Preview zoom</label>
+        <input type="range" id="lab-preview-scale" min="25" max="100" value="40" step="5">
+        <span id="lab-preview-scale-label">40%</span>
+      </div>
       <button type="button" id="btn-refit" style="margin-top:8px;padding:6px 12px;border-radius:6px;border:1px solid #3f3f46;background:#27272a;color:#fafafa;cursor:pointer">Re-run shrink-to-fit</button>
       <h2>LLM layers (${composed.text_layers.length})</h2>
       <pre>${escapeHtml(layerJson)}</pre>
@@ -347,15 +386,17 @@ export function renderMimicTextOverlayLabHtml(
       <pre>${escapeHtml(refJson)}</pre>
     </aside>
     <div class="lab-canvas-wrap">
-      <div class="slide mimic-docai-slide">
-        ${bgStyle ? `<div class="slide-bg" style="${bgStyle}"></div>` : `<div class="slide-bg"></div>`}
-        <div class="page mimic-docai-layers">
-          ${refGhost}
-          ${refBoxes}
-          ${layers}
+      <div class="lab-canvas-scaler">
+        <div class="slide mimic-docai-slide">
+          ${bgStyle ? `<div class="slide-bg" style="${bgStyle}"></div>` : `<div class="slide-bg"></div>`}
+          <div class="page mimic-docai-layers">
+            ${refGhost}
+            ${refBoxes}
+            ${layers}
+          </div>
         </div>
       </div>
-      <p class="scale-hint">1:1 render size — zoom browser to inspect pixel alignment</p>
+      <p class="scale-hint">Canvas is 1080×1350 at 100% — use preview zoom to fit your screen</p>
     </div>
   </div>
   <script>${fitScript}</script>

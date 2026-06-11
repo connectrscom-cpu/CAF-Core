@@ -27,13 +27,13 @@ export function buildDefaultLlmSlideFromInsightSlide(
         const rec = asRecord(b) ?? {};
         return {
           role: rec.role ?? "body",
-          text: `[NEW] ${String(rec.text ?? "").slice(0, 120)}`,
+          text: String(rec.text ?? "").slice(0, 120),
         };
       }),
     };
   }
   return {
-    headline: refText ? `[NEW] ${refText.slice(0, 80)}` : "Sample headline",
+    headline: refText ? refText.slice(0, 80) : "Sample headline",
     body: "Sample body copy for overlay lab.",
   };
 }

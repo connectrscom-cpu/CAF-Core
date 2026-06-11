@@ -223,7 +223,7 @@
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -259,7 +259,7 @@
     <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if ../mimic_render_text_layers}}
         {{#each ../mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -279,7 +279,7 @@
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}">{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">

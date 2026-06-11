@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMimicDocAiRenderTextLayers,
+  estimateDocAiFitFontSizePx,
   inferMimicCarouselTheme,
   isDarkCelestialDeck,
   isDarkVisualDeck,
@@ -200,6 +201,39 @@ describe("mimic-slide-typography", () => {
     expect(layers[1]?.text).toBe("Fresh body copy");
     expect(layers[1]?.y_px).toBe(743);
     expect(layers[1]?.layout_mode).toBe("single_line");
+  });
+
+  it("estimateDocAiFitFontSizePx keeps Document AI ref size for single-line same-length copy", () => {
+    expect(
+      estimateDocAiFitFontSizePx({
+        text: "gemini with a crush",
+        refText: "gemini with a crush",
+        refFontPx: 73,
+        boxWPx: 762,
+        boxHPx: 82,
+        singleLine: true,
+      })
+    ).toBe(73);
+    expect(
+      estimateDocAiFitFontSizePx({
+        text: "astrhology",
+        refText: "astrhology",
+        refFontPx: 15,
+        boxWPx: 85,
+        boxHPx: 17,
+        singleLine: true,
+      })
+    ).toBe(15);
+    expect(
+      estimateDocAiFitFontSizePx({
+        text: "1",
+        refText: "1",
+        refFontPx: 30,
+        boxWPx: 34,
+        boxHPx: 35,
+        singleLine: true,
+      })
+    ).toBe(30);
   });
 
   it("prefers document_ai_ocr_v1 text_layers geometry over text_blocks", () => {

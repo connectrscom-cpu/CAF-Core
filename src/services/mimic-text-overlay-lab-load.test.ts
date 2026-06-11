@@ -40,6 +40,6 @@ describe("mimic-text-overlay-lab-load", () => {
     const llm = buildDefaultLlmSlideFromInsightSlide({
       text_blocks: [{ role: "headline", text: "ARIES" }],
     });
-    expect(llm.text_blocks).toEqual([{ role: "headline", text: "[NEW] ARIES" }]);
+    expect(llm.text_blocks).toEqual([{ role: "headline", text: "ARIES" }]);
   });
 });

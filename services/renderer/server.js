@@ -192,8 +192,10 @@ async function fitDocAiTextLayersToBoxes(page) {
       const maxH = parseFloat(style.height);
       const maxW = parseFloat(style.width);
       if (!Number.isFinite(maxH) || !Number.isFinite(maxW) || maxH <= 0 || maxW <= 0) continue;
-      let fs = parseFloat(getComputedStyle(el).fontSize);
+      const refFs = Number(el.getAttribute("data-ref-font-size"));
+      let fs = Number.isFinite(refFs) && refFs > 0 ? refFs : parseFloat(getComputedStyle(el).fontSize);
       if (!Number.isFinite(fs) || fs <= 0) continue;
+      style.fontSize = `${fs}px`;
       const minFs = 10;
       let guard = 0;
       while (guard++ < 140 && fs > minFs && (el.scrollHeight > maxH + 2 || el.scrollWidth > maxW + 2)) {

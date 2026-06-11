@@ -703,6 +703,8 @@ export interface MimicDocAiRenderTextLayer {
   layout_mode: "single_line" | "multi_line";
   layout_class: string;
   font_size_px: number | null;
+  /** Document AI / Nemotron detected size on the reference slide. */
+  ref_font_size_px: number | null;
   font_weight: number | null;
   color_hex: string | null;
   text_align: string;
@@ -833,6 +835,8 @@ function isSingleLineLayoutBlock(refText: string, hNorm: number, wNorm: number):
   return hNorm < 0.09 || hNorm / Math.max(wNorm, 0.01) < 0.38;
 }
 
+const DOC_AI_CHAR_WIDTH_RATIO = 0.52;
+
 /** Estimate initial font size before Puppeteer shrink-to-fit. */
 export function estimateDocAiFitFontSizePx(opts: {
   text: string;
@@ -840,25 +844,35 @@ export function estimateDocAiFitFontSizePx(opts: {
   refFontPx: number | null;
   boxWPx: number;
   boxHPx: number;
+  singleLine?: boolean;
 }): number {
   const refLen = Math.max(1, opts.refText.trim().length);
   const newLen = Math.max(1, opts.text.trim().length);
+  const maxByHeight = Math.max(10, Math.round(opts.boxHPx * 0.96));
   let size =
     opts.refFontPx != null && opts.refFontPx > 0
       ? opts.refFontPx
       : Math.max(12, Math.round(opts.boxHPx * 0.82));
 
-  if (newLen > refLen) {
-    size = Math.max(10, Math.round(size * Math.sqrt(refLen / newLen)));
+  size = Math.min(size, maxByHeight);
+
+  if (opts.singleLine) {
+    const approxWidth = newLen * size * DOC_AI_CHAR_WIDTH_RATIO;
+    if (approxWidth > opts.boxWPx) {
+      size = Math.floor(opts.boxWPx / (newLen * DOC_AI_CHAR_WIDTH_RATIO));
+    }
+    return Math.max(10, Math.min(512, size));
   }
 
-  size = Math.min(size, Math.max(10, Math.round(opts.boxHPx * 0.96)));
+  if (newLen > refLen) {
+    size = Math.max(10, Math.round(size * (refLen / newLen)));
+  }
 
   const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
-  const maxByHeight = Math.floor(opts.boxHPx / (lineCount * 1.12));
-  if (maxByHeight > 0) size = Math.min(size, maxByHeight);
+  const maxByLineHeight = Math.floor(opts.boxHPx / (lineCount * 1.12));
+  if (maxByLineHeight > 0) size = Math.min(size, maxByLineHeight);
 
-  const approxCharW = size * 0.52;
+  const approxCharW = size * DOC_AI_CHAR_WIDTH_RATIO;
   const charsPerLine = Math.max(1, Math.floor(opts.boxWPx / approxCharW));
   const wrappedLines = Math.max(lineCount, Math.ceil(newLen / charsPerLine));
   const maxByWrap = Math.floor(opts.boxHPx / (wrappedLines * 1.12));
@@ -884,6 +898,7 @@ export function buildDocAiLayerCssStyle(opts: {
     refFontPx: opts.refFontPx,
     boxWPx: opts.px.w,
     boxHPx: opts.px.h,
+    singleLine: opts.singleLine,
   });
   const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
   const lineHeight = opts.singleLine
@@ -1071,6 +1086,7 @@ export function buildMimicDocAiRenderTextLayers(
       layout_mode: styled.layout_mode,
       layout_class: styled.layout_class,
       font_size_px: styled.font_size_px,
+      ref_font_size_px: ref.font_size_px,
       font_weight: fontWeight,
       color_hex: color,
       text_align: textAlign,

@@ -117,7 +117,7 @@ ${adminPhWithPipelineHtml("Mimic text overlay lab", "signal_pack", currentSlug, 
   <div class="card">
     <div class="card-h">Live preview</div>
     <div style="padding:12px;background:#0d0d12;border-radius:0 0 8px 8px;overflow:auto">
-      <iframe id="mtol-frame" title="Mimic text overlay preview" style="width:100%;min-height:1420px;border:0;background:#0f0f14"></iframe>
+      <iframe id="mtol-frame" title="Mimic text overlay preview" style="width:100%;min-height:720px;height:72vh;max-height:900px;border:0;background:#0f0f14"></iframe>
     </div>
   </div>
 </div>
