@@ -1,4 +1,9 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import type { SignalPackRow } from "../repositories/signal-packs.js";
+import {
+  buildSignalPackMimicReferencesForUi,
+  type SignalPackMimicReferenceUiRow,
+} from "./signal-pack-mimic-ui.js";
 import type { MimicTextOverlayLabFixture } from "./mimic-text-overlay-lab.js";
 import type { Pool } from "pg";
 
@@ -7,45 +12,50 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
+/** Starter LLM copy shape for overlay lab (roles preserved, text prefixed for easy spotting). */
+export function buildDefaultLlmSlideFromInsightSlide(
+  slide: Record<string, unknown> | null
+): Record<string, unknown> {
+  if (!slide) {
+    return { headline: "Sample headline", body: "Sample body copy for overlay lab." };
+  }
+  const refText = String(slide.on_screen_text_transcript ?? slide.on_image_text ?? "").trim();
+  const blocks = Array.isArray(slide.text_blocks) ? slide.text_blocks : [];
+  if (blocks.length > 0) {
+    return {
+      text_blocks: blocks.map((b: unknown) => {
+        const rec = asRecord(b) ?? {};
+        return {
+          role: rec.role ?? "body",
+          text: `[NEW] ${String(rec.text ?? "").slice(0, 120)}`,
+        };
+      }),
+    };
+  }
+  return {
+    headline: refText ? `[NEW] ${refText.slice(0, 80)}` : "Sample headline",
+    body: "Sample body copy for overlay lab.",
+  };
+}
+
+export function listCarouselMimicReferencesFromSignalPack(
+  signalPack: SignalPackRow
+): SignalPackMimicReferenceUiRow[] {
+  return buildSignalPackMimicReferencesForUi(signalPack).filter((r) => r.mimic_kind === "carousel");
+}
+
 export async function loadMimicTextOverlayFixtureFromInsights(
   db: Pool,
   insightsId: string,
   slideIndex: number
 ): Promise<MimicTextOverlayLabFixture> {
-  const r = await db.query<{ aesthetic_analysis_json: Record<string, unknown> | null }>(
-    `SELECT aesthetic_analysis_json
-     FROM caf_core.inputs_evidence_row_insights
-     WHERE insights_id = $1
-     LIMIT 1`,
-    [insightsId]
-  );
-  const row = r.rows[0];
-  if (!row?.aesthetic_analysis_json) {
-    throw new Error(`No insights row for insights_id=${insightsId}`);
-  }
-  const vg = row.aesthetic_analysis_json;
+  const vg = await fetchInsightVisualGuideline(db, insightsId);
   const slides = Array.isArray(vg.slides) ? vg.slides : [];
   const slideRec = slides.find(
     (s: unknown) => s && typeof s === "object" && Number(asRecord(s)?.slide_index) === slideIndex
   );
   const slide = asRecord(slideRec);
-  const refText = String(slide?.on_screen_text_transcript ?? slide?.on_image_text ?? "").trim();
-  const blocks = Array.isArray(slide?.text_blocks) ? slide!.text_blocks : [];
-  const llm_slide: Record<string, unknown> =
-    blocks.length > 0
-      ? {
-          text_blocks: blocks.map((b: unknown) => {
-            const rec = asRecord(b) ?? {};
-            return {
-              role: rec.role ?? "body",
-              text: `[NEW] ${String(rec.text ?? "").slice(0, 120)}`,
-            };
-          }),
-        }
-      : {
-          headline: refText ? `[NEW] ${refText.slice(0, 80)}` : "Sample headline",
-          body: "Sample body copy for overlay lab.",
-        };
+  const llm_slide = buildDefaultLlmSlideFromInsightSlide(slide);
 
   const mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans"> = {
     visual_guideline: vg,
@@ -59,6 +69,24 @@ export async function loadMimicTextOverlayFixtureFromInsights(
     llm_slide,
     mimic,
   };
+}
+
+async function fetchInsightVisualGuideline(
+  db: Pool,
+  insightsId: string
+): Promise<Record<string, unknown>> {
+  const r = await db.query<{ aesthetic_analysis_json: Record<string, unknown> | null }>(
+    `SELECT aesthetic_analysis_json
+     FROM caf_core.inputs_evidence_row_insights
+     WHERE insights_id = $1
+     LIMIT 1`,
+    [insightsId]
+  );
+  const row = r.rows[0];
+  if (!row?.aesthetic_analysis_json) {
+    throw new Error(`No insights row for insights_id=${insightsId}`);
+  }
+  return row.aesthetic_analysis_json;
 }
 
 export type InsightsSlideSummary = {

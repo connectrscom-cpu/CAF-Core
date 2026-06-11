@@ -2,12 +2,14 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
 import type { AppConfig } from "../config.js";
+import { getSignalPackById } from "../repositories/signal-packs.js";
 import {
   composeMimicTextOverlayLabFromFixture,
   renderMimicTextOverlayLabHtml,
   type MimicTextOverlayLabFixture,
 } from "../services/mimic-text-overlay-lab.js";
 import {
+  listCarouselMimicReferencesFromSignalPack,
   listInsightSlidesForOverlayLab,
   loadMimicTextOverlayFixtureFromInsights,
 } from "../services/mimic-text-overlay-lab-load.js";
@@ -44,6 +46,7 @@ function esc(s: unknown): string {
 
 const previewBodySchema = z.object({
   insights_id: z.string().min(1).optional(),
+  signal_pack_id: z.string().uuid().optional(),
   slide_index: z.coerce.number().int().min(1).default(1),
   llm_slide: z.record(z.unknown()).optional(),
   background_image_url: z.string().nullable().optional(),
@@ -62,15 +65,29 @@ const previewBodySchema = z.object({
 
 function adminMimicTextOverlayLabBody(currentSlug: string): string {
   return `
-${adminPhWithPipelineHtml("Mimic text overlay lab", null, currentSlug, "Document AI geometry + Nemotron roles → HTML/CSS on 1080×1350 (no image gen)")}
+${adminPhWithPipelineHtml("Mimic text overlay lab", "signal_pack", currentSlug, "Import a signal pack → pick mimic carousel reference → preview Document AI text placement")}
 <div class="content">
-  <p class="runs-ops-hint">Preview precise on-image copy placement using stored <strong>Document AI</strong> bboxes and <strong>Nemotron</strong> text block roles. Red dashed boxes = reference OCR regions. Uses the same <span class="mono">buildMimicDocAiRenderTextLayers</span> path as production carousel render.</p>
+  <p class="runs-ops-hint">Preview on-image copy at <strong>Document AI</strong> bbox positions with <strong>Nemotron</strong> roles — same <span class="mono">buildMimicDocAiRenderTextLayers</span> path as production. No image generation.</p>
   <div class="card" style="margin-bottom:16px">
-    <div class="card-h">Source</div>
+    <div class="card-h">Import from signal pack</div>
     <form id="mtol-form" class="config-form" style="padding:12px 16px 16px">
       <div class="form-group">
-        <label for="mtol-insights">insights_id (top_performer_carousel)</label>
-        <input type="text" id="mtol-insights" name="insights_id" placeholder="UUID from Processing → insights row" style="font-family:var(--mono)">
+        <label for="mtol-pack">Signal pack</label>
+        <select id="mtol-pack" name="signal_pack_id">
+          <option value="">— select project in sidebar, then load packs —</option>
+        </select>
+        <span id="mtol-pack-hint" class="form-msg"></span>
+      </div>
+      <div class="form-group">
+        <label for="mtol-ref">Mimic carousel reference</label>
+        <select id="mtol-ref" name="insights_id" disabled>
+          <option value="">— pick a signal pack first —</option>
+        </select>
+        <span id="mtol-ref-hint" class="form-msg"></span>
+      </div>
+      <div class="form-group">
+        <label for="mtol-insights">insights_id (advanced / manual)</label>
+        <input type="text" id="mtol-insights" name="insights_id_manual" placeholder="Filled when you pick a reference above" style="font-family:var(--mono)">
       </div>
       <div class="form-group">
         <label for="mtol-slide">Slide index (1-based)</label>
@@ -80,6 +97,7 @@ ${adminPhWithPipelineHtml("Mimic text overlay lab", null, currentSlug, "Document
       <div class="form-group">
         <label for="mtol-copy">llm_slide JSON (headline/body or text_blocks)</label>
         <textarea id="mtol-copy" name="llm_slide_json" rows="8" placeholder='{"headline":"…","body":"…"}'></textarea>
+        <button type="button" class="btn btn-ghost btn-sm" id="mtol-fill-copy-btn" style="margin-top:6px">Reset copy from reference slide</button>
       </div>
       <div class="form-group">
         <label for="mtol-bg">Optional background plate URL</label>
@@ -105,14 +123,96 @@ ${adminPhWithPipelineHtml("Mimic text overlay lab", null, currentSlug, "Document
 </div>
 <script>
 (function(){
+  const SLUG=${JSON.stringify(currentSlug)};
   var form=document.getElementById('mtol-form');
   var frame=document.getElementById('mtol-frame');
   var msg=document.getElementById('mtol-msg');
   var slideHint=document.getElementById('mtol-slide-hint');
+  var packSel=document.getElementById('mtol-pack');
+  var refSel=document.getElementById('mtol-ref');
+  var insightsInput=document.getElementById('mtol-insights');
+  var copyTa=document.getElementById('mtol-copy');
   function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+  function insightsId(){
+    return (refSel&&refSel.value||insightsInput&&insightsInput.value||'').trim();
+  }
+  function packId(){ return (packSel&&packSel.value||'').trim(); }
+  async function loadPacks(){
+    var hint=document.getElementById('mtol-pack-hint');
+    if(!SLUG){ if(hint)hint.textContent='Select a project in the sidebar'; return; }
+    if(hint)hint.textContent='Loading packs…';
+    try{
+      var r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=120');
+      var d=await r.json();
+      if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+      var rows=Array.isArray(d.rows)?d.rows:[];
+      if(!packSel)return;
+      packSel.innerHTML='<option value="">— choose signal pack —</option>'+rows.map(function(p){
+        var label=(p.run_id||'pack')+' · '+String(p.created_at||'').slice(0,10)+' · ideas '+String(p.ideas_count||0);
+        return '<option value="'+esc(p.id)+'">'+esc(label)+'</option>';
+      }).join('');
+      if(hint)hint.textContent=rows.length?rows.length+' pack(s)':'No signal packs for '+SLUG;
+      var qs=new URLSearchParams(window.location.search);
+      var wantPack=qs.get('signal_pack_id');
+      if(wantPack&&rows.some(function(p){return p.id===wantPack;})){
+        packSel.value=wantPack;
+        await loadReferences();
+        var wantIns=qs.get('insights_id');
+        if(wantIns&&refSel){ refSel.value=wantIns; await onReferencePicked(false); }
+      }
+    }catch(e){
+      if(hint)hint.textContent=e.message||String(e);
+    }
+  }
+  async function loadReferences(){
+    var hint=document.getElementById('mtol-ref-hint');
+    var pid=packId();
+    if(!pid){
+      if(refSel){ refSel.innerHTML='<option value="">— pick a signal pack first —</option>'; refSel.disabled=true; }
+      return;
+    }
+    if(hint)hint.textContent='Loading mimic carousel refs…';
+    try{
+      var r=await cafFetch('/v1/admin/mimic-text-overlay-lab/signal-packs/'+encodeURIComponent(pid)+'/carousel-references?project='+encodeURIComponent(SLUG));
+      var d=await r.json();
+      if(!r.ok)throw new Error(d.error||d.message||('HTTP '+r.status));
+      var refs=Array.isArray(d.references)?d.references:[];
+      if(!refSel)return;
+      refSel.disabled=refs.length===0;
+      refSel.innerHTML=refs.length?refs.map(function(row){
+        var label=row.title+' · '+row.predicted_render_label+(row.has_inspection_media?' · media':'');
+        return '<option value="'+esc(row.insights_id)+'">'+esc(label)+'</option>';
+      }).join(''):'<option value="">No mimic carousel references in this pack</option>';
+      if(hint)hint.textContent=refs.length?refs.length+' carousel reference(s)':'No top_performer_carousel entries — run Processing on carousel posts first';
+      if(refs.length===1){ refSel.value=refs[0].insights_id; await onReferencePicked(false); }
+    }catch(e){
+      if(hint)hint.textContent=e.message||String(e);
+    }
+  }
+  async function fillDefaultCopy(){
+    var id=insightsId();
+    var slideIndex=parseInt(document.getElementById('mtol-slide').value,10)||1;
+    if(!id||!copyTa)return;
+    var r=await cafFetch('/v1/admin/mimic-text-overlay-lab/insights/'+encodeURIComponent(id)+'/default-llm-slide?slide_index='+slideIndex);
+    var d=await r.json();
+    if(!r.ok)throw new Error(d.error||('HTTP '+r.status));
+    copyTa.value=JSON.stringify(d.llm_slide,null,2);
+  }
+  async function onReferencePicked(autoPreview){
+    var id=insightsId();
+    if(insightsInput)insightsInput.value=id;
+    if(!id)return;
+    try{
+      await fillDefaultCopy();
+      await loadSlides();
+      if(autoPreview!==false)form.dispatchEvent(new Event('submit',{cancelable:true}));
+    }catch(e){
+      if(msg)msg.textContent=e.message||String(e);
+    }
+  }
   async function loadSlides(){
-    var id=(document.getElementById('mtol-insights').value||'').trim();
-    if(!id){ if(slideHint)slideHint.textContent='Enter insights_id first'; return; }
+    var id=insightsId();
+    if(!id){ if(slideHint)slideHint.textContent='Pick a mimic reference or enter insights_id'; return; }
     if(slideHint)slideHint.textContent='Loading…';
     try{
       var r=await cafFetch('/v1/admin/mimic-text-overlay-lab/insights/'+encodeURIComponent(id)+'/slides');
@@ -121,20 +221,32 @@ ${adminPhWithPipelineHtml("Mimic text overlay lab", null, currentSlug, "Document
       var slides=Array.isArray(d.slides)?d.slides:[];
       if(slideHint){
         slideHint.innerHTML=slides.length?slides.map(function(s){
-          return 'S'+s.slide_index+(s.has_document_ai?' docai':'')+': '+esc((s.preview_text||'').slice(0,40));
-        }).join(' · '):'No slides';
+          return '<button type="button" class="btn-ghost btn-sm" data-slide="'+s.slide_index+'" style="margin:2px 4px 2px 0">S'+s.slide_index+(s.has_document_ai?' docai':'')+': '+esc((s.preview_text||'').slice(0,28))+'</button>';
+        }).join(''):'No slides on insights row';
+        slideHint.querySelectorAll('button[data-slide]').forEach(function(btn){
+          btn.addEventListener('click',async function(){
+            document.getElementById('mtol-slide').value=btn.getAttribute('data-slide');
+            await fillDefaultCopy();
+            form.dispatchEvent(new Event('submit',{cancelable:true}));
+          });
+        });
       }
     }catch(e){
       if(slideHint)slideHint.textContent=e.message||String(e);
     }
   }
+  if(packSel)packSel.addEventListener('change',function(){ loadReferences(); });
+  if(refSel)refSel.addEventListener('change',function(){ onReferencePicked(true); });
   document.getElementById('mtol-load-slides-btn').addEventListener('click',loadSlides);
+  document.getElementById('mtol-fill-copy-btn').addEventListener('click',async function(){
+    try{ await fillDefaultCopy(); if(msg)msg.textContent='Copy reset from reference'; }catch(e){ if(msg)msg.textContent=e.message||String(e); }
+  });
   form.addEventListener('submit',async function(ev){
     ev.preventDefault();
     if(msg)msg.textContent='Rendering…';
-    var insightsId=(document.getElementById('mtol-insights').value||'').trim();
+    var insightsIdVal=insightsId();
     var slideIndex=parseInt(document.getElementById('mtol-slide').value,10)||1;
-    var copyRaw=(document.getElementById('mtol-copy').value||'').trim();
+    var copyRaw=(copyTa&&copyTa.value||'').trim();
     var llmSlide=null;
     if(copyRaw){
       try{ llmSlide=JSON.parse(copyRaw); }catch(e){ if(msg)msg.textContent='Invalid llm_slide JSON'; return; }
@@ -146,18 +258,20 @@ ${adminPhWithPipelineHtml("Mimic text overlay lab", null, currentSlug, "Document
       show_reference_ghost_text:document.getElementById('mtol-ghost').checked,
       background_image_url:bg
     };
-    if(insightsId)payload.insights_id=insightsId;
+    if(insightsIdVal)payload.insights_id=insightsIdVal;
+    if(packId())payload.signal_pack_id=packId();
     if(llmSlide)payload.llm_slide=llmSlide;
     try{
       var r=await cafFetch('/v1/admin/mimic-text-overlay-lab/preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       var html=await r.text();
       if(!r.ok)throw new Error(html.slice(0,200));
       if(frame)frame.srcdoc=html;
-      if(msg)msg.textContent='Preview updated ('+html.length+' bytes)';
+      if(msg)msg.textContent='Preview updated';
     }catch(e){
       if(msg)msg.textContent=e.message||String(e);
     }
   });
+  loadPacks();
 })();
 </script>`;
 }
@@ -177,11 +291,42 @@ export function registerMimicTextOverlayLabRoutes(app: FastifyInstance, deps: Mi
       .send(wrapAdminPage("Mimic text overlay lab", "mimic-text-overlay-lab", body, projects, currentSlug));
   });
 
+  app.get("/v1/admin/mimic-text-overlay-lab/signal-packs/:packId/carousel-references", async (request, reply) => {
+    const { packId } = request.params as { packId: string };
+    const query = request.query as { project?: string };
+    const project = await resolveProject(db, query.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const pack = await getSignalPackById(db, packId.trim());
+    if (!pack || pack.project_id !== project.id) {
+      return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
+    }
+    const references = listCarouselMimicReferencesFromSignalPack(pack);
+    return {
+      ok: true,
+      signal_pack_id: pack.id,
+      run_id: pack.run_id,
+      references,
+    };
+  });
+
   app.get("/v1/admin/mimic-text-overlay-lab/insights/:insightsId/slides", async (request, reply) => {
     const { insightsId } = request.params as { insightsId: string };
     try {
       const slides = await listInsightSlidesForOverlayLab(db, insightsId.trim());
       return { ok: true, insights_id: insightsId, slides };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: message });
+    }
+  });
+
+  app.get("/v1/admin/mimic-text-overlay-lab/insights/:insightsId/default-llm-slide", async (request, reply) => {
+    const { insightsId } = request.params as { insightsId: string };
+    const query = request.query as { slide_index?: string };
+    const slideIndex = Math.max(1, parseInt(query.slide_index ?? "1", 10) || 1);
+    try {
+      const fixture = await loadMimicTextOverlayFixtureFromInsights(db, insightsId.trim(), slideIndex);
+      return { ok: true, insights_id: insightsId, slide_index: slideIndex, llm_slide: fixture.llm_slide };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       return reply.code(400).send({ ok: false, error: message });
@@ -205,11 +350,24 @@ export function registerMimicTextOverlayLabRoutes(app: FastifyInstance, deps: Mi
           mimic: b.fixture.mimic as MimicTextOverlayLabFixture["mimic"],
         };
       } else if (b.insights_id) {
+        if (b.signal_pack_id) {
+          const pack = await getSignalPackById(db, b.signal_pack_id);
+          if (!pack) {
+            return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
+          }
+          const refs = listCarouselMimicReferencesFromSignalPack(pack);
+          if (!refs.some((r) => r.insights_id === b.insights_id)) {
+            return reply.code(400).send({
+              ok: false,
+              error: "insights_id not found in signal pack mimic carousel references",
+            });
+          }
+        }
         fixture = await loadMimicTextOverlayFixtureFromInsights(db, b.insights_id, b.slide_index);
       } else {
         return reply.code(400).send({
           ok: false,
-          error: "Provide insights_id or fixture in request body",
+          error: "Provide insights_id (from signal pack reference) or fixture in request body",
         });
       }
       if (b.llm_slide) fixture.llm_slide = { ...fixture.llm_slide, ...b.llm_slide };
