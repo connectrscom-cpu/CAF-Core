@@ -46,6 +46,34 @@ export function effectiveMimicCarouselTextViaFlux(
   return envDefault;
 }
 
+export type MimicImageInputMode = "reference_edit" | "analysis_t2i";
+
+const VALID_MIMIC_IMAGE_INPUT_MODES = new Set<MimicImageInputMode>([
+  "reference_edit",
+  "analysis_t2i",
+]);
+
+export function parseMimicImageInputMode(raw: unknown): MimicImageInputMode | null {
+  const s = String(raw ?? "")
+    .trim()
+    .toLowerCase();
+  if (s === "reference_edit" || s === "reference" || s === "edit") return "reference_edit";
+  if (s === "analysis_t2i" || s === "analysis" || s === "t2i" || s === "text_to_image") {
+    return "analysis_t2i";
+  }
+  return VALID_MIMIC_IMAGE_INPUT_MODES.has(s as MimicImageInputMode)
+    ? (s as MimicImageInputMode)
+    : null;
+}
+
+export function effectiveMimicImageInputMode(
+  projectMode: MimicImageInputMode | null | undefined,
+  envDefault: MimicImageInputMode
+): MimicImageInputMode {
+  if (projectMode && VALID_MIMIC_IMAGE_INPUT_MODES.has(projectMode)) return projectMode;
+  return parseMimicImageInputMode(envDefault) ?? "reference_edit";
+}
+
 /** Bold variants: new visual plate only — copy is never baked by Flux. */
 export const MIMIC_BOLD_VARIANT_SAME_COPY_INSTRUCTION =
   "Generate a new art-only visual plate for this slide; editorial copy is added later via HTML/CSS overlay, never in the image.";

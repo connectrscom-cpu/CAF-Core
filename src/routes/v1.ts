@@ -1487,6 +1487,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         w_px: z.number().int().positive().optional(),
         h_px: z.number().int().positive().optional(),
         text: z.string().min(1).optional(),
+        box_locked: z.boolean().optional(),
+        hidden: z.boolean().optional(),
       })
     ),
   });

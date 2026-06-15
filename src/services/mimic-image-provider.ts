@@ -9,7 +9,8 @@ import { downloadBufferFromUrl } from "./supabase-storage.js";
 export type MimicImageProvider = "openai" | "nvidia" | "dashscope" | "bfl";
 
 export interface MimicImageEditParams {
-  referenceUrl: string;
+  /** Required for reference_edit; omitted for analysis_t2i text-to-image. */
+  referenceUrl?: string;
   prompt: string;
   size?: string;
   inputFidelity?: "high" | "low";
@@ -31,6 +32,8 @@ export interface MimicImageEditParams {
 export interface MimicSlideImageParams extends MimicImageEditParams {
   /** When ≤25%, uses low input fidelity on reference edit. */
   visualSimilarityPct?: number;
+  /** When analysis_t2i, generates from prompt only (no reference pixels). */
+  imageInputMode?: "reference_edit" | "analysis_t2i";
 }
 
 export interface MimicImageEditResult {
@@ -482,7 +485,7 @@ function buildDashScopeEditBody(
   config: AppConfig,
   params: MimicImageEditParams
 ): Record<string, unknown> {
-  const content: Array<Record<string, string>> = [{ image: params.referenceUrl }, { text: params.prompt }];
+  const content: Array<Record<string, string>> = [{ image: params.referenceUrl! }, { text: params.prompt }];
 
   return {
     model: call.model,
@@ -698,7 +701,7 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
 
   const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
   const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
-  const inputImage = await bflImageInputFromUrl(config, params.referenceUrl, "reference");
+  const inputImage = await bflImageInputFromUrl(config, params.referenceUrl!, "reference");
   const body: Record<string, unknown> = {
     prompt: params.prompt,
     input_image: inputImage,
@@ -1157,13 +1160,15 @@ export async function generateImageFromPrompt(
 }
 
 /**
- * Mimic slide render entry — bold variants use reference edit with low input fidelity ("like this, not the same").
+ * Mimic slide render entry — reference edit or analysis-driven text-to-image.
  */
 export async function generateMimicSlideImage(
   config: AppConfig,
   params: MimicSlideImageParams
 ): Promise<MimicImageEditResult> {
-  // Art-only plates must use low fidelity — high fidelity preserves reference typography on Flux edits.
+  if (params.imageInputMode === "analysis_t2i") {
+    return generateImageFromPrompt(config, params);
+  }
   return editImageFromReference(config, {
     ...params,
     inputFidelity: "low",
@@ -1192,7 +1197,11 @@ export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
-  params = withArtOnlyImagePrompt(params);
+  const referenceUrl = String(params.referenceUrl ?? "").trim();
+  if (!referenceUrl) {
+    throw new Error("referenceUrl is required for reference-conditioned mimic image edit");
+  }
+  params = withArtOnlyImagePrompt({ ...params, referenceUrl });
   const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
   assertMimicImageProviderConfigured(effectiveConfig);
 
@@ -1208,7 +1217,7 @@ export async function editImageFromReference(
           return await editViaDashScope(effectiveConfig, params);
         } catch (dashErr) {
           if (isDashScopeAuthError(dashErr) && effectiveConfig.OPENAI_API_KEY?.trim()) {
-            const { blob, mimeType: refMime } = await downloadReferenceAsBlob(params.referenceUrl);
+            const { blob, mimeType: refMime } = await downloadReferenceAsBlob(referenceUrl);
             return editViaOpenAi(effectiveConfig, params, blob, refMime);
           }
           throw dashErr;
@@ -1222,7 +1231,7 @@ export async function editImageFromReference(
     return editViaDashScope(effectiveConfig, params);
   }
 
-  const { blob, mimeType: refMime } = await downloadReferenceAsBlob(params.referenceUrl);
+  const { blob, mimeType: refMime } = await downloadReferenceAsBlob(referenceUrl);
 
   if (effectiveConfig.MIMIC_IMAGE_PROVIDER !== "nvidia") {
     return editViaOpenAi(effectiveConfig, params, blob, refMime);

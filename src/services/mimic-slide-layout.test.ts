@@ -99,10 +99,12 @@ describe("mimic-slide-layout", () => {
     expect(placement).toContain("bottom");
   });
 
-  it("buildArtOnlySafeZoneHint is empty (overlay handles text placement)", () => {
+  it("buildArtOnlySafeZoneHint describes OCR overlay regions for image prompts", () => {
     const hint = buildArtOnlySafeZoneHint({
       text_blocks: [{ text: "Caption", bbox_norm: { x: 0.1, y: 0.7, w: 0.8, h: 0.1 } }],
     });
-    expect(hint).toBe("");
+    expect(hint).toContain("10–90%");
+    expect(hint).toContain("70–80%");
+    expect(hint).toContain("low-detail");
   });
 });

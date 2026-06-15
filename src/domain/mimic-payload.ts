@@ -7,6 +7,19 @@ export type MimicMode = "image_full" | "template_bg" | "carousel_visual";
 
 export type MimicSlideRenderMode = "hbs" | "full_bleed";
 
+export type MimicImageInputMode = "reference_edit" | "analysis_t2i";
+
+export interface MimicFluxImagePromptRow {
+  slide_index: number;
+  source_slide_index?: number | null;
+  flux_image_prompt: string;
+  image_input_mode: MimicImageInputMode;
+  safe_zone_hint?: string | null;
+  generated_at?: string | null;
+}
+
+export type MimicFluxImagePromptsBySlide = Record<string, MimicFluxImagePromptRow>;
+
 export interface MimicReferenceItem {
   index: number;
   role: string;
@@ -60,6 +73,8 @@ export interface MimicPayloadV1 {
   };
   /** Reviewer layout editor — preserved across pick/merge; consumed at render via raw mimic_v1. */
   docai_layer_positions?: Record<string, unknown>;
+  /** Per-slide Flux text-to-image prompts (analysis_t2i mode). Keyed by output slide index string. */
+  flux_image_prompts?: MimicFluxImagePromptsBySlide;
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";
@@ -189,7 +204,59 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     ...(rec.docai_layer_positions != null
       ? { docai_layer_positions: rec.docai_layer_positions as Record<string, unknown> }
       : {}),
+    ...(parseFluxImagePrompts(rec.flux_image_prompts)
+      ? { flux_image_prompts: parseFluxImagePrompts(rec.flux_image_prompts)! }
+      : {}),
   };
+}
+
+function parseFluxImagePrompts(raw: unknown): MimicFluxImagePromptsBySlide | null {
+  const rec = asRecord(raw);
+  if (!rec) return null;
+  const out: MimicFluxImagePromptsBySlide = {};
+  for (const [key, rows] of Object.entries(rec)) {
+    const row = asRecord(rows);
+    if (!row) continue;
+    const prompt = String(row.flux_image_prompt ?? "").trim();
+    if (!prompt) continue;
+    const slideIndex = Number(row.slide_index) || Number(key);
+    if (!Number.isFinite(slideIndex) || slideIndex < 1) continue;
+    const modeRaw = String(row.image_input_mode ?? "analysis_t2i").trim();
+    const image_input_mode: MimicImageInputMode =
+      modeRaw === "reference_edit" ? "reference_edit" : "analysis_t2i";
+    out[String(slideIndex)] = {
+      slide_index: slideIndex,
+      source_slide_index:
+        row.source_slide_index != null && Number.isFinite(Number(row.source_slide_index))
+          ? Number(row.source_slide_index)
+          : null,
+      flux_image_prompt: prompt,
+      image_input_mode,
+      safe_zone_hint:
+        typeof row.safe_zone_hint === "string" && row.safe_zone_hint.trim()
+          ? row.safe_zone_hint.trim()
+          : null,
+      generated_at: typeof row.generated_at === "string" ? row.generated_at : null,
+    };
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+export function pickMimicFluxImagePromptForSlide(
+  mimic: MimicPayloadV1 | null | undefined,
+  slideIndex1Based: number
+): MimicFluxImagePromptRow | null {
+  const map = mimic?.flux_image_prompts;
+  if (!map) return null;
+  const direct = map[String(slideIndex1Based)];
+  if (direct?.flux_image_prompt?.trim()) return direct;
+  const plan = mimic?.slide_plans?.find((p) => p.slide_index === slideIndex1Based);
+  const sourceIdx = plan?.source_slide_index;
+  if (sourceIdx != null && sourceIdx > 0) {
+    const fromSource = map[String(sourceIdx)];
+    if (fromSource?.flux_image_prompt?.trim()) return fromSource;
+  }
+  return null;
 }
 
 export function hasMimicPayload(payload: unknown): boolean {

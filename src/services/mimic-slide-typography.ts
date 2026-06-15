@@ -174,9 +174,27 @@ export function textPlacementFromSlide(slide: Record<string, unknown> | null): s
   return "center band";
 }
 
-export function buildArtOnlySafeZoneHint(_slide: Record<string, unknown> | null | undefined): string {
-  // Text placement is handled by HTML/CSS overlay — do not steer Flux with % safe zones.
-  return "";
+export function buildArtOnlySafeZoneHint(slide: Record<string, unknown> | null | undefined): string {
+  if (!slide) return "";
+  const blocks = parseMimicTextBlocks(slide.text_blocks);
+  if (blocks.length === 0) return "";
+
+  const zones = blocks.map((b) => ({
+    left: Math.max(0, Math.min(100, Math.round(b.x * 100))),
+    top: Math.max(0, Math.min(100, Math.round(b.y * 100))),
+    right: Math.max(0, Math.min(100, Math.round((b.x + b.w) * 100))),
+    bottom: Math.max(0, Math.min(100, Math.round((b.y + b.h) * 100))),
+  }));
+
+  const hints = zones.map(
+    (z) =>
+      `${z.left}–${z.right}% width × ${z.top}–${z.bottom}% height`
+  );
+
+  return (
+    "Reserve smooth low-detail backdrop zones where HTML overlay copy will sit (match these layout regions): " +
+    `${hints.join("; ")}. Do not place faces, busy texture, or high-contrast detail inside those rectangles.`
+  );
 }
 
 /** Fixed carousel render canvas — must match services/renderer (1080×1350). */

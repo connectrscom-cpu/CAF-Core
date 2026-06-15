@@ -5,6 +5,7 @@ import {
   isMimicDocAiHandleLayer,
   MIMIC_DOCAI_HANDLE_FONT_SIZE_PX,
 } from "@caf-core-carousel/mimic-slide-typography";
+import { refKeyFromLayerPositionKey } from "@caf-core-carousel/mimic-docai-layer-positions";
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
@@ -132,6 +133,8 @@ type MimicDocAiLayerPositionEditorProps = {
   renderPreviewBusy?: boolean;
   /** Project Instagram handle — handle OCR boxes default to 25px. */
   projectHandle?: string;
+  /** When true, ignore inspect/layer refreshes on the same slide (preserves deletes/moves). */
+  suppressReseed?: boolean;
 };
 
 type MoveDrag = {
@@ -233,6 +236,7 @@ export function MimicDocAiLayerPositionEditor({
   renderPreviewUrl = null,
   renderPreviewBusy = false,
   projectHandle = "",
+  suppressReseed = false,
 }: MimicDocAiLayerPositionEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(360);
@@ -268,6 +272,7 @@ export function MimicDocAiLayerPositionEditor({
     const slideChanged = slideSeedRef.current.slideIndex !== slideIndex;
     const overridesChanged = slideSeedRef.current.overridesKey !== initialOverridesFingerprint;
     if (!slideChanged && !layerKeysChanged && !overridesChanged) return;
+    if (suppressReseed && !slideChanged) return;
 
     slideSeedRef.current = {
       slideIndex,
@@ -275,12 +280,18 @@ export function MimicDocAiLayerPositionEditor({
       overridesKey: initialOverridesFingerprint,
     };
 
-    const saved = new Map((initialOverrides ?? []).map((p) => [p.layer_key, p]));
+    const savedByKey = new Map((initialOverrides ?? []).map((p) => [p.layer_key, p]));
+    const savedByRefKey = new Map(
+      (initialOverrides ?? []).map((p) => [refKeyFromLayerPositionKey(p.layer_key), p])
+    );
+    const resolveSaved = (layerKey: string): DocAiLayerOverride | undefined =>
+      savedByKey.get(layerKey) ?? savedByRefKey.get(refKeyFromLayerPositionKey(layerKey));
+
     const nextCustom: DocAiLayerBox[] = [];
     const next: Record<string, DocAiLayerOverride> = {};
     for (const layer of layers) {
       const key = layer.layer_key;
-      const savedRow = saved.get(key);
+      const savedRow = resolveSaved(key);
       const text = savedRow?.text ?? layer.text;
       const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
       const x_px = savedRow?.x_px ?? layer.x_px;
@@ -318,12 +329,31 @@ export function MimicDocAiLayerPositionEditor({
         box_locked: true,
       };
     }
+    for (const savedRow of initialOverrides ?? []) {
+      if (!savedRow.hidden || isCustomLayerKey(savedRow.layer_key)) continue;
+      const ref = refKeyFromLayerPositionKey(savedRow.layer_key);
+      const matchedVisible = layers.some(
+        (layer) =>
+          layer.layer_key === savedRow.layer_key || refKeyFromLayerPositionKey(layer.layer_key) === ref
+      );
+      if (!matchedVisible && !next[savedRow.layer_key]) {
+        next[savedRow.layer_key] = { ...savedRow };
+      }
+    }
     setCustomLayers(nextCustom);
     setOverrides(next);
     const allKeys = [...layers.map((l) => l.layer_key), ...nextCustom.map((l) => l.layer_key)];
-    setSelectedKey((prev) => (prev && next[prev] ? prev : allKeys[0] ?? null));
+    setSelectedKey((prev) => (prev && next[prev] && !next[prev]?.hidden ? prev : allKeys.find((k) => !next[k]?.hidden) ?? null));
     skipUserChangeEmitRef.current = true;
-  }, [layers, initialOverrides, slideIndex, layerKeysFingerprint, initialOverridesFingerprint, projectHandle]);
+  }, [
+    layers,
+    initialOverrides,
+    slideIndex,
+    layerKeysFingerprint,
+    initialOverridesFingerprint,
+    projectHandle,
+    suppressReseed,
+  ]);
 
   const overrideList = useMemo(() => Object.values(overrides), [overrides]);
   const onOverridesChangeRef = useRef(onOverridesChange);

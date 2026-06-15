@@ -220,6 +220,24 @@ const envSchema = z.object({
   MIMIC_USE_PROJECT_BRAND_PALETTE: z.coerce.boolean().default(false),
   /** When true, Nemotron layout/visual/deck hints are appended to art-only image-model prompts. */
   MIMIC_USE_BRAND_IMAGE_STYLE_HINTS: z.coerce.boolean().default(false),
+  /**
+   * Mimic slide image input: `reference_edit` sends the archived frame to Flux/Qwen edit;
+   * `analysis_t2i` uses LLM-written prompts from Nemotron analysis (no reference pixels).
+   */
+  MIMIC_IMAGE_INPUT_MODE: z.enum(["reference_edit", "analysis_t2i"]).default("reference_edit"),
+  /**
+   * When MIMIC_IMAGE_INPUT_MODE=analysis_t2i, run OpenAI to author per-slide Flux prompts at copy generation.
+   * Set 0 to use deterministic prompts from Nemotron fields only.
+   */
+  MIMIC_FLUX_PROMPT_LLM: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
   /** Target visual similarity for mimic image variants (0–100). Per-project override in Runs tab. */
   MIMIC_VISUAL_SIMILARITY_PCT: z.coerce.number().int().min(0).max(100).default(70),
   /**

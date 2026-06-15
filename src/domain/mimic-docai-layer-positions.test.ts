@@ -3,6 +3,7 @@ import {
   applyMimicDocAiLayerPositionOverrides,
   mimicDocAiLayerPositionKey,
   mimicDocAiLayerRefKey,
+  parseMimicDocAiLayerPositionsBySlide,
   patchMimicDocAiLayerFontSize,
   patchMimicDocAiLayerPxPosition,
   patchMimicDocAiLayerSize,
@@ -139,5 +140,14 @@ describe("mimic-docai-layer-positions", () => {
     expect(out[1]?.text).toBe("Extra line");
     expect(out[1]?.x_px).toBe(220);
     expect(out[1]?.w_px).toBe(300);
+  });
+
+  it("parseMimicDocAiLayerPositionsBySlide preserves hidden reviewer deletions", () => {
+    const layer = sampleLayer();
+    const key = mimicDocAiLayerPositionKey(layer);
+    const parsed = parseMimicDocAiLayerPositionsBySlide({
+      "2": [{ layer_key: key, x_px: 100, y_px: 200, hidden: true }],
+    });
+    expect(parsed?.["2"]?.[0]?.hidden).toBe(true);
   });
 });

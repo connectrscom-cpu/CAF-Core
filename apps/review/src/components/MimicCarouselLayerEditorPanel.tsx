@@ -366,6 +366,9 @@ export function MimicCarouselLayerEditorPanel({
 
   const [slidesWithSavedLayout, setSlidesWithSavedLayout] = useState<Set<number>>(() => new Set());
 
+  const userTouchedLayoutRef = useRef(false);
+  userTouchedLayoutRef.current = userTouchedLayout;
+
 
 
   const buildInspectPayloadRef = useRef(buildInspectPayload);
@@ -698,13 +701,17 @@ export function MimicCarouselLayerEditorPanel({
 
   const handleLayoutInitialized = useCallback((overrides: DocAiLayerOverride[]) => {
 
+    if (userTouchedLayoutRef.current) return;
+
     setLayerPosDraft(overrides);
+
+    setSlideDrafts((prev) => ({ ...prev, [editorSlide]: overrides }));
 
     setLayoutBaseline(JSON.stringify(overrides));
 
     setUserTouchedLayout(false);
 
-  }, []);
+  }, [editorSlide]);
 
 
 
@@ -742,9 +749,12 @@ export function MimicCarouselLayerEditorPanel({
 
   const persistedPositionsForInspect = useMemo(
 
-    () => overridesForPersist(slideDrafts[editorSlide] ?? []),
+    () =>
+      overridesForPersist(
+        layerPosDraft.length > 0 ? layerPosDraft : slideDrafts[editorSlide] ?? []
+      ),
 
-    [slideDrafts, editorSlide]
+    [layerPosDraft, slideDrafts, editorSlide]
 
   );
 
@@ -1279,6 +1289,8 @@ export function MimicCarouselLayerEditorPanel({
             renderPreviewBusy={layoutPreviewBusy}
 
             projectHandle={instagramHandle}
+
+            suppressReseed={userTouchedLayout}
 
           />
 

@@ -1867,6 +1867,8 @@ async function processCarouselJob(
   const mimicBflModelOverride = mimicProjectRender?.bflModel ?? null;
   const mimicVisualSimilarityPct =
     mimicProjectRender?.visualSimilarityPct ?? config.MIMIC_VISUAL_SIMILARITY_PCT;
+  const mimicImageInputMode =
+    mimicProjectRender?.imageInputMode ?? config.MIMIC_IMAGE_INPUT_MODE;
   const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarouselRender
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
@@ -1958,6 +1960,7 @@ async function processCarouselJob(
             totalSlides: n,
             bflModelOverride: mimicBflModelOverride,
             visualSimilarityPct: mimicVisualSimilarityPct,
+            imageInputMode: mimicImageInputMode,
           });
         }
       }
@@ -2020,6 +2023,7 @@ async function processCarouselJob(
             projectHandle: projectInstagramHandle,
             bflModelOverride: mimicBflModelOverride,
             visualSimilarityPct: mimicVisualSimilarityPct,
+            imageInputMode: mimicImageInputMode,
           }
         );
         const plateUrl = await persistMimicVisualPlateForSlide(db, config, job, i, buffer, mimeType);
@@ -2040,6 +2044,7 @@ async function processCarouselJob(
             totalSlides: n,
             reuseStoredPlatesOnly: textOverlayOnly,
             visualSimilarityPct: mimicVisualSimilarityPct,
+            imageInputMode: mimicImageInputMode,
           });
           slideRenderBase = { ...renderBase, background_image_url: slideBg };
         }
@@ -2092,6 +2097,7 @@ async function processCarouselJob(
           bakeTextOnImage: false,
           bflModelOverride: mimicBflModelOverride,
           visualSimilarityPct: mimicVisualSimilarityPct,
+          imageInputMode: mimicImageInputMode,
         });
         const fluxBuf = rendered.buffer;
         const fluxMime = rendered.mimeType;

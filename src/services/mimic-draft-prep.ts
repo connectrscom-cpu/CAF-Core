@@ -7,7 +7,7 @@ import {
 import { assertMimicCopyDiffersFromReference } from "../domain/mimic-copy-guard.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
-import { buildContentSlideCopyLayoutFromEntry } from "../domain/mimic-job-grounding.js";
+import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
@@ -39,6 +39,7 @@ import { logPipelineEvent } from "./pipeline-logger.js";
 import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
+import { generateMimicFluxImagePromptsForJob } from "./mimic-flux-image-prompts.js";
 import {
   mimicDeckUsesSlotDeduplication,
   requireMimicSlideBackgroundPlate,
@@ -405,6 +406,7 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
       promptOverrides,
       totalSlides,
       visualSimilarityPct: mimicRender.visualSimilarityPct,
+      imageInputMode: mimicRender.imageInputMode,
     });
   }
 
@@ -552,6 +554,38 @@ export async function prepareMimicDraftPackage(
             skipped_promotional: asRecord(merged.mimic_render_context)?.skipped_promotional_slide_indices,
           },
         });
+      }
+    }
+
+    const imageInputMode = mimicRender.imageInputMode;
+    if (imageInputMode === "analysis_t2i" && !mimic.flux_image_prompts) {
+      const layout = buildSlideCopyLayoutForLlmFromPayload(merged);
+      if (layout.length > 0) {
+        const { bySlide, meta } = await generateMimicFluxImagePromptsForJob(
+          config,
+          config.OPENAI_API_KEY ?? "",
+          db,
+          { task_id: job.task_id, project_id: job.project_id, run_id: runId },
+          mimic,
+          gen,
+          layout,
+          { imageInputMode, useLlm: config.MIMIC_FLUX_PROMPT_LLM }
+        );
+        if (Object.keys(bySlide).length > 0) {
+          mimic = { ...mimic, flux_image_prompts: bySlide };
+          merged = mergeMimicPayloadSlice(merged, mimic);
+          await persistGenerationPayload(db, job.id, merged);
+          logPipelineEvent("info", "generate", "mimic_flux_image_prompts_stored", {
+            run_id: runId ?? undefined,
+            task_id: job.task_id,
+            data: {
+              slides_written: meta.slides_written,
+              slides_requested: meta.slides_requested,
+              model: meta.model,
+              used_llm: meta.used_llm,
+            },
+          });
+        }
       }
     }
   }

@@ -21,7 +21,7 @@ import {
   mimicEvalSkipSlideIndices,
   resolveEffectiveContentSlideIndices,
 } from "../domain/mimic-content-slide-indices.js";
-import { isBoldMimicVisualVariant } from "../domain/mimic-render-settings.js";
+import { effectiveMimicImageInputMode, isBoldMimicVisualVariant, type MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import type { TemplateBgSlot } from "../domain/mimic-template-library.js";
 import type { Pool } from "pg";
 import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask } from "../repositories/assets.js";
@@ -32,6 +32,7 @@ import {
   type MimicPromptOverrides,
   type MimicRenderPromptSettings,
 } from "./mimic-prompt-builder.js";
+import { resolveMimicSlideImagePrompt } from "./mimic-flux-image-prompts.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
 import { isVideoishUrl } from "./instagram-media-normalizer.js";
 import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js";
@@ -39,6 +40,7 @@ import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js
 type MimicRenderImageOpts = {
   bflModelOverride?: MimicBflModelSlug | null;
   visualSimilarityPct?: number;
+  imageInputMode?: MimicImageInputMode;
 };
 import {
   slidesFromGeneratedOutput,
@@ -436,10 +438,11 @@ export async function extractMimicSlideBackground(
     totalSlides?: number;
   } & MimicRenderImageOpts
 ): Promise<string | null> {
+  const imageInputMode =
+    opts?.imageInputMode ?? effectiveMimicImageInputMode(null, config.MIMIC_IMAGE_INPUT_MODE);
   const item = referenceItemForMimicSlide(mimic, slideIndex);
-  if (!item) return null;
+  if (!item && imageInputMode === "reference_edit") return null;
 
-  const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
   const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
   const promptFields = mimicSlidePromptFields(mimic, slideIndex, opts?.visualSimilarityPct, {
     includeStyleHints: styleHints,
@@ -466,9 +469,17 @@ export async function extractMimicSlideBackground(
   if (promptFields.intentInstruction) bgPrompt = `${bgPrompt} ${promptFields.intentInstruction}`;
   if (promptFields.safeZoneInstruction) bgPrompt = `${bgPrompt} ${promptFields.safeZoneInstruction}`;
 
+  const resolvedPrompt = resolveMimicSlideImagePrompt(mimic, slideIndex, bgPrompt, imageInputMode);
+  let referenceUrl: string | undefined;
+  if (resolvedPrompt.usesReferenceImage) {
+    if (!item) return null;
+    referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
+  }
+
   const { buffer, mimeType } = await generateMimicSlideImage(config, {
-    referenceUrl,
-    prompt: bgPrompt,
+    ...(referenceUrl ? { referenceUrl } : {}),
+    prompt: resolvedPrompt.prompt,
+    imageInputMode: resolvedPrompt.imageInputMode,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
     visualSimilarityPct: opts?.visualSimilarityPct,
@@ -477,7 +488,14 @@ export async function extractMimicSlideBackground(
       projectId: job.project_id,
       runId: job.run_id,
       taskId: job.task_id,
-      step: slideIndex === 1 ? "mimic_bg_extract" : `mimic_bg_extract_${slideIndex}`,
+      step:
+        resolvedPrompt.imageInputMode === "analysis_t2i"
+          ? slideIndex === 1
+            ? "mimic_bg_t2i"
+            : `mimic_bg_t2i_${slideIndex}`
+          : slideIndex === 1
+            ? "mimic_bg_extract"
+            : `mimic_bg_extract_${slideIndex}`,
     },
   });
 
@@ -1487,10 +1505,13 @@ export async function renderMimicCarouselSlideFullBleed(
     visualSimilarityPct?: number;
   } & MimicRenderImageOpts
 ): Promise<{ buffer: Buffer; mimeType: string }> {
+  const imageInputMode =
+    opts?.imageInputMode ?? effectiveMimicImageInputMode(null, config.MIMIC_IMAGE_INPUT_MODE);
   const item = referenceItemForMimicSlide(mimic, slideIndex);
-  if (!item?.vision_fetch_url) throw new Error(`No reference URL for mimic slide ${slideIndex}`);
+  if (!item?.vision_fetch_url && imageInputMode === "reference_edit") {
+    throw new Error(`No reference URL for mimic slide ${slideIndex}`);
+  }
 
-  const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
   const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
   const promptFields = mimicSlidePromptFields(mimic, slideIndex, opts?.visualSimilarityPct, {
     includeStyleHints: styleHints,
@@ -1522,9 +1543,17 @@ export async function renderMimicCarouselSlideFullBleed(
     renderSettings
   );
 
+  const resolvedPrompt = resolveMimicSlideImagePrompt(mimic, slideIndex, basePrompt, imageInputMode);
+  let referenceUrl: string | undefined;
+  if (resolvedPrompt.usesReferenceImage) {
+    if (!item) throw new Error(`No reference URL for mimic slide ${slideIndex}`);
+    referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
+  }
+
   return generateMimicSlideImage(config, {
-    referenceUrl,
-    prompt: basePrompt,
+    ...(referenceUrl ? { referenceUrl } : {}),
+    prompt: resolvedPrompt.prompt,
+    imageInputMode: resolvedPrompt.imageInputMode,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
     visualSimilarityPct: opts?.visualSimilarityPct,

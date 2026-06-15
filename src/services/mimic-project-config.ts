@@ -4,21 +4,26 @@ import { qOne } from "../db/queries.js";
 import { effectiveMimicBflModel, parseProjectMimicBflModel, type MimicBflModelSlug } from "../domain/mimic-bfl-model.js";
 import {
   effectiveMimicCarouselTextViaFlux,
+  effectiveMimicImageInputMode,
   effectiveMimicVisualSimilarityPct,
+  parseMimicImageInputMode,
   parseProjectMimicCarouselTextViaFlux,
   parseProjectMimicVisualSimilarityPct,
+  type MimicImageInputMode,
 } from "../domain/mimic-render-settings.js";
 
 export interface ProjectMimicRenderSettings {
   bflModel: MimicBflModelSlug | null;
   visualSimilarityPct: number;
   carouselTextViaFlux: boolean;
+  imageInputMode: MimicImageInputMode;
 }
 
 type MimicConstraintsRow = {
   mimic_image_bfl_model: string | null;
   mimic_visual_similarity_pct: number | null;
   mimic_carousel_text_via_flux: boolean | null;
+  mimic_image_input_mode: string | null;
 };
 
 export async function loadProjectMimicConstraintsRow(
@@ -28,7 +33,8 @@ export async function loadProjectMimicConstraintsRow(
   try {
     return await qOne<MimicConstraintsRow>(
       db,
-      `SELECT mimic_image_bfl_model, mimic_visual_similarity_pct, mimic_carousel_text_via_flux
+      `SELECT mimic_image_bfl_model, mimic_visual_similarity_pct, mimic_carousel_text_via_flux,
+              mimic_image_input_mode
        FROM caf_core.project_system_constraints WHERE project_id = $1`,
       [projectId]
     );
@@ -52,6 +58,10 @@ export async function loadProjectMimicRenderSettings(
     carouselTextViaFlux: effectiveMimicCarouselTextViaFlux(
       parseProjectMimicCarouselTextViaFlux(row?.mimic_carousel_text_via_flux),
       config.MIMIC_CAROUSEL_TEXT_VIA_FLUX
+    ),
+    imageInputMode: effectiveMimicImageInputMode(
+      parseMimicImageInputMode(row?.mimic_image_input_mode),
+      config.MIMIC_IMAGE_INPUT_MODE
     ),
   };
 }

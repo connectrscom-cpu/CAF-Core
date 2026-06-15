@@ -166,6 +166,7 @@ import {
 } from "../decision_engine/default-plan-caps.js";
 import { parseProjectMimicBflModel } from "../domain/mimic-bfl-model.js";
 import {
+  parseMimicImageInputMode,
   parseProjectMimicCarouselTextViaFlux,
   parseProjectMimicVisualSimilarityPct,
 } from "../domain/mimic-render-settings.js";
@@ -753,10 +754,15 @@ function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
       </div>`;
 }
 
+function mimicImageInputModeAdminLabel(mode: string): string {
+  return mode === "analysis_t2i" ? "Analysis text-to-image" : "Reference edit (archived frame)";
+}
+
 function renderMimicRenderSettingsHtml(opts: {
   serverBflModel: string;
   serverVisualSimilarityPct: number;
   serverCarouselTextViaFlux: boolean;
+  serverImageInputMode: string;
 }): string {
   const fluxDefaultLabel = opts.serverCarouselTextViaFlux
     ? "image model bakes copy"
@@ -775,6 +781,14 @@ function renderMimicRenderSettingsHtml(opts: {
         <input type="number" id="plan-cap-mimic-visual-sim" min="0" max="100" step="1" placeholder="${opts.serverVisualSimilarityPct}" />
       </div>
       <div class="plan-cap-row plan-cap-row--select">
+        <label for="plan-cap-mimic-image-input" title="Whether mimic slide plates are generated from the archived reference frame (Flux edit) or from an LLM-written prompt based on Nemotron analysis (text-to-image, no reference pixels).">Image input mode</label>
+        <select id="plan-cap-mimic-image-input">
+          <option value="">Server default (${esc(mimicImageInputModeAdminLabel(opts.serverImageInputMode))})</option>
+          <option value="reference_edit">Reference edit — archived frame → Flux edit</option>
+          <option value="analysis_t2i">Analysis text-to-image — Nemotron brief, no reference pixels</option>
+        </select>
+      </div>
+      <div class="plan-cap-row plan-cap-row--select">
         <label for="plan-cap-mimic-text-flux" title="Strip reference text from images, then either composite your LLM copy via precise HTML/CSS (Document AI bboxes) or bake copy in the image model.">Mimic text rendering</label>
         <select id="plan-cap-mimic-text-flux">
           <option value="">Server default (${esc(fluxDefaultLabel)})</option>
@@ -788,6 +802,7 @@ function renderPlanCapColumnsHtml(opts: {
   serverBflModel: string;
   serverVisualSimilarityPct: number;
   serverCarouselTextViaFlux: boolean;
+  serverImageInputMode: string;
 }): string {
   return PLAN_CAP_UI_CATEGORIES.map((cat) => {
     const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
@@ -1879,6 +1894,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           return { ok: false, error: "invalid mimic_carousel_text_via_flux (use true/false or empty for server default)" };
         }
         patch.mimic_carousel_text_via_flux = parsed;
+      }
+    }
+    if ("mimic_image_input_mode" in body) {
+      const raw = body.mimic_image_input_mode;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.mimic_image_input_mode = null;
+      } else {
+        const parsed = parseMimicImageInputMode(raw);
+        if (!parsed) {
+          return {
+            ok: false,
+            error: "invalid mimic_image_input_mode (use reference_edit, analysis_t2i, or empty for server default)",
+          };
+        }
+        patch.mimic_image_input_mode = parsed;
       }
     }
     if ("openai_generation_mode" in body) {
@@ -3722,6 +3752,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
       serverBflModel: config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b",
       serverVisualSimilarityPct: config.MIMIC_VISUAL_SIMILARITY_PCT,
       serverCarouselTextViaFlux: config.MIMIC_CAROUSEL_TEXT_VIA_FLUX,
+      serverImageInputMode: config.MIMIC_IMAGE_INPUT_MODE,
     });
     const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
     const llmJobGenTitle = adminLlmPromptTitleAttr(
@@ -3938,6 +3969,10 @@ const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_P
 const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 const SERVER_MIMIC_VISUAL_SIM=${config.MIMIC_VISUAL_SIMILARITY_PCT};
 const SERVER_MIMIC_TEXT_FLUX=${config.MIMIC_CAROUSEL_TEXT_VIA_FLUX ? "1" : "0"};
+const SERVER_MIMIC_IMAGE_INPUT_MODE=${JSON.stringify(config.MIMIC_IMAGE_INPUT_MODE)};
+function mimicImageInputModeClientLabel(mode){
+  return mode==='analysis_t2i'?'analysis text-to-image':'reference edit';
+}
 const SERVER_OPENAI_GEN_MODE=${JSON.stringify(config.OPENAI_GENERATION_MODE)};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
@@ -4441,6 +4476,7 @@ async function loadPlanningCaps(){
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
   const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
   const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
   const genModeHint=document.getElementById('plan-cap-openai-gen-hint');
   const genModeBtn=document.getElementById('plan-cap-openai-gen-save');
@@ -4469,6 +4505,7 @@ async function loadPlanningCaps(){
     if(mModelSel)mModelSel.disabled=true;
     if(mSimInp)mSimInp.disabled=true;
     if(mFluxSel)mFluxSel.disabled=true;
+    if(mInputModeSel)mInputModeSel.disabled=true;
     if(genModeSel)genModeSel.disabled=true;
     if(genModeBtn)genModeBtn.disabled=true;
     if(genModeHint)genModeHint.textContent='Pick a project to set copy generation mode.';
@@ -4485,6 +4522,7 @@ async function loadPlanningCaps(){
   if(mModelSel)mModelSel.disabled=false;
   if(mSimInp){mSimInp.disabled=false;mSimInp.placeholder=String(SERVER_MIMIC_VISUAL_SIM);}
   if(mFluxSel)mFluxSel.disabled=false;
+  if(mInputModeSel)mInputModeSel.disabled=false;
   if(genModeSel)genModeSel.disabled=false;
   if(genModeBtn)genModeBtn.disabled=false;
   if(genModeHint)genModeHint.textContent='Loading…';
@@ -4568,7 +4606,11 @@ async function loadPlanningCaps(){
       var fluxHas=fluxSaved===true||fluxSaved===false;
       var fluxEff=fluxHas?(fluxSaved===true):SERVER_MIMIC_TEXT_FLUX==='1';
       var fluxLabel=fluxEff?'image model bakes copy':'HTML/CSS overlay (HBS)';
-      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Render: ~'+simEff+'% visual variant; on-image text via '+fluxLabel+(fluxHas?' (saved)':(' (server default)'))+'. Requires MIMIC_IMAGE_ENABLED.';
+      var inputModeSaved=d.constraints&&d.constraints.mimic_image_input_mode;
+      var inputModeHas=inputModeSaved==='reference_edit'||inputModeSaved==='analysis_t2i';
+      var inputModeEff=inputModeHas?String(inputModeSaved):SERVER_MIMIC_IMAGE_INPUT_MODE;
+      var inputModeLabel=mimicImageInputModeClientLabel(inputModeEff);
+      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Render: ~'+simEff+'% visual variant; plates via '+inputModeLabel+(inputModeHas?' (saved)':(' (server default)'))+'; on-image text via '+fluxLabel+(fluxHas?' (saved)':(' (server default)'))+'. Requires MIMIC_IMAGE_ENABLED.';
     }
     if(mModelSel){
       const savedModel=d.constraints&&d.constraints.mimic_image_bfl_model;
@@ -4582,6 +4624,10 @@ async function loadPlanningCaps(){
     if(mFluxSel){
       const fluxRaw=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
       mFluxSel.value=(fluxRaw===true)?'1':(fluxRaw===false)?'0':'';
+    }
+    if(mInputModeSel){
+      const modeRaw=String((d.constraints&&d.constraints.mimic_image_input_mode)||'').trim();
+      mInputModeSel.value=(modeRaw==='reference_edit'||modeRaw==='analysis_t2i')?modeRaw:'';
     }
     var createMimicText=document.getElementById('create-mimic-text-mode');
     if(createMimicText&&mFluxSel){
@@ -4669,7 +4715,13 @@ async function saveMimicPlanningCaps(){
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
   const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
   const simRaw=(mSimInp&&mSimInp.value||'').trim();
+  const inputModePick=(mInputModeSel&&mInputModeSel.value||'').trim();
+  if(inputModePick!==''&&inputModePick!=='reference_edit'&&inputModePick!=='analysis_t2i'){
+    showToast('Image input mode: reference edit, analysis text-to-image, or empty for server default.',false);
+    return;
+  }
   if(simRaw!==''){
     var simN=parseInt(simRaw,10);
     if(!Number.isFinite(simN)||simN<0||simN>100){showToast('Visual similarity: enter an integer 0–100 or leave empty for server default.',false);return;}
@@ -4709,6 +4761,9 @@ async function saveMimicPlanningCaps(){
     if(mFluxSel){
       const fluxPick=(mFluxSel.value||'').trim();
       body.mimic_carousel_text_via_flux=fluxPick===''?'':fluxPick==='1';
+    }
+    if(mInputModeSel){
+      body.mimic_image_input_mode=inputModePick===''?'':inputModePick;
     }
     var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var rawText=await r.text();

@@ -30,6 +30,8 @@ export interface ConstraintRow {
   mimic_visual_similarity_pct?: number | null;
   /** Bake on-image copy in image model vs HBS overlay (migration 067). */
   mimic_carousel_text_via_flux?: boolean | null;
+  /** reference_edit | analysis_t2i (migration 069). */
+  mimic_image_input_mode?: string | null;
   /** Per-project copy generation: live | placeholder (migration 068). */
   openai_generation_mode?: string | null;
 }
@@ -150,7 +152,7 @@ export async function getConstraints(db: Pool, projectId: string): Promise<Const
             auto_validation_pass_threshold,
             max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type,
             mimic_image_bfl_model, mimic_visual_similarity_pct, mimic_carousel_text_via_flux,
-            openai_generation_mode
+            mimic_image_input_mode, openai_generation_mode
      FROM caf_core.project_system_constraints WHERE project_id = $1`,
     [projectId]
   );
@@ -189,6 +191,7 @@ export type ConstraintsPatch = {
   mimic_image_bfl_model?: string | null;
   mimic_visual_similarity_pct?: number | null;
   mimic_carousel_text_via_flux?: boolean | null;
+  mimic_image_input_mode?: string | null;
   openai_generation_mode?: string | null;
 };
 
@@ -207,6 +210,7 @@ export function mergeConstraintUpdate(
   mimic_image_bfl_model: string | null;
   mimic_visual_similarity_pct: number | null;
   mimic_carousel_text_via_flux: boolean | null;
+  mimic_image_input_mode: string | null;
   openai_generation_mode: string | null;
 } {
   return {
@@ -256,6 +260,10 @@ export function mergeConstraintUpdate(
       patch.mimic_carousel_text_via_flux !== undefined
         ? patch.mimic_carousel_text_via_flux
         : existing?.mimic_carousel_text_via_flux ?? null,
+    mimic_image_input_mode:
+      patch.mimic_image_input_mode !== undefined
+        ? patch.mimic_image_input_mode
+        : existing?.mimic_image_input_mode ?? null,
     openai_generation_mode:
       patch.openai_generation_mode !== undefined
         ? patch.openai_generation_mode
@@ -278,6 +286,7 @@ export async function upsertConstraints(
     mimic_image_bfl_model: string | null;
     mimic_visual_similarity_pct: number | null;
     mimic_carousel_text_via_flux: boolean | null;
+    mimic_image_input_mode: string | null;
     openai_generation_mode: string | null;
   }
 ): Promise<void> {
@@ -285,8 +294,8 @@ export async function upsertConstraints(
     `INSERT INTO caf_core.project_system_constraints
       (project_id, max_daily_jobs, min_score_to_generate, max_active_prompt_versions, default_variation_cap, auto_validation_pass_threshold,
        max_carousel_jobs_per_run, max_video_jobs_per_run, max_jobs_per_flow_type, mimic_image_bfl_model,
-       mimic_visual_similarity_pct, mimic_carousel_text_via_flux, openai_generation_mode)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13)
+       mimic_visual_similarity_pct, mimic_carousel_text_via_flux, mimic_image_input_mode, openai_generation_mode)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14)
      ON CONFLICT (project_id) DO UPDATE SET
        max_daily_jobs = EXCLUDED.max_daily_jobs,
        min_score_to_generate = EXCLUDED.min_score_to_generate,
@@ -299,6 +308,7 @@ export async function upsertConstraints(
        mimic_image_bfl_model = EXCLUDED.mimic_image_bfl_model,
        mimic_visual_similarity_pct = EXCLUDED.mimic_visual_similarity_pct,
        mimic_carousel_text_via_flux = EXCLUDED.mimic_carousel_text_via_flux,
+       mimic_image_input_mode = EXCLUDED.mimic_image_input_mode,
        openai_generation_mode = EXCLUDED.openai_generation_mode,
        updated_at = now()`,
     [
@@ -314,6 +324,7 @@ export async function upsertConstraints(
       row.mimic_image_bfl_model,
       row.mimic_visual_similarity_pct,
       row.mimic_carousel_text_via_flux,
+      row.mimic_image_input_mode,
       row.openai_generation_mode,
     ]
   );
