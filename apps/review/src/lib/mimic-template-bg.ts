@@ -151,3 +151,48 @@ export function normalizeMimicTemplateBgSlides(slides: NormalizedSlide[]): Norma
   const total = slides.length;
   return slides.map((slide, i) => normalizeMimicTemplateBgSlide(slide, i + 1, total));
 }
+
+/** LLM slide row scoped to cover / body / CTA slot for template_bg DocAI text mapping (matches Core pipeline). */
+export function templateBgLlmSlideForDocAi(
+  slideIndex1Based: number,
+  totalSlides: number,
+  rawLlmSlide: Record<string, unknown>
+): Record<string, unknown> {
+  const slot = templateBgSlotForSlide(slideIndex1Based, totalSlides);
+  const headline = String(rawLlmSlide.headline ?? rawLlmSlide.title ?? "").trim();
+  const body = String(rawLlmSlide.body ?? "").trim();
+  const subtitle = String(
+    rawLlmSlide.subtitle ?? rawLlmSlide.cover_subtitle ?? rawLlmSlide.kicker ?? ""
+  ).trim();
+  const cta = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
+  const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
+
+  if (slot === "cover") {
+    return {
+      ...rawLlmSlide,
+      headline,
+      title: headline,
+      body: subtitle || (body && headline ? "" : body),
+      cover_subtitle: subtitle || body,
+      subtitle: subtitle || body,
+    };
+  }
+  if (slot === "cta") {
+    const ctaHeadline = cta || headline;
+    const ctaBody = handle || body || subtitle;
+    return {
+      ...rawLlmSlide,
+      headline: ctaHeadline,
+      body: ctaBody,
+      cta: ctaHeadline,
+      cta_text: ctaHeadline,
+      handle: ctaBody,
+      cta_handle: ctaBody,
+    };
+  }
+  return {
+    ...rawLlmSlide,
+    headline,
+    body: body || subtitle,
+  };
+}

@@ -17,7 +17,7 @@ import {
   mimicDocAiLayersCoverLlmCopy,
   mimicPayloadHasDocAiTextLayout,
 } from "@caf-core-carousel/mimic-slide-typography";
-import { templateBgLlmSlideForDocAi } from "@caf-core-carousel/mimic-template-bg-render";
+import { templateBgLlmSlideForDocAi } from "@/lib/mimic-template-bg";
 
 export type MimicDocAiEnrichedSlide = {
   renderContext: Record<string, unknown>;
