@@ -7,7 +7,12 @@ import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-packag
 import { slideCopyBlocksNeedCoherence } from "../domain/mimic-ocr-garbage.js";
 import { sanitizeMimicOverlayCopyText } from "../domain/mimic-overlay-copy.js";
 import { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
-import type { MimicReferenceCopySlot } from "./mimic-copy-slots.js";
+import {
+  collapseTextBlocksToCopySlots,
+  type MimicReferenceCopySlot,
+} from "./mimic-copy-slots.js";
+
+export { collapseTextBlocksToCopySlots };
 import {
   enforceMimicCopyBudgetOnParsedOutput,
   mimicCopySlotBudgets,
@@ -63,45 +68,6 @@ function textBlocksFromSlide(slide: Record<string, unknown>): Array<{ role: stri
     });
   }
   return out;
-}
-
-/** Collapse per-OCR text_blocks rows into one string per copy slot cluster. */
-export function collapseTextBlocksToCopySlots(
-  blocks: Array<{ role: string; text: string }>,
-  slots: MimicReferenceCopySlot[]
-): string[] {
-  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
-  if (sorted.length === 0) return [];
-
-  if (blocks.length === sorted.length) {
-    return blocks.map((b) => b.text.trim());
-  }
-
-  const out: string[] = [];
-  let bi = 0;
-  for (const slot of sorted) {
-    const n = Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length);
-    const slice = blocks.slice(bi, bi + n);
-    bi += n;
-    if (slice.length === 0) {
-      out.push("");
-      continue;
-    }
-    const joiner = slot.split === "line_per_block" ? " " : " ";
-    out.push(slice.map((b) => b.text.trim()).filter(Boolean).join(joiner).trim());
-  }
-
-  if (bi < blocks.length && out.length > 0) {
-    const tail = blocks
-      .slice(bi)
-      .map((b) => b.text.trim())
-      .filter(Boolean)
-      .join(" ");
-    out[out.length - 1] = `${out[out.length - 1]!} ${tail}`.trim();
-  }
-
-  while (out.length < sorted.length) out.push("");
-  return out.slice(0, sorted.length);
 }
 
 function syncHeadlineBodyFromSlotBlocks(

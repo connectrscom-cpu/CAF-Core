@@ -366,8 +366,8 @@ export function CarouselSlider({
             <div className="mimic-text-blocks" style={{ marginBottom: 12 }}>
               <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
               <p style={{ margin: "0 0 10px", fontSize: 11, color: "var(--muted)", lineHeight: 1.45 }}>
-                One field per OCR overlay box on this slide. Saved to <code style={{ fontSize: 10 }}>text_blocks[]</code>{" "}
-                on save/reprint and synced to the layout editor.
+                One field per copy cluster (headline, body, handle, etc.) — not every OCR line. Saved to{" "}
+                <code style={{ fontSize: 10 }}>text_blocks[]</code> on save/reprint and synced to the layout editor.
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {mimicTextBlocks.map((block, bi) => (

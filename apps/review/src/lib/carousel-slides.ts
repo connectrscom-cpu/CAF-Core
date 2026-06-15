@@ -1,4 +1,9 @@
 import { sanitizeMimicOverlayCopyText } from "../../../../src/domain/mimic-overlay-copy";
+import {
+  collapseTextBlocksToCopySlots,
+  copySlotsForSlideRecord,
+  type MimicReferenceCopySlot,
+} from "@caf-core-carousel/mimic-copy-slots";
 
 export type MimicTextBlock = {
   role: string;
@@ -11,7 +16,7 @@ export interface NormalizedSlide {
   headline: string;
   body: string;
   handle: string;
-  /** Per OCR/overlay box — preferred editor shape for mimic carousels. */
+  /** Per copy-slot cluster — preferred editor shape for mimic carousels. */
   text_blocks?: MimicTextBlock[];
   /** Flat copy lines (legacy); kept in sync with `text_blocks[].text`. */
   on_slide_lines?: string[];
@@ -279,7 +284,7 @@ export function mimicSlideFieldsFromTextBlocks(blocks: MimicTextBlock[]): {
   return { headline, body, on_slide_lines };
 }
 
-/** Blocks to show in mimic review UI — one entry per overlay box / sentence line. */
+/** Blocks to show in mimic review UI — one entry per copy slot cluster. */
 export function resolveMimicTextBlocksForSlide(slide: NormalizedSlide): MimicTextBlock[] {
   if (slide.text_blocks?.length) {
     return slide.text_blocks.map((b) => ({ role: b.role || "body", text: b.text }));
@@ -307,17 +312,25 @@ function asSlideRecord(raw: unknown): Record<string, unknown> | null {
   return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
 }
 
+function visualGuidelineSlideAtIndex(
+  visualGuideline: Record<string, unknown> | null | undefined,
+  slideIndex1Based: number
+): Record<string, unknown> | null {
+  if (!visualGuideline) return null;
+  const slides = Array.isArray(visualGuideline.slides) ? visualGuideline.slides : [];
+  if (slides.length === 0) return null;
+  return (
+    slides.map((s) => asSlideRecord(s)).find((s) => s && Number(s.slide_index) === slideIndex1Based) ??
+    asSlideRecord(slides[slideIndex1Based - 1])
+  );
+}
+
 /** Copy-slot clusters from mimic `visual_guideline` (one block per semantic group, not per OCR line). */
 export function copyClusterBlocksFromVisualGuideline(
   visualGuideline: Record<string, unknown> | null | undefined,
   slideIndex1Based: number
 ): MimicTextBlock[] {
-  if (!visualGuideline) return [];
-  const slides = Array.isArray(visualGuideline.slides) ? visualGuideline.slides : [];
-  if (slides.length === 0) return [];
-  const match =
-    slides.map((s) => asSlideRecord(s)).find((s) => s && Number(s.slide_index) === slideIndex1Based) ??
-    asSlideRecord(slides[slideIndex1Based - 1]);
+  const match = visualGuidelineSlideAtIndex(visualGuideline, slideIndex1Based);
   if (!match) return [];
 
   const slotsRaw = match.copy_slots_v1;
@@ -357,28 +370,61 @@ export function ocrTextBlocksFromVisualGuideline(
   );
 }
 
-/** Align slide copy to copy-slot cluster count when `text_blocks[]` is missing or mismatched. */
-export function enrichMimicSlideWithOcrBlocks(
+function slideRecordForCopySlots(
+  visualGuideline: Record<string, unknown> | null | undefined,
+  slideCopyLayout: Array<Record<string, unknown>> | null | undefined,
+  slideIndex1Based: number
+): Record<string, unknown> | null {
+  const fromVg = visualGuidelineSlideAtIndex(visualGuideline, slideIndex1Based);
+  const layoutRow =
+    slideCopyLayout?.find((r) => Number(r.slide_index) === slideIndex1Based) ??
+    slideCopyLayout?.[slideIndex1Based - 1] ??
+    null;
+  if (!fromVg && !layoutRow) return null;
+  if (!layoutRow) return fromVg;
+  const layoutSlots = layoutRow.copy_slots_v1;
+  const vgSlots = fromVg?.copy_slots_v1;
+  const hasVgSlots = Array.isArray(vgSlots) && vgSlots.length > 0;
+  const hasLayoutSlots = Array.isArray(layoutSlots) && layoutSlots.length > 0;
+  if (hasVgSlots) return fromVg;
+  if (hasLayoutSlots) {
+    return { ...(fromVg ?? {}), ...layoutRow, slide_index: slideIndex1Based };
+  }
+  return fromVg;
+}
+
+function ocrBoxCountForSlots(slots: MimicReferenceCopySlot[]): number {
+  return [...slots]
+    .sort((a, b) => a.slot_index - b.slot_index)
+    .reduce((n, slot) => n + Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length), 0);
+}
+
+function slotsAlreadyMatchSlide(slide: NormalizedSlide, slots: MimicReferenceCopySlot[]): boolean {
+  const blocks = resolveMimicTextBlocksForSlide(slide).filter((b) => b.text.trim());
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  if (blocks.length !== sorted.length) return false;
+  if (ocrBoxCountForSlots(slots) !== blocks.length) return false;
+  const collapsed = collapseTextBlocksToCopySlots(blocks, slots);
+  return sorted.every((slot, i) => {
+    const block = blocks[i]!;
+    return block.text.trim() === (collapsed[i] ?? "").trim() && block.role === slot.llm_field;
+  });
+}
+
+/** Collapse per-OCR `text_blocks[]` into one row per copy slot cluster. */
+export function enrichMimicSlideToCopyClusters(
   slide: NormalizedSlide,
-  clusterBlocks: MimicTextBlock[]
+  slideRecord: Record<string, unknown> | null | undefined
 ): NormalizedSlide {
-  if (clusterBlocks.length === 0) return slide;
-  const existing = slide.text_blocks?.filter((b) => b.text.trim()) ?? [];
-  if (existing.length === clusterBlocks.length && existing.length > 0) {
-    return slide;
-  }
-  const copyLines = (
-    slide.on_slide_lines?.map((l) => cleanOverlayCopy(l)).filter(Boolean) ??
-    resolveMimicTextBlocksForSlide(slide)
-      .map((b) => b.text.trim())
-      .filter(Boolean)
-  ).slice();
-  if (slide.handle.trim() && !copyLines.some((l) => l === slide.handle.trim())) {
-    copyLines.push(slide.handle.trim());
-  }
-  const text_blocks = clusterBlocks.map((cluster, i) => ({
-    role: cluster.role || "body",
-    text: copyLines[i]?.trim() || "",
+  const slots = copySlotsForSlideRecord(slideRecord);
+  if (slots.length === 0) return slide;
+  if (slotsAlreadyMatchSlide(slide, slots)) return slide;
+
+  const existingBlocks = resolveMimicTextBlocksForSlide(slide);
+  const collapsed = collapseTextBlocksToCopySlots(existingBlocks, slots);
+  const text_blocks = slots.map((slot, i) => ({
+    role: slot.llm_field,
+    text: collapsed[i]?.trim() ?? "",
   }));
   const fields = mimicSlideFieldsFromTextBlocks(text_blocks);
   const handleFromBlocks = text_blocks.find((b) => b.role === "handle" || looksLikeHandleLine(b.text))?.text;
@@ -392,13 +438,39 @@ export function enrichMimicSlideWithOcrBlocks(
   };
 }
 
+/** @deprecated use enrichMimicSlideToCopyClusters */
+export function enrichMimicSlideWithOcrBlocks(
+  slide: NormalizedSlide,
+  clusterBlocks: MimicTextBlock[]
+): NormalizedSlide {
+  if (clusterBlocks.length === 0) return slide;
+  const slots = clusterBlocks.map((cluster, i) => ({
+    slot_index: i,
+    llm_field: (cluster.role === "handle"
+      ? "handle"
+      : cluster.role === "headline"
+        ? "headline"
+        : cluster.role === "cta"
+          ? "cta"
+          : "body") as "headline" | "body" | "cta" | "handle",
+    block_indices: [i],
+    block_texts: [""],
+    split: "single_block" as const,
+  }));
+  return enrichMimicSlideToCopyClusters(slide, { copy_slots_v1: slots });
+}
+
 export function enrichMimicSlidesFromVisualGuideline(
   slides: NormalizedSlide[],
-  visualGuideline: Record<string, unknown> | null | undefined
+  visualGuideline: Record<string, unknown> | null | undefined,
+  slideCopyLayout?: Array<Record<string, unknown>> | null
 ): NormalizedSlide[] {
-  if (!visualGuideline) return slides;
+  if (!visualGuideline && !slideCopyLayout?.length) return slides;
   return slides.map((slide, i) =>
-    enrichMimicSlideWithOcrBlocks(slide, copyClusterBlocksFromVisualGuideline(visualGuideline, i + 1))
+    enrichMimicSlideToCopyClusters(
+      slide,
+      slideRecordForCopySlots(visualGuideline, slideCopyLayout ?? null, i + 1)
+    )
   );
 }
 

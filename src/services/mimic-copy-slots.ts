@@ -682,6 +682,45 @@ export function copySlotsForSlideRecord(slide: Record<string, unknown> | null | 
   return inferMimicReferenceCopySlots(blocks, transcript);
 }
 
+/** Collapse per-OCR text_blocks rows into one string per copy slot cluster. */
+export function collapseTextBlocksToCopySlots(
+  blocks: Array<{ role: string; text: string }>,
+  slots: MimicReferenceCopySlot[]
+): string[] {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  if (sorted.length === 0) return [];
+
+  if (blocks.length === sorted.length) {
+    return blocks.map((b) => b.text.trim());
+  }
+
+  const out: string[] = [];
+  let bi = 0;
+  for (const slot of sorted) {
+    const n = Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length);
+    const slice = blocks.slice(bi, bi + n);
+    bi += n;
+    if (slice.length === 0) {
+      out.push("");
+      continue;
+    }
+    const joiner = slot.split === "line_per_block" ? " " : " ";
+    out.push(slice.map((b) => b.text.trim()).filter(Boolean).join(joiner).trim());
+  }
+
+  if (bi < blocks.length && out.length > 0) {
+    const tail = blocks
+      .slice(bi)
+      .map((b) => b.text.trim())
+      .filter(Boolean)
+      .join(" ");
+    out[out.length - 1] = `${out[out.length - 1]!} ${tail}`.trim();
+  }
+
+  while (out.length < sorted.length) out.push("");
+  return out.slice(0, sorted.length);
+}
+
 function llmLineLongerThanRefBlocks(line: string, refTexts: string[]): boolean {
   const refLen = refTexts.join(" ").replace(/\s+/g, " ").trim().length;
   return line.trim().length > Math.max(refLen, 6) * 1.15;

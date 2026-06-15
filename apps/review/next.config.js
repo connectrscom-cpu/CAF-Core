@@ -11,7 +11,7 @@ const nextConfig = {
   /** Allow importing CAF Core carousel pack from repo `src/services` (live slide preview API). */
   experimental: { externalDir: true },
   webpack: (config) => {
-    for (const mod of ["carousel-render-pack", "mimic-slide-typography", "mimic-prompt-builder"]) {
+    for (const mod of ["carousel-render-pack", "mimic-slide-typography", "mimic-prompt-builder", "mimic-copy-slots"]) {
       config.resolve.alias[`@caf-core-carousel/${mod}`] = path.join(coreServices, `${mod}.ts`);
     }
     config.resolve.alias["@caf-core-carousel/mimic-docai-layer-positions"] = path.join(

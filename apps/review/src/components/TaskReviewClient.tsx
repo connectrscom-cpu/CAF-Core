@@ -388,11 +388,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       mimicV1?.visual_guideline && typeof mimicV1.visual_guideline === "object"
         ? (mimicV1.visual_guideline as Record<string, unknown>)
         : null;
-    if (!vg) return;
+    const grounding =
+      gp?.mimic_job_grounding && typeof gp.mimic_job_grounding === "object" && !Array.isArray(gp.mimic_job_grounding)
+        ? (gp.mimic_job_grounding as Record<string, unknown>)
+        : null;
+    const slideCopyLayout = Array.isArray(grounding?.slide_copy_layout)
+      ? (grounding.slide_copy_layout as Record<string, unknown>[])
+      : null;
+    if (!vg && !slideCopyLayout?.length) return;
     mimicOcrEnrichedForTask.current = execTaskId;
     setEditedSlides((prev) => {
       if (prev.length === 0) return prev;
-      return enrichMimicSlidesFromVisualGuideline(prev, vg);
+      return enrichMimicSlidesFromVisualGuideline(prev, vg, slideCopyLayout);
     });
   }, [mimicCarouselFlow, fullJob, editedSlides.length, execTaskId]);
 
