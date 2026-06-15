@@ -256,7 +256,7 @@ describe("mimic-copy-slots", () => {
     expect(assigned.some((t) => /playful/i.test(t) && /bored/i.test(t))).toBe(true);
   });
 
-  it("normalizeLlmSlideToCopySlots expands multi-line slots to one text_blocks row per OCR box", () => {
+  it("normalizeLlmSlideToCopySlots keeps one text_blocks row per copy slot cluster", () => {
     const blocks = [
       { text: "Aries", role: "headline", x: 0.35, y: 0.06, w: 0.3, h: 0.05 },
       { text: "mad about trip", role: "body", x: 0.58, y: 0.32, w: 0.32, h: 0.04 },
@@ -273,12 +273,11 @@ describe("mimic-copy-slots", () => {
       { projectHandle: "@mybrand" }
     );
     const tbs = normalized.text_blocks as Array<{ role: string; text: string }>;
-    expect(tbs.length).toBe(ocrBlockCountForCopySlots(slots));
-    expect(tbs.length).toBe(3);
+    expect(tbs.length).toBe(slots.length);
     expect(String(normalized.headline)).toMatch(/Aries/i);
   });
 
-  it("normalizeLlmSlideToCopySlots splits line_per_block headline into two OCR rows", () => {
+  it("normalizeLlmSlideToCopySlots keeps line_per_block headline as one cluster row", () => {
     const slots = inferMimicReferenceCopySlots([
       { text: "how you should text", role: "headline", x: 0.14, y: 0.07, w: 0.72, h: 0.065 },
       { text: "your gemini friend", role: "subheadline", x: 0.17, y: 0.15, w: 0.65, h: 0.065 },
@@ -288,8 +287,9 @@ describe("mimic-copy-slots", () => {
       slots
     );
     const tbs = normalized.text_blocks as Array<{ role: string; text: string }>;
-    expect(tbs).toHaveLength(2);
-    expect(tbs.every((b) => b.role === "headline")).toBe(true);
+    expect(tbs).toHaveLength(1);
+    expect(tbs[0]?.role).toBe("headline");
+    expect(tbs[0]?.text).toMatch(/Texting a Gemini friend/i);
   });
 
   it("extractLlmTextPerCopySlot prefers slot-aligned text_blocks", () => {

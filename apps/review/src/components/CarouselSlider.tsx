@@ -378,7 +378,7 @@ export function CarouselSlider({
                     >
                       <span>{mimicTextBlockEditorLabel(block, bi, mimicTextBlocks.length)}</span>
                       <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>
-                        OCR box {bi + 1}
+                        Copy cluster {bi + 1}
                         {block.role && block.role !== "body" ? ` · ${block.role}` : ""}
                       </span>
                     </label>

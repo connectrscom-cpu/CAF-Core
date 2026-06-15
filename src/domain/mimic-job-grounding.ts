@@ -293,7 +293,7 @@ export function appendMimicGroundedReferenceToUserPrompt(
   parts.push(
     "",
     "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.",
-    "When copy_slots_v1 is present on a slide, output text_blocks[] with **one entry per OCR box** (one per reference_chars_per_line value, in slot order). The renderer composites each line onto its Document AI box — match reference character count per box."
+    "When copy_slots_v1 is present on a slide, output text_blocks[] with **one entry per copy slot cluster** (not per OCR line). The renderer composites each cluster across its Document AI boxes."
   );
   return parts.join("\n").trim();
 }

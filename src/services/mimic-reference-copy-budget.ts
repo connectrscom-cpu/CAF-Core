@@ -249,15 +249,15 @@ export function buildMimicReferenceCopyBudgetSystemBlock(
     slotBudgets.length > 0
       ? "Mimic reference copy length (required — strict per placement slot):"
       : "Mimic reference copy length (required — strict per placement line):",
-    `- **Rule:** Rephrase the reference; **never** copy verbatim. Match the **reference character count at each OCR box** (±${slack} chars). Preserve the same on-screen reading volume — do not compress, omit lines, or merge boxes.`,
+    `- **Rule:** Rephrase the reference; **never** copy verbatim. Match the **reference character count per copy slot cluster** (±${slack} chars). Preserve on-screen reading volume — do not fragment one cluster into OCR-sized micro-lines.`,
     `- **${branchNote}**`,
   ];
 
   if (slotBudgets.length > 0) {
     lines.push(
-      "- **Copy slots:** Each `copy_slots_v1` row maps to one or more OCR boxes. Emit **one `text_blocks[]` entry per OCR box** (same order as `reference_chars_per_line` within each slot).",
-      "- **Grouped headline slots:** When `split: line_per_block`, write **one headline line per OCR box** at the reference character count for that box.",
-      "- **Multi-stack body slides:** When a slide has multiple body OCR lines, write **one `text_blocks[]` body line per box** — same count and similar length as the reference.",
+      "- **Copy slots:** Each `copy_slots_v1` row is one **semantic cluster** (may span multiple OCR boxes). Emit **one `text_blocks[]` entry per slot** with the full cluster phrase. Render splits across OCR boxes automatically.",
+      "- **Grouped headline slots:** When `split: line_per_block`, still emit **one** `text_blocks[]` headline entry — the full title phrase for the cluster.",
+      "- **Multi-stack body slides:** Write **one body cluster per copy slot** — not one entry per OCR fragment.",
       "- **Decor title + body stacks:** When the reference keeps a fixed label (zodiac sign, segment title) plus separate body regions, write `headline` as **label + hook phrase** and emit **one body slot per spatial stack**.",
       "- **Handles:** Where the reference shows an @handle, use the **project @handle** from strategy context only — never the reference creator's handle.",
       "",

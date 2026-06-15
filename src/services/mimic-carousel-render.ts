@@ -1186,14 +1186,14 @@ export function mimicCarouselSlideCountRetryFooter(
   opts?: { full_bleed_mimic?: boolean }
 ): string {
   const lengthHint = opts?.full_bleed_mimic
-    ? "Emit **one text_blocks entry per OCR box** (reference_chars_per_line). Match each line's reference character count — do not shorten or omit boxes."
+    ? "Emit **one text_blocks entry per copy_slots_v1 row** (semantic cluster). Match each cluster's reference character total — do not fragment into OCR micro-lines."
     : "For content slides, keep `body` substantive (target 220–400 chars unless the slide is intentionally a short CTA/hook).";
   return [
     "",
     "---",
     `CRITICAL: Your JSON had ${got} renderable on-screen slide(s) but this job requires exactly ${target}.`,
     `Return one complete JSON object with exactly ${target} entries in top-level \`slides[]\` (one per slide_copy_layout row, same order).`,
-    "Each slide must contain rephrased on-screen copy (headline+body, or text_blocks with role+text). When copy_slots_v1 is present, emit **one text_blocks entry per OCR box** (reference_chars_per_line). Do not omit content slides.",
+    "Each slide must contain rephrased on-screen copy (headline+body, or text_blocks with role+text). When copy_slots_v1 is present, emit **one text_blocks entry per copy slot cluster**. Do not omit content slides.",
     "Do NOT leave headline/body empty strings. Every slide must have at least one non-empty text field that will be rendered onto the slide.",
     lengthHint,
     "Output must follow the FLOW_CAROUSEL copy schema (cover/body/cta + caption/hashtags when the schema expects them) — not a visual-only analysis stub.",

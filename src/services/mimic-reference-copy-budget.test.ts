@@ -139,7 +139,7 @@ describe("mimic-reference-copy-budget", () => {
     expect(blocks.find((b) => b.role === "handle")?.text).toBe("@mybrand");
   });
 
-  it("enforceMimicCopyBudgetOnParsedOutput clamps each OCR line in a multi-block slot", () => {
+  it("enforceMimicCopyBudgetOnParsedOutput clamps multi-block headline slot to cluster max", () => {
     const layout: MimicSlideCopyLayoutForLlm[] = [
       {
         slide_index: 1,
@@ -188,9 +188,8 @@ describe("mimic-reference-copy-budget", () => {
     );
     const slide = (parsed.slides as Record<string, unknown>[])[0]!;
     const blocks = slide.text_blocks as Array<{ role: string; text: string }>;
-    expect(blocks).toHaveLength(2);
-    expect(blocks[0]?.text.length).toBeLessThanOrEqual("how you should text".length + 4);
-    expect(blocks[1]?.text.length).toBeLessThanOrEqual("your gemini friend".length + 4);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.text.length).toBeLessThanOrEqual(45);
   });
 
   it("mimicCopySlotBudgets uses per-OCR-line caps instead of multiplying merged reference length", () => {

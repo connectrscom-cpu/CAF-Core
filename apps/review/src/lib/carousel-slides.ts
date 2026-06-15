@@ -307,11 +307,40 @@ function asSlideRecord(raw: unknown): Record<string, unknown> | null {
   return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
 }
 
-/** Document AI overlay boxes from mimic `visual_guideline` for one slide (1-based index). */
+/** Copy-slot clusters from mimic `visual_guideline` (one block per semantic group, not per OCR line). */
+export function copyClusterBlocksFromVisualGuideline(
+  visualGuideline: Record<string, unknown> | null | undefined,
+  slideIndex1Based: number
+): MimicTextBlock[] {
+  if (!visualGuideline) return [];
+  const slides = Array.isArray(visualGuideline.slides) ? visualGuideline.slides : [];
+  if (slides.length === 0) return [];
+  const match =
+    slides.map((s) => asSlideRecord(s)).find((s) => s && Number(s.slide_index) === slideIndex1Based) ??
+    asSlideRecord(slides[slideIndex1Based - 1]);
+  if (!match) return [];
+
+  const slotsRaw = match.copy_slots_v1;
+  if (Array.isArray(slotsRaw) && slotsRaw.length > 0) {
+    return slotsRaw
+      .map((item) => asSlideRecord(item))
+      .filter(Boolean)
+      .map((rec) => ({
+        role: String(rec!.llm_field ?? rec!.role ?? "body").trim() || "body",
+        text: "",
+      }));
+  }
+
+  return [];
+}
+
+/** @deprecated use copyClusterBlocksFromVisualGuideline */
 export function ocrTextBlocksFromVisualGuideline(
   visualGuideline: Record<string, unknown> | null | undefined,
   slideIndex1Based: number
 ): MimicTextBlock[] {
+  const clusters = copyClusterBlocksFromVisualGuideline(visualGuideline, slideIndex1Based);
+  if (clusters.length > 0) return clusters;
   if (!visualGuideline) return [];
   const slides = Array.isArray(visualGuideline.slides) ? visualGuideline.slides : [];
   if (slides.length === 0) return [];
@@ -328,14 +357,14 @@ export function ocrTextBlocksFromVisualGuideline(
   );
 }
 
-/** Align slide copy to OCR box count/roles when `text_blocks[]` is missing or mismatched. */
+/** Align slide copy to copy-slot cluster count when `text_blocks[]` is missing or mismatched. */
 export function enrichMimicSlideWithOcrBlocks(
   slide: NormalizedSlide,
-  ocrBlocks: MimicTextBlock[]
+  clusterBlocks: MimicTextBlock[]
 ): NormalizedSlide {
-  if (ocrBlocks.length === 0) return slide;
+  if (clusterBlocks.length === 0) return slide;
   const existing = slide.text_blocks?.filter((b) => b.text.trim()) ?? [];
-  if (existing.length === ocrBlocks.length && existing.length > 0) {
+  if (existing.length === clusterBlocks.length && existing.length > 0) {
     return slide;
   }
   const copyLines = (
@@ -347,8 +376,8 @@ export function enrichMimicSlideWithOcrBlocks(
   if (slide.handle.trim() && !copyLines.some((l) => l === slide.handle.trim())) {
     copyLines.push(slide.handle.trim());
   }
-  const text_blocks = ocrBlocks.map((ocr, i) => ({
-    role: ocr.role || "body",
+  const text_blocks = clusterBlocks.map((cluster, i) => ({
+    role: cluster.role || "body",
     text: copyLines[i]?.trim() || "",
   }));
   const fields = mimicSlideFieldsFromTextBlocks(text_blocks);
@@ -369,7 +398,7 @@ export function enrichMimicSlidesFromVisualGuideline(
 ): NormalizedSlide[] {
   if (!visualGuideline) return slides;
   return slides.map((slide, i) =>
-    enrichMimicSlideWithOcrBlocks(slide, ocrTextBlocksFromVisualGuideline(visualGuideline, i + 1))
+    enrichMimicSlideWithOcrBlocks(slide, copyClusterBlocksFromVisualGuideline(visualGuideline, i + 1))
   );
 }
 

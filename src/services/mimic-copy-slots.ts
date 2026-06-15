@@ -411,7 +411,7 @@ export function extractLlmTextPerCopySlot(
   }
 
   const expectedOcrBlocks = ocrBlockCountForCopySlots(sorted);
-  if (tbRows.length === expectedOcrBlocks) {
+  if (tbRows.length === expectedOcrBlocks && expectedOcrBlocks > sorted.length) {
     let rowIdx = 0;
     for (const slot of sorted) {
       const blockCount = Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length);
@@ -463,8 +463,8 @@ export type NormalizeLlmSlideToCopySlotsOpts = ExtractLlmCopyPerSlotOpts & {
 };
 
 /**
- * Normalize LLM slide output to one `text_blocks[]` row per OCR box (Document AI line).
- * Multi-line copy slots are split across their `block_texts[]` so review + render see every field.
+ * Normalize LLM slide output to one `text_blocks[]` row per copy slot (semantic cluster).
+ * Multi-OCR slots keep one combined phrase; render splits across boxes via copy_slots_v1.
  */
 export function normalizeLlmSlideToCopySlots(
   slide: Record<string, unknown>,
@@ -489,21 +489,7 @@ export function normalizeLlmSlideToCopySlots(
     if (slot.llm_field === "headline" && text) {
       headline = headline ? `${headline} ${text}`.trim() : text;
     }
-
-    const blockTexts = slot.block_texts.map((t) => t.trim()).filter(Boolean);
-    if (blockTexts.length <= 1) {
-      text_blocks.push({ role: slot.llm_field, text });
-      continue;
-    }
-
-    const segments = splitLineForRefBlocks(text, blockTexts);
-    for (let i = 0; i < blockTexts.length; i++) {
-      let lineText = segments[i] ?? "";
-      if (opts?.clampOcrLine && lineText) {
-        lineText = opts.clampOcrLine(lineText, blockTexts[i]!.length);
-      }
-      text_blocks.push({ role: slot.llm_field, text: lineText });
-    }
+    text_blocks.push({ role: slot.llm_field, text });
   }
 
   const bodyJoined = text_blocks
@@ -681,10 +667,7 @@ export function attachCopySlotsToSlideRecord(slide: Record<string, unknown>): Re
   const blocks = copyBlocksFromSlideRecord(slide);
   if (blocks.length === 0) return slide;
   const transcript = String(slide.on_screen_text_transcript ?? "").trim();
-  const slots =
-    blocks.length >= 2
-      ? inferMimicReferenceCopySlotsOnePerBlock(blocks, transcript)
-      : inferMimicReferenceCopySlots(blocks, transcript);
+  const slots = inferMimicReferenceCopySlots(blocks, transcript);
   if (slots.length === 0) return slide;
   return { ...slide, copy_slots_v1: slots };
 }
@@ -696,9 +679,7 @@ export function copySlotsForSlideRecord(slide: Record<string, unknown> | null | 
   const blocks = copyBlocksFromSlideRecord(slide);
   if (blocks.length === 0) return [];
   const transcript = String(slide.on_screen_text_transcript ?? "").trim();
-  return blocks.length >= 2
-    ? inferMimicReferenceCopySlotsOnePerBlock(blocks, transcript)
-    : inferMimicReferenceCopySlots(blocks, transcript);
+  return inferMimicReferenceCopySlots(blocks, transcript);
 }
 
 function llmLineLongerThanRefBlocks(line: string, refTexts: string[]): boolean {

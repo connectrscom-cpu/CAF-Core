@@ -1,17 +1,16 @@
 /**
- * Post-generation LLM pass (after text_blocks[] exist): suggest coherent copy groupings
- * and rewrite per-box lines so each group reads as one message split across OCR boxes.
+ * Post-generation LLM pass: after text_blocks[] exist, refine one coherent phrase per copy slot cluster.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
+import { slideCopyBlocksNeedCoherence } from "../domain/mimic-ocr-garbage.js";
 import { sanitizeMimicOverlayCopyText } from "../domain/mimic-overlay-copy.js";
 import { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
-import type { MimicCopySlotLlmField, MimicCopySlotSplit } from "./mimic-copy-slots.js";
-import { MIMIC_COPY_SLOTS_SCHEMA } from "./mimic-copy-slots.js";
+import type { MimicReferenceCopySlot } from "./mimic-copy-slots.js";
 import {
   enforceMimicCopyBudgetOnParsedOutput,
-  mimicCopyBlockBudgets,
+  mimicCopySlotBudgets,
   parseMimicCopyCharSlack,
   parseMimicCopyReferenceScale,
 } from "./mimic-reference-copy-budget.js";
@@ -27,30 +26,18 @@ export type MimicCopyGroupingMeta = {
   tokens: number;
 };
 
-export type MimicCopyGroupingGroup = {
-  llm_field: MimicCopySlotLlmField;
-  split: MimicCopySlotSplit;
-  box_indices: number[];
-  lines: string[];
-};
-
-export type MimicCopyGroupingSlide = {
-  slide_index: number;
-  groups: MimicCopyGroupingGroup[];
-};
-
-type GroupingBox = {
-  box_index: number;
-  role: string;
+type SlotInput = {
+  slot_index: number;
+  llm_field: string;
   max_chars: number;
+  ocr_box_count: number;
   draft_text: string;
 };
 
-type GroupingSlideInput = {
+type SlideSlotInput = {
   slide_index: number;
   slide_purpose: string | null;
-  visual_description: string | null;
-  boxes: GroupingBox[];
+  slots: SlotInput[];
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -70,204 +57,174 @@ function textBlocksFromSlide(slide: Record<string, unknown>): Array<{ role: stri
   for (const item of raw) {
     const rec = asRecord(item);
     if (!rec) continue;
-    const text = sanitizeMimicOverlayCopyText(rec.text);
     out.push({
       role: String(rec.role ?? "body").trim() || "body",
-      text,
+      text: sanitizeMimicOverlayCopyText(rec.text),
     });
   }
   return out;
 }
 
-function syncHeadlineBodyFromTextBlocks(slide: Record<string, unknown>): Record<string, unknown> {
-  const blocks = textBlocksFromSlide(slide);
-  if (blocks.length === 0) return slide;
-  const headline = blocks
+/** Collapse per-OCR text_blocks rows into one string per copy slot cluster. */
+export function collapseTextBlocksToCopySlots(
+  blocks: Array<{ role: string; text: string }>,
+  slots: MimicReferenceCopySlot[]
+): string[] {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  if (sorted.length === 0) return [];
+
+  if (blocks.length === sorted.length) {
+    return blocks.map((b) => b.text.trim());
+  }
+
+  const out: string[] = [];
+  let bi = 0;
+  for (const slot of sorted) {
+    const n = Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length);
+    const slice = blocks.slice(bi, bi + n);
+    bi += n;
+    if (slice.length === 0) {
+      out.push("");
+      continue;
+    }
+    const joiner = slot.split === "line_per_block" ? " " : " ";
+    out.push(slice.map((b) => b.text.trim()).filter(Boolean).join(joiner).trim());
+  }
+
+  if (bi < blocks.length && out.length > 0) {
+    const tail = blocks
+      .slice(bi)
+      .map((b) => b.text.trim())
+      .filter(Boolean)
+      .join(" ");
+    out[out.length - 1] = `${out[out.length - 1]!} ${tail}`.trim();
+  }
+
+  while (out.length < sorted.length) out.push("");
+  return out.slice(0, sorted.length);
+}
+
+function syncHeadlineBodyFromSlotBlocks(
+  slide: Record<string, unknown>,
+  slots: MimicReferenceCopySlot[],
+  texts: string[]
+): Record<string, unknown> {
+  const text_blocks = slots.map((slot, i) => ({
+    role: slot.llm_field,
+    text: texts[i] ?? "",
+  }));
+  const headline = text_blocks
     .filter((b) => /headline|title|hook|cover|kicker/i.test(b.role))
     .map((b) => b.text)
     .filter(Boolean)
     .join(" ")
     .trim();
-  const body = blocks
+  const body = text_blocks
     .filter((b) => !/headline|title|hook|cover|kicker|handle/i.test(b.role))
     .map((b) => b.text)
     .filter(Boolean)
     .join("\n")
     .trim();
-  const next: Record<string, unknown> = { ...slide, text_blocks: blocks };
+  const next: Record<string, unknown> = { ...slide, text_blocks };
   if (headline) next.headline = headline;
   if (body) next.body = body;
   return next;
 }
 
-function parseLlmField(raw: unknown): MimicCopySlotLlmField {
-  const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "headline" || v === "body" || v === "cta" || v === "handle") return v;
-  if (/headline|title|hook|cover|kicker/.test(v)) return "headline";
-  if (/handle|@/.test(v)) return "handle";
-  if (/cta/.test(v)) return "cta";
-  return "body";
-}
-
-function parseSplit(raw: unknown, boxCount: number): MimicCopySlotSplit {
-  const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "line_per_block" || v === "single_block") return v;
-  return boxCount > 1 ? "line_per_block" : "single_block";
-}
-
-/** Slides with 2+ overlay boxes — grouping review applies (single-box slides skip). */
 export function buildCopyGroupingSlideInputs(
   parsed: Record<string, unknown>,
   layout: MimicSlideCopyLayoutForLlm[],
   opts?: { scale?: number; charSlack?: number }
-): GroupingSlideInput[] {
+): SlideSlotInput[] {
   const scale = parseMimicCopyReferenceScale(opts?.scale);
   const slack = parseMimicCopyCharSlack(opts?.charSlack);
-  const blockBudgets = mimicCopyBlockBudgets(layout, { scale, charSlack: slack });
+  const slotBudgets = mimicCopySlotBudgets(layout, { scale, charSlack: slack });
   const slides = slideRows(parsed);
-  const out: GroupingSlideInput[] = [];
+  const out: SlideSlotInput[] = [];
 
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i]!;
     const layoutRow = layout[i] ?? layout.find((r) => r.slide_index === i + 1);
+    const slots = layoutRow?.copy_slots_v1 ?? [];
+    if (slots.length === 0) continue;
+
     const slideIndex = layoutRow?.slide_index ?? i + 1;
     const blocks = textBlocksFromSlide(slide);
-    if (blocks.length < 2) continue;
+    const collapsed = collapseTextBlocksToCopySlots(blocks, slots);
+    const fragmented =
+      blocks.length !== slots.length || slideCopyBlocksNeedCoherence(collapsed.filter(Boolean));
+    if (slots.length < 2 && !fragmented) continue;
 
-    const budgets = blockBudgets.filter((b) => b.slide_index === slideIndex);
-    const boxes: GroupingBox[] = blocks.map((b, boxIndex) => {
-      const budget = budgets[boxIndex] ?? budgets[budgets.length - 1];
+    const slotInputs: SlotInput[] = slots.map((slot, slotIdx) => {
+      const budget = slotBudgets.find(
+        (b) => b.slide_index === slideIndex && b.slot_index === slot.slot_index
+      );
       return {
-        box_index: boxIndex,
-        role: b.role,
+        slot_index: slot.slot_index,
+        llm_field: slot.llm_field,
         max_chars: budget?.max_chars ?? 80 + slack,
-        draft_text: b.text,
+        ocr_box_count: Math.max(1, slot.block_indices.length),
+        draft_text: collapsed[slotIdx] ?? "",
       };
     });
 
     out.push({
       slide_index: slideIndex,
       slide_purpose: layoutRow?.slide_purpose ?? null,
-      visual_description: layoutRow?.visual_description ?? null,
-      boxes,
+      slots: slotInputs,
     });
   }
 
   return out;
 }
 
-export function parseCopyGroupingLlmResult(raw: Record<string, unknown>): MimicCopyGroupingSlide[] {
-  const slides = raw.slides;
-  if (!Array.isArray(slides)) return [];
-  const out: MimicCopyGroupingSlide[] = [];
-
-  for (const item of slides) {
-    const rec = asRecord(item);
-    if (!rec) continue;
-    const slideIndex = Number(rec.slide_index);
-    if (!Number.isFinite(slideIndex) || slideIndex <= 0) continue;
-    const groupsRaw = Array.isArray(rec.groups) ? rec.groups : [];
-    const groups: MimicCopyGroupingGroup[] = [];
-
-    for (const gItem of groupsRaw) {
-      const gRec = asRecord(gItem);
-      if (!gRec) continue;
-      const box_indices = Array.isArray(gRec.box_indices)
-        ? gRec.box_indices.map((v) => Number(v)).filter((n) => Number.isFinite(n) && n >= 0)
-        : [];
-      const linesRaw = Array.isArray(gRec.lines) ? gRec.lines : [];
-      const lines = linesRaw.map((line) => sanitizeMimicOverlayCopyText(line)).filter(Boolean);
-      if (box_indices.length === 0 || lines.length !== box_indices.length) continue;
-      groups.push({
-        llm_field: parseLlmField(gRec.llm_field),
-        split: parseSplit(gRec.split, box_indices.length),
-        box_indices,
-        lines,
-      });
-    }
-
-    if (groups.length > 0) out.push({ slide_index: slideIndex, groups });
-  }
-
-  return out;
-}
-
-/** Validate groups partition box indices and apply lines to text_blocks. */
-export function applyCopyGroupingToSlide(
+export function applySlotGroupingToSlide(
   slide: Record<string, unknown>,
-  grouping: MimicCopyGroupingSlide
+  slots: MimicReferenceCopySlot[],
+  slotTexts: Map<number, string>
 ): Record<string, unknown> | null {
-  const blocks = textBlocksFromSlide(slide);
-  const n = blocks.length;
-  if (n < 2) return null;
-
-  const seen = new Set<number>();
-  const nextTexts = [...blocks.map((b) => b.text)];
-  const nextRoles = [...blocks.map((b) => b.role)];
-  const appliedGroups: MimicCopyGroupingGroup[] = [];
-
-  for (const group of grouping.groups) {
-    if (group.box_indices.length !== group.lines.length) continue;
-    for (const idx of group.box_indices) {
-      if (idx < 0 || idx >= n || seen.has(idx)) return null;
-      seen.add(idx);
-    }
-    for (let i = 0; i < group.box_indices.length; i++) {
-      const idx = group.box_indices[i]!;
-      nextTexts[idx] = group.lines[i]!;
-      nextRoles[idx] = group.llm_field;
-    }
-    appliedGroups.push(group);
-  }
-
-  if (seen.size !== n) return null;
-
-  const text_blocks = nextTexts.map((text, i) => ({
-    role: nextRoles[i]!,
-    text,
-  }));
-
-  const copy_groupings_v1 = appliedGroups.map((g, groupIndex) => ({
-    schema_version: "copy_groupings_v1" as const,
-    group_index: groupIndex,
-    llm_field: g.llm_field,
-    split: g.split,
-    box_indices: g.box_indices,
-    lines: g.lines,
-  }));
-
-  const copy_slots_v1 = appliedGroups.map((g, slotIndex) => ({
-    schema_version: MIMIC_COPY_SLOTS_SCHEMA,
-    slot_index: slotIndex,
-    llm_field: g.llm_field,
-    split: g.split,
-    block_indices: g.box_indices,
-    block_texts: g.lines,
-    reference_text: g.lines.join(" ").trim(),
-  }));
-
-  return syncHeadlineBodyFromTextBlocks({
-    ...slide,
-    text_blocks,
-    copy_groupings_v1,
-    copy_slots_v1,
-  });
+  if (slots.length === 0) return null;
+  const texts = slots.map((slot) => sanitizeMimicOverlayCopyText(slotTexts.get(slot.slot_index) ?? ""));
+  if (texts.every((t) => !t)) return null;
+  return syncHeadlineBodyFromSlotBlocks(slide, slots, texts);
 }
 
 export function applyCopyGroupingLlmResultToParsed(
   parsed: Record<string, unknown>,
-  groupings: MimicCopyGroupingSlide[]
+  layout: MimicSlideCopyLayoutForLlm[],
+  llmParsed: Record<string, unknown>
 ): { parsed: Record<string, unknown>; slides_applied: number } {
   const slides = slideRows(parsed);
-  if (slides.length === 0 || groupings.length === 0) return { parsed, slides_applied: 0 };
+  if (slides.length === 0) return { parsed, slides_applied: 0 };
 
-  const byIndex = new Map(groupings.map((g) => [g.slide_index, g]));
+  const refinedSlides = llmParsed.slides;
+  if (!Array.isArray(refinedSlides)) return { parsed, slides_applied: 0 };
+
   let slides_applied = 0;
   const nextSlides = slides.map((slide, i) => {
-    const slideIndex = Number(slide.slide_index) || i + 1;
-    const grouping = byIndex.get(slideIndex);
-    if (!grouping) return slide;
-    const next = applyCopyGroupingToSlide(slide, grouping);
+    const layoutRow = layout[i] ?? layout.find((r) => r.slide_index === i + 1);
+    const slots = layoutRow?.copy_slots_v1 ?? [];
+    if (slots.length === 0) return slide;
+
+    const slideIndex = layoutRow?.slide_index ?? i + 1;
+    const rec = refinedSlides
+      .map((item) => asRecord(item))
+      .find((r) => r && Number(r.slide_index) === slideIndex);
+    if (!rec) return slide;
+
+    const slotTexts = new Map<number, string>();
+    const slotsRaw = Array.isArray(rec.slots) ? rec.slots : [];
+    for (const item of slotsRaw) {
+      const sRec = asRecord(item);
+      if (!sRec) continue;
+      const slotIndex = Number(sRec.slot_index);
+      const text = sanitizeMimicOverlayCopyText(sRec.text);
+      if (!Number.isFinite(slotIndex) || slotIndex < 0 || !text) continue;
+      slotTexts.set(slotIndex, text);
+    }
+
+    if (slotTexts.size === 0) return slide;
+    const next = applySlotGroupingToSlide(slide, slots, slotTexts);
     if (!next) return slide;
     slides_applied++;
     return next;
@@ -278,13 +235,12 @@ export function applyCopyGroupingLlmResultToParsed(
 }
 
 const GROUPING_SYSTEM = [
-  "You are a carousel on-image copy editor reviewing OCR-aligned text boxes after draft copy was generated.",
-  "Each slide has a fixed number of overlay boxes (box_index 0..N-1). You must:",
-  "1) Propose coherent semantic GROUPS — which boxes belong to the same headline, body phrase, CTA, or handle.",
-  "2) Rewrite copy so each group reads as one message, split naturally across its boxes (one line per box).",
-  "Remove OCR garbage (math, LaTeX, random symbols). Respect max_chars per box.",
-  "Every box_index must appear in exactly one group. groups[].lines.length must equal groups[].box_indices.length.",
-  "When role is handle, use only the project @handle from input.",
+  "You are a carousel on-image copy editor.",
+  "Each slide has copy SLOT CLUSTERS — semantic groups that may span multiple OCR boxes on the reference.",
+  "Your job: rewrite draft copy so each slot is ONE coherent phrase (not fragmented OCR micro-lines).",
+  "Remove OCR garbage (math, LaTeX, random symbols). Respect max_chars per slot.",
+  "Return one `text` string per slot_index. Do not split one cluster into multiple slots.",
+  "When llm_field is handle, use only the project @handle from input.",
   "Return JSON only.",
 ].join(" ");
 
@@ -314,10 +270,9 @@ export async function refineMimicCarouselCopyCoherence(
   };
 
   const user = [
-    "Review draft text_blocks and return coherent groupings + rewritten lines per box.",
-    "Partition every box_index into exactly one group per slide.",
+    "Review draft copy per COPY SLOT (cluster). Return one coherent phrase per slot — not per OCR box.",
     "Output JSON:",
-    `{ "slides": [ { "slide_index": number, "groups": [ { "llm_field": "headline|body|cta|handle", "split": "line_per_block|single_block", "box_indices": number[], "lines": string[] } ] } ] }`,
+    `{ "slides": [ { "slide_index": number, "slots": [ { "slot_index": number, "text": string } ] } ] }`,
     "",
     JSON.stringify(userPayload, null, 2),
   ].join("\n");
@@ -336,20 +291,19 @@ export async function refineMimicCarouselCopyCoherence(
       projectId: job.project_id,
       runId: job.run_id,
       taskId: job.task_id,
-      step: "mimic_copy_grouping_review",
+      step: "mimic_copy_slot_grouping_review",
     }
   );
 
   const llmParsed = parseJsonObjectFromLlmText(llm.content);
   if (!llmParsed) {
-    logPipelineEvent("warn", "generate", "Mimic copy grouping LLM returned non-JSON; keeping draft copy", {
+    logPipelineEvent("warn", "generate", "Mimic copy slot grouping LLM returned non-JSON; keeping draft copy", {
       task_id: job.task_id,
     });
     return { parsed, meta: null };
   }
 
-  const groupings = parseCopyGroupingLlmResult(llmParsed);
-  const applied = applyCopyGroupingLlmResultToParsed(parsed, groupings);
+  const applied = applyCopyGroupingLlmResultToParsed(parsed, layout, llmParsed);
   let next = applied.parsed;
   next = enforceMimicCopyBudgetOnParsedOutput(next, layout, {
     scale: opts?.scale,
@@ -364,7 +318,7 @@ export async function refineMimicCarouselCopyCoherence(
     tokens: llm.total_tokens,
   };
 
-  logPipelineEvent("info", "generate", "Applied mimic copy grouping review", {
+  logPipelineEvent("info", "generate", "Applied mimic copy slot grouping review", {
     task_id: job.task_id,
     data: {
       slides_reviewed: meta.slides_reviewed,
@@ -376,15 +330,5 @@ export async function refineMimicCarouselCopyCoherence(
   return { parsed: next, meta };
 }
 
-/** @deprecated use MimicCopyGroupingMeta */
 export type MimicCopyCoherenceMeta = MimicCopyGroupingMeta;
-
-/** @deprecated use buildCopyGroupingSlideInputs */
 export const buildCoherenceSlideInputs = buildCopyGroupingSlideInputs;
-
-/** @deprecated use applyCopyGroupingLlmResultToParsed */
-export const applyCoherenceLlmResultToParsed = (
-  parsed: Record<string, unknown>,
-  _layout: MimicSlideCopyLayoutForLlm[],
-  llmParsed: Record<string, unknown>
-) => applyCopyGroupingLlmResultToParsed(parsed, parseCopyGroupingLlmResult(llmParsed));
