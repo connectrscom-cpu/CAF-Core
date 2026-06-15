@@ -3,6 +3,8 @@ import {
   mimicTemplateLibraryObjectPath,
   referenceIndexForTemplateSlot,
   resolveTemplateStorageDecision,
+  templateBgSlidePlanRef,
+  templateBgSlotForIndex,
 } from "./mimic-template-library.js";
 
 describe("resolveTemplateStorageDecision", () => {
@@ -114,6 +116,38 @@ describe("referenceIndexForTemplateSlot", () => {
       3
     );
     expect(idx).toBe(2);
+  });
+});
+
+describe("templateBgSlotForIndex", () => {
+  it("labels cover, body, and cta slots", () => {
+    expect(templateBgSlotForIndex(1, 5)).toBe("cover");
+    expect(templateBgSlotForIndex(3, 5)).toBe("body");
+    expect(templateBgSlotForIndex(5, 5)).toBe("cta");
+  });
+});
+
+describe("templateBgSlidePlanRef", () => {
+  const entry = {
+    aesthetic_analysis_json: {
+      slides: [
+        { slide_index: 1, slide_purpose: "hook" },
+        { slide_index: 2, slide_purpose: "listicle_item" },
+        { slide_index: 3, slide_purpose: "listicle_item" },
+        { slide_index: 4, slide_purpose: "cta" },
+      ],
+    },
+  };
+
+  it("maps uniform template slides to cover/body/cta reference frames", () => {
+    const cover = templateBgSlidePlanRef(entry, 1, 4, 4, true);
+    const body = templateBgSlidePlanRef(entry, 2, 4, 4, true);
+    const cta = templateBgSlidePlanRef(entry, 4, 4, 4, true);
+    expect(cover.reference_index).toBe(1);
+    expect(body.reference_index).toBe(3);
+    expect(cta.reference_index).toBe(4);
+    expect(cover.source_slide_index).toBe(1);
+    expect(cta.source_slide_index).toBe(4);
   });
 });
 

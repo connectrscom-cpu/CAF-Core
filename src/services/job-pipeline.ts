@@ -108,12 +108,14 @@ import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-t
 import { MIMIC_FULL_BLEED_RENDER_TEMPLATE, MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
 import {
   buildMimicDocAiRenderTextLayers,
+  formatMimicTextBackingBackground,
   inferMimicCarouselTheme,
   mimicDocAiLayersCoverLlmCopy,
   mimicPayloadHasDocAiTextLayout,
   mimicSlideTypographyPatch,
   mimicSlideThemePatch,
 } from "./mimic-slide-typography.js";
+import { templateBgLlmSlideForDocAi } from "./mimic-template-bg-render.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -1668,6 +1670,8 @@ export type CarouselRenderOpts = {
   renderTypographyPatch?: Record<string, number>;
   /** Full-bleed mimic: semi-opaque white pad behind each text layer (reprint option). */
   textBacking?: boolean;
+  /** CSS color for text highlight pad (#RRGGBB or rgba). */
+  textBackingColor?: string;
 };
 
 async function processCarouselJob(
@@ -1932,11 +1936,12 @@ async function processCarouselJob(
   const mimicUsesDocAiTextLayout = Boolean(
     isMimicCarouselRender && mimicPayload && mimicPayloadHasDocAiTextLayout(mimicPayload)
   );
+  const mimicTemplateBgJob = Boolean(isMimicCarouselRender && mimicPayload?.mode === "template_bg");
+  const mimicUsesDocAiTextForRender = Boolean(
+    mimicPayload && (mimicUsesDocAiTextLayout || mimicTemplateBgJob)
+  );
   if (isMimicCarouselRender && mimicPayload) {
-    if (mimicUsesDocAiTextLayout) {
-      // Per-block Document AI geometry → carousel_mimic_bg absolute text layers.
-      template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
-    } else if (mimicPayload.mode === "template_bg") {
+    if (mimicTemplateBgJob) {
       const evidenceTemplate = await ensureMimicEvidenceCarouselTemplate(
         db,
         config,
@@ -1946,8 +1951,11 @@ async function processCarouselJob(
         { projectPinnedTemplates }
       );
       template = evidenceTemplate.template_base;
+    } else if (mimicUsesDocAiTextLayout) {
+      // carousel_visual + Document AI geometry → shared absolute-layer template.
+      template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
     } else {
-      // carousel_visual / full_bleed: shared HBS + coarse block vars at render time.
+      // carousel_visual without OCR blocks: shared HBS + coarse block vars at render time.
       template = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
     }
   }
@@ -2195,9 +2203,13 @@ async function processCarouselJob(
         instagramHandle: projectInstagramHandle,
         projectDisplayName,
       });
-      if (mimicUsesDocAiTextLayout && mimicPayload && !mimicCarouselTextViaFlux) {
+      if (mimicUsesDocAiTextForRender && mimicPayload && !mimicCarouselTextViaFlux) {
         const theme = inferMimicCarouselTheme(mimicPayload.visual_guideline);
         const rawLlmSlide = pickSlideByCarouselIndex(slidesForRender, i);
+        const llmSlideForDocAi =
+          mimicTemplateBgJob && n > 0
+            ? templateBgLlmSlideForDocAi(i, n, rawLlmSlide)
+            : rawLlmSlide;
         const slideUsesFullBleed = slideMimicRenderMode(mimicPayload, i) === "full_bleed";
         const mimicV1Raw =
           job.generation_payload &&
@@ -2212,10 +2224,18 @@ async function processCarouselJob(
         const useTextBacking = Boolean(
           (textOverlayOnly || slideUsesFullBleed) && renderOpts?.textBacking !== false
         );
+        const textBackingColor =
+          renderOpts?.textBackingColor ??
+          (typeof baseRender.mimic_text_backing_color === "string"
+            ? baseRender.mimic_text_backing_color
+            : undefined);
+        const resolvedTextBackingColor = useTextBacking
+          ? formatMimicTextBackingBackground(textBackingColor)
+          : undefined;
         let docAiLayers = buildMimicDocAiRenderTextLayers(
           mimicPayload,
           i,
-          rawLlmSlide,
+          llmSlideForDocAi,
           {
             ink: theme.ink,
             body: theme.body,
@@ -2223,7 +2243,9 @@ async function processCarouselJob(
           {
             projectHandle: projectInstagramHandle,
             textBacking: useTextBacking,
+            textBackingColor: resolvedTextBackingColor,
             avoidCenterSubject: Boolean(useTextBacking && slideUsesFullBleed && !hasReviewerLayout),
+            totalSlides: n,
           }
         );
         if (layerPosOverrides?.length) {
@@ -2234,7 +2256,8 @@ async function processCarouselJob(
           docAiLayers.length > 0 &&
           (hasReviewerLayout ||
             textOverlayOnly ||
-            mimicDocAiLayersCoverLlmCopy(docAiLayers, rawLlmSlide));
+            mimicTemplateBgJob ||
+            mimicDocAiLayersCoverLlmCopy(docAiLayers, llmSlideForDocAi));
         if (useDocAiLayers) {
           ctx = {
             ...ctx,
@@ -2243,12 +2266,13 @@ async function processCarouselJob(
             ...(useTextBacking
               ? {
                   mimic_text_backing: true,
+                  mimic_text_backing_color: resolvedTextBackingColor,
                   ...(hasReviewerLayout ? {} : { mimic_avoid_center_subject: true }),
                 }
               : {}),
           };
-        } else if (slideHasRenderableContent(rawLlmSlide)) {
-          const copy = slideHeadlineBodyForRender(rawLlmSlide);
+        } else if (slideHasRenderableContent(llmSlideForDocAi)) {
+          const copy = slideHeadlineBodyForRender(llmSlideForDocAi);
           logPipelineEvent(
             "warn",
             "render",
@@ -2586,15 +2610,42 @@ export async function persistCarouselRenderTypographyPatch(
   );
 }
 
+export async function persistCarouselTextBackingColor(
+  db: Pool,
+  jobId: string,
+  color: string
+): Promise<void> {
+  const normalized = formatMimicTextBackingBackground(color);
+  const job = await reloadJobRow(db, jobId);
+  if (!job) throw new Error("job_not_found");
+  const gen = pickGeneratedOutputOrEmpty(job.generation_payload);
+  const render =
+    typeof gen.render === "object" && gen.render && !Array.isArray(gen.render)
+      ? (gen.render as Record<string, unknown>)
+      : {};
+  gen.render = { ...render, mimic_text_backing_color: normalized };
+  await q(
+    db,
+    `UPDATE caf_core.content_jobs SET generation_payload = generation_payload || $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify({ generated_output: gen }), jobId]
+  );
+}
+
 export async function rerenderCarouselTextOverlay(
   db: Pool,
   config: AppConfig,
   jobId: string,
   slideIndices1Based?: number[],
-  renderExtras?: Pick<CarouselRenderOpts, "slideCopyOverrides" | "renderTypographyPatch" | "textBacking">
+  renderExtras?: Pick<
+    CarouselRenderOpts,
+    "slideCopyOverrides" | "renderTypographyPatch" | "textBacking" | "textBackingColor"
+  >
 ): Promise<void> {
   if (renderExtras?.renderTypographyPatch && Object.keys(renderExtras.renderTypographyPatch).length > 0) {
     await persistCarouselRenderTypographyPatch(db, jobId, renderExtras.renderTypographyPatch);
+  }
+  if (renderExtras?.textBackingColor?.trim()) {
+    await persistCarouselTextBackingColor(db, jobId, renderExtras.textBackingColor);
   }
   const job = await reloadJobRow(db, jobId);
   if (!job || !isTopPerformerMimicCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
@@ -2616,6 +2667,7 @@ export async function rerenderCarouselTextOverlay(
       ? { renderTypographyPatch: renderExtras.renderTypographyPatch }
       : {}),
     textBacking: renderExtras?.textBacking !== false,
+    ...(renderExtras?.textBackingColor?.trim() ? { textBackingColor: renderExtras.textBackingColor } : {}),
   });
 }
 

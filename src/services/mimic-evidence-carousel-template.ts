@@ -7,8 +7,8 @@ import { resolveTemplateStorageFromMimic } from "../domain/mimic-template-librar
 import { addProjectCarouselTemplate } from "../repositories/project-config.js";
 import {
   injectMimicBackgroundPlateSupport,
-  pickMimicLayoutBaseTemplate,
   MIMIC_FULL_BLEED_RENDER_TEMPLATE,
+  pickMimicLayoutBaseTemplate,
 } from "./mimic-carousel-template-layout.js";
 import { inferMimicCarouselTheme } from "./mimic-slide-typography.js";
 
@@ -97,7 +97,8 @@ function injectRootTheme(
 
 /**
  * Writes an evidence-specific `.hbs` fork for **template_bg** mimic only.
- * Full-bleed (`carousel_visual`) uses shared `carousel_mimic_bg.hbs` + runtime Document AI positioning.
+ * Structural base is always `carousel_mimic_bg` (cover/body/cta + Document AI text layers).
+ * Semantic layout cues are recorded in the trace comment for operators.
  */
 export async function ensureMimicEvidenceCarouselTemplate(
   db: Pool,
@@ -121,7 +122,8 @@ export async function ensureMimicEvidenceCarouselTemplate(
   const pinned_to_project = storage.pin_project_template;
 
   const theme = pickMimicEvidenceTemplateTheme(mimic.visual_guideline);
-  const layoutBaseTemplate = pickMimicLayoutBaseTemplate(mimic, opts?.projectPinnedTemplates ?? []);
+  const semanticLayoutHint = pickMimicLayoutBaseTemplate(mimic, opts?.projectPinnedTemplates ?? []);
+  const layoutBaseTemplate = MIMIC_FULL_BLEED_RENDER_TEMPLATE;
 
   const refreshSource = async (): Promise<string> => {
     const readBase = async (base: string): Promise<string> => {
@@ -145,6 +147,7 @@ export async function ensureMimicEvidenceCarouselTemplate(
       "<!--",
       "  mimic_evidence_template",
       `  layout_base_template=${layoutBaseTemplate}`,
+      `  semantic_layout_hint=${semanticLayoutHint}`,
       `  source_insights_id=${mimic.source_insights_id}`,
       `  source_evidence_row_id=${mimic.source_evidence_row_id ?? ""}`,
       `  analysis_tier=${mimic.analysis_tier}`,

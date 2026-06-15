@@ -26,6 +26,9 @@ import {
   orderDocAiBlocksForLlmCopyMapping,
   parseRelativeScaleHeadlinePx,
   splitHeadlineForChatMockTitlePair,
+  formatMimicTextBackingBackground,
+  mimicTextBackingColorToHex,
+  MIMIC_DEFAULT_TEXT_BACKING_BACKGROUND,
 } from "./mimic-slide-typography.js";
 
 describe("mimic-slide-typography", () => {
@@ -622,6 +625,7 @@ describe("mimic-slide-typography", () => {
     const texts = layers.map((l) => l.text);
     expect(texts).toContain("your Cancer friend's message style");
     expect(texts).toContain("Caring and full of sentiment");
+    expect(texts).toContain("When we leave impressions like paw prints");
     expect(texts.filter((t) => t === "your Cancer friend's message style")).toHaveLength(1);
     expect(texts.some((t) => t.includes("Slide headline"))).toBe(false);
   });
@@ -1160,5 +1164,12 @@ describe("mimic-slide-typography", () => {
     expect(layers.length).toBeLessThanOrEqual(4);
     expect(layers.filter((l) => l.text.includes("life as a gemini"))).toHaveLength(1);
     expect(layers.filter((l) => l.text.includes("maybe elsewhere"))).toHaveLength(1);
+  });
+
+  it("formatMimicTextBackingBackground normalizes hex and rgba", () => {
+    expect(formatMimicTextBackingBackground(null)).toBe(MIMIC_DEFAULT_TEXT_BACKING_BACKGROUND);
+    expect(formatMimicTextBackingBackground("#ff8800")).toBe("rgba(255,136,0,0.92)");
+    expect(formatMimicTextBackingBackground("rgba(10,20,30,0.5)")).toBe("rgba(10,20,30,0.5)");
+    expect(mimicTextBackingColorToHex("rgba(255,136,0,0.92)")).toBe("#ff8800");
   });
 });

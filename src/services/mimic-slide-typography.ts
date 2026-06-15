@@ -231,6 +231,49 @@ export const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 24;
 /** Default ink for mimic Document AI overlays (readable on light plates + white backing). */
 export const MIMIC_DOCAI_DEFAULT_TEXT_COLOR = "#000000";
 
+/** Default semi-opaque pad behind mimic text layers (full-bleed / text-back mode). */
+export const MIMIC_DEFAULT_TEXT_BACKING_BACKGROUND = "rgba(255,255,255,0.92)";
+
+const MIMIC_TEXT_BACKING_ALPHA = 0.92;
+
+/** Normalize reviewer/API color (#RRGGBB, #RRGGBBAA, rgba) for CSS `background`. */
+export function formatMimicTextBackingBackground(color?: string | null): string {
+  const raw = String(color ?? "").trim();
+  if (!raw) return MIMIC_DEFAULT_TEXT_BACKING_BACKGROUND;
+  if (/^rgba?\(/i.test(raw)) return raw;
+  const hex = raw.replace(/^#/, "");
+  if (/^[0-9a-f]{6}$/i.test(hex)) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${MIMIC_TEXT_BACKING_ALPHA})`;
+  }
+  if (/^[0-9a-f]{8}$/i.test(hex)) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const a = parseInt(hex.slice(6, 8), 16) / 255;
+    return `rgba(${r},${g},${b},${Number(a.toFixed(3))})`;
+  }
+  return MIMIC_DEFAULT_TEXT_BACKING_BACKGROUND;
+}
+
+/** Hex #RRGGBB for `<input type="color">` from a stored backing color. */
+export function mimicTextBackingColorToHex(color?: string | null): string {
+  const raw = String(color ?? "").trim();
+  if (!raw) return "#ffffff";
+  if (/^#[0-9a-f]{6}$/i.test(raw)) return raw.toLowerCase();
+  const hex = raw.replace(/^#/, "");
+  if (/^[0-9a-f]{6}$/i.test(hex)) return `#${hex.toLowerCase()}`;
+  if (/^[0-9a-f]{8}$/i.test(hex)) return `#${hex.slice(0, 6).toLowerCase()}`;
+  const rgba = raw.match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+  if (rgba) {
+    const toHex = (n: number) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0");
+    return `#${toHex(Number(rgba[1]))}${toHex(Number(rgba[2]))}${toHex(Number(rgba[3]))}`;
+  }
+  return "#ffffff";
+}
+
 function clampDocAiFontSizePx(size: number): number {
   if (!Number.isFinite(size)) return MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX;
   return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.min(512, Math.round(size)));
@@ -379,7 +422,8 @@ function visualGuidelineSlideList(
 /** Resolve reference OCR geometry when output index and archive source index diverge. */
 function resolveRefSlideWithLayoutBlocksForMimic(
   mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
-  slideIndex1Based: number
+  slideIndex1Based: number,
+  _opts?: { totalSlides?: number }
 ): { refSlide: Record<string, unknown>; layoutBlocks: DocAiLayoutBlock[] } | null {
   const vg = mimic.visual_guideline ?? {};
   const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
@@ -417,7 +461,7 @@ function resolveRefSlideWithLayoutBlocksForMimic(
 function buildSyntheticDocAiLayersFromLlmCopy(
   llmSlide: Record<string, unknown>,
   theme: { ink: string; body: string } | undefined,
-  opts: { projectHandle?: string | null; textBacking: boolean; avoidCenterSubject?: boolean }
+  opts: { projectHandle?: string | null; textBacking: boolean; textBackingColor?: string | null; avoidCenterSubject?: boolean }
 ): MimicDocAiRenderTextLayer[] {
   const parsed = parseMimicTextBlocks(llmSlide.text_blocks);
   const lines = orderedLlmTextBlockLines(llmSlide);
@@ -451,6 +495,7 @@ function buildSyntheticDocAiLayersFromLlmCopy(
     }
     pushDocAiRenderLayer(layers, ref, text, ref, {
       textBacking: opts.textBacking,
+      textBackingColor: opts.textBackingColor,
       theme,
       forceMultiLine: text.includes("\n") || ref.ref_text.length > 48,
       avoidCenterSubject: opts.avoidCenterSubject,
@@ -1576,6 +1621,7 @@ export function buildDocAiLayerCssStyle(opts: {
   textAlign: string;
   singleLine: boolean;
   textBacking?: boolean;
+  textBackingColor?: string | null;
   role?: string | null;
   projectHandle?: string | null;
 }): { css_style: string; font_size_px: number; layout_mode: "single_line" | "multi_line"; layout_class: string } {
@@ -1630,7 +1676,7 @@ export function buildDocAiLayerCssStyle(opts: {
   if (opts.textBacking) {
     cssParts.push("display:inline-block", "vertical-align:top");
     cssParts.push(
-      "background:rgba(255,255,255,0.9)",
+      `background:${formatMimicTextBackingBackground(opts.textBackingColor)}`,
       "padding:3px 8px",
       "border-radius:4px",
       "box-decoration-break:clone",
@@ -1874,6 +1920,7 @@ function pushDocAiRenderLayer(
   bbox: { x: number; y: number; w: number; h: number },
   opts: {
     textBacking: boolean;
+    textBackingColor?: string | null;
     theme?: { ink: string; body: string };
     forceSingleLine?: boolean;
     forceMultiLine?: boolean;
@@ -1938,6 +1985,7 @@ function pushDocAiRenderLayer(
     textAlign,
     singleLine,
     textBacking: opts.textBacking,
+    textBackingColor: opts.textBackingColor,
     role: ref.role ?? bucket,
     projectHandle: opts.projectHandle,
   });
@@ -2119,7 +2167,7 @@ function layerMatchesRefNorm(
 export function consolidateDocAiRenderLayersInVerticalStacks(
   layers: MimicDocAiRenderTextLayer[],
   orderedRef: DocAiLayoutBlock[],
-  opts?: { textBacking?: boolean; projectHandle?: string | null }
+  opts?: { textBacking?: boolean; textBackingColor?: string | null; projectHandle?: string | null }
 ): MimicDocAiRenderTextLayer[] {
   if (layers.length <= 1) return layers;
   const stacks = sortVerticalStacksForReadingOrder(
@@ -2201,6 +2249,7 @@ export function consolidateDocAiRenderLayersInVerticalStacks(
       textAlign: stackLayers[0]!.text_align,
       singleLine,
       textBacking: opts?.textBacking,
+      textBackingColor: opts?.textBackingColor,
       role: stackLayers[0]!.role,
       projectHandle: opts?.projectHandle,
     });
@@ -2527,9 +2576,10 @@ function buildMimicDocAiStackRenderLayers(
   llmLines: LlmSlideCopyLines,
   transcript: string,
   theme: { ink: string; body: string } | undefined,
-  opts: { projectHandle?: string | null; textBacking: boolean; avoidCenterSubject?: boolean }
+  opts: { projectHandle?: string | null; textBacking: boolean; textBackingColor?: string | null; avoidCenterSubject?: boolean }
 ): MimicDocAiRenderTextLayer[] {
   const textBacking = opts.textBacking;
+  const textBackingColor = opts.textBackingColor;
   const avoidCenterSubject = Boolean(opts.avoidCenterSubject);
   const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
   const decorSplit = splitHeadlineWithPreservedDecorTitle(llmLines.headline ?? "", orderedRef);
@@ -2573,6 +2623,7 @@ function buildMimicDocAiStackRenderLayers(
     if (!isPreserveReferenceDecorText(ref.ref_text, ref)) continue;
     pushDocAiRenderLayer(layers, ref, ref.ref_text.trim(), ref, {
       textBacking,
+      textBackingColor,
       theme,
       forceSingleLine: true,
       avoidCenterSubject,
@@ -2589,6 +2640,7 @@ function buildMimicDocAiStackRenderLayers(
     const stackRefFont = stackRefFontPxFromBlocks(stack);
     pushDocAiRenderLayer(layers, anchor, text, union, {
       textBacking,
+      textBackingColor,
       theme,
       forceMultiLine: true,
       refFontPxOverride: stackRefFont,
@@ -2621,6 +2673,7 @@ function buildMimicDocAiStackRenderLayers(
     if (!text.trim()) continue;
     pushDocAiRenderLayer(layers, ref, text, ref, {
       textBacking,
+      textBackingColor,
       theme,
       avoidCenterSubject,
       projectHandle,
@@ -2629,6 +2682,66 @@ function buildMimicDocAiStackRenderLayers(
 
   layers.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
   return normalizeDocAiRenderLayerFontSizes(layers, { textBacking, projectHandle });
+}
+
+/** Place LLM copy that did not fit any reference OCR box into stacked synthetic layers. */
+function appendLeftoverLlmCopyAsSyntheticLayers(
+  layers: MimicDocAiRenderTextLayer[],
+  leftoverLines: string[],
+  orderedRef: DocAiLayoutBlock[],
+  opts: {
+    textBacking: boolean;
+    textBackingColor?: string | null;
+    theme?: { ink: string; body: string };
+    avoidCenterSubject?: boolean;
+    projectHandle?: string | null;
+  }
+): void {
+  const lines = leftoverLines.map((l) => sanitizeMimicOverlayCopyText(l)).filter(Boolean);
+  if (lines.length === 0) return;
+
+  const bodyRefs = orderedRef.filter(
+    (r) =>
+      roleBucket(r.role) === "body" &&
+      !isHandleTextBlock(r.role, r.ref_text) &&
+      !isPreserveReferenceDecorText(r.ref_text, r)
+  );
+  const anchor =
+    bodyRefs.length > 0
+      ? [...bodyRefs].sort((a, b) => b.y - a.y || b.x - a.x)[0]!
+      : [...orderedRef].sort((a, b) => b.y - a.y || b.x - a.x).find(
+          (r) => !isPreserveReferenceDecorText(r.ref_text, r)
+        ) ?? null;
+  if (!anchor) return;
+
+  let yNorm = clamp01(anchor.y + anchor.h + 0.02);
+  for (const line of lines) {
+    const bbox = {
+      x: anchor.x,
+      y: yNorm,
+      w: Math.min(0.92 - anchor.x, Math.max(anchor.w, 0.55)),
+      h: 0.08,
+    };
+    const ref: DocAiLayoutBlock = {
+      ...anchor,
+      text: line,
+      ref_text: line,
+      role: "body",
+      x: bbox.x,
+      y: bbox.y,
+      w: bbox.w,
+      h: bbox.h,
+    };
+    pushDocAiRenderLayer(layers, ref, line, bbox, {
+      textBacking: opts.textBacking,
+      textBackingColor: opts.textBackingColor,
+      theme: opts.theme,
+      forceSingleLine: true,
+      avoidCenterSubject: opts.avoidCenterSubject,
+      projectHandle: opts.projectHandle ?? null,
+    });
+    yNorm = clamp01(bbox.y + bbox.h + 0.02);
+  }
 }
 
 /**
@@ -2640,15 +2753,25 @@ export function buildMimicDocAiRenderTextLayers(
   slideIndex1Based: number,
   llmSlide: Record<string, unknown>,
   theme?: { ink: string; body: string },
-  opts?: { projectHandle?: string | null; textBacking?: boolean; avoidCenterSubject?: boolean }
+  opts?: {
+    projectHandle?: string | null;
+    textBacking?: boolean;
+    textBackingColor?: string | null;
+    avoidCenterSubject?: boolean;
+    totalSlides?: number;
+  }
 ): MimicDocAiRenderTextLayer[] {
   const textBacking = Boolean(opts?.textBacking);
+  const textBackingColor = opts?.textBackingColor;
   const avoidCenterSubject = Boolean(opts?.avoidCenterSubject);
-  const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based);
+  const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based, {
+    totalSlides: opts?.totalSlides,
+  });
   if (!resolved || resolved.layoutBlocks.length === 0) {
     return buildSyntheticDocAiLayersFromLlmCopy(llmSlide, theme, {
       projectHandle: opts?.projectHandle ?? null,
       textBacking,
+      textBackingColor,
       avoidCenterSubject,
     });
   }
@@ -2714,6 +2837,7 @@ export function buildMimicDocAiRenderTextLayers(
         buildMimicDocAiStackRenderLayers(orderedRef, llmLines, transcript, theme, {
           projectHandle: opts?.projectHandle ?? null,
           textBacking,
+          textBackingColor,
           avoidCenterSubject,
         })
       );
@@ -2872,6 +2996,7 @@ export function buildMimicDocAiRenderTextLayers(
       textAlign,
       singleLine,
       textBacking,
+      textBackingColor,
       role: ref.role ?? bucket,
       projectHandle,
     });
@@ -2911,9 +3036,31 @@ export function buildMimicDocAiRenderTextLayers(
     });
   }
 
+  const leftoverLines: string[] = [];
+  if (headlinePending?.trim()) leftoverLines.push(headlinePending.trim());
+  for (const line of bodyQueue) {
+    const trimmed = String(line ?? "").trim();
+    if (trimmed) leftoverLines.push(trimmed);
+  }
+  const shouldAppendLeftovers =
+    leftoverLines.length > 0 &&
+    (directLines.length > 0
+      ? layers.length < directLines.length
+      : !mimicDocAiLayersCoverLlmCopy(layers, llmSlide));
+  if (shouldAppendLeftovers) {
+    appendLeftoverLlmCopyAsSyntheticLayers(layers, leftoverLines, orderedRef, {
+      textBacking,
+      textBackingColor,
+      theme,
+      avoidCenterSubject,
+      projectHandle: opts?.projectHandle ?? null,
+    });
+  }
+
   return dedupeDocAiRenderLayersByNormalizedText(
     consolidateDocAiRenderLayersInVerticalStacks(layers, orderedRef, {
       textBacking,
+      textBackingColor,
       projectHandle: opts?.projectHandle ?? null,
     })
   );

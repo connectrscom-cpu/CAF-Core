@@ -49,6 +49,6 @@ describe("mimicCarouselCopyBranch", () => {
   it("template_bg addendum requires per-slide semantic fidelity", () => {
     const text = mimicCarouselCopySystemAddendum("template_bg");
     expect(text).toContain("reference_on_screen_text");
-    expect(text).toContain("same subject and claim");
+    expect(text).toContain("same idea, subject, and list item");
   });
 });

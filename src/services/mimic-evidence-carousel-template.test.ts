@@ -68,15 +68,15 @@ describe("pickMimicEvidenceTemplateTheme", () => {
 });
 
 describe("ensureMimicEvidenceCarouselTemplate", () => {
-  it("forks a project layout template with background plate support for template_bg", async () => {
+  it("forks carousel_mimic_bg with DocAI layers and palette for template_bg", async () => {
     const tmp = await mkdtemp(path.join(os.tmpdir(), "mimic-tpl-"));
     const repoTpl = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
       "../../services/renderer/templates"
     );
     await copyFile(
-      path.join(repoTpl, "carousel_notes_app_minimal.hbs"),
-      path.join(tmp, "carousel_notes_app_minimal.hbs")
+      path.join(repoTpl, "carousel_mimic_bg.hbs"),
+      path.join(tmp, "carousel_mimic_bg.hbs")
     );
 
     const { ensureMimicEvidenceCarouselTemplate } = await import("./mimic-evidence-carousel-template.js");
@@ -98,12 +98,13 @@ describe("ensureMimicEvidenceCarouselTemplate", () => {
     );
 
     expect(record.template_base).toBe("mimic_e8842_ins_top_performer_abc123");
-    expect(record.layout_base_template).toBe("carousel_notes_app_minimal");
+    expect(record.layout_base_template).toBe("carousel_mimic_bg");
     expect(record.reused_existing).toBe(false);
     const written = await readFile(record.path_written, "utf8");
-    expect(written).toContain("layout_base_template=carousel_notes_app_minimal");
+    expect(written).toContain("layout_base_template=carousel_mimic_bg");
+    expect(written).toContain("semantic_layout_hint=carousel_notes_app_minimal");
+    expect(written).toContain("mimic_render_text_layers");
     expect(written).toContain("slide-bg");
-    expect(written).toContain("{{{background_image_url}}}");
     expect(written).toContain("source_insights_id=ins_top_performer_abc123");
   });
 });

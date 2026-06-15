@@ -18,19 +18,32 @@ describe("classifyMimicMode", () => {
     expect(classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_IMAGE, {}).mode).toBe("image_full");
   });
 
-  it("returns template_bg with unified reference frame for listicle decks", () => {
+  it("returns template_bg with cover/body/cta slot references for listicle decks", () => {
     const entry = {
       aesthetic_analysis_json: {
         format_pattern: "listicle",
+        mimic_evaluation: { template_consistency: "uniform" },
         slides: [
-          { text_density: "high", image_or_photo_role: "none" },
-          { text_density: "high", image_or_photo_role: "none" },
+          { slide_index: 1, text_density: "high", image_or_photo_role: "none", slide_purpose: "hook" },
+          { slide_index: 2, text_density: "high", image_or_photo_role: "none", slide_purpose: "listicle_item" },
+          { slide_index: 3, text_density: "high", image_or_photo_role: "none", slide_purpose: "listicle_item" },
+          { slide_index: 4, text_density: "high", image_or_photo_role: "none", slide_purpose: "cta" },
+        ],
+      },
+      stored_inspection_media_json: {
+        items: [
+          { index: 1, vision_fetch_url: "https://x/1.jpg" },
+          { index: 2, vision_fetch_url: "https://x/2.jpg" },
+          { index: 3, vision_fetch_url: "https://x/3.jpg" },
+          { index: 4, vision_fetch_url: "https://x/4.jpg" },
         ],
       },
     };
     const r = classifyMimicMode(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, entry);
     expect(r.mode).toBe("template_bg");
-    expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
+    expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
+    expect(r.slide_plans?.[0]?.reference_index).toBe(1);
+    expect(r.slide_plans?.[3]?.reference_index).toBe(4);
   });
 
   it("plans carousel_visual slides as full_bleed (visual plate + HBS at render)", () => {
@@ -163,7 +176,7 @@ describe("classifyMimicMode", () => {
     );
     expect(plans).toHaveLength(5);
     expect(plans[4]?.render_mode).toBe("hbs");
-    expect(plans[3]?.reference_index).toBe(1);
+    expect(plans[3]?.reference_index).toBe(2);
     expect(plans[4]?.reference_index).toBe(1);
   });
 
@@ -188,7 +201,8 @@ describe("classifyMimicMode", () => {
     expect(r.mode).toBe("template_bg");
     expect(r.slide_plans).toHaveLength(12);
     expect(r.slide_plans?.every((p) => p.render_mode === "hbs")).toBe(true);
-    expect(r.slide_plans?.every((p) => p.reference_index === 1)).toBe(true);
+    expect(r.slide_plans?.[0]?.reference_index).toBe(1);
+    expect(r.slide_plans?.[11]?.reference_index).toBe(12);
   });
 
   it("clampSlidePlansToOutputCount drops plans beyond output slide count", () => {
@@ -203,16 +217,22 @@ describe("classifyMimicMode", () => {
     expect(plans[0]?.slide_index).toBe(1);
   });
 
-  it("extendSlidePlansForOutputCount keeps reference_index 1 for template_bg extras", () => {
+  it("extendSlidePlansForOutputCount maps cover/body/cta refs for uniform template_bg extras", () => {
     const plans = extendSlidePlansForOutputCount(
       {
         mode: "template_bg",
-        reference_items: [{ index: 0 }, { index: 1 }],
-        slide_plans: [{ slide_index: 1, render_mode: "hbs", reference_index: 1 }],
+        reference_items: [{ index: 1 }, { index: 2 }, { index: 3 }, { index: 4 }],
+        visual_guideline: {
+          format_pattern: "listicle",
+          mimic_evaluation: { template_consistency: "uniform" },
+        },
+        slide_plans: [{ slide_index: 1, render_mode: "hbs", reference_index: 1, source_slide_index: 1 }],
       },
       4
     );
-    expect(plans.every((p) => p.reference_index === 1)).toBe(true);
+    expect(plans).toHaveLength(4);
+    expect(plans[0]?.reference_index).toBe(1);
+    expect(plans[3]?.reference_index).toBe(4);
   });
 });
 

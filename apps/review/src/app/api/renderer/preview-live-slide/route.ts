@@ -65,6 +65,8 @@ export async function POST(request: NextRequest) {
     const backgroundFromBody =
       typeof body.background_image_url === "string" ? body.background_image_url.trim() : "";
     const textBacking = body.text_backing !== false;
+    const textBackingColor =
+      typeof body.text_backing_color === "string" ? body.text_backing_color.trim() : "";
     const draftOverrides = parseLayerPosOverrides(body.docai_layer_positions);
 
     if (!template) {
@@ -120,6 +122,7 @@ export async function POST(request: NextRequest) {
       const enriched = enrichSlideRenderContextWithMimicDocAi(ctx, mimicV1, slideIndex, usableSlides, {
         instagramHandle,
         textBacking,
+        textBackingColor: textBackingColor || undefined,
         layerPosOverrides: draftOverrides,
       });
       ctx = enriched.renderContext;

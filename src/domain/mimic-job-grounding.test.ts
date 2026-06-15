@@ -96,7 +96,7 @@ describe("mimic-job-grounding", () => {
     expect(layout).toHaveLength(12);
   });
 
-  it("buildContentSlideCopyLayoutFromEntry filters to mimic_evaluation content slides when skip marks promos", () => {
+  it("buildContentSlideCopyLayoutFromEntry expands sparse content_slide_indices on uniform text decks", () => {
     const layout = buildContentSlideCopyLayoutFromEntry({
       aesthetic_analysis_json: {
         mimic_evaluation: {
@@ -115,11 +115,9 @@ describe("mimic-job-grounding", () => {
         items: [{ index: 1 }, { index: 2 }, { index: 3 }, { index: 4 }],
       },
     });
-    expect(layout).toHaveLength(2);
-    expect(layout[0]?.slide_index).toBe(1);
+    expect(layout).toHaveLength(4);
     expect(layout[0]?.reference_on_screen_text).toContain("Aries");
-    expect(layout[1]?.slide_index).toBe(2);
-    expect(layout[1]?.reference_on_screen_text).toContain("Taurus");
+    expect(layout[3]?.reference_on_screen_text).toContain("Taurus");
   });
 
   it("buildContentSlideCopyLayoutFromEntry drops slides when Document AI confirms excessive on-screen text", () => {

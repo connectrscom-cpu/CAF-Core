@@ -8,6 +8,7 @@ import {
   nemotronSuggestsTextOnTemplate,
   requiresCopyBeforeVisualMimic,
 } from "../domain/mimic-text-heavy.js";
+import { pickMimicEvaluationFromEntry, templateBgSlidePlanRef } from "../domain/mimic-template-library.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
@@ -84,11 +85,13 @@ export function classifyMimicMode(
     const unifiedBg = isUniform || deckUsesUnifiedBackgroundPlate(entry);
     const slide_plans: MimicSlidePlan[] = [];
     for (let i = 0; i < slideCount; i++) {
-      const refSlot = unifiedBg ? 1 : refFrames > 0 ? (i % refFrames) + 1 : 1;
+      const slideIndex = i + 1;
+      const ref = templateBgSlidePlanRef(entry, slideIndex, slideCount, refFrames || slideCount, unifiedBg);
       slide_plans.push({
-        slide_index: i + 1,
+        slide_index: slideIndex,
         render_mode: "hbs",
-        reference_index: refSlot,
+        reference_index: ref.reference_index,
+        ...(ref.source_slide_index != null ? { source_slide_index: ref.source_slide_index } : {}),
       });
     }
     return { mode: "template_bg", slide_plans };
@@ -126,17 +129,37 @@ function determineAutoMode(
 
 /** Ensure every output slide has a render plan (cycle reference frames for extras). */
 export function extendSlidePlansForOutputCount(
-  mimic: { mode: MimicMode; reference_items: { index: number }[]; slide_plans?: MimicSlidePlan[] },
+  mimic: {
+    mode: MimicMode;
+    reference_items: { index: number }[];
+    slide_plans?: MimicSlidePlan[];
+    visual_guideline?: Record<string, unknown>;
+  },
   outputSlideCount: number
 ): MimicSlidePlan[] {
   const refCount = Math.max(mimic.reference_items.length, 1);
   const plans = [...(mimic.slide_plans ?? [])];
   const defaultMode: MimicSlidePlan["render_mode"] =
     mimic.mode === "template_bg" ? "hbs" : plans[plans.length - 1]?.render_mode ?? "hbs";
+  const vg = mimic.visual_guideline ?? {};
+  const entry: Record<string, unknown> = { ...vg, aesthetic_analysis_json: vg };
+  const mimicEval = pickMimicEvaluationFromEntry(entry);
+  const isUniform = String(mimicEval?.template_consistency ?? "").toLowerCase() === "uniform";
+  const unifiedTemplateBg =
+    mimic.mode === "template_bg" && (isUniform || deckUsesUnifiedBackgroundPlate(entry));
 
   for (let slideIndex = plans.length + 1; slideIndex <= outputSlideCount; slideIndex++) {
-    const unifiedBg = mimic.mode === "template_bg";
-    const refSlot = unifiedBg ? 1 : refCount > 0 ? ((slideIndex - 1) % refCount) + 1 : 1;
+    if (mimic.mode === "template_bg" && unifiedTemplateBg) {
+      const ref = templateBgSlidePlanRef(entry, slideIndex, outputSlideCount, refCount, true);
+      plans.push({
+        slide_index: slideIndex,
+        render_mode: "hbs",
+        reference_index: ref.reference_index,
+        ...(ref.source_slide_index != null ? { source_slide_index: ref.source_slide_index } : {}),
+      });
+      continue;
+    }
+    const refSlot = refCount > 0 ? ((slideIndex - 1) % refCount) + 1 : 1;
     const render_mode = mimic.mode === "template_bg" ? "hbs" : defaultMode;
     plans.push({ slide_index: slideIndex, render_mode, reference_index: refSlot });
   }

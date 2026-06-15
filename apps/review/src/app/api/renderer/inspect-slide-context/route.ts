@@ -79,6 +79,14 @@ function parseLayerPosOverrides(raw: unknown): MimicDocAiLayerPositionOverride[]
       ...(text ? { text } : {}),
       ...(r.box_locked === true ? { box_locked: true } : {}),
       ...(r.hidden === true ? { hidden: true } : {}),
+      ...(Number.isFinite(Number(r.font_weight)) && Number(r.font_weight) >= 100
+        ? { font_weight: Math.round(Number(r.font_weight) / 100) * 100 }
+        : {}),
+      ...(typeof r.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(r.color_hex.trim())
+        ? { color_hex: r.color_hex.trim() }
+        : {}),
+      ...(typeof r.font_family === "string" && r.font_family.trim() ? { font_family: r.font_family.trim() } : {}),
+      ...(r.font_style_italic === true ? { font_style_italic: true } : {}),
     });
   }
   return out.length ? out : null;
@@ -105,6 +113,8 @@ export async function POST(request: NextRequest) {
     const backgroundFromBody =
       typeof body.background_image_url === "string" ? body.background_image_url.trim() : "";
     const textBacking = body.text_backing !== false;
+    const textBackingColor =
+      typeof body.text_backing_color === "string" ? body.text_backing_color.trim() : "";
     const draftOverrides = parseLayerPosOverrides(body.docai_layer_positions);
 
     if (!template) {
@@ -175,6 +185,7 @@ export async function POST(request: NextRequest) {
         {
           instagramHandle,
           textBacking,
+          textBackingColor: textBackingColor || undefined,
           layerPosOverrides: draftOverrides,
         }
       );

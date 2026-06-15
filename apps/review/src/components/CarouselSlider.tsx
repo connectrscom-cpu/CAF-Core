@@ -5,8 +5,15 @@ import type { NormalizedSlide } from "@/lib/carousel-slides";
 import {
   mimicSlideFieldsFromTextBlocks,
   mimicTextBlockEditorLabel,
+  mimicTextBlockDisplayText,
+  isMimicHandleTextBlock,
   resolveMimicTextBlocksForSlide,
 } from "@/lib/carousel-slides";
+import {
+  applyMimicTemplateBgFieldEdit,
+  resolveMimicTemplateBgEditorFields,
+  type MimicTemplateBgEditorField,
+} from "@/lib/mimic-template-bg";
 import { isVideoUrl } from "@/lib/media-url";
 
 const SWIPE_THRESHOLD = 50;
@@ -54,6 +61,21 @@ export interface CarouselSliderProps {
   mimicCopyEditor?: boolean;
   /** When set, carousel navigation follows this 1-based slide index (e.g. from layout editor). */
   activeSlideIndex?: number;
+  /** Original reference frame for side-by-side compare (mimic flows). */
+  referenceSlideUrl?: string;
+  /** Project Instagram handle — shown on handle text blocks. */
+  projectHandle?: string;
+  /** Generated post caption — always visible in mimic review. */
+  caption?: string;
+  onCaptionChange?: (value: string) => void;
+  /** Active text block index (0-based) — syncs with layout editor boxes. */
+  activeTextBlockIndex?: number | null;
+  onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
+  onDeleteSlide?: () => void;
+  onRegenerateSlide?: () => void;
+  regenerateSlideBusy?: boolean;
+  /** template_bg listicle — headline/body fields instead of OCR clusters. */
+  mimicTemplateBg?: boolean;
 }
 
 export function CarouselSlider({
@@ -71,6 +93,16 @@ export function CarouselSlider({
   copySidePanel,
   mimicCopyEditor = false,
   activeSlideIndex,
+  referenceSlideUrl,
+  projectHandle = "",
+  caption = "",
+  onCaptionChange,
+  activeTextBlockIndex = null,
+  onActiveTextBlockIndexChange,
+  onDeleteSlide,
+  onRegenerateSlide,
+  regenerateSlideBusy = false,
+  mimicTemplateBg = false,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -79,6 +111,9 @@ export function CarouselSlider({
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveErr, setLiveErr] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
+  const syncingSlideFromParentRef = useRef(false);
+  const onCurrentSlideChangeRef = useRef(onCurrentSlideChange);
+  onCurrentSlideChangeRef.current = onCurrentSlideChange;
 
   const slidesKey = useMemo(() => JSON.stringify(slides), [slides]);
 
@@ -89,13 +124,21 @@ export function CarouselSlider({
   }, [initialSlides]);
 
   useEffect(() => {
-    onCurrentSlideChange?.(currentIndex + 1);
-  }, [currentIndex, onCurrentSlideChange]);
+    if (syncingSlideFromParentRef.current) {
+      syncingSlideFromParentRef.current = false;
+      return;
+    }
+    onCurrentSlideChangeRef.current?.(currentIndex + 1);
+  }, [currentIndex]);
 
   useEffect(() => {
     if (activeSlideIndex == null || slides.length === 0) return;
     const idx = Math.max(0, Math.min(slides.length - 1, activeSlideIndex - 1));
-    setCurrentIndex((cur) => (cur !== idx ? idx : cur));
+    setCurrentIndex((cur) => {
+      if (cur === idx) return cur;
+      syncingSlideFromParentRef.current = true;
+      return idx;
+    });
   }, [activeSlideIndex, slides.length]);
 
   useEffect(() => {
@@ -217,6 +260,22 @@ export function CarouselSlider({
     [onSlidesChange]
   );
 
+  const updateMimicTemplateBgField = useCallback(
+    (slideIndex: number, field: MimicTemplateBgEditorField, text: string) => {
+      setSavedAt(null);
+      setSlides((prev) => {
+        const next = prev.map((s, i) =>
+          i === slideIndex
+            ? applyMimicTemplateBgFieldEdit(s, slideIndex + 1, prev.length, field.key, text)
+            : s
+        );
+        onSlidesChange?.(next);
+        return next;
+      });
+    },
+    [onSlidesChange]
+  );
+
   const handleSaveSlide = useCallback(() => {
     onSlidesChange?.(slides);
     setSavedAt(currentIndex);
@@ -240,9 +299,16 @@ export function CarouselSlider({
   );
 
   const slide = slides[currentIndex];
+  const mimicTemplateBgFields = useMemo(
+    () =>
+      mimicCopyEditor && mimicTemplateBg
+        ? resolveMimicTemplateBgEditorFields(slide, currentIndex + 1, slides.length)
+        : [],
+    [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]
+  );
   const mimicTextBlocks = useMemo(
-    () => (mimicCopyEditor ? resolveMimicTextBlocksForSlide(slide) : []),
-    [mimicCopyEditor, slide]
+    () => (mimicCopyEditor && !mimicTemplateBg ? resolveMimicTextBlocksForSlide(slide) : []),
+    [mimicCopyEditor, mimicTemplateBg, slide]
   );
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
@@ -264,13 +330,44 @@ export function CarouselSlider({
   }
 
   return (
-    <div className={`card ${className ?? ""}`}>
-      <div className="flex items-center justify-between mb-3">
+    <div className={`card ${className ?? ""}${mimicCopyEditor ? " mimic-carousel-review" : ""}`}>
+      {mimicCopyEditor ? (
+        <div className="mimic-caption-bar">
+          <label className="filter-label">Post caption</label>
+          <textarea
+            value={caption}
+            onChange={(e) => onCaptionChange?.(e.target.value)}
+            placeholder="No caption on this job yet"
+            rows={2}
+            readOnly={!onCaptionChange}
+            className="mimic-caption-bar__input"
+          />
+        </div>
+      ) : null}
+
+      <div className="flex items-center justify-between mb-3 mimic-carousel-review__header">
         <h3 style={{ fontSize: 13, fontWeight: 600 }}>{heyGenVideoMode ? "Video preview" : "Carousel slides"}</h3>
-        <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
+          {mimicCopyEditor && onRegenerateSlide ? (
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              disabled={regenerateSlideBusy}
+              onClick={onRegenerateSlide}
+            >
+              {regenerateSlideBusy ? "Regenerating…" : "Regenerate"}
+            </button>
+          ) : null}
+          {mimicCopyEditor && onDeleteSlide && total > 1 ? (
+            <button type="button" className="btn-danger-ghost btn-sm" onClick={onDeleteSlide}>
+              Delete slide
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      <div className="flex items-center gap-2" style={{ marginBottom: 12 }}>
+      <div className={`flex items-center gap-2${mimicCopyEditor ? " mimic-compare-row" : ""}`} style={{ marginBottom: 12 }}>
         <button
           type="button"
           aria-label="Previous slide"
@@ -285,10 +382,11 @@ export function CarouselSlider({
           &#8249;
         </button>
         <div
+          className={mimicCopyEditor ? "mimic-compare-frame" : undefined}
           style={{
             flex: 1,
             minWidth: 0,
-            minHeight: 200,
+            minHeight: mimicCopyEditor ? 140 : 200,
             overflow: "hidden",
             borderRadius: 8,
             border: "1px solid var(--border)",
@@ -296,10 +394,29 @@ export function CarouselSlider({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            ...(mimicCopyEditor && referenceSlideUrl?.trim()
+              ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "var(--border)" }
+              : {}),
           }}
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
         >
+          {mimicCopyEditor && referenceSlideUrl?.trim() ? (
+            <div className="mimic-compare-pane">
+              <span className="mimic-compare-pane__label">Original</span>
+              <img
+                src={referenceSlideUrl}
+                alt={`Original slide ${currentIndex + 1}`}
+                className="mimic-compare-pane__img"
+                draggable={false}
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          ) : null}
+          <div className={mimicCopyEditor && referenceSlideUrl?.trim() ? "mimic-compare-pane" : undefined} style={mimicCopyEditor && referenceSlideUrl?.trim() ? { display: "flex", flexDirection: "column", minHeight: 0 } : undefined}>
+            {mimicCopyEditor && referenceSlideUrl?.trim() ? (
+              <span className="mimic-compare-pane__label">Generated</span>
+            ) : null}
           {livePngUrl ? (
             <img
               key={livePngUrl}
@@ -321,7 +438,13 @@ export function CarouselSlider({
               <img
                 src={mediaUrl}
                 alt={`Slide ${currentIndex + 1}`}
-                style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
+                style={{
+                  width: "100%",
+                  maxHeight: mimicCopyEditor ? "28vh" : "50vh",
+                  objectFit: "contain",
+                  userSelect: "none",
+                  flex: 1,
+                }}
                 draggable={false}
                 referrerPolicy="no-referrer"
               />
@@ -329,6 +452,7 @@ export function CarouselSlider({
           ) : (
             <span style={{ fontSize: 13, color: "var(--muted)", padding: 24 }}>No rendered asset for this slide</span>
           )}
+          </div>
         </div>
         <button
           type="button"
@@ -362,46 +486,96 @@ export function CarouselSlider({
             className="carousel-edit-copy"
             style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
           >
-          {mimicCopyEditor ? (
-            <div className="mimic-text-blocks" style={{ marginBottom: 12 }}>
-              <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
-              <p style={{ margin: "0 0 10px", fontSize: 11, color: "var(--muted)", lineHeight: 1.45 }}>
-                One field per copy cluster (headline, body, handle, etc.) — not every OCR line. Saved to{" "}
-                <code style={{ fontSize: 10 }}>text_blocks[]</code> on save/reprint and synced to the layout editor.
+          {mimicCopyEditor && mimicTemplateBg ? (
+            <div className="mimic-text-blocks mimic-text-blocks--compact">
+              <label className="filter-label">Slide copy</label>
+              <p className="mimic-text-blocks__hint">
+                Listicle format — headline and body per slide (cover uses subtitle; last slide uses CTA + handle).
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {mimicTextBlocks.map((block, bi) => (
-                  <div key={bi}>
-                    <label
-                      className="filter-label"
-                      style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}
+              <div className="mimic-text-blocks__list">
+                {mimicTemplateBgFields.map((field, bi) => {
+                  const isHandle = field.role === "handle";
+                  const displayText =
+                    isHandle && projectHandle.trim()
+                      ? projectHandle.trim().startsWith("@")
+                        ? projectHandle.trim()
+                        : `@${projectHandle.trim().replace(/^@+/, "")}`
+                      : field.text;
+                  const linked = activeTextBlockIndex === bi;
+                  return (
+                    <div
+                      key={field.key}
+                      className={`mimic-text-block-field${linked ? " mimic-text-block-field--linked" : ""}`}
+                      onClick={() => onActiveTextBlockIndexChange?.(bi)}
                     >
+                      <label className="filter-label mimic-text-block-field__label">
+                        <span>{field.label}</span>
+                        <span className="mimic-text-block-field__meta">Box {bi + 1}</span>
+                      </label>
+                      <textarea
+                        value={isHandle && projectHandle.trim() ? displayText : field.text}
+                        readOnly={isHandle && Boolean(projectHandle.trim())}
+                        onChange={(e) => {
+                          if (isHandle && projectHandle.trim()) return;
+                          updateMimicTemplateBgField(currentIndex, field, e.target.value);
+                        }}
+                        rows={Math.min(5, Math.max(2, displayText.split("\n").length))}
+                        placeholder={`${field.label}…`}
+                        className="mimic-text-block-field__input"
+                        onFocus={() => onActiveTextBlockIndexChange?.(bi)}
+                      />
+                      {isHandle ? (
+                        <p className="mimic-text-block-field__note">Always prints project handle on reprint</p>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : mimicCopyEditor ? (
+            <div className="mimic-text-blocks mimic-text-blocks--compact">
+              <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
+              <p className="mimic-text-blocks__hint">
+                One field per OCR copy cluster — synced to layout boxes below.
+              </p>
+              <div className="mimic-text-blocks__list">
+                {mimicTextBlocks.map((block, bi) => {
+                  const isHandle = isMimicHandleTextBlock(block);
+                  const displayText = mimicTextBlockDisplayText(block, projectHandle);
+                  const linked = activeTextBlockIndex === bi;
+                  return (
+                  <div
+                    key={bi}
+                    className={`mimic-text-block-field${linked ? " mimic-text-block-field--linked" : ""}`}
+                    onClick={() => onActiveTextBlockIndexChange?.(bi)}
+                  >
+                    <label className="filter-label mimic-text-block-field__label">
                       <span>{mimicTextBlockEditorLabel(block, bi, mimicTextBlocks.length)}</span>
-                      <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>
-                        Copy cluster {bi + 1}
+                      <span className="mimic-text-block-field__meta">
+                        Box {bi + 1}
                         {block.role && block.role !== "body" ? ` · ${block.role}` : ""}
                       </span>
                     </label>
                     <textarea
-                      value={block.text}
-                      onChange={(e) => updateMimicTextBlock(currentIndex, bi, e.target.value)}
-                      rows={Math.min(5, Math.max(2, block.text.split("\n").length))}
-                      placeholder="On-slide copy for this box"
-                      style={{
-                        width: "100%",
-                        fontSize: 14,
-                        lineHeight: 1.45,
-                        minHeight: 52,
-                        resize: "vertical",
+                      value={isHandle ? displayText : block.text}
+                      readOnly={isHandle && Boolean(projectHandle.trim())}
+                      onChange={(e) => {
+                        if (isHandle && projectHandle.trim()) return;
+                        updateMimicTextBlock(currentIndex, bi, e.target.value);
                       }}
+                      rows={Math.min(4, Math.max(2, (isHandle ? displayText : block.text).split("\n").length))}
+                      placeholder="On-slide copy for this box"
+                      className="mimic-text-block-field__input"
+                      onFocus={() => onActiveTextBlockIndexChange?.(bi)}
                     />
-                    {block.role === "handle" || /^@[a-z0-9_.]{2,}$/i.test(block.text.trim()) ? (
-                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
-                        Prints with project Instagram handle on reprint
+                    {isHandle ? (
+                      <p className="mimic-text-block-field__note">
+                        Always prints project handle on reprint
                       </p>
                     ) : null}
                   </div>
-                ))}
+                );
+                })}
               </div>
             </div>
           ) : (

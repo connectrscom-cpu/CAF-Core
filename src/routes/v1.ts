@@ -1219,6 +1219,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     slide_indices: z.array(z.number().int().positive()).optional(),
     render_typography: z.record(z.union([z.number(), z.string()])).optional(),
     text_backing: z.boolean().optional(),
+    text_backing_color: z.string().min(1).max(64).optional(),
     docai_layer_positions: z
       .record(
         z.string(),
@@ -1245,6 +1246,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     slideIndices: number[] | undefined,
     renderTypography: Record<string, number> | undefined,
     textBacking: boolean | undefined,
+    textBackingColor: string | undefined,
     docaiLayerPositions: Record<string, MimicDocAiLayerPositionOverride[]> | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
@@ -1286,6 +1288,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         ? { renderTypographyPatch: renderTypography }
         : {}),
       textBacking: textBacking !== false,
+      ...(textBackingColor?.trim() ? { textBackingColor: textBackingColor.trim() } : {}),
     })
       .then(() => {
         log.info(
@@ -1343,6 +1346,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         ? parseCarouselRenderTypographyPatch(body.data.render_typography)
         : undefined,
       body.data.text_backing,
+      body.data.text_backing_color,
       body.data.docai_layer_positions
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,
@@ -1371,6 +1375,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         ? parseCarouselRenderTypographyPatch(body.data.render_typography)
         : undefined,
       body.data.text_backing,
+      body.data.text_backing_color,
       body.data.docai_layer_positions
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,

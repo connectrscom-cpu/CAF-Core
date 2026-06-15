@@ -39,6 +39,14 @@ export type MimicDocAiLayerPositionOverride = {
   w_px?: number;
   /** Reviewer override — highlight box height in px. */
   h_px?: number;
+  /** Reviewer override — CSS font-weight (400–900). */
+  font_weight?: number;
+  /** Reviewer override — text color (#rrggbb). */
+  color_hex?: string;
+  /** Reviewer override — CSS font-family stack. */
+  font_family?: string;
+  /** Reviewer override — italic style. */
+  font_style_italic?: boolean;
   /** When true, w/h are frozen on reprint (user resized the highlight box). */
   box_locked?: boolean;
   /** When true, layer is omitted from reprint (reviewer deleted the text box). */
@@ -205,6 +213,54 @@ export function patchMimicDocAiLayerText<T extends MimicDocAiLayerPositionLayer>
   return { ...layer, text: trimmed };
 }
 
+function patchCssProp(css: string, prop: string, value: string): string {
+  const re = new RegExp(`${prop}:[^;]+`);
+  return re.test(css) ? css.replace(re, `${prop}:${value}`) : `${css};${prop}:${value}`;
+}
+
+export function patchMimicDocAiLayerFontWeight<T extends MimicDocAiLayerPositionLayer>(
+  layer: T,
+  fontWeight: number
+): T {
+  const weight = Math.max(100, Math.min(900, Math.round(fontWeight / 100) * 100));
+  return {
+    ...layer,
+    font_weight: weight,
+    css_style: patchCssProp(layer.css_style, "font-weight", String(weight)),
+  };
+}
+
+export function patchMimicDocAiLayerColor<T extends MimicDocAiLayerPositionLayer>(layer: T, colorHex: string): T {
+  const color = /^#[0-9a-fA-F]{3,8}$/.test(colorHex.trim()) ? colorHex.trim() : layer.color_hex ?? "#111111";
+  return {
+    ...layer,
+    color_hex: color,
+    css_style: patchCssProp(layer.css_style, "color", color),
+  };
+}
+
+export function patchMimicDocAiLayerFontFamily<T extends MimicDocAiLayerPositionLayer>(
+  layer: T,
+  fontFamily: string
+): T {
+  const family = fontFamily.trim();
+  if (!family) return layer;
+  return {
+    ...layer,
+    css_style: patchCssProp(layer.css_style, "font-family", family),
+  };
+}
+
+export function patchMimicDocAiLayerFontStyle<T extends MimicDocAiLayerPositionLayer>(
+  layer: T,
+  italic: boolean
+): T {
+  const css = italic
+    ? patchCssProp(layer.css_style, "font-style", "italic")
+    : layer.css_style.replace(/font-style:[^;]+;?/g, "");
+  return { ...layer, css_style: css };
+}
+
 export function patchMimicDocAiLayerSize<T extends MimicDocAiLayerPositionLayer>(
   layer: T,
   wPx: number,
@@ -248,6 +304,12 @@ export function parseMimicDocAiLayerPositionsBySlide(raw: unknown): MimicDocAiLa
         const hidden = r.hidden === true;
         const custom = isCustomAddedMimicDocAiLayerKey(layer_key);
         const persistBox = box_locked || custom;
+        const font_weight = Number(r.font_weight);
+        const color_hex =
+          typeof r.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(r.color_hex.trim())
+            ? r.color_hex.trim()
+            : undefined;
+        const font_family = typeof r.font_family === "string" ? r.font_family.trim() : undefined;
         parsed.push({
           layer_key,
           x_px: Math.round(x_px),
@@ -256,6 +318,12 @@ export function parseMimicDocAiLayerPositionsBySlide(raw: unknown): MimicDocAiLa
           ...(persistBox && Number.isFinite(w_px) && w_px > 0 ? { w_px: Math.round(w_px) } : {}),
           ...(persistBox && Number.isFinite(h_px) && h_px > 0 ? { h_px: Math.round(h_px) } : {}),
           ...(text ? { text } : custom ? { text: "New text" } : {}),
+          ...(Number.isFinite(font_weight) && font_weight >= 100 && font_weight <= 900
+            ? { font_weight: Math.round(font_weight / 100) * 100 }
+            : {}),
+          ...(color_hex ? { color_hex } : {}),
+          ...(font_family ? { font_family } : {}),
+          ...(r.font_style_italic === true ? { font_style_italic: true } : {}),
           ...(persistBox ? { box_locked: true } : {}),
           ...(hidden ? { hidden: true } : {}),
         });
@@ -307,6 +375,20 @@ export function applyMimicDocAiLayerPositionOverrides<T extends MimicDocAiLayerP
       let next = patchMimicDocAiLayerPxPosition(layer, o.x_px, o.y_px);
       if (o.font_size_px != null && Number.isFinite(o.font_size_px) && o.font_size_px > 0) {
         next = patchMimicDocAiLayerFontSize(next, o.font_size_px);
+      }
+      if (o.font_weight != null && Number.isFinite(o.font_weight) && o.font_weight >= 100) {
+        next = patchMimicDocAiLayerFontWeight(next, o.font_weight);
+      }
+      if (o.color_hex?.trim()) {
+        next = patchMimicDocAiLayerColor(next, o.color_hex);
+      }
+      if (o.font_family?.trim()) {
+        next = patchMimicDocAiLayerFontFamily(next, o.font_family);
+      }
+      if (o.font_style_italic === true) {
+        next = patchMimicDocAiLayerFontStyle(next, true);
+      } else if (o.font_style_italic === false) {
+        next = patchMimicDocAiLayerFontStyle(next, false);
       }
       if (
         o.text != null &&

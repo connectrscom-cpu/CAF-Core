@@ -502,6 +502,7 @@ export async function reprintMimicTextOverlay(
     slideIndices?: number[];
     renderTypography?: Record<string, number>;
     textBacking?: boolean;
+    textBackingColor?: string;
     docaiLayerPositions?: Record<string, MimicDocAiLayerPositionRow[]>;
   }
 ): Promise<ReprintTextOverlayResult> {
@@ -520,6 +521,9 @@ export async function reprintMimicTextOverlay(
     body.render_typography = opts.renderTypography;
   }
   body.text_backing = opts?.textBacking !== false;
+  if (opts?.textBackingColor?.trim()) {
+    body.text_backing_color = opts.textBackingColor.trim();
+  }
   if (opts?.docaiLayerPositions && Object.keys(opts.docaiLayerPositions).length > 0) {
     body.docai_layer_positions = opts.docaiLayerPositions;
   }

@@ -37,6 +37,11 @@ import {
   textOverlayReprintBannerMessage,
   textOverlayReprintUiState,
 } from "@/lib/text-overlay-reprint-status";
+import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
+import {
+  isMimicTemplateBgMode,
+  normalizeMimicTemplateBgSlides,
+} from "@/lib/mimic-template-bg";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -106,6 +111,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
   const [viewerSlideIndex, setViewerSlideIndex] = useState(1);
+  const [activeTextBlockIndex, setActiveTextBlockIndex] = useState<number | null>(null);
+  const [regenerateSlideBusy, setRegenerateSlideBusy] = useState(false);
   const [editedCaption, setEditedCaption] = useState("");
   const [editedTitle, setEditedTitle] = useState("");
   const [editedHook, setEditedHook] = useState("");
@@ -133,6 +140,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   });
   const carouselTypoSeededForTask = useRef<string | null>(null);
   const mimicOcrEnrichedForTask = useRef<string | null>(null);
+  const taskLoadedOnceRef = useRef(false);
 
   useEffect(() => {
     setEditedSlides([]);
@@ -152,28 +160,31 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setFullJob(null);
     setProjectStrategyHandle("");
     mimicOcrEnrichedForTask.current = null;
+    taskLoadedOnceRef.current = false;
   }, [task_id]);
 
   useEffect(() => {
     if (initialSlides.length > 0) {
-      if (taskAssets.length > initialSlides.length) {
-        const nExtra = taskAssets.length - initialSlides.length;
-        const extra: NormalizedSlide[] = Array.from({ length: nExtra }, (_, i) => ({
-          index: initialSlides.length + i,
-          type: "body",
-          headline: "",
-          body: "",
-          handle: "",
-        }));
-        setEditedSlides([...initialSlides, ...extra]);
-      } else {
-        setEditedSlides(initialSlides);
-      }
+      setEditedSlides((prev) => {
+        if (prev.length > 0) return prev;
+        if (taskAssets.length > initialSlides.length) {
+          const nExtra = taskAssets.length - initialSlides.length;
+          const extra: NormalizedSlide[] = Array.from({ length: nExtra }, (_, i) => ({
+            index: initialSlides.length + i,
+            type: "body",
+            headline: "",
+            body: "",
+            handle: "",
+          }));
+          return [...initialSlides, ...extra];
+        }
+        return initialSlides;
+      });
       return;
     }
     if (taskAssets.length > 0) {
       setEditedSlides((prev) =>
-        prev.length !== taskAssets.length ? createSyntheticSlides(taskAssets.length) : prev
+        prev.length === 0 ? createSyntheticSlides(taskAssets.length) : prev
       );
     }
   }, [initialSlides, taskAssets]);
@@ -225,9 +236,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     carouselTypoSeededForTask.current = task_id;
   }, [fullJob, task_id]);
 
-  const fetchTask = useCallback(async () => {
+  const fetchTask = useCallback(async (opts?: { quiet?: boolean; bustAssets?: boolean }) => {
     if (!task_id) return;
-    setLoading(true);
+    const quiet = opts?.quiet === true;
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const qs = taskApiQuery(task_id, projectFromUrl);
@@ -267,7 +279,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         }
         setMimicBackgroundByPosition(mimicBg);
         setMimicPlateByPosition(mimicPlates);
-        setTaskAssets(taskAssetsToPreviewRows(rows, { flowTypeHint: flowHint, cacheBust: Date.now() }));
+        setTaskAssets(
+          taskAssetsToPreviewRows(rows, {
+            flowTypeHint: flowHint,
+            ...(opts?.bustAssets ? { cacheBust: Date.now() } : {}),
+          })
+        );
       } else {
         setMimicBackgroundByPosition({});
         setMimicPlateByPosition({});
@@ -278,9 +295,15 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       setData(null);
       setTaskAssets([]);
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
+      taskLoadedOnceRef.current = true;
     }
   }, [task_id, projectFromUrl]);
+
+  const refreshTaskAssets = useCallback(
+    () => fetchTask({ quiet: true, bustAssets: true }),
+    [fetchTask]
+  );
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
@@ -311,7 +334,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   useEffect(() => {
     if (!textOverlayReprint.active) return;
     const id = window.setInterval(() => {
-      void fetchTask();
+      void fetchTask({ quiet: true, bustAssets: true });
     }, 15_000);
     return () => window.clearInterval(id);
   }, [textOverlayReprint.active, fetchTask]);
@@ -412,8 +435,23 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     [flowTypeStr]
   );
 
+  const mimicTemplateBg = useMemo(() => {
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    const mimicV1 =
+      gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+        ? (gp.mimic_v1 as Record<string, unknown>)
+        : null;
+    return isMimicTemplateBgMode(mimicV1);
+  }, [fullJob]);
+
   useEffect(() => {
     if (!mimicCarouselFlow || !fullJob || editedSlides.length === 0) return;
+    if (mimicTemplateBg) {
+      if (mimicOcrEnrichedForTask.current === execTaskId) return;
+      mimicOcrEnrichedForTask.current = execTaskId;
+      setEditedSlides((prev) => normalizeMimicTemplateBgSlides(prev));
+      return;
+    }
     if (mimicOcrEnrichedForTask.current === execTaskId) return;
     const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
     const mimicV1 =
@@ -437,7 +475,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       if (prev.length === 0) return prev;
       return enrichMimicSlidesFromVisualGuideline(prev, vg, slideCopyLayout);
     });
-  }, [mimicCarouselFlow, fullJob, editedSlides.length, execTaskId]);
+  }, [mimicCarouselFlow, mimicTemplateBg, fullJob, editedSlides.length, execTaskId]);
 
   const carouselFlow = useMemo(
     () => (flowTypeStr ? isCarouselFlow(flowTypeStr) : false),
@@ -592,6 +630,62 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     }
     return projectStrategyHandle;
   }, [fullJob, projectStrategyHandle]);
+
+  const mimicReferenceUrlForViewer = useMemo(() => {
+    if (!mimicCarouselFlow || !fullJob) return undefined;
+    const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
+    const mimicV1 =
+      gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+        ? (gp.mimic_v1 as Record<string, unknown>)
+        : null;
+    return mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex);
+  }, [mimicCarouselFlow, fullJob, viewerSlideIndex]);
+
+  useEffect(() => {
+    setActiveTextBlockIndex(null);
+  }, [viewerSlideIndex]);
+
+  const handleDeleteMimicSlide = useCallback((slideIndex1Based: number) => {
+    const idx = slideIndex1Based - 1;
+    setEditedSlides((prev) => {
+      if (prev.length <= 1 || idx < 0 || idx >= prev.length) return prev;
+      const next = prev.filter((_, i) => i !== idx).map((s, i) => ({ ...s, index: i }));
+      setViewerSlideIndex((cur) => {
+        if (cur > slideIndex1Based) return cur - 1;
+        return Math.min(cur, next.length);
+      });
+      return next;
+    });
+  }, []);
+
+  const handleRegenerateMimicSlide = useCallback(
+    async (slideIndex1Based: number) => {
+      const project = (data?.project ?? projectFromUrl).trim();
+      if (!execTaskId.trim() || !project) return;
+      setRegenerateSlideBusy(true);
+      try {
+        const res = await fetch("/api/task/regenerate-carousel-slides", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            task_id: execTaskId,
+            project,
+            slide_indices: [slideIndex1Based],
+          }),
+        });
+        const json = (await res.json()) as { ok?: boolean; error?: string; message?: string };
+        if ((!res.ok && res.status !== 202) || !json.ok) {
+          throw new Error(json.error ?? json.message ?? `Regenerate failed (${res.status})`);
+        }
+        void refreshTaskAssets();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Regenerate failed");
+      } finally {
+        setRegenerateSlideBusy(false);
+      }
+    },
+    [data?.project, projectFromUrl, execTaskId, refreshTaskAssets]
+  );
 
   const decorateCarouselSlidesPayload = useCallback(
     (slidesPayload: CarouselSlidesPayload) => {
@@ -902,6 +996,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
               onCarouselSlideChange={setViewerSlideIndex}
               carouselActiveSlideIndex={mimicCarouselFlow ? viewerSlideIndex : undefined}
+              referenceSlideUrl={mimicCarouselFlow ? mimicReferenceUrlForViewer : undefined}
+              projectHandle={mimicCarouselFlow ? instagramHandleForPreview : undefined}
+              caption={mimicCarouselFlow ? editedCaption : undefined}
+              onCaptionChange={mimicCarouselFlow ? setEditedCaption : undefined}
+              activeTextBlockIndex={mimicCarouselFlow ? activeTextBlockIndex : undefined}
+              onActiveTextBlockIndexChange={mimicCarouselFlow ? setActiveTextBlockIndex : undefined}
+              onDeleteSlide={mimicCarouselFlow ? handleDeleteMimicSlide : undefined}
+              onRegenerateSlide={mimicCarouselFlow ? handleRegenerateMimicSlide : undefined}
+              regenerateSlideBusy={mimicCarouselFlow ? regenerateSlideBusy : undefined}
+              mimicTemplateBg={mimicCarouselFlow && mimicTemplateBg}
               carouselCopySidePanel={
                 mimicCarouselFlow && fullJob ? (
                   <MimicCarouselLayerEditorPanel
@@ -918,10 +1022,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     getBackgroundUrl={
                       mimicCarouselInspectContext?.getBackgroundUrl ?? carouselLivePreview?.getBackgroundUrl
                     }
-                    onReprintComplete={fetchTask}
+                    onReprintComplete={refreshTaskAssets}
                     buildReprintTypographyPatch={buildReprintTypographyPatch}
                     onMimicLayoutSaved={handleMimicLayoutSaved}
                     onSlideSelect={setViewerSlideIndex}
+                    onDeleteSlide={handleDeleteMimicSlide}
+                    activeTextBlockIndex={activeTextBlockIndex}
+                    onActiveTextBlockIndexChange={setActiveTextBlockIndex}
                   />
                 ) : undefined
               }
@@ -1050,7 +1157,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onSkipImageRegenerationChange={setSkipImageRegeneration}
               />
             ) : mimicCarouselFlow ? (
-              <MimicCarouselEdits fontScale={fontScale} onFontScaleChange={setFontScale} />
+              <MimicCarouselEdits
+                fontScale={fontScale}
+                onFontScaleChange={setFontScale}
+                hashtags={editedHashtags}
+                onHashtagsChange={setEditedHashtags}
+              />
             ) : (
               <CarouselEdits
                 taskId={execTaskId}

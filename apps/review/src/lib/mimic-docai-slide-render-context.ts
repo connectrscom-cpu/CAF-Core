@@ -12,10 +12,12 @@ import {
 } from "@caf-core-carousel/mimic-docai-layer-positions";
 import {
   buildMimicDocAiRenderTextLayers,
+  formatMimicTextBackingBackground,
   inferMimicCarouselTheme,
   mimicDocAiLayersCoverLlmCopy,
   mimicPayloadHasDocAiTextLayout,
 } from "@caf-core-carousel/mimic-slide-typography";
+import { templateBgLlmSlideForDocAi } from "@caf-core-carousel/mimic-template-bg-render";
 
 export type MimicDocAiEnrichedSlide = {
   renderContext: Record<string, unknown>;
@@ -52,6 +54,7 @@ export function enrichSlideRenderContextWithMimicDocAi(
   opts?: {
     instagramHandle?: string;
     textBacking?: boolean;
+    textBackingColor?: string | null;
     layerPosOverrides?: MimicDocAiLayerPositionOverride[] | null;
   }
 ): MimicDocAiEnrichedSlide {
@@ -59,7 +62,16 @@ export function enrichSlideRenderContextWithMimicDocAi(
     mimicV1 as Parameters<typeof mimicPayloadHasDocAiTextLayout>[0]
   );
   const textBacking = opts?.textBacking !== false;
+  const textBackingColor = textBacking
+    ? formatMimicTextBackingBackground(opts?.textBackingColor)
+    : undefined;
+  const totalSlides = usableSlides.length;
   const rawLlmSlide = pickSlideByCarouselIndex(usableSlides, slideIndex1Based);
+  const mimicMode = String(mimicV1.mode ?? "").trim();
+  const llmSlideForDocAi =
+    mimicMode === "template_bg" && totalSlides > 0
+      ? templateBgLlmSlideForDocAi(slideIndex1Based, totalSlides, rawLlmSlide)
+      : rawLlmSlide;
   const layerPosOverrides =
     opts?.layerPosOverrides ?? pickMimicDocAiLayerPositionsForSlide(mimicV1, slideIndex1Based);
   const hasReviewerLayout = Boolean(layerPosOverrides?.length);
@@ -78,12 +90,14 @@ export function enrichSlideRenderContextWithMimicDocAi(
   let docAiLayers = buildMimicDocAiRenderTextLayers(
     mimicV1 as Parameters<typeof buildMimicDocAiRenderTextLayers>[0],
     slideIndex1Based,
-    rawLlmSlide,
+    llmSlideForDocAi,
     { ink: theme.ink, body: theme.body },
     {
       projectHandle: opts?.instagramHandle || null,
       textBacking,
+      textBackingColor,
       avoidCenterSubject: textBacking && !hasReviewerLayout,
+      totalSlides,
     }
   );
   if (layerPosOverrides?.length) {
@@ -99,7 +113,8 @@ export function enrichSlideRenderContextWithMimicDocAi(
   })) as Array<Record<string, unknown> & { layer_key: string }>;
 
   const useDocAiLayers =
-    docAiLayers.length > 0 && (hasReviewerLayout || mimicDocAiLayersCoverLlmCopy(docAiLayers, rawLlmSlide));
+    docAiLayers.length > 0 &&
+    (hasReviewerLayout || mimicDocAiLayersCoverLlmCopy(docAiLayers, llmSlideForDocAi));
 
   let nextContext = renderContext;
   if (useDocAiLayers) {
@@ -110,15 +125,16 @@ export function enrichSlideRenderContextWithMimicDocAi(
       ...(textBacking
         ? {
             mimic_text_backing: true,
+            mimic_text_backing_color: textBackingColor,
             ...(hasReviewerLayout ? {} : { mimic_avoid_center_subject: true }),
           }
         : {}),
     };
-  } else if (slideHasRenderableContent(rawLlmSlide)) {
+  } else if (slideHasRenderableContent(llmSlideForDocAi)) {
     nextContext = applySlideCopyToRenderContext(
       renderContext,
       slideIndex1Based,
-      slideHeadlineBodyForRender(rawLlmSlide)
+      slideHeadlineBodyForRender(llmSlideForDocAi)
     );
   }
 

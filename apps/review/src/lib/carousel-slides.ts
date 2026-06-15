@@ -249,6 +249,27 @@ function rowsToMimicTextBlocks(rows: Record<string, unknown>[]): MimicTextBlock[
     .filter((b) => b.text);
 }
 
+/** Format project Instagram handle for display in review UI. */
+export function formatMimicProjectHandle(raw: string): string {
+  const t = raw.trim();
+  if (!t) return "";
+  return t.startsWith("@") ? t : `@${t.replace(/^@+/, "")}`;
+}
+
+/** Whether a text block is the on-slide handle slot. */
+export function isMimicHandleTextBlock(block: MimicTextBlock): boolean {
+  return block.role === "handle" || looksLikeHandleLine(block.text);
+}
+
+/** Display value for a mimic text block — handle slots always show the project handle. */
+export function mimicTextBlockDisplayText(block: MimicTextBlock, projectHandle: string): string {
+  if (isMimicHandleTextBlock(block)) {
+    const formatted = formatMimicProjectHandle(projectHandle);
+    if (formatted) return formatted;
+  }
+  return block.text;
+}
+
 /** Human label for a mimic text block in the review editor (OCR role when available). */
 export function mimicTextBlockEditorLabel(block: MimicTextBlock, index: number, total: number): string {
   if (block.role === "handle" || looksLikeHandleLine(block.text)) return "Handle";
@@ -426,11 +447,21 @@ export function enrichMimicSlideToCopyClusters(
     role: slot.llm_field,
     text: collapsed[i]?.trim() ?? "",
   }));
-  const fields = mimicSlideFieldsFromTextBlocks(text_blocks);
-  const handleFromBlocks = text_blocks.find((b) => b.role === "handle" || looksLikeHandleLine(b.text))?.text;
+  let handleSlotKept = false;
+  const normalizedBlocks = text_blocks.filter((b) => {
+    const isHandle = b.role === "handle";
+    if (isHandle) {
+      if (handleSlotKept) return false;
+      handleSlotKept = true;
+      return true;
+    }
+    return Boolean(b.text.trim()) || text_blocks.indexOf(b) < slots.length;
+  });
+  const fields = mimicSlideFieldsFromTextBlocks(normalizedBlocks);
+  const handleFromBlocks = normalizedBlocks.find((b) => b.role === "handle" || looksLikeHandleLine(b.text))?.text;
   return {
     ...slide,
-    text_blocks,
+    text_blocks: normalizedBlocks,
     on_slide_lines: fields.on_slide_lines,
     headline: fields.headline,
     body: fields.body,

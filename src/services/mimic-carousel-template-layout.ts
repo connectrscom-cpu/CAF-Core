@@ -161,7 +161,10 @@ export function injectMimicBackgroundPlateSupport(source: string): string {
 
   s = s.replace(
     /(\{\{#each body_slides\}\}\s*\r?\n\s*<div class="slide[^"]*">)\s*\r?\n/g,
-    `$1\n    ${BODY_BG_SNIPPET}\n`
+    (match, prefix) =>
+      match.includes("slide-bg") || match.includes("background_image_url")
+        ? match
+        : `${prefix}\n    ${BODY_BG_SNIPPET}\n`
   );
 
   s = s.replace(

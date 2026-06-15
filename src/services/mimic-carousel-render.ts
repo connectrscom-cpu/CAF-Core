@@ -16,13 +16,14 @@ import {
   mimicTemplateLibraryObjectPath,
   referenceIndexForTemplateSlot,
   resolveTemplateStorageFromMimic,
+  templateBgSlotForIndex,
+  type TemplateBgSlot,
 } from "../domain/mimic-template-library.js";
 import {
   mimicEvalSkipSlideIndices,
   resolveEffectiveContentSlideIndices,
 } from "../domain/mimic-content-slide-indices.js";
 import { effectiveMimicImageInputMode, isBoldMimicVisualVariant, type MimicImageInputMode } from "../domain/mimic-render-settings.js";
-import type { TemplateBgSlot } from "../domain/mimic-template-library.js";
 import type { Pool } from "pg";
 import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask } from "../repositories/assets.js";
 import { generateMimicSlideImage, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -246,14 +247,7 @@ export function mimicDeckUsesUnifiedBackgroundPlate(mimic: MimicPayloadV1): bool
 }
 
 export type { TemplateBgSlot };
-
-/** Determine the template slot type for a given slide index. */
-export function templateBgSlotForIndex(slideIndex: number, totalSlides: number): TemplateBgSlot {
-  if (slideIndex === 1) return "cover";
-  if (totalSlides > 2 && slideIndex === totalSlides) return "cta";
-  return "body";
-}
-
+export { templateBgSlotForIndex };
 
 /**
  * Asset position used for deduplication (stored on MIMIC_BACKGROUND assets).

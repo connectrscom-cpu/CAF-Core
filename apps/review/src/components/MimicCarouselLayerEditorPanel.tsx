@@ -14,12 +14,25 @@ import {
 
 } from "@/components/MimicDocAiLayerPositionEditor";
 
+import {
+  formatMimicTextBackingBackground,
+  mimicTextBackingColorToHex,
+} from "@caf-core-carousel/mimic-slide-typography";
+
 
 
 function asRec(v: unknown): Record<string, unknown> | null {
 
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 
+}
+
+function readJobTextBackingColorHex(job: Record<string, unknown> | null): string {
+  const gp = asRec(job?.generation_payload);
+  const gen = asRec(gp?.generated_output);
+  const render = asRec(gen?.render);
+  const stored = typeof render?.mimic_text_backing_color === "string" ? render.mimic_text_backing_color : null;
+  return mimicTextBackingColorToHex(stored);
 }
 
 
@@ -150,7 +163,7 @@ function parseDocAiLayerBoxes(renderInspect: Record<string, unknown> | null): Do
 
   return raw
 
-    .map((row) => {
+    .map((row, blockIndex) => {
 
       const r = asRec(row);
 
@@ -161,6 +174,12 @@ function parseDocAiLayerBoxes(renderInspect: Record<string, unknown> | null): Do
       const text = String(r.text ?? "").trim();
 
       if (!layer_key || !text) return null;
+
+      const font_weight = Number(r.font_weight);
+
+      const color_hex = typeof r.color_hex === "string" ? r.color_hex.trim() : undefined;
+
+      const font_family = typeof r.font_family === "string" ? r.font_family.trim() : undefined;
 
       return {
 
@@ -179,6 +198,14 @@ function parseDocAiLayerBoxes(renderInspect: Record<string, unknown> | null): Do
         h_px: Math.max(20, Number(r.h_px) || 48),
 
         font_size_px: Number(r.font_size_px) > 0 ? Number(r.font_size_px) : undefined,
+
+        ...(Number.isFinite(font_weight) && font_weight >= 100 ? { font_weight } : {}),
+
+        ...(color_hex && /^#[0-9a-fA-F]{3,8}$/.test(color_hex) ? { color_hex } : {}),
+
+        ...(font_family ? { font_family } : {}),
+
+        block_index: blockIndex,
 
         skip_center_avoid: r.skip_center_avoid === true,
 
@@ -225,6 +252,12 @@ function parseDocAiSavedOverrides(renderInspect: Record<string, unknown> | null)
       const hidden = r.hidden === true;
       const custom = layer_key.startsWith("custom@");
       const persistBox = box_locked || custom;
+      const font_weight = Number(r.font_weight);
+      const color_hex =
+        typeof r.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(r.color_hex.trim())
+          ? r.color_hex.trim()
+          : undefined;
+      const font_family = typeof r.font_family === "string" ? r.font_family.trim() : undefined;
 
       return {
 
@@ -241,6 +274,14 @@ function parseDocAiSavedOverrides(renderInspect: Record<string, unknown> | null)
         ...(persistBox && Number.isFinite(h_px) && h_px > 0 ? { h_px } : {}),
 
         ...(text?.trim() ? { text: text.trim() } : custom ? { text: "New text" } : {}),
+
+        ...(Number.isFinite(font_weight) && font_weight >= 100 ? { font_weight } : {}),
+
+        ...(color_hex ? { color_hex } : {}),
+
+        ...(font_family ? { font_family } : {}),
+
+        ...(r.font_style_italic === true ? { font_style_italic: true } : {}),
 
         ...(persistBox ? { box_locked: true } : {}),
 
@@ -286,6 +327,12 @@ export interface MimicCarouselLayerEditorPanelProps {
 
   onSlideSelect?: (slideIndex1Based: number) => void;
 
+  onDeleteSlide?: (slideIndex1Based: number) => void;
+
+  activeTextBlockIndex?: number | null;
+
+  onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
+
 }
 
 
@@ -318,6 +365,12 @@ export function MimicCarouselLayerEditorPanel({
 
   onSlideSelect,
 
+  onDeleteSlide,
+
+  activeTextBlockIndex = null,
+
+  onActiveTextBlockIndexChange,
+
 }: MimicCarouselLayerEditorPanelProps) {
 
   const [editorSlide, setEditorSlide] = useState(activeSlideIndex);
@@ -327,18 +380,21 @@ export function MimicCarouselLayerEditorPanel({
   const [renderInspectLoading, setRenderInspectLoading] = useState(false);
 
   const inspectRequestGenRef = useRef(0);
-  const previewRequestGenRef = useRef(0);
-
-  const [layoutPreviewUrl, setLayoutPreviewUrl] = useState<string | null>(null);
-
-  const [layoutPreviewBusy, setLayoutPreviewBusy] = useState(false);
-
-  const [layoutPreviewError, setLayoutPreviewError] = useState<string | null>(null);
 
   const [reprintScope, setReprintScope] = useState<"selected" | "all">("all");
 
   const [reprintTextBacking, setReprintTextBacking] = useState(true);
+  const [reprintTextBackingHex, setReprintTextBackingHex] = useState(() => readJobTextBackingColorHex(job));
   const [userTouchedLayout, setUserTouchedLayout] = useState(false);
+
+  useEffect(() => {
+    setReprintTextBackingHex(readJobTextBackingColorHex(job));
+  }, [job]);
+
+  const reprintTextBackingCss = useMemo(
+    () => formatMimicTextBackingBackground(reprintTextBackingHex),
+    [reprintTextBackingHex]
+  );
 
   const [reprintBusy, setReprintBusy] = useState(false);
 
@@ -425,16 +481,6 @@ export function MimicCarouselLayerEditorPanel({
 
     setUserTouchedLayout(false);
 
-    setLayoutPreviewUrl((prev) => {
-
-      if (prev) URL.revokeObjectURL(prev);
-
-      return null;
-
-    });
-
-    setLayoutPreviewError(null);
-
   }, [editorSlide]);
 
 
@@ -499,11 +545,8 @@ export function MimicCarouselLayerEditorPanel({
   const autoReprintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshCarouselAfterReprint = useCallback(() => {
-    const refreshPreview = () => void onReprintComplete?.();
-    refreshPreview();
-    for (const delayMs of [20_000, 45_000, 75_000]) {
-      window.setTimeout(refreshPreview, delayMs);
-    }
+    void onReprintComplete?.();
+    window.setTimeout(() => void onReprintComplete?.(), 35_000);
   }, [onReprintComplete]);
 
   const requestTextOverlayReprint = useCallback(
@@ -531,6 +574,7 @@ export function MimicCarouselLayerEditorPanel({
           ...(render_typography && Object.keys(render_typography).length > 0 ? { render_typography } : {}),
           ...(docai_layer_positions ? { docai_layer_positions } : {}),
           text_backing: reprintTextBacking,
+          text_backing_color: reprintTextBackingCss,
         }),
       });
       const json = (await res.json()) as { ok?: boolean; accepted?: boolean; message?: string; error?: string };
@@ -545,6 +589,7 @@ export function MimicCarouselLayerEditorPanel({
       projectSlug,
       mimicV1,
       reprintTextBacking,
+      reprintTextBackingCss,
       buildReprintTypographyPatch,
       refreshCarouselAfterReprint,
     ]
@@ -806,6 +851,8 @@ export function MimicCarouselLayerEditorPanel({
 
               text_backing: reprintTextBacking,
 
+              text_backing_color: reprintTextBackingCss,
+
               ...(persistedPositionsForInspect.length > 0
 
                 ? { docai_layer_positions: persistedPositionsForInspect }
@@ -848,147 +895,7 @@ export function MimicCarouselLayerEditorPanel({
 
     };
 
-  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, inspectCopyKey, persistedPositionsForInspect]);
-
-
-
-  const refreshLayoutPreview = useCallback(async () => {
-
-    if (!buildInspectPayloadRef.current || !templateUsed || !taskId.trim() || slideCount < 1) return;
-
-    const gen = ++previewRequestGenRef.current;
-
-    setLayoutPreviewBusy(true);
-
-    setLayoutPreviewError(null);
-
-    try {
-
-      const payload = buildInspectPayloadRef.current?.() ?? {};
-
-      const bg = getBackgroundUrlRef.current?.(editorSlide);
-
-      const gp = asRec(payload);
-
-      const draftPositions = overridesForPersist(
-
-        layerPosDraft.length > 0 ? layerPosDraft : slideDrafts[editorSlide] ?? []
-
-      );
-
-      const res = await fetch("/api/renderer/preview-live-slide", {
-
-        method: "POST",
-
-        headers: { "Content-Type": "application/json" },
-
-        signal: AbortSignal.timeout(90_000),
-
-        body: JSON.stringify({
-
-          template: templateUsed,
-
-          slide_index: editorSlide,
-
-          task_id: taskId,
-
-          run_id: String(job?.run_id ?? gp?.run_id ?? "preview"),
-
-          instagram_handle: instagramHandle,
-
-          text_backing: reprintTextBacking,
-
-          ...(draftPositions.length > 0 ? { docai_layer_positions: draftPositions } : {}),
-
-          ...(bg ? { background_image_url: bg } : {}),
-
-          payload,
-
-        }),
-
-      });
-
-      if (!res.ok) {
-
-        throw new Error(await res.text().then((t) => t.slice(0, 160)));
-
-      }
-
-      const blob = await res.blob();
-
-      if (previewRequestGenRef.current !== gen) return;
-
-      const url = URL.createObjectURL(blob);
-
-      setLayoutPreviewUrl((prev) => {
-
-        if (prev) URL.revokeObjectURL(prev);
-
-        return url;
-
-      });
-
-    } catch (e) {
-
-      if (previewRequestGenRef.current !== gen) return;
-
-      setLayoutPreviewUrl((prev) => {
-
-        if (prev) URL.revokeObjectURL(prev);
-
-        return null;
-
-      });
-
-      setLayoutPreviewError(e instanceof Error ? e.message : "Preview failed");
-
-    } finally {
-
-      if (previewRequestGenRef.current === gen) setLayoutPreviewBusy(false);
-
-    }
-
-  }, [
-
-    templateUsed,
-
-    taskId,
-
-    slideCount,
-
-    editorSlide,
-
-    instagramHandle,
-
-    reprintTextBacking,
-
-    layerPosDraft,
-
-    slideDrafts,
-
-    job?.run_id,
-
-  ]);
-
-
-
-  useEffect(
-
-    () => () => {
-
-      setLayoutPreviewUrl((prev) => {
-
-        if (prev) URL.revokeObjectURL(prev);
-
-        return null;
-
-      });
-
-    },
-
-    []
-
-  );
+  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss, inspectCopyKey, persistedPositionsForInspect]);
 
 
 
@@ -1194,15 +1101,15 @@ export function MimicCarouselLayerEditorPanel({
 
       <p className="mimic-layer-editor-panel__hint">
 
-        Drag boxes on the art-only plate. White highlights match reprint when text backing is on. Save layout,
-
-        then Reprint to update carousel PNGs. Use Preview render to check Puppeteer output (slow).
+        Drag boxes on the art plate — the editor is your live preview. Save layout, then Reprint to bake text into carousel PNGs.
 
       </p>
 
 
 
       <div className="mimic-layer-editor-panel__slide-row">
+
+        <span className="mimic-layer-editor-panel__slide-counter">Slide {editorSlide} / {slideCount}</span>
 
         {Array.from({ length: Math.max(slideCount, 1) }, (_, i) => i + 1).map((n) => {
 
@@ -1244,17 +1151,54 @@ export function MimicCarouselLayerEditorPanel({
         <button
           type="button"
           className="btn-secondary btn-sm"
-          disabled={layoutPreviewBusy || docAiLayerBoxes.length === 0}
-          onClick={() => void refreshLayoutPreview()}
+          disabled={regenerateBusy || reprintBusy || layerPosSaving}
+          onClick={() => void handleRegenerateSlideImage()}
+          title="Run Flux/Qwen again for this slide (billed)"
         >
-
-          {layoutPreviewBusy ? "Preview…" : "Preview render"}
-
+          {regenerateBusy ? "Regenerating…" : "Regenerate"}
         </button>
+
+        {onDeleteSlide && slideCount > 1 ? (
+          <button
+            type="button"
+            className="btn-danger-ghost btn-sm"
+            onClick={() => {
+              if (window.confirm(`Remove slide ${editorSlide} from this deck?`)) {
+                onDeleteSlide(editorSlide);
+              }
+            }}
+            title="Remove this slide from the carousel deck"
+          >
+            Delete slide
+          </button>
+        ) : null}
 
       </div>
 
+      {regenerateMsg ? <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p> : null}
+      {regenerateError ? <p className="mimic-layer-editor-panel__error">{regenerateError}</p> : null}
 
+      <div className="mimic-layer-editor-panel__highlight">
+        <label className="mimic-layer-editor-panel__option">
+          <input
+            type="checkbox"
+            checked={reprintTextBacking}
+            onChange={(e) => setReprintTextBacking(e.target.checked)}
+          />
+          <span>Highlight behind text</span>
+        </label>
+        {reprintTextBacking ? (
+          <label className="mimic-layer-editor-panel__highlight-color">
+            <span>Colour</span>
+            <input
+              type="color"
+              value={reprintTextBackingHex}
+              onChange={(e) => setReprintTextBackingHex(e.target.value)}
+              title="Highlight colour behind text"
+            />
+          </label>
+        ) : null}
+      </div>
 
       {!showEditor && !renderInspectLoading ? (
 
@@ -1284,25 +1228,17 @@ export function MimicCarouselLayerEditorPanel({
 
             textBacking={reprintTextBacking}
 
-            renderPreviewUrl={layoutPreviewUrl}
-
-            renderPreviewBusy={layoutPreviewBusy}
+            textBackingColor={reprintTextBackingCss}
 
             projectHandle={instagramHandle}
 
             suppressReseed={userTouchedLayout}
 
+            activeBlockIndex={activeTextBlockIndex}
+
+            onActiveBlockIndexChange={onActiveTextBlockIndexChange}
+
           />
-
-          {layoutPreviewError ? (
-
-            <p className="mimic-layer-editor-panel__error" style={{ marginTop: 6 }}>
-
-              {layoutPreviewError}
-
-            </p>
-
-          ) : null}
 
           <div className="mimic-layer-editor-panel__actions">
             <button
@@ -1355,14 +1291,6 @@ export function MimicCarouselLayerEditorPanel({
 
           </label>
 
-          <label className="mimic-layer-editor-panel__option mimic-layer-editor-panel__option--muted">
-
-            <input type="checkbox" checked={reprintTextBacking} onChange={(e) => setReprintTextBacking(e.target.checked)} />
-
-            <span>White highlight boxes</span>
-
-          </label>
-
         </div>
 
         <button
@@ -1379,33 +1307,6 @@ export function MimicCarouselLayerEditorPanel({
         {reprintMsg ? <p className="mimic-layer-editor-panel__status">{reprintMsg}</p> : null}
 
         {reprintError ? <p className="mimic-layer-editor-panel__error">{reprintError}</p> : null}
-
-      </div>
-
-
-
-      <div className="mimic-layer-editor-panel__regenerate">
-
-        <p className="mimic-layer-editor-panel__regenerate-hint">
-
-          Runs Flux/Qwen again for slide {editorSlide} only (billed). Use after art or composition issues — not for copy or layout tweaks.
-
-        </p>
-
-        <button
-          type="button"
-          className="btn-secondary btn-block mimic-layer-editor-panel__regenerate-btn"
-          disabled={regenerateBusy || reprintBusy || layerPosSaving}
-          onClick={() => void handleRegenerateSlideImage()}
-        >
-
-          {regenerateBusy ? "Regenerating…" : `Regenerate image — slide ${editorSlide}`}
-
-        </button>
-
-        {regenerateMsg ? <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p> : null}
-
-        {regenerateError ? <p className="mimic-layer-editor-panel__error">{regenerateError}</p> : null}
 
       </div>
 

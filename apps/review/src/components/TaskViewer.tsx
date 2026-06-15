@@ -36,6 +36,17 @@ export interface TaskViewerProps {
   carouselCopySidePanel?: ReactNode;
   /** Sync carousel slide when side panel changes slide (1-based). */
   carouselActiveSlideIndex?: number;
+  /** Mimic: original reference frame URL for current slide. */
+  referenceSlideUrl?: string;
+  projectHandle?: string;
+  caption?: string;
+  onCaptionChange?: (value: string) => void;
+  activeTextBlockIndex?: number | null;
+  onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
+  onDeleteSlide?: (slideIndex1Based: number) => void;
+  onRegenerateSlide?: (slideIndex1Based: number) => void;
+  regenerateSlideBusy?: boolean;
+  mimicTemplateBg?: boolean;
 }
 
 export function TaskViewer({
@@ -53,6 +64,16 @@ export function TaskViewer({
   onCarouselSlideChange,
   carouselCopySidePanel,
   carouselActiveSlideIndex,
+  referenceSlideUrl,
+  projectHandle,
+  caption,
+  onCaptionChange,
+  activeTextBlockIndex,
+  onActiveTextBlockIndexChange,
+  onDeleteSlide,
+  onRegenerateSlide,
+  regenerateSlideBusy,
+  mimicTemplateBg,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -172,6 +193,16 @@ export function TaskViewer({
           copySidePanel={carouselCopySidePanel}
           mimicCopyEditor={Boolean(carouselCopySidePanel)}
           activeSlideIndex={carouselActiveSlideIndex}
+          referenceSlideUrl={referenceSlideUrl}
+          projectHandle={projectHandle}
+          caption={caption}
+          onCaptionChange={onCaptionChange}
+          activeTextBlockIndex={activeTextBlockIndex}
+          onActiveTextBlockIndexChange={onActiveTextBlockIndexChange}
+          onDeleteSlide={onDeleteSlide ? () => onDeleteSlide(carouselActiveSlideIndex ?? 1) : undefined}
+          onRegenerateSlide={onRegenerateSlide ? () => onRegenerateSlide(carouselActiveSlideIndex ?? 1) : undefined}
+          regenerateSlideBusy={regenerateSlideBusy}
+          mimicTemplateBg={mimicTemplateBg}
         />
       </div>
     );

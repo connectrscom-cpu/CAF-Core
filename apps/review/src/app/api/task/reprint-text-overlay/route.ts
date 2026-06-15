@@ -55,6 +55,8 @@ export async function POST(request: NextRequest) {
     }
 
     const textBacking = body?.text_backing !== false;
+    const textBackingColor =
+      typeof body?.text_backing_color === "string" ? body.text_backing_color.trim() : undefined;
     const rawDocAi = body?.docai_layer_positions;
     const docaiLayerPositions =
       rawDocAi && typeof rawDocAi === "object" && !Array.isArray(rawDocAi)
@@ -65,6 +67,7 @@ export async function POST(request: NextRequest) {
       slideIndices,
       renderTypography,
       textBacking,
+      textBackingColor,
       docaiLayerPositions,
     });
     if (!result.ok) {

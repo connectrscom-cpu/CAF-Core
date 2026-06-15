@@ -137,10 +137,24 @@ export function contentReferenceIndicesForTemplate(
   entry: Record<string, unknown>,
   totalRefs: number
 ): number[] {
-  return resolveEffectiveContentSlideIndices(entry, totalRefs);
+  const base = resolveEffectiveContentSlideIndices(entry, totalRefs);
+  const slides = aestheticSlideRecords(entry);
+  const nonPromo = base.filter((idx) => {
+    const slide = asRecord(slides.find((s) => Number(s.slide_index) === idx) ?? slides[idx - 1]);
+    if (!slide) return true;
+    return !slideIsPromotionalForLibrary(slide);
+  });
+  return nonPromo.length > 0 ? nonPromo : base;
 }
 
 export type TemplateBgSlot = "cover" | "body" | "cta";
+
+/** Output slide index → cover / body / CTA slot for template_bg mimic decks. */
+export function templateBgSlotForIndex(slideIndex: number, totalSlides: number): TemplateBgSlot {
+  if (slideIndex === 1) return "cover";
+  if (totalSlides > 2 && slideIndex === totalSlides) return "cta";
+  return "body";
+}
 
 /**
  * Pick a non-promotional reference index for cover / body / CTA extraction.
@@ -157,6 +171,23 @@ export function referenceIndexForTemplateSlot(
   if (slot === "cta") return candidates[candidates.length - 1]!;
   const bodyPick = candidates.length >= 3 ? candidates[Math.floor(candidates.length / 2)] : candidates[0];
   return bodyPick ?? 1;
+}
+
+/** Slide plan reference frame for template_bg — maps cover/body/cta slots to archive geometry. */
+export function templateBgSlidePlanRef(
+  entry: Record<string, unknown>,
+  slideIndex: number,
+  totalSlides: number,
+  refFrameCount: number,
+  unifiedBg: boolean
+): { reference_index: number; source_slide_index?: number } {
+  if (!unifiedBg) {
+    const refSlot = refFrameCount > 0 ? ((slideIndex - 1) % refFrameCount) + 1 : 1;
+    return { reference_index: refSlot };
+  }
+  const slot = templateBgSlotForIndex(slideIndex, totalSlides);
+  const refIdx = referenceIndexForTemplateSlot(entry, slot, refFrameCount || totalSlides);
+  return { reference_index: refIdx, source_slide_index: refIdx };
 }
 
 function programmaticStorageQuality(
