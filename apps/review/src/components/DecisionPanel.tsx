@@ -77,6 +77,10 @@ export interface DecisionPanelProps {
   showCarouselSlideRework?: boolean;
   /** Restored from last NEEDS_EDIT `slide_rework_indices`. */
   existingSlideReworkIndices?: number[];
+  /** Mimic carousel: hide issue-tag cloud (copy/layout edited elsewhere). */
+  hideIssueTags?: boolean;
+  /** Mimic carousel: compact decision card styling and copy. */
+  mimicReviewMode?: boolean;
 }
 
 export function DecisionPanel({
@@ -108,6 +112,8 @@ export function DecisionPanel({
   carouselSlideCount = 0,
   showCarouselSlideRework = false,
   existingSlideReworkIndices,
+  hideIssueTags = false,
+  mimicReviewMode = false,
 }: DecisionPanelProps) {
   const [decision, setDecision] = useState<DecisionValue | "">((existingDecision as DecisionValue) || "");
   const [notes, setNotes] = useState(existingNotes);
@@ -271,7 +277,7 @@ export function DecisionPanel({
   };
 
   return (
-    <div className="card surface-warn">
+    <div className={`card surface-warn${mimicReviewMode ? " decision-panel--mimic" : ""}`}>
       <div className="card-header">Decision</div>
 
       <div className="decision-buttons">
@@ -305,34 +311,52 @@ export function DecisionPanel({
         </button>
       </div>
 
-      <div
-        style={{
-          marginBottom: 14,
-          padding: 12,
-          background: "var(--bg-secondary)",
-          borderRadius: 8,
-          border: "1px solid var(--border-subtle)",
-        }}
-      >
-        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
-          <input
-            type="checkbox"
-            checked={regenerateAssets}
-            onChange={(e) => setRegenerateAssets(e.target.checked)}
-            style={{ marginTop: 3 }}
-          />
-          <span>
-            <strong>Regenerate rendered assets</strong> — run billed media outputs again when the pipeline would
-            charge another render (HeyGen, video tools, etc.).
-            <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
-              This is <strong>not</strong> <strong>Rewrite copy (LLM)</strong>. Carousel: if you change{" "}
-              <strong>font sizes or font scale</strong> in Edits for rework, slide PNGs are always regenerated so
-              thumbnails match — that path does not use this checkbox. Uncheck here mainly to skip expensive
-              non-carousel reruns when you only want text patched.
+      {!mimicReviewMode ? (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: 12,
+            background: "var(--bg-secondary)",
+            borderRadius: 8,
+            border: "1px solid var(--border-subtle)",
+          }}
+        >
+          <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={regenerateAssets}
+              onChange={(e) => setRegenerateAssets(e.target.checked)}
+              style={{ marginTop: 3 }}
+            />
+            <span>
+              <strong>Regenerate rendered assets</strong> — run billed media outputs again when the pipeline would
+              charge another render (HeyGen, video tools, etc.).
+              <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
+                This is <strong>not</strong> <strong>Rewrite copy (LLM)</strong>. Carousel: if you change{" "}
+                <strong>font sizes or font scale</strong> in Edits for rework, slide PNGs are always regenerated so
+                thumbnails match — that path does not use this checkbox. Uncheck here mainly to skip expensive
+                non-carousel reruns when you only want text patched.
+              </span>
             </span>
-          </span>
-        </label>
-      </div>
+          </label>
+        </div>
+      ) : (
+        <div className="decision-panel--mimic__regen-hint">
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={regenerateAssets}
+              onChange={(e) => setRegenerateAssets(e.target.checked)}
+            />
+            <span>
+              <strong>Regenerate images on Needs Edit rework</strong> — full-deck Flux pass when you submit rework.
+            </span>
+          </label>
+          <p className="decision-panel--mimic__regen-note">
+            For one slide now, use <strong>Regenerate image</strong> in the text layout panel (billed).
+          </p>
+        </div>
+      )}
 
       {hasEdits && (
         <div style={{ marginBottom: 14 }}>
@@ -356,46 +380,48 @@ export function DecisionPanel({
         />
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <label className="filter-label">Issue tags (what went wrong — for the next generation)</label>
-        <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: 8, marginTop: 6, border: "1px solid var(--border-subtle)" }}>
-          <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 8 }}>
-            {includeHeyGenFields ? (
-              <>
-                Use <strong style={{ color: "var(--fg)" }}>HeyGen video — edits for rework</strong> for script / avatar /
-                voice, and hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
-                when applicable — stored on the NEEDS_EDIT row for the next rework pass.
-              </>
-            ) : (
-              <>
-                Use hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
-                — they are stored on the NEEDS_EDIT row and fed into the next rework pass.
-              </>
-            )}
-          </p>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {REVIEW_ISSUE_TAGS.map((tag) => (
-              <button
-                key={tag}
-                type="button"
-                onClick={() => toggleTag(tag)}
-                style={{
-                  padding: "4px 10px",
-                  borderRadius: 6,
-                  fontSize: 12,
-                  border: `1px solid ${tags.includes(tag) ? "var(--accent)" : "var(--border)"}`,
-                  background: tags.includes(tag) ? "var(--accent)" : "var(--card)",
-                  color: tags.includes(tag) ? "#fff" : "var(--fg-secondary)",
-                  cursor: "pointer",
-                  transition: "all 0.15s",
-                }}
-              >
-                {tag}
-              </button>
-            ))}
+      {!hideIssueTags ? (
+        <div style={{ marginBottom: 14 }}>
+          <label className="filter-label">Issue tags (what went wrong — for the next generation)</label>
+          <div style={{ padding: 12, background: "var(--bg-secondary)", borderRadius: 8, marginTop: 6, border: "1px solid var(--border-subtle)" }}>
+            <p style={{ fontSize: 12, color: "var(--fg-secondary)", marginBottom: 8 }}>
+              {includeHeyGenFields ? (
+                <>
+                  Use <strong style={{ color: "var(--fg)" }}>HeyGen video — edits for rework</strong> for script / avatar /
+                  voice, and hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
+                  when applicable — stored on the NEEDS_EDIT row for the next rework pass.
+                </>
+              ) : (
+                <>
+                  Use hook, caption, hashtags, and slides in <strong style={{ color: "var(--fg)" }}>Edits for rework</strong>{" "}
+                  — they are stored on the NEEDS_EDIT row and fed into the next rework pass.
+                </>
+              )}
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {REVIEW_ISSUE_TAGS.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  style={{
+                    padding: "4px 10px",
+                    borderRadius: 6,
+                    fontSize: 12,
+                    border: `1px solid ${tags.includes(tag) ? "var(--accent)" : "var(--border)"}`,
+                    background: tags.includes(tag) ? "var(--accent)" : "var(--card)",
+                    color: tags.includes(tag) ? "#fff" : "var(--fg-secondary)",
+                    cursor: "pointer",
+                    transition: "all 0.15s",
+                  }}
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      ) : null}
 
       {showCarouselSlideRework &&
         carouselSlideCount > 0 &&

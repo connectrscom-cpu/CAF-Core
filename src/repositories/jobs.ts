@@ -275,3 +275,26 @@ export async function patchMimicModeOverride(
   );
   return (rowCount ?? 0) > 0;
 }
+
+/** Merge reviewer text-layer positions into generation_payload.mimic_v1.docai_layer_positions. */
+export async function patchMimicDocAiLayerPositions(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  docaiLayerPositions: Record<string, unknown>
+): Promise<boolean> {
+  const { rowCount } = await db.query(
+    `UPDATE caf_core.content_jobs
+        SET generation_payload = jsonb_set(
+              COALESCE(generation_payload, '{}'::jsonb),
+              '{mimic_v1,docai_layer_positions}',
+              $3::jsonb,
+              true
+            ),
+            updated_at = NOW()
+      WHERE project_id = $1 AND task_id = $2
+        AND generation_payload ? 'mimic_v1'`,
+    [projectId, taskId, JSON.stringify(docaiLayerPositions)]
+  );
+  return (rowCount ?? 0) > 0;
+}

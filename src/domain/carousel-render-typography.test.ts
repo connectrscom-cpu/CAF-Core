@@ -3,6 +3,7 @@ import {
   extractCarouselSlidesAndTypographyFromOverrideJson,
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
   mergeCarouselTypographyIntoGeneratedOutputRender,
+  parseCarouselRenderTypographyPatch,
   pickCarouselTypographyPatch,
   pickCarouselTypographyPatchFromPlatformConstraints,
 } from "./carousel-render-typography.js";
@@ -61,5 +62,16 @@ describe("carousel-render-typography", () => {
       carousel_headline_font_px: 64,
       font_scale: 1,
     });
+  });
+
+  it("parseCarouselRenderTypographyPatch clamps font_scale and ignores invalid px", () => {
+    expect(
+      parseCarouselRenderTypographyPatch({
+        font_scale: 2,
+        carousel_headline_font_px: 80,
+        carousel_body_font_px: "48",
+        carousel_kicker_font_px: "nope",
+      })
+    ).toEqual({ font_scale: 1.25, carousel_headline_font_px: 80, carousel_body_font_px: 48 });
   });
 });

@@ -74,22 +74,36 @@ export function selectCarouselPreviewAssets<
   const byPosition = new Map<number, T>();
   for (const row of candidates) {
     const prev = byPosition.get(row.position);
-    if (!prev || carouselPreviewAssetPriority(row.asset_type) < carouselPreviewAssetPriority(prev.asset_type)) {
+    const rowPri = carouselPreviewAssetPriority(row.asset_type);
+    const prevPri = prev ? carouselPreviewAssetPriority(prev.asset_type) : 99;
+    if (!prev || rowPri < prevPri) {
+      byPosition.set(row.position, row);
+      continue;
+    }
+    if (rowPri === prevPri) {
+      // Same type at same position — keep the later row (reprint inserts after delete).
       byPosition.set(row.position, row);
     }
   }
   return [...byPosition.values()].sort((a, b) => a.position - b.position);
 }
 
+function withCacheBust(url: string, token: string | number | undefined): string {
+  const u = url.trim();
+  if (!u || token == null || token === "") return u;
+  const sep = u.includes("?") ? "&" : "?";
+  return `${u}${sep}v=${encodeURIComponent(String(token))}`;
+}
+
 export function taskAssetsToPreviewRows(
   assets: Array<{ position: number; public_url: string | null; asset_type?: string | null }>,
-  opts?: { flowTypeHint?: string }
+  opts?: { flowTypeHint?: string; cacheBust?: string | number }
 ): TaskAssetPreview[] {
   const rows = selectCarouselPreviewAssets(assets);
   const single = rows.length === 1;
   const flowLooksVideo = /video|heygen|reel|avatar|tiktok|shorts|mux|scene/i.test(opts?.flowTypeHint ?? "");
   return rows.map((a) => {
-    const public_url = (a.public_url ?? "").trim();
+    const public_url = withCacheBust((a.public_url ?? "").trim(), opts?.cacheBust);
     let kind = mediaKindFromAsset(public_url, a.asset_type ?? null);
     if (kind === "unknown") kind = single && flowLooksVideo ? "video" : "image";
     return { position: a.position, public_url, kind, asset_type: a.asset_type ?? null };

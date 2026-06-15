@@ -169,6 +169,26 @@ describe("mimic-job-grounding", () => {
     expect(layout[11]?.reference_on_screen_text).toContain("SIGN_12");
   });
 
+  it("buildContentSlideCopyLayoutFromEntry expands theme-skipped decks from archive frame count", () => {
+    const layout = buildContentSlideCopyLayoutFromEntry({
+      aesthetic_analysis_json: {
+        mimic_evaluation: {
+          recommended_mode: "text_on_template",
+          content_slide_indices: [1],
+          skip_slide_indices: [2, 3, 4, 5],
+          skip_reason: "No relevance to theme",
+        },
+        slides: [{ slide_index: 1, on_screen_text_transcript: "aries cover" }],
+      },
+      stored_inspection_media_json: {
+        items: [{ index: 1 }, { index: 2 }, { index: 3 }, { index: 4 }, { index: 5 }],
+      },
+    });
+    expect(layout).toHaveLength(5);
+    expect(layout[0]?.reference_on_screen_text).toContain("aries");
+    expect(layout[4]?.slide_index).toBe(5);
+  });
+
   it("buildMimicJobPlanningGroundingFromEntry includes slide_copy_layout from full entry", () => {
     const g = buildMimicJobPlanningGroundingFromEntry(
       {
@@ -239,8 +259,9 @@ describe("mimic-job-grounding", () => {
     expect(out).toContain("reference_on_screen_text");
     expect(out).toContain("mimic_copy_job_brief");
     expect(out).toContain("reference_hook_preview");
-    expect(out).not.toContain("text_blocks");
+    expect(out).toContain("copy_slots_v1");
     expect(out).not.toContain('"x":');
+    expect(out).not.toContain('"font_size_px"');
     expect(out).not.toContain("mimic_render_context");
     expect(out).not.toContain("mimic_visual_guideline_for_copy");
     expect(out).toContain("Semantic fidelity");

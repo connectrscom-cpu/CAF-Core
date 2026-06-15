@@ -29,6 +29,15 @@ function parseSlidesArray(slidesJson: string): unknown[] | null {
   return null;
 }
 
+export function replaceSlidesInGeneratedOutput(
+  generatedOutput: Record<string, unknown>,
+  slides: Record<string, unknown>[]
+): Record<string, unknown> {
+  const out = JSON.parse(JSON.stringify(generatedOutput)) as Record<string, unknown>;
+  if (!setSlidesIfPresent(out, slides) && !Array.isArray(out.slides)) out.slides = slides;
+  return out;
+}
+
 function setSlidesIfPresent(gen: Record<string, unknown>, slides: unknown[]): boolean {
   const tryDeck = asRec(gen.slide_deck);
   if (tryDeck) {

@@ -58,6 +58,8 @@ export interface MimicPayloadV1 {
     finished_at?: string;
     qc?: Record<string, unknown>;
   };
+  /** Reviewer layout editor — preserved across pick/merge; consumed at render via raw mimic_v1. */
+  docai_layer_positions?: Record<string, unknown>;
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";
@@ -184,6 +186,9 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     },
     slide_plans: slide_plans?.length ? slide_plans : undefined,
     render: asRecord(rec.render) ?? undefined,
+    ...(rec.docai_layer_positions != null
+      ? { docai_layer_positions: rec.docai_layer_positions as Record<string, unknown> }
+      : {}),
   };
 }
 
@@ -205,5 +210,16 @@ export function mergeMimicPayloadSlice(
   payload: Record<string, unknown>,
   mimic: MimicPayloadV1
 ): Record<string, unknown> {
-  return { ...payload, [MIMIC_PAYLOAD_KEY]: mimic };
+  const existing = asRecord(payload[MIMIC_PAYLOAD_KEY]);
+  const docai_layer_positions: Record<string, unknown> | undefined =
+    existing?.docai_layer_positions != null
+      ? (existing.docai_layer_positions as Record<string, unknown>)
+      : mimic.docai_layer_positions;
+  return {
+    ...payload,
+    [MIMIC_PAYLOAD_KEY]: {
+      ...mimic,
+      ...(docai_layer_positions != null ? { docai_layer_positions } : {}),
+    },
+  };
 }

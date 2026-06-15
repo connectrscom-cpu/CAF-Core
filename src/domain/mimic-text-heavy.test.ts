@@ -197,4 +197,22 @@ describe("buildMimicRenderContextForLlm", () => {
     expect(ctx.target_slide_count).toBe(2);
     expect(ctx.render_sequence).toBe("visual_plate_then_hbs_overlay");
   });
+
+  it("records visual_similarity_pct and bold variant note at 10%", () => {
+    const mimic: MimicPayloadV1 = {
+      schema_version: 1,
+      mode: "carousel_visual",
+      classified_at: "2026-01-01T00:00:00.000Z",
+      source_insights_id: "ins_a",
+      analysis_tier: "top_performer_carousel",
+      reference_items: [
+        { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg" },
+      ],
+      twist_brief: { visual_only: true, legal_note: "pattern only" },
+    };
+    const ctx = buildMimicRenderContextForLlm(mimic, {}, { visualSimilarityPct: 10 });
+    expect(ctx.visual_similarity_pct).toBe(10);
+    expect(ctx.operator_note).toContain("bold visual variant");
+    expect(ctx.operator_note).toContain("~10%");
+  });
 });

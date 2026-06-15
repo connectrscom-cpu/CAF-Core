@@ -772,7 +772,7 @@ function renderMimicRenderSettingsHtml(opts: {
       </div>
       <div class="plan-cap-row">
         <label for="plan-cap-mimic-visual-sim" title="How closely full-bleed mimic slides should match the reference visual — lower reads as a more distinct variant.">Visual similarity %</label>
-        <input type="number" id="plan-cap-mimic-visual-sim" min="50" max="95" step="1" placeholder="${opts.serverVisualSimilarityPct}" />
+        <input type="number" id="plan-cap-mimic-visual-sim" min="0" max="100" step="1" placeholder="${opts.serverVisualSimilarityPct}" />
       </div>
       <div class="plan-cap-row plan-cap-row--select">
         <label for="plan-cap-mimic-text-flux" title="Strip reference text from images, then either composite your LLM copy via precise HTML/CSS (Document AI bboxes) or bake copy in the image model.">Mimic text rendering</label>
@@ -1369,6 +1369,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     const limit = Math.min(200, Math.max(1, parseInt(query.limit ?? "80", 10)));
     const offset = Math.max(0, parseInt(query.offset ?? "0", 10));
     const rows = await listSignalPacks(db, project.id, limit, offset);
+    reply.header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
     return {
       ok: true,
       rows: rows.map((p) => ({
@@ -1863,7 +1864,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       } else {
         const parsed = parseProjectMimicVisualSimilarityPct(raw);
         if (parsed == null) {
-          return { ok: false, error: "invalid mimic_visual_similarity_pct (use integer 50–95 or empty for server default)" };
+          return { ok: false, error: "invalid mimic_visual_similarity_pct (use integer 0–100 or empty for server default)" };
         }
         patch.mimic_visual_similarity_pct = parsed;
       }
@@ -3774,7 +3775,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
   <div class="runs-ops">
     <div class="runs-ops-title">Operations</div>
     <div class="runs-ops-row">
-      <button type="button" class="btn" onclick="togglePanel('create-panel')">Pick signal pack</button>
+      <button type="button" class="btn" onclick="openCreatePanel()">Pick signal pack</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
       <p class="runs-ops-hint"><strong>Pick signal pack</strong> attaches a pack built in <strong>Processing</strong> (<code>ideas_json</code>). Choose automated rules, LLM picking, or manual format tabs before <strong>Start</strong>. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps planned jobs). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
@@ -3875,7 +3876,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
   <div id="create-panel" class="panel card" style="display:none;max-width:560px">
     <div class="card-h">Pick signal pack</div>
     <form id="create-form">
-      <div class="form-group"><label>Signal pack <span style="color:var(--red)">*</span></label><select name="signal_pack_id" id="create-signal-pack" required style="width:100%;max-width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"><option value="">Loading…</option></select><p class="runs-ops-hint" style="margin:8px 0 0">Built in <strong>Processing</strong>; shows created date and idea/overall counts.</p></div>
+      <div class="form-group"><label>Signal pack <span style="color:var(--red)">*</span></label><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><select name="signal_pack_id" id="create-signal-pack" required style="flex:1;min-width:200px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)"><option value="">Loading…</option></select><button type="button" class="btn-ghost btn-sm" onclick="loadSignalPackSelect()" title="Reload signal packs from Processing">Reload</button></div><p class="runs-ops-hint" style="margin:8px 0 0">Built in <strong>Processing</strong>; shows created date and idea/overall counts.</p></div>
       <div class="form-group"><label>Run ID (optional, auto-generated if empty)</label><input type="text" name="run_id" placeholder="e.g. SNS_2026W14"></div>
       <div class="form-group"><label>Run name (optional)</label><input type="text" name="name" maxlength="200" placeholder="Friendly label for this run"></div>
       <div class="form-group"><label>Source Window (optional)</label><input type="text" name="source_window" placeholder="e.g. 2026W14"></div>
@@ -3915,7 +3916,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
         </select>
         <p class="runs-ops-hint" style="margin:8px 0 0">Reference slides always have text removed for backgrounds. This chooses how <strong>your</strong> generated copy is rendered. Saved to project mimic settings when you create the run.</p>
       </div>
-      <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="togglePanel('create-panel')">Cancel</button><span id="create-msg" class="form-msg"></span></div>
+      <div class="form-actions"><button type="submit" class="btn" id="create-btn">Create Run</button><button type="button" class="btn-ghost" onclick="closeCreatePanel()">Cancel</button><span id="create-msg" class="form-msg"></span></div>
     </form>
   </div>
 
@@ -3944,33 +3945,35 @@ function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+actio
 function badge(s){const u=(s||'').toUpperCase();let c='badge-b';if(u.includes('COMPLETE')||u==='APPROVED')c='badge-g';else if(u==='FAILED'||u==='CANCELLED')c='badge-r';else if(u==='PLANNING'||u==='GENERATING'||u==='RENDERING')c='badge-y';return '<span class="badge '+c+'">'+esc(s||'—')+'</span>';}
 function fmtDate(d){if(!d)return '—';try{return new Date(d).toLocaleString()}catch{return d}}
 
-function togglePanel(id){
-  const el=document.getElementById(id);
-  if(!el)return;
-  const panels=['create-panel'];
-  panels.forEach(p=>{if(p!==id){const x=document.getElementById(p);if(x)x.style.display='none';}});
-  const next=el.style.display==='none'?'block':'none';
-  el.style.display=next;
-  if(id==='create-panel'&&next==='block'){
-    loadSignalPackSelect();
-    syncCreateIdeaPickUi();
-    if(typeof window.__bindCafTerms==='function'){
-      var cp=document.getElementById('create-panel');
-      if(cp)window.__bindCafTerms(cp);
-    }
-  }
-  if(next==='block'){
-    try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
-    try{showToast('Pick signal pack panel opened.',true);}catch(_e){}
-  }
+function closeCreatePanel(){
+  const el=document.getElementById('create-panel');
+  if(el)el.style.display='none';
 }
+
+function openCreatePanel(){
+  const el=document.getElementById('create-panel');
+  if(!el)return;
+  el.style.display='block';
+  loadSignalPackSelect();
+  syncCreateIdeaPickUi();
+  if(typeof window.__bindCafTerms==='function')window.__bindCafTerms(el);
+  try{el.scrollIntoView({behavior:'smooth',block:'start'});}catch(_e){}
+  try{showToast('Pick signal pack panel opened.',true);}catch(_e){}
+}
+
+document.addEventListener('visibilitychange',function(){
+  if(document.visibilityState!=='visible')return;
+  var cp=document.getElementById('create-panel');
+  if(cp&&cp.style.display==='block')loadSignalPackSelect();
+});
 
 async function loadSignalPackSelect(){
   const sel=document.getElementById('create-signal-pack');
   if(!sel||!SLUG)return;
+  const prev=(sel.value||'').trim();
   sel.innerHTML='<option value="">Loading…</option>';
   try{
-    const r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=80&offset=0');
+    const r=await cafFetch('/v1/admin/signal-packs?project='+encodeURIComponent(SLUG)+'&limit=80&offset=0&_='+Date.now(),{cache:'no-store'});
     const d=await r.json();
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     const packs=d.rows||[];
@@ -3983,6 +3986,7 @@ async function loadSignalPackSelect(){
       h+='<option value="'+esc(p.id)+'">'+when+' · '+fn+' (ideas '+(p.ideas_count||0)+', overall '+(p.candidate_count||0)+')</option>';
     }
     sel.innerHTML=h;
+    if(prev&&sel.querySelector('option[value="'+prev.replace(/"/g,'')+'"]'))sel.value=prev;
   }catch(e){
     sel.innerHTML='<option value="">Could not load signal packs</option>';
     showToast('Could not load signal packs: '+String(e.message||e),false);
@@ -4668,7 +4672,7 @@ async function saveMimicPlanningCaps(){
   const simRaw=(mSimInp&&mSimInp.value||'').trim();
   if(simRaw!==''){
     var simN=parseInt(simRaw,10);
-    if(!Number.isFinite(simN)||simN<50||simN>95){showToast('Visual similarity: enter an integer 50–95 or leave empty for server default.',false);return;}
+    if(!Number.isFinite(simN)||simN<0||simN>100){showToast('Visual similarity: enter an integer 0–100 or leave empty for server default.',false);return;}
   }
   for(var mi=0;mi<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;mi++){
     var mg=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[mi];
@@ -4795,7 +4799,7 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
     const mode=String(d.idea_picking_mode||body.idea_picking_mode||'rules');
     if(mode==='manual'&&runId){
       showToast('Run created: '+runId+' — pick ideas in the popup.',true);
-      const cp=document.getElementById('create-panel');if(cp)cp.style.display='none';
+      closeCreatePanel();
       e.target.reset();
       syncCreateIdeaPickUi();
       loadRuns(1);
@@ -4812,7 +4816,7 @@ document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
     }else{
       showToast('Run created: '+runId,true);
     }
-    const cp=document.getElementById('create-panel');if(cp)cp.style.display='none';
+    closeCreatePanel();
     e.target.reset();
     syncCreateIdeaPickUi();
     loadRuns(1);
@@ -5811,9 +5815,11 @@ function renderJobDetailHtml(d){
   lines.push('<div class="job-detail-toolbar" style="display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap">');
   lines.push('<button type="button" class="btn btn-sm" onclick="copyJobDetailFull(event)">Copy all for debug</button>');
   var rs=j.render_state||{};
-  var canResume=(String(j.status||'').toUpperCase()==='RENDERING') && (String(rs.status||'').toLowerCase()==='pending' || String(rs.status||'').toLowerCase()==='in_progress');
+  var rsStatus=String(rs.status||'').toLowerCase();
+  var rsProvider=String(rs.provider||j.render_provider||'').toLowerCase();
+  var canResume=(String(j.status||'').toUpperCase()==='RENDERING') && (rsStatus==='pending' || rsStatus==='in_progress' || rsStatus==='failed') && (rsProvider==='carousel-renderer' || rsProvider==='carousel_renderer' || String(rs.phase||'').toLowerCase().indexOf('sora')>=0 || String(rs.phase||'').toLowerCase().indexOf('heygen')>=0);
   if(canResume){
-    lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();resumeJob(event,'+JSON.stringify(j.task_id||'')+')" title="Resume pipeline without clearing payload (picks up missing renders)">Resume</button>');
+    lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();resumeJob(event,'+JSON.stringify(j.task_id||'')+')" title="Resume pipeline without clearing payload (mimic reprint re-runs text overlay on stored plates)">Resume</button>');
   }
   lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run entire pipeline</button>');
   lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
@@ -5954,7 +5960,8 @@ async function loadJobs(p,silent){
     var badgeStatus=stJob;
     if (isRendering && renderPhase==='failed') badgeStatus='FAILED';
     var isFailedBadge=String(badgeStatus||'').toUpperCase()==='FAILED';
-    var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress') && (renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
+    var renderProvider=String(j.render_provider||'').toLowerCase();
+    var showResume=isRendering && (renderStatus==='pending' || renderStatus==='in_progress' || renderStatus==='failed') && (renderProvider==='carousel-renderer' || renderProvider==='carousel_renderer' || renderPhase.indexOf('sora')>=0 || renderPhase.indexOf('heygen')>=0);
     h+='<tr class="job-row" onclick="toggleJobDetail('+i+')"><td class="mono" style="color:var(--accent)" title="'+escAttr(j.task_id)+'"><div class="job-cell-inner">'+esc(trunc(j.task_id,52))+' <span style="opacity:.5">▸</span></div></td>';
     h+='<td class="mono" style="font-size:11px" title="'+escAttr(j.run_id||"")+'"><div class="job-cell-inner">'+esc(j.run_id||'—')+'</div></td>';
     var pkg=String(j.package_type||'').trim();
@@ -5974,7 +5981,7 @@ async function loadJobs(p,silent){
     h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td>';
     h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">';
     if(showResume){
-      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — continues missing clips / mux">Resume</button>';
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — mimic reprint re-composites text on stored plates">Resume</button>';
     }
     h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
     h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="14"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';

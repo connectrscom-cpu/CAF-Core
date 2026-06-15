@@ -30,6 +30,12 @@ export interface TaskViewerProps {
   carouselLivePreview?: CarouselLivePreviewOptions | null;
   /** e.g. debug-bundle copy — shown beside preview open links. */
   previewToolbar?: ReactNode;
+  /** Carousel viewer navigation (1-based slide index). */
+  onCarouselSlideChange?: (slideIndex1Based: number) => void;
+  /** Right panel beside slide copy fields (mimic text layout editor). */
+  carouselCopySidePanel?: ReactNode;
+  /** Sync carousel slide when side panel changes slide (1-based). */
+  carouselActiveSlideIndex?: number;
 }
 
 export function TaskViewer({
@@ -44,6 +50,9 @@ export function TaskViewer({
   onSpokenScriptChange,
   carouselLivePreview = null,
   previewToolbar,
+  onCarouselSlideChange,
+  carouselCopySidePanel,
+  carouselActiveSlideIndex,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -159,6 +168,10 @@ export function TaskViewer({
           heyGenVideoMode={heyGenVideoMode}
           spokenScript={effectiveSpokenScript}
           onSpokenScriptChange={heyGenVideoMode && !readOnly ? onSpokenScriptChange : undefined}
+          onCurrentSlideChange={onCarouselSlideChange}
+          copySidePanel={carouselCopySidePanel}
+          mimicCopyEditor={Boolean(carouselCopySidePanel)}
+          activeSlideIndex={carouselActiveSlideIndex}
         />
       </div>
     );

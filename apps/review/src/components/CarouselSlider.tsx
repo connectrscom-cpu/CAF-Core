@@ -1,7 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
+import {
+  mimicSlideFieldsFromTextBlocks,
+  mimicTextBlockEditorLabel,
+  resolveMimicTextBlocksForSlide,
+} from "@/lib/carousel-slides";
 import { isVideoUrl } from "@/lib/media-url";
 
 const SWIPE_THRESHOLD = 50;
@@ -41,6 +46,14 @@ export interface CarouselSliderProps {
   heyGenVideoMode?: boolean;
   spokenScript?: string;
   onSpokenScriptChange?: (v: string) => void;
+  /** Fires when the user navigates to another slide (1-based index). */
+  onCurrentSlideChange?: (slideIndex1Based: number) => void;
+  /** Optional panel rendered beside the carousel (e.g. mimic layer editor). */
+  copySidePanel?: ReactNode;
+  /** When true, show expanded copy fields for mimic carousel editing. */
+  mimicCopyEditor?: boolean;
+  /** When set, carousel navigation follows this 1-based slide index (e.g. from layout editor). */
+  activeSlideIndex?: number;
 }
 
 export function CarouselSlider({
@@ -54,6 +67,10 @@ export function CarouselSlider({
   heyGenVideoMode = false,
   spokenScript = "",
   onSpokenScriptChange,
+  onCurrentSlideChange,
+  copySidePanel,
+  mimicCopyEditor = false,
+  activeSlideIndex,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -70,6 +87,16 @@ export function CarouselSlider({
     setCurrentIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
     setSavedAt(null);
   }, [initialSlides]);
+
+  useEffect(() => {
+    onCurrentSlideChange?.(currentIndex + 1);
+  }, [currentIndex, onCurrentSlideChange]);
+
+  useEffect(() => {
+    if (activeSlideIndex == null || slides.length === 0) return;
+    const idx = Math.max(0, Math.min(slides.length - 1, activeSlideIndex - 1));
+    setCurrentIndex((cur) => (cur !== idx ? idx : cur));
+  }, [activeSlideIndex, slides.length]);
 
   useEffect(() => {
     if (heyGenVideoMode || readOnly || !livePreview?.template) {
@@ -134,7 +161,7 @@ export function CarouselSlider({
   const updateSlide = useCallback(
     (
       index: number,
-      patch: Partial<Pick<NormalizedSlide, "headline" | "body" | "handle" | "extras">>
+      patch: Partial<Pick<NormalizedSlide, "headline" | "body" | "handle" | "extras" | "on_slide_lines" | "text_blocks">>
     ) => {
       setSavedAt(null);
       setSlides((prev) => {
@@ -157,6 +184,31 @@ export function CarouselSlider({
           if (t) extras[key] = t;
           else delete extras[key];
           return { ...s, extras: Object.keys(extras).length ? extras : undefined };
+        });
+        onSlidesChange?.(next);
+        return next;
+      });
+    },
+    [onSlidesChange]
+  );
+
+  const updateMimicTextBlock = useCallback(
+    (slideIndex: number, blockIndex: number, text: string) => {
+      setSavedAt(null);
+      setSlides((prev) => {
+        const next = prev.map((s, i) => {
+          if (i !== slideIndex) return s;
+          const blocks = resolveMimicTextBlocksForSlide(s).map((b, bi) =>
+            bi === blockIndex ? { ...b, text } : b
+          );
+          const fields = mimicSlideFieldsFromTextBlocks(blocks);
+          return {
+            ...s,
+            text_blocks: blocks,
+            on_slide_lines: fields.on_slide_lines,
+            headline: fields.headline,
+            body: fields.body,
+          };
         });
         onSlidesChange?.(next);
         return next;
@@ -188,6 +240,10 @@ export function CarouselSlider({
   );
 
   const slide = slides[currentIndex];
+  const mimicTextBlocks = useMemo(
+    () => (mimicCopyEditor ? resolveMimicTextBlocksForSlide(slide) : []),
+    [mimicCopyEditor, slide]
+  );
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
@@ -301,7 +357,55 @@ export function CarouselSlider({
       )}
 
       {!readOnly && !heyGenVideoMode && (
-        <div style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8, marginBottom: 12 }}>
+        <div className={copySidePanel ? "carousel-edit-split" : undefined} style={{ marginBottom: 12 }}>
+          <div
+            className="carousel-edit-copy"
+            style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
+          >
+          {mimicCopyEditor ? (
+            <div className="mimic-text-blocks" style={{ marginBottom: 12 }}>
+              <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
+              <p style={{ margin: "0 0 10px", fontSize: 11, color: "var(--muted)", lineHeight: 1.45 }}>
+                One field per OCR overlay box on this slide. Saved to <code style={{ fontSize: 10 }}>text_blocks[]</code>{" "}
+                on save/reprint and synced to the layout editor.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {mimicTextBlocks.map((block, bi) => (
+                  <div key={bi}>
+                    <label
+                      className="filter-label"
+                      style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}
+                    >
+                      <span>{mimicTextBlockEditorLabel(block, bi, mimicTextBlocks.length)}</span>
+                      <span style={{ fontSize: 10, color: "var(--muted)", fontWeight: 400 }}>
+                        OCR box {bi + 1}
+                        {block.role && block.role !== "body" ? ` · ${block.role}` : ""}
+                      </span>
+                    </label>
+                    <textarea
+                      value={block.text}
+                      onChange={(e) => updateMimicTextBlock(currentIndex, bi, e.target.value)}
+                      rows={Math.min(5, Math.max(2, block.text.split("\n").length))}
+                      placeholder="On-slide copy for this box"
+                      style={{
+                        width: "100%",
+                        fontSize: 14,
+                        lineHeight: 1.45,
+                        minHeight: 52,
+                        resize: "vertical",
+                      }}
+                    />
+                    {block.role === "handle" || /^@[a-z0-9_.]{2,}$/i.test(block.text.trim()) ? (
+                      <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--muted)" }}>
+                        Prints with project Instagram handle on reprint
+                      </p>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <>
           {(slide.type === "cover" || slide.type === "body") && (
             <>
               <div style={{ marginBottom: 10 }}>
@@ -321,7 +425,10 @@ export function CarouselSlider({
                   onChange={(e) => updateSlide(currentIndex, { body: e.target.value })}
                   placeholder={slide.type === "cover" ? "Cover subtitle" : "Slide body text"}
                   rows={slide.type === "cover" ? 2 : 3}
-                  style={{ minHeight: slide.type === "cover" ? 60 : 80 }}
+                  style={{
+                    minHeight: slide.type === "cover" ? 60 : 80,
+                    lineHeight: 1.45,
+                  }}
                 />
               </div>
 
@@ -505,9 +612,13 @@ export function CarouselSlider({
                 </div>
             </>
           )}
+            </>
+          )}
           <button type="button" className="btn-primary" onClick={handleSaveSlide} disabled={savedAt === currentIndex} style={{ fontSize: 12, padding: "6px 14px" }}>
             {savedAt === currentIndex ? "Saved" : "Save slide"}
           </button>
+          </div>
+          {copySidePanel ? <div className="carousel-edit-side-panel">{copySidePanel}</div> : null}
         </div>
       )}
 

@@ -3,11 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   buildSlideRenderContext,
+  applySlideCopyToRenderContext,
+  alignSlidesToMimicOutputCount,
   carouselSlideCount,
   DEFAULT_CAROUSEL_CTA_COPY,
   explicitCarouselTemplateBaseName,
   formatInstagramHandleForCta,
   pickCarouselTemplateForRender,
+  mergeSlideCopyAtCarouselIndex,
+  pickSlideByCarouselIndex,
+  slideHeadlineBodyForRender,
   reviewRequestsCarouselTemplateChange,
   slidesFromGeneratedOutput,
   slideHasRenderableContent,
@@ -93,6 +98,17 @@ describe("stripNonRenderableDeckFields", () => {
 });
 
 describe("slidesFromGeneratedOutput", () => {
+  it("alignSlidesToMimicOutputCount pads missing LLM rows to planned slide count", () => {
+    const renderable = [
+      { slide_index: 1, headline: "Aries", body: "line one" },
+      { slide_index: 2, headline: "Taurus", body: "line two" },
+    ];
+    const aligned = alignSlidesToMimicOutputCount(renderable, renderable, 4);
+    expect(aligned).toHaveLength(4);
+    expect(aligned[0]?.headline).toBe("Aries");
+    expect(aligned[3]?.slide_index).toBe(4);
+  });
+
   it("reads cover_slide + body_slides + cta_slide with nested text blocks", () => {
     const gen = {
       package_type: "mimic_carousel_package",
@@ -176,6 +192,34 @@ describe("slidesFromGeneratedOutput", () => {
     const slides = slidesFromGeneratedOutput({ carousel: json });
     expect(slides).toHaveLength(2);
     expect(slides[0]?.headline).toBe("Hook");
+  });
+
+  it("prefers copy.carousel.slides over copy.slides with truncated text_blocks (mimic package)", () => {
+    const gen = {
+      package_type: "mimic_carousel_package",
+      copy: {
+        slides: [
+          {
+            headline: "Aries gets playful when bored",
+            body: "Short",
+            text_blocks: [
+              { role: "headline", text: "Aries gets play…" },
+              { role: "body", text: "Short…" },
+            ],
+          },
+        ],
+        carousel: {
+          slides: [
+            {
+              headline: "Aries gets playful when bored",
+              body: "Line one\nLine two\nLine three\nLine four",
+            },
+          ],
+        },
+      },
+    };
+    const slides = slidesFromGeneratedOutput(gen);
+    expect(String(slides[0]?.body)).toContain("Line four");
   });
 
   it("uses slides when they contain real text even if carousel exists (tie-band prefers slides)", () => {
@@ -937,5 +981,60 @@ describe("mimic carousel copy shapes", () => {
     expect(slideHasRenderableContent(flat[0]!)).toBe(true);
     expect(String(flat[0]?.headline ?? "")).toBe("Aries Attraction");
     expect(String(flat[0]?.body ?? "")).toContain("Ever wondered");
+  });
+});
+
+describe("mergeSlideCopyAtCarouselIndex", () => {
+  it("patches slide by slide_index and preserves other slides", () => {
+    const slides = [
+      { slide_index: 1, headline: "A", body: "one" },
+      { slide_index: 2, headline: "B", body: "two" },
+    ];
+    const merged = mergeSlideCopyAtCarouselIndex(slides, 2, {
+      headline: "B2",
+      text_blocks: [{ role: "body", text: "patched" }],
+    });
+    expect(merged[0]?.headline).toBe("A");
+    expect(merged[1]?.headline).toBe("B2");
+    expect(merged[1]?.text_blocks).toEqual([{ role: "body", text: "patched" }]);
+  });
+});
+
+describe("pickSlideByCarouselIndex", () => {
+  it("matches slide_index field instead of array position", () => {
+    const slides = [
+      { slide_index: 2, headline: "Gemini", body: "Whimsical" },
+      { slide_index: 5, headline: "Virgo", body: "Practical" },
+    ];
+    expect(pickSlideByCarouselIndex(slides, 5).headline).toBe("Virgo");
+    expect(pickSlideByCarouselIndex(slides, 2).headline).toBe("Gemini");
+  });
+});
+
+describe("slideHeadlineBodyForRender + applySlideCopyToRenderContext", () => {
+  it("reads copy from text_blocks even when buildSlideRenderContext clears root headline/body", () => {
+    const slides = [
+      { slide_index: 1, headline: "Cover", body: "Sub" },
+      {
+        slide_index: 2,
+        text_blocks: [
+          { role: "headline", text: "Aries Mother", x: 0.1, y: 0.2, w: 0.8, h: 0.1 },
+          { role: "body", text: "She protects fiercely.", x: 0.1, y: 0.35, w: 0.8, h: 0.3 },
+        ],
+      },
+      { slide_index: 3, headline: "Follow", body: "@brand" },
+    ];
+    const base = { slides };
+    const ctx = buildSlideRenderContext(base, slides, 2, { instagramHandle: "@SignAndSound" });
+    expect(ctx.headline).toBe("");
+    expect(ctx.body).toBe("");
+
+    const copy = slideHeadlineBodyForRender(pickSlideByCarouselIndex(slides, 2));
+    expect(copy.headline).toBe("Aries Mother");
+    expect(copy.body).toContain("She protects");
+
+    const patched = applySlideCopyToRenderContext(ctx, 2, copy);
+    expect(patched.headline).toBe("Aries Mother");
+    expect((patched.body_slides as Record<string, unknown>[])?.[0]?.headline).toBe("Aries Mother");
   });
 });

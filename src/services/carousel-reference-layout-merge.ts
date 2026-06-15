@@ -2,6 +2,7 @@
  * Merge Document AI OCR + Nemotron semantic carousel JSON into persisted insight shape.
  */
 import type { CarouselDocumentAiSlideOcr, CarouselDetectedTextLayer } from "../domain/carousel-slide-analysis.js";
+import { attachCopySlotsToSlideRecord } from "./mimic-copy-slots.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -60,7 +61,7 @@ function mergeSlideRecord(
   ocr: CarouselDocumentAiSlideOcr | undefined
 ): Record<string, unknown> {
   const out: Record<string, unknown> = { ...nemotronSlide };
-  if (!ocr) return out;
+  if (!ocr) return attachCopySlotsToSlideRecord(out);
 
   out.document_ai_ocr_v1 = ocr;
   out.on_screen_text_transcript = ocr.full_text;
@@ -69,7 +70,7 @@ function mergeSlideRecord(
     for (const layer of ocr.text_layers) {
       const role =
         pickNemotronRoleForLayer(nemotronSlide, layer.layer_index) ??
-        inferRoleFromLayerIndex(layer.layer_index, ocr.text_layers.length);
+        inferRoleFromLayer(layer.layer_index, ocr.text_layers.length, layer.text);
       blocks.push(textBlockFromLayer(layer, role));
     }
     out.text_blocks = blocks;
@@ -84,11 +85,13 @@ function mergeSlideRecord(
     }
   }
   delete out.on_screen_text_transcript_nemotron;
-  return out;
+  return attachCopySlotsToSlideRecord(out);
 }
 
-function inferRoleFromLayerIndex(layerIndex: number, total: number): string {
-  if (layerIndex === 1 && total <= 2) return "headline";
+function inferRoleFromLayer(layerIndex: number, total: number, text: string): string {
+  const t = String(text ?? "").trim();
+  if (/^how you should text\b/i.test(t)) return "headline";
+  if (/^your .+ friend$/i.test(t)) return "subheadline";
   if (layerIndex === total && total > 1) return "cta";
   if (layerIndex === 1) return "headline";
   return "body";
@@ -131,5 +134,6 @@ export const TOP_PERFORMER_CAROUSEL_WITH_DOCUMENT_AI_NEMOTRON_APPENDIX = `
 Document AI provides exact on-screen text and typography separately. For each slide:
 - Do NOT include on_screen_text_transcript, text_blocks[].text, font_size_px, color_hex, or bbox coordinates.
 - DO include text_block_roles[]: { "block_index": 1, "role": "headline|subheadline|body|cta|logo|watermark|other" } matching reading order of visible text regions (block_index starts at 1).
+- When two adjacent lines form one title sentence (e.g. headline + subheadline), label the second line **subheadline** — not body.
 - DO include all visual / semantic fields: visual_description, layout_template, composition_blueprint (descriptions and element types only — no literal text in text_blocks), typography qualitative guesses (headline_guess, text_placement, relative_scale words only — no pixel sizes), slide_purpose, brand_specificity, color_tokens as color names not OCR.
 - Describe ONLY pixels visible in each attached image.`;

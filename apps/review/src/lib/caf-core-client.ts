@@ -475,6 +475,108 @@ export async function getMimicImageAudits(
   return data?.audits ?? [];
 }
 
+export type ReprintTextOverlayResult = {
+  ok: boolean;
+  accepted?: boolean;
+  task_id?: string;
+  message?: string;
+  error?: string;
+};
+
+/** Recomposite mimic carousel text on stored art-only plates — no Flux/Qwen/BFL. Returns immediately (202). */
+export type MimicDocAiLayerPositionRow = {
+  layer_key: string;
+  x_px: number;
+  y_px: number;
+  font_size_px?: number;
+  w_px?: number;
+  h_px?: number;
+  text?: string;
+};
+
+export async function reprintMimicTextOverlay(
+  projectSlug: string,
+  taskId: string,
+  opts?: {
+    slideIndices?: number[];
+    renderTypography?: Record<string, number>;
+    textBacking?: boolean;
+    docaiLayerPositions?: Record<string, MimicDocAiLayerPositionRow[]>;
+  }
+): Promise<ReprintTextOverlayResult> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return { ok: false, error: "missing_project_or_task" };
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/reprint-text-overlay?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/reprint-text-overlay`;
+  const body: Record<string, unknown> = {};
+  if (opts?.slideIndices && opts.slideIndices.length > 0) {
+    body.slide_indices = opts.slideIndices;
+  }
+  if (opts?.renderTypography && Object.keys(opts.renderTypography).length > 0) {
+    body.render_typography = opts.renderTypography;
+  }
+  body.text_backing = opts?.textBacking !== false;
+  if (opts?.docaiLayerPositions && Object.keys(opts.docaiLayerPositions).length > 0) {
+    body.docai_layer_positions = opts.docaiLayerPositions;
+  }
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json()) as ReprintTextOverlayResult;
+  if (res.status === 202 && json.ok) return json;
+  if (!res.ok) {
+    return { ok: false, error: json.error ?? `http_${res.status}`, message: json.message };
+  }
+  return json;
+}
+
+export type RegenerateCarouselSlidesResult = {
+  ok: boolean;
+  accepted?: boolean;
+  task_id?: string;
+  message?: string;
+  error?: string;
+};
+
+/** Re-run Flux/Qwen for selected mimic carousel slides (billed). Returns immediately (202). */
+export async function regenerateMimicCarouselSlides(
+  projectSlug: string,
+  taskId: string,
+  slideIndices: number[]
+): Promise<RegenerateCarouselSlidesResult> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return { ok: false, error: "missing_project_or_task" };
+  const indices = slideIndices.map((i) => Math.floor(i)).filter((i) => Number.isFinite(i) && i >= 1);
+  if (indices.length === 0) return { ok: false, error: "slide_indices_required" };
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/regenerate-carousel-slides?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/regenerate-carousel-slides`;
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ slide_indices: indices }),
+    cache: "no-store",
+  });
+  const json = (await res.json()) as RegenerateCarouselSlidesResult;
+  if (res.status === 202 && json.ok) return json;
+  if (!res.ok) {
+    return { ok: false, error: json.error ?? `http_${res.status}`, message: json.message };
+  }
+  return json;
+}
+
 export interface JobLineageResponse {
   ok: boolean;
   lineage: Record<string, unknown>;

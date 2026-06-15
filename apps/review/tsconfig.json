@@ -26,6 +26,9 @@
       "@/*": [
         "./src/*"
       ],
+      "@caf-core-carousel/mimic-docai-layer-positions": [
+        "../../src/domain/mimic-docai-layer-positions.ts"
+      ],
       "@caf-core-carousel/*": [
         "../../src/services/*"
       ]

@@ -23,6 +23,22 @@ function normalizePositivePx(raw: unknown): number | null {
   return Math.round(n);
 }
 
+function normalizeFontScale(raw: unknown): number | null {
+  const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(String(raw).trim()) : NaN;
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(1.25, Math.max(0.75, n));
+}
+
+/** Parse reviewer typography from API bodies (`render_typography`) or loose objects. */
+export function parseCarouselRenderTypographyPatch(input: unknown): Record<string, number> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const src = input as Record<string, unknown>;
+  const patch = pickCarouselTypographyPatch(src);
+  const fs = normalizeFontScale(src.font_scale);
+  if (fs != null) patch.font_scale = fs;
+  return patch;
+}
+
 /** Pull typography patch from a flat object (e.g. parsed `final_slides_json_override` or `render`). */
 export function pickCarouselTypographyPatch(source: Record<string, unknown> | null | undefined): Record<string, number> {
   if (!source || typeof source !== "object") return {};

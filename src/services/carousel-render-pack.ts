@@ -607,13 +607,40 @@ function legacyCoverBodyCtaSlides(gen: Record<string, unknown>): Record<string, 
   return slides;
 }
 
+function slideHasUnreliableMimicTextBlocks(s: Record<string, unknown>): boolean {
+  const blocks = s.text_blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  const body = String(s.body ?? "").trim();
+  for (const item of blocks) {
+    const rec = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
+    const t = String(rec?.text ?? "");
+    if (t.includes("…") || t.includes("...")) return true;
+  }
+  if (body.length > 40) {
+    let blockBodyLen = 0;
+    for (const item of blocks) {
+      const rec = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
+      if (!rec) continue;
+      const role = String(rec.role ?? "").toLowerCase();
+      const text = String(rec.text ?? "").trim();
+      if (/headline|title|hook|cover|kicker/.test(role)) continue;
+      if (/^@[\w.]{2,}$/.test(text)) continue;
+      blockBodyLen += text.length;
+    }
+    if (blockBodyLen < body.length * 0.45) return true;
+  }
+  return false;
+}
+
 function slideDeckTextScore(slides: Record<string, unknown>[]): number {
   let t = 0;
+  let penalty = 0;
   for (const s of slides) {
     const x = textFromSlide(s);
     t += x.headline.length + x.body.length;
+    if (slideHasUnreliableMimicTextBlocks(s)) penalty += 800;
   }
-  return t;
+  return t - penalty;
 }
 
 /**
@@ -931,6 +958,66 @@ export function slidesFromGeneratedOutput(
   return normalizeSlideRoles(picked);
 }
 
+/** Merge lab / editorial copy onto one carousel slide row (by slide_index or array slot). */
+export function mergeSlideCopyAtCarouselIndex(
+  slides: Record<string, unknown>[],
+  slideIndex1Based: number,
+  patch: Record<string, unknown>
+): Record<string, unknown>[] {
+  const want = Math.max(1, Math.floor(slideIndex1Based));
+  const out = slides.map((s) => ({ ...(s as Record<string, unknown>) }));
+  for (let i = 0; i < out.length; i++) {
+    const rec = out[i]!;
+    const si = Number(rec.slide_index ?? rec.slide_number ?? 0);
+    if (Number.isFinite(si) && si > 0 && si === want) {
+      out[i] = { ...rec, ...patch, slide_index: si };
+      return out;
+    }
+  }
+  const idx = Math.max(0, Math.min(out.length - 1, want - 1));
+  out[idx] = { ...(out[idx] ?? {}), ...patch, slide_index: want };
+  return out;
+}
+
+/** Match LLM slide row to 1-based carousel output index (`slide_index` / `slide_number`, else array slot). */
+export function pickSlideByCarouselIndex(
+  slides: Record<string, unknown>[],
+  slideIndex1Based: number
+): Record<string, unknown> {
+  if (!Array.isArray(slides) || slides.length === 0) return {};
+  const want = Math.max(1, Math.floor(slideIndex1Based));
+  for (const raw of slides) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const rec = raw as Record<string, unknown>;
+    const si = Number(rec.slide_index ?? rec.slide_number ?? 0);
+    if (Number.isFinite(si) && si > 0 && si === want) return rec;
+  }
+  const idx = Math.max(0, Math.min(slides.length - 1, want - 1));
+  return (slides[idx] ?? {}) as Record<string, unknown>;
+}
+
+/** Align slide rows 1..N for mimic render — pad missing LLM rows without dropping planned frames. */
+export function alignSlidesToMimicOutputCount(
+  allSlides: Record<string, unknown>[],
+  renderableSlides: Record<string, unknown>[],
+  targetCount: number
+): Record<string, unknown>[] {
+  const n = Math.max(1, Math.floor(targetCount));
+  const primary = renderableSlides.length > 0 ? renderableSlides : allSlides;
+  const out: Record<string, unknown>[] = [];
+  for (let i = 1; i <= n; i++) {
+    const fromRenderable = pickSlideByCarouselIndex(primary, i);
+    const fromAll = pickSlideByCarouselIndex(allSlides, i);
+    const row = slideHasRenderableContent(fromRenderable)
+      ? fromRenderable
+      : slideHasRenderableContent(fromAll)
+        ? fromAll
+        : fromRenderable;
+    out.push({ ...row, slide_index: i });
+  }
+  return out;
+}
+
 function looksLikeCarouselCtaSlideText(s: string): boolean {
   const t = String(s ?? "").trim().toLowerCase();
   if (!t) return false;
@@ -1010,12 +1097,31 @@ export function shouldMaterializeCarouselTemplateShape(base: Record<string, unkn
 }
 
 /**
+ * True when this render job uses per-slide full-bleed mimic overlays (no healthcard panel defaults).
+ */
+export function isMimicFullBleedCarouselRenderBase(base: Record<string, unknown>): boolean {
+  const ctx = base.mimic_render_context;
+  if (ctx && typeof ctx === "object" && !Array.isArray(ctx)) {
+    const mode = String((ctx as Record<string, unknown>).mode ?? "").trim();
+    if (mode === "carousel_visual") return true;
+    const seq = String((ctx as Record<string, unknown>).render_sequence ?? "").trim();
+    if (seq === "visual_plate_then_hbs_overlay" || seq === "per_slide_visual_mimic") return true;
+  }
+  const mimic = base.mimic_v1;
+  if (mimic && typeof mimic === "object" && !Array.isArray(mimic)) {
+    if (String((mimic as Record<string, unknown>).mode ?? "").trim() === "carousel_visual") return true;
+  }
+  return base.draft_package_type === "mimic_carousel_package";
+}
+
+/**
  * Map flat `slides[]` into `cover_slide` + `body_slides` + `cta_slide` for Handlebars templates.
  * - 1 slide: cover only + empty CTA shell (renderer still emits a CTA `.slide` → 2 DOM slides).
  * - 2+ slides: first = cover, last = CTA, middle = body_slides (may be empty when N===2).
  */
 export function splitFlatSlidesToTemplateShape(
-  allSlides: Record<string, unknown>[]
+  allSlides: Record<string, unknown>[],
+  opts?: { skipPanelDefaults?: boolean }
 ): {
   cover_slide: Record<string, unknown>;
   body_slides: Record<string, unknown>[];
@@ -1024,6 +1130,7 @@ export function splitFlatSlidesToTemplateShape(
   if (allSlides.length === 0) {
     return { cover_slide: {}, body_slides: [], cta_slide: {} };
   }
+  const skipPanels = opts?.skipPanelDefaults === true;
   const first = allSlides[0]!;
   const tf = textFromSlide(first);
   const coverBodyRaw = tf.body || String(first.body ?? "").trim();
@@ -1034,10 +1141,12 @@ export function splitFlatSlidesToTemplateShape(
     headline: coverHeadline || tf.headline || first.headline,
     body: coverBody || tf.body || first.body,
   };
-  const cover_slide_with_panel = ensurePanelFields(cover_slide, {
-    title: "Quick note",
-    body: "Save this. You’ll want it when you’re overthinking later.",
-  });
+  const cover_slide_with_panel = skipPanels
+    ? cover_slide
+    : ensurePanelFields(cover_slide, {
+        title: "Quick note",
+        body: "Save this. You’ll want it when you’re overthinking later.",
+      });
   if (allSlides.length === 1) {
     return { cover_slide: cover_slide_with_panel, body_slides: [], cta_slide: {} };
   }
@@ -1055,14 +1164,16 @@ export function splitFlatSlidesToTemplateShape(
       ...s,
       headline: t.headline || s.headline,
       body: t.body || s.body,
-      ...ensurePanelFields(s as Record<string, unknown>, {
-        title: "Micro-action",
-        body: deriveMicroActionPanelBody(
-          t.headline || String(s.headline ?? ""),
-          t.body || String(s.body ?? ""),
-          idx
-        ),
-      }),
+      ...(skipPanels
+        ? {}
+        : ensurePanelFields(s as Record<string, unknown>, {
+            title: "Micro-action",
+            body: deriveMicroActionPanelBody(
+              t.headline || String(s.headline ?? ""),
+              t.body || String(s.body ?? ""),
+              idx
+            ),
+          })),
     };
   });
   const rawHandle = String((last as Record<string, unknown>).handle ?? "").trim();
@@ -1449,11 +1560,12 @@ export function buildSlideRenderContext(
     }
   }
   const totalDomSlides = carouselSlideCount({ ...base, slides });
-  const idx =
-    slides.length === 1 && slideIndex1Based === totalDomSlides && totalDomSlides > 1
-      ? -1
-      : Math.max(0, Math.min(slides.length - 1, slideIndex1Based - 1));
-  const current = idx >= 0 ? (slides[idx] ?? {}) : {};
+  let current: Record<string, unknown>;
+  if (slides.length === 1 && slideIndex1Based === totalDomSlides && totalDomSlides > 1) {
+    current = {};
+  } else {
+    current = pickSlideByCarouselIndex(slides, slideIndex1Based);
+  }
   const currentRec = current as Record<string, unknown>;
   let { headline, body } = textFromSlide(currentRec);
   if (slideHasPositionedTextBlocks(currentRec)) {
@@ -1461,7 +1573,11 @@ export function buildSlideRenderContext(
     body = "";
   }
   const templateShape =
-    shouldMaterializeCarouselTemplateShape(base) && slides.length > 0 ? splitFlatSlidesToTemplateShape(slides) : {};
+    shouldMaterializeCarouselTemplateShape(base) && slides.length > 0
+      ? splitFlatSlidesToTemplateShape(slides, {
+          skipPanelDefaults: isMimicFullBleedCarouselRenderBase(base),
+        })
+      : {};
   // Some generators provide `cover_slide.name` (or `cover_slide.status`) as whitespace or placeholders.
   // Normalize here so templates can reliably fall back to `handle` or defaults.
   const sanitizeCoverSlide = (cs: unknown): Record<string, unknown> => {
@@ -1541,6 +1657,71 @@ export function buildSlideRenderContext(
   synchronizeCoverRootStringFields(out);
 
   return out;
+}
+
+/** Copy fields for renderer / DocAI — always derived from slide row, never cleared for positioned blocks. */
+export function slideHeadlineBodyForRender(slide: Record<string, unknown>): { headline: string; body: string } {
+  return textFromSlide(unwrapMimicSlideRow(slide));
+}
+
+/**
+ * When DocAI layers are unavailable, restore headline/body on render ctx and template-shaped fields
+ * (`cover_slide` / `body_slides` / `cta_slide`) so carousel_mimic_bg HBS fallback is not blank.
+ */
+export function applySlideCopyToRenderContext(
+  ctx: Record<string, unknown>,
+  slideIndex1Based: number,
+  copy: { headline: string; body: string }
+): Record<string, unknown> {
+  const next: Record<string, unknown> = {
+    ...ctx,
+    headline: copy.headline,
+    body: copy.body,
+  };
+
+  const want = Math.max(1, Math.floor(slideIndex1Based));
+  const total = carouselSlideCount(next);
+
+  if (want === 1) {
+    if (next.cover_slide && typeof next.cover_slide === "object" && !Array.isArray(next.cover_slide)) {
+      next.cover_slide = {
+        ...(next.cover_slide as Record<string, unknown>),
+        headline: copy.headline,
+        body: copy.body,
+      };
+    }
+    if (copy.headline) next.cover = copy.headline;
+    if (copy.body) next.cover_subtitle = copy.body;
+    synchronizeCoverRootStringFields(next);
+    return next;
+  }
+
+  if (want === total && total > 1) {
+    if (next.cta_slide && typeof next.cta_slide === "object" && !Array.isArray(next.cta_slide)) {
+      next.cta_slide = {
+        ...(next.cta_slide as Record<string, unknown>),
+        body: copy.headline || copy.body,
+        ...(copy.body ? { sub: copy.body } : {}),
+      };
+    }
+    if (copy.headline) next.cta_text = copy.headline;
+    return next;
+  }
+
+  const bodySlides = Array.isArray(next.body_slides) ? [...next.body_slides] : [];
+  const bodyIdx = want - 2;
+  if (bodyIdx >= 0 && bodyIdx < bodySlides.length) {
+    const item = bodySlides[bodyIdx];
+    if (item && typeof item === "object" && !Array.isArray(item)) {
+      bodySlides[bodyIdx] = {
+        ...(item as Record<string, unknown>),
+        headline: copy.headline,
+        body: copy.body,
+      };
+      next.body_slides = bodySlides;
+    }
+  }
+  return next;
 }
 
 export function templateNameFromPayload(generationPayload: Record<string, unknown>): string {

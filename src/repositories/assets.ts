@@ -56,7 +56,7 @@ export async function listAssetsByTask(
   return q(
     db,
     `SELECT id, asset_type, public_url, bucket, object_path, position
-     FROM caf_core.assets WHERE project_id = $1 AND task_id = $2 ORDER BY position ASC`,
+     FROM caf_core.assets WHERE project_id = $1 AND task_id = $2 ORDER BY position ASC, created_at ASC`,
     [projectId, taskId]
   );
 }
@@ -94,6 +94,44 @@ export async function deleteCarouselSlideAssetsAtPositions(
     `DELETE FROM caf_core.assets
      WHERE project_id = $1 AND task_id = $2
        AND UPPER(COALESCE(asset_type, '')) = 'CAROUSEL_SLIDE'
+       AND position = ANY($3::int[])`,
+    [projectId, taskId, positions]
+  );
+}
+
+/** Drop stored art-only plates so Flux/Qwen regen cannot reuse a text-baked plate. */
+export async function deleteMimicVisualPlateAssetsAtPositions(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  slideIndices1Based: number[]
+): Promise<void> {
+  const positions = slideIndices1Based
+    .map((i) => Math.floor(i) - 1)
+    .filter((p) => Number.isFinite(p) && p >= 0);
+  if (positions.length === 0) return;
+  await db.query(
+    `DELETE FROM caf_core.assets
+     WHERE project_id = $1 AND task_id = $2
+       AND UPPER(COALESCE(asset_type, '')) = 'MIMIC_VISUAL_PLATE'
+       AND position = ANY($3::int[])`,
+    [projectId, taskId, positions]
+  );
+}
+
+/** Drop background extract plates at asset positions (cover=0, shared body=1, cta=last, or per-slide). */
+export async function deleteMimicBackgroundAssetsAtPositions(
+  db: Pool,
+  projectId: string,
+  taskId: string,
+  assetPositions: number[]
+): Promise<void> {
+  const positions = [...new Set(assetPositions.map((p) => Math.floor(p)).filter((p) => Number.isFinite(p) && p >= 0))];
+  if (positions.length === 0) return;
+  await db.query(
+    `DELETE FROM caf_core.assets
+     WHERE project_id = $1 AND task_id = $2
+       AND UPPER(COALESCE(asset_type, '')) = 'MIMIC_BACKGROUND'
        AND position = ANY($3::int[])`,
     [projectId, taskId, positions]
   );

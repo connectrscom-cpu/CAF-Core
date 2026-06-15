@@ -26,6 +26,7 @@
     "run-scraper": "node --import tsx src/cli/run-scraper.ts",
     "test:document-ai": "node --import tsx src/cli/test-document-ai.ts",
     "mimic-text-lab": "node --import tsx src/cli/mimic-text-overlay-lab.ts",
+    "rerender-carousel-text": "node --import tsx src/cli/rerender-carousel-text.ts",
     "replan-run": "node --import tsx src/cli/replan-run.ts",
     "test": "vitest run",
     "test:watch": "vitest",

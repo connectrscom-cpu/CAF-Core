@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
+import { MimicCarouselEdits } from "@/components/MimicCarouselEdits";
 import { CarouselEdits, CarouselEditsExport } from "@/components/CarouselEdits";
 import {
+  buildCarouselRenderTypographyPatch,
   buildSlidesJson,
   createSyntheticSlides,
   mergeCarouselTypographyIntoPayload,
   parseSlidesFromJson,
+  enrichMimicSlidesFromVisualGuideline,
   readCarouselTypographyFromFullJob,
   type CarouselSlidesPayload,
 } from "@/lib/carousel-slides";
@@ -27,6 +30,7 @@ import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isCarouselFlow, isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
+import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow } from "@/lib/flow-kind";
 
@@ -68,6 +72,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   /** Qwen background plates by asset position (for live preview compositing). */
   const [mimicBackgroundByPosition, setMimicBackgroundByPosition] = useState<Record<number, string>>({});
+  const [mimicPlateByPosition, setMimicPlateByPosition] = useState<Record<number, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submittedHeygenPrompt, setSubmittedHeygenPrompt] = useState<{
@@ -83,6 +88,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   } | null>(null);
   const [upstreamLineage, setUpstreamLineage] = useState<Record<string, unknown> | null>(null);
   const [fullJob, setFullJob] = useState<Record<string, unknown> | null>(null);
+  const [projectStrategyHandle, setProjectStrategyHandle] = useState("");
 
   const execTaskId = (data?.task_id ?? "").trim() || task_id;
 
@@ -95,6 +101,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   );
 
   const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
+  const [viewerSlideIndex, setViewerSlideIndex] = useState(1);
   const [editedCaption, setEditedCaption] = useState("");
   const [editedTitle, setEditedTitle] = useState("");
   const [editedHook, setEditedHook] = useState("");
@@ -121,11 +128,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     carousel_handle_font_px: "",
   });
   const carouselTypoSeededForTask = useRef<string | null>(null);
+  const mimicOcrEnrichedForTask = useRef<string | null>(null);
 
   useEffect(() => {
     setEditedSlides([]);
     setTaskAssets([]);
     setMimicBackgroundByPosition({});
+    setMimicPlateByPosition({});
     setEditedScript("");
     setHeygenAvatarId("");
     setHeygenVoiceId("");
@@ -137,6 +146,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setSubmittedHeygenPrompt(null);
     setUpstreamLineage(null);
     setFullJob(null);
+    setProjectStrategyHandle("");
+    mimicOcrEnrichedForTask.current = null;
   }, [task_id]);
 
   useEffect(() => {
@@ -242,15 +253,20 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         const rows = [...(assetsJson.assets ?? [])].sort((a, b) => a.position - b.position);
         const flowHint = (taskJson.data?.flow_type ?? "").trim();
         const mimicBg: Record<number, string> = {};
+        const mimicPlates: Record<number, string> = {};
         for (const a of rows) {
-          if ((a.asset_type ?? "").toLowerCase() !== "mimic_background") continue;
+          const assetType = (a.asset_type ?? "").toLowerCase();
           const u = (a.public_url ?? "").trim();
-          if (u) mimicBg[a.position] = u;
+          if (!u) continue;
+          if (assetType === "mimic_background") mimicBg[a.position] = u;
+          if (assetType === "mimic_visual_plate") mimicPlates[a.position] = u;
         }
         setMimicBackgroundByPosition(mimicBg);
-        setTaskAssets(taskAssetsToPreviewRows(rows, { flowTypeHint: flowHint }));
+        setMimicPlateByPosition(mimicPlates);
+        setTaskAssets(taskAssetsToPreviewRows(rows, { flowTypeHint: flowHint, cacheBust: Date.now() }));
       } else {
         setMimicBackgroundByPosition({});
+        setMimicPlateByPosition({});
         setTaskAssets([]);
       }
     } catch (e) {
@@ -316,6 +332,33 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     };
   }, [data, task_id, projectFromUrl]);
 
+  useEffect(() => {
+    const slug = (data?.project ?? projectFromUrl ?? "").trim();
+    if (!slug) {
+      setProjectStrategyHandle("");
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      try {
+        const res = await fetch(`/api/project-config/strategy?project=${encodeURIComponent(slug)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as { strategy?: Record<string, unknown> | null };
+        const h = json.strategy?.instagram_handle;
+        if (cancelled) return;
+        setProjectStrategyHandle(typeof h === "string" ? h.trim() : "");
+      } catch {
+        if (!cancelled) setProjectStrategyHandle("");
+      }
+    };
+    run();
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.project, projectFromUrl]);
+
   const decision = useMemo(() => (data?.decision ?? "").trim(), [data?.decision]);
   const notes = useMemo(() => (data?.notes ?? "").trim(), [data?.notes]);
   const runId = (data?.run_id ?? "").trim();
@@ -332,6 +375,27 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     () => (flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false),
     [flowTypeStr]
   );
+
+  useEffect(() => {
+    if (!mimicCarouselFlow || !fullJob || editedSlides.length === 0) return;
+    if (mimicOcrEnrichedForTask.current === execTaskId) return;
+    const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
+    const mimicV1 =
+      gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+        ? (gp.mimic_v1 as Record<string, unknown>)
+        : null;
+    const vg =
+      mimicV1?.visual_guideline && typeof mimicV1.visual_guideline === "object"
+        ? (mimicV1.visual_guideline as Record<string, unknown>)
+        : null;
+    if (!vg) return;
+    mimicOcrEnrichedForTask.current = execTaskId;
+    setEditedSlides((prev) => {
+      if (prev.length === 0) return prev;
+      return enrichMimicSlidesFromVisualGuideline(prev, vg);
+    });
+  }, [mimicCarouselFlow, fullJob, editedSlides.length, execTaskId]);
+
   const carouselFlow = useMemo(
     () => (flowTypeStr ? isCarouselFlow(flowTypeStr) : false),
     [flowTypeStr]
@@ -474,10 +538,17 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const instagramHandleForPreview = useMemo(() => {
     const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
-    if (!gp) return "";
-    const d = gp.instagram_handle;
-    return typeof d === "string" ? d.trim() : "";
-  }, [fullJob]);
+    if (gp) {
+      const direct = gp.instagram_handle;
+      if (typeof direct === "string" && direct.trim()) return direct.trim();
+      const strat = gp.strategy;
+      if (strat && typeof strat === "object" && !Array.isArray(strat)) {
+        const nested = (strat as Record<string, unknown>).instagram_handle;
+        if (typeof nested === "string" && nested.trim()) return nested.trim();
+      }
+    }
+    return projectStrategyHandle;
+  }, [fullJob, projectStrategyHandle]);
 
   const decorateCarouselSlidesPayload = useCallback(
     (slidesPayload: CarouselSlidesPayload) => {
@@ -500,6 +571,58 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       carouselCtaFontPx,
       carouselHandleFontPx,
     ]
+  );
+
+  const buildReprintTypographyPatch = useCallback(
+    () =>
+      buildCarouselRenderTypographyPatch(fontScale, {
+        carousel_headline_font_px: carouselHeadlineFontPx,
+        carousel_body_font_px: carouselBodyFontPx,
+        carousel_kicker_font_px: carouselKickerFontPx,
+        carousel_cta_font_px: carouselCtaFontPx,
+        carousel_handle_font_px: carouselHandleFontPx,
+      }),
+    [
+      fontScale,
+      carouselHeadlineFontPx,
+      carouselBodyFontPx,
+      carouselKickerFontPx,
+      carouselCtaFontPx,
+      carouselHandleFontPx,
+    ]
+  );
+
+  const handleMimicLayoutSaved = useCallback(
+    (slideIndex: number, positions: Record<string, unknown>[]) => {
+      setFullJob((prev) => {
+        if (!prev) return prev;
+        const gp =
+          prev.generation_payload && typeof prev.generation_payload === "object" && !Array.isArray(prev.generation_payload)
+            ? (prev.generation_payload as Record<string, unknown>)
+            : {};
+        const mimicV1 =
+          gp.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? (gp.mimic_v1 as Record<string, unknown>)
+            : {};
+        const raw = mimicV1.docai_layer_positions;
+        const existing =
+          raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown>) } : {};
+        return {
+          ...prev,
+          generation_payload: {
+            ...gp,
+            mimic_v1: {
+              ...mimicV1,
+              docai_layer_positions: {
+                ...existing,
+                [String(slideIndex)]: positions,
+              },
+            },
+          },
+        };
+      });
+    },
+    []
   );
 
   const carouselLivePreview = useMemo(() => {
@@ -573,6 +696,82 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     fullJob,
   ]);
 
+  const mimicCarouselInspectContext = useMemo(() => {
+    if (!mimicCarouselFlow || editedSlides.length === 0) return null;
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    const templateFromGp = String(gp?.template ?? carouselTemplate ?? "carousel_mimic_bg")
+      .replace(/\.hbs$/i, "")
+      .trim();
+    const template = templateFromGp || "carousel_mimic_bg";
+    return {
+      template,
+      getPayload: () => {
+        const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
+        decorateCarouselSlidesPayload(slidesPayload);
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? gp.mimic_v1
+            : undefined;
+        const bgFromGp =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        return {
+          ...slidesPayload,
+          task_id: execTaskId,
+          run_id: runId || undefined,
+          ...(mimicV1 ? { mimic_v1: mimicV1 } : {}),
+          ...(bgFromGp ? { background_image_url: bgFromGp } : {}),
+        };
+      },
+      getBackgroundUrl: (slideIndex1Based: number) => {
+        const pos = slideIndex1Based - 1;
+        if (mimicPlateByPosition[pos]) return mimicPlateByPosition[pos];
+        if (mimicBackgroundByPosition[pos]) return mimicBackgroundByPosition[pos];
+        const platePositions = Object.keys(mimicPlateByPosition)
+          .map(Number)
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b);
+        if (platePositions.length > 0) {
+          const cycled = platePositions[pos % platePositions.length];
+          if (cycled != null && mimicPlateByPosition[cycled]) return mimicPlateByPosition[cycled];
+        }
+        const bgPositions = Object.keys(mimicBackgroundByPosition)
+          .map(Number)
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b);
+        if (bgPositions.length > 0) {
+          const cycled = bgPositions[pos % bgPositions.length];
+          if (cycled != null && mimicBackgroundByPosition[cycled]) {
+            return mimicBackgroundByPosition[cycled];
+          }
+        }
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? (gp.mimic_v1 as Record<string, unknown>)
+            : null;
+        const fromPayload =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        const fromMimic =
+          mimicV1 && typeof mimicV1.background_image_url === "string"
+            ? mimicV1.background_image_url.trim()
+            : "";
+        const fromTaskAsset = taskAssets.find((a) => a.position === pos && a.public_url)?.public_url;
+        return fromPayload || fromMimic || fromTaskAsset || undefined;
+      },
+    };
+  }, [
+    mimicCarouselFlow,
+    editedSlides,
+    fullJob,
+    carouselTemplate,
+    rawPayload,
+    decorateCarouselSlidesPayload,
+    execTaskId,
+    runId,
+    mimicPlateByPosition,
+    mimicBackgroundByPosition,
+    taskAssets,
+  ]);
+
   const finalSlidesJsonOverride =
     !videoFlow && !imageFlow && editedSlides.length > 0 && rawPayload !== undefined
       ? (() => {
@@ -638,7 +837,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
 
       {data && !loading && (
-        <div className="detail-grid">
+        <div className={`detail-grid${mimicCarouselFlow ? " detail-grid--mimic-carousel" : ""}`}>
           <div style={{ minWidth: 0 }}>
             <TaskViewer
               data={data}
@@ -650,6 +849,31 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
               carouselLivePreview={carouselLivePreview}
               previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
+              onCarouselSlideChange={setViewerSlideIndex}
+              carouselActiveSlideIndex={mimicCarouselFlow ? viewerSlideIndex : undefined}
+              carouselCopySidePanel={
+                mimicCarouselFlow && fullJob ? (
+                  <MimicCarouselLayerEditorPanel
+                    job={fullJob}
+                    taskId={execTaskId}
+                    projectSlug={(data.project ?? projectFromUrl).trim()}
+                    slideCount={editedSlides.length}
+                    activeSlideIndex={viewerSlideIndex}
+                    template={mimicCarouselInspectContext?.template ?? carouselTemplate}
+                    instagramHandle={instagramHandleForPreview}
+                    buildInspectPayload={
+                      mimicCarouselInspectContext?.getPayload ?? carouselLivePreview?.getPayload
+                    }
+                    getBackgroundUrl={
+                      mimicCarouselInspectContext?.getBackgroundUrl ?? carouselLivePreview?.getBackgroundUrl
+                    }
+                    onReprintComplete={fetchTask}
+                    buildReprintTypographyPatch={buildReprintTypographyPatch}
+                    onMimicLayoutSaved={handleMimicLayoutSaved}
+                    onSlideSelect={setViewerSlideIndex}
+                  />
+                ) : undefined
+              }
             />
 
             <div className="card mt-4 surface-teal">
@@ -683,16 +907,25 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             </div>
 
             {mimicCarouselFlow && fullJob ? (
-              <MimicCarouselInspectPanel
-                job={fullJob}
-                taskId={execTaskId}
-                projectSlug={(data.project ?? projectFromUrl).trim()}
-                slideCount={editedSlides.length}
-                template={carouselTemplate}
-                instagramHandle={instagramHandleForPreview}
-                buildInspectPayload={carouselLivePreview?.getPayload}
-                getBackgroundUrl={carouselLivePreview?.getBackgroundUrl}
-              />
+              <details className="mimic-inspect-details mt-4">
+                <summary className="mimic-inspect-details__summary">Advanced — mimic package inspect</summary>
+                <MimicCarouselInspectPanel
+                  job={fullJob}
+                  taskId={execTaskId}
+                  projectSlug={(data.project ?? projectFromUrl).trim()}
+                  slideCount={editedSlides.length}
+                  activeSlideIndex={viewerSlideIndex}
+                  onInspectSlideChange={setViewerSlideIndex}
+                  template={mimicCarouselInspectContext?.template ?? carouselTemplate}
+                  instagramHandle={instagramHandleForPreview}
+                  buildInspectPayload={
+                    mimicCarouselInspectContext?.getPayload ?? carouselLivePreview?.getPayload
+                  }
+                  getBackgroundUrl={
+                    mimicCarouselInspectContext?.getBackgroundUrl ?? carouselLivePreview?.getBackgroundUrl
+                  }
+                />
+              </details>
             ) : null}
 
             <div className="card mt-4 surface-purple">
@@ -715,7 +948,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className={mimicCarouselFlow ? "mimic-review-sidebar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {heygenWorkbench && (
               <HeyGenReviewEdits
                 heygenAvatarId={heygenAvatarId}
@@ -759,6 +992,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 skipImageRegeneration={skipImageRegeneration}
                 onSkipImageRegenerationChange={setSkipImageRegeneration}
               />
+            ) : mimicCarouselFlow ? (
+              <MimicCarouselEdits fontScale={fontScale} onFontScaleChange={setFontScale} />
             ) : (
               <CarouselEdits
                 taskId={execTaskId}
@@ -824,8 +1059,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
               skipImageRegeneration={imageFlow ? skipImageRegeneration : undefined}
-              showCarouselTemplateControl={carouselFlow && !videoFlow && !imageFlow}
-              showCarouselSlideRework={carouselFlow && !videoFlow && !imageFlow}
+              showCarouselTemplateControl={carouselFlow && !videoFlow && !imageFlow && !mimicCarouselFlow}
+              showCarouselSlideRework={carouselFlow && !videoFlow && !imageFlow && !mimicCarouselFlow}
+              hideIssueTags={mimicCarouselFlow}
+              mimicReviewMode={mimicCarouselFlow}
               carouselSlideCount={carouselSlideCount}
               existingSlideReworkIndices={existingSlideReworkIndices}
               existingCarouselReworkChangeTemplate={
@@ -836,7 +1073,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     : undefined
               }
             />
-            {!videoFlow && !imageFlow && (
+            {!videoFlow && !imageFlow && !mimicCarouselFlow && (
               <CarouselEditsExport
                 taskId={execTaskId}
                 runId={runId || undefined}

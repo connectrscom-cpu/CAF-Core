@@ -5,6 +5,10 @@ import {
   targetSlideCountFromReference,
 } from "./mimic-text-heavy.js";
 import type { MimicMode, MimicPayloadV1 } from "./mimic-payload.js";
+import {
+  DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT,
+  isBoldMimicVisualVariant,
+} from "./mimic-render-settings.js";
 
 export type MimicRenderSequence =
   | "copy_then_template_overlay"
@@ -20,6 +24,8 @@ export interface MimicRenderContextForLlm {
   format_pattern: string | null;
   render_sequence: MimicRenderSequence;
   operator_note: string;
+  /** Project/env visual similarity target for image-model plates (0–100). */
+  visual_similarity_pct?: number;
   /** Original reference indices removed as brand/app promos (carousel_visual). */
   skipped_promotional_slide_indices?: number[];
 }
@@ -32,7 +38,7 @@ function renderStrategyForMode(mode: MimicMode): MimicCarouselRenderStrategy {
 export function buildMimicRenderContextForLlm(
   mimic: MimicPayloadV1,
   guidelineEntry: Record<string, unknown>,
-  opts?: { target_slide_count?: number | null }
+  opts?: { target_slide_count?: number | null; visualSimilarityPct?: number }
 ): MimicRenderContextForLlm {
   const isTemplate = mimic.mode === "template_bg";
   const isCarouselVisual = mimic.mode === "carousel_visual";
@@ -62,14 +68,21 @@ export function buildMimicRenderContextForLlm(
 
   let render_sequence: MimicRenderSequence;
   let operator_note: string;
+  const visualSimilarityPct = opts?.visualSimilarityPct ?? DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT;
+  const variantLabel = isBoldMimicVisualVariant(visualSimilarityPct)
+    ? `bold visual variant (~${visualSimilarityPct}% similarity)`
+    : `~${visualSimilarityPct}% visual similarity variant`;
   if (isTemplate) {
     render_sequence = "copy_then_template_overlay";
     operator_note =
-      "Template path: background plates (cover/body/CTA) are extracted before this copy step. Finalize all slide copy here; render burns text onto those plates via HBS using Nemotron placement hints.";
+      `Template path: background plates (cover/body/CTA) are extracted before this copy step (${variantLabel}). ` +
+      "Finalize all slide copy here; render burns text onto those plates via HBS using Nemotron placement hints.";
   } else if (isCarouselVisual) {
     render_sequence = "visual_plate_then_hbs_overlay";
     operator_note =
-      "Visual mimic path: produce exactly target_slide_count slides — one per reference frame in slide_copy_layout (promo/video frames already removed). Same per-slide meaning as reference (rephrase only). Single-pass Flux edit (~70% visual similarity variant) bakes LLM copy onto each slide when MIMIC_CAROUSEL_TEXT_VIA_FLUX=1; otherwise art-only plate + HBS overlay.";
+      "Visual mimic path: produce exactly target_slide_count slides — one per reference frame in slide_copy_layout (promo/video frames already removed). " +
+      `Same per-slide meaning as reference (rephrase only). Art-only image edit (${variantLabel}) per slide; ` +
+      "final copy is composited via HBS/DocAI text overlay only (never baked into the image model).";
   } else {
     render_sequence = copyBefore ? "copy_then_template_overlay" : "per_slide_visual_mimic";
     operator_note = copyBefore
@@ -86,6 +99,7 @@ export function buildMimicRenderContextForLlm(
     format_pattern: formatPattern,
     render_sequence,
     operator_note,
+    visual_similarity_pct: visualSimilarityPct,
   };
 }
 

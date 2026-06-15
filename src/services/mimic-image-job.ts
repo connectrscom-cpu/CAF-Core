@@ -5,7 +5,7 @@ import { requireMimicPayloadForRender } from "../domain/mimic-payload.js";
 import { assertImageMimicSingleReference } from "../domain/mimic-reference-eligibility.js";
 import { insertAsset, deleteAssetsForTask } from "../repositories/assets.js";
 import type { RunRow } from "../repositories/runs.js";
-import { editImageFromReference, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
+import { generateMimicSlideImage, assertMimicImageProviderConfigured, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import { mimicPromptForMode, type MimicPromptOverrides } from "./mimic-prompt-builder.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
@@ -94,10 +94,16 @@ export async function processImageMimicJob(
   }
 
   const promptOverrides = await loadMimicPromptOverrides(db);
-  const { buffer, mimeType } = await editImageFromReference(config, {
+  const { buffer, mimeType } = await generateMimicSlideImage(config, {
     referenceUrl,
-    prompt: mimicPromptForMode("image_full", { onImageCopy }, promptOverrides),
+    prompt: mimicPromptForMode(
+      "image_full",
+      { onImageCopy },
+      promptOverrides,
+      { visualSimilarityPct: mimicProjectRender.visualSimilarityPct }
+    ),
     bflModelOverride: mimicBflModelOverride,
+    visualSimilarityPct: mimicProjectRender.visualSimilarityPct,
     audit: {
       db,
       projectId: job.project_id,

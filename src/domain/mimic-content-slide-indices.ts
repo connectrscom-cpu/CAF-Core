@@ -1,8 +1,56 @@
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
+import type { MimicMode } from "./mimic-payload.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
   return null;
+}
+
+/** Nemotron sometimes marks slides as skipped for theme/planner relevance — not promo frames. */
+export function isThemeOnlyMimicSkipReason(skipReason: string | null | undefined): boolean {
+  const r = String(skipReason ?? "").trim().toLowerCase();
+  if (!r) return false;
+  return (
+    r.includes("no relevance") ||
+    r.includes("not relevant") ||
+    r.includes("off topic") ||
+    r.includes("off-topic") ||
+    r.includes("unrelated") ||
+    /\btheme\b/.test(r)
+  );
+}
+
+/** Vision eval recommended full-bleed per-slide mimic (vs shared template plate). */
+export function isFullBleedCarouselMimicEntry(entry: Record<string, unknown>): boolean {
+  const raw = pickMimicEvaluationFromGuidelineEntry(entry);
+  const recommended = String(raw?.recommended_mode ?? "").trim().toLowerCase();
+  return recommended === "full_bleed_visual" || recommended === "not_suitable";
+}
+
+/**
+ * Nemotron `skip_slide_indices` are planner hints only — not used to drop reference frames.
+ * Only promotional / video filtering removes slides (`isPromotionalSourceSlide`, etc.).
+ */
+export function mimicEvalSkipSlideIndices(
+  _entry: Record<string, unknown>,
+  _opts?: { mimicMode?: MimicMode }
+): number[] {
+  return [];
+}
+
+export function shouldExpandThemeSkippedArchiveDeck(
+  entry: Record<string, unknown>,
+  fromEval: number[],
+  totalRefs: number
+): boolean {
+  if (totalRefs < 2 || fromEval.length >= totalRefs) return false;
+  const raw = pickMimicEvaluationFromGuidelineEntry(entry);
+  if (!isThemeOnlyMimicSkipReason(String(raw?.skip_reason ?? ""))) return false;
+  const rawSkip = Array.isArray(raw?.skip_slide_indices)
+    ? raw!.skip_slide_indices.filter((v: unknown): v is number => typeof v === "number")
+    : [];
+  if (rawSkip.length === 0) return false;
+  return rawSkip.length >= totalRefs - fromEval.length;
 }
 
 export function pickMimicEvaluationFromGuidelineEntry(
@@ -66,15 +114,12 @@ export function shouldExpandContentIndicesToFullTextDeck(
  */
 export function resolveEffectiveContentSlideIndices(
   entry: Record<string, unknown>,
-  totalRefs: number
+  totalRefs: number,
+  opts?: { mimicMode?: MimicMode }
 ): number[] {
   const total = Math.max(1, Math.floor(totalRefs));
+  const skip = new Set(mimicEvalSkipSlideIndices(entry, opts));
   const raw = pickMimicEvaluationFromGuidelineEntry(entry);
-  const skip = new Set(
-    Array.isArray(raw?.skip_slide_indices)
-      ? raw!.skip_slide_indices.filter((v: unknown): v is number => typeof v === "number")
-      : []
-  );
   const fromEval = Array.isArray(raw?.content_slide_indices)
     ? raw!.content_slide_indices.filter(
         (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1 && v <= total
@@ -86,8 +131,12 @@ export function resolveEffectiveContentSlideIndices(
 
   if (fromEval.length > 0) {
     const filtered = fromEval.filter((i) => !skip.has(i));
-    if (shouldExpandContentIndicesToFullTextDeck(filtered, textful.length > 0 ? textful : allNonSkipped, total)) {
-      return textful.length > 0 ? textful : allNonSkipped;
+    const expandCandidates = textful.length > 0 ? textful : allNonSkipped;
+    if (shouldExpandThemeSkippedArchiveDeck(entry, filtered, total)) {
+      return allNonSkipped;
+    }
+    if (shouldExpandContentIndicesToFullTextDeck(filtered, expandCandidates, total)) {
+      return expandCandidates;
     }
     return filtered.length > 0 ? filtered : allNonSkipped;
   }

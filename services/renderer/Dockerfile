@@ -15,6 +15,8 @@ RUN npm install --production
 
 COPY server.js ./
 COPY join-emoji-orphans.js ./
+COPY mimic-docai-contrast.js ./
+COPY mimic-docai-fit.js ./
 COPY templates/ ./templates/
 
 EXPOSE 3333

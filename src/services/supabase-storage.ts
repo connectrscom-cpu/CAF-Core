@@ -141,6 +141,7 @@ export function storageDownloadKeyCandidates(bucket: string, objectPath: string)
   add(n);
   add(assetObjectKeyInBucket(bucket, n));
   if (n.startsWith(`${bucket}/`)) {
+    add(`${bucket}/${n}`);
     add(n.slice(bucket.length + 1));
   }
   return ordered;

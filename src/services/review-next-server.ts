@@ -64,47 +64,33 @@ async function waitForReviewReady(upstream: string, log: (msg: string) => void, 
   throw new Error(`Review app did not become ready within ${timeoutMs}ms (${upstream})`);
 }
 
-function spawnReviewDev(config: AppConfig, port: number, log: (msg: string) => void): ChildProcess {
+function wireReviewChildLogs(child: ChildProcess, log: (msg: string) => void): void {
+  child.stdout?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
+  child.stderr?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
+}
+
+function spawnReviewDev(config: AppConfig, port: number): ChildProcess {
   const reviewDir = path.join(repoRoot, "apps", "review");
   const cmd = process.platform === "win32" ? "npx.cmd" : "npx";
-  const child = spawn(cmd, ["next", "dev", "-p", String(port)], {
+  return spawn(cmd, ["next", "dev", "-p", String(port)], {
     cwd: reviewDir,
     env: reviewChildEnv(config, port),
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stdout?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
-  child.stderr?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
-  child.on("exit", (code, signal) => {
-    if (code != null && code !== 0) log(`[review] exited code=${code}`);
-    if (signal) log(`[review] exited signal=${signal}`);
-  });
-  return child;
 }
 
-function spawnReviewStandalone(
-  config: AppConfig,
-  port: number,
-  standaloneDir: string,
-  log: (msg: string) => void
-): ChildProcess {
+function spawnReviewStandalone(config: AppConfig, port: number, standaloneDir: string): ChildProcess {
   const serverJs = path.join(standaloneDir, "server.js");
   if (!existsSync(serverJs)) {
     throw new Error(
       `Review standalone server not found at ${serverJs}. Run: cd apps/review && npm run build`
     );
   }
-  const child = spawn(process.execPath, [serverJs], {
+  return spawn(process.execPath, [serverJs], {
     cwd: standaloneDir,
     env: reviewChildEnv(config, port),
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stdout?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
-  child.stderr?.on("data", (buf) => log(`[review] ${String(buf).trimEnd()}`));
-  child.on("exit", (code, signal) => {
-    if (code != null && code !== 0) log(`[review] exited code=${code}`);
-    if (signal) log(`[review] exited signal=${signal}`);
-  });
-  return child;
 }
 
 export async function startReviewNextServer(
@@ -124,32 +110,98 @@ export async function startReviewNextServer(
       : `Starting Review (standalone) from ${standaloneDir} on ${upstream}`
   );
 
-  const child = useDev
-    ? spawnReviewDev(config, port, log)
-    : spawnReviewStandalone(config, port, standaloneDir, log);
+  let shuttingDown = false;
+  let currentChild: ChildProcess | null = null;
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+  let respawnInFlight: Promise<void> | null = null;
+
+  const spawnOne = (): ChildProcess => {
+    const child = useDev
+      ? spawnReviewDev(config, port)
+      : spawnReviewStandalone(config, port, standaloneDir);
+    wireReviewChildLogs(child, log);
+    return child;
+  };
+
+  const respawn = async (): Promise<void> => {
+    if (shuttingDown) return;
+    if (respawnInFlight) return respawnInFlight;
+    respawnInFlight = (async () => {
+      log("[review] sidecar exited — restarting…");
+      try {
+        const child = spawnOne();
+        currentChild = child;
+        child.on("exit", (code, signal) => {
+          if (code != null && code !== 0) log(`[review] exited code=${code}`);
+          if (signal) log(`[review] exited signal=${signal}`);
+          if (currentChild === child) currentChild = null;
+          if (shuttingDown || restartTimer) return;
+          restartTimer = setTimeout(() => {
+            restartTimer = null;
+            void respawn();
+          }, 1500);
+        });
+        await waitForReviewReady(upstream, log, 60_000);
+        log("[review] sidecar restarted");
+      } catch (err) {
+        log(`[review] restart failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (!shuttingDown && !restartTimer) {
+          restartTimer = setTimeout(() => {
+            restartTimer = null;
+            void respawn();
+          }, 5000);
+        }
+      } finally {
+        respawnInFlight = null;
+      }
+    })();
+    return respawnInFlight;
+  };
+
+  const child = spawnOne();
+  currentChild = child;
+  child.on("exit", (code, signal) => {
+    if (code != null && code !== 0) log(`[review] exited code=${code}`);
+    if (signal) log(`[review] exited signal=${signal}`);
+    if (currentChild === child) currentChild = null;
+    if (shuttingDown || restartTimer) return;
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      void respawn();
+    }, 1500);
+  });
 
   await waitForReviewReady(upstream, log);
 
   return {
     upstream,
-    child,
+    get child() {
+      return currentChild;
+    },
     stop: async () => {
-      if (!child.pid) return;
-      child.kill("SIGTERM");
+      shuttingDown = true;
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
+      }
+      const toStop = currentChild;
+      if (!toStop?.pid) return;
+      toStop.kill("SIGTERM");
       await new Promise<void>((resolve) => {
         const t = setTimeout(() => {
           try {
-            child.kill("SIGKILL");
+            toStop.kill("SIGKILL");
           } catch {
             /* ignore */
           }
           resolve();
         }, 5_000);
-        child.on("exit", () => {
+        toStop.on("exit", () => {
           clearTimeout(t);
           resolve();
         });
       });
+      currentChild = null;
     },
   };
 }

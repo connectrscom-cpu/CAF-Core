@@ -5,6 +5,11 @@ import {
   type SignalPackMimicReferenceUiRow,
 } from "./signal-pack-mimic-ui.js";
 import type { MimicTextOverlayLabFixture } from "./mimic-text-overlay-lab.js";
+import {
+  copyBlocksFromSlideRecord,
+  inferMimicReferenceCopySlots,
+  llmSlideFromCopySlots,
+} from "./mimic-copy-slots.js";
 import type { Pool } from "pg";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -20,10 +25,15 @@ export function buildDefaultLlmSlideFromInsightSlide(
     return { headline: "Sample headline", body: "Sample body copy for overlay lab." };
   }
   const refText = String(slide.on_screen_text_transcript ?? slide.on_image_text ?? "").trim();
-  const blocks = Array.isArray(slide.text_blocks) ? slide.text_blocks : [];
+  const blocks = copyBlocksFromSlideRecord(slide);
   if (blocks.length > 0) {
+    const slots = inferMimicReferenceCopySlots(blocks, refText);
+    return llmSlideFromCopySlots(slots);
+  }
+  const legacyBlocks = Array.isArray(slide.text_blocks) ? slide.text_blocks : [];
+  if (legacyBlocks.length > 0) {
     return {
-      text_blocks: blocks.map((b: unknown) => {
+      text_blocks: legacyBlocks.map((b: unknown) => {
         const rec = asRecord(b) ?? {};
         return {
           role: rec.role ?? "body",

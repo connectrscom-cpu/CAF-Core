@@ -3,6 +3,7 @@ import type { MimicBflModelSlug } from "../domain/mimic-bfl-model.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import type { Pool } from "pg";
 import { appConfigWithMimicBflModel } from "./mimic-project-config.js";
+import { finalizeMimicImageModelPrompt } from "./mimic-prompt-builder.js";
 import { downloadBufferFromUrl } from "./supabase-storage.js";
 
 export type MimicImageProvider = "openai" | "nvidia" | "dashscope" | "bfl";
@@ -23,6 +24,13 @@ export interface MimicImageEditParams {
     taskId: string;
     step: string;
   };
+  /** When true, skip art-only hard guard (legacy Flux text-bake — disabled in pipeline). */
+  allowOnImageText?: boolean;
+}
+
+export interface MimicSlideImageParams extends MimicImageEditParams {
+  /** When ≤25%, uses low input fidelity on reference edit. */
+  visualSimilarityPct?: number;
 }
 
 export interface MimicImageEditResult {
@@ -39,6 +47,14 @@ export interface MimicImageCallConfig {
   providerLabel: string;
 }
 
+function withArtOnlyImagePrompt(params: MimicImageEditParams): MimicImageEditParams {
+  const prompt = finalizeMimicImageModelPrompt(params.prompt, {
+    allowOnImageText: params.allowOnImageText,
+  });
+  if (prompt === params.prompt) return params;
+  return { ...params, prompt };
+}
+
 function apiBaseUrl(base: string): string {
   return base.replace(/\/$/, "");
 }
@@ -46,6 +62,11 @@ function apiBaseUrl(base: string): string {
 function imagesEditsUrl(apiBase: string): string {
   const base = apiBaseUrl(apiBase);
   return base.endsWith("/images/edits") ? base : `${base}/images/edits`;
+}
+
+function imagesGenerationsUrl(apiBase: string): string {
+  const base = apiBaseUrl(apiBase);
+  return base.endsWith("/images/generations") ? base : `${base}/images/generations`;
 }
 
 function dashScopeGenerationUrl(apiBase: string): string {
@@ -471,8 +492,7 @@ function buildDashScopeEditBody(
     parameters: {
       n: 1,
       watermark: false,
-      negative_prompt:
-        "watermark, logo, @handle, instagram handle, brand tag, exact copy, duplicate illustration, landscape, horizontal",
+      negative_prompt: MIMIC_ART_ONLY_NEGATIVE_PROMPT,
       prompt_extend: false,
       size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
     },
@@ -686,6 +706,7 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
     height,
     safety_tolerance: config.MIMIC_IMAGE_BFL_SAFETY_TOLERANCE,
     output_format: outputFormat,
+    ...(!params.allowOnImageText ? { negative_prompt: MIMIC_ART_ONLY_NEGATIVE_PROMPT } : {}),
   };
   const flexTuning = bflFlexTuningParams(config);
   if (flexTuning) {
@@ -801,6 +822,354 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
   return { buffer, mimeType };
 }
 
+const MIMIC_ART_ONLY_NEGATIVE_PROMPT =
+  "text, words, letters, numbers, typography, headline, subhead, caption, watermark, logo, @handle, instagram handle, brand tag, UI labels, lorem ipsum, gibberish text, readable copy, exact copy, duplicate illustration, landscape, horizontal, near-duplicate, same composition";
+
+const DASHSCOPE_GENERATION_NEGATIVE_PROMPT = MIMIC_ART_ONLY_NEGATIVE_PROMPT;
+
+function buildDashScopeGenerateBody(
+  call: MimicImageCallConfig,
+  config: AppConfig,
+  params: Pick<MimicImageEditParams, "prompt" | "size">
+): Record<string, unknown> {
+  return {
+    model: call.model,
+    input: {
+      messages: [{ role: "user", content: [{ text: params.prompt }] }],
+    },
+    parameters: {
+      n: 1,
+      watermark: false,
+      negative_prompt: DASHSCOPE_GENERATION_NEGATIVE_PROMPT,
+      prompt_extend: false,
+      size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
+    },
+  };
+}
+
+async function generateViaDashScope(
+  config: AppConfig,
+  params: MimicImageEditParams
+): Promise<MimicImageEditResult> {
+  const call = resolveMimicImageCall(config);
+  if (!call.apiKey) throw new Error("DASHSCOPE_API_KEY is required when MIMIC_IMAGE_PROVIDER=dashscope");
+  const body = buildDashScopeGenerateBody(call, config, params);
+
+  const started = Date.now();
+  const res = await fetch(call.editsEndpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${call.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const latencyMs = Math.max(0, Date.now() - started);
+  const rawText = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(rawText) as Record<string, unknown>;
+  } catch {
+    parsed = { raw: rawText.slice(0, 500) };
+  }
+
+  if (params.audit) {
+    await tryInsertApiCallAudit(params.audit.db, {
+      projectId: params.audit.projectId,
+      runId: params.audit.runId,
+      taskId: params.audit.taskId,
+      step: params.audit.step,
+      provider: call.provider,
+      model: call.model,
+      ok: res.ok && !parsed.code,
+      requestJson: {
+        endpoint: call.editsEndpoint,
+        mimic_provider: call.provider,
+        generation_mode: "text_to_image",
+        prompt: params.prompt,
+        size: dashScopeSizeParam(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE),
+        input: body.input,
+        parameters: body.parameters,
+      },
+      responseJson: res.ok ? { request_id: parsed.request_id } : parsed,
+      latencyMs,
+    });
+  }
+
+  if (!res.ok || parsed.code) {
+    throw new Error(
+      `${providerErrorLabel("dashscope")} text-to-image failed (${res.status}): ${String(parsed.message ?? rawText.slice(0, 200))}`
+    );
+  }
+
+  return parseDashScopeImageEditResponse(parsed);
+}
+
+async function generateViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+  const call = resolveMimicImageCall(config);
+  if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
+
+  const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
+  const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
+  const body: Record<string, unknown> = {
+    prompt: params.prompt,
+    width,
+    height,
+    safety_tolerance: config.MIMIC_IMAGE_BFL_SAFETY_TOLERANCE,
+    output_format: outputFormat,
+    ...(!params.allowOnImageText ? { negative_prompt: MIMIC_ART_ONLY_NEGATIVE_PROMPT } : {}),
+  };
+  const flexTuning = bflFlexTuningParams(config);
+  if (flexTuning) {
+    body.steps = flexTuning.steps;
+    body.guidance = flexTuning.guidance;
+  }
+
+  const started = Date.now();
+  const submitRes = await fetch(call.editsEndpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "x-key": call.apiKey,
+    },
+    body: JSON.stringify(body),
+  });
+
+  const submitLatencyMs = Math.max(0, Date.now() - started);
+  const submitRaw = await submitRes.text();
+  let submitParsed: Record<string, unknown> = {};
+  try {
+    submitParsed = JSON.parse(submitRaw) as Record<string, unknown>;
+  } catch {
+    submitParsed = { raw: submitRaw.slice(0, 500) };
+  }
+
+  if (!submitRes.ok) {
+    const detail =
+      typeof submitParsed.detail === "string"
+        ? submitParsed.detail
+        : JSON.stringify(submitParsed.detail ?? submitParsed).slice(0, 300);
+    if (params.audit) {
+      await tryInsertApiCallAudit(params.audit.db, {
+        projectId: params.audit.projectId,
+        runId: params.audit.runId,
+        taskId: params.audit.taskId,
+        step: params.audit.step,
+        provider: call.provider,
+        model: call.model,
+        ok: false,
+        requestJson: {
+          endpoint: call.editsEndpoint,
+          mimic_provider: call.provider,
+          generation_mode: "text_to_image",
+          prompt: params.prompt,
+          width,
+          height,
+          output_format: outputFormat,
+        },
+        responseJson: submitParsed,
+        latencyMs: submitLatencyMs,
+      });
+    }
+    throw new Error(`${providerErrorLabel("bfl")} text-to-image submit failed (${submitRes.status}): ${detail}`);
+  }
+
+  const taskId = typeof submitParsed.id === "string" ? submitParsed.id : "";
+  const pollingUrl = typeof submitParsed.polling_url === "string" ? submitParsed.polling_url : "";
+  if (!taskId || !pollingUrl) {
+    throw new Error(`${providerErrorLabel("bfl")} text-to-image submit returned no id/polling_url`);
+  }
+
+  const pollStarted = Date.now();
+  const pollResult = await pollBflFluxTask({
+    config,
+    call,
+    pollingUrl,
+    taskId,
+    startedMs: pollStarted,
+  });
+  const sampleUrl = bflResultSampleUrl(pollResult);
+  if (!sampleUrl) {
+    throw new Error(`${providerErrorLabel("bfl")} text-to-image task ${taskId} ready but missing result.sample URL`);
+  }
+
+  const dl = await fetch(sampleUrl, { redirect: "follow" });
+  if (!dl.ok) {
+    throw new Error(`${providerErrorLabel("bfl")} failed to download text-to-image result (${dl.status})`);
+  }
+  const mimeType = dl.headers.get("content-type")?.split(";")[0]?.trim() || bflOutputMimeType(outputFormat);
+  const buffer = Buffer.from(await dl.arrayBuffer());
+  const latencyMs = Math.max(0, Date.now() - started);
+
+  if (params.audit) {
+    await tryInsertApiCallAudit(params.audit.db, {
+      projectId: params.audit.projectId,
+      runId: params.audit.runId,
+      taskId: params.audit.taskId,
+      step: params.audit.step,
+      provider: call.provider,
+      model: call.model,
+      ok: true,
+      requestJson: {
+        endpoint: call.editsEndpoint,
+        mimic_provider: call.provider,
+        generation_mode: "text_to_image",
+        prompt: params.prompt,
+        width,
+        height,
+        output_format: outputFormat,
+        bfl_task_id: taskId,
+      },
+      responseJson: {
+        status: pollResult.status,
+        sample_url: sampleUrl,
+        bytes: buffer.length,
+      },
+      latencyMs,
+    });
+  }
+
+  return { buffer, mimeType };
+}
+
+async function generateViaOpenAi(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+  const call = resolveMimicImageCall({ ...config, MIMIC_IMAGE_PROVIDER: "openai" });
+  if (!call.apiKey) throw new Error("OPENAI_API_KEY is required for OpenAI text-to-image");
+
+  const endpoint = imagesGenerationsUrl(config.OPENAI_API_BASE);
+  const body = JSON.stringify({
+    model: call.model,
+    prompt: params.prompt,
+    size: params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE,
+    n: 1,
+    quality: params.quality ?? config.MIMIC_IMAGE_QUALITY,
+  });
+
+  const started = Date.now();
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${call.apiKey}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body,
+  });
+  const latencyMs = Math.max(0, Date.now() - started);
+  const rawText = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(rawText) as Record<string, unknown>;
+  } catch {
+    parsed = { raw: rawText.slice(0, 500) };
+  }
+
+  if (params.audit) {
+    await tryInsertApiCallAudit(params.audit.db, {
+      projectId: params.audit.projectId,
+      runId: params.audit.runId,
+      taskId: params.audit.taskId,
+      step: params.audit.step,
+      provider: call.provider,
+      model: call.model,
+      ok: res.ok,
+      requestJson: {
+        endpoint,
+        mimic_provider: call.provider,
+        generation_mode: "text_to_image",
+        prompt: params.prompt,
+        size: params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE,
+      },
+      responseJson: res.ok
+        ? { data_count: Array.isArray(parsed.data) ? parsed.data.length : 0 }
+        : parsed,
+      latencyMs,
+    });
+  }
+
+  if (!res.ok) {
+    const errMsg =
+      asRecord(parsed.error)?.message ??
+      (typeof parsed.error === "string" ? parsed.error : rawText.slice(0, 300));
+    throw new Error(`${providerErrorLabel("openai")} text-to-image failed (${res.status}): ${String(errMsg)}`);
+  }
+
+  return parseImageEditResponse(parsed);
+}
+
+/**
+ * Text-to-image generation for bold mimic variants (no reference pixels sent to the model).
+ */
+export async function generateImageFromPrompt(
+  config: AppConfig,
+  params: MimicImageEditParams
+): Promise<MimicImageEditResult> {
+  params = withArtOnlyImagePrompt(params);
+  const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
+  assertMimicImageProviderConfigured(effectiveConfig);
+
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "bfl") {
+    try {
+      return await generateViaBfl(effectiveConfig, params);
+    } catch (err) {
+      const canFallback =
+        effectiveConfig.MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE &&
+        Boolean(effectiveConfig.DASHSCOPE_API_KEY?.trim());
+      if (canFallback && isBflModerationError(err)) {
+        try {
+          return await generateViaDashScope(effectiveConfig, params);
+        } catch (dashErr) {
+          if (isDashScopeAuthError(dashErr) && effectiveConfig.OPENAI_API_KEY?.trim()) {
+            return generateViaOpenAi(effectiveConfig, params);
+          }
+          throw dashErr;
+        }
+      }
+      throw err;
+    }
+  }
+
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "dashscope") {
+    try {
+      return await generateViaDashScope(effectiveConfig, params);
+    } catch {
+      return editImageFromReference(effectiveConfig, {
+        ...params,
+        inputFidelity: "low",
+      });
+    }
+  }
+
+  if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "openai") {
+    return generateViaOpenAi(effectiveConfig, params);
+  }
+
+  if (effectiveConfig.OPENAI_API_KEY?.trim()) {
+    return generateViaOpenAi(effectiveConfig, params);
+  }
+
+  return editImageFromReference(effectiveConfig, {
+    ...params,
+    inputFidelity: "low",
+  });
+}
+
+/**
+ * Mimic slide render entry — bold variants use reference edit with low input fidelity ("like this, not the same").
+ */
+export async function generateMimicSlideImage(
+  config: AppConfig,
+  params: MimicSlideImageParams
+): Promise<MimicImageEditResult> {
+  // Art-only plates must use low fidelity — high fidelity preserves reference typography on Flux edits.
+  return editImageFromReference(config, {
+    ...params,
+    inputFidelity: "low",
+  });
+}
+
 /**
  * Reference-conditioned image edit/generate for mimic flows.
  * Downloads archived inspection media (signed Supabase URL) and sends it to the configured provider.
@@ -823,6 +1192,7 @@ export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
+  params = withArtOnlyImagePrompt(params);
   const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
   assertMimicImageProviderConfigured(effectiveConfig);
 

@@ -28,10 +28,10 @@ export const CAROUSEL_COPY_SYSTEM_ADDENDUM = `Carousel copy quality (editorial b
  */
 export const MIMIC_TEMPLATE_BG_COPY_ADDENDUM = `Mimic template carousel (text-on-template):
 - **Primary deliverable:** Complete per-slide copy for every slide in the deck (headline, body, kicker, CTA fields per schema). This copy will be composited onto pre-extracted background plates — write for on-slide reading, not caption-only.
-- **Narrative:** Rephrase the reference deck slide-by-slide using \`slide_copy_layout\`. Match **roles, pacing, line count, and approximate length** (~80% structural similarity). Each slide must keep the **same subject and claim** as that slide's \`reference_on_screen_text\` — new wording only; do not transcribe verbatim and do not invent a new topic for a slide.
-- **Do not inflate copy length:** Prefer *tight* rewrites that match each reference **line** length (see per-block character caps in the system prompt). If the reference slide is a short title line, output a short title line — do not expand into an explanatory paragraph just to “add depth”.
-- **Output shape:** Prefer \`text_blocks[]\` per slide (one entry per reference line / role) when \`slide_copy_layout[N].text_blocks\` exist.
-- **Use the reference text blocks:** When \`slide_copy_layout[N].text_blocks\` exist, treat them as the authoritative on-screen lines for that slide. Rewrite those lines in new wording while keeping the same named entities, product/brand mentions, and claim.
+- **Narrative:** Rephrase the reference deck slide-by-slide using \`slide_copy_layout\`. Match **roles, pacing, and line count**. Each on-screen line should have roughly the **same character count** as that OCR box's reference (±slack in the system prompt). Do not shorten, omit, or merge reference lines.
+- **Length:** Match each reference **OCR box** (see \`reference_chars_per_line\`). A 40-char reference line → ~40 chars of rephrased copy. Do not compress the slide into fewer/shorter lines.
+- **Output shape (required when \`copy_slots_v1\` present):** Emit \`text_blocks[]\` with **one entry per OCR box** — walk each \`copy_slots_v1\` row and emit one line per value in \`reference_chars_per_line\` (same \`llm_field\`, same order).
+- **Use copy slots, not raw OCR:** When \`slide_copy_layout[N].copy_slots_v1\` exists, treat each OCR line in \`reference_chars_per_line\` as one rewrite unit with matching length.
 ${MIMIC_SEMANTIC_FIDELITY_COPY_RULES}
 - **Slide count (required):** Output **exactly** \`mimic_render_context.target_slide_count\` slides — one per row in \`slide_copy_layout\` (same order). Do not omit content slides from the reference; do not add extra slides.
 - **No brand/app promo slides:** Do not write copy for sponsor frames, app download CTAs, or cash-back promos omitted from \`slide_copy_layout\`.
@@ -42,12 +42,15 @@ ${MIMIC_SEMANTIC_FIDELITY_COPY_RULES}
  */
 export const MIMIC_FULL_BLEED_COPY_ADDENDUM = `Mimic visual carousel (full-bleed / Flux-baked on-image text):
 - **Primary deliverable:** Complete per-slide copy for every slide (headline, body, kicker, CTA per schema). Render generates an art-only visual plate per slide, then composites this copy via HBS at the same screen region as Nemotron \`text_blocks\` / \`typography.text_placement\` (not a default top stack) — write for on-slide reading.
-- **Narrative:** Rephrase the reference deck slide-by-slide using \`slide_copy_layout\`. Match slide roles, line count, and approximate length (~80% structural similarity). Each slide's on-screen copy must preserve the **same meaning** as that slide's \`reference_on_screen_text\` and \`visual_description\` — rephrase only; never transcribe verbatim and never substitute a different sign, product, or topic on that slide.
-- **Do not inflate copy length:** Prefer *tight* rewrites that match each reference **line** length (see per-block character caps in the system prompt). If the reference slide is 1–2 short lines, keep your output to ~1–2 short lines; do not expand into a long paragraph that changes the “feel” of the slide.
-- **Output shape:** Prefer \`text_blocks[]\` per slide when \`slide_copy_layout[N].text_blocks\` exist.
-- **Use the reference text blocks:** When \`slide_copy_layout[N].text_blocks\` exist, treat them as the authoritative on-screen lines for that slide. Rewrite those lines in new wording while keeping the same named entities, product/brand mentions, and claim.
+- **Narrative:** Rephrase the reference deck slide-by-slide using \`slide_copy_layout\`. Match slide roles and line count. Each on-screen line should have roughly the **same character count** as that OCR position (±slack). Preserve the same on-screen reading volume — do not compress into fewer lines.
+- **Length:** Match each reference **OCR box** (see \`reference_chars_per_line\`). Write one rephrased line per box at similar length — not one ultra-short phrase split across the slide.
+- **Output shape (required when \`copy_slots_v1\` present):** Emit \`text_blocks[]\` with **one entry per OCR box** (one per \`reference_chars_per_line\` value, in slot order). The overlay engine places each line at its Document AI box.
+- **Decor + hook slides:** When the reference keeps a fixed label (zodiac sign, segment title) plus separate body stacks, write **one headline/body line per OCR box** at reference length.
 ${MIMIC_SEMANTIC_FIDELITY_COPY_RULES}
-- **Caption / hashtags:** Include when the schema expects them; they are the Instagram post text, separate from on-slide fields.
+- **Caption / hashtags:** Include when the schema expects them; they are the Instagram post text, separate from on-slide fields. Rephrase \`reference_hook_preview\` / the reference caption theme — do not invent a unrelated post angle.
+- **@handle:** Put the project @handle from candidate/strategy context on the **CTA slide only** when the schema expects it. Do **not** copy the reference creator @handle onto cover/body slides unless that exact handle appears in your project context.
+- **No synthetic panel fields:** Do **not** emit \`panel_title\`, \`panel_body\`, \`site_bar\`, or \`note\` unless \`slide_copy_layout\` / reference text_blocks show that slot on that slide. Full-bleed mimic overlays use \`headline\`, \`body\`, and \`text_blocks[]\` only.
+- **text_blocks shape:** Emit **one \`text_blocks[]\` entry per OCR box** (see \`reference_chars_per_line\` on each slot). Same \`llm_field\` per slot, one line per box — do not collapse multiple boxes into one entry.
 - **Slide count (required):** Output **exactly** \`mimic_render_context.target_slide_count\` slides — one per row in \`slide_copy_layout\` (same order). This is every content slide from the original post except promo/video frames in \`skipped_promotional_slide_indices\`. Do not skip or invent slides.
 - **No brand/app promo slides:** Do not write copy for sponsor frames, app download CTAs, cash-back offers, or "link in bio" promos — those reference slides are omitted from \`slide_copy_layout\`.
 - **Ignore generic carousel "depth bar" / slide_min_chars** — obey the per-slide length caps block when present; short reference bubbles must stay short.

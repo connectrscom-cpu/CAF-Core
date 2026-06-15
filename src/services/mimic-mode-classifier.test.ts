@@ -365,6 +365,34 @@ describe("mimic-payload", () => {
     expect(picked?.reference_items[0]?.bucket).toBe("assets");
     expect(picked?.reference_items[0]?.object_path).toBe("top-performer/x/slide_01.png");
   });
+
+  it("preserves docai_layer_positions across pick and merge", () => {
+    const mimic = {
+      schema_version: 1 as const,
+      mode: "carousel_visual" as const,
+      classified_at: "2026-01-01T00:00:00.000Z",
+      source_insights_id: "ins_a",
+      analysis_tier: "top_performer_carousel",
+      reference_items: [
+        {
+          index: 1,
+          role: "carousel_slide",
+          vision_fetch_url: "https://example.com/a.jpg",
+        },
+      ],
+      twist_brief: { visual_only: true as const, legal_note: "pattern only" },
+    };
+    const positions = {
+      "1": [{ layer_key: "body@100,200:hello", x_px: 10, y_px: 20, w_px: 300, h_px: 80 }],
+    };
+    const gp = mergeMimicPayloadSlice(
+      { mimic_v1: { ...mimic, docai_layer_positions: positions } },
+      mimic
+    );
+    expect((gp.mimic_v1 as Record<string, unknown>).docai_layer_positions).toEqual(positions);
+    const picked = pickMimicPayload(gp);
+    expect(picked?.docai_layer_positions).toEqual(positions);
+  });
 });
 
 describe("flow routing", () => {

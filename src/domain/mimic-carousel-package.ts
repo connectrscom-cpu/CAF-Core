@@ -2,6 +2,11 @@
  * Execution draft package for FLOW_TOP_PERFORMER_MIMIC_CAROUSEL only.
  * Distinct from `carousel_package` (FLOW_CAROUSEL): merges LLM copy + upstream visual analysis + render plan.
  */
+import type { MimicReferenceCopySlot } from "../services/mimic-copy-slots.js";
+import {
+  copySlotsForSlideRecord,
+  serializeCopySlotsForLlmPrompt,
+} from "../services/mimic-copy-slots.js";
 import type { MimicMode, MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "./mimic-payload.js";
 import { pickMimicPayload } from "./mimic-payload.js";
 import { parseMimicTextBlocks } from "../services/mimic-slide-typography.js";
@@ -277,6 +282,8 @@ export interface MimicSlideCopyLayoutForLlm {
   typography: MimicCarouselSlideTypography | null;
   /** Normalized 0–1 boxes + font hints from Nemotron vision. */
   text_blocks: MimicCarouselSlideTextBlock[] | null;
+  /** Persisted LLM→OCR mapping groups (from Document AI + Nemotron merge). */
+  copy_slots_v1?: MimicReferenceCopySlot[] | null;
 }
 
 function slimTextBlocksForLlmCopy(raw: unknown): MimicCarouselSlideTextBlock[] | null {
@@ -305,11 +312,13 @@ export function serializeSlideCopyLayoutMinimalForCopyGeneration(
   slide_index: number;
   reference_on_screen_text: string | null;
   visual_description: string | null;
+  copy_slots_v1: ReturnType<typeof serializeCopySlotsForLlmPrompt>;
 }> {
   return layout.map((row) => ({
     slide_index: row.slide_index,
     reference_on_screen_text: truncateSlideTextForLlm(row.reference_on_screen_text, 320),
     visual_description: truncateSlideTextForLlm(row.visual_description, 180),
+    copy_slots_v1: serializeCopySlotsForLlmPrompt(row.copy_slots_v1),
   }));
 }
 
@@ -325,6 +334,7 @@ export function serializeSlideCopyLayoutForLlmPrompt(
   text_density: string | null;
   typography: Pick<MimicCarouselSlideTypography, "text_placement" | "headline_guess" | "relative_scale"> | null;
   text_blocks: Array<{ role: string | null; text: string }> | null;
+  copy_slots_v1: ReturnType<typeof serializeCopySlotsForLlmPrompt>;
 }> {
   return layout.map((row) => ({
     slide_index: row.slide_index,
@@ -335,6 +345,7 @@ export function serializeSlideCopyLayoutForLlmPrompt(
     text_density: row.text_density,
     typography: slimTypographyForLlmPrompt(row.typography),
     text_blocks: slimTextBlocksForLlmPrompt(row.text_blocks),
+    copy_slots_v1: serializeCopySlotsForLlmPrompt(row.copy_slots_v1),
   }));
 }
 
@@ -409,6 +420,7 @@ export function buildMimicSlideCopyLayoutFromEntry(
       color_tokens: slimColorTokens(s.color_tokens),
       typography: slimTypography(s.typography),
       text_blocks: slimTextBlocksForLlmCopy(s.text_blocks),
+      copy_slots_v1: copySlotsForSlideRecord(s),
     };
   });
 }

@@ -2,10 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildSlideRenderContext,
   carouselRenderBaseForPipeline,
+  pickSlideByCarouselIndex,
   slidesFromGeneratedOutput,
 } from "@caf-core-carousel/carousel-render-pack";
-import { mimicSlideTypographyPatch, mimicSlideThemePatch } from "@caf-core-carousel/mimic-slide-typography";
 import { mimicPromptForMode } from "@caf-core-carousel/mimic-prompt-builder";
+import {
+  mimicSlideTypographyPatch,
+  mimicSlideThemePatch,
+} from "@caf-core-carousel/mimic-slide-typography";
+import {
+  enrichSlideRenderContextWithMimicDocAi,
+  mergeDocAiLayerPositionsIntoMimicV1,
+} from "@/lib/mimic-docai-slide-render-context";
+import type { MimicDocAiLayerPositionOverride } from "@caf-core-carousel/mimic-docai-layer-positions";
 
 export const dynamic = "force-dynamic";
 
@@ -46,6 +55,35 @@ function slideMimicRenderMode(mimic: Record<string, unknown>, slideIndex: number
   return renderMode === "hbs" ? "hbs" : "full_bleed";
 }
 
+function parseLayerPosOverrides(raw: unknown): MimicDocAiLayerPositionOverride[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: MimicDocAiLayerPositionOverride[] = [];
+  for (const row of raw) {
+    const r = asRec(row);
+    if (!r) continue;
+    const layer_key = String(r.layer_key ?? "").trim();
+    const x_px = Number(r.x_px);
+    const y_px = Number(r.y_px);
+    if (!layer_key || !Number.isFinite(x_px) || !Number.isFinite(y_px)) continue;
+    const font_size_px = Number(r.font_size_px);
+    const w_px = Number(r.w_px);
+    const h_px = Number(r.h_px);
+    const text = typeof r.text === "string" ? r.text.trim() : "";
+    out.push({
+      layer_key,
+      x_px: Math.round(x_px),
+      y_px: Math.round(y_px),
+      ...(Number.isFinite(font_size_px) && font_size_px > 0 ? { font_size_px: Math.round(font_size_px) } : {}),
+      ...(Number.isFinite(w_px) && w_px > 0 ? { w_px: Math.round(w_px) } : {}),
+      ...(Number.isFinite(h_px) && h_px > 0 ? { h_px: Math.round(h_px) } : {}),
+      ...(text ? { text } : {}),
+      ...(r.box_locked === true ? { box_locked: true } : {}),
+      ...(r.hidden === true ? { hidden: true } : {}),
+    });
+  }
+  return out.length ? out : null;
+}
+
 /**
  * POST /api/renderer/inspect-slide-context
  *
@@ -66,6 +104,8 @@ export async function POST(request: NextRequest) {
     const instagramHandle = typeof body.instagram_handle === "string" ? body.instagram_handle.trim() : "";
     const backgroundFromBody =
       typeof body.background_image_url === "string" ? body.background_image_url.trim() : "";
+    const textBacking = body.text_backing !== false;
+    const draftOverrides = parseLayerPosOverrides(body.docai_layer_positions);
 
     if (!template) {
       return NextResponse.json({ ok: false, error: "template required" }, { status: 400 });
@@ -80,7 +120,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "no slides in payload" }, { status: 400 });
     }
 
-    const mimicV1 = asRec(payload.mimic_v1);
+    let mimicV1 = asRec(payload.mimic_v1);
+    if (mimicV1 && draftOverrides?.length) {
+      mimicV1 = mergeDocAiLayerPositionsIntoMimicV1(mimicV1, slideIndex, draftOverrides);
+    }
     const backgroundFromPayload =
       typeof payload.background_image_url === "string" ? payload.background_image_url.trim() : "";
     const backgroundFromMimic =
@@ -92,6 +135,7 @@ export async function POST(request: NextRequest) {
         ...payload,
         slides: usableSlides,
         ...(backgroundImageUrl ? { background_image_url: backgroundImageUrl } : {}),
+        ...(mimicV1 ? { mimic_v1: mimicV1 } : {}),
       },
       usableSlides
     );
@@ -110,14 +154,35 @@ export async function POST(request: NextRequest) {
       };
     }
 
-    const renderContext = buildSlideRenderContext(renderBase, usableSlides, slideIndex, {
+    let renderContext = buildSlideRenderContext(renderBase, usableSlides, slideIndex, {
       instagramHandle: instagramHandle || null,
     });
 
-    const currentSlide = asRec(usableSlides[Math.min(slideIndex - 1, usableSlides.length - 1)]);
+    const currentSlide = asRec(pickSlideByCarouselIndex(usableSlides, slideIndex));
     const mimicRenderMode = mimicV1 ? slideMimicRenderMode(mimicV1, slideIndex) : null;
     const hints = mimicV1 ? slideVisionHints(mimicV1, slideIndex) : {};
     const onImageCopy = slideOnImageCopy(currentSlide);
+
+    let docai_layer_count = 0;
+    let docaiTextLayers: Array<Record<string, unknown>> = [];
+    let docaiLayerPositions: MimicDocAiLayerPositionOverride[] = [];
+    if (mimicV1) {
+      const enriched = enrichSlideRenderContextWithMimicDocAi(
+        renderContext,
+        mimicV1,
+        slideIndex,
+        usableSlides,
+        {
+          instagramHandle,
+          textBacking,
+          layerPosOverrides: draftOverrides,
+        }
+      );
+      renderContext = enriched.renderContext;
+      docai_layer_count = enriched.docaiLayerCount;
+      docaiTextLayers = enriched.docaiTextLayers;
+      docaiLayerPositions = enriched.docaiLayerPositions;
+    }
 
     let expectedQwenPrompt: string | null = null;
     if (mimicV1) {
@@ -140,6 +205,9 @@ export async function POST(request: NextRequest) {
       mimic_render_mode: mimicRenderMode,
       background_image_url: backgroundImageUrl || null,
       expected_qwen_prompt: expectedQwenPrompt,
+      docai_layer_count,
+      docai_text_layers: docaiTextLayers,
+      docai_layer_positions: docaiLayerPositions,
       render_context: renderContext,
     });
   } catch (err) {

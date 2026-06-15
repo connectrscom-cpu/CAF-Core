@@ -10,7 +10,7 @@ import {
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
 import { buildMimicCopyJobBriefForLlm } from "./mimic-render-context.js";
-import { resolveEffectiveContentSlideIndices } from "./mimic-content-slide-indices.js";
+import { resolveEffectiveContentSlideIndices, shouldExpandThemeSkippedArchiveDeck, pickMimicEvaluationFromGuidelineEntry } from "./mimic-content-slide-indices.js";
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
@@ -154,8 +154,15 @@ export function buildContentSlideCopyLayoutFromEntry(
 
   const totalRefs = totalReferenceFramesInEntry(entry);
   const contentIndices = contentIndicesForCopyLayout(entry, totalRefs);
+  const rawEval = pickMimicEvaluationFromGuidelineEntry(entry);
+  const fromEval = Array.isArray(rawEval?.content_slide_indices)
+    ? rawEval!.content_slide_indices.filter(
+        (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1 && v <= totalRefs
+      )
+    : [];
+  const isThemeArchiveExpansion = shouldExpandThemeSkippedArchiveDeck(entry, fromEval, totalRefs);
   let layout: MimicSlideCopyLayoutForLlm[];
-  if (contentIndices.length === 0 || contentIndices.length >= full.length) {
+  if (contentIndices.length === 0 || (!isThemeArchiveExpansion && contentIndices.length >= full.length)) {
     layout = full;
   } else {
     const bySlideIndex = new Map(full.map((row) => [row.slide_index, row]));
@@ -273,7 +280,7 @@ export function appendMimicGroundedReferenceToUserPrompt(
   if (slimLayout.length > 0) {
     parts.push(
       "",
-      `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject to rephrase; visual_description = look; rephrase only):`,
+      `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject to rephrase; visual_description = look; copy_slots_v1 = on-screen placement units for text_blocks[]; rephrase only):`,
       trimMimicGroundingJson(JSON.stringify(slimLayout), maxGroundingJsonChars)
     );
   } else if (vgRaw) {
@@ -285,7 +292,8 @@ export function appendMimicGroundedReferenceToUserPrompt(
   parts.push("", MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
   parts.push(
     "",
-    "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide."
+    "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.",
+    "When copy_slots_v1 is present on a slide, output text_blocks[] with **one entry per OCR box** (one per reference_chars_per_line value, in slot order). The renderer composites each line onto its Document AI box — match reference character count per box."
   );
   return parts.join("\n").trim();
 }

@@ -3,7 +3,18 @@ import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { decideGenerationPlan, generationPlanRequestSchema } from "../decision_engine/index.js";
 import { ensureProject, upsertConstraints, getConstraints, mergeConstraintUpdate } from "../repositories/core.js";
-import { upsertContentJob, getContentJobByTaskId, patchMimicModeOverride } from "../repositories/jobs.js";
+import {
+  upsertContentJob,
+  getContentJobByTaskId,
+  patchMimicModeOverride,
+  patchMimicDocAiLayerPositions,
+} from "../repositories/jobs.js";
+import {
+  mergeMimicDocAiLayerPositionOverrides,
+  parseMimicDocAiLayerPositionsBySlide,
+  pickMimicDocAiLayerPositionsFromMimicV1,
+  type MimicDocAiLayerPositionOverride,
+} from "../domain/mimic-docai-layer-positions.js";
 import { insertLearningRule, applyLearningRule, listLearningRules } from "../repositories/learning.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
 import {
@@ -51,6 +62,13 @@ import { applyEditorialFlatOverridesToGeneratedOutput, partitionEditorialOverrid
 import { listPlatformConstraints } from "../repositories/project-config.js";
 import { resolvePlatformConstraintsForPack } from "../services/llm-generator-helpers.js";
 import { buildImmediateNeedsEditGenerationGuidance } from "../services/immediate-needs-edit-guidance.js";
+import {
+  recordCarouselTextOverlayReprintFailure,
+  rerenderCarouselTextOverlay,
+  rerenderCarouselSlidesAtIndices,
+} from "../services/job-pipeline.js";
+import { parseCarouselRenderTypographyPatch } from "../domain/carousel-render-typography.js";
+import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -1202,6 +1220,341 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const audits = await listMimicImageAuditsForTask(db, project.id, query.data.task_id);
     return { ok: true, audits };
+  });
+
+  const reprintTextOverlayBodySchema = z.object({
+    slide_indices: z.array(z.number().int().positive()).optional(),
+    render_typography: z.record(z.union([z.number(), z.string()])).optional(),
+    text_backing: z.boolean().optional(),
+    docai_layer_positions: z
+      .record(
+        z.string(),
+        z.array(
+          z.object({
+            layer_key: z.string().min(1),
+            x_px: z.number(),
+            y_px: z.number(),
+            font_size_px: z.number().int().positive().optional(),
+            w_px: z.number().int().positive().optional(),
+            h_px: z.number().int().positive().optional(),
+            box_locked: z.boolean().optional(),
+            hidden: z.boolean().optional(),
+            text: z.string().min(1).optional(),
+          })
+        )
+      )
+      .optional(),
+  });
+
+  async function scheduleReprintTextOverlay(
+    projectSlug: string,
+    taskId: string,
+    slideIndices: number[] | undefined,
+    renderTypography: Record<string, number> | undefined,
+    textBacking: boolean | undefined,
+    docaiLayerPositions: Record<string, MimicDocAiLayerPositionOverride[]> | undefined,
+    log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
+  ): Promise<
+    | { ok: true; accepted: true; task_id: string; message: string }
+    | { ok: false; error: string; message?: string }
+  > {
+    const project = await ensureProject(db, projectSlug);
+    const job = await getContentJobByTaskId(db, project.id, taskId.trim());
+    if (!job) return { ok: false, error: "job_not_found" };
+    const flowType = String(job.flow_type ?? "");
+    if (!isCarouselFlow(flowType) || !isTopPerformerMimicCarouselFlow(flowType)) {
+      return { ok: false, error: "reprint_text_overlay_requires_mimic_carousel_job" };
+    }
+    const jobId = String(job.id ?? "");
+    if (!jobId) return { ok: false, error: "job_missing_id" };
+
+    if (docaiLayerPositions && Object.keys(docaiLayerPositions).length > 0) {
+      const parsed = parseMimicDocAiLayerPositionsBySlide(docaiLayerPositions);
+      if (!parsed) {
+        return {
+          ok: false,
+          error: "invalid_docai_layer_positions",
+          message: "Layout positions were rejected — check layer_key, x_px, and y_px on every box.",
+        };
+      }
+      const gp = job.generation_payload as Record<string, unknown>;
+      const existing = pickMimicDocAiLayerPositionsFromMimicV1(gp?.mimic_v1) ?? {};
+      const merged: Record<string, MimicDocAiLayerPositionOverride[]> = { ...existing, ...parsed };
+      const patched = await patchMimicDocAiLayerPositions(db, project.id, taskId.trim(), merged);
+      if (!patched) {
+        return { ok: false, error: "job_not_found_or_no_mimic_payload" };
+      }
+    }
+
+    void rerenderCarouselTextOverlay(db, config, jobId, slideIndices, {
+      ...(renderTypography && Object.keys(renderTypography).length > 0
+        ? { renderTypographyPatch: renderTypography }
+        : {}),
+      textBacking: textBacking !== false,
+    })
+      .then(() => {
+        log.info(
+          { task_id: taskId, slide_indices: slideIndices ?? "all", render_typography: renderTypography ?? null },
+          "text overlay reprint completed"
+        );
+      })
+      .catch(async (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error(
+          { err, task_id: taskId, slide_indices: slideIndices ?? "all", render_typography: renderTypography ?? null },
+          "text overlay reprint failed"
+        );
+        try {
+          await recordCarouselTextOverlayReprintFailure(
+            db,
+            {
+              id: jobId,
+              task_id: taskId.trim(),
+              project_id: project.id,
+              status: String(job.status ?? "RENDERING"),
+            },
+            msg
+          );
+        } catch (markErr) {
+          log.error({ err: markErr, task_id: taskId }, "failed to mark text overlay reprint as FAILED");
+        }
+      });
+
+    const slideHint =
+      slideIndices && slideIndices.length > 0
+        ? `slide(s) ${slideIndices.join(", ")}`
+        : "all slides";
+    return {
+      ok: true,
+      accepted: true,
+      task_id: taskId,
+      message: `Text overlay reprint started for ${slideHint} (reuses stored plates, no Flux). Refresh the carousel in 1–2 minutes.`,
+    };
+  }
+
+  /** Recomposite mimic text on stored MIMIC_BACKGROUND / MIMIC_VISUAL_PLATE — no Flux/Qwen/BFL. */
+  app.post("/v1/review-queue/:project_slug/task/:task_id/reprint-text-overlay", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = reprintTextOverlayBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleReprintTextOverlay(
+      params.data.project_slug,
+      params.data.task_id,
+      body.data.slide_indices,
+      body.data.render_typography
+        ? parseCarouselRenderTypographyPatch(body.data.render_typography)
+        : undefined,
+      body.data.text_backing,
+      body.data.docai_layer_positions
+        ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
+        : undefined,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
+  app.post("/v1/review-queue/:project_slug/reprint-text-overlay", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = reprintTextOverlayBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleReprintTextOverlay(
+      params.data.project_slug,
+      query.data.task_id,
+      body.data.slide_indices,
+      body.data.render_typography
+        ? parseCarouselRenderTypographyPatch(body.data.render_typography)
+        : undefined,
+      body.data.text_backing,
+      body.data.docai_layer_positions
+        ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
+        : undefined,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
+  const regenerateCarouselSlidesBodySchema = z.object({
+    slide_indices: z.array(z.number().int().positive()).min(1),
+  });
+
+  async function scheduleRegenerateCarouselSlides(
+    projectSlug: string,
+    taskId: string,
+    slideIndices: number[],
+    log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
+  ): Promise<
+    | { ok: true; accepted: true; task_id: string; message: string }
+    | { ok: false; error: string; message?: string }
+  > {
+    const project = await ensureProject(db, projectSlug);
+    const job = await getContentJobByTaskId(db, project.id, taskId.trim());
+    if (!job) return { ok: false, error: "job_not_found" };
+    const flowType = String(job.flow_type ?? "");
+    if (!isCarouselFlow(flowType) || !isTopPerformerMimicCarouselFlow(flowType)) {
+      return { ok: false, error: "regenerate_slide_requires_mimic_carousel_job" };
+    }
+    const jobId = String(job.id ?? "");
+    if (!jobId) return { ok: false, error: "job_missing_id" };
+
+    const indices = [...new Set(slideIndices.map((i) => Math.floor(i)).filter((i) => i >= 1))].sort(
+      (a, b) => a - b
+    );
+    if (indices.length === 0) return { ok: false, error: "slide_indices_required" };
+
+    void rerenderCarouselSlidesAtIndices(db, config, jobId, indices)
+      .then(() => {
+        log.info({ task_id: taskId, slide_indices: indices }, "mimic carousel slide regenerate completed");
+      })
+      .catch((err) => {
+        log.error({ err, task_id: taskId, slide_indices: indices }, "mimic carousel slide regenerate failed");
+      });
+
+    const slideHint = indices.length === 1 ? `slide ${indices[0]}` : `slides ${indices.join(", ")}`;
+    return {
+      ok: true,
+      accepted: true,
+      task_id: taskId,
+      message: `Image regenerate started for ${slideHint} (Flux/Qwen — billed). Refresh the carousel in 2–5 minutes.`,
+    };
+  }
+
+  /** Re-run Flux/Qwen for selected mimic carousel slides (full image regen, billed). */
+  app.post("/v1/review-queue/:project_slug/task/:task_id/regenerate-carousel-slides", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = regenerateCarouselSlidesBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleRegenerateCarouselSlides(
+      params.data.project_slug,
+      params.data.task_id,
+      body.data.slide_indices,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
+  app.post("/v1/review-queue/:project_slug/regenerate-carousel-slides", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = regenerateCarouselSlidesBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleRegenerateCarouselSlides(
+      params.data.project_slug,
+      query.data.task_id,
+      body.data.slide_indices,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
+  const mimicDocAiLayerPositionsBodySchema = z.object({
+    task_id: z.string().min(1),
+    slide_index: z.number().int().positive(),
+    positions: z.array(
+      z.object({
+        layer_key: z.string().min(1),
+        x_px: z.number(),
+        y_px: z.number(),
+        font_size_px: z.number().int().positive().optional(),
+        w_px: z.number().int().positive().optional(),
+        h_px: z.number().int().positive().optional(),
+        text: z.string().min(1).optional(),
+      })
+    ),
+  });
+
+  async function saveMimicDocAiLayerPositions(
+    projectSlug: string,
+    taskId: string,
+    slideIndex: number,
+    positions: MimicDocAiLayerPositionOverride[]
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const project = await ensureProject(db, projectSlug);
+    const job = await getContentJobByTaskId(db, project.id, taskId.trim());
+    if (!job) return { ok: false, error: "job_not_found" };
+    const flowType = String(job.flow_type ?? "");
+    if (!isTopPerformerMimicCarouselFlow(flowType)) {
+      return { ok: false, error: "mimic_docai_layer_positions_requires_mimic_carousel_job" };
+    }
+    const gp = job.generation_payload as Record<string, unknown>;
+    const mimicV1 = gp?.mimic_v1;
+    if (!mimicV1 || typeof mimicV1 !== "object") {
+      return { ok: false, error: "job_missing_mimic_v1" };
+    }
+    const existing = pickMimicDocAiLayerPositionsFromMimicV1(mimicV1) ?? {};
+    const merged = mergeMimicDocAiLayerPositionOverrides(existing, slideIndex, positions);
+    const updated = await patchMimicDocAiLayerPositions(db, project.id, taskId.trim(), merged);
+    if (!updated) return { ok: false, error: "job_not_found_or_no_mimic_payload" };
+    return { ok: true };
+  }
+
+  app.post("/v1/review-queue/:project_slug/task/:task_id/mimic-docai-layer-positions", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    const body = mimicDocAiLayerPositionsBodySchema.safeParse(request.body ?? {});
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    if (body.data.task_id !== params.data.task_id) {
+      return reply.code(400).send({ ok: false, error: "task_id_mismatch" });
+    }
+    const result = await saveMimicDocAiLayerPositions(
+      params.data.project_slug,
+      params.data.task_id,
+      body.data.slide_index,
+      body.data.positions
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return result;
+  });
+
+  app.post("/v1/review-queue/:project_slug/mimic-docai-layer-positions", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = mimicDocAiLayerPositionsBodySchema.safeParse(request.body ?? {});
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "bad_params" });
+    }
+    const result = await saveMimicDocAiLayerPositions(
+      params.data.project_slug,
+      body.data.task_id,
+      body.data.slide_index,
+      body.data.positions
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return result;
   });
 
   /**

@@ -53,6 +53,16 @@ describe("mimic-slide-layout", () => {
     expect(layout.mimic_page_justify).toBe("flex-end");
   });
 
+  it("guidelineSlideIndexForMimicOutput prefers slide_plans.source_slide_index over output index", () => {
+    const mimic: Pick<MimicPayloadV1, "reference_items" | "slide_plans"> = {
+      reference_items: [
+        { index: 4, role: "carousel_slide", vision_fetch_url: "https://x/4.jpg", source_slide_index: 4 },
+      ],
+      slide_plans: [{ slide_index: 4, render_mode: "full_bleed", reference_index: 2, source_slide_index: 2 }],
+    };
+    expect(guidelineSlideIndexForMimicOutput(mimic, 4)).toBe(2);
+  });
+
   it("parseMimicTextBlocks normalizes bbox_norm fractions", () => {
     const blocks = parseMimicTextBlocks([
       {
@@ -89,13 +99,10 @@ describe("mimic-slide-layout", () => {
     expect(placement).toContain("bottom");
   });
 
-  it("buildArtOnlySafeZoneHint reserves lower area when blocks sit low", () => {
+  it("buildArtOnlySafeZoneHint is empty (overlay handles text placement)", () => {
     const hint = buildArtOnlySafeZoneHint({
-      text_blocks: [
-        { text: "Caption", bbox_norm: { x: 0.1, y: 0.7, w: 0.8, h: 0.1 } },
-      ],
+      text_blocks: [{ text: "Caption", bbox_norm: { x: 0.1, y: 0.7, w: 0.8, h: 0.1 } }],
     });
-    expect(hint).toMatch(/do not render any letters/i);
-    expect(hint).toMatch(/lower/i);
+    expect(hint).toBe("");
   });
 });

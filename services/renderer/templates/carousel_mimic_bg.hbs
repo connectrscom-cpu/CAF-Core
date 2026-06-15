@@ -179,6 +179,7 @@
 
     .page.mimic-docai-layers{
       display:block;
+      position:relative;
       padding:0;
       width:1080px;
       height:1350px;
@@ -190,6 +191,7 @@
       margin:0;
       padding:0;
       box-sizing:border-box;
+      color:#000000;
       text-rendering:geometricPrecision;
       -webkit-font-smoothing:antialiased;
       text-shadow: var(--text-shadow-headline, 0 1px 12px rgba(255,254,249,0.85));
@@ -198,10 +200,36 @@
     .mimic-docai-layer--single-line{
       display:flex;
       align-items:center;
+      justify-content:flex-start;
+      overflow:visible;
+    }
+
+    .mimic-docai-layer--single-line.mimic-docai-layer--text-back{
+      display:inline-block;
+      align-items:unset;
+      justify-content:unset;
+    }
+
+    .mimic-docai-layer--text-back{
+      display:inline-block;
+      vertical-align:top;
+      background:rgba(255,255,255,0.92);
+      color:#000000;
+      text-shadow:none;
+      padding:4px 10px;
+      border-radius:4px;
+      overflow:visible;
+      box-decoration-break:clone;
+      -webkit-box-decoration-break:clone;
     }
 
     .mimic-docai-layer--multi-line{
       display:block;
+    }
+
+    .mimic-docai-layer--multi-line.mimic-docai-layer--text-back{
+      display:inline-block;
+      overflow:visible;
     }
 
     .mimic-docai-layer--body,
@@ -210,6 +238,11 @@
     .mimic-docai-layer--paragraph,
     .mimic-docai-layer--sub{
       text-shadow: var(--text-shadow-body, 0 1px 10px rgba(255,254,249,0.8));
+    }
+
+    /* Renderer sets inline color + shadow after sampling the background plate (mimic-docai-contrast.js). */
+    .mimic-docai-layer--contrast-adapted{
+      text-shadow: inherit;
     }
   </style>
 </head>
@@ -220,10 +253,10 @@
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
-    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -256,10 +289,10 @@
     {{#if ../background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
     {{/if}}
-    <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
+    <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if ../mimic_render_text_layers}}
         {{#each ../mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">
@@ -276,10 +309,10 @@
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
     {{/if}}
-    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
-        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}>{{joinEmojiOrphans text}}</div>
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
         {{/each}}
       {{else}}
       <div class="mimic-text-stack">

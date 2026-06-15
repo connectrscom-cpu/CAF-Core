@@ -3,7 +3,7 @@ import type { MimicBflModelSlug } from "../domain/mimic-bfl-model.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
 import type { MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "../domain/mimic-payload.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
-import { parseMimicTextBlocks } from "./mimic-slide-typography.js";
+import { buildArtOnlySafeZoneHint, parseMimicTextBlocks } from "./mimic-slide-typography.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
@@ -17,11 +17,15 @@ import {
   referenceIndexForTemplateSlot,
   resolveTemplateStorageFromMimic,
 } from "../domain/mimic-template-library.js";
-import { resolveEffectiveContentSlideIndices } from "../domain/mimic-content-slide-indices.js";
+import {
+  mimicEvalSkipSlideIndices,
+  resolveEffectiveContentSlideIndices,
+} from "../domain/mimic-content-slide-indices.js";
+import { isBoldMimicVisualVariant } from "../domain/mimic-render-settings.js";
 import type { TemplateBgSlot } from "../domain/mimic-template-library.js";
 import type { Pool } from "pg";
-import { insertAsset, listAssetsByTask } from "../repositories/assets.js";
-import { editImageFromReference, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
+import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask } from "../repositories/assets.js";
+import { generateMimicSlideImage, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import {
   mimicPromptForMode,
@@ -34,6 +38,7 @@ import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js
 
 type MimicRenderImageOpts = {
   bflModelOverride?: MimicBflModelSlug | null;
+  visualSimilarityPct?: number;
 };
 import {
   slidesFromGeneratedOutput,
@@ -86,7 +91,7 @@ export function contentSourceSlideIndicesForMimic(
   const skipSet = skipSlideIndicesFromMimic(mimic);
   const videoIdx = new Set(videoSlideIndicesFromMimic(mimic));
 
-  let candidates = resolveEffectiveContentSlideIndices(entry, totalRefs);
+  let candidates = resolveEffectiveContentSlideIndices(entry, totalRefs, { mimicMode: mimic.mode });
   candidates = candidates.filter(
     (src) => !skipSet.has(src) && !videoIdx.has(src) && !isPromotionalSourceSlide(mimic, src)
   );
@@ -191,9 +196,10 @@ export function alignMimicSlidePlansToReferences(mimic: MimicPayloadV1): MimicPa
         ? item.source_slide_index
         : sources[i] ?? slide_index;
     const denseText = isExcessiveOnScreenTextSlide(mimic, source_slide_index);
-    const render_mode =
-      prior?.render_mode ??
-      (mimic.mode === "template_bg" || denseText ? "hbs" : "full_bleed");
+    const render_mode: "hbs" | "full_bleed" =
+      mimic.mode === "template_bg"
+        ? "hbs"
+        : prior?.render_mode ?? (denseText ? "hbs" : "full_bleed");
     return {
       slide_index,
       reference_index: slide_index,
@@ -205,7 +211,7 @@ export function alignMimicSlidePlansToReferences(mimic: MimicPayloadV1): MimicPa
   return { ...mimic, slide_plans };
 }
 
-function publicUrlFromAssetRow(
+export function publicUrlFromAssetRow(
   config: AppConfig,
   row: { public_url: string | null; bucket: string | null; object_path: string | null }
 ): string | null {
@@ -257,14 +263,67 @@ function assetPositionForSlot(slot: TemplateBgSlot, totalSlides: number): number
   return 1;
 }
 
-/** Reuse stored `MIMIC_BACKGROUND` plate when present; otherwise generate via Qwen. */
+type MimicPlateAssetRow = {
+  asset_type: string | null;
+  position: number | null;
+  public_url: string | null;
+  bucket: string | null;
+  object_path: string | null;
+  metadata_json?: unknown;
+};
+
+/** Resolve a stored art-only plate URL (no Flux). Checks MIMIC_BACKGROUND then MIMIC_VISUAL_PLATE. */
+export function pickStoredMimicPlateUrl(
+  config: AppConfig,
+  assets: MimicPlateAssetRow[],
+  lookupPosition: number,
+  slideIndex1Based: number
+): string | null {
+  const bg = assets.find(
+    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === lookupPosition
+  );
+  if (bg) {
+    const url = publicUrlFromAssetRow(config, bg);
+    if (url) return url;
+  }
+
+  const plateByPos = assets.find(
+    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_VISUAL_PLATE" && a.position === slideIndex1Based - 1
+  );
+  if (plateByPos) {
+    const url = publicUrlFromAssetRow(config, plateByPos);
+    if (url) return url;
+  }
+
+  for (const a of assets) {
+    if ((a.asset_type ?? "").toUpperCase() !== "MIMIC_VISUAL_PLATE") continue;
+    const meta =
+      a.metadata_json && typeof a.metadata_json === "object" && !Array.isArray(a.metadata_json)
+        ? (a.metadata_json as Record<string, unknown>)
+        : null;
+    const idx = Number(meta?.slide_index);
+    if (Number.isFinite(idx) && idx === slideIndex1Based) {
+      const url = publicUrlFromAssetRow(config, a);
+      if (url) return url;
+    }
+  }
+
+  return null;
+}
+
+/** Reuse stored `MIMIC_BACKGROUND` plate when present; otherwise generate via Qwen/Flux. */
 export async function resolveMimicSlideBackgroundPlate(
   db: Pool,
   config: AppConfig,
   job: { id: string; task_id: string; project_id: string; run_id: string },
   mimic: MimicPayloadV1,
   slideIndex: number,
-  opts?: { promptOverrides?: MimicPromptOverrides | null; totalSlides?: number } & MimicRenderImageOpts
+  opts?: {
+    promptOverrides?: MimicPromptOverrides | null;
+    totalSlides?: number;
+    /** When true, never call image providers — fail if no stored plate exists. */
+    reuseStoredPlatesOnly?: boolean;
+  } & MimicRenderImageOpts
 ): Promise<string | null> {
   const totalSlides = opts?.totalSlides ?? mimic.reference_items.length;
   const usesSlots = mimicDeckUsesSlotDeduplication(mimic);
@@ -286,12 +345,15 @@ export async function resolveMimicSlideBackgroundPlate(
   }
 
   const assets = await listAssetsByTask(db, job.project_id, job.task_id);
-  const existing = assets.find(
-    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === lookupPosition
-  );
-  if (existing) {
-    const url = publicUrlFromAssetRow(config, existing);
-    if (url) return url;
+  const storedUrl = pickStoredMimicPlateUrl(config, assets, lookupPosition, slideIndex);
+  if (storedUrl) return storedUrl;
+
+  if (opts?.reuseStoredPlatesOnly) {
+    throw new MimicBackgroundPlateRequiredError(
+      job.task_id,
+      slideIndex,
+      "text-overlay-only reprint requires an existing MIMIC_BACKGROUND or MIMIC_VISUAL_PLATE asset (Flux/Qwen skipped)."
+    );
   }
 
   return extractMimicSlideBackground(db, config, job, mimic, extractIndex, {
@@ -320,7 +382,11 @@ export async function requireMimicSlideBackgroundPlate(
   job: { id: string; task_id: string; project_id: string; run_id: string },
   mimic: MimicPayloadV1,
   slideIndex: number,
-  opts?: { promptOverrides?: MimicPromptOverrides | null; totalSlides?: number } & MimicRenderImageOpts
+  opts?: {
+    promptOverrides?: MimicPromptOverrides | null;
+    totalSlides?: number;
+    reuseStoredPlatesOnly?: boolean;
+  } & MimicRenderImageOpts
 ): Promise<string> {
   const url = await resolveMimicSlideBackgroundPlate(db, config, job, mimic, slideIndex, opts);
   if (!url?.trim()) {
@@ -374,12 +440,38 @@ export async function extractMimicSlideBackground(
   if (!item) return null;
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
+  const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
+  const promptFields = mimicSlidePromptFields(mimic, slideIndex, opts?.visualSimilarityPct, {
+    includeStyleHints: styleHints,
+  });
+  const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex, opts?.visualSimilarityPct, {
+    includeStyleHints: styleHints,
+  });
+  const renderSettings: MimicRenderPromptSettings = {
+    ...(opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : {}),
+    includeStyleHints: styleHints,
+  };
+  let bgPrompt = mimicPromptForMode(
+    "template_bg",
+    {
+      layout: promptFields.layout,
+      visual: promptFields.visual,
+      consistencyHint,
+      deckAesthetic: promptFields.deckAesthetic,
+      deckVisualConsistency: promptFields.deckVisualConsistency,
+    },
+    opts?.promptOverrides,
+    renderSettings
+  );
+  if (promptFields.intentInstruction) bgPrompt = `${bgPrompt} ${promptFields.intentInstruction}`;
+  if (promptFields.safeZoneInstruction) bgPrompt = `${bgPrompt} ${promptFields.safeZoneInstruction}`;
 
-  const { buffer, mimeType } = await editImageFromReference(config, {
+  const { buffer, mimeType } = await generateMimicSlideImage(config, {
     referenceUrl,
-    prompt: mimicPromptForMode("template_bg", undefined, opts?.promptOverrides),
+    prompt: bgPrompt,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
+    visualSimilarityPct: opts?.visualSimilarityPct,
     audit: {
       db,
       projectId: job.project_id,
@@ -526,8 +618,18 @@ function resolveSlideGuideline(
 
 /**
  * Text-only cross-slide consistency for full-bleed (avoids passing prior slide images to DashScope).
+ * Skipped at ≤25% visual similarity — bold-variant prompts must not be overridden by palette lock hints.
  */
-export function buildFullBleedConsistencyHint(mimic: MimicPayloadV1, slideIndex: number): string {
+export function buildFullBleedConsistencyHint(
+  mimic: MimicPayloadV1,
+  slideIndex: number,
+  visualSimilarityPct?: number,
+  opts?: { includeStyleHints?: boolean }
+): string {
+  if (opts?.includeStyleHints === false) return "";
+  if (visualSimilarityPct != null && isBoldMimicVisualVariant(visualSimilarityPct)) {
+    return "";
+  }
   const parts: string[] = [];
   const vg = asRecord(mimic.visual_guideline);
   const consistency = String(vg?.visual_consistency ?? "").trim();
@@ -596,6 +698,62 @@ export function slideVisionHints(
   return {
     ...(layout ? { layout } : {}),
     ...(visual ? { visual } : {}),
+  };
+}
+
+/** Deck-wide mood cues for bold variants — not per-slide reference scene descriptions. */
+export function mimicDeckVisualMood(mimic: MimicPayloadV1): {
+  aesthetic: string | null;
+  consistency: string | null;
+} {
+  const vg = asRecord(mimic.visual_guideline);
+  const dvs = asRecord(vg?.deck_visual_system);
+  const aesthetic = String(dvs?.overall_aesthetic ?? "").trim();
+  const consistency = String(vg?.visual_consistency ?? "").trim();
+  return {
+    aesthetic: aesthetic || null,
+    consistency: consistency || null,
+  };
+}
+
+function mimicSlidePromptFields(
+  mimic: MimicPayloadV1,
+  slideIndex: number,
+  visualSimilarityPct?: number,
+  opts?: { includeStyleHints?: boolean }
+): {
+  layout?: string;
+  visual?: string;
+  safeZoneInstruction?: string;
+  intentInstruction?: string;
+  slidePurpose: string | null;
+  deckAesthetic: string | null;
+  deckVisualConsistency: string | null;
+} {
+  const refSlide = resolveSlideGuideline(mimic, slideIndex);
+  const includeStyleHints = opts?.includeStyleHints === true;
+  const hints = includeStyleHints ? slideVisionHints(mimic, slideIndex) : {};
+  const intent = slideIntentHints(mimic, slideIndex);
+  const mood = includeStyleHints ? mimicDeckVisualMood(mimic) : { aesthetic: null, consistency: null };
+  const bold = visualSimilarityPct != null && isBoldMimicVisualVariant(visualSimilarityPct);
+  if (bold) {
+    return {
+      layout: hints.layout,
+      visual: hints.visual,
+      safeZoneInstruction: "",
+      slidePurpose: includeStyleHints ? intent.slidePurpose : null,
+      deckAesthetic: mood.aesthetic,
+      deckVisualConsistency: mood.consistency,
+    };
+  }
+  return {
+    layout: hints.layout,
+    visual: hints.visual,
+    safeZoneInstruction: buildArtOnlySafeZoneHint(refSlide),
+    intentInstruction: includeStyleHints ? buildSlideIntentInstruction(intent) : "",
+    slidePurpose: includeStyleHints ? intent.slidePurpose : null,
+    deckAesthetic: mood.aesthetic,
+    deckVisualConsistency: mood.consistency,
   };
 }
 
@@ -797,11 +955,9 @@ export function isPromotionalSourceSlide(mimic: MimicPayloadV1, sourceSlideIndex
   const videoIdx = videoSlideIndicesFromMimic(mimic);
   if (videoIdx.includes(sourceSlideIndex)) return true;
 
-  const vg = asRecord(mimic.visual_guideline);
-  const mimicEval = asRecord(vg?.mimic_evaluation);
+  const entry = mimicGuidelineEntry(mimic);
+  const mimicEval = asRecord(entry.mimic_evaluation) ?? asRecord(asRecord(entry.aesthetic_analysis_json)?.mimic_evaluation);
   if (mimicEval) {
-    const skipIndices = Array.isArray(mimicEval.skip_slide_indices) ? mimicEval.skip_slide_indices : [];
-    if (skipIndices.includes(sourceSlideIndex)) return true;
     const contentIndices = Array.isArray(mimicEval.content_slide_indices)
       ? mimicEval.content_slide_indices
       : [];
@@ -810,8 +966,6 @@ export function isPromotionalSourceSlide(mimic: MimicPayloadV1, sourceSlideIndex
 
   const match = resolveSlideGuidelineBySourceIndex(mimic, sourceSlideIndex);
   if (match) {
-    if (shouldDropReferenceSlideForDocumentAiText(match)) return true;
-
     const purpose = String(match.slide_purpose ?? "").trim().toLowerCase();
     const brandSpec = String(match.brand_specificity ?? "").trim().toLowerCase();
 
@@ -834,7 +988,7 @@ export function isPromotionalSourceSlide(mimic: MimicPayloadV1, sourceSlideIndex
     mimic.reference_items.length
   );
   if (refCount > 2 && sourceSlideIndex === refCount) {
-    const fp = String(vg?.format_pattern ?? "").toLowerCase();
+    const fp = String(entry.format_pattern ?? "").toLowerCase();
     if (fp === "mixed" || fp.includes("mixed")) return true;
   }
 
@@ -845,10 +999,12 @@ export function isPromotionalSourceSlide(mimic: MimicPayloadV1, sourceSlideIndex
  * Detect whether a reference slide should be skipped (promotional / brand-specific).
  *
  * Priority:
- *  1. Nemotron `mimic_evaluation.skip_slide_indices` — deck-level explicit list
- *  2. Per-slide `slide_purpose` tag (`self_promo`, `product_pitch`)
- *  3. Per-slide `brand_specificity` tag (`high`)
- *  4. Regex fallback on `on_screen_text_transcript` + `visual_description` (pre-tagging packs)
+ *  1. Per-slide `slide_purpose` tag (`self_promo`, `product_pitch`)
+ *  2. Per-slide `brand_specificity` tag (`high`)
+ *  3. Regex fallback on `on_screen_text_transcript` + `visual_description` (pre-tagging packs)
+ *  4. Video slides and mixed-format trailing CTA heuristics
+ *
+ * Nemotron `skip_slide_indices` are ignored — they flag layout/theme issues, not promo.
  */
 export function isPromotionalSlide(
   mimic: MimicPayloadV1,
@@ -934,6 +1090,24 @@ export function expectedMimicCarouselOutputSlideCount(
   return Math.max(mimic.reference_items.length, 0);
 }
 
+/**
+ * Render slide count: never drop below planning target when LLM under-delivers.
+ * Expands references via reconcileMimicPayloadToOutputSlideCount when target > refLen.
+ */
+export function resolveMimicCarouselRenderSlideCount(opts: {
+  mimic: MimicPayloadV1;
+  plannedTarget: number | null;
+  llmRenderableCount: number;
+}): number {
+  const llm = Math.max(0, Math.floor(opts.llmRenderableCount));
+  const refLen = opts.mimic.reference_items.length;
+  if (opts.plannedTarget != null && opts.plannedTarget > 0) {
+    return Math.max(Math.floor(opts.plannedTarget), llm, 1);
+  }
+  if (llm > 0) return llm;
+  return Math.max(refLen, 1);
+}
+
 /** Required on-screen copy slide count for mimic carousel LLM + render (from planning context). */
 export function targetMimicCarouselCopySlideCount(
   payload: Record<string, unknown>,
@@ -941,24 +1115,35 @@ export function targetMimicCarouselCopySlideCount(
 ): number | null {
   const grounding = asRecord(payload.mimic_job_grounding);
   const layout = grounding?.slide_copy_layout;
-  if (Array.isArray(layout) && layout.length > 0) return layout.length;
-  const ctx = asRecord(payload.mimic_render_context);
-  const fromCtx = ctx?.target_slide_count;
-  if (typeof fromCtx === "number" && Number.isFinite(fromCtx) && fromCtx > 0) {
-    return Math.floor(fromCtx);
-  }
+  const fromGrounding =
+    Array.isArray(layout) && layout.length > 0 ? layout.length : null;
+
+  let fromArchive: number | null = null;
   if (mimic) {
     const archiveLen = mimic.archive_reference_items?.length ?? 0;
     const refLen = mimic.reference_items.length;
     const entry = mimicGuidelineEntry(mimic);
     const aesLen = aestheticSlideRecords(entry).length;
     const totalRefs = Math.max(archiveLen, refLen, aesLen, 1);
-    const effective = resolveEffectiveContentSlideIndices(entry, totalRefs);
-    if (effective.length > 0) return effective.length;
-    if (archiveLen > 0) return archiveLen;
-    if (refLen > 0) return refLen;
+    const effective = resolveEffectiveContentSlideIndices(entry, totalRefs, { mimicMode: mimic.mode });
+    if (effective.length > 0) fromArchive = effective.length;
+    else if (archiveLen > 0) fromArchive = archiveLen;
+    else if (refLen > 0) fromArchive = refLen;
   }
-  return null;
+
+  const ctx = asRecord(payload.mimic_render_context);
+  const fromCtx =
+    typeof ctx?.target_slide_count === "number" &&
+    Number.isFinite(ctx.target_slide_count) &&
+    ctx.target_slide_count > 0
+      ? Math.floor(ctx.target_slide_count)
+      : null;
+
+  const candidates = [fromGrounding, fromArchive, fromCtx].filter(
+    (n): n is number => typeof n === "number" && n > 0
+  );
+  if (candidates.length === 0) return null;
+  return Math.max(...candidates);
 }
 
 export function countRenderableMimicCarouselSlides(
@@ -1001,14 +1186,14 @@ export function mimicCarouselSlideCountRetryFooter(
   opts?: { full_bleed_mimic?: boolean }
 ): string {
   const lengthHint = opts?.full_bleed_mimic
-    ? "Keep each slide's on-screen copy **short** — match `slide_copy_layout` line count (~2/3 of reference length max). Do not expand into long paragraphs."
+    ? "Emit **one text_blocks entry per OCR box** (reference_chars_per_line). Match each line's reference character count — do not shorten or omit boxes."
     : "For content slides, keep `body` substantive (target 220–400 chars unless the slide is intentionally a short CTA/hook).";
   return [
     "",
     "---",
     `CRITICAL: Your JSON had ${got} renderable on-screen slide(s) but this job requires exactly ${target}.`,
     `Return one complete JSON object with exactly ${target} entries in top-level \`slides[]\` (one per slide_copy_layout row, same order).`,
-    "Each slide must contain rephrased on-screen copy (headline+body, or text_blocks with role+text). Do not omit content slides.",
+    "Each slide must contain rephrased on-screen copy (headline+body, or text_blocks with role+text). When copy_slots_v1 is present, emit **one text_blocks entry per OCR box** (reference_chars_per_line). Do not omit content slides.",
     "Do NOT leave headline/body empty strings. Every slide must have at least one non-empty text field that will be rendered onto the slide.",
     lengthHint,
     "Output must follow the FLOW_CAROUSEL copy schema (cover/body/cta + caption/hashtags when the schema expects them) — not a visual-only analysis stub.",
@@ -1037,13 +1222,24 @@ export function reconcileMimicPayloadToOutputSlideCount(
         ? mimic.slide_plans.map((plan, i) => ({
             slide_index: i + 1,
             reference_index: Math.min(plan.reference_index ?? i + 1, refLen),
-            render_mode: plan.render_mode ?? "full_bleed",
+            render_mode:
+              mimic.mode === "template_bg"
+                ? ("hbs" as const)
+                : (plan.render_mode ?? "full_bleed"),
           }))
-        : mimic.reference_items.map((_, i) => ({
-            slide_index: i + 1,
-            reference_index: i + 1,
-            render_mode: "full_bleed" as const,
-          }));
+        : mimic.reference_items.map((item, i) => {
+            const sourceIdx =
+              item.source_slide_index != null && item.source_slide_index > 0
+                ? item.source_slide_index
+                : i + 1;
+            const denseText = isExcessiveOnScreenTextSlide(mimic, sourceIdx);
+            return {
+              slide_index: i + 1,
+              reference_index: i + 1,
+              render_mode:
+                mimic.mode === "template_bg" || denseText ? ("hbs" as const) : ("full_bleed" as const),
+            };
+          });
     return { ...mimic, slide_plans };
   }
 
@@ -1051,13 +1247,18 @@ export function reconcileMimicPayloadToOutputSlideCount(
     ...item,
     index: i + 1,
   }));
-  const slide_plans = filteredItems.map((item, i) => ({
-    slide_index: i + 1,
-    render_mode: "full_bleed" as const,
-    reference_index: i + 1,
-    source_slide_index:
-      item.source_slide_index != null && item.source_slide_index > 0 ? item.source_slide_index : i + 1,
-  }));
+  const slide_plans = filteredItems.map((item, i) => {
+    const sourceIdx =
+      item.source_slide_index != null && item.source_slide_index > 0 ? item.source_slide_index : i + 1;
+    const denseText = isExcessiveOnScreenTextSlide(mimic, sourceIdx);
+    return {
+      slide_index: i + 1,
+      render_mode:
+        mimic.mode === "template_bg" || denseText ? ("hbs" as const) : ("full_bleed" as const),
+      reference_index: i + 1,
+      source_slide_index: sourceIdx,
+    };
+  });
   return alignMimicSlidePlansToReferences({ ...mimic, reference_items: filteredItems, slide_plans });
 }
 
@@ -1108,14 +1309,15 @@ export function expandMimicReferenceItemsForOutputSlideCount(
     const prior = mimic.slide_plans?.find((p) => p.slide_index === slide_index);
     const sourceIdx = item.source_slide_index ?? contentSources[i] ?? slide_index;
     const denseText = isExcessiveOnScreenTextSlide(mimic, sourceIdx);
-    const render_mode =
-      prior?.render_mode ??
-      (mimic.mode === "template_bg" || denseText ? "hbs" : "full_bleed");
+    const render_mode: "hbs" | "full_bleed" =
+      mimic.mode === "template_bg"
+        ? "hbs"
+        : prior?.render_mode ?? (denseText ? "hbs" : "full_bleed");
     return {
       slide_index,
       reference_index: slide_index,
       source_slide_index: sourceIdx,
-      render_mode: render_mode as "hbs" | "full_bleed",
+      render_mode,
     };
   });
 
@@ -1128,15 +1330,7 @@ export function expandMimicReferenceItemsForOutputSlideCount(
 }
 
 function skipSlideIndicesFromMimic(mimic: MimicPayloadV1): Set<number> {
-  const vg = asRecord(mimic.visual_guideline);
-  const mimicEval = asRecord(vg?.mimic_evaluation);
-  return new Set(
-    Array.isArray(mimicEval?.skip_slide_indices)
-      ? mimicEval!.skip_slide_indices.filter(
-          (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v >= 1
-        )
-      : []
-  );
+  return new Set(mimicEvalSkipSlideIndices(mimicGuidelineEntry(mimic), { mimicMode: mimic.mode }));
 }
 
 /**
@@ -1154,7 +1348,6 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
     return { mimic, removed_slide_indices: [] };
   }
 
-  const skipSet = skipSlideIndicesFromMimic(mimic);
   const kept: MimicReferenceItem[] = [];
   const removed: number[] = [];
   const keptOrigIndices: number[] = [];
@@ -1165,10 +1358,6 @@ export function filterPromotionalSlidesFromMimicPayload(mimic: MimicPayloadV1): 
       item.source_slide_index != null && item.source_slide_index > 0
         ? item.source_slide_index
         : item.index;
-    if (skipSet.has(origIdx)) {
-      removed.push(origIdx);
-      continue;
-    }
     if (referenceItemLooksLikeVideo(item) || videoSlideIndicesFromMimic(mimic).includes(origIdx)) {
       removed.push(origIdx);
       continue;
@@ -1258,7 +1447,7 @@ export async function composeMimicSlideOnBackground(
 ): Promise<{ buffer: Buffer; mimeType: string }> {
   const renderSettings: MimicRenderPromptSettings | undefined =
     opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : undefined;
-  return editImageFromReference(config, {
+  return generateMimicSlideImage(config, {
     referenceUrl: backgroundUrl,
     prompt: mimicPromptForMode(
       "template_bg_compose",
@@ -1271,6 +1460,7 @@ export async function composeMimicSlideOnBackground(
     ),
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
+    visualSimilarityPct: opts?.visualSimilarityPct,
     audit: {
       db,
       projectId: job.project_id,
@@ -1301,29 +1491,43 @@ export async function renderMimicCarouselSlideFullBleed(
   if (!item?.vision_fetch_url) throw new Error(`No reference URL for mimic slide ${slideIndex}`);
 
   const referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
-  const hints = slideVisionHints(mimic, slideIndex);
+  const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
+  const promptFields = mimicSlidePromptFields(mimic, slideIndex, opts?.visualSimilarityPct, {
+    includeStyleHints: styleHints,
+  });
+  const consistencyHint = buildFullBleedConsistencyHint(mimic, slideIndex, opts?.visualSimilarityPct, {
+    includeStyleHints: styleHints,
+  });
 
-  const renderSettings: MimicRenderPromptSettings | undefined =
-    opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : undefined;
+  const renderSettings: MimicRenderPromptSettings = {
+    ...(opts?.visualSimilarityPct != null ? { visualSimilarityPct: opts.visualSimilarityPct } : {}),
+    includeStyleHints: styleHints,
+  };
   const basePrompt = mimicPromptForMode(
     "carousel_visual",
     {
       index: slideIndex,
-      artOnly: opts?.bakeTextOnImage !== true,
-      onImageCopy: opts?.onImageCopy,
-      layout: hints.layout,
-      visual: hints.visual,
+      artOnly: true,
+      layout: promptFields.layout,
+      visual: promptFields.visual,
       projectHandle: opts?.projectHandle,
+      safeZoneInstruction: promptFields.safeZoneInstruction,
+      intentInstruction: promptFields.intentInstruction,
+      slidePurpose: promptFields.slidePurpose,
+      deckAesthetic: promptFields.deckAesthetic,
+      deckVisualConsistency: promptFields.deckVisualConsistency,
+      consistencyHint,
     },
     opts?.promptOverrides,
     renderSettings
   );
 
-  return editImageFromReference(config, {
+  return generateMimicSlideImage(config, {
     referenceUrl,
     prompt: basePrompt,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
+    visualSimilarityPct: opts?.visualSimilarityPct,
     audit: {
       db,
       projectId: job.project_id,
@@ -1384,6 +1588,8 @@ export async function persistMimicVisualPlateForSlide(
   buffer: Buffer,
   mimeType: string
 ): Promise<string> {
+  await deleteMimicVisualPlateAssetsAtPositions(db, job.project_id, job.task_id, [slideIndex]);
+
   const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const ext = mimeType.includes("jpeg") ? "jpg" : "png";

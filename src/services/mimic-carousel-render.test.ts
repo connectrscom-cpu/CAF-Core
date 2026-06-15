@@ -13,8 +13,10 @@ import {
   mimicCarouselNeedsBackgroundPlate,
   reconcileFullBleedSlidePlansAtRender,
   reconcileMimicPayloadToOutputSlideCount,
+  resolveMimicCarouselRenderSlideCount,
   contentSourceSlideIndicesForMimic,
   referenceItemForMimicSlide,
+  pickStoredMimicPlateUrl,
   requireMimicSlideBackgroundPlate,
   slideMimicRenderMode,
   slideVisionHints,
@@ -188,7 +190,7 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
     expect(out.slide_plans?.[1]?.render_mode).toBe("hbs");
   });
 
-  it("filterPromotionalSlidesFromMimicPayload drops Document AI-confirmed excessive text slides", () => {
+  it("filterPromotionalSlidesFromMimicPayload keeps Document AI dense text slides and switches to hbs", () => {
     const mimic = baseMimic({
       slides: [
         { slide_index: 1, on_screen_text_transcript: "short hook", slide_purpose: "content" },
@@ -213,9 +215,31 @@ describe("isPromotionalSlide and full-bleed eligibility", () => {
       { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg", source_slide_index: 3 },
     ];
     const { mimic: out, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
-    expect(removed_slide_indices).toEqual([2]);
-    expect(out.reference_items).toHaveLength(2);
-    expect(out.reference_items[1]?.source_slide_index).toBe(3);
+    expect(removed_slide_indices).toEqual([]);
+    expect(out.reference_items).toHaveLength(3);
+    expect(out.slide_plans?.[1]?.render_mode).toBe("hbs");
+  });
+
+  it("filterPromotionalSlidesFromMimicPayload ignores Nemotron skip_slide_indices", () => {
+    const mimic = baseMimic({
+      mimic_evaluation: {
+        skip_slide_indices: [1, 3, 5],
+        skip_reason: "text overlay mismatch",
+        content_slide_indices: [],
+      },
+      slides: [
+        { slide_index: 1, on_screen_text_transcript: "aries with a crush", slide_purpose: "content" },
+        { slide_index: 2, on_screen_text_transcript: "taurus with a crush", slide_purpose: "content" },
+        { slide_index: 3, on_screen_text_transcript: "gemini with a crush", slide_purpose: "content" },
+      ],
+    });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://x/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://x/2.jpg", source_slide_index: 2 },
+      { index: 3, role: "carousel_slide", vision_fetch_url: "https://x/3.jpg", source_slide_index: 3 },
+    ];
+    const { removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(mimic);
+    expect(removed_slide_indices).toEqual([]);
   });
 
   it("filterPromotionalSlidesFromMimicPayload removes promo frames and renumbers", () => {
@@ -415,6 +439,28 @@ describe("filterSlideCopyLayoutForMimic", () => {
 });
 
 describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutputSlideCount", () => {
+  it("resolveMimicCarouselRenderSlideCount keeps planned target when LLM under-delivers", () => {
+    const mimic = baseMimic({ slides: [{ slide_index: 1, on_screen_text_transcript: "a" }] });
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg" },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg" },
+    ];
+    expect(
+      resolveMimicCarouselRenderSlideCount({
+        mimic,
+        plannedTarget: 6,
+        llmRenderableCount: 4,
+      })
+    ).toBe(6);
+    expect(
+      resolveMimicCarouselRenderSlideCount({
+        mimic,
+        plannedTarget: null,
+        llmRenderableCount: 4,
+      })
+    ).toBe(4);
+  });
+
   it("maps expanded slides through content source indices when promo frame is omitted", () => {
     const mimic = baseMimic({
       slides: [
@@ -469,6 +515,21 @@ describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutpu
     expect(reconciled.reference_items).toHaveLength(2);
     expect(reconciled.slide_plans).toHaveLength(2);
     expect(reconciled.slide_plans?.[1]?.slide_index).toBe(2);
+  });
+
+  it("keeps template_bg slide plans on hbs when trimming references", () => {
+    const mimic = baseMimic({});
+    mimic.mode = "template_bg";
+    mimic.slide_plans = [
+      { slide_index: 1, reference_index: 1, render_mode: "hbs" },
+      { slide_index: 2, reference_index: 2, render_mode: "hbs" },
+    ];
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/2.jpg", source_slide_index: 2 },
+    ];
+    const reconciled = reconcileMimicPayloadToOutputSlideCount(mimic, 1);
+    expect(reconciled.slide_plans?.[0]?.render_mode).toBe("hbs");
   });
 
   it("keeps all text slides when content_slide_indices is a narrow subset", () => {
@@ -533,5 +594,48 @@ describe("mimic carousel copy slide count", () => {
       ],
     };
     expect(() => assertMimicCarouselCopySlideCount(payload, parsed)).toThrow(MimicCarouselCopySlideCountError);
+  });
+});
+
+describe("pickStoredMimicPlateUrl", () => {
+  const config = {
+    SUPABASE_URL: "https://example.supabase.co",
+  } as import("../config.js").AppConfig;
+
+  it("prefers MIMIC_BACKGROUND at lookup position", () => {
+    const url = pickStoredMimicPlateUrl(
+      config,
+      [
+        {
+          asset_type: "MIMIC_BACKGROUND",
+          position: 1,
+          public_url: "https://cdn.example/bg.png",
+          bucket: null,
+          object_path: null,
+        },
+      ],
+      1,
+      2
+    );
+    expect(url).toBe("https://cdn.example/bg.png");
+  });
+
+  it("falls back to MIMIC_VISUAL_PLATE by slide index", () => {
+    const url = pickStoredMimicPlateUrl(
+      config,
+      [
+        {
+          asset_type: "MIMIC_VISUAL_PLATE",
+          position: 2,
+          public_url: "https://cdn.example/plate3.png",
+          bucket: null,
+          object_path: null,
+          metadata_json: { slide_index: 3 },
+        },
+      ],
+      99,
+      3
+    );
+    expect(url).toBe("https://cdn.example/plate3.png");
   });
 });

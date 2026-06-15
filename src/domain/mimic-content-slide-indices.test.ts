@@ -38,7 +38,7 @@ describe("resolveEffectiveContentSlideIndices", () => {
     expect(indices[11]).toBe(12);
   });
 
-  it("honors explicit skip_slide_indices", () => {
+  it("ignores Nemotron skip_slide_indices when resolving content indices", () => {
     const indices = resolveEffectiveContentSlideIndices(
       {
         aesthetic_analysis_json: {
@@ -56,6 +56,29 @@ describe("resolveEffectiveContentSlideIndices", () => {
       },
       4
     );
-    expect(indices).toEqual([1, 4]);
+    expect(indices).toEqual([1, 2, 3, 4]);
+  });
+
+  it("expands theme-skipped archive decks to all reference frames", () => {
+    const indices = resolveEffectiveContentSlideIndices(
+      {
+        aesthetic_analysis_json: {
+          mimic_evaluation: {
+            recommended_mode: "text_on_template",
+            content_slide_indices: [1],
+            skip_slide_indices: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+            skip_reason: "No relevance to theme",
+          },
+          slides: [{ slide_index: 1, on_screen_text_transcript: "cover only" }],
+        },
+        stored_inspection_media_json: {
+          items: Array.from({ length: 12 }).map((_, i) => ({ index: i + 1 })),
+        },
+      },
+      12
+    );
+    expect(indices).toHaveLength(12);
+    expect(indices[0]).toBe(1);
+    expect(indices[11]).toBe(12);
   });
 });

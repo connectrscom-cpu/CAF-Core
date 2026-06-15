@@ -215,9 +215,13 @@ const envSchema = z.object({
    * When true, mimic carousel slides use a single-pass image edit from the reference frame with baked copy
    * (BFL FLUX / configured provider) instead of Puppeteer HBS overlay or separate bg-extract + compose passes.
    */
-  MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(true),
-  /** Target visual similarity for full-bleed mimic variants (50–95). Per-project override in Runs tab. */
-  MIMIC_VISUAL_SIMILARITY_PCT: z.coerce.number().int().min(50).max(95).default(70),
+  MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(false),
+  /** When true, project brand_assets palette overrides carousel paper/ink in HBS text overlay. */
+  MIMIC_USE_PROJECT_BRAND_PALETTE: z.coerce.boolean().default(false),
+  /** When true, Nemotron layout/visual/deck hints are appended to art-only image-model prompts. */
+  MIMIC_USE_BRAND_IMAGE_STYLE_HINTS: z.coerce.boolean().default(false),
+  /** Target visual similarity for mimic image variants (0–100). Per-project override in Runs tab. */
+  MIMIC_VISUAL_SIMILARITY_PCT: z.coerce.number().int().min(0).max(100).default(70),
   /**
    * Mimic copy length vs each reference text line (default 1× reference length).
    * Use with MIMIC_COPY_CHAR_SLACK for ± few characters tolerance.

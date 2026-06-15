@@ -29,16 +29,19 @@ primary_region = "ams"
   HOST = "0.0.0.0"
   MIMIC_IMAGE_PROVIDER = "bfl"
   MIMIC_IMAGE_BFL_MODEL = "flux-2-klein-4b"
-  MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE = "0.5"
+  MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE = "1"
   MIMIC_IMAGE_BFL_FALLBACK_DASHSCOPE = "0"
-  MIMIC_CAROUSEL_TEXT_VIA_FLUX = "1"
+  # HTML/CSS overlay on clean background plates (template_bg). Per-project override in Runs → planning caps.
+  MIMIC_CAROUSEL_TEXT_VIA_FLUX = "0"
+  MIMIC_USE_PROJECT_BRAND_PALETTE = "0"
+  MIMIC_USE_BRAND_IMAGE_STYLE_HINTS = "0"
   MIMIC_VISUAL_SIMILARITY_PCT = "70"
   MIMIC_IMAGE_DASHSCOPE_MODEL = "qwen-image-edit-max"
   DASHSCOPE_API_BASE = "https://dashscope-intl.aliyuncs.com/api/v1"
   MIMIC_IMAGE_NVIDIA_FALLBACK_OPENAI = "0"
   PROCESSING_VISION_PROVIDER = "nvidia"
-  # Stub job copy / approval-review OpenAI calls (no chat/vision API spend). Set to "live" when quota is restored.
-  OPENAI_GENERATION_MODE = "placeholder"
+  # Live LLM copy for jobs (placeholder echoes reference OCR verbatim — bad for mimic handles/copy).
+  OPENAI_GENERATION_MODE = "live"
 
 [http_service]
   internal_port = 3847

@@ -7,6 +7,7 @@ import {
 import { assertMimicCopyDiffersFromReference } from "../domain/mimic-copy-guard.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
+import { buildContentSlideCopyLayoutFromEntry } from "../domain/mimic-job-grounding.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
@@ -37,6 +38,7 @@ import { getMimicModeOverridesFromPack } from "../repositories/signal-packs.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
+import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import {
   mimicDeckUsesSlotDeduplication,
   requireMimicSlideBackgroundPlate,
@@ -212,6 +214,35 @@ export async function backfillMimicArchiveReferenceItems(
   }
 }
 
+function refreshMimicJobGroundingSlideLayout(
+  gp: Record<string, unknown>,
+  guidelineEntry: Record<string, unknown>,
+  mimic: MimicPayloadV1
+): Record<string, unknown> {
+  const prior = asRecord(gp.mimic_job_grounding);
+  if (!prior) return gp;
+  const archive = mimic.archive_reference_items?.length
+    ? mimic.archive_reference_items
+    : mimic.reference_items;
+  const entryForLayout: Record<string, unknown> = {
+    ...guidelineEntry,
+    stored_inspection_media_json: {
+      items: archive.map((item, i) => ({
+        index: item.source_slide_index ?? item.index ?? i + 1,
+      })),
+    },
+  };
+  const layout = buildContentSlideCopyLayoutFromEntry(entryForLayout);
+  if (layout.length === 0) return gp;
+  return {
+    ...gp,
+    mimic_job_grounding: {
+      ...prior,
+      slide_copy_layout: layout,
+    },
+  };
+}
+
 async function persistGenerationPayload(
   db: Pool,
   jobId: string,
@@ -240,6 +271,9 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     throw new Error(`ensureMimicReferenceBeforeCopyGeneration called for non-mimic flow: ${job.flow_type}`);
   }
 
+  const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
+  const renderContextOpts = { visualSimilarityPct: mimicRender.visualSimilarityPct };
+
   const existing = pickMimicPayload(job.generation_payload);
   if (existing?.reference_items?.length) {
     const archive = existing.archive_reference_items?.length
@@ -254,7 +288,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
       filterPromotionalSlidesFromMimicPayload(normalized);
     const vg = asRecord(filtered.visual_guideline) ?? {};
     const renderContext = {
-      ...buildMimicRenderContextForLlm(filtered, vg),
+      ...buildMimicRenderContextForLlm(filtered, vg, renderContextOpts),
       ...(removed_slide_indices.length > 0
         ? { skipped_promotional_slide_indices: removed_slide_indices }
         : {}),
@@ -264,17 +298,19 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
       [job.id]
     );
     const gp = row.rows[0]?.generation_payload ?? job.generation_payload;
-    await persistGenerationPayload(db, job.id, {
+    const mergedBase = {
       ...mergeMimicPayloadSlice(gp, filtered),
       mimic_render_context: renderContext,
-    });
+    };
+    const merged = refreshMimicJobGroundingSlideLayout(mergedBase, vg, filtered);
+    await persistGenerationPayload(db, job.id, merged);
     return filtered;
   }
 
   const { mimic: resolvedMimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);
   const { mimic, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(resolvedMimic);
   const renderContext = {
-    ...buildMimicRenderContextForLlm(mimic, resolved.guideline_entry),
+    ...buildMimicRenderContextForLlm(mimic, resolved.guideline_entry, renderContextOpts),
     ...(removed_slide_indices.length > 0
       ? { skipped_promotional_slide_indices: removed_slide_indices }
       : {}),
@@ -286,11 +322,16 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     [job.id]
   );
   const gp = row.rows[0]?.generation_payload ?? {};
-  const merged = {
+  const mergedBase = {
     ...mergeMimicPayloadSlice(gp, mimic),
     mimic_render_context: renderContext,
     template_storage_decision: templateStorage,
   };
+  const merged = refreshMimicJobGroundingSlideLayout(
+    mergedBase,
+    resolved.guideline_entry,
+    mimic
+  );
 
   await persistGenerationPayload(db, job.id, merged);
 
@@ -354,6 +395,7 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
   }
 
   const promptOverrides = await loadMimicPromptOverrides(db);
+  const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const indices = mimicDeckUsesSlotDeduplication(mimic)
     ? slideIndicesForTemplateBgPrep(totalSlides)
     : [1];
@@ -362,6 +404,7 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
     await requireMimicSlideBackgroundPlate(db, config, job, mimic, slideIndex, {
       promptOverrides,
       totalSlides,
+      visualSimilarityPct: mimicRender.visualSimilarityPct,
     });
   }
 
@@ -397,6 +440,9 @@ export async function prepareMimicDraftPackage(
     throw new Error(`prepareMimicDraftPackage called for non-mimic flow: ${job.flow_type}`);
   }
 
+  const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
+  const renderContextOpts = { visualSimilarityPct: mimicRender.visualSimilarityPct };
+
   let mimic = pickMimicPayload(job.generation_payload);
   let resolvedGuideline: Record<string, unknown> | null = null;
 
@@ -406,7 +452,7 @@ export async function prepareMimicDraftPackage(
     mimic = filtered.mimic;
     resolvedGuideline = resolved.resolved.guideline_entry;
     const renderContext = {
-      ...buildMimicRenderContextForLlm(mimic, resolved.resolved.guideline_entry),
+      ...buildMimicRenderContextForLlm(mimic, resolved.resolved.guideline_entry, renderContextOpts),
       ...(filtered.removed_slide_indices.length > 0
         ? { skipped_promotional_slide_indices: filtered.removed_slide_indices }
         : {}),

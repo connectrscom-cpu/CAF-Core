@@ -1,9 +1,44 @@
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
+import { sanitizeMimicOverlayCopyText } from "../domain/mimic-overlay-copy.js";
+import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
 import {
+  collectInstagramHandlesFromText,
   formatInstagramHandleForCta,
   isHandleTextBlock,
   looksLikeInstagramHandleText,
+  stripLeadingInstagramHandle,
+  substituteReferenceHandlesInText,
 } from "../domain/instagram-handle.js";
+import {
+  collapseParagraphCopyTargets,
+  blocksVerticallyNestedOrAdjacent,
+  dropOcrContainerBoxes,
+  filterOverlayLayoutBlocks,
+  isChatMockFriendSubtitle,
+  isOverlayChromeReferenceText,
+  bodySlotIndexForHeadlineRemainder,
+  isPreserveReferenceDecorText,
+  preferSingleLineTextBackLayer,
+  referenceTextMatchesLlmHeadline,
+  shouldRenderDocAiLayerSingleLine,
+  splitHeadlineWithPreservedDecorTitle,
+} from "./mimic-docai-overlay-layout.js";
+import {
+  assignLlmCopyUsingCopySlots,
+  parseCopySlotsFromSlide,
+  isChatMockTitlePairBlocks,
+  isTemplateInstructionText,
+  splitHeadlineForChatMockTitlePair,
+} from "./mimic-copy-slots.js";
+import {
+  bodyLinesToSemanticUnits,
+  fitSemanticUnitsToStackCount,
+  joinOrphanWordBodyLines,
+  repairDanglingStackTexts,
+  semanticBodyCopyForStacks,
+} from "./mimic-semantic-copy-units.js";
+
+export { joinOrphanWordBodyLines } from "./mimic-semantic-copy-units.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -139,48 +174,125 @@ export function textPlacementFromSlide(slide: Record<string, unknown> | null): s
   return "center band";
 }
 
-export function buildArtOnlySafeZoneHint(slide: Record<string, unknown> | null | undefined): string {
-  if (!slide) {
-    return "Leave generous clean margins for later HTML text overlay. Never render text blocks, headlines, paragraphs, or placeholder copy — no letters, numbers, logos, signs, captions, watermarks, symbols, or handwriting.";
-  }
-
-  const blocks = parseMimicTextBlocks(slide.text_blocks);
-  const placement = textPlacementFromSlide(slide);
-
-  const parts: string[] = [
-    "Never render readable text: no words, headlines, paragraphs, lorem ipsum, or placeholder text blocks.",
-    "Do not render any letters, numbers, logos, signs, captions, watermarks, symbols, or handwriting.",
-    "Output art/background only — all final copy will be added later via HTML/CSS overlay.",
-  ];
-
-  if (blocks.length > 0) {
-    const minY = Math.min(...blocks.map((b) => b.y));
-    const maxY = Math.max(...blocks.map((b) => b.y + b.h));
-    if (maxY >= 0.55) {
-      parts.push(
-        `Leave the lower ${Math.round(Math.min(45, (1 - minY) * 100))}% of the frame clean, soft, and low-detail for white or light text overlay.`
-      );
-    } else if (minY <= 0.35) {
-      parts.push("Leave the upper third clean and low-detail for headline overlay.");
-    } else {
-      parts.push("Leave a clear center band with low visual clutter for centered text overlay.");
-    }
-  } else if (/bottom|lower|footer|caption/.test(placement)) {
-    parts.push("Leave the bottom 35% clean, soft gradient, low detail, suitable for text overlay.");
-  } else if (/top|upper|header/.test(placement)) {
-    parts.push("Leave the top 30% clean and low-detail for headline overlay.");
-  } else if (/center|middle|band|stack/.test(placement)) {
-    parts.push("Leave a clear center band with low clutter for centered text overlay.");
-  } else {
-    parts.push("Leave generous clean margins suitable for later HTML text overlay.");
-  }
-
-  return parts.join(" ");
+export function buildArtOnlySafeZoneHint(_slide: Record<string, unknown> | null | undefined): string {
+  // Text placement is handled by HTML/CSS overlay — do not steer Flux with % safe zones.
+  return "";
 }
 
 /** Fixed carousel render canvas — must match services/renderer (1080×1350). */
 export const CAROUSEL_RENDER_WIDTH_PX = 1080;
 export const CAROUSEL_RENDER_HEIGHT_PX = 1350;
+
+/** Default on-canvas font when OCR/ref size is missing (review + Puppeteer). */
+export const MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX = 50;
+/** Minimum shrink-to-fit floor for mimic Document AI overlays (review + Puppeteer). */
+export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 24;
+/** Default font for project / reference Instagram handle overlays. */
+export const MIMIC_DOCAI_HANDLE_FONT_SIZE_PX = 25;
+
+/** True when a layer carries the project handle or occupies a handle OCR slot. */
+export function isMimicDocAiHandleLayer(
+  role: string | null | undefined,
+  text: string,
+  projectHandle?: string | null
+): boolean {
+  const t = String(text ?? "").trim();
+  if (isHandleTextBlock(role ?? null, t)) return true;
+  if (looksLikeInstagramHandleText(t)) return true;
+  const project = projectHandle ? formatInstagramHandleForCta(projectHandle) : "";
+  if (project && formatInstagramHandleForCta(t) === project) return true;
+  return false;
+}
+/** Target body size on 1080px canvas when white highlight backing is enabled. */
+export const MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX = 50;
+/** Boost applied to reference OCR font sizes for readable meme-trait overlays. */
+export const MIMIC_DOCAI_TEXT_BACK_FONT_SCALE = 1.22;
+/** Minimum readable size for full-bleed white-backed trait boxes (Puppeteer must not go below). */
+export const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 24;
+
+/** Default ink for mimic Document AI overlays (readable on light plates + white backing). */
+export const MIMIC_DOCAI_DEFAULT_TEXT_COLOR = "#000000";
+
+function clampDocAiFontSizePx(size: number): number {
+  if (!Number.isFinite(size)) return MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX;
+  return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.min(512, Math.round(size)));
+}
+
+export function clampDocAiTextBackFontSizePx(size: number): number {
+  if (!Number.isFinite(size)) return MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
+  return Math.max(MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX, Math.min(120, Math.round(size)));
+}
+
+/** Resolve layer color — always black for mimic reprint (OCR ink is often wrong on generated plates). */
+export function resolveMimicDocAiLayerColor(_opts?: {
+  refColor?: string | null;
+  textBacking?: boolean;
+}): string {
+  return MIMIC_DOCAI_DEFAULT_TEXT_COLOR;
+}
+
+/** Keep glyphs inside the plate safe area (OCR boxes often touch image edges). */
+export const MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX = 32;
+
+/**
+ * Full-bleed subject safe zone (normalized 0–1) — keep trait copy out of the center
+ * where characters / focal art usually sit.
+ */
+export const MIMIC_FULL_BLEED_SUBJECT_ZONE = { x: 0.22, y: 0.26, w: 0.56, h: 0.48 };
+
+export function bboxIntersectsFullBleedSubjectZone(
+  bbox: { x: number; y: number; w: number; h: number },
+  gap = 0.01
+): boolean {
+  const z = MIMIC_FULL_BLEED_SUBJECT_ZONE;
+  const zx = z.x - gap;
+  const zy = z.y - gap;
+  const zw = z.w + gap * 2;
+  const zh = z.h + gap * 2;
+  return bbox.x < zx + zw && bbox.x + bbox.w > zx && bbox.y < zy + zh && bbox.y + bbox.h > zy;
+}
+
+export function docAiLayerSkipsCenterAvoid(ref: MimicTextBlock & { ref_text: string }, bucket: string): boolean {
+  if (isPreserveReferenceDecorText(ref.ref_text, ref)) return true;
+  if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) return true;
+  if (bucket === "cta") return true;
+  if (bucket === "headline" && ref.y < 0.18) return true;
+  if (ref.y + ref.h > 0.86) return true;
+  return false;
+}
+
+/** Push OCR bbox to the nearest quadrant outside the subject zone. */
+export function nudgeBBoxAwayFromFullBleedSubjectZone(bbox: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}): { x: number; y: number; w: number; h: number } {
+  if (!bboxIntersectsFullBleedSubjectZone(bbox)) return bbox;
+
+  const z = MIMIC_FULL_BLEED_SUBJECT_ZONE;
+  const gap = 0.02;
+  const cx = bbox.x + bbox.w / 2;
+  const cy = bbox.y + bbox.h / 2;
+  const zcx = z.x + z.w / 2;
+  const zcy = z.y + z.h / 2;
+  let { x, y, w, h } = bbox;
+
+  if (cx <= zcx) {
+    x = Math.max(0.02, z.x - w - gap);
+  } else {
+    x = Math.min(0.98 - w, z.x + z.w + gap);
+  }
+  if (cy <= zcy) {
+    y = Math.max(0.02, z.y - h - gap);
+  } else {
+    y = Math.min(0.98 - h, z.y + z.h + gap);
+  }
+
+  x = Math.max(0.02, Math.min(0.98 - w, x));
+  y = Math.max(0.02, Math.min(0.98 - h, y));
+  return { x, y, w, h };
+}
 
 const CANVAS_HEIGHT = CAROUSEL_RENDER_HEIGHT_PX;
 
@@ -207,10 +319,18 @@ export function guidelineSlideIndexForMimicOutput(
   mimic: Partial<Pick<MimicPayloadV1, "reference_items" | "slide_plans">>,
   outputSlideIndex1Based: number
 ): number {
+  const plan = mimic.slide_plans?.find((p) => p.slide_index === outputSlideIndex1Based);
+  if (
+    plan?.source_slide_index != null &&
+    Number.isFinite(plan.source_slide_index) &&
+    plan.source_slide_index > 0
+  ) {
+    return plan.source_slide_index;
+  }
+
   const items = mimic.reference_items ?? [];
   if (items.length === 0) return outputSlideIndex1Based;
 
-  const plan = mimic.slide_plans?.find((p) => p.slide_index === outputSlideIndex1Based);
   const refIdx = plan?.reference_index ?? outputSlideIndex1Based;
 
   let item = items[outputSlideIndex1Based - 1] ?? null;
@@ -224,6 +344,102 @@ export function guidelineSlideIndexForMimicOutput(
   const src = item?.source_slide_index;
   if (src != null && Number.isFinite(src) && src > 0) return src;
   return outputSlideIndex1Based;
+}
+
+function visualGuidelineSlideList(
+  visualGuideline: Record<string, unknown> | null | undefined
+): Record<string, unknown>[] {
+  const vg = visualGuideline ?? {};
+  const fromPackage = Array.isArray(vg.slides) ? vg.slides : [];
+  const parsed = fromPackage
+    .map((raw) => asRecord(raw))
+    .filter((x): x is Record<string, unknown> => x != null);
+  if (parsed.length > 0) return parsed;
+  return aestheticSlideRecordsFromGuideline(vg);
+}
+
+/** Resolve reference OCR geometry when output index and archive source index diverge. */
+function resolveRefSlideWithLayoutBlocksForMimic(
+  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
+  slideIndex1Based: number
+): { refSlide: Record<string, unknown>; layoutBlocks: DocAiLayoutBlock[] } | null {
+  const vg = mimic.visual_guideline ?? {};
+  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
+  let refSlide = slideGuidelineRecord(vg, slideIndex1Based, lookupIdx);
+  if (refSlide) {
+    const layoutBlocks = layoutBlocksForMimicSlideRender(refSlide);
+    if (layoutBlocks.length > 0) return { refSlide, layoutBlocks };
+  }
+
+  const plan = mimic.slide_plans?.find((p) => p.slide_index === slideIndex1Based);
+  const tryIndices = new Set<number>();
+  if (lookupIdx > 0) tryIndices.add(lookupIdx);
+  if (plan?.reference_index != null && plan.reference_index > 0) tryIndices.add(plan.reference_index);
+  if (plan?.source_slide_index != null && plan.source_slide_index > 0) {
+    tryIndices.add(plan.source_slide_index);
+  }
+  for (const item of mimic.reference_items ?? []) {
+    if (item.index > 0) tryIndices.add(item.index);
+    if (item.source_slide_index != null && item.source_slide_index > 0) {
+      tryIndices.add(item.source_slide_index);
+    }
+  }
+
+  for (const idx of tryIndices) {
+    const candidate = slideGuidelineRecord(vg, slideIndex1Based, idx);
+    if (!candidate) continue;
+    const layoutBlocks = layoutBlocksForMimicSlideRender(candidate);
+    if (layoutBlocks.length > 0) return { refSlide: candidate, layoutBlocks };
+  }
+
+  return refSlide ? { refSlide, layoutBlocks: [] } : null;
+}
+
+/** Last-resort editor/reprint boxes from reviewer copy when reference OCR lookup misses geometry. */
+function buildSyntheticDocAiLayersFromLlmCopy(
+  llmSlide: Record<string, unknown>,
+  theme: { ink: string; body: string } | undefined,
+  opts: { projectHandle?: string | null; textBacking: boolean; avoidCenterSubject?: boolean }
+): MimicDocAiRenderTextLayer[] {
+  const parsed = parseMimicTextBlocks(llmSlide.text_blocks);
+  const lines = orderedLlmTextBlockLines(llmSlide);
+  if (parsed.length === 0 && lines.length === 0) return [];
+
+  const layers: MimicDocAiRenderTextLayer[] = [];
+  const sources: DocAiLayoutBlock[] =
+    parsed.length > 0
+      ? parsed.map((b) => ({ ...b, ref_text: b.text }))
+      : lines.map((text, i) => ({
+          text,
+          ref_text: text,
+          role: i === 0 ? "headline" : looksLikeInstagramHandleText(text) ? "handle" : "body",
+          x: 0.1,
+          y: clamp01(0.1 + i * 0.16),
+          w: 0.8,
+          h: 0.1,
+          align: "left" as const,
+          font_size_px: null,
+          font_weight: null,
+          color_hex: null,
+          font_family: null,
+          source: "reviewer" as const,
+        }));
+
+  const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+  for (const ref of sources) {
+    let text = ref.ref_text;
+    if (projectHandle && (isHandleTextBlock(ref.role, text) || looksLikeInstagramHandleText(text))) {
+      text = projectHandle;
+    }
+    pushDocAiRenderLayer(layers, ref, text, ref, {
+      textBacking: opts.textBacking,
+      theme,
+      forceMultiLine: text.includes("\n") || ref.ref_text.length > 48,
+      avoidCenterSubject: opts.avoidCenterSubject,
+      projectHandle: opts.projectHandle ?? null,
+    });
+  }
+  return layers;
 }
 
 function slideGuidelineRecord(
@@ -489,17 +705,50 @@ export interface MimicSlideThemePatch {
 }
 
 /** Runtime palette override — injected by renderer after template compile (fixes contrast on Qwen plates). */
+export function pickProjectBrandPaletteColors(brandAssets: ProjectBrandAssetRow[]): string[] {
+  const palette = brandAssets.find((a) => a.kind === "palette");
+  const colors = palette?.metadata_json?.colors;
+  if (!Array.isArray(colors)) return [];
+  return colors
+    .map((c) => String(c ?? "").trim())
+    .filter((c) => /^#[0-9a-fA-F]{6}$/.test(c));
+}
+
+/** Prefer project brand palette for slide paper/ink when vision tokens are missing. */
+export function mergeProjectBrandPaletteIntoThemePatch(
+  patch: MimicSlideThemePatch,
+  brandAssets: ProjectBrandAssetRow[]
+): MimicSlideThemePatch {
+  const colors = pickProjectBrandPaletteColors(brandAssets);
+  if (colors.length === 0) return patch;
+  const paper = colors[0]!;
+  const ink = colors.length > 1 ? colors[1]! : patch.carousel_ink;
+  const body = colors.length > 2 ? colors[2]! : ink ?? patch.carousel_body;
+  return {
+    ...patch,
+    carousel_paper: patch.carousel_paper && patch.carousel_paper !== "#fffef9" ? patch.carousel_paper : paper,
+    carousel_ink: patch.carousel_ink ?? ink,
+    carousel_body: patch.carousel_body ?? body,
+  };
+}
+
 export function mimicSlideThemePatch(
-  mimic: Pick<MimicPayloadV1, "visual_guideline">
+  mimic: Pick<MimicPayloadV1, "visual_guideline">,
+  brandAssets?: ProjectBrandAssetRow[],
+  opts?: { useProjectBrandPalette?: boolean }
 ): MimicSlideThemePatch {
   const theme = inferMimicCarouselTheme(mimic.visual_guideline);
-  return {
+  const base: MimicSlideThemePatch = {
     carousel_paper: theme.paper,
     carousel_ink: theme.ink,
     carousel_body: theme.body,
     carousel_text_shadow_headline: theme.text_shadow_headline,
     carousel_text_shadow_body: theme.text_shadow_body,
   };
+  if (opts?.useProjectBrandPalette && brandAssets?.length) {
+    return mergeProjectBrandPaletteIntoThemePatch(base, brandAssets);
+  }
+  return base;
 }
 
 export function parseRelativeScaleHeadlinePx(raw: unknown, canvasHeight = CANVAS_HEIGHT): number | null {
@@ -668,7 +917,7 @@ export function mimicSlideTypographyPatch(
   return out;
 }
 
-/** True when reference slides carry Document AI OCR geometry (merged `text_blocks` or `document_ai_ocr_v1`). */
+/** True when reference slides carry positioned text geometry for HTML/CSS overlay. */
 export function mimicPayloadHasDocAiTextLayout(
   mimic: Pick<MimicPayloadV1, "visual_guideline">
 ): boolean {
@@ -680,14 +929,7 @@ export function mimicPayloadHasDocAiTextLayout(
     const slide = asRecord(raw);
     if (!slide) continue;
     if (slide.document_ai_ocr_v1) return true;
-    const blocks = slide.text_blocks;
-    if (Array.isArray(blocks)) {
-      for (const b of blocks) {
-        const rec = asRecord(b);
-        if (rec && String(rec.source ?? "").trim().toLowerCase() === "document_ai") return true;
-      }
-    }
-    if (parseMimicTextBlocks(slide.text_blocks).some((b) => b.source === "document_ai")) return true;
+    if (parseMimicTextBlocks(slide.text_blocks).length > 0) return true;
   }
   return false;
 }
@@ -714,13 +956,21 @@ export interface MimicDocAiRenderTextLayer {
   color_hex: string | null;
   text_align: string;
   css_style: string;
+  text_backing?: boolean;
+  /** Source OCR norm bbox (for stack merge matching). */
+  ref_x?: number;
+  ref_y?: number;
+  ref_w?: number;
+  ref_h?: number;
+  /** Top decor / handle — do not push away from center subject zone. */
+  skip_center_avoid?: boolean;
 }
 
 function roleBucket(role: string | null): "headline" | "body" | "cta" | "other" {
   const r = (role ?? "").toLowerCase();
-  if (/title|headline|hook|cover|kicker/.test(r)) return "headline";
+  if (/title|headline|hook|cover|kicker|subheadline/.test(r)) return "headline";
   if (/cta|handle/.test(r)) return "cta";
-  if (/body|subtitle|caption|paragraph|sub/.test(r)) return "body";
+  if (/body|subtitle|caption|paragraph/.test(r)) return "body";
   return "other";
 }
 
@@ -765,7 +1015,141 @@ function bboxNormToRenderPx(
   };
 }
 
+/** Map OCR norm bbox → render px with canvas safe margins and inner padding. */
+export function docAiBBoxToRenderPx(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  opts?: { safeMarginPx?: number; innerPadPx?: number }
+): { x: number; y: number; w: number; h: number } {
+  const margin = opts?.safeMarginPx ?? MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX;
+  const pad = opts?.innerPadPx ?? 4;
+  const canvasW = CAROUSEL_RENDER_WIDTH_PX;
+  const canvasH = CAROUSEL_RENDER_HEIGHT_PX;
+  let px = bboxNormToRenderPx(x, y, w, h, canvasW, canvasH);
+
+  px.x = Math.max(margin, px.x);
+  px.y = Math.max(margin, px.y);
+  const maxRight = canvasW - margin;
+  const maxBottom = canvasH - margin;
+  px.w = Math.max(12, Math.min(px.w, maxRight - px.x));
+  px.h = Math.max(12, Math.min(px.h, maxBottom - px.y));
+
+  if (px.w > pad * 4) {
+    px.x += pad;
+    px.w -= pad * 2;
+  }
+  if (px.h > pad * 4) {
+    px.y += pad;
+    px.h -= pad * 2;
+  }
+  return px;
+}
+
 type DocAiLayoutBlock = MimicTextBlock & { ref_text: string };
+
+function normalizeOcrMatchText(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9+@#\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function ocrTextMatchScore(blockText: string, ocrText: string): number {
+  const a = normalizeOcrMatchText(blockText);
+  const b = normalizeOcrMatchText(ocrText);
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.includes(b) || b.includes(a)) return 0.92;
+  const ta = new Set(a.split(" ").filter(Boolean));
+  const tb = new Set(b.split(" ").filter(Boolean));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) {
+    if (tb.has(t)) inter++;
+  }
+  return inter / Math.max(ta.size, tb.size);
+}
+
+function bboxFromOcrLayer(layer: Record<string, unknown>): { x: number; y: number; w: number; h: number } | null {
+  const bbox = asRecord(layer.bbox_pct);
+  if (
+    bbox &&
+    Number.isFinite(Number(bbox.x)) &&
+    Number.isFinite(Number(bbox.y)) &&
+    Number.isFinite(Number(bbox.w)) &&
+    Number.isFinite(Number(bbox.h))
+  ) {
+    return {
+      x: clamp01(Number(bbox.x)),
+      y: clamp01(Number(bbox.y)),
+      w: clamp01(Number(bbox.w)),
+      h: clamp01(Number(bbox.h)),
+    };
+  }
+  return null;
+}
+
+function mergeOcrLayerFieldsOntoBlock(block: MimicTextBlock, layer: Record<string, unknown>): DocAiLayoutBlock {
+  const ocrText = String(layer.text ?? block.text ?? "").trim();
+  const font = asRecord(layer.font);
+  const fontPx = pickNum(font?.size_px);
+  const ocrBox = bboxFromOcrLayer(layer);
+  const box = ocrBox ?? { x: block.x, y: block.y, w: block.w, h: block.h };
+  return {
+    ...block,
+    text: ocrText || block.text,
+    ref_text: ocrText || block.text,
+    x: box.x,
+    y: box.y,
+    w: box.w,
+    h: box.h,
+    align: String(layer.alignment ?? block.align ?? "").trim().toLowerCase() || block.align,
+    font_size_px:
+      fontPx != null && fontPx > 0 && fontPx < 400 ? Math.round(fontPx) : block.font_size_px,
+    font_weight: font?.weight != null ? String(font.weight) : block.font_weight,
+    color_hex:
+      typeof font?.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(font.color_hex)
+        ? font.color_hex
+        : block.color_hex,
+    font_family:
+      typeof font?.family_detected === "string" && font.family_detected.trim()
+        ? font.family_detected.trim()
+        : block.font_family,
+    source: "document_ai",
+  };
+}
+
+/** Match OCR text_layers to Nemotron text_blocks by text similarity — not array index. */
+function mergeOcrLayersOntoLayoutBlocks(
+  layoutBlocks: MimicTextBlock[],
+  ocrLayers: unknown[]
+): DocAiLayoutBlock[] {
+  const used = new Set<number>();
+  const minScore = 0.38;
+
+  return layoutBlocks.map((block) => {
+    let bestIdx = -1;
+    let bestScore = minScore;
+    for (let j = 0; j < ocrLayers.length; j++) {
+      if (used.has(j)) continue;
+      const layer = asRecord(ocrLayers[j]);
+      if (!layer) continue;
+      const score = ocrTextMatchScore(block.text, String(layer.text ?? ""));
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = j;
+      }
+    }
+    if (bestIdx < 0) {
+      return { ...block, ref_text: block.text };
+    }
+    used.add(bestIdx);
+    return mergeOcrLayerFieldsOntoBlock(block, asRecord(ocrLayers[bestIdx])!);
+  });
+}
 
 /** Prefer OCR `text_layers` geometry merged with Nemotron roles from `text_blocks`. */
 function extractDocAiLayoutBlocks(refSlide: Record<string, unknown>): DocAiLayoutBlock[] {
@@ -780,67 +1164,311 @@ function extractDocAiLayoutBlocks(refSlide: Record<string, unknown>): DocAiLayou
     return layoutBlocks.map((b) => ({ ...b, ref_text: b.text }));
   }
 
-  const out: DocAiLayoutBlock[] = [];
-  const pairCount = Math.max(layoutBlocks.length, ocrLayers.length);
-  for (let i = 0; i < pairCount; i++) {
-    const block = layoutBlocks[i] ?? layoutBlocks[layoutBlocks.length - 1]!;
-    const layer = asRecord(ocrLayers[i]);
-    if (!layer) {
-      out.push({ ...block, ref_text: block.text });
+  return mergeOcrLayersOntoLayoutBlocks(layoutBlocks, ocrLayers);
+}
+
+function medianPositiveInt(nums: number[]): number | null {
+  const sorted = nums.filter((n) => n > 0).sort((a, b) => a - b);
+  if (sorted.length === 0) return null;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1
+    ? sorted[mid]!
+    : Math.round((sorted[mid - 1]! + sorted[mid]!) / 2);
+}
+
+/** Even out per-line OCR font estimates inside one vertical stack (corner column). */
+export function normalizeRefFontSizesPerStack(blocks: DocAiLayoutBlock[]): DocAiLayoutBlock[] {
+  if (blocks.length < 2) return blocks;
+  const stacks = groupDocAiBlocksIntoVerticalStacks(blocks);
+  const medianByBlock = new WeakMap<DocAiLayoutBlock, number>();
+  for (const stack of stacks) {
+    if (stack.length < 2) continue;
+    const sizes = stack
+      .map((b) => b.font_size_px)
+      .filter((n): n is number => n != null && n > 0);
+    const med = medianPositiveInt(sizes);
+    if (med == null) continue;
+    const stackSize = clampDocAiFontSizePx(med);
+    for (const b of stack) medianByBlock.set(b, stackSize);
+  }
+  return blocks.map((b) => {
+    const med = medianByBlock.get(b);
+    return med != null ? { ...b, font_size_px: med } : b;
+  });
+}
+
+/** Blocks used for overlay mapping (filter chrome + collapse paragraphs). */
+export function layoutBlocksForMimicSlideRender(
+  refSlide: Record<string, unknown>
+): DocAiLayoutBlock[] {
+  return normalizeRefFontSizesPerStack(
+    collapseParagraphCopyTargets(
+      dropOcrContainerBoxes(filterOverlayLayoutBlocks(extractDocAiLayoutBlocks(refSlide)))
+    )
+  );
+}
+
+function isTemplateInstructionRefBlock(refText: string): boolean {
+  return isTemplateInstructionText(refText);
+}
+
+/** Chat-mock decks split one title sentence across template line + "your {sign} friend". */
+export function isChatMockTitlePair(
+  upper: Pick<DocAiLayoutBlock, "ref_text" | "x" | "y" | "w" | "h">,
+  lower: Pick<DocAiLayoutBlock, "ref_text" | "x" | "y" | "w" | "h">
+): boolean {
+  return isChatMockTitlePairBlocks(
+    {
+      text: upper.ref_text,
+      role: null,
+      x: upper.x,
+      y: upper.y,
+      w: upper.w,
+      h: upper.h,
+    },
+    {
+      text: lower.ref_text,
+      role: null,
+      x: lower.x,
+      y: lower.y,
+      w: lower.w,
+      h: lower.h,
+    }
+  );
+}
+
+export { splitHeadlineForChatMockTitlePair } from "./mimic-copy-slots.js";
+
+function docAiRefAcceptsDirectCopyLine(
+  ref: Pick<DocAiLayoutBlock, "ref_text" | "role" | "x" | "y" | "w" | "h">
+): boolean {
+  if (isPreserveReferenceDecorText(ref.ref_text, ref)) return false;
+  if (isHandleTextBlock(ref.role, ref.ref_text)) return false;
+  if (isOverlayChromeReferenceText(ref.ref_text.trim(), roleBucket(ref.role))) return false;
+  return true;
+}
+
+/** Map text_blocks[] lines onto OCR boxes by reading order (handles handle/decor gaps). */
+export function buildDirectCopyAssignmentsByIndex(
+  orderedRef: DocAiLayoutBlock[],
+  directLines: string[]
+): { useDirect: boolean; assignments: string[] } {
+  const assignments = new Array<string>(orderedRef.length).fill("");
+  if (directLines.length === 0) return { useDirect: false, assignments };
+
+  const copyableIndices: number[] = [];
+  for (let i = 0; i < orderedRef.length; i++) {
+    if (docAiRefAcceptsDirectCopyLine(orderedRef[i]!)) copyableIndices.push(i);
+  }
+
+  if (directLines.length === orderedRef.length) {
+    for (let i = 0; i < orderedRef.length; i++) {
+      assignments[i] = directLines[i] ?? "";
+    }
+    return { useDirect: true, assignments };
+  }
+
+  if (copyableIndices.length === 0) return { useDirect: false, assignments };
+
+  if (directLines.length === copyableIndices.length) {
+    for (let j = 0; j < copyableIndices.length; j++) {
+      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+    }
+    return { useDirect: true, assignments };
+  }
+
+  if (directLines.length > copyableIndices.length && copyableIndices.length >= 1) {
+    for (let j = 0; j < copyableIndices.length; j++) {
+      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+    }
+    return { useDirect: true, assignments };
+  }
+
+  if (directLines.length < copyableIndices.length && copyableIndices.length >= 1) {
+    for (let j = 0; j < directLines.length; j++) {
+      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+    }
+    return { useDirect: true, assignments };
+  }
+
+  return { useDirect: false, assignments };
+}
+
+/**
+ * Reference OCR often fragments one meme line into many boxes; reviewer `text_blocks[]`
+ * carries the authoritative copy count. Keep decor/handle slots + one target per copy line.
+ */
+function shrinkOrderedRefToTextBlockLines(
+  orderedRef: DocAiLayoutBlock[],
+  directLines: string[]
+): DocAiLayoutBlock[] | null {
+  if (directLines.length === 0) return null;
+
+  const preserved = orderedRef.filter(
+    (r) =>
+      isPreserveReferenceDecorText(r.ref_text, r) ||
+      isHandleTextBlock(r.role, r.ref_text) ||
+      looksLikeInstagramHandleText(r.ref_text)
+  );
+  const copyable = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r));
+  if (copyable.length <= directLines.length) return null;
+
+  const stacks = sortVerticalStacksForReadingOrder(groupDocAiBlocksIntoVerticalStacks(copyable));
+  let picks = stacks.map((stack) =>
+    stack.reduce((best, b) => (b.w * b.h >= best.w * best.h ? b : best), stack[0]!)
+  );
+  if (picks.length > directLines.length) {
+    picks = picks.slice(0, directLines.length);
+  } else if (picks.length < directLines.length) {
+    const byReading = [...copyable].sort((a, b) => a.y - b.y || a.x - b.x || b.w * b.h - a.w * a.h);
+    picks = byReading.slice(0, directLines.length);
+  }
+
+  const merged = [...preserved, ...picks];
+  merged.sort((a, b) => a.y - b.y || a.x - b.x);
+  return merged.length > 0 ? merged : null;
+}
+
+function dedupeDocAiRenderLayersByNormalizedText(
+  layers: MimicDocAiRenderTextLayer[]
+): MimicDocAiRenderTextLayer[] {
+  if (layers.length <= 1) return layers;
+  const out: MimicDocAiRenderTextLayer[] = [];
+  const indexByKey = new Map<string, number>();
+
+  for (const layer of layers) {
+    const key = normalizeCopyChunkForLayerMatch(layer.text);
+    if (key.length < 3) {
+      out.push(layer);
       continue;
     }
-    const text = String(layer.text ?? block.text ?? "").trim();
-    if (!text) continue;
-    const bbox = asRecord(layer.bbox_pct);
-    const font = asRecord(layer.font);
-    const box =
-      bbox &&
-      Number.isFinite(Number(bbox.x)) &&
-      Number.isFinite(Number(bbox.y)) &&
-      Number.isFinite(Number(bbox.w)) &&
-      Number.isFinite(Number(bbox.h))
-        ? {
-            x: clamp01(Number(bbox.x)),
-            y: clamp01(Number(bbox.y)),
-            w: clamp01(Number(bbox.w)),
-            h: clamp01(Number(bbox.h)),
-          }
-        : { x: block.x, y: block.y, w: block.w, h: block.h };
-    const fontPx = pickNum(font?.size_px);
-    out.push({
-      ...block,
-      text,
-      ref_text: text,
-      x: box.x,
-      y: box.y,
-      w: box.w,
-      h: box.h,
-      align: String(layer.alignment ?? block.align ?? "").trim().toLowerCase() || block.align,
-      font_size_px:
-        fontPx != null && fontPx > 0 && fontPx < 400 ? Math.round(fontPx) : block.font_size_px,
-      font_weight:
-        font?.weight != null ? String(font.weight) : block.font_weight,
-      color_hex:
-        typeof font?.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(font.color_hex)
-          ? font.color_hex
-          : block.color_hex,
-      font_family:
-        typeof font?.family_detected === "string" && font.family_detected.trim()
-          ? font.family_detected.trim()
-          : block.font_family,
-      source: "document_ai",
-    });
+    const prevIdx = indexByKey.get(key);
+    if (prevIdx == null) {
+      indexByKey.set(key, out.length);
+      out.push(layer);
+      continue;
+    }
+    const prev = out[prevIdx]!;
+    if (layer.w_px * layer.h_px > prev.w_px * prev.h_px) {
+      out[prevIdx] = layer;
+    }
   }
+
+  out.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
   return out;
 }
 
-function isSingleLineLayoutBlock(refText: string, hNorm: number, wNorm: number): boolean {
-  if (refText.includes("\n")) return false;
-  if (refText.split(/\s+/).length <= 1 && refText.length <= 24) return true;
-  return hNorm < 0.09 || hNorm / Math.max(wNorm, 0.01) < 0.38;
+function textBlocksPreferDirectMapping(
+  orderedRef: DocAiLayoutBlock[],
+  directLines: string[],
+  llmLines: LlmSlideCopyLines
+): boolean {
+  if (directLines.length === 0) return false;
+  if (!orderedRefHasChatMockTitlePair(orderedRef)) return true;
+  const headline = (llmLines.headline ?? directLines[0] ?? "").trim();
+  if (/^Texting\s+(?:a|an|your)\s+/i.test(headline)) return false;
+  if (directLines.length >= 2 && llmLines.bodyLines.length >= 1) return true;
+  return directLines.length >= 3;
 }
 
-const DOC_AI_CHAR_WIDTH_RATIO = 0.52;
+function orderedRefHasChatMockTitlePair(orderedRef: DocAiLayoutBlock[]): boolean {
+  for (let i = 0; i < orderedRef.length - 1; i++) {
+    const cur = orderedRef[i]!;
+    const next = orderedRef[i + 1];
+    if (
+      next &&
+      isTemplateInstructionText(cur.ref_text) &&
+      isChatMockFriendSubtitle(next.ref_text) &&
+      docAiBlocksAdjacentInStackStrict(cur, next)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Pre-assign copy when chat-mock title is one sentence split across two OCR boxes. */
+function buildRefBlockCopyAssignments(
+  orderedRef: DocAiLayoutBlock[],
+  llmLines: LlmSlideCopyLines,
+  directLines: string[]
+): string[] {
+  const headline = (llmLines.headline ?? directLines[0] ?? "").trim();
+  const bodyLines = [...llmLines.bodyLines];
+  let bodyIdx = 0;
+  const out = new Array<string>(orderedRef.length).fill("");
+
+  for (let i = 0; i < orderedRef.length; i++) {
+    const ref = orderedRef[i]!;
+    const next = orderedRef[i + 1];
+
+    if (isPreserveReferenceDecorText(ref.ref_text, ref)) {
+      out[i] = ref.ref_text.trim();
+      continue;
+    }
+
+    if (next && isChatMockTitlePair(ref, next)) {
+      const split = splitHeadlineForChatMockTitlePair(headline, ref, next);
+      out[i] = split.upper;
+      out[i + 1] = split.lower;
+      i++;
+      continue;
+    }
+
+    if (isTemplateInstructionRefBlock(ref.ref_text) || roleBucket(ref.role) === "headline") {
+      out[i] = headline;
+      continue;
+    }
+
+    if (isChatMockFriendSubtitle(ref.ref_text)) continue;
+
+    const bucket = roleBucket(ref.role);
+    if (bucket === "cta" && bodyIdx < bodyLines.length - 1) {
+      out[i] = bodyLines[bodyLines.length - 1] ?? "";
+      bodyIdx = bodyLines.length;
+      continue;
+    }
+
+    out[i] = bodyLines[bodyIdx++] ?? "";
+  }
+
+  return out;
+}
+
+export { filterOverlayLayoutBlocks, collapseParagraphCopyTargets } from "./mimic-docai-overlay-layout.js";
+
+/** Bias larger vs raw OCR size_px — Puppeteer shrink-to-fit caps overflow afterward. */
+export const DEFAULT_MIMIC_DOCAI_FONT_SCALE = 1.15;
+
+/** Slightly conservative width estimate — lower ratio = less preemptive shrink for width. */
+const DOC_AI_CHAR_WIDTH_RATIO = 0.48;
+
+function inferDocAiFontSizeFromBBox(boxHPx: number, singleLine: boolean, lineCount: number): number {
+  if (singleLine) return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.round(boxHPx * 0.9));
+  return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.floor(boxHPx / (Math.max(1, lineCount) * 1.1)));
+}
+
+function medianRefFontPxFromBlocks(blocks: Array<Pick<DocAiLayoutBlock, "font_size_px">>): number | null {
+  const sizes = blocks
+    .map((b) => b.font_size_px)
+    .filter((n): n is number => n != null && Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  if (sizes.length === 0) return null;
+  const mid = Math.floor(sizes.length / 2);
+  return sizes.length % 2 === 1 ? sizes[mid]! : Math.round((sizes[mid - 1]! + sizes[mid]!) / 2);
+}
+
+/** Prefer the largest reference line size in a stack (meme traits should read bold). */
+function stackRefFontPxFromBlocks(blocks: Array<Pick<DocAiLayoutBlock, "font_size_px">>): number | null {
+  const sizes = blocks
+    .map((b) => b.font_size_px)
+    .filter((n): n is number => n != null && Number.isFinite(n) && n > 0);
+  if (sizes.length === 0) return null;
+  const median = medianRefFontPxFromBlocks(blocks);
+  const peak = Math.max(...sizes);
+  const blended = Math.round(Math.max(median ?? 0, peak * 0.92));
+  return blended > 0 ? blended : null;
+}
 
 /** Estimate initial font size before Puppeteer shrink-to-fit. */
 export function estimateDocAiFitFontSizePx(opts: {
@@ -850,40 +1478,73 @@ export function estimateDocAiFitFontSizePx(opts: {
   boxWPx: number;
   boxHPx: number;
   singleLine?: boolean;
+  fontScale?: number;
+  textBacking?: boolean;
+  role?: string | null;
+  projectHandle?: string | null;
 }): number {
-  const refLen = Math.max(1, opts.refText.trim().length);
+  const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
   const newLen = Math.max(1, opts.text.trim().length);
-  const maxByHeight = Math.max(10, Math.round(opts.boxHPx * 0.96));
+
+  if (isMimicDocAiHandleLayer(opts.role ?? null, opts.text, opts.projectHandle)) {
+    return clampDocAiFontSizePx(MIMIC_DOCAI_HANDLE_FONT_SIZE_PX);
+  }
+
+  if (opts.textBacking) {
+    const base =
+      opts.refFontPx != null && opts.refFontPx > 0
+        ? clampDocAiTextBackFontSizePx(opts.refFontPx)
+        : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
+    return clampDocAiTextBackFontSizePx(Math.round(base * MIMIC_DOCAI_TEXT_BACK_FONT_SCALE));
+  }
+
+  const fontScale =
+    opts.fontScale != null && Number.isFinite(opts.fontScale) && opts.fontScale > 0
+      ? opts.fontScale
+      : DEFAULT_MIMIC_DOCAI_FONT_SCALE;
+  const refLen = Math.max(1, opts.refText.trim().length);
+  const maxByHeight = Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.round(opts.boxHPx * 0.96));
+  const inferredFromBox = inferDocAiFontSizeFromBBox(opts.boxHPx, Boolean(opts.singleLine), lineCount);
+
   let size =
     opts.refFontPx != null && opts.refFontPx > 0
-      ? opts.refFontPx
-      : Math.max(12, Math.round(opts.boxHPx * 0.82));
-
+      ? clampDocAiFontSizePx(opts.refFontPx)
+      : inferredFromBox;
+  // Document AI size_px often under-reports — prefer filling the bbox height.
+  size = Math.max(size, inferredFromBox);
   size = Math.min(size, maxByHeight);
+  size = clampDocAiFontSizePx(size);
 
   if (opts.singleLine) {
     const approxWidth = newLen * size * DOC_AI_CHAR_WIDTH_RATIO;
     if (approxWidth > opts.boxWPx) {
       size = Math.floor(opts.boxWPx / (newLen * DOC_AI_CHAR_WIDTH_RATIO));
     }
-    return Math.max(10, Math.min(512, size));
+    size = Math.round(size * fontScale);
+    size = Math.min(size, maxByHeight);
+    return clampDocAiFontSizePx(size);
   }
 
   if (newLen > refLen) {
-    size = Math.max(10, Math.round(size * (refLen / newLen)));
+    size = clampDocAiFontSizePx(Math.round(size * (refLen / newLen)));
   }
 
-  const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
-  const maxByLineHeight = Math.floor(opts.boxHPx / (lineCount * 1.12));
-  if (maxByLineHeight > 0) size = Math.min(size, maxByLineHeight);
+  const maxByLineHeight = Math.floor(opts.boxHPx / (lineCount * 1.1));
+  if (maxByLineHeight >= MIMIC_DOCAI_MIN_FONT_SIZE_PX) {
+    size = Math.min(size, maxByLineHeight);
+  }
 
   const approxCharW = size * DOC_AI_CHAR_WIDTH_RATIO;
   const charsPerLine = Math.max(1, Math.floor(opts.boxWPx / approxCharW));
   const wrappedLines = Math.max(lineCount, Math.ceil(newLen / charsPerLine));
-  const maxByWrap = Math.floor(opts.boxHPx / (wrappedLines * 1.12));
-  if (maxByWrap > 0) size = Math.min(size, maxByWrap);
+  const maxByWrap = Math.floor(opts.boxHPx / (wrappedLines * 1.1));
+  if (maxByWrap >= MIMIC_DOCAI_MIN_FONT_SIZE_PX) {
+    size = Math.min(size, maxByWrap);
+  }
 
-  return Math.max(10, Math.min(512, size));
+  size = Math.round(size * fontScale);
+  size = Math.min(size, maxByHeight);
+  return clampDocAiFontSizePx(size);
 }
 
 export function buildDocAiLayerCssStyle(opts: {
@@ -896,6 +1557,9 @@ export function buildDocAiLayerCssStyle(opts: {
   fontFamily: string | null;
   textAlign: string;
   singleLine: boolean;
+  textBacking?: boolean;
+  role?: string | null;
+  projectHandle?: string | null;
 }): { css_style: string; font_size_px: number; layout_mode: "single_line" | "multi_line"; layout_class: string } {
   const fontSize = estimateDocAiFitFontSizePx({
     text: opts.text,
@@ -904,6 +1568,9 @@ export function buildDocAiLayerCssStyle(opts: {
     boxWPx: opts.px.w,
     boxHPx: opts.px.h,
     singleLine: opts.singleLine,
+    textBacking: opts.textBacking,
+    role: opts.role,
+    projectHandle: opts.projectHandle,
   });
   const lineCount = Math.max(1, opts.text.split(/\n/).filter((l) => l.trim()).length);
   const lineHeight = opts.singleLine
@@ -921,13 +1588,40 @@ export function buildDocAiLayerCssStyle(opts: {
   ];
 
   if (opts.singleLine) {
-    cssParts.push("white-space:nowrap", "overflow:hidden", "text-overflow:clip");
+    const justify =
+      opts.textAlign === "center" ? "center" : opts.textAlign === "right" ? "flex-end" : "flex-start";
+    if (opts.textBacking) {
+      cssParts.push("white-space:nowrap", "overflow:visible", `justify-content:${justify}`);
+    } else {
+      cssParts.push(
+        "white-space:nowrap",
+        "overflow:hidden",
+        "text-overflow:ellipsis",
+        `justify-content:${justify}`
+      );
+    }
   } else {
-    cssParts.push("white-space:pre-line", "overflow:hidden");
+    cssParts.push(
+      "white-space:pre-wrap",
+      "overflow-wrap:break-word",
+      "word-break:normal",
+      "overflow:visible"
+    );
+  }
+
+  if (opts.textBacking) {
+    cssParts.push("display:inline-block", "vertical-align:top");
+    cssParts.push(
+      "background:rgba(255,255,255,0.9)",
+      "padding:3px 8px",
+      "border-radius:4px",
+      "box-decoration-break:clone",
+      "-webkit-box-decoration-break:clone"
+    );
   }
 
   if (opts.fontWeight) cssParts.push(`font-weight:${opts.fontWeight}`);
-  if (opts.color) cssParts.push(`color:${opts.color}`);
+  cssParts.push(`color:${resolveMimicDocAiLayerColor({ refColor: opts.color, textBacking: opts.textBacking })}`);
   if (opts.fontFamily) cssParts.push(`font-family:${opts.fontFamily}`);
 
   const layout_mode = opts.singleLine ? "single_line" : "multi_line";
@@ -936,55 +1630,824 @@ export function buildDocAiLayerCssStyle(opts: {
   return { css_style: cssParts.join(";"), font_size_px: fontSize, layout_mode, layout_class };
 }
 
-function llmTextPoolForSlide(slide: Record<string, unknown>): Array<{ bucket: string; text: string }> {
-  const pool: Array<{ bucket: string; text: string }> = [];
-  if (Array.isArray(slide.text_blocks) && slide.text_blocks.length > 0) {
+function horizontalOverlapRatio(
+  a: Pick<MimicTextBlock, "x" | "w">,
+  b: Pick<MimicTextBlock, "x" | "w">
+): number {
+  const a1 = a.x;
+  const a2 = a.x + a.w;
+  const b1 = b.x;
+  const b2 = b.x + b.w;
+  const overlap = Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
+  const union = Math.max(a2, b2) - Math.min(a1, b1);
+  return union > 0 ? overlap / union : 0;
+}
+
+function blockCenterX(b: Pick<MimicTextBlock, "x" | "w">): number {
+  return b.x + b.w / 2;
+}
+
+export function docAiBlocksShareVerticalStack(
+  a: Pick<MimicTextBlock, "x" | "w">,
+  b: Pick<MimicTextBlock, "x" | "w">
+): boolean {
+  if (horizontalOverlapRatio(a, b) >= 0.35) return true;
+  return Math.abs(blockCenterX(a) - blockCenterX(b)) < 0.1;
+}
+
+/** True when two reference lines share a vertical text column (stacked phrases). */
+export function docAiBlocksAdjacentInStack(
+  a: Pick<MimicTextBlock, "x" | "y" | "w" | "h">,
+  b: Pick<MimicTextBlock, "x" | "y" | "w" | "h">
+): boolean {
+  return blocksVerticallyNestedOrAdjacent(a, b);
+}
+
+/** Tighter adjacency for chat-mock title pairs (two-line headline). */
+export function docAiBlocksAdjacentInStackStrict(
+  a: Pick<MimicTextBlock, "x" | "y" | "w" | "h">,
+  b: Pick<MimicTextBlock, "x" | "y" | "w" | "h">
+): boolean {
+  if (!docAiBlocksShareVerticalStack(a, b)) return false;
+  const gap = b.y - (a.y + a.h);
+  return gap >= -0.015 && gap < 0.06;
+}
+
+/** Union bbox for a vertical OCR stack (cluster = one sentence block). */
+export function docAiStackUnionBBox(
+  stack: Array<Pick<MimicTextBlock, "x" | "y" | "w" | "h">>
+): { x: number; y: number; w: number; h: number } {
+  const x1 = Math.min(...stack.map((b) => b.x));
+  const y1 = Math.min(...stack.map((b) => b.y));
+  const x2 = Math.max(...stack.map((b) => b.x + b.w));
+  const y2 = Math.max(...stack.map((b) => b.y + b.h));
+  return { x: x1, y: y1, w: Math.max(0.02, x2 - x1), h: Math.max(0.02, y2 - y1) };
+}
+
+/** Prefer upper-left multi-line corner stacks for meme hook remainders (e.g. flirt / slumber hooks). */
+export function hookStyleBodyStackIndex(stacks: DocAiLayoutBlock[][]): number | null {
+  if (stacks.length === 0) return null;
+  let bestIdx: number | null = null;
+  let bestScore = -1;
+  for (let i = 0; i < stacks.length; i++) {
+    const stack = stacks[i]!;
+    const yMin = Math.min(...stack.map((b) => b.y));
+    const xMin = Math.min(...stack.map((b) => b.x));
+    let score = 0;
+    if (yMin < 0.58) score += 6;
+    if (xMin < 0.42) score += 8;
+    if (stack.length >= 2 && stack.length <= 4) score += stack.length * 3;
+    else if (stack.length === 1 && yMin < 0.5) score += 2;
+    if (score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  if (bestIdx != null) return bestIdx;
+  let leftMost: number | null = null;
+  let minX = 1;
+  for (let i = 0; i < stacks.length; i++) {
+    const stack = stacks[i]!;
+    const yMin = Math.min(...stack.map((b) => b.y));
+    const xMin = Math.min(...stack.map((b) => b.x));
+    if (yMin < 0.58 && xMin < minX) {
+      minX = xMin;
+      leftMost = i;
+    }
+  }
+  return leftMost;
+}
+
+/** Map body copy-slot index → spatial stack index for headline remainder routing. */
+export function bodyStackIndexForHeadlineRemainder(
+  stacks: DocAiLayoutBlock[][],
+  transcript: string,
+  headlineRemainder: string | null | undefined,
+  orderedRef: Array<Pick<DocAiLayoutBlock, "ref_text" | "role" | "x" | "y" | "w" | "h">>
+): number | null {
+  if (stacks.length === 0) return null;
+  if (!String(headlineRemainder ?? "").trim()) return null;
+  const pseudoSlots = stacks.map((stack, slot_index) => ({
+    slot_index,
+    llm_field: "body",
+    block_texts: stack.map((b) => b.ref_text),
+    reference_text: stack.map((b) => b.ref_text).join(" "),
+  }));
+  const idx = bodySlotIndexForHeadlineRemainder(pseudoSlots, transcript, headlineRemainder, orderedRef);
+  if (idx != null) return idx;
+  if (headlineRemainder?.trim()) return hookStyleBodyStackIndex(stacks);
+  return null;
+}
+
+/** Sentence-aware body normalization for stack assignment (replaces naive line chunking). */
+export function normalizeBodyLinesForStackCount(bodyLines: string[], stackCount: number): string[] {
+  return semanticBodyCopyForStacks(bodyLines, stackCount);
+}
+
+/**
+ * Assign LLM body lines to spatial stacks (one render cluster per stack).
+ * When there are enough lines, each OCR micro-line in a stack gets one LLM line (joined at render).
+ */
+export function assignBodyLinesToSpatialStacks(
+  stacks: DocAiLayoutBlock[][],
+  bodyLines: string[],
+  opts?: {
+    headlineRemainder?: string | null;
+    remainderStackIndex?: number | null;
+  }
+): { stackTexts: string[]; consumedBodyLines: number } {
+  const remainderIdx = opts?.remainderStackIndex ?? -1;
+  const bodyStackIndices: number[] = [];
+  for (let i = 0; i < stacks.length; i++) {
+    if (i !== remainderIdx) bodyStackIndices.push(i);
+  }
+
+  const refCounts = bodyStackIndices.map((i) => stacks[i]!.length);
+  const totalRefs = refCounts.reduce((a, b) => a + b, 0);
+  const units = bodyLinesToSemanticUnits(bodyLines);
+  const stackTexts = new Array<string>(stacks.length).fill("");
+
+  if (remainderIdx >= 0 && opts?.headlineRemainder?.trim()) {
+    stackTexts[remainderIdx] = opts.headlineRemainder.trim();
+  }
+
+  if (units.length === totalRefs && totalRefs > 0 && bodyStackIndices.length > 0) {
+    const work = [...units];
+    for (const si of bodyStackIndices) {
+      const take = stacks[si]!.length;
+      const chunk = work.splice(0, take);
+      const merged = bodyLinesToSemanticUnits(chunk);
+      stackTexts[si] = merged.length <= 1 ? (merged[0] ?? "") : merged.join("\n");
+    }
+  } else if (bodyStackIndices.length > 0) {
+    const fitted =
+      units.length === bodyStackIndices.length
+        ? units
+        : fitSemanticUnitsToStackCount(units, bodyStackIndices.length);
+    for (let j = 0; j < bodyStackIndices.length; j++) {
+      stackTexts[bodyStackIndices[j]!] = fitted[j] ?? "";
+    }
+  }
+
+  const repaired = repairDanglingStackTexts(stackTexts, stacks, {
+    skipIndices: remainderIdx >= 0 ? [remainderIdx] : undefined,
+  });
+  for (let i = 0; i < stackTexts.length; i++) {
+    if (i === remainderIdx && opts?.headlineRemainder?.trim()) {
+      stackTexts[i] = repaired[i]?.trim() ? repaired[i]! : opts.headlineRemainder.trim();
+    } else {
+      stackTexts[i] = repaired[i] ?? stackTexts[i] ?? "";
+    }
+  }
+
+  const assignedBodyStacks = bodyStackIndices.filter((si) => stackTexts[si]?.trim()).length;
+  const consumedBodyLines =
+    assignedBodyStacks >= bodyStackIndices.length && bodyStackIndices.length > 0
+      ? bodyLines.length
+      : Math.min(bodyLines.length, assignedBodyStacks);
+  return { stackTexts, consumedBodyLines };
+}
+
+function maxFontSizeForDocAiBox(
+  boxWPx: number,
+  boxHPx: number,
+  lineCount: number,
+  singleLine: boolean
+): number {
+  if (singleLine) return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.round(boxHPx * 0.85));
+  const lines = Math.max(1, lineCount);
+  return Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.floor(boxHPx / (lines * 1.15)));
+}
+
+/** Stretch OCR highlight boxes before render so copy is not trapped in collapsed OCR bboxes. */
+function expandDocAiBoxForTextContent(
+  bbox: { x: number; y: number; w: number; h: number },
+  text: string,
+  fontSizePx: number,
+  singleLine: boolean
+): { x: number; y: number; w: number; h: number } {
+  const margin = 32;
+  const padX = 24;
+  const padY = 16;
+  const charW = fontSizePx * 0.52;
+  const lineH = fontSizePx * 1.22;
+  const trimmed = text.trim();
+  if (!trimmed) return bbox;
+  const lineParts = trimmed.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const lines = singleLine ? 1 : Math.max(1, lineParts.length);
+  const longestLine = singleLine
+    ? trimmed.replace(/\n/g, " ")
+    : lineParts.reduce((a, b) => (b.length > a.length ? b : a), lineParts[0] ?? "");
+  const xPx = bbox.x * CAROUSEL_RENDER_WIDTH_PX;
+  const yPx = bbox.y * CAROUSEL_RENDER_HEIGHT_PX;
+  const maxWNorm = (CAROUSEL_RENDER_WIDTH_PX - margin - xPx) / CAROUSEL_RENDER_WIDTH_PX;
+  const maxHNorm = (CAROUSEL_RENDER_HEIGHT_PX - margin - yPx) / CAROUSEL_RENDER_HEIGHT_PX;
+  const needWNorm = (longestLine.length * charW + padX) / CAROUSEL_RENDER_WIDTH_PX;
+  const needHNorm = (lines * lineH + padY) / CAROUSEL_RENDER_HEIGHT_PX;
+  const minW = Math.min(maxWNorm, Math.max(bbox.w, needWNorm));
+  const minH = Math.min(maxHNorm, Math.max(bbox.h, needHNorm));
+  return { ...bbox, w: minW, h: minH };
+}
+
+function pushDocAiRenderLayer(
+  layers: MimicDocAiRenderTextLayer[],
+  ref: DocAiLayoutBlock,
+  text: string,
+  bbox: { x: number; y: number; w: number; h: number },
+  opts: {
+    textBacking: boolean;
+    theme?: { ink: string; body: string };
+    forceSingleLine?: boolean;
+    forceMultiLine?: boolean;
+    refFontPxOverride?: number | null;
+    avoidCenterSubject?: boolean;
+    projectHandle?: string | null;
+  }
+): void {
+  const trimmed = sanitizeMimicOverlayCopyText(text);
+  if (!trimmed) return;
+
+  const bucket = roleBucket(ref.role);
+  const skipCenterAvoid = docAiLayerSkipsCenterAvoid(ref, bucket);
+  let renderBBox = bbox;
+  if (opts.avoidCenterSubject && !skipCenterAvoid) {
+    renderBBox = nudgeBBoxAwayFromFullBleedSubjectZone(bbox);
+  }
+  const color = resolveMimicDocAiLayerColor({
+    refColor:
+      ref.color_hex ??
+      (bucket === "headline" || bucket === "cta" ? opts.theme?.ink : opts.theme?.body) ??
+      null,
+    textBacking: opts.textBacking,
+  });
+  const fontWeight = cssFontWeight(ref.font_weight);
+  const textAlign =
+    ref.align && ref.align !== "unknown" ? ref.align : bucket === "cta" ? "center" : "left";
+  const fontFamily = webFontFamilyFromDetected(ref.font_family);
+  const lineCount = Math.max(1, trimmed.split(/\n/).filter((l) => l.trim()).length);
+  const boxWPx = renderBBox.w * CAROUSEL_RENDER_WIDTH_PX;
+  const singleLinePreview = opts.textBacking
+    ? preferSingleLineTextBackLayer(trimmed, boxWPx, {
+        forceSingleLine: opts.forceSingleLine,
+        forceMultiLine: opts.forceMultiLine || lineCount > 1,
+      })
+    : opts.forceMultiLine || lineCount > 1
+      ? false
+      : opts.forceSingleLine || (bucket === "headline" && !trimmed.includes("\n"))
+        ? true
+        : shouldRenderDocAiLayerSingleLine(ref.ref_text, trimmed, boxWPx, renderBBox.h * CAROUSEL_RENDER_HEIGHT_PX);
+  if (opts.textBacking) {
+    const estFont = ref.font_size_px && ref.font_size_px > 0 ? clampDocAiTextBackFontSizePx(ref.font_size_px) : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
+    renderBBox = expandDocAiBoxForTextContent(renderBBox, trimmed, estFont, singleLinePreview);
+  }
+  const px = docAiBBoxToRenderPx(renderBBox.x, renderBBox.y, renderBBox.w, renderBBox.h);
+  const singleLine = singleLinePreview;
+  const refFontPx =
+    opts.refFontPxOverride != null && opts.refFontPxOverride > 0
+      ? clampDocAiFontSizePx(opts.refFontPxOverride)
+      : ref.font_size_px != null && ref.font_size_px > 0
+        ? clampDocAiFontSizePx(ref.font_size_px)
+        : ref.font_size_px;
+  const isHandleLayer = isMimicDocAiHandleLayer(ref.role ?? bucket, trimmed, opts.projectHandle);
+  const styled = buildDocAiLayerCssStyle({
+    px,
+    text: trimmed,
+    refText: ref.ref_text,
+    refFontPx,
+    fontWeight,
+    color,
+    fontFamily,
+    textAlign,
+    singleLine,
+    textBacking: opts.textBacking,
+    role: ref.role ?? bucket,
+    projectHandle: opts.projectHandle,
+  });
+  const maxFit = maxFontSizeForDocAiBox(px.w, px.h, lineCount, singleLine);
+  const fontSize = isHandleLayer
+    ? clampDocAiFontSizePx(MIMIC_DOCAI_HANDLE_FONT_SIZE_PX)
+    : opts.textBacking
+      ? clampDocAiTextBackFontSizePx(styled.font_size_px)
+      : clampDocAiFontSizePx(Math.min(styled.font_size_px, maxFit));
+  const css = styled.css_style.replace(/font-size:\d+px/, `font-size:${fontSize}px`);
+
+  layers.push({
+    text: trimmed,
+    role: ref.role ?? bucket,
+    x_pct: pct01(renderBBox.x),
+    y_pct: pct01(renderBBox.y),
+    w_pct: pct01(renderBBox.w),
+    h_pct: pct01(renderBBox.h),
+    x_px: px.x,
+    y_px: px.y,
+    w_px: px.w,
+    h_px: px.h,
+    layout_mode: singleLine ? "single_line" : "multi_line",
+    layout_class: singleLine ? "mimic-docai-layer--single-line" : "mimic-docai-layer--multi-line",
+    font_size_px: fontSize,
+    ref_font_size_px: refFontPx ?? ref.font_size_px,
+    font_weight: fontWeight,
+    color_hex: color,
+    text_align: textAlign,
+    css_style: css,
+    text_backing: opts.textBacking,
+    ref_x: ref.x,
+    ref_y: ref.y,
+    ref_w: ref.w,
+    ref_h: ref.h,
+    skip_center_avoid: skipCenterAvoid,
+  });
+}
+
+/**
+ * Cluster body lines into vertical stacks (e.g. top-left phrase block, top-right phrase block).
+ * Column-first, then chain adjacent lines — matches mimic-copy-slots grouping.
+ */
+export function groupDocAiBlocksIntoVerticalStacks(blocks: DocAiLayoutBlock[]): DocAiLayoutBlock[][] {
+  const columns: DocAiLayoutBlock[][] = [];
+  for (const block of blocks) {
+    let placed = false;
+    for (const column of columns) {
+      if (docAiBlocksShareVerticalStack(block, column[0]!)) {
+        column.push(block);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) columns.push([block]);
+  }
+
+  const stacks: DocAiLayoutBlock[][] = [];
+  for (const column of columns) {
+    column.sort((a, b) => a.y - b.y || a.x - b.x);
+    let current: DocAiLayoutBlock[] = [];
+    for (const block of column) {
+      if (current.length === 0) {
+        current.push(block);
+        continue;
+      }
+      const prev = current[current.length - 1]!;
+      if (docAiBlocksAdjacentInStack(prev, block)) {
+        current.push(block);
+      } else {
+        stacks.push(current);
+        current = [block];
+      }
+    }
+    if (current.length > 0) stacks.push(current);
+  }
+  return stacks;
+}
+
+/** Merge tiny single-line OCR orphans into the nearest vertical neighbor stack. */
+function mergeOrphanSingleBlockStacks(stacks: DocAiLayoutBlock[][]): DocAiLayoutBlock[][] {
+  if (stacks.length <= 1) return stacks;
+  const working = stacks.map((s) => [...s]);
+  const drop = new Set<number>();
+  for (let i = 0; i < working.length; i++) {
+    if (drop.has(i)) continue;
+    const stack = working[i]!;
+    if (stack.length !== 1) continue;
+    const block = stack[0]!;
+    if (block.ref_text.split(/\s+/).length > 3) continue;
+    for (let j = 0; j < working.length; j++) {
+      if (i === j || drop.has(j)) continue;
+      const other = working[j]!;
+      if (other.length === 0) continue;
+      const anchor = other[0]!;
+      const gap = block.y - (anchor.y + anchor.h);
+      if (docAiBlocksShareVerticalStack(block, anchor) && gap >= -0.03 && gap < 0.14) {
+        other.push(block);
+        other.sort((a, b) => a.y - b.y || a.x - b.x);
+        drop.add(i);
+        break;
+      }
+    }
+  }
+  return working.filter((_, i) => !drop.has(i));
+}
+
+function isBodyStackMergeBlock(block: DocAiLayoutBlock): boolean {
+  const bucket = roleBucket(block.role);
+  if (bucket === "headline") return false;
+  if (isHandleTextBlock(block.role, block.ref_text)) return false;
+  if (isPreserveReferenceDecorText(block.ref_text, block)) return false;
+  return bucket === "body" || bucket === "cta";
+}
+
+function bodyBlocksFromOrderedRef(orderedRef: DocAiLayoutBlock[]): DocAiLayoutBlock[] {
+  return orderedRef.filter(isBodyStackMergeBlock);
+}
+
+function sortVerticalStacksForReadingOrder(stacks: DocAiLayoutBlock[][]): DocAiLayoutBlock[][] {
+  return [...stacks].sort((a, b) => {
+    const ay = Math.min(...a.map((x) => x.y));
+    const by = Math.min(...b.map((x) => x.y));
+    if (Math.abs(ay - by) > 0.035) return ay - by;
+    const ax = Math.min(...a.map((x) => x.x));
+    const bx = Math.min(...b.map((x) => x.x));
+    return ax - bx;
+  });
+}
+
+/**
+ * Reference block order for mapping LLM lines: headline → each vertical stack top-to-bottom → handles.
+ */
+export function orderDocAiBlocksForLlmCopyMapping(blocks: DocAiLayoutBlock[]): DocAiLayoutBlock[] {
+  const headlines: DocAiLayoutBlock[] = [];
+  const handles: DocAiLayoutBlock[] = [];
+  const body: DocAiLayoutBlock[] = [];
+
+  for (const block of blocks) {
+    if (isHandleTextBlock(block.role, block.ref_text)) {
+      handles.push(block);
+    } else if (roleBucket(block.role) === "headline") {
+      headlines.push(block);
+    } else if (roleBucket(block.role) === "cta") {
+      handles.push(block);
+    } else {
+      body.push(block);
+    }
+  }
+
+  const sortPos = (a: DocAiLayoutBlock, b: DocAiLayoutBlock) => a.y - b.y || a.x - b.x;
+  headlines.sort(sortPos);
+  handles.sort(sortPos);
+
+  const stacks = sortVerticalStacksForReadingOrder(groupDocAiBlocksIntoVerticalStacks(body));
+  const bodyOrdered = stacks.flatMap((stack) => [...stack].sort(sortPos));
+
+  return [...headlines, ...bodyOrdered, ...handles];
+}
+
+function layerMatchesRefNorm(
+  layer: MimicDocAiRenderTextLayer,
+  ref: DocAiLayoutBlock,
+  tolerance = 0.012
+): boolean {
+  if (layer.ref_x == null || layer.ref_y == null) return false;
+  return (
+    Math.abs(layer.ref_x - ref.x) <= tolerance &&
+    Math.abs(layer.ref_y - ref.y) <= tolerance &&
+    Math.abs(layer.ref_w! - ref.w) <= tolerance * 2 &&
+    Math.abs(layer.ref_h! - ref.h) <= tolerance * 2
+  );
+}
+
+/**
+ * Merge fragmented copy inside one vertical stack into a single multi-line layer
+ * (top-to-bottom reading order) so sentences are not clipped across micro-boxes.
+ */
+export function consolidateDocAiRenderLayersInVerticalStacks(
+  layers: MimicDocAiRenderTextLayer[],
+  orderedRef: DocAiLayoutBlock[],
+  opts?: { textBacking?: boolean; projectHandle?: string | null }
+): MimicDocAiRenderTextLayer[] {
+  if (layers.length <= 1) return layers;
+  const stacks = sortVerticalStacksForReadingOrder(
+    groupDocAiBlocksIntoVerticalStacks(bodyBlocksFromOrderedRef(orderedRef))
+  );
+  const consumed = new Set<MimicDocAiRenderTextLayer>();
+  const merged: MimicDocAiRenderTextLayer[] = [];
+
+  const findLayer = (ref: DocAiLayoutBlock): MimicDocAiRenderTextLayer | null => {
+    for (const layer of layers) {
+      if (consumed.has(layer)) continue;
+      if (layerMatchesRefNorm(layer, ref)) return layer;
+    }
+    return null;
+  };
+
+  for (const stack of stacks) {
+    const mergeStack = stack.length >= 2 && stack.every(isBodyStackMergeBlock);
+
+    if (!mergeStack) {
+      for (const ref of stack) {
+        const layer = findLayer(ref);
+        if (layer) {
+          merged.push(layer);
+          consumed.add(layer);
+        }
+      }
+      continue;
+    }
+
+    const stackLayers: MimicDocAiRenderTextLayer[] = [];
+    for (const ref of stack) {
+      const layer = findLayer(ref);
+      if (layer) stackLayers.push(layer);
+    }
+    if (stackLayers.length === 0) continue;
+
+    const rawTexts = stackLayers.map((l) => l.text.trim()).filter(Boolean);
+    const uniqueTexts = [...new Set(rawTexts)];
+    if (uniqueTexts.length === 0) {
+      for (const l of stackLayers) consumed.add(l);
+      continue;
+    }
+
+    const text = uniqueTexts.length === 1 ? uniqueTexts[0]! : rawTexts.join("\n");
+
+    if (uniqueTexts.length === 1 && stackLayers.length === 1 && stack.length === 1) {
+      merged.push(stackLayers[0]!);
+      consumed.add(stackLayers[0]!);
+      continue;
+    }
+
+    const yTop = Math.min(...stack.map((b) => b.y));
+    const yBottom = Math.max(...stack.map((b) => b.y + b.h));
+    const xLeft = Math.min(...stack.map((b) => b.x));
+    const xRight = Math.max(...stack.map((b) => b.x + b.w));
+    const anchor = stack[0]!;
+    const unionPx = docAiBBoxToRenderPx(xLeft, yTop, xRight - xLeft, yBottom - yTop);
+    const singleLine =
+      opts?.textBacking && text.includes("\n")
+        ? false
+        : shouldRenderDocAiLayerSingleLine(
+            stack.map((b) => b.ref_text).join(" "),
+            text,
+            unionPx.w,
+            unionPx.h
+          );
+    const styled = buildDocAiLayerCssStyle({
+      px: unionPx,
+      text,
+      refText: stack.map((b) => b.ref_text).join(" "),
+      refFontPx:
+        anchor.font_size_px != null && anchor.font_size_px > 0
+          ? clampDocAiFontSizePx(anchor.font_size_px)
+          : anchor.font_size_px,
+      fontWeight: stackLayers[0]!.font_weight,
+      color: stackLayers[0]!.color_hex,
+      fontFamily: null,
+      textAlign: stackLayers[0]!.text_align,
+      singleLine,
+      textBacking: opts?.textBacking,
+      role: stackLayers[0]!.role,
+      projectHandle: opts?.projectHandle,
+    });
+
+    merged.push({
+      ...stackLayers[0]!,
+      text,
+      x_pct: pct01(xLeft),
+      y_pct: pct01(yTop),
+      w_pct: pct01(xRight - xLeft),
+      h_pct: pct01(yBottom - yTop),
+      x_px: unionPx.x,
+      y_px: unionPx.y,
+      w_px: unionPx.w,
+      h_px: unionPx.h,
+      layout_mode: styled.layout_mode,
+      layout_class: styled.layout_class,
+      font_size_px: styled.font_size_px,
+      css_style: styled.css_style,
+      text_backing: opts?.textBacking ?? false,
+    });
+    for (const l of stackLayers) consumed.add(l);
+  }
+
+  for (const layer of layers) {
+    if (!consumed.has(layer)) merged.push(layer);
+  }
+
+  merged.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
+  return normalizeDocAiRenderLayerFontSizes(merged, opts);
+}
+
+function layerLooksLikeDecorTitle(layer: MimicDocAiRenderTextLayer): boolean {
+  return isPreserveReferenceDecorText(layer.text, {
+    role: layer.role,
+    x: layer.ref_x ?? 0,
+    y: layer.ref_y ?? 0,
+    w: layer.ref_w ?? 0,
+    h: layer.ref_h ?? 0,
+  });
+}
+
+/** Even out body/handle font sizes so corner micro-OCR boxes do not render illegibly small. */
+export function normalizeDocAiRenderLayerFontSizes(
+  layers: MimicDocAiRenderTextLayer[],
+  opts?: { textBacking?: boolean; projectHandle?: string | null }
+): MimicDocAiRenderTextLayer[] {
+  return layers.map((layer) => {
+    if (isMimicDocAiHandleLayer(layer.role, layer.text, opts?.projectHandle)) {
+      const handlePx = clampDocAiFontSizePx(MIMIC_DOCAI_HANDLE_FONT_SIZE_PX);
+      if (layer.font_size_px === handlePx) return layer;
+      const css = layer.css_style.replace(/font-size:\d+px/, `font-size:${handlePx}px`);
+      return { ...layer, font_size_px: handlePx, css_style: css };
+    }
+    if (layerLooksLikeDecorTitle(layer)) return layer;
+    if (roleBucket(layer.role) === "headline") return layer;
+    const lineCount = Math.max(1, layer.text.split(/\n/).filter((l) => l.trim()).length);
+    const singleLine = layer.layout_mode === "single_line";
+    const refTarget =
+      layer.ref_font_size_px != null && layer.ref_font_size_px > 0
+        ? clampDocAiFontSizePx(layer.ref_font_size_px)
+        : opts?.textBacking
+          ? MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX
+          : MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX;
+    const current = clampDocAiFontSizePx(layer.font_size_px ?? MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX);
+    const boostedTarget = opts?.textBacking
+      ? clampDocAiTextBackFontSizePx(Math.round(refTarget * MIMIC_DOCAI_TEXT_BACK_FONT_SCALE))
+      : refTarget;
+    const maxFit = maxFontSizeForDocAiBox(layer.w_px, layer.h_px, lineCount, singleLine);
+    const next = opts?.textBacking
+      ? clampDocAiTextBackFontSizePx(Math.max(current, boostedTarget))
+      : clampDocAiFontSizePx(Math.min(Math.max(current, MIMIC_DOCAI_MIN_FONT_SIZE_PX), maxFit));
+    if (next === layer.font_size_px) return layer;
+
+    const css = layer.css_style.replace(/font-size:\d+px/, `font-size:${next}px`);
+    return { ...layer, font_size_px: next, css_style: css };
+  });
+}
+
+function splitBodyLineForRefBlock(
+  text: string,
+  ref: DocAiLayoutBlock,
+  nextInStack: DocAiLayoutBlock | null
+): { current: string; remainder: string } {
+  const trimmed = String(text ?? "").trim();
+  if (!trimmed || !nextInStack) return { current: trimmed, remainder: "" };
+
+  const refLen = Math.max(1, ref.ref_text.trim().length);
+  const maxChars = Math.max(refLen, Math.floor(refLen * 1.15));
+  if (trimmed.length <= maxChars) return { current: trimmed, remainder: "" };
+
+  const slice = trimmed.slice(0, maxChars + 1);
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace > Math.floor(maxChars * 0.45)) {
+    return {
+      current: trimmed.slice(0, lastSpace).trim(),
+      remainder: trimmed.slice(lastSpace).trim(),
+    };
+  }
+  return {
+    current: trimmed.slice(0, maxChars).trim(),
+    remainder: trimmed.slice(maxChars).trim(),
+  };
+}
+
+type LlmSlideCopyLines = {
+  headline: string | null;
+  bodyLines: string[];
+};
+
+function referenceHandlesFromSlide(slide: Record<string, unknown>): string[] {
+  const handles = new Set<string>();
+  if (Array.isArray(slide.text_blocks)) {
     for (const item of slide.text_blocks) {
       const rec = asRecord(item);
       if (!rec) continue;
       const text = String(rec.text ?? "").trim();
       if (!text) continue;
-      pool.push({ bucket: roleBucket(String(rec.role ?? "")), text });
-    }
-    if (pool.length > 0) return pool;
-  }
-  const headline = String(slide.headline ?? slide.title ?? "").trim();
-  const body = String(slide.body ?? slide.subtitle ?? "").trim();
-  const cover = asRecord(slide.cover_slide);
-  const cta = asRecord(slide.cta_slide);
-  const h = headline || String(cover?.headline ?? slide.cover ?? slide.intro_title ?? "").trim();
-  const b = body || String(cover?.body ?? slide.cover_subtitle ?? "").trim();
-  const ctaText = String(slide.cta_text ?? cta?.body ?? "").trim();
-  const ctaSub = String(cta?.sub ?? slide.cta_handle ?? cta?.handle ?? "").trim();
-  if (h) pool.push({ bucket: "headline", text: h });
-  if (b) {
-    const parts = b.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-    for (const part of parts.length > 0 ? parts : [b]) {
-      pool.push({ bucket: "body", text: part });
+      if (isHandleTextBlock(String(rec.role ?? ""), text)) {
+        handles.add(formatInstagramHandleForCta(text));
+      } else {
+        for (const h of collectInstagramHandlesFromText(text)) handles.add(h);
+      }
     }
   }
-  if (ctaText) pool.push({ bucket: "cta", text: ctaText });
-  if (ctaSub) pool.push({ bucket: "body", text: ctaSub });
-  return pool;
+  return [...handles].filter(Boolean);
 }
 
-function takeLlmTextForRefBlock(
-  pool: Array<{ bucket: string; text: string }>,
-  refRole: string | null,
-  refIndex: number
-): { text: string; pool: Array<{ bucket: string; text: string }> } {
-  const bucket = roleBucket(refRole);
-  const matchIdx = pool.findIndex((p) => p.bucket === bucket);
-  if (matchIdx >= 0) {
-    const text = pool[matchIdx]!.text;
-    const next = [...pool.slice(0, matchIdx), ...pool.slice(matchIdx + 1)];
-    return { text, pool: next };
+/** Truncated or sparse `text_blocks[]` should not override richer headline/body fields. */
+export function mimicSlideTextBlocksLookUnreliable(slide: Record<string, unknown>): boolean {
+  const blocks = slide.text_blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return false;
+  const body = String(slide.body ?? "").trim();
+  for (const item of blocks) {
+    const t = String(asRecord(item)?.text ?? "");
+    if (t.includes("…") || t.includes("...")) return true;
   }
-  if (refIndex < pool.length) {
-    const text = pool[refIndex]!.text;
-    return { text, pool: [...pool.slice(0, refIndex), ...pool.slice(refIndex + 1)] };
+  let headlineBlockCount = 0;
+  let blockBodyLen = 0;
+  for (const item of blocks) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const role = String(rec.role ?? "");
+    const text = String(rec.text ?? "").trim();
+    if (!text) continue;
+    if (roleBucket(role) === "headline") headlineBlockCount += 1;
+    else if (!isHandleTextBlock(role, text)) blockBodyLen += text.length;
   }
-  return { text: "", pool };
+  if (headlineBlockCount > 1) return true;
+  if (body.length > 40 && blockBodyLen < body.length * 0.45) {
+    let nonEmptyBlockCount = 0;
+    for (const item of blocks) {
+      const text = String(asRecord(item)?.text ?? "").trim();
+      if (text) nonEmptyBlockCount += 1;
+    }
+    // Review UI body often concatenates lines; per-OCR text_blocks[] is authoritative when present.
+    if (nonEmptyBlockCount >= 2) return false;
+    return true;
+  }
+  return false;
+}
+
+/** Flatten slide copy into ordered lines (one per reference bbox in column stacks). */
+export function expandLlmLinesForDocAiMapping(
+  slide: Record<string, unknown>,
+  opts?: {
+    referenceHandles?: string[];
+    projectHandle?: string | null;
+    /** When true, drop @handle lines from body — handle bbox gets project handle at render. */
+    layoutHasHandleBlock?: boolean;
+  }
+): LlmSlideCopyLines {
+  const refHandles = [...new Set([...referenceHandlesFromSlide(slide), ...(opts?.referenceHandles ?? [])])];
+  const projectHandle = opts?.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+
+  const cleanBodyLine = (raw: string): string | null => {
+    let t = substituteReferenceHandlesInText(String(raw ?? "").trim(), refHandles, projectHandle);
+    if (opts?.layoutHasHandleBlock && looksLikeInstagramHandleText(t)) return null;
+    return t || null;
+  };
+
+  if (
+    Array.isArray(slide.text_blocks) &&
+    slide.text_blocks.length > 0 &&
+    !mimicSlideTextBlocksLookUnreliable(slide)
+  ) {
+    const headlines: string[] = [];
+    const bodyLines: string[] = [];
+    for (const item of slide.text_blocks) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      const text = String(rec.text ?? "").trim();
+      if (!text) continue;
+      const bucket = roleBucket(String(rec.role ?? ""));
+      const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      if (bucket === "headline") {
+        for (const line of lines.length > 0 ? lines : [text]) {
+          const h = substituteReferenceHandlesInText(line, refHandles, projectHandle);
+          if (h) headlines.push(h);
+        }
+      } else if (isHandleTextBlock(String(rec.role ?? ""), text)) {
+        continue;
+      } else {
+        for (const line of lines.length > 0 ? lines : [text]) {
+          const cleaned = cleanBodyLine(line);
+          if (cleaned) bodyLines.push(cleaned);
+        }
+      }
+    }
+    const headline = headlines.length > 0 ? headlines.join(" ").replace(/\s+/g, " ").trim() : null;
+    const bodyField = substituteReferenceHandlesInText(
+      String(slide.body ?? slide.subtitle ?? "").trim(),
+      refHandles,
+      projectHandle
+    );
+    const headlineField = substituteReferenceHandlesInText(
+      String(slide.headline ?? slide.title ?? "").trim(),
+      refHandles,
+      projectHandle
+    ).replace(/\s+/g, " ").trim();
+    const mergedHeadline = headline || headlineField || null;
+    let nonEmptyBlockCount = 0;
+    for (const item of slide.text_blocks) {
+      const text = String(asRecord(item)?.text ?? "").trim();
+      if (text) nonEmptyBlockCount += 1;
+    }
+    if (nonEmptyBlockCount >= 2) {
+      return { headline: mergedHeadline, bodyLines };
+    }
+    if (bodyField) {
+      for (const line of bodyField.split(/\n/).map((l) => l.trim()).filter(Boolean)) {
+        const cleaned = cleanBodyLine(line);
+        if (cleaned && !bodyLines.includes(cleaned)) bodyLines.push(cleaned);
+      }
+    }
+    return { headline: mergedHeadline, bodyLines };
+  }
+
+  const cover = asRecord(slide.cover_slide);
+  const cta = asRecord(slide.cta_slide);
+  let headline = substituteReferenceHandlesInText(
+    String(slide.headline ?? slide.title ?? cover?.headline ?? slide.cover ?? slide.intro_title ?? "").trim(),
+    refHandles,
+    projectHandle
+  );
+  headline = headline.replace(/\s+/g, " ").trim();
+  const strippedHeadline = stripLeadingInstagramHandle(headline, refHandles);
+  if (strippedHeadline.handle) headline = strippedHeadline.remainder;
+  let body = substituteReferenceHandlesInText(
+    String(slide.body ?? slide.subtitle ?? cover?.body ?? slide.cover_subtitle ?? slide.cta_text ?? cta?.body ?? "").trim(),
+    refHandles,
+    projectHandle
+  );
+  const bodyLines: string[] = [];
+  for (const line of body.split(/\n/).map((l) => l.trim()).filter(Boolean)) {
+    const cleaned = cleanBodyLine(line);
+    if (cleaned) bodyLines.push(cleaned);
+  }
+  const ctaSub = String(cta?.sub ?? slide.cta_handle ?? cta?.handle ?? "").trim();
+  if (ctaSub) {
+    const cleaned = cleanBodyLine(ctaSub);
+    if (cleaned) bodyLines.push(cleaned);
+  }
+
+  return { headline: headline || null, bodyLines };
 }
 
 /** Reference OCR/Nemotron layout blocks for a slide (px + normalized bbox). Used by overlay lab + QA. */
@@ -1005,10 +2468,9 @@ export function referenceDocAiLayoutBlocksForMimicSlide(
   font_size_px: number | null;
   color_hex: string | null;
 }> {
-  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
-  const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
-  if (!refSlide) return [];
-  return extractDocAiLayoutBlocks(refSlide).map((b) => {
+  const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based);
+  if (!resolved || resolved.layoutBlocks.length === 0) return [];
+  return resolved.layoutBlocks.map((b) => {
     const px = bboxNormToRenderPx(b.x, b.y, b.w, b.h);
     return {
       text: b.ref_text,
@@ -1027,6 +2489,130 @@ export function referenceDocAiLayoutBlocksForMimicSlide(
   });
 }
 
+function orderedLlmTextBlockLines(slide: Record<string, unknown>): string[] {
+  if (!Array.isArray(slide.text_blocks)) return [];
+  const lines: string[] = [];
+  for (const item of slide.text_blocks) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const text = sanitizeMimicOverlayCopyText(rec.text);
+    if (!text) continue;
+    if (isOverlayChromeReferenceText(text, roleBucket(String(rec.role ?? "")))) continue;
+    lines.push(text);
+  }
+  return lines;
+}
+
+/** Stack-first render: one layer per spatial cluster (zodiac quadrant / column). */
+function buildMimicDocAiStackRenderLayers(
+  orderedRef: DocAiLayoutBlock[],
+  llmLines: LlmSlideCopyLines,
+  transcript: string,
+  theme: { ink: string; body: string } | undefined,
+  opts: { projectHandle?: string | null; textBacking: boolean; avoidCenterSubject?: boolean }
+): MimicDocAiRenderTextLayer[] {
+  const textBacking = opts.textBacking;
+  const avoidCenterSubject = Boolean(opts.avoidCenterSubject);
+  const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+  const decorSplit = splitHeadlineWithPreservedDecorTitle(llmLines.headline ?? "", orderedRef);
+  const headlineRemainder = decorSplit?.remainder?.trim() || null;
+
+  const bodyBlocks: DocAiLayoutBlock[] = [];
+  const tailBlocks: DocAiLayoutBlock[] = [];
+
+  for (const ref of orderedRef) {
+    if (isPreserveReferenceDecorText(ref.ref_text, ref)) continue;
+    if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) {
+      tailBlocks.push(ref);
+      continue;
+    }
+    if (roleBucket(ref.role) === "cta") {
+      tailBlocks.push(ref);
+      continue;
+    }
+    if (roleBucket(ref.role) === "headline" && ref.y < 0.22) continue;
+    bodyBlocks.push(ref);
+  }
+
+  const bodyStacks = sortVerticalStacksForReadingOrder(
+    mergeOrphanSingleBlockStacks(groupDocAiBlocksIntoVerticalStacks(bodyBlocks))
+  );
+  const remainderStackIdx = bodyStackIndexForHeadlineRemainder(
+    bodyStacks,
+    transcript,
+    headlineRemainder,
+    orderedRef
+  );
+  const { stackTexts, consumedBodyLines } = assignBodyLinesToSpatialStacks(bodyStacks, llmLines.bodyLines, {
+    headlineRemainder,
+    remainderStackIndex: remainderStackIdx,
+  });
+  const tailBodyLines = llmLines.bodyLines.slice(consumedBodyLines);
+
+  const layers: MimicDocAiRenderTextLayer[] = [];
+
+  for (const ref of orderedRef) {
+    if (!isPreserveReferenceDecorText(ref.ref_text, ref)) continue;
+    pushDocAiRenderLayer(layers, ref, ref.ref_text.trim(), ref, {
+      textBacking,
+      theme,
+      forceSingleLine: true,
+      avoidCenterSubject,
+      projectHandle,
+    });
+  }
+
+  for (let si = 0; si < bodyStacks.length; si++) {
+    const text = stackTexts[si]?.trim();
+    if (!text) continue;
+    const stack = bodyStacks[si]!;
+    const union = docAiStackUnionBBox(stack);
+    const anchor = stack[0]!;
+    const stackRefFont = stackRefFontPxFromBlocks(stack);
+    pushDocAiRenderLayer(layers, anchor, text, union, {
+      textBacking,
+      theme,
+      forceMultiLine: true,
+      refFontPxOverride: stackRefFont,
+      avoidCenterSubject,
+      projectHandle,
+    });
+  }
+
+  const handleTailBlocks = tailBlocks.filter(
+    (b) => isHandleTextBlock(b.role, b.ref_text) || looksLikeInstagramHandleText(b.ref_text)
+  );
+  const primaryHandleRef =
+    handleTailBlocks.length > 0
+      ? [...handleTailBlocks].sort((a, b) => b.y - a.y || b.x - a.x)[0]!
+      : [...tailBlocks].sort((a, b) => b.y - a.y || b.x - a.x)[0] ?? null;
+
+  let tailIdx = 0;
+  for (const ref of tailBlocks) {
+    const isHandleSlot =
+      isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text);
+    if (isHandleSlot && primaryHandleRef && ref !== primaryHandleRef) {
+      continue;
+    }
+    let text = "";
+    if (isHandleSlot && projectHandle) {
+      text = projectHandle;
+    } else {
+      text = tailBodyLines[tailIdx++] ?? "";
+    }
+    if (!text.trim()) continue;
+    pushDocAiRenderLayer(layers, ref, text, ref, {
+      textBacking,
+      theme,
+      avoidCenterSubject,
+      projectHandle,
+    });
+  }
+
+  layers.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
+  return normalizeDocAiRenderLayerFontSizes(layers, { textBacking, projectHandle });
+}
+
 /**
  * Map Document AI reference geometry to LLM copy as absolute px layers on the 1080×1350 canvas.
  * Puppeteer performs a second shrink-to-fit pass (see services/renderer/server.js).
@@ -1036,76 +2622,306 @@ export function buildMimicDocAiRenderTextLayers(
   slideIndex1Based: number,
   llmSlide: Record<string, unknown>,
   theme?: { ink: string; body: string },
-  opts?: { projectHandle?: string | null }
+  opts?: { projectHandle?: string | null; textBacking?: boolean; avoidCenterSubject?: boolean }
 ): MimicDocAiRenderTextLayer[] {
-  const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
-  const refSlide = slideGuidelineRecord(mimic.visual_guideline ?? {}, slideIndex1Based, lookupIdx);
-  if (!refSlide) return [];
+  const textBacking = Boolean(opts?.textBacking);
+  const avoidCenterSubject = Boolean(opts?.avoidCenterSubject);
+  const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based);
+  if (!resolved || resolved.layoutBlocks.length === 0) {
+    return buildSyntheticDocAiLayersFromLlmCopy(llmSlide, theme, {
+      projectHandle: opts?.projectHandle ?? null,
+      textBacking,
+      avoidCenterSubject,
+    });
+  }
+  const { refSlide, layoutBlocks } = resolved;
 
-  const layoutBlocks = extractDocAiLayoutBlocks(refSlide);
-  if (layoutBlocks.length === 0) return [];
+  let orderedRef = orderDocAiBlocksForLlmCopyMapping(layoutBlocks);
+  const refHandles = new Set<string>();
+  for (const b of layoutBlocks) {
+    if (isHandleTextBlock(b.role, b.ref_text)) {
+      const h = formatInstagramHandleForCta(b.ref_text);
+      if (h) refHandles.add(h);
+    }
+    for (const h of collectInstagramHandlesFromText(b.ref_text)) refHandles.add(h);
+  }
+  for (const h of referenceHandlesFromSlide(refSlide)) refHandles.add(h);
+  for (const h of collectInstagramHandlesFromText(String(refSlide.on_screen_text_transcript ?? ""))) {
+    refHandles.add(h);
+  }
+  for (const key of ["headline", "title", "body", "subtitle", "kicker"] as const) {
+    for (const h of collectInstagramHandlesFromText(String(llmSlide[key] ?? ""))) refHandles.add(h);
+  }
+  const refHandlesArr = [...refHandles];
+  const llmLines = expandLlmLinesForDocAiMapping(llmSlide, {
+    referenceHandles: refHandlesArr,
+    projectHandle: opts?.projectHandle ?? null,
+    layoutHasHandleBlock: orderedRef.some((r) => isHandleTextBlock(r.role, r.ref_text)),
+  });
+  const directLines = orderedLlmTextBlockLines(llmSlide);
+  const transcript = String(refSlide.on_screen_text_transcript ?? "").trim();
+  let directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
+  let useDirectMapping =
+    directCopy.useDirect && textBlocksPreferDirectMapping(orderedRef, directLines, llmLines);
 
-  let pool = llmTextPoolForSlide(llmSlide);
-  const sortedRef = [...layoutBlocks].sort((a, b) => a.y - b.y || a.x - b.x);
+  if (directLines.length > 0 && !useDirectMapping) {
+    const shrunk = shrinkOrderedRefToTextBlockLines(orderedRef, directLines);
+    if (shrunk) {
+      orderedRef = orderDocAiBlocksForLlmCopyMapping(shrunk);
+      directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
+      useDirectMapping =
+        directCopy.useDirect && textBlocksPreferDirectMapping(orderedRef, directLines, llmLines);
+    }
+  }
+
+  const persistedSlots = parseCopySlotsFromSlide(refSlide);
+  const copySlots = useDirectMapping ? [] : persistedSlots;
+
+  if (copySlots.length === 0 && !useDirectMapping && directLines.length === 0) {
+    const bodyOnly = orderedRef.filter(
+      (r) =>
+        !isPreserveReferenceDecorText(r.ref_text, r) &&
+        !isHandleTextBlock(r.role, r.ref_text) &&
+        roleBucket(r.role) !== "cta" &&
+        !(roleBucket(r.role) === "headline" && r.y < 0.22)
+    );
+    const bodyStacksPreview = groupDocAiBlocksIntoVerticalStacks(bodyOnly);
+    const totalBodyRefs = bodyOnly.length;
+    const useStackRender =
+      !orderedRefHasChatMockTitlePair(orderedRef) &&
+      (bodyStacksPreview.length >= 2 || totalBodyRefs >= 4);
+
+    if (useStackRender) {
+      return dedupeDocAiRenderLayersByNormalizedText(
+        buildMimicDocAiStackRenderLayers(orderedRef, llmLines, transcript, theme, {
+          projectHandle: opts?.projectHandle ?? null,
+          textBacking,
+          avoidCenterSubject,
+        })
+      );
+    }
+  }
+  const preassignedFromSlots =
+    copySlots.length > 0 && !useDirectMapping
+      ? assignLlmCopyUsingCopySlots(orderedRef, copySlots, llmLines, directLines, { transcript })
+      : null;
+  const hasChatMockTitlePair = !preassignedFromSlots && !useDirectMapping && orderedRefHasChatMockTitlePair(orderedRef);
+  const preassigned =
+    preassignedFromSlots ??
+    (hasChatMockTitlePair ? buildRefBlockCopyAssignments(orderedRef, llmLines, directLines) : null);
+  const bodyQueue = [...llmLines.bodyLines];
+  const hasHeadlineSlot = orderedRef.some((r) => roleBucket(r.role) === "headline");
+  let headlinePending =
+    !useDirectMapping &&
+    directLines.length <= 1 &&
+    llmLines.headline &&
+    !hasHeadlineSlot &&
+    llmLines.bodyLines.length === 0
+      ? llmLines.headline
+      : null;
+  const projectHandle = opts?.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+  const editableBodyRefs = orderedRef.filter(
+    (r) =>
+      roleBucket(r.role) === "body" &&
+      !isHandleTextBlock(r.role, r.ref_text) &&
+      !isPreserveReferenceDecorText(r.ref_text, r)
+  );
+  const soloBodyRef = !useDirectMapping && editableBodyRefs.length === 1;
+  const soloBodyCopy = soloBodyRef
+    ? llmLines.bodyLines.filter((l) => l.trim() && !looksLikeInstagramHandleText(l)).join("\n")
+    : "";
   const layers: MimicDocAiRenderTextLayer[] = [];
+  let headlinePrefixAssigned = false;
 
-  for (let i = 0; i < sortedRef.length; i++) {
-    const ref = sortedRef[i]!;
-    const { text: rawText, pool: nextPool } = takeLlmTextForRefBlock(pool, ref.role, i);
-    pool = nextPool;
-    const projectHandle = opts?.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
-    let text = rawText;
-    if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
+  for (let i = 0; i < orderedRef.length; i++) {
+    const ref = orderedRef[i]!;
+    const nextRef = orderedRef[i + 1] ?? null;
+    const nextInStack =
+      !useDirectMapping &&
+      nextRef &&
+      roleBucket(ref.role) !== "headline" &&
+      !isHandleTextBlock(ref.role, ref.ref_text) &&
+      docAiBlocksAdjacentInStack(ref, nextRef)
+        ? nextRef
+        : null;
+
+    let text = "";
+    if (isPreserveReferenceDecorText(ref.ref_text, ref)) {
+      text = ref.ref_text.trim();
+    } else if (useDirectMapping) {
+      if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
+        text = projectHandle;
+      } else {
+        text = directCopy.assignments[i] ?? "";
+        if (!text.trim()) continue;
+      }
+    } else if (
+      !headlinePrefixAssigned &&
+      llmLines.headline &&
+      referenceTextMatchesLlmHeadline(ref.ref_text, llmLines.headline, ref)
+    ) {
+      text = llmLines.headline;
+      headlinePrefixAssigned = true;
+      headlinePending = null;
+    } else if (preassigned) {
+      text = preassigned[i] ?? "";
+      if (!text.trim() && isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
+        text = projectHandle;
+      }
+    } else if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
       text = projectHandle;
-    } else if (projectHandle && looksLikeInstagramHandleText(rawText)) {
+    } else if (isTemplateInstructionRefBlock(ref.ref_text)) {
+      text = llmLines.headline ?? headlinePending ?? "";
+      headlinePending = null;
+    } else if (roleBucket(ref.role) === "headline") {
+      text = llmLines.headline ?? bodyQueue.shift() ?? "";
+      if (llmLines.headline) headlinePending = null;
+    } else if (headlinePending && !isHandleTextBlock(ref.role, ref.ref_text)) {
+      text = headlinePending;
+      headlinePending = null;
+    } else if (soloBodyRef && editableBodyRefs[0] === ref && soloBodyCopy) {
+      text = soloBodyCopy;
+      bodyQueue.length = 0;
+    } else if (projectHandle && bodyQueue[0] && looksLikeInstagramHandleText(bodyQueue[0]!)) {
       text = projectHandle;
+      bodyQueue.shift();
+    } else {
+      let candidate = bodyQueue.shift() ?? "";
+      if (candidate && nextInStack) {
+        const split = splitBodyLineForRefBlock(candidate, ref, nextInStack);
+        text = split.current;
+        if (split.remainder) bodyQueue.unshift(split.remainder);
+      } else {
+        text = candidate;
+      }
+    }
+
+    if (projectHandle) {
+      if (refHandlesArr.length > 0) {
+        text = substituteReferenceHandlesInText(text, refHandlesArr, projectHandle);
+      }
+      if (looksLikeInstagramHandleText(text) || isHandleTextBlock(ref.role, ref.ref_text)) {
+        text = projectHandle;
+      }
     }
     if (!text.trim()) continue;
 
     const bucket = roleBucket(ref.role);
-    const color =
-      ref.color_hex ??
-      (bucket === "headline" || bucket === "cta" ? theme?.ink : theme?.body) ??
-      null;
+    const color = resolveMimicDocAiLayerColor({
+      refColor:
+        ref.color_hex ??
+        (bucket === "headline" || bucket === "cta" ? theme?.ink : theme?.body) ??
+        null,
+      textBacking,
+    });
     const fontWeight = cssFontWeight(ref.font_weight);
     const textAlign =
       ref.align && ref.align !== "unknown" ? ref.align : bucket === "cta" ? "center" : "left";
     const fontFamily = webFontFamilyFromDetected(ref.font_family);
-    const px = bboxNormToRenderPx(ref.x, ref.y, ref.w, ref.h);
-    const singleLine = isSingleLineLayoutBlock(ref.ref_text, ref.h, ref.w);
+    const skipCenterAvoid = docAiLayerSkipsCenterAvoid(ref, bucket);
+    let renderBBox =
+      avoidCenterSubject && !skipCenterAvoid
+        ? nudgeBBoxAwayFromFullBleedSubjectZone(ref)
+        : ref;
+    const boxWPx = renderBBox.w * CAROUSEL_RENDER_WIDTH_PX;
+    const boxHPx = renderBBox.h * CAROUSEL_RENDER_HEIGHT_PX;
+    const singleLinePreview = textBacking
+      ? preferSingleLineTextBackLayer(text, boxWPx)
+      : bucket === "headline" && !text.includes("\n")
+        ? true
+        : shouldRenderDocAiLayerSingleLine(ref.ref_text, text, boxWPx, boxHPx);
+    if (textBacking) {
+      const estFont =
+        ref.font_size_px != null && ref.font_size_px > 0
+          ? clampDocAiTextBackFontSizePx(ref.font_size_px)
+          : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
+      renderBBox = expandDocAiBoxForTextContent(renderBBox, text, estFont, singleLinePreview);
+    }
+    const px = docAiBBoxToRenderPx(renderBBox.x, renderBBox.y, renderBBox.w, renderBBox.h);
+    const singleLine = singleLinePreview;
+    const isHandleLayer = isMimicDocAiHandleLayer(ref.role ?? bucket, text, projectHandle);
     const styled = buildDocAiLayerCssStyle({
       px,
       text,
       refText: ref.ref_text,
-      refFontPx: ref.font_size_px,
+      refFontPx:
+        ref.font_size_px != null && ref.font_size_px > 0
+          ? clampDocAiFontSizePx(ref.font_size_px)
+          : ref.font_size_px,
       fontWeight,
       color,
       fontFamily,
       textAlign,
       singleLine,
+      textBacking,
+      role: ref.role ?? bucket,
+      projectHandle,
     });
+    const fontSizePx = isHandleLayer
+      ? clampDocAiFontSizePx(MIMIC_DOCAI_HANDLE_FONT_SIZE_PX)
+      : styled.font_size_px;
+    const cssStyle =
+      fontSizePx === styled.font_size_px
+        ? styled.css_style
+        : styled.css_style.replace(/font-size:\d+px/, `font-size:${fontSizePx}px`);
 
     layers.push({
       text,
       role: ref.role ?? bucket,
-      x_pct: pct01(ref.x),
-      y_pct: pct01(ref.y),
-      w_pct: pct01(ref.w),
-      h_pct: pct01(ref.h),
+      x_pct: pct01(renderBBox.x),
+      y_pct: pct01(renderBBox.y),
+      w_pct: pct01(renderBBox.w),
+      h_pct: pct01(renderBBox.h),
       x_px: px.x,
       y_px: px.y,
       w_px: px.w,
       h_px: px.h,
       layout_mode: styled.layout_mode,
       layout_class: styled.layout_class,
-      font_size_px: styled.font_size_px,
+      font_size_px: fontSizePx,
       ref_font_size_px: ref.font_size_px,
       font_weight: fontWeight,
       color_hex: color,
       text_align: textAlign,
-      css_style: styled.css_style,
+      css_style: cssStyle,
+      text_backing: textBacking,
+      ref_x: ref.x,
+      ref_y: ref.y,
+      ref_w: ref.w,
+      ref_h: ref.h,
+      skip_center_avoid: skipCenterAvoid,
     });
   }
 
-  return layers;
+  return dedupeDocAiRenderLayersByNormalizedText(
+    consolidateDocAiRenderLayersInVerticalStacks(layers, orderedRef, {
+      textBacking,
+      projectHandle: opts?.projectHandle ?? null,
+    })
+  );
+}
+
+function normalizeCopyChunkForLayerMatch(s: string): string {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** True when at least one LLM copy chunk appears on a rendered DocAI layer. */
+export function mimicDocAiLayersCoverLlmCopy(
+  layers: Pick<MimicDocAiRenderTextLayer, "text">[],
+  llmSlide: Record<string, unknown>
+): boolean {
+  const lines = expandLlmLinesForDocAiMapping(llmSlide);
+  const chunks = [lines.headline, ...lines.bodyLines]
+    .map((c) => normalizeCopyChunkForLayerMatch(String(c ?? "")))
+    .filter((c) => c.length >= 3);
+  if (chunks.length === 0) return true;
+  const layerTexts = layers
+    .map((l) => normalizeCopyChunkForLayerMatch(l.text))
+    .filter((t) => t.length >= 3);
+  if (layerTexts.length === 0) return false;
+  return chunks.some((chunk) => layerTexts.some((lt) => lt.includes(chunk) || chunk.includes(lt)));
 }

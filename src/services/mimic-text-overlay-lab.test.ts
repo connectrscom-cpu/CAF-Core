@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  buildMimicTextOverlayDebugLog,
   composeMimicTextOverlayLabFromFixture,
   renderMimicTextOverlayLabHtml,
   type MimicTextOverlayLabFixture,
@@ -21,8 +22,8 @@ describe("mimic-text-overlay-lab", () => {
     expect(composed.has_docai_layout).toBe(true);
     expect(composed.text_layers).toHaveLength(2);
     expect(composed.text_layers[0]?.text).toBe("Your Aries friend");
-    expect(composed.text_layers[0]?.x_px).toBe(130);
-    expect(composed.text_layers[0]?.y_px).toBe(243);
+    expect(composed.text_layers[0]?.x_px).toBe(134);
+    expect(composed.text_layers[0]?.y_px).toBe(247);
     expect(composed.text_layers[1]?.text).toContain("adventure");
     expect(composed.render_context.mimic_use_docai_layers).toBe(true);
     expect(composed.reference_blocks).toHaveLength(2);
@@ -32,8 +33,8 @@ describe("mimic-text-overlay-lab", () => {
   it("prefers document_ai_ocr_v1 geometry over stale text_blocks (ocr-layers-priority)", () => {
     const composed = composeMimicTextOverlayLabFromFixture(loadFixture("ocr-layers-priority.json"));
     expect(composed.text_layers).toHaveLength(1);
-    expect(composed.text_layers[0]?.x_px).toBe(108);
-    expect(composed.text_layers[0]?.color_hex).toBe("#ffcc00");
+    expect(composed.text_layers[0]?.x_px).toBe(112);
+    expect(composed.text_layers[0]?.color_hex).toBe("#000000");
     expect(composed.text_layers[0]?.text_align).toBe("center");
   });
 
@@ -41,12 +42,23 @@ describe("mimic-text-overlay-lab", () => {
     const composed = composeMimicTextOverlayLabFromFixture(loadFixture("two-block-dark-slide.json"));
     const html = renderMimicTextOverlayLabHtml(composed, { description: "fixture test" });
     expect(html).toContain('class="mimic-docai-layer');
-    expect(html).toContain("left:130px");
+    expect(html).toContain("left:134px");
     expect(html).toContain("Your Aries friend");
     expect(html).toContain('class="ref-debug-box"');
     expect(html).toContain("fitDocAiTextLayersToBoxes");
     expect(html).toContain("1080px");
     expect(html).toContain("1350px");
+    expect(html).toContain("btn-copy-debug-log");
+  });
+
+  it("buildMimicTextOverlayDebugLog pairs reference OCR with rendered copy", () => {
+    const fixture = loadFixture("two-block-dark-slide.json");
+    const composed = composeMimicTextOverlayLabFromFixture(fixture);
+    const log = buildMimicTextOverlayDebugLog(composed, { llmSlide: fixture.llm_slide });
+    expect(log).toContain("Original (reference):");
+    expect(log).toContain("Rendered (LLM copy):");
+    expect(log).toContain("Your Aries friend");
+    expect(log).toContain("ARIES");
   });
 
   it("uses blank paper background when no background_image_url", () => {

@@ -1,4 +1,5 @@
 import {
+  isMimicFullBleedCarouselRenderBase,
   slidesFromGeneratedOutput,
   splitFlatSlidesToTemplateShape,
   stripNonRenderableDeckFields,
@@ -7,6 +8,7 @@ import {
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
 
 /**
  * Flat slide list for the human review UI — same merge/normalize path as carousel rendering
@@ -41,7 +43,11 @@ export function slidesJsonForReviewUi(
     // Ensure microcopy slots (panel_title/panel_body/etc.) are visible + editable in Review UI by
     // materializing the template shape (same defaults renderer uses) and flattening back to slides[].
     if (isCarouselFlow(flowType ?? "")) {
-      const shaped = splitFlatSlidesToTemplateShape(deckSlides);
+      const shaped = splitFlatSlidesToTemplateShape(deckSlides, {
+        skipPanelDefaults:
+          isTopPerformerMimicCarouselFlow(flowType ?? "") ||
+          isMimicFullBleedCarouselRenderBase(generationPayload),
+      });
       const flat = [shaped.cover_slide, ...shaped.body_slides, shaped.cta_slide].filter(
         (s) => s && typeof s === "object" && slideHasRenderableContent(s as Record<string, unknown>)
       );

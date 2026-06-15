@@ -4,14 +4,15 @@ import {
   clampMimicVisualSimilarityPct,
   effectiveMimicCarouselTextViaFlux,
   effectiveMimicVisualSimilarityPct,
+  isBoldMimicVisualVariant,
   parseProjectMimicVisualSimilarityPct,
 } from "./mimic-render-settings.js";
 
 describe("mimic-render-settings", () => {
-  it("clamps visual similarity to 50–95", () => {
+  it("clamps visual similarity to 0–100", () => {
     expect(clampMimicVisualSimilarityPct(70)).toBe(70);
-    expect(clampMimicVisualSimilarityPct(40)).toBe(50);
-    expect(clampMimicVisualSimilarityPct(99)).toBe(95);
+    expect(clampMimicVisualSimilarityPct(-5)).toBe(0);
+    expect(clampMimicVisualSimilarityPct(150)).toBe(100);
   });
 
   it("uses project override then env default", () => {
@@ -29,6 +30,19 @@ describe("mimic-render-settings", () => {
     expect(buildVisualVariantSimilarityInstruction(70)).toContain("~70%");
     expect(buildVisualVariantSimilarityInstruction(80)).toContain("~80%");
     expect(buildVisualVariantSimilarityInstruction(70)).toContain("variant");
+    expect(buildVisualVariantSimilarityInstruction(10)).toContain("Make a new slide like this");
+    expect(buildVisualVariantSimilarityInstruction(95)).toContain("very close");
+  });
+
+  it("detects bold variant band at 25% and below", () => {
+    expect(isBoldMimicVisualVariant(10)).toBe(true);
+    expect(isBoldMimicVisualVariant(25)).toBe(true);
+    expect(isBoldMimicVisualVariant(26)).toBe(false);
+  });
+
+  it("bold variant instruction keeps same-copy and like-this framing", () => {
+    expect(buildVisualVariantSimilarityInstruction(10)).toContain("Make a new slide like this");
+    expect(buildVisualVariantSimilarityInstruction(10)).toContain("does not need to be the same photo");
   });
 
   it("resolves carousel text via flux flag", () => {

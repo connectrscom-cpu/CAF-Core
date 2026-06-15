@@ -50,6 +50,7 @@ export interface MimicCarouselInspectPanelProps {
   template?: string;
   instagramHandle?: string;
   getBackgroundUrl?: (slideIndex1Based: number) => string | undefined;
+  onInspectSlideChange?: (slideIndex1Based: number) => void;
 }
 
 export function MimicCarouselInspectPanel({
@@ -62,9 +63,9 @@ export function MimicCarouselInspectPanel({
   template = "",
   instagramHandle = "",
   getBackgroundUrl,
+  onInspectSlideChange,
 }: MimicCarouselInspectPanelProps) {
   const [expanded, setExpanded] = useState(true);
-  const [selectedSlide, setSelectedSlide] = useState(activeSlideIndex);
   const [audits, setAudits] = useState<MimicImageAudit[]>([]);
   const [auditsLoading, setAuditsLoading] = useState(false);
   const [auditsError, setAuditsError] = useState<string | null>(null);
@@ -74,12 +75,9 @@ export function MimicCarouselInspectPanel({
   const [modeOverrideSaving, setModeOverrideSaving] = useState(false);
   const [modeOverrideError, setModeOverrideError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setSelectedSlide(activeSlideIndex);
-  }, [activeSlideIndex]);
-
   const gp = useMemo(() => asRec(job?.generation_payload) ?? {}, [job]);
   const mimicV1 = useMemo(() => asRec(gp.mimic_v1), [gp]);
+
   const draftPackage = useMemo(() => {
     const snap = asRec(gp.draft_package_snapshot);
     if (snap?.package_type === "mimic_carousel_package") return snap;
@@ -191,13 +189,13 @@ export function MimicCarouselInspectPanel({
       setRenderInspectLoading(true);
       try {
         const payload = buildInspectPayload();
-        const bg = getBackgroundUrl?.(selectedSlide);
+        const bg = getBackgroundUrl?.(activeSlideIndex);
         const res = await fetch("/api/renderer/inspect-slide-context", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             template: templateUsed,
-            slide_index: selectedSlide,
+            slide_index: activeSlideIndex,
             payload,
             instagram_handle: instagramHandle,
             ...(bg ? { background_image_url: bg } : {}),
@@ -216,9 +214,9 @@ export function MimicCarouselInspectPanel({
     return () => {
       cancelled = true;
     };
-  }, [buildInspectPayload, templateUsed, selectedSlide, slideCount, instagramHandle, getBackgroundUrl]);
+  }, [buildInspectPayload, templateUsed, activeSlideIndex, slideCount, instagramHandle, getBackgroundUrl]);
 
-  const selectedAudit = useMemo(() => auditForSlide(audits, selectedSlide), [audits, selectedSlide]);
+  const selectedAudit = useMemo(() => auditForSlide(audits, activeSlideIndex), [audits, activeSlideIndex]);
 
   async function copyText(label: string, text: string) {
     try {
@@ -401,8 +399,10 @@ export function MimicCarouselInspectPanel({
               <label style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
                 Inspect slide{" "}
                 <select
-                  value={selectedSlide}
-                  onChange={(e) => setSelectedSlide(Math.max(1, Number(e.target.value) || 1))}
+                  value={activeSlideIndex}
+                  onChange={(e) =>
+                    onInspectSlideChange?.(Math.max(1, Math.min(slideCount, Number(e.target.value) || 1)))
+                  }
                   style={{ marginLeft: 4 }}
                 >
                   {Array.from({ length: Math.max(slideCount, 1) }, (_, i) => i + 1).map((n) => (
@@ -461,7 +461,7 @@ export function MimicCarouselInspectPanel({
                 </div>
               ) : (
                 <p style={{ margin: "8px 0 0", fontSize: 12, color: "var(--muted)" }}>
-                  No Qwen audit for slide {selectedSlide} yet. Re-render the job, or inspect the expected prompt below
+                  No Qwen audit for slide {activeSlideIndex} yet. Re-render the job, or inspect the expected prompt below
                   (reconstructed from current copy).
                 </p>
               )}

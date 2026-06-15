@@ -2,7 +2,8 @@ FROM node:20-slim AS review-builder
 WORKDIR /app
 # Core deps for webpack when Review bundles ../../src/services (e.g. @supabase/supabase-js).
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+# Review build typechecks ../../src (needs @types/pg etc.)
+RUN npm ci
 COPY apps/review/package.json apps/review/package-lock.json ./apps/review/
 RUN cd apps/review && npm ci
 COPY apps/review ./apps/review
