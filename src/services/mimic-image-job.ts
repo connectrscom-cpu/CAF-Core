@@ -13,6 +13,12 @@ import { refreshMimicPayloadReferenceUrls, refreshMimicReferenceFetchUrl } from 
 import { finalJobStatusAfterRender } from "./validation-router.js";
 import { uploadBuffer } from "./supabase-storage.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import {
+  assertRenderNotPaused,
+  beginRenderActivity,
+  endRenderActivity,
+  updateRenderActivity,
+} from "./render-control.js";
 
 type JobRow = {
   id: string;
@@ -40,6 +46,15 @@ export async function processImageMimicJob(
   run: RunRow | null,
   recommendedRoute: string | null
 ): Promise<void> {
+  assertRenderNotPaused();
+  beginRenderActivity({
+    task_id: job.task_id,
+    run_id: job.run_id,
+    flow_type: job.flow_type,
+    kind: "image",
+    phase: "starting",
+  });
+  try {
   if (!config.MIMIC_IMAGE_ENABLED) {
     throw new Error("MIMIC_IMAGE_ENABLED is off");
   }
@@ -94,6 +109,8 @@ export async function processImageMimicJob(
   }
 
   const promptOverrides = await loadMimicPromptOverrides(db);
+  assertRenderNotPaused();
+  updateRenderActivity(job.task_id, { phase: "mimic_image_edit", kind: "image" });
   const { buffer, mimeType } = await generateMimicSlideImage(config, {
     referenceUrl,
     prompt: mimicPromptForMode(
@@ -180,5 +197,8 @@ export async function processImageMimicJob(
        VALUES ($1, $2, 'RENDERING', $3, 'system', 'mimic-image-job')`,
       [job.task_id, run.project_id, terminalStatus]
     );
+  }
+  } finally {
+    endRenderActivity(job.task_id);
   }
 }

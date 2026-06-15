@@ -50,7 +50,7 @@ import {
   mergeVideoPublishUrlIntoJob,
 } from "../services/validation-router.js";
 import { computeAutoValidationScores } from "../services/autoValidation.js";
-import { probeRenderingDeps } from "../services/rendering-deps-probe.js";
+import { buildRenderingHealthSnapshot } from "../services/rendering-health-snapshot.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "../services/supabase-storage.js";
 import { z } from "zod";
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
@@ -63,6 +63,7 @@ import { listPlatformConstraints } from "../repositories/project-config.js";
 import { resolvePlatformConstraintsForPack } from "../services/llm-generator-helpers.js";
 import { buildImmediateNeedsEditGenerationGuidance } from "../services/immediate-needs-edit-guidance.js";
 import {
+  markCarouselTextOverlayReprintStarted,
   recordCarouselTextOverlayReprintFailure,
   rerenderCarouselTextOverlay,
   rerenderCarouselSlidesAtIndices,
@@ -468,24 +469,16 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
 
   /** Shows RENDERER_BASE_URL / VIDEO_ASSEMBLY_BASE_URL for this process and probes each upstream GET /health. */
   app.get("/health/rendering", async () => {
-    const rendering = await probeRenderingDeps(config);
-    const supabaseAssets =
-      Boolean(config.SUPABASE_URL?.trim()) &&
-      Boolean(config.SUPABASE_SERVICE_ROLE_KEY?.trim()) &&
-      Boolean(config.SUPABASE_ASSETS_BUCKET?.trim());
+    const snap = await buildRenderingHealthSnapshot(db, config);
     return {
-      ok: true,
-      service: "caf-core",
-      engine_version: config.DECISION_ENGINE_VERSION,
-      rendering,
-      /** In-process flags only (no HeyGen/OpenAI calls). HeyGen single-take still needs `heygen_config` rows + job payload. */
-      video: {
-        heygen_api_key_configured: Boolean(config.HEYGEN_API_KEY?.trim()),
-        heygen_api_base: config.HEYGEN_API_BASE,
-        supabase_assets_configured: supabaseAssets,
-        openai_api_key_configured: Boolean(config.OPENAI_API_KEY?.trim()),
-        openai_generation_mode: config.OPENAI_GENERATION_MODE,
-      },
+      ok: snap.ok,
+      service: snap.service,
+      checked_at: snap.checked_at,
+      rendering: snap.rendering,
+      renderer_queue: snap.renderer_queue,
+      control: { paused: snap.control.paused, paused_at: snap.control.paused_at, active_count: snap.control.active.length },
+      concurrency: snap.concurrency,
+      video: snap.video,
     };
   });
 
@@ -1285,6 +1278,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         return { ok: false, error: "job_not_found_or_no_mimic_payload" };
       }
     }
+
+    await markCarouselTextOverlayReprintStarted(db, jobId, { slideIndices });
 
     void rerenderCarouselTextOverlay(db, config, jobId, slideIndices, {
       ...(renderTypography && Object.keys(renderTypography).length > 0

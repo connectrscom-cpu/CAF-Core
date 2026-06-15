@@ -100,6 +100,15 @@ app.use(
 );
 
 app.use(
+  "/render-queue",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${RENDERER_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/render-queue": "/render-queue" },
+  })
+);
+
+app.use(
   "/preview-template",
   createProxyMiddleware({
     target: `http://127.0.0.1:${RENDERER_PORT}`,

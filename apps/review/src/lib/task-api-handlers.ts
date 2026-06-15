@@ -10,6 +10,7 @@ import {
 } from "@/lib/caf-core-client";
 import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 import { previewFieldsFromJob } from "@/lib/job-preview-fields";
+import { textOverlayReprintUiState } from "@/lib/text-overlay-reprint-status";
 import { isVideoUrl } from "@/lib/media-url";
 import {
   pickCaptionFromGenerationPayload,
@@ -86,6 +87,7 @@ export async function jsonTaskDetailResponse(
           .filter((n) => Number.isFinite(n) && n >= 1)
           .join(",")
       : undefined;
+    const reprintState = textOverlayReprintUiState(job.render_state);
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -125,6 +127,11 @@ export async function jsonTaskDetailResponse(
           ? overrideKeysTouched.map((k) => k.replace(/^final_/, "").replace(/_override$/, "")).join(", ")
           : "",
       latest_rejection_tags: rejectionTagsStr || undefined,
+      text_overlay_reprint_active: reprintState.active ? "true" : reprintState.failed ? "failed" : "",
+      text_overlay_reprint_error: reprintState.error ?? undefined,
+      text_overlay_reprint_requested_at: reprintState.requested_at ?? undefined,
+      text_overlay_reprint_completed_at: reprintState.completed_at ?? undefined,
+      text_overlay_reprint_slides: reprintState.slide_indices ?? undefined,
     };
     const body: Record<string, unknown> = { rowIndex: 0, data };
     if (opts?.includeJob) body.job = job;

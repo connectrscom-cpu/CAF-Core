@@ -84,6 +84,8 @@ import {
   runSceneAssemblyResumePipelineFromJobPayload,
 } from "../services/scene-merge-from-storage.js";
 import { processJobByTaskId, reprocessJobFromScratch } from "../services/job-pipeline.js";
+import { buildRenderingHealthSnapshot } from "../services/rendering-health-snapshot.js";
+import { pauseRendering, resumeRendering } from "../services/render-control.js";
 import { executeRework } from "../services/rework-orchestrator.js";
 import {
   deleteAllJobsForRun,
@@ -658,7 +660,7 @@ function sidebar(active: string, projects: ProjectRow[], currentSlug: string): s
     ${globalLinks.map(renderGlobalLink).join("\n    ")}
     <div class="sb-title" style="margin-top:auto;padding-top:24px">System</div>
     <a href="/health" class="sb-link" target="_blank" rel="noopener noreferrer">${adminSidebarIcon("health")}<span>API health</span></a>
-    <a href="/health/rendering" class="sb-link" target="_blank" rel="noopener noreferrer">${adminSidebarIcon("health")}<span>Rendering health</span></a>
+    <a href="/admin/rendering-health${gq}" class="sb-link">${adminSidebarIcon("health")}<span>Rendering health</span></a>
   </nav>
 </aside>`;
 }
@@ -1016,6 +1018,17 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
   app.get("/v1/admin/observability/platform", async () => {
     const summary = await getPlatformObservabilitySummary(db);
     return { ok: true, summary };
+  });
+
+  app.get("/v1/admin/rendering-health", async () => buildRenderingHealthSnapshot(db, config));
+
+  app.post("/v1/admin/rendering-control", async (request, reply) => {
+    const parsed = z.object({ action: z.enum(["pause", "resume"]) }).safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "bad_body", details: parsed.error.flatten() });
+    }
+    const control = parsed.data.action === "pause" ? pauseRendering() : resumeRendering();
+    return { ok: true, control };
   });
 
   app.get("/v1/admin/jobs", async (request) => {
@@ -3557,6 +3570,145 @@ ${adminPhWithPipelineHtml("Platform overview", null, currentSlug, "CAF Core — 
   <p style="font-size:12px;color:var(--muted);line-height:1.5">Open a project row for the full Overview (runs, review metrics, learning, observability inventory).</p>
 </div>`;
     reply.type("text/html").send(page("Platform overview", "platform-overview", body, projects, currentSlug, adminHeadTokenScript(config)));
+  });
+
+  app.get("/admin/rendering-health", async (request, reply) => {
+    const query = request.query as Record<string, string>;
+    const projects = await listProjects(db);
+    const currentSlug = sidebarSlugFromQuery(query.project, projects);
+    const body = `
+<div class="ph"><div><h2>Rendering health</h2><span class="ph-sub">Upstream deps, in-flight work, and operator pause</span></div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <button type="button" class="btn" id="rh-pause" style="background:var(--yellow);color:#111">Pause rendering</button>
+    <button type="button" class="btn" id="rh-resume">Resume rendering</button>
+    <button type="button" class="btn-ghost" id="rh-refresh">Refresh now</button>
+    <span id="rh-pause-badge" class="badge badge-y" style="display:none">PAUSED</span>
+    <span id="rh-updated" style="font-size:12px;color:var(--muted);margin-left:8px"></span>
+  </div>
+</div>
+<div class="content">
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h">Upstream services</div>
+    <div id="rh-deps" style="padding:12px 16px 16px;font-size:13px;color:var(--muted)">Loading…</div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h">Puppeteer renderer queue</div>
+    <div id="rh-queue" style="padding:12px 16px 16px;font-size:13px;color:var(--muted)">Loading…</div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h">In-process on this Core instance</div>
+    <p style="padding:0 16px;margin:0 0 8px;font-size:12px;color:var(--muted)">Active render steps tracked by the job pipeline on this machine. Pause stops new slides / provider steps; jobs stay <code>RENDERING</code> until you resume and re-process.</p>
+    <div style="overflow-x:auto;padding:0 16px 16px">
+      <table class="sp-modal-table" style="margin:0" id="rh-active-table">
+        <thead><tr><th>Task</th><th>Run</th><th>Flow</th><th>Kind</th><th>Phase</th><th>Slide</th><th>Started</th></tr></thead>
+        <tbody id="rh-active-body"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-h">Jobs in database (status RENDERING)</div>
+    <div style="overflow-x:auto;padding:0 16px 16px">
+      <table class="sp-modal-table" style="margin:0">
+        <thead><tr><th>Project</th><th>Run</th><th>Task</th><th>Flow</th><th>Provider phase</th><th>Updated</th><th></th></tr></thead>
+        <tbody id="rh-db-jobs"><tr><td colspan="7" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-h">Runs in RENDERING phase</div>
+    <div style="overflow-x:auto;padding:0 16px 16px">
+      <table class="sp-modal-table" style="margin:0">
+        <thead><tr><th>Project</th><th>Run</th><th>Updated</th></tr></thead>
+        <tbody id="rh-db-runs"><tr><td colspan="3" class="empty">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <p style="font-size:12px;color:var(--muted);line-height:1.5;margin-top:14px">Raw JSON: <a href="/health/rendering" target="_blank" rel="noopener">GET /health/rendering</a> · <a href="/v1/admin/rendering-health" target="_blank" rel="noopener">GET /v1/admin/rendering-health</a></p>
+</div>
+<script>
+(function(){
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function depRow(label,d){
+    if(!d)return '<div>'+esc(label)+': <span class="badge badge-r">missing</span></div>';
+    var ok=!!d.ok;
+    var cls=ok?'badge-g':'badge-r';
+    var extra=d.http_status?(' HTTP '+d.http_status):'';
+    if(d.error)extra+=' — '+esc(d.error);
+    return '<div style="margin-bottom:6px"><strong>'+esc(label)+'</strong> <span class="badge '+cls+'">'+(ok?'ok':'down')+'</span> <code style="font-size:11px">'+esc(d.base_url||'')+'</code>'+esc(extra)+'</div>';
+  }
+  function render(data){
+    var deps=document.getElementById('rh-deps');
+    var queue=document.getElementById('rh-queue');
+    var badge=document.getElementById('rh-pause-badge');
+    var updated=document.getElementById('rh-updated');
+    if(!data||!deps)return;
+    deps.innerHTML=depRow('Renderer',data.rendering&&data.rendering.renderer)+depRow('Video assembly',data.rendering&&data.rendering.video_assembly);
+    var q=data.renderer_queue||{};
+    if(q.ok){
+      queue.innerHTML='<div><span class="badge badge-g">reachable</span> queue depth <strong>'+esc(q.queue_depth)+'</strong> · busy <strong>'+(q.rendering?'yes':'no')+'</strong> · browser <strong>'+(q.browser_up?'up':'down')+'</strong> · renders since reset <strong>'+esc(q.render_count)+'</strong></div>';
+    }else{
+      queue.innerHTML='<span class="badge badge-r">unavailable</span> '+esc(q.error||'GET /render-queue failed')+' <span style="font-size:12px;color:var(--muted)">(deploy caf-renderer after this Core release for queue metrics)</span>';
+    }
+    var paused=!!(data.control&&data.control.paused);
+    if(badge){badge.style.display=paused?'inline-block':'none';}
+    var ab=document.getElementById('rh-active-body');
+    var act=(data.control&&data.control.active)||[];
+    if(ab){
+      if(!act.length)ab.innerHTML='<tr><td colspan="7" class="empty">No in-process render steps on this instance</td></tr>';
+      else ab.innerHTML=act.map(function(a){
+        var slide=a.slide_index!=null?(a.slide_index+'/'+(a.slide_total||'?')):'—';
+        return '<tr><td class="mono" style="font-size:11px;word-break:break-all">'+esc(a.task_id)+'</td><td>'+esc(a.run_id)+'</td><td>'+esc(a.flow_type)+'</td><td>'+esc(a.kind)+'</td><td>'+esc(a.phase)+'</td><td>'+slide+'</td><td style="white-space:nowrap;font-size:11px">'+esc(a.started_at)+'</td></tr>';
+      }).join('');
+    }
+    var jb=document.getElementById('rh-db-jobs');
+    var jobs=(data.db&&data.db.rendering_jobs)||[];
+    if(jb){
+      if(!jobs.length)jb.innerHTML='<tr><td colspan="7" class="empty">No jobs in RENDERING</td></tr>';
+      else jb.innerHTML=jobs.map(function(j){
+        var rs=j.render_state||{};
+        var phase=[rs.provider,rs.phase,rs.status].filter(Boolean).join(' · ')||'—';
+        var pq=j.project_slug?'?project='+encodeURIComponent(j.project_slug):'';
+        return '<tr><td>'+esc(j.project_slug)+'</td><td>'+esc(j.run_id)+'</td><td class="mono" style="font-size:11px;word-break:break-all">'+esc(j.task_id)+'</td><td>'+esc(j.flow_type)+'</td><td style="font-size:12px">'+esc(phase)+'</td><td style="white-space:nowrap;font-size:11px">'+esc(j.updated_at)+'</td><td><a href="/admin/jobs'+pq+'">Jobs</a></td></tr>';
+      }).join('');
+    }
+    var rb=document.getElementById('rh-db-runs');
+    var runs=(data.db&&data.db.rendering_runs)||[];
+    if(rb){
+      if(!runs.length)rb.innerHTML='<tr><td colspan="3" class="empty">No runs in RENDERING</td></tr>';
+      else rb.innerHTML=runs.map(function(r){
+        var pq=r.project_slug?'?project='+encodeURIComponent(r.project_slug):'';
+        return '<tr><td>'+esc(r.project_slug)+'</td><td><a href="/admin/runs'+pq+'">'+esc(r.run_id)+'</a></td><td style="white-space:nowrap;font-size:11px">'+esc(r.updated_at)+'</td></tr>';
+      }).join('');
+    }
+    if(updated)updated.textContent='Updated '+esc(data.checked_at||new Date().toISOString());
+  }
+  async function load(){
+    try{
+      var r=await window.cafFetch('/v1/admin/rendering-health');
+      var d=await r.json();
+      render(d);
+    }catch(e){
+      console.error(e);
+    }
+  }
+  async function control(action){
+    try{
+      var r=await window.cafFetch('/v1/admin/rendering-control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})});
+      var d=await r.json();
+      if(!r.ok||!d.ok)throw new Error((d&&d.error)||'control failed');
+      await load();
+    }catch(e){alert(e.message||String(e));}
+  }
+  document.getElementById('rh-pause')&&document.getElementById('rh-pause').addEventListener('click',function(){control('pause');});
+  document.getElementById('rh-resume')&&document.getElementById('rh-resume').addEventListener('click',function(){control('resume');});
+  document.getElementById('rh-refresh')&&document.getElementById('rh-refresh').addEventListener('click',load);
+  load();
+  setInterval(load,5000);
+})();
+</script>`;
+    reply
+      .type("text/html")
+      .send(page("Rendering health", "rendering-health", body, projects, currentSlug, adminHeadTokenScript(config)));
   });
 
   // --- Overview (project) ---

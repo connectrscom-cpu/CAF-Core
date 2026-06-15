@@ -33,6 +33,10 @@ import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPane
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow } from "@/lib/flow-kind";
+import {
+  textOverlayReprintBannerMessage,
+  textOverlayReprintUiState,
+} from "@/lib/text-overlay-reprint-status";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -279,6 +283,38 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [task_id, projectFromUrl]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
+
+  const textOverlayReprint = useMemo(() => {
+    if (fullJob?.render_state != null) {
+      return textOverlayReprintUiState(fullJob.render_state);
+    }
+    const active = data?.text_overlay_reprint_active === "true";
+    const failed = data?.text_overlay_reprint_active === "failed";
+    if (!active && !failed && !data?.text_overlay_reprint_completed_at && !data?.text_overlay_reprint_requested_at) {
+      return textOverlayReprintUiState(null);
+    }
+    return {
+      active,
+      failed,
+      error: data?.text_overlay_reprint_error ?? null,
+      requested_at: data?.text_overlay_reprint_requested_at ?? null,
+      completed_at: data?.text_overlay_reprint_completed_at ?? null,
+      slide_indices: data?.text_overlay_reprint_slides ?? null,
+    };
+  }, [fullJob, data]);
+
+  const textOverlayReprintBanner = useMemo(
+    () => textOverlayReprintBannerMessage(textOverlayReprint),
+    [textOverlayReprint]
+  );
+
+  useEffect(() => {
+    if (!textOverlayReprint.active) return;
+    const id = window.setInterval(() => {
+      void fetchTask();
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, [textOverlayReprint.active, fetchTask]);
 
   /**
    * Fetch the exact prompt/script_text HeyGen received for this task (from api_call_audit).
@@ -841,6 +877,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           {error}
         </div>
       )}
+      {textOverlayReprintBanner ? (
+        <div
+          className={`task-reprint-banner${textOverlayReprint.failed ? " task-reprint-banner--failed" : ""}${textOverlayReprint.active ? " task-reprint-banner--active" : ""}`}
+          role="status"
+        >
+          {textOverlayReprintBanner}
+        </div>
+      ) : null}
       {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
 
       {data && !loading && (
@@ -895,6 +939,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               <div className="info-row"><span className="info-label">Run ID</span><span className="info-value">{runId || "—"}</span></div>
               <div className="info-row"><span className="info-label">Risk</span><span className="info-value">{data.risk_score || "—"}</span></div>
               <div className="info-row"><span className="info-label">QC</span><span className="info-value">{data.qc_status || "—"}</span></div>
+              {textOverlayReprintBanner ? (
+                <div className="info-row">
+                  <span className="info-label">Text reprint</span>
+                  <span className="info-value">{textOverlayReprintBanner}</span>
+                </div>
+              ) : null}
               {(data.overrides_from_last_review ?? "").trim() !== "" && (
                 <div className="info-row">
                   <span className="info-label">Stored overrides</span>

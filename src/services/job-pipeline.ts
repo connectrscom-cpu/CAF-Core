@@ -56,6 +56,13 @@ import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
 import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
+import {
+  assertRenderNotPaused,
+  beginRenderActivity,
+  endRenderActivity,
+  updateRenderActivity,
+} from "./render-control.js";
+import { RenderNotReadyError } from "../domain/render-not-ready-error.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
 import {
@@ -116,6 +123,11 @@ import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js"
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { mergeCarouselTypographyIntoGeneratedOutputRender } from "../domain/carousel-render-typography.js";
+import {
+  isReviewRetainStatusDuringTextOverlayReprint,
+  MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
+  pickRenderStateRecord,
+} from "../domain/mimic-text-overlay-reprint.js";
 import {
   applyMimicDocAiLayerPositionOverrides,
   pickMimicDocAiLayerPositionsForSlide,
@@ -179,14 +191,6 @@ function isVideoRenderingSafelyRetryable(j: JobRow): boolean {
   /** Empty render_state, "starting", or explicit "failed" with no resume key — safe to re-enter. Avoid retrying mid-stream phases like "polling" / "sora_polling" / "submitted" that imply a HeyGen/Sora id should already exist. */
   if (phase === "" || phase === "starting" || phase === "failed") return true;
   return false;
-}
-
-/** Video poll timeouts — job stays RENDERING; caller may retry. Do not mark FAILED. */
-export class RenderNotReadyError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "RenderNotReadyError";
-  }
 }
 
 type PreRenderStep =
@@ -658,6 +662,7 @@ export async function processRunJobs(
       while (true) {
         const i = idx++;
         if (i >= items.length) return;
+        assertRenderNotPaused();
         await fn(items[i]!);
       }
     };
@@ -879,6 +884,7 @@ export async function renderRunGeneratedJobs(
       while (true) {
         const i = idx++;
         if (i >= items.length) return;
+        assertRenderNotPaused();
         await fn(items[i]!);
       }
     };
@@ -933,14 +939,21 @@ async function shouldResumeAsTextOverlayReprint(
   db: Pool,
   job: JobRow & { render_state?: unknown }
 ): Promise<boolean> {
-  if (job.status !== "RENDERING") return false;
   if (!isTopPerformerMimicCarouselFlow(job.flow_type)) return false;
-  const rs =
-    job.render_state && typeof job.render_state === "object" && !Array.isArray(job.render_state)
-      ? (job.render_state as Record<string, unknown>)
-      : {};
+  const rs = pickRenderStateRecord(job.render_state) ?? {};
+  const phase = String(rs.phase ?? "").trim();
+  const renderStatus = String(rs.status ?? "").trim().toLowerCase();
+  const isReprintPending =
+    phase === MIMIC_TEXT_OVERLAY_REPRINT_PHASE && renderStatus === "pending";
+  if (!isReprintPending && job.status !== "RENDERING") return false;
   const provider = String(rs.provider ?? "").toLowerCase();
-  if (provider !== "carousel-renderer" && provider !== "carousel_renderer") return false;
+  if (
+    !isReprintPending &&
+    provider !== "carousel-renderer" &&
+    provider !== "carousel_renderer"
+  ) {
+    return false;
+  }
   return mimicCarouselHasStoredPlatesForReprint(db, job.project_id, job.task_id);
 }
 
@@ -951,13 +964,16 @@ export async function recordCarouselTextOverlayReprintFailure(
   message: string
 ): Promise<void> {
   const msg = String(message ?? "").trim() || "text overlay reprint failed";
+  const fromState = job.status ?? "RENDERING";
+  const retainInReview = isReviewRetainStatusDuringTextOverlayReprint(fromState);
   await mergeJobRenderState(db, job.id, {
     provider: "carousel-renderer",
     status: "failed",
-    phase: "text_overlay_reprint",
+    phase: MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
     error: msg.slice(0, 500),
+    failed_at: new Date().toISOString(),
   });
-  const fromState = job.status ?? "RENDERING";
+  if (retainInReview) return;
   await updateJobStatus(db, job.id, "FAILED");
   await insertJobStateTransition(db, {
     task_id: job.task_id,
@@ -967,6 +983,26 @@ export async function recordCarouselTextOverlayReprintFailure(
     triggered_by: "system",
     actor: "text-overlay-reprint",
     metadata: { error: msg.slice(0, 500) },
+  });
+}
+
+/** Mark mimic text-overlay reprint as queued — job stays IN_REVIEW when already in review queue. */
+export async function markCarouselTextOverlayReprintStarted(
+  db: Pool,
+  jobId: string,
+  opts?: { slideIndices?: number[] }
+): Promise<void> {
+  const slide_indices =
+    opts?.slideIndices && opts.slideIndices.length > 0 ? opts.slideIndices : "all";
+  await mergeJobRenderState(db, jobId, {
+    provider: "carousel-renderer",
+    status: "pending",
+    phase: MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
+    requested_at: new Date().toISOString(),
+    slide_indices,
+    error: null,
+    completed_at: null,
+    failed_at: null,
   });
 }
 
@@ -1643,12 +1679,30 @@ async function processCarouselJob(
   recommendedRoute: string | null,
   renderOpts?: CarouselRenderOpts
 ) {
+  assertRenderNotPaused();
+  beginRenderActivity({
+    task_id: job.task_id,
+    run_id: job.run_id,
+    flow_type: job.flow_type,
+    kind: "carousel",
+    phase: "starting",
+  });
+  try {
   const priorStatus = job.status;
+  const textOverlayOnly = Boolean(renderOpts?.textOverlayOnly);
+  const keepInReview =
+    textOverlayOnly && isReviewRetainStatusDuringTextOverlayReprint(priorStatus);
   await warnIfRendererBaseUrlIsCafCore(pipeConfig.rendererBaseUrl, console.warn);
-  await updateJobStatus(db, job.id, "RENDERING");
-  await updateJobRenderState(db, job.id, { provider: "carousel-renderer", status: "pending" });
+  if (!keepInReview) {
+    await updateJobStatus(db, job.id, "RENDERING");
+  }
+  await mergeJobRenderState(db, job.id, {
+    provider: "carousel-renderer",
+    status: "pending",
+    ...(textOverlayOnly ? { phase: MIMIC_TEXT_OVERLAY_REPRINT_PHASE } : {}),
+  });
 
-  if (run && priorStatus !== "RENDERING") {
+  if (run && !keepInReview && priorStatus !== "RENDERING") {
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: run.project_id,
@@ -1736,7 +1790,6 @@ async function processCarouselJob(
 
   const mimicPayloadRaw = pickMimicPayload(job.generation_payload);
   let mimicPayload = mimicPayloadRaw;
-  const textOverlayOnly = Boolean(renderOpts?.textOverlayOnly);
   if (
     (config.MIMIC_IMAGE_ENABLED || textOverlayOnly) &&
     isTopPerformerMimicCarouselFlow(job.flow_type) &&
@@ -1986,6 +2039,13 @@ async function processCarouselJob(
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
     for (const i of slideIndicesToRender) {
+      assertRenderNotPaused();
+      updateRenderActivity(job.task_id, {
+        kind: "carousel",
+        phase: `slide ${i}/${n}`,
+        slide_index: i,
+        slide_total: n,
+      });
       await updateJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "pending",
@@ -2285,10 +2345,17 @@ async function processCarouselJob(
       slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
     }
 
-    await updateJobRenderState(db, job.id, {
+    await mergeJobRenderState(db, job.id, {
       provider: "carousel-renderer",
       status: "completed",
       slides: slideResults,
+      ...(textOverlayOnly
+        ? {
+            phase: MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
+            completed_at: new Date().toISOString(),
+            error: null,
+          }
+        : {}),
     });
 
     const manifestSlides = slideResults.map((s) => ({
@@ -2372,7 +2439,7 @@ async function processCarouselJob(
       await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "pending",
-        phase: "renderer_unavailable",
+        phase: textOverlayOnly ? MIMIC_TEXT_OVERLAY_REPRINT_PHASE : "renderer_unavailable",
         error: msg,
         note: "will_retry_on_next_process",
       });
@@ -2383,7 +2450,7 @@ async function processCarouselJob(
         flow_type: job.flow_type,
         flow_kind: "carousel",
         outcome: "pending",
-        job_status: "RENDERING",
+        job_status: keepInReview ? priorStatus : "RENDERING",
         slide_count: n,
         asset_count: 0,
         summary: carouselOutcomeSummary(job, template, slidesForRender, []),
@@ -2393,6 +2460,19 @@ async function processCarouselJob(
       });
       throw new RenderNotReadyError(msg);
     } else {
+      if (textOverlayOnly && keepInReview) {
+        await recordCarouselTextOverlayReprintFailure(
+          db,
+          {
+            id: job.id,
+            task_id: job.task_id,
+            project_id: job.project_id,
+            status: priorStatus,
+          },
+          msg
+        );
+        throw err;
+      }
       await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "failed",
@@ -2415,9 +2495,11 @@ async function processCarouselJob(
     }
   }
 
-  const finalStatus = finalJobStatusAfterRender(recommendedRoute);
-  await updateJobStatus(db, job.id, finalStatus);
-  if (run) {
+  const finalStatus = keepInReview ? priorStatus : finalJobStatusAfterRender(recommendedRoute);
+  if (!keepInReview || job.status !== finalStatus) {
+    await updateJobStatus(db, job.id, finalStatus);
+  }
+  if (run && !keepInReview) {
     await insertJobStateTransition(db, {
       task_id: job.task_id,
       project_id: run.project_id,
@@ -2426,6 +2508,9 @@ async function processCarouselJob(
       triggered_by: "system",
       actor: "job-pipeline",
     });
+  }
+  } finally {
+    endRenderActivity(job.task_id);
   }
 }
 
@@ -2542,6 +2627,15 @@ async function processVideoJob(
   run: RunRow | null,
   recommendedRoute: string | null
 ) {
+  assertRenderNotPaused();
+  beginRenderActivity({
+    task_id: job.task_id,
+    run_id: job.run_id,
+    flow_type: job.flow_type,
+    kind: "video",
+    phase: "starting",
+  });
+  try {
   const priorStatus = job.status;
   await updateJobStatus(db, job.id, "RENDERING");
   // Shallow-merge so retries/reprocess keep provider-specific resume keys (e.g. HeyGen video_id).
@@ -2788,6 +2882,9 @@ async function processVideoJob(
       actor: "job-pipeline",
     });
   }
+  } finally {
+    endRenderActivity(job.task_id);
+  }
 }
 
 function extractRenderPayload(genPayload: Record<string, unknown>): Record<string, unknown> {
@@ -2829,3 +2926,5 @@ async function mergeJobRenderState(db: Pool, jobId: string, patch: Record<string
       : {};
   await updateJobRenderState(db, jobId, { ...prev, ...patch });
 }
+
+export { RenderNotReadyError } from "../domain/render-not-ready-error.js";

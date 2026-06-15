@@ -329,6 +329,16 @@ app.use(express.json({ limit: "50mb" }));
 app.use("/output", express.static(OUTPUT_DIR));
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "caf-renderer", version: VERSION, uptime_seconds: process.uptime() }));
+app.get("/render-queue", (_req, res) => {
+  res.json({
+    ok: true,
+    service: "caf-renderer",
+    queue_depth: renderQueue.length,
+    rendering,
+    render_count: renderCount,
+    browser_up: Boolean(browser),
+  });
+});
 app.get("/version", (_req, res) => res.json({ version: VERSION }));
 app.get("/ready", async (_req, res) => {
   try {

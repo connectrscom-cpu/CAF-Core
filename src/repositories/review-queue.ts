@@ -44,6 +44,7 @@ export interface ReviewQueueJob {
   pre_gen_score: string | null;
   generation_payload: Record<string, unknown>;
   review_snapshot: Record<string, unknown>;
+  render_state?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
   latest_decision: string | null;
@@ -398,7 +399,7 @@ export async function getReviewJobDetail(
     `     SELECT
        j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
        j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
-       j.pre_gen_score::text, j.generation_payload, j.review_snapshot,
+       j.pre_gen_score::text, j.generation_payload, j.review_snapshot, j.render_state,
        j.created_at, j.updated_at,
        lr.decision AS latest_decision,
        lr.notes AS latest_notes,

@@ -453,6 +453,24 @@ textarea { resize: vertical; }
   flex-direction: column;
   gap: 10px;
 }
+.task-reprint-banner {
+  margin: 0 28px 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  border: 1px solid color-mix(in srgb, var(--teal, #0d9488) 35%, var(--border));
+  background: color-mix(in srgb, var(--teal, #0d9488) 12%, var(--card));
+  color: var(--fg);
+}
+.task-reprint-banner--active {
+  border-color: color-mix(in srgb, var(--teal, #0d9488) 50%, var(--border));
+}
+.task-reprint-banner--failed {
+  border-color: color-mix(in srgb, var(--red) 40%, var(--border));
+  background: var(--red-bg);
+  color: var(--red);
+}
 .mimic-layer-editor-panel__reprint-options {
   display: flex;
   flex-direction: column;

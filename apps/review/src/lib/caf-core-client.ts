@@ -197,6 +197,7 @@ export interface ReviewQueueJob {
   project_display_name?: string | null;
   /** First asset URL for list thumbnails (prefers images). */
   preview_thumb_url?: string | null;
+  render_state?: Record<string, unknown> | null;
 }
 
 export interface ReviewQueueCounts {
