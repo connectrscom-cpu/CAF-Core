@@ -349,7 +349,7 @@ export function enrichMimicSlideWithOcrBlocks(
   }
   const text_blocks = ocrBlocks.map((ocr, i) => ({
     role: ocr.role || "body",
-    text: copyLines[i]?.trim() || ocr.text || "",
+    text: copyLines[i]?.trim() || "",
   }));
   const fields = mimicSlideFieldsFromTextBlocks(text_blocks);
   const handleFromBlocks = text_blocks.find((b) => b.role === "handle" || looksLikeHandleLine(b.text))?.text;

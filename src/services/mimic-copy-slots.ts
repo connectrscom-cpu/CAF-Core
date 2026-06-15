@@ -18,6 +18,7 @@ import {
   formatInstagramHandleForCta,
   looksLikeInstagramHandleText,
 } from "../domain/instagram-handle.js";
+import { isLikelyOcrGarbageText } from "../domain/mimic-ocr-garbage.js";
 import { sanitizeMimicOverlayCopyText } from "../domain/mimic-overlay-copy.js";
 
 export const MIMIC_COPY_SLOTS_SCHEMA = "copy_slots_v1" as const;
@@ -166,6 +167,7 @@ function isHeadlineRole(role: string | null): boolean {
 }
 
 function isSkipCopyBlock(block: MimicReferenceCopyBlock): boolean {
+  if (isLikelyOcrGarbageText(block.text)) return true;
   if (/watermark|logo|timestamp|placeholder|ui_chrome/i.test(block.role ?? "")) return true;
   if (isPreserveReferenceDecorText(block.text, block)) return true;
   if (isOverlayChromeReferenceText(block.text, block.role)) return true;

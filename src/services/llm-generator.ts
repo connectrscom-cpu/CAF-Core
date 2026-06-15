@@ -92,6 +92,7 @@ import {
   parseMimicCopyCharSlack,
   parseMimicCopyReferenceScale,
 } from "./mimic-reference-copy-budget.js";
+import { refineMimicCarouselCopyCoherence } from "./mimic-copy-coherence.js";
 import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
 import {
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
@@ -1029,6 +1030,45 @@ export async function generateForJob(
         charSlack: parseMimicCopyCharSlack(appCfg.MIMIC_COPY_CHAR_SLACK),
         projectHandle: igRaw ? formatInstagramHandleForCta(igRaw) : null,
       });
+
+      if (
+        appCfg.MIMIC_COPY_COHERENCE_LLM &&
+        apiKey.trim() &&
+        !placeholderMode
+      ) {
+        const caption =
+          typeof parsed.caption === "string"
+            ? parsed.caption
+            : typeof parsed.post_caption === "string"
+              ? parsed.post_caption
+              : null;
+        const coherence = await refineMimicCarouselCopyCoherence(
+          appCfg,
+          apiKey,
+          db,
+          {
+            task_id: job.task_id,
+            project_id: job.project_id,
+            run_id: job.run_id,
+          },
+          parsed,
+          mimicSlideCopyLayout,
+          {
+            scale: parseMimicCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE),
+            charSlack: parseMimicCopyCharSlack(appCfg.MIMIC_COPY_CHAR_SLACK),
+            projectHandle: igRaw ? formatInstagramHandleForCta(igRaw) : null,
+            caption,
+          }
+        );
+        parsed = coherence.parsed;
+        if (coherence.meta) {
+          llmResult = {
+            ...llmResult,
+            total_tokens: llmResult.total_tokens + coherence.meta.tokens,
+          };
+        }
+      }
+
       llmResult = {
         ...llmResult,
         content: JSON.stringify(parsed),

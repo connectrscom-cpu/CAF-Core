@@ -229,6 +229,19 @@ const envSchema = z.object({
   MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE: z.coerce.number().min(0.2).max(1.5).default(1),
   /** ± characters allowed vs each reference on-screen line (template_bg + full_bleed). */
   MIMIC_COPY_CHAR_SLACK: z.coerce.number().int().min(0).max(32).default(4),
+  /**
+   * After mimic carousel text_blocks[] are built, run OpenAI to suggest coherent copy groupings
+   * and rewrite per-box lines. Set 0 to disable.
+   */
+  MIMIC_COPY_COHERENCE_LLM: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === "") return true;
+      const s = v.trim().toLowerCase();
+      if (s === "0" || s === "false" || s === "no") return false;
+      return true;
+    }),
   OPENAI_IMAGE_MODEL: z.string().default("gpt-image-1"),
   /** Alibaba DashScope (Model Studio) when MIMIC_IMAGE_PROVIDER=dashscope. */
   DASHSCOPE_API_KEY: z.string().optional(),
