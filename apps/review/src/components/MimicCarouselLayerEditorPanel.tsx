@@ -535,6 +535,9 @@ export function MimicCarouselLayerEditorPanel({
 
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
+  /** Which template_bg slot regen is in flight (for button feedback). */
+  const [regeneratingSlot, setRegeneratingSlot] = useState<MimicTemplateBgSlot | null>(null);
+
   // Regenerate route picker (1.6): similarity preset + reference on/off.
   const [regenSimilarityPct, setRegenSimilarityPct] = useState<number>(85);
   const [regenUseReference, setRegenUseReference] = useState<boolean>(true);
@@ -1273,11 +1276,22 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
-  async function regenerateSlideImages(slideIndices: number[]) {
+  async function regenerateSlideImages(
+    slideIndices: number[],
+    opts?: { slot?: MimicTemplateBgSlot | null }
+  ) {
 
-    if (!taskId.trim() || !projectSlug.trim() || slideIndices.length === 0) return;
+    if (!taskId.trim() || !projectSlug.trim()) {
+      setRegenerateError("Missing task or project — reload the review page and try again.");
+      return;
+    }
+    if (slideIndices.length === 0) {
+      setRegenerateError("No slides selected for regeneration.");
+      return;
+    }
 
     setRegenerateBusy(true);
+    setRegeneratingSlot(opts?.slot ?? null);
 
     setRegenerateError(null);
 
@@ -1317,7 +1331,16 @@ export function MimicCarouselLayerEditorPanel({
 
       }
 
-      setRegenerateMsg(json.message ?? `Regenerating ${slideIndices.length} slide(s)…`);
+      setRegenerateMsg(
+        json.message ??
+          (opts?.slot === "cover"
+            ? "Cover background regen started — refresh in 2–5 minutes."
+            : opts?.slot === "cta"
+              ? "CTA background regen started — refresh in 2–5 minutes."
+              : opts?.slot === "body"
+                ? `Middle background regen started for ${slideIndices.length} slides — refresh in 2–5 minutes.`
+                : `Regenerating ${slideIndices.length} slide(s)…`)
+      );
 
       refreshCarouselAfterReprint();
 
@@ -1328,6 +1351,7 @@ export function MimicCarouselLayerEditorPanel({
     } finally {
 
       setRegenerateBusy(false);
+      setRegeneratingSlot(null);
 
     }
 
@@ -1347,9 +1371,16 @@ export function MimicCarouselLayerEditorPanel({
 
     const indices = templateBgSlideIndicesForSlot(slot, slideCount);
 
-    if (indices.length === 0) return;
+    if (indices.length === 0) {
+      setRegenerateError(
+        slot === "body"
+          ? "This deck has no middle slides to regenerate."
+          : "No slides in that slot for this deck."
+      );
+      return;
+    }
 
-    await regenerateSlideImages(indices);
+    await regenerateSlideImages(indices, { slot });
 
   }
 
@@ -1364,6 +1395,11 @@ export function MimicCarouselLayerEditorPanel({
   const templateBgMiddleSlideCount = templateBgMode
     ? templateBgSlideIndicesForSlot("body", slideCount).length
     : 0;
+
+  const slotRegenButtonLabel = (slot: MimicTemplateBgSlot, base: string): string => {
+    if (regeneratingSlot === slot && regenerateBusy) return "Starting…";
+    return base;
+  };
 
   const restoreDefaultLayout = useCallback(() => {
     const cleared = layerPosDraft.filter((row) => !row.hidden);
@@ -1474,42 +1510,52 @@ export function MimicCarouselLayerEditorPanel({
       {templateBgMode ? (
         <div className="mimic-regen-route mimic-regen-route--slots">
           <div className="mimic-regen-route__group">
-            <span className="mimic-regen-route__label">Background slot</span>
+            <span className="mimic-regen-route__label">Regen plate</span>
             <button
               type="button"
-              className="mimic-regen-route__chip"
+              className="btn-secondary btn-sm mimic-slot-regen-btn"
               disabled={regenerateBusy || reprintBusy || layerPosSaving}
               onClick={() => void handleRegenerateTemplateBgSlot("cover")}
-              title="Regenerate cover slide background (slide 1)"
+              title="Regenerate cover slide background (slide 1) — billed"
             >
-              Cover
+              {slotRegenButtonLabel("cover", "Regen cover")}
             </button>
             {templateBgMiddleSlideCount > 0 ? (
               <button
                 type="button"
-                className="mimic-regen-route__chip"
+                className="btn-secondary btn-sm mimic-slot-regen-btn"
                 disabled={regenerateBusy || reprintBusy || layerPosSaving}
                 onClick={() => void handleRegenerateTemplateBgSlot("body")}
-                title={`Regenerate shared middle background for slides 2–${slideCount - 1}`}
+                title={`Regenerate shared middle background for slides 2–${slideCount - 1} — billed`}
               >
-                Middle ({templateBgMiddleSlideCount})
+                {slotRegenButtonLabel("body", `Regen middle (${templateBgMiddleSlideCount})`)}
               </button>
             ) : null}
             {slideCount > 1 ? (
               <button
                 type="button"
-                className="mimic-regen-route__chip"
+                className="btn-secondary btn-sm mimic-slot-regen-btn"
                 disabled={regenerateBusy || reprintBusy || layerPosSaving}
                 onClick={() => void handleRegenerateTemplateBgSlot("cta")}
-                title={`Regenerate CTA slide background (slide ${slideCount})`}
+                title={`Regenerate CTA slide background (slide ${slideCount}) — billed`}
               >
-                CTA
+                {slotRegenButtonLabel("cta", "Regen CTA")}
               </button>
             ) : null}
           </div>
           <p className="mimic-regen-route__note">
-            Middle slides share one background plate — regen middle updates all list slides at once.
+            Each button starts image regen immediately (2–5 min). Middle slides share one background plate.
           </p>
+          {regenerateMsg || regenerateError ? (
+            <div className="mimic-slot-regen-feedback">
+              {regenerateMsg ? (
+                <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p>
+              ) : null}
+              {regenerateError ? (
+                <p className="mimic-layer-editor-panel__error">{regenerateError}</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1568,8 +1614,12 @@ export function MimicCarouselLayerEditorPanel({
         </div>
       ) : null}
 
-      {regenerateMsg ? <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p> : null}
-      {regenerateError ? <p className="mimic-layer-editor-panel__error">{regenerateError}</p> : null}
+      {regenerateMsg && !templateBgMode ? (
+        <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p>
+      ) : null}
+      {regenerateError && !templateBgMode ? (
+        <p className="mimic-layer-editor-panel__error">{regenerateError}</p>
+      ) : null}
 
       <div className="mimic-layer-editor-panel__highlight">
         <label className="mimic-layer-editor-panel__option">

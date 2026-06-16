@@ -18,6 +18,20 @@ import { isVideoUrl } from "@/lib/media-url";
 
 const SWIPE_THRESHOLD = 50;
 
+/** Initial textarea rows from copy length; user can drag the corner to grow further. */
+function mimicCopyTextareaRows(text: string, opts?: { min?: number; max?: number }): number {
+  const min = opts?.min ?? 3;
+  const max = opts?.max ?? 24;
+  const lines = text.split("\n").length;
+  const chars = text.trim().length;
+  const byChars = chars > 0 ? Math.ceil(chars / 72) : min;
+  return Math.min(max, Math.max(min, lines, byChars));
+}
+
+function stopTextareaBubble(e: React.MouseEvent | React.FocusEvent) {
+  e.stopPropagation();
+}
+
 export interface CarouselMediaItem {
   url: string;
   kind: "image" | "video";
@@ -612,10 +626,15 @@ export function CarouselSlider({
                           if (isHandle && projectHandle.trim()) return;
                           updateMimicTemplateBgField(currentIndex, field, e.target.value);
                         }}
-                        rows={Math.min(8, Math.max(2, displayText.split("\n").length))}
+                        rows={mimicCopyTextareaRows(isHandle ? displayText : field.text, { min: 3, max: 24 })}
                         placeholder={`${field.label}…`}
-                        className="mimic-text-block-field__input"
-                        onFocus={() => onActiveTextBlockIndexChange?.(bi)}
+                        className="mimic-text-block-field__input mimic-text-block-field__input--grow"
+                        onFocus={(e) => {
+                          stopTextareaBubble(e);
+                          onActiveTextBlockIndexChange?.(bi);
+                        }}
+                        onClick={stopTextareaBubble}
+                        onMouseDown={stopTextareaBubble}
                       />
                       {isHandle ? (
                         <p className="mimic-text-block-field__note">Always prints project handle on reprint</p>
@@ -650,10 +669,15 @@ export function CarouselSlider({
                         if (isHandle && projectHandle.trim() && !mimicTemplateBg) return;
                         updateMimicTextBlock(currentIndex, bi, e.target.value);
                       }}
-                      rows={Math.min(4, Math.max(2, (isHandle ? displayText : block.text).split("\n").length))}
+                      rows={mimicCopyTextareaRows(isHandle ? displayText : block.text, { min: 2, max: 16 })}
                       placeholder="On-slide copy for this box"
-                      className="mimic-text-block-field__input"
-                      onFocus={() => onActiveTextBlockIndexChange?.(bi)}
+                      className="mimic-text-block-field__input mimic-text-block-field__input--grow"
+                      onFocus={(e) => {
+                        stopTextareaBubble(e);
+                        onActiveTextBlockIndexChange?.(bi);
+                      }}
+                      onClick={stopTextareaBubble}
+                      onMouseDown={stopTextareaBubble}
                     />
                     {isHandle && projectHandle.trim() && !mimicTemplateBg ? (
                       <p className="mimic-text-block-field__note">
