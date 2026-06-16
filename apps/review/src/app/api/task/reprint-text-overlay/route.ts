@@ -63,12 +63,22 @@ export async function POST(request: NextRequest) {
         ? (rawDocAi as Record<string, MimicDocAiLayerPositionRow[]>)
         : undefined;
 
+    const rawLogo = body?.logo_overlay;
+    const logoUrl =
+      rawLogo && typeof rawLogo === "object" && !Array.isArray(rawLogo) && typeof rawLogo.url === "string"
+        ? rawLogo.url.trim()
+        : "";
+    const logoOverlay = logoUrl
+      ? { url: logoUrl, position: typeof rawLogo.position === "string" ? rawLogo.position.trim() : "br" }
+      : undefined;
+
     const result = await reprintMimicTextOverlay(slug, tid, {
       slideIndices,
       renderTypography,
       textBacking,
       textBackingColor,
       docaiLayerPositions,
+      logoOverlay,
     });
     if (!result.ok) {
       const status = result.error === "job_not_found" ? 404 : 400;

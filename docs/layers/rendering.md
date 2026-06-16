@@ -9,6 +9,10 @@ Primarily **`src/services/job-pipeline.ts`** (orchestration), plus:
 | Module | Role |
 |--------|------|
 | **`carousel-render-pack.ts`** | Slide count, template pick, **`buildSlideRenderContext`**, strip non-render fields. |
+| **`mimic-carousel-render.ts`** | Top-performer carousel mimic: per-slide plates, template-bg, DocAI text overlay, **`MIMIC_BACKGROUND`** / **`MIMIC_VISUAL_PLATE`** assets. |
+| **`mimic-image-job.ts`** | Single-frame **`image_full`** mimic → **`STATIC_IMAGE`**. |
+| **`mimic-image-provider.ts`** | BFL / DashScope / NVIDIA / OpenAI image edit & T2I (`MIMIC_IMAGE_PROVIDER`). |
+| **`mimic-template-bg-render.ts`** | Template-background plate extract + HBS path. |
 | **`heygen-renderer.ts`** | Submit/poll HeyGen, burn subtitles optional. |
 | **`scene-pipeline.ts`** | Scene clips, concat, mux (**`pollVideoAssemblyJob`**, **`runScenePipeline`**). |
 | **`sora-scene-clips.ts`** | Sora polling (errors surface to pipeline). |
@@ -18,8 +22,19 @@ Primarily **`src/services/job-pipeline.ts`** (orchestration), plus:
 ## Carousel
 
 - HTTP **`POST`** to **`RENDERER_BASE_URL`** (per-slide or batch per implementation in **`job-pipeline`**).
-- Templates: **`CAROUSEL_TEMPLATES_DIR`**, Core may expose **`/api/templates/*`** for the worker.
+- Templates: **`CAROUSEL_TEMPLATES_DIR`**, Core may expose **`/api/templates/*`** for the worker. Mimic template-bg uses **`carousel_mimic_bg.hbs`** (`services/renderer/templates/`).
 - Retries: **`CAROUSEL_RENDERER_SLIDE_RETRY_ATTEMPTS`**, timeouts **`CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS`**.
+
+## Top-performer mimic (optional)
+
+When **`MIMIC_IMAGE_ENABLED=1`** and flow type is **`FLOW_TOP_PERFORMER_MIMIC_*`**:
+
+- **Image mimic** — one reference-conditioned edit → **`STATIC_IMAGE`** (`mimic-image-job.ts`).
+- **Carousel mimic** — modes **`template_bg`** (bg plate + HBS/Sharp text) or **`carousel_visual`** (per-slide art-only plate + DocAI/HBS overlay). Source of truth: **`generation_payload.mimic_v1`**.
+- **Providers** — **`MIMIC_IMAGE_PROVIDER`** (default **`bfl`**); copy generation still uses OpenAI regardless of render provider.
+- **Text-only reprint** — reviewers can re-run overlay without re-calling image models when plates exist (`MIMIC_TEXT_OVERLAY_REPRINT_PHASE`).
+
+See **[../MIMIC_FLOWS_COMPLETE_GUIDE.md](../MIMIC_FLOWS_COMPLETE_GUIDE.md)**.
 
 ## Video
 
@@ -43,4 +58,4 @@ Any new render branch that talks to HeyGen or Sora must consult **`hasActiveProv
 
 - [../TECH_STACK.md](../TECH_STACK.md)
 - [job-pipeline.md](./job-pipeline.md)
-- `docs/VIDEO_FLOWS.md`, `docs/HEYGEN_API_V3.md`
+- `docs/VIDEO_FLOWS.md`, `docs/HEYGEN_API_V3.md`, `docs/MIMIC_IMAGE_FLOWS.md`

@@ -126,6 +126,13 @@ export type DocAiLayerOverride = {
   text?: string;
   box_locked?: boolean;
   hidden?: boolean;
+  /**
+   * Forward-compat provenance tag so the human drag-editor emits the same shape an
+   * automated placer would (`ocr` = solver seed, `human` = reviewer edit, `vision` =
+   * vision-model suggestion). See docs/MIMIC_TEXT_PLACEMENT_AUTOMATION.md. Capture
+   * plumbing (persisting this through Core) is intentionally NOT wired yet.
+   */
+  source?: "ocr" | "human" | "vision";
 };
 
 type MimicDocAiLayerPositionEditorProps = {
@@ -147,6 +154,12 @@ type MimicDocAiLayerPositionEditorProps = {
   /** Active text block index (0-based) — syncs selection with copy fields. */
   activeBlockIndex?: number | null;
   onActiveBlockIndexChange?: (blockIndex: number | null) => void;
+  /** Full-bleed mimic: neutral box labels (no headline/body roles in UI). */
+  fullBleedMode?: boolean;
+  /** Project brand palette (hex) for the per-box colour quick-pick. */
+  brandPalette?: string[];
+  /** When set, preview the brand logo lower-right on the canvas. */
+  logoOverlayUrl?: string;
 };
 
 type MoveDrag = {
@@ -171,7 +184,14 @@ type ResizeDrag = {
 const FONT_FAMILY_OPTIONS = [
   { label: "Sans (default)", value: "" },
   { label: "Inter / System", value: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
+  { label: "Arial / Helvetica", value: "Arial, Helvetica, sans-serif" },
+  { label: "Roboto", value: "Roboto, 'Helvetica Neue', Arial, sans-serif" },
+  { label: "Montserrat", value: "Montserrat, 'Segoe UI', sans-serif" },
+  { label: "Poppins", value: "Poppins, 'Segoe UI', sans-serif" },
+  { label: "Oswald / Condensed", value: "Oswald, 'Arial Narrow', sans-serif" },
+  { label: "Impact / Display", value: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
   { label: "Georgia / Serif", value: "Georgia, 'Times New Roman', serif" },
+  { label: "Playfair Display", value: "'Playfair Display', Georgia, serif" },
   { label: "Script", value: "'Segoe Script', 'Brush Script MT', cursive" },
   { label: "Monospace", value: "ui-monospace, 'Cascadia Code', monospace" },
 ];
@@ -201,7 +221,11 @@ function layerStyleFromRow(
   return { font_size_px, font_weight, color_hex, font_family, font_style_italic };
 }
 
-function roleLabel(role: string): string {
+function roleLabel(role: string, fullBleed?: boolean, blockIndex?: number): string {
+  if (fullBleed) {
+    if (role.toLowerCase() === "handle" || role.toLowerCase() === "watermark") return "Handle";
+    return blockIndex != null ? `Box ${blockIndex + 1}` : "Box";
+  }
   const r = role.toLowerCase();
   if (r === "headline" || r === "title" || r === "hook") return "Headline";
   if (r === "handle" || r === "watermark") return "Handle";
@@ -276,6 +300,9 @@ export function MimicDocAiLayerPositionEditor({
   suppressReseed = false,
   activeBlockIndex = null,
   onActiveBlockIndexChange,
+  fullBleedMode = false,
+  brandPalette = [],
+  logoOverlayUrl = "",
 }: MimicDocAiLayerPositionEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(360);
@@ -284,6 +311,16 @@ export function MimicDocAiLayerPositionEditor({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [moveDrag, setMoveDrag] = useState<MoveDrag | null>(null);
   const [resizeDrag, setResizeDrag] = useState<ResizeDrag | null>(null);
+  const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null);
+  const textInputRef = useRef<HTMLTextAreaElement>(null);
+  const lastActiveBlockIndexRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    setFontSizeDraft(null);
+    if (selectedKey) {
+      window.requestAnimationFrame(() => textInputRef.current?.focus());
+    }
+  }, [selectedKey, slideIndex]);
 
   const scale = containerWidth / CANVAS_W;
   const highlightBackground = textBacking
@@ -381,8 +418,21 @@ export function MimicDocAiLayerPositionEditor({
         next[savedRow.layer_key] = { ...savedRow };
       }
     }
-    setCustomLayers(nextCustom);
-    setOverrides(next);
+    setCustomLayers((prevCustom) => {
+      const mergedKeys = new Set(nextCustom.map((b) => b.layer_key));
+      const unsavedLocal = prevCustom.filter(
+        (b) => isCustomLayerKey(b.layer_key) && !mergedKeys.has(b.layer_key)
+      );
+      return unsavedLocal.length > 0 ? [...nextCustom, ...unsavedLocal] : nextCustom;
+    });
+    setOverrides((prevOverrides) => {
+      const merged = { ...next };
+      for (const [key, row] of Object.entries(prevOverrides)) {
+        if (!isCustomLayerKey(key) || merged[key] || row.hidden) continue;
+        merged[key] = row;
+      }
+      return merged;
+    });
     const allKeys = [...layers.map((l) => l.layer_key), ...nextCustom.map((l) => l.layer_key)];
     setSelectedKey((prev) => (prev && next[prev] && !next[prev]?.hidden ? prev : allKeys.find((k) => !next[k]?.hidden) ?? null));
     skipUserChangeEmitRef.current = true;
@@ -510,20 +560,26 @@ export function MimicDocAiLayerPositionEditor({
     return new Map(sorted.map((layer, index) => [layer.layer_key, index]));
   }, [visibleLayers, overrides]);
   useEffect(() => {
-    if (activeBlockIndex == null) return;
-    const match = visibleLayers.find((layer) => layer.block_index === activeBlockIndex);
-    if (match && match.layer_key !== selectedKey) {
-      setSelectedKey(match.layer_key);
+    if (activeBlockIndex == null) {
+      lastActiveBlockIndexRef.current = null;
+      return;
     }
-  }, [activeBlockIndex, visibleLayers, selectedKey]);
+    if (lastActiveBlockIndexRef.current === activeBlockIndex) return;
+    lastActiveBlockIndexRef.current = activeBlockIndex;
+    const match = visibleLayers[activeBlockIndex];
+    if (match) setSelectedKey(match.layer_key);
+  }, [activeBlockIndex, visibleLayers]);
 
   const selectLayer = useCallback(
     (key: string) => {
       setSelectedKey(key);
-      const layer = displayLayers.find((l) => l.layer_key === key);
-      if (layer?.block_index != null) onActiveBlockIndexChange?.(layer.block_index);
+      const idx = visibleLayers.findIndex((l) => l.layer_key === key);
+      if (idx >= 0) {
+        lastActiveBlockIndexRef.current = idx;
+        onActiveBlockIndexChange?.(idx);
+      }
     },
-    [displayLayers, onActiveBlockIndexChange]
+    [visibleLayers, onActiveBlockIndexChange]
   );
 
   const hiddenCount = displayLayers.length - visibleLayers.length;
@@ -563,6 +619,7 @@ export function MimicDocAiLayerPositionEditor({
       h_px: open.h_px,
       font_size_px,
     };
+    const newBlockIndex = layers.length + customLayers.length;
     setCustomLayers((prev) => [...prev, box]);
     setOverrides((prev) => ({
       ...prev,
@@ -578,7 +635,9 @@ export function MimicDocAiLayerPositionEditor({
       },
     }));
     setSelectedKey(key);
-  }, []);
+    lastActiveBlockIndexRef.current = newBlockIndex;
+    onActiveBlockIndexChange?.(newBlockIndex);
+  }, [layers.length, customLayers.length, onActiveBlockIndexChange]);
 
   const deleteSelectedLayer = useCallback(() => {
     if (!selectedKey) return;
@@ -595,7 +654,23 @@ export function MimicDocAiLayerPositionEditor({
       updateOverride(selectedKey, { hidden: true });
     }
     setSelectedKey(null);
-  }, [selectedKey, overrides, updateOverride]);
+    lastActiveBlockIndexRef.current = null;
+    onActiveBlockIndexChange?.(null);
+  }, [selectedKey, overrides, updateOverride, onActiveBlockIndexChange]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!selectedKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        deleteSelectedLayer();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedKey, deleteSelectedLayer]);
 
   if (layers.length === 0 && customLayers.length === 0) {
     return (
@@ -611,13 +686,8 @@ export function MimicDocAiLayerPositionEditor({
   }
 
   return (
-    <div>
+    <div className="mimic-docai-editor">
       <div className="mimic-docai-editor__toolbar">
-        <p className="mimic-docai-editor__toolbar-hint">
-          Drag boxes on the art plate. All boxes stay expanded — this view is your live preview. Click a box or
-          text block to edit copy and style.
-          {hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ""}
-        </p>
         <div className="mimic-docai-editor__toolbar-actions">
           <button type="button" className="btn-secondary btn-sm" onClick={fitAllBoxesToText}>
             Fit boxes to text
@@ -625,6 +695,14 @@ export function MimicDocAiLayerPositionEditor({
           <button type="button" className="btn-secondary btn-sm" onClick={addTextBox}>
             Add text box
           </button>
+          {selectedKey ? (
+            <button type="button" className="btn-danger-ghost btn-sm" onClick={deleteSelectedLayer}>
+              Delete box
+            </button>
+          ) : null}
+          {hiddenCount > 0 ? (
+            <span className="mimic-docai-editor__hidden-count">{hiddenCount} hidden</span>
+          ) : null}
         </div>
       </div>
 
@@ -636,7 +714,7 @@ export function MimicDocAiLayerPositionEditor({
             const preview = (row?.text ?? layer.text).trim();
             const short = preview.length > 36 ? `${preview.slice(0, 36)}…` : preview || "(empty)";
             const active = selectedKey === key;
-            const blockTag = layer.block_index != null ? ` · Box ${layer.block_index + 1}` : "";
+            const blockIndex = layer.block_index ?? visibleLayers.indexOf(layer);
             return (
               <button
                 key={key}
@@ -645,265 +723,324 @@ export function MimicDocAiLayerPositionEditor({
                 onClick={() => selectLayer(key)}
                 title={preview}
               >
-                {roleLabel(layer.role)}
-                {blockTag}: {short}
+                {roleLabel(layer.role, fullBleedMode, blockIndex)}: {short}
               </button>
             );
           })}
         </div>
       ) : null}
 
-      <div
-        ref={containerRef}
-        className="mimic-docai-editor__canvas"
-        onPointerMove={onPointerMove}
-        onPointerUp={endPointer}
-        onPointerLeave={endPointer}
-      >
-        <div className="mimic-docai-editor__canvas-inner">
-          {baseImageUrl ? (
-            <img
-              src={baseImageUrl}
-              alt=""
-              draggable={false}
-              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
-            />
-          ) : null}
-          {!baseImageUrl ? (
-            <div className="mimic-docai-editor__canvas-empty">
-              No background plate for this slide — reprint or regenerate art-only image first.
-            </div>
-          ) : null}
-          {visibleLayers.map((layer) => {
-            const key = layer.layer_key;
-            const row = overrides[key] ?? {
-              layer_key: key,
-              x_px: layer.x_px,
-              y_px: layer.y_px,
-              w_px: layer.w_px,
-              h_px: layer.h_px,
-              font_size_px: layer.font_size_px ?? DEFAULT_FONT_PX,
-              text: layer.text,
-            };
-            const style = layerStyleFromRow(layer, row);
-            const boxW = Math.max(MIN_BOX_W, row.w_px ?? layer.w_px);
-            const boxH = Math.max(MIN_BOX_H, row.h_px ?? layer.h_px);
-            const w = boxW * scale;
-            const h = boxH * scale;
-            const isSelected = selectedKey === key;
-            const previewFont = Math.max(8, style.font_size_px * scale);
-            const displayText = row.text ?? layer.text;
-            const padY = 4 * scale;
-            const padX = 10 * scale;
-            const corners: ResizeCorner[] = ["nw", "ne", "sw", "se"];
-            const paintIndex = layerPaintOrder.get(key) ?? 0;
-            const linkedBlock = layer.block_index === activeBlockIndex;
-            return (
-              <div
-                key={key}
-                role="button"
-                tabIndex={0}
-                onClick={() => selectLayer(key)}
-                onPointerDown={(e) => {
-                  if ((e.target as HTMLElement).dataset.resizeCorner) return;
-                  e.currentTarget.setPointerCapture(e.pointerId);
-                  selectLayer(key);
-                  setMoveDrag({
-                    key,
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    origX: row.x_px,
-                    origY: row.y_px,
-                  });
-                }}
-                title={displayText}
-                style={{
-                  position: "absolute",
-                  left: row.x_px * scale,
-                  top: row.y_px * scale,
-                  width: w,
-                  height: h,
-                  boxSizing: "border-box",
-                  border: isSelected
-                    ? "2px solid rgba(37,99,235,1)"
-                    : linkedBlock
-                      ? "2px solid rgba(16,185,129,0.9)"
-                      : "2px solid rgba(59,130,246,0.75)",
-                  background: highlightBackground,
-                  color: style.color_hex,
-                  fontSize: previewFont,
-                  fontWeight: style.font_weight,
-                  fontFamily: style.font_family || undefined,
-                  fontStyle: style.font_style_italic ? "italic" : "normal",
-                  lineHeight: HIGHLIGHT_LINE_HEIGHT,
-                  padding: `${padY}px ${padX}px`,
-                  cursor: "grab",
-                  userSelect: "none",
-                  touchAction: "none",
-                  overflow: "visible",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  zIndex: isSelected ? 20 : 3 + paintIndex,
-                  boxShadow: isSelected ? "0 0 0 2px rgba(37,99,235,0.25)" : undefined,
-                }}
-              >
-                {displayText}
-                {isSelected
-                  ? corners.map((corner) => (
-                      <div
-                        key={corner}
-                        data-resize-corner={corner}
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          selectLayer(key);
-                          setResizeDrag({
-                            key,
-                            corner,
-                            startX: e.clientX,
-                            startY: e.clientY,
-                            origX: row.x_px,
-                            origY: row.y_px,
-                            origW: boxW,
-                            origH: boxH,
-                          });
-                        }}
-                        style={{
-                          position: "absolute",
-                          width: 10,
-                          height: 10,
-                          borderRadius: 2,
-                          background: "#fff",
-                          border: "2px solid rgba(37,99,235,1)",
-                          boxSizing: "border-box",
-                          zIndex: 5,
-                          cursor: CORNER_CURSORS[corner],
-                          ...(corner === "nw" ? { left: -5, top: -5 } : {}),
-                          ...(corner === "ne" ? { right: -5, top: -5 } : {}),
-                          ...(corner === "sw" ? { left: -5, bottom: -5 } : {}),
-                          ...(corner === "se" ? { right: -5, bottom: -5 } : {}),
-                        }}
-                      />
-                    ))
-                  : null}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {selected && selectedLayer ? (
-        <div className="mimic-docai-editor__selected-panel">
-          <p className="mimic-docai-editor__selected-header">
-            <span>
-              {roleLabel(selectedLayer.role)}
-              {selectedLayer.block_index != null ? ` · Text block ${selectedLayer.block_index + 1}` : ""}
-              {isCustomLayerKey(selected.layer_key) ? " (added)" : ""}
-            </span>
-            <button type="button" className="btn-danger-ghost" style={{ marginLeft: "auto" }} onClick={deleteSelectedLayer}>
-              Delete box
-            </button>
-          </p>
-          <label className="filter-label">Text</label>
-          <textarea
-            value={selected.text ?? ""}
-            rows={2}
-            onChange={(e) => updateOverride(selected.layer_key, { text: e.target.value })}
-            className="mimic-docai-editor__text-input"
-          />
-          {(() => {
-            const style = layerStyleFromRow(selectedLayer, selected);
-            return (
-              <>
-                <div className="mimic-docai-editor__font-row">
-                  <span className="mimic-docai-editor__font-label">Size</span>
-                  <button
-                    type="button"
-                    className="btn-secondary mimic-docai-editor__font-step"
-                    onClick={() =>
-                      updateOverride(selected.layer_key, {
-                        font_size_px: Math.max(MIN_FONT_PX, style.font_size_px - 2),
-                      })
-                    }
-                  >
-                    −
-                  </button>
-                  <input
-                    type="number"
-                    className="mimic-docai-editor__font-input"
-                    min={MIN_FONT_PX}
-                    max={MAX_FONT_PX}
-                    value={style.font_size_px}
-                    onChange={(e) => {
-                      const n = Number(e.target.value);
-                      if (!Number.isFinite(n)) return;
-                      updateOverride(selected.layer_key, {
-                        font_size_px: Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(n))),
+      <div className="mimic-docai-editor__workspace">
+        <div className="mimic-docai-editor__canvas-col">
+          <div
+            ref={containerRef}
+            className="mimic-docai-editor__canvas"
+            onPointerMove={onPointerMove}
+            onPointerUp={endPointer}
+            onPointerLeave={endPointer}
+          >
+            <div className="mimic-docai-editor__canvas-inner">
+              {baseImageUrl ? (
+                <img
+                  src={baseImageUrl}
+                  alt=""
+                  draggable={false}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}
+                />
+              ) : null}
+              {!baseImageUrl ? (
+                <div className="mimic-docai-editor__canvas-empty">
+                  No background plate for this slide — reprint or regenerate art-only image first.
+                </div>
+              ) : null}
+              {logoOverlayUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoOverlayUrl}
+                  alt="Brand logo preview"
+                  draggable={false}
+                  className="mimic-docai-editor__logo-preview"
+                />
+              ) : null}
+              {visibleLayers.map((layer) => {
+                const key = layer.layer_key;
+                const row = overrides[key] ?? {
+                  layer_key: key,
+                  x_px: layer.x_px,
+                  y_px: layer.y_px,
+                  w_px: layer.w_px,
+                  h_px: layer.h_px,
+                  font_size_px: layer.font_size_px ?? DEFAULT_FONT_PX,
+                  text: layer.text,
+                };
+                const style = layerStyleFromRow(layer, row);
+                const boxW = Math.max(MIN_BOX_W, row.w_px ?? layer.w_px);
+                const boxH = Math.max(MIN_BOX_H, row.h_px ?? layer.h_px);
+                const w = boxW * scale;
+                const h = boxH * scale;
+                const isSelected = selectedKey === key;
+                const previewFont = Math.max(8, style.font_size_px * scale);
+                const displayText = row.text ?? layer.text;
+                const padY = 4 * scale;
+                const padX = 10 * scale;
+                const corners: ResizeCorner[] = ["nw", "ne", "sw", "se"];
+                const paintIndex = layerPaintOrder.get(key) ?? 0;
+                const linkedBlock = visibleLayers.findIndex((l) => l.layer_key === key) === activeBlockIndex;
+                return (
+                  <div
+                    key={key}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => selectLayer(key)}
+                    onPointerDown={(e) => {
+                      if ((e.target as HTMLElement).dataset.resizeCorner) return;
+                      e.currentTarget.setPointerCapture(e.pointerId);
+                      selectLayer(key);
+                      setMoveDrag({
+                        key,
+                        startX: e.clientX,
+                        startY: e.clientY,
+                        origX: row.x_px,
+                        origY: row.y_px,
                       });
                     }}
-                  />
-                  <button
-                    type="button"
-                    className="btn-secondary mimic-docai-editor__font-step"
-                    onClick={() =>
-                      updateOverride(selected.layer_key, {
-                        font_size_px: Math.min(MAX_FONT_PX, style.font_size_px + 2),
-                      })
-                    }
+                    title={displayText}
+                    style={{
+                      position: "absolute",
+                      left: row.x_px * scale,
+                      top: row.y_px * scale,
+                      width: w,
+                      height: h,
+                      boxSizing: "border-box",
+                      border: isSelected
+                        ? "2px solid rgba(37,99,235,1)"
+                        : linkedBlock
+                          ? "2px solid rgba(16,185,129,0.9)"
+                          : "2px solid rgba(59,130,246,0.75)",
+                      background: highlightBackground,
+                      color: style.color_hex,
+                      fontSize: previewFont,
+                      fontWeight: style.font_weight,
+                      fontFamily: style.font_family || undefined,
+                      fontStyle: style.font_style_italic ? "italic" : "normal",
+                      lineHeight: HIGHLIGHT_LINE_HEIGHT,
+                      padding: `${padY}px ${padX}px`,
+                      cursor: "grab",
+                      userSelect: "none",
+                      touchAction: "none",
+                      overflow: "visible",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      zIndex: isSelected ? 20 : 3 + paintIndex,
+                      boxShadow: isSelected ? "0 0 0 2px rgba(37,99,235,0.25)" : undefined,
+                    }}
                   >
-                    +
-                  </button>
-                  <label className="mimic-docai-editor__style-toggle">
-                    <input
-                      type="checkbox"
-                      checked={style.font_weight >= 700}
-                      onChange={(e) =>
-                        updateOverride(selected.layer_key, {
-                          font_weight: e.target.checked ? 700 : 400,
-                        })
-                      }
-                    />
-                    Bold
-                  </label>
-                  <label className="mimic-docai-editor__style-toggle">
-                    <input
-                      type="checkbox"
-                      checked={style.font_style_italic}
-                      onChange={(e) =>
-                        updateOverride(selected.layer_key, { font_style_italic: e.target.checked })
-                      }
-                    />
-                    Italic
-                  </label>
-                </div>
-                <div className="mimic-docai-editor__font-row">
-                  <span className="mimic-docai-editor__font-label">Color</span>
-                  <input
-                    type="color"
-                    value={style.color_hex}
-                    onChange={(e) => updateOverride(selected.layer_key, { color_hex: e.target.value })}
-                    className="mimic-docai-editor__color-input"
-                  />
-                  <select
-                    value={style.font_family}
-                    onChange={(e) => updateOverride(selected.layer_key, { font_family: e.target.value })}
-                    className="mimic-docai-editor__family-select"
-                  >
-                    {FONT_FAMILY_OPTIONS.map((opt) => (
-                      <option key={opt.label} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="mimic-docai-editor__box-dims">
-                    {Math.round(selected.w_px ?? selectedLayer.w_px)}×{Math.round(selected.h_px ?? selectedLayer.h_px)} px
-                  </span>
-                </div>
-              </>
-            );
-          })()}
+                    {displayText}
+                    {isSelected
+                      ? corners.map((corner) => (
+                          <div
+                            key={corner}
+                            data-resize-corner={corner}
+                            onPointerDown={(e) => {
+                              e.stopPropagation();
+                              e.currentTarget.setPointerCapture(e.pointerId);
+                              selectLayer(key);
+                              setResizeDrag({
+                                key,
+                                corner,
+                                startX: e.clientX,
+                                startY: e.clientY,
+                                origX: row.x_px,
+                                origY: row.y_px,
+                                origW: boxW,
+                                origH: boxH,
+                              });
+                            }}
+                            style={{
+                              position: "absolute",
+                              width: 10,
+                              height: 10,
+                              borderRadius: 2,
+                              background: "#fff",
+                              border: "2px solid rgba(37,99,235,1)",
+                              boxSizing: "border-box",
+                              zIndex: 5,
+                              cursor: CORNER_CURSORS[corner],
+                              ...(corner === "nw" ? { left: -5, top: -5 } : {}),
+                              ...(corner === "ne" ? { right: -5, top: -5 } : {}),
+                              ...(corner === "sw" ? { left: -5, bottom: -5 } : {}),
+                              ...(corner === "se" ? { right: -5, bottom: -5 } : {}),
+                            }}
+                          />
+                        ))
+                      : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </div>
-      ) : null}
+
+        <div className="mimic-docai-editor__inspector-col">
+          {selected && selectedLayer ? (
+            <div className="mimic-docai-editor__selected-panel">
+              <p className="mimic-docai-editor__selected-header">
+                <span>
+                  {roleLabel(
+                    selectedLayer.role,
+                    fullBleedMode,
+                    selectedLayer.block_index ?? visibleLayers.findIndex((l) => l.layer_key === selected.layer_key)
+                  )}
+                  {isCustomLayerKey(selected.layer_key) ? " (added)" : ""}
+                </span>
+                <button
+                  type="button"
+                  className="btn-danger-ghost btn-sm"
+                  style={{ marginLeft: "auto" }}
+                  onClick={deleteSelectedLayer}
+                >
+                  Delete box
+                </button>
+              </p>
+              <label className="filter-label">Text</label>
+              <textarea
+                ref={textInputRef}
+                value={selected.text ?? ""}
+                rows={3}
+                onChange={(e) => updateOverride(selected.layer_key, { text: e.target.value })}
+                className="mimic-docai-editor__text-input"
+                placeholder="Type on-slide copy…"
+              />
+              {(() => {
+                const style = layerStyleFromRow(selectedLayer, selected);
+                const fontSizeDisplay = fontSizeDraft ?? String(style.font_size_px);
+                return (
+                  <>
+                    <div className="mimic-docai-editor__font-row">
+                      <span className="mimic-docai-editor__font-label">Size</span>
+                      <button
+                        type="button"
+                        className="btn-secondary mimic-docai-editor__font-step"
+                        onClick={() => {
+                          setFontSizeDraft(null);
+                          updateOverride(selected.layer_key, {
+                            font_size_px: Math.max(MIN_FONT_PX, style.font_size_px - 2),
+                          });
+                        }}
+                      >
+                        −
+                      </button>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        className="mimic-docai-editor__font-input"
+                        value={fontSizeDisplay}
+                        onFocus={() => setFontSizeDraft(String(style.font_size_px))}
+                        onChange={(e) => setFontSizeDraft(e.target.value)}
+                        onBlur={() => {
+                          const raw = (fontSizeDraft ?? fontSizeDisplay).trim();
+                          setFontSizeDraft(null);
+                          if (!raw) return;
+                          const n = Number(raw);
+                          if (!Number.isFinite(n)) return;
+                          updateOverride(selected.layer_key, {
+                            font_size_px: Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(n))),
+                          });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary mimic-docai-editor__font-step"
+                        onClick={() => {
+                          setFontSizeDraft(null);
+                          updateOverride(selected.layer_key, {
+                            font_size_px: Math.min(MAX_FONT_PX, style.font_size_px + 2),
+                          });
+                        }}
+                      >
+                        +
+                      </button>
+                    </div>
+                    <div className="mimic-docai-editor__font-row mimic-docai-editor__font-row--styles">
+                      <label className="mimic-docai-editor__style-toggle">
+                        <input
+                          type="checkbox"
+                          checked={style.font_weight >= 700}
+                          onChange={(e) =>
+                            updateOverride(selected.layer_key, {
+                              font_weight: e.target.checked ? 700 : 400,
+                            })
+                          }
+                        />
+                        Bold
+                      </label>
+                      <label className="mimic-docai-editor__style-toggle">
+                        <input
+                          type="checkbox"
+                          checked={style.font_style_italic}
+                          onChange={(e) =>
+                            updateOverride(selected.layer_key, { font_style_italic: e.target.checked })
+                          }
+                        />
+                        Italic
+                      </label>
+                    </div>
+                    <div className="mimic-docai-editor__font-row">
+                      <span className="mimic-docai-editor__font-label">Color</span>
+                      <input
+                        type="color"
+                        value={style.color_hex}
+                        onChange={(e) => updateOverride(selected.layer_key, { color_hex: e.target.value })}
+                        className="mimic-docai-editor__color-input"
+                      />
+                      {brandPalette.length > 0 ? (
+                        <div className="brand-swatches" title="Brand palette">
+                          {brandPalette.map((hex) => (
+                            <button
+                              key={hex}
+                              type="button"
+                              className="brand-swatch"
+                              style={{ background: hex }}
+                              title={hex}
+                              aria-label={`Use ${hex}`}
+                              onClick={() => updateOverride(selected.layer_key, { color_hex: hex })}
+                            />
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="mimic-docai-editor__font-row">
+                      <span className="mimic-docai-editor__font-label">Font</span>
+                      <select
+                        value={style.font_family}
+                        onChange={(e) => updateOverride(selected.layer_key, { font_family: e.target.value })}
+                        className="mimic-docai-editor__family-select"
+                      >
+                        {FONT_FAMILY_OPTIONS.map((opt) => (
+                          <option key={opt.label} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <p className="mimic-docai-editor__box-dims">
+                      {Math.round(selected.w_px ?? selectedLayer.w_px)}×
+                      {Math.round(selected.h_px ?? selectedLayer.h_px)} px
+                    </p>
+                  </>
+                );
+              })()}
+            </div>
+          ) : (
+            <div className="mimic-docai-editor__inspector-empty">
+              Select a text box on the preview to edit copy and style.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

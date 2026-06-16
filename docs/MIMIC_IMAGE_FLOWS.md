@@ -1,82 +1,80 @@
-# Top-performer image / carousel mimic
+# Top-performer mimic flows (quick reference)
 
-Optional flows that mimic archived top-performer visuals using reference-conditioned image edits (`MIMIC_IMAGE_PROVIDER`: OpenAI `gpt-image-1` or NVIDIA NIM `qwen-image-edit`).
+Optional pipeline lanes that recreate **visual patterns** from archived top-performer posts while generating **fresh copy**. Full detail: **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)** (PDF: `MIMIC_FLOWS_COMPLETE_GUIDE.pdf`).
 
-## Mimic carousel draft package (`mimic_carousel_package`)
+## Flow types
 
-**Distinct from `FLOW_CAROUSEL` / `carousel_package`.** Only `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` uses this type.
+| Flow | Format | Reference tier |
+|------|--------|----------------|
+| `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single post | `top_performer_deep` (exactly **one** frame) |
+| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` |
+| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | — | Placeholder (not wired) |
 
-After Generate + mimic prep, `generation_payload.draft_package_snapshot` holds:
-
-| Slice | Source |
-|-------|--------|
-| `copy` | LLM slides, caption, hashtags |
-| `render_plan` | Upstream vision analysis via `classifyMimicMode` — `template_background` (listicle/text-heavy) or `per_slide_mimic` (strong imagery) |
-| `visual_reference` | Archived inspection media paths (`bucket`, `object_path`, folder prefix) |
-| `visual_guideline` | Slim top-performer row: format pattern, deck system, replication blueprint |
-
-`mimic_v1` remains the render source of truth; the composed package is for review, content log, and operators.
+Mimic lanes (`mimic_image`, `mimic_carousel`) run **in parallel** with `FLOW_CAROUSEL` — separate plan caps.
 
 ## Enable (both required)
 
-1. **Env:** `MIMIC_IMAGE_ENABLED=1` and either `OPENAI_API_KEY` (`MIMIC_IMAGE_PROVIDER=openai`, default) or `NVIDIA_NIM_API_KEY` (`MIMIC_IMAGE_PROVIDER=nvidia` for free/cheap Qwen edits via the same NIM key as Nemotron)
-2. **Project:** enable `FLOW_TOP_PERFORMER_MIMIC_IMAGE` and/or `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` in allowed flow types; set plan cap &gt; 0
+1. **Env:** `MIMIC_IMAGE_ENABLED=1`, `OPENAI_API_KEY` (copy), and a render provider key for `MIMIC_IMAGE_PROVIDER` (default **`bfl`** → `BFL_API_KEY`; also `dashscope`, `nvidia`, `openai`).
+2. **Project:** enable mimic flow types + plan cap &gt; 0 (seeded **disabled** by default).
 
-Flows are seeded **disabled** via `seedMimicFlowTypesSkeleton()` (like product flows).
+## Payload keys
 
-Migration **`061_mimic_flow_prompts.sql`** adds Flow Engine `flow_definitions` + `prompt_templates` for both mimic flows (inherits carousel output schema). Carousel **template-bg** renders use `carousel_mimic_bg.hbs` (background plate from gpt-image-1).
-
-## Prerequisites
-
-- Top-performer passes with Supabase archive (`stored_inspection_media_json`)
-- Signal pack with `visual_guidelines_pack_v1`
-- Ideas grounded to top-performer `insights_id` values
-
-## Operator workflow
-
-1. **Plan run** — mimic flows compete in parallel with regular carousel flows when both enabled
-2. **Resolve reference** (before LLM) — `mimic_v1` + `mimic_render_context` + `template_storage_decision`; `mimic_evaluation.recommended_mode` → `template_bg` or `carousel_visual`
-3. **Template backgrounds** (template_bg only, before LLM) — Qwen extracts cover/body/CTA plates → `MIMIC_BACKGROUND` (+ project library path when `template_storage_quality=reusable`)
-4. **Generate Jobs** — OpenAI copy: **full slide copy** (template) or **caption/hashtags + short hooks** (full bleed); then `mimic_carousel_package` snapshot; status **GENERATED**
-4. **Review** — inspect copy and mimic metadata (no assets yet)
-5. **Render** — **template_bg / hbs slides:** Qwen strips text → background plate → Puppeteer HBS overlays LLM copy (typography from Nemotron `text_blocks` + `typography`). **carousel_visual full_bleed:** art-only Qwen (no on-image copy) for photo-only slides. Slides with any `on_screen_text_transcript` use **hbs**, not image-model typography. Status **IN_REVIEW**
-
-## Carousel composite templates (alternative to .hbs)
-
-Listicle / `template_bg` mimic carousels prefer **stored background plates + Sharp text overlay** (layout aligned with `carousel_mimic_bg.hbs` padding and font sizes).
-
-| Piece | Location |
-|-------|----------|
-| DB table | `caf_core.carousel_composite_templates` |
-| Layout defaults | `src/domain/carousel-composite-layout.ts` |
-| Compositor | `src/services/carousel-composite-render.ts` |
-| Mimic template build | `src/services/mimic-composite-template-builder.ts` (once per `source_insights_id`) |
-| Default listicle pin | `composite:listicle_stack_v1` via `ensureDefaultListicleCompositeTemplate` |
-
-Pin `composite:{template_key}` on a project to force a composite layout. **All stored composite templates for the project also join the implicit pool automatically** — normal `FLOW_CAROUSEL` jobs pick deterministically (per `task_id`) between eligible `.hbs` templates and every active composite row, without requiring a pin.
-
-| Variable | Default |
-|----------|---------|
-| `CAROUSEL_COMPOSITE_ENABLED` | `true` (set `0` to force Puppeteer .hbs only) |
+| Key | Role |
+|-----|------|
+| `mimic_v1` | **Render source of truth** — mode, references, slide plans |
+| `mimic_carousel_package` | Review snapshot only (`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`) — **not** `carousel_package` |
+| `mimic_render_context` | Copy-time hints (slide count, template path) |
+| `mimic_job_grounding` | Per-slide layout for copy LLM |
 
 ## Mimic modes (`mimic_v1.mode`)
 
 | Mode | When | Render |
 |------|------|--------|
-| `image_full` | Single-frame top performer (exactly **one** archived reference image) | One `STATIC_IMAGE` with **new** on-image copy from LLM (not reference text) |
-| `template_bg` | Text-heavy template carousel | Background extract + `carousel_mimic_bg.hbs` slides |
-| `carousel_visual` | Image-led carousel (**2+** reference frames, or multi-slide deck) | Per-slide mimic (full bleed or HBS) |
+| `image_full` | Single reference frame | One `STATIC_IMAGE` via image edit + LLM on-image copy |
+| `template_bg` | Text-heavy / listicle deck | Background plate → `carousel_mimic_bg.hbs` or Sharp composite + text overlay |
+| `carousel_visual` | Image-led carousel (2+ frames) | Per-slide art-only plates + HBS/DocAI text overlay |
 
-**Routing:** `FLOW_TOP_PERFORMER_MIMIC_IMAGE` is for **post**-format ideas with a **single** archived frame. Carousel-format ideas and references with 2+ slides must use `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`. Generate fails early if image mimic resolves to multiple reference frames.
+Classifier: `classifyMimicMode()` — reviewer override → Nemotron `mimic_evaluation.recommended_mode` → heuristics (`src/services/mimic-mode-classifier.ts`).
 
-## Config
+## Operator workflow
+
+1. **Plan run** — mimic flows compete with `FLOW_CAROUSEL` when both enabled.
+2. **Resolve reference** (before LLM) — `mimic_v1`, `mimic_render_context`, `template_storage_decision`.
+3. **Template backgrounds** (`template_bg` only, optional pre-copy) — extract plates → `MIMIC_BACKGROUND`.
+4. **Generate** — OpenAI copy; carousel mimic writes `mimic_carousel_package` snapshot → **GENERATED**.
+5. **Review** — copy + mimic metadata (assets may not exist yet).
+6. **Render** — image provider + Puppeteer/DocAI overlays → **IN_REVIEW**.
+
+## Prerequisites
+
+- Top-performer archive in Supabase (`stored_inspection_media_json` on visual-guidelines entries).
+- Signal pack `visual_guidelines_pack_v1` + ideas grounded to `insights_id`.
+- See also **[CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)** for ingest.
+
+## Config (defaults from `src/config.ts`)
 
 | Variable | Default |
 |----------|---------|
 | `MIMIC_IMAGE_ENABLED` | `false` |
-| `MIMIC_IMAGE_PROVIDER` | `openai` (`nvidia` → Qwen image edit on NVIDIA NIM) |
-| `OPENAI_IMAGE_MODEL` | `gpt-image-1` |
-| `MIMIC_IMAGE_NVIDIA_MODEL` | `qwen/qwen-image-edit` |
-| `MIMIC_IMAGE_INPUT_FIDELITY` | `high` (OpenAI only) |
-| `MIMIC_IMAGE_QUALITY` | `high` (OpenAI only) |
+| `MIMIC_IMAGE_PROVIDER` | `bfl` |
+| `MIMIC_IMAGE_BFL_MODEL` | `flux-2-klein-4b` |
+| `MIMIC_VISUAL_SIMILARITY_PCT` | `70` |
+| `MIMIC_IMAGE_INPUT_MODE` | `reference_edit` (`analysis_t2i` = Flux T2I prompts) |
 | `MIMIC_IMAGE_DEFAULT_SIZE` | `1024x1536` |
+| `CAROUSEL_COMPOSITE_ENABLED` | `true` |
+
+Per-project overrides: `project_system_constraints.mimic_*` columns (migrations `066`–`069`).
+
+## Key modules
+
+| Area | Path |
+|------|------|
+| Prep / snapshot | `src/services/mimic-draft-prep.ts` |
+| Carousel render | `src/services/mimic-carousel-render.ts`, `mimic-image-job.ts` |
+| Image providers | `src/services/mimic-image-provider.ts` |
+| Payload types | `src/domain/mimic-payload.ts`, `mimic-carousel-package.ts` |
+| Pipeline hook | `src/services/job-pipeline.ts` |
+
+## Migrations
+
+`060`–`069` — flow types, prompts, copy rules, grounding, BFL model, render settings, image input mode.

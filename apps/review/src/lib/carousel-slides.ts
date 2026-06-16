@@ -271,7 +271,16 @@ export function mimicTextBlockDisplayText(block: MimicTextBlock, projectHandle: 
 }
 
 /** Human label for a mimic text block in the review editor (OCR role when available). */
-export function mimicTextBlockEditorLabel(block: MimicTextBlock, index: number, total: number): string {
+export function mimicTextBlockEditorLabel(
+  block: MimicTextBlock,
+  index: number,
+  total: number,
+  opts?: { fullBleed?: boolean }
+): string {
+  if (opts?.fullBleed) {
+    if (block.role === "handle" || looksLikeHandleLine(block.text)) return "Handle";
+    return total <= 1 ? "Text" : `Box ${index + 1}`;
+  }
   if (block.role === "handle" || looksLikeHandleLine(block.text)) return "Handle";
   if (isHeadlineRoleToken(block.role)) return "Headline";
   const ocrRole = String(block.role ?? "body").trim().toLowerCase();

@@ -45,6 +45,8 @@ QC can short-circuit: **`routeJobAfterQc`** maps **`DISCARD`** → **`REJECTED`*
 
 Video jobs may stay **`RENDERING`** for a long time while HeyGen/Sora poll; **`RenderNotReadyError`** keeps status **`RENDERING`** for retry.
 
+**Top-performer mimic jobs** (`FLOW_TOP_PERFORMER_MIMIC_*`) follow the same status enum. Mimic prep may run during **GENERATING** (reference resolve before copy); render produces assets then lands in **`IN_REVIEW`** like other carousel/image jobs. See **[MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md)**.
+
 ## Editorial decision (human)
 
 Stored in **`caf_core.editorial_reviews`**; **`decision`** is one of:
@@ -77,4 +79,5 @@ Applied via review endpoints that update **`content_jobs.status`** to match.
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — abbreviated lifecycle
 - [layers/job-pipeline.md](./layers/job-pipeline.md) — execution layer
+- [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md) — mimic job path
 - [.cursor/rules/caf-domain-model.mdc](../.cursor/rules/caf-domain-model.mdc) — ID conventions

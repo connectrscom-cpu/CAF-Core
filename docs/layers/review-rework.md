@@ -15,6 +15,7 @@
 ## Review app
 
 - **`apps/review`** — Next.js; **proxies** Core (**`caf-core-client.ts`**). **Source of truth remains Postgres via Core**, not the Review DB.
+- **Mimic carousel jobs** — `MimicCarouselEdits`, DocAI layer editor, mimic mode overrides on signal packs (`/api/pipeline/signal-packs/.../mimic-mode-override`). See **[../MIMIC_IMAGE_FLOWS.md](../MIMIC_IMAGE_FLOWS.md)**.
 
 ## Inputs
 

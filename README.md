@@ -19,6 +19,9 @@ CAF (Content Automation Framework) is a **content operating system**: **signals 
 | **[docs/RISK_RULES.md](docs/RISK_RULES.md)** | `risk_policies` vs project `risk_rules` vs brand bans |
 | **[AGENTS.md](AGENTS.md)** | Onboarding for **AI assistants** and contributors (invariants, “where to change what”) |
 | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | HTTP request/response examples |
+| [docs/MIMIC_FLOWS_COMPLETE_GUIDE.md](docs/MIMIC_FLOWS_COMPLETE_GUIDE.md) | **Top-performer mimic** flows (image + carousel) — full guide; PDF alongside |
+| [docs/MIMIC_IMAGE_FLOWS.md](docs/MIMIC_IMAGE_FLOWS.md) | Mimic quick reference (operator checklist) |
+| [docs/CREATIVE_INTELLIGENCE.md](docs/CREATIVE_INTELLIGENCE.md) | Top-performer ingest, vision analysis, signal-pack styling |
 | [docs/USER_INPUT_AND_SECRETS.md](docs/USER_INPUT_AND_SECRETS.md) | Safety and secrets |
 | [ENV_AND_SECRETS_INVENTORY.md](ENV_AND_SECRETS_INVENTORY.md) | Environment variable list |
 
@@ -188,6 +191,9 @@ Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applica
 | `AGENTS.md` | AI agents: invariants, file map, commands (see also `.cursor/rules/`) |
 | `docs/API_REFERENCE.md` | HTTP examples for major `/v1/...` bodies |
 | `docs/VIDEO_FLOWS.md` | Video flow behavior and options |
+| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Top-performer mimic (full guide + PDF) |
+| `docs/MIMIC_IMAGE_FLOWS.md` | Mimic operator quick reference |
+| `docs/CREATIVE_INTELLIGENCE.md` | Top-performer ingest and styling cues |
 | `docs/HEYGEN_API_V3.md` | HeyGen v3 integration notes |
 | `docs/FLY_PRODUCTION_CHECKLIST.md` | Production deploy checklist |
 | `docs/USER_INPUT_AND_SECRETS.md` | Safety / secrets guidance |

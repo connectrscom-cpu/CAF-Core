@@ -57,6 +57,8 @@ export interface CarouselSliderProps {
   onCurrentSlideChange?: (slideIndex1Based: number) => void;
   /** Optional panel rendered beside the carousel (e.g. mimic layer editor). */
   copySidePanel?: ReactNode;
+  /** Optional panel rendered beside the slide preview (e.g. caption editor) to fill dead space. */
+  previewSidePanel?: ReactNode;
   /** When true, show expanded copy fields for mimic carousel editing. */
   mimicCopyEditor?: boolean;
   /** When set, carousel navigation follows this 1-based slide index (e.g. from layout editor). */
@@ -76,6 +78,10 @@ export interface CarouselSliderProps {
   regenerateSlideBusy?: boolean;
   /** template_bg listicle — headline/body fields instead of OCR clusters. */
   mimicTemplateBg?: boolean;
+  /** Full-bleed mimic: layout boxes drive left-column text fields (1:1 with editor). */
+  mimicFullBleed?: boolean;
+  mimicLayoutTextBlocks?: Array<{ role: string; text: string }>;
+  onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
 }
 
 export function CarouselSlider({
@@ -91,6 +97,7 @@ export function CarouselSlider({
   onSpokenScriptChange,
   onCurrentSlideChange,
   copySidePanel,
+  previewSidePanel,
   mimicCopyEditor = false,
   activeSlideIndex,
   referenceSlideUrl,
@@ -103,43 +110,73 @@ export function CarouselSlider({
   onRegenerateSlide,
   regenerateSlideBusy = false,
   mimicTemplateBg = false,
+  mimicFullBleed = false,
+  mimicLayoutTextBlocks,
+  onMimicLayoutTextBlockChange,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
-  const [currentIndex, setCurrentIndex] = useState(0);
+  // Slide index is controlled by the parent (single source of truth) whenever
+  // `activeSlideIndex` is supplied. Internal state is only the uncontrolled fallback.
+  const isSlideControlled = activeSlideIndex != null;
+  const [internalIndex, setInternalIndex] = useState(0);
+  const currentIndex = isSlideControlled
+    ? Math.max(0, Math.min(Math.max(0, slides.length - 1), (activeSlideIndex as number) - 1))
+    : Math.min(internalIndex, Math.max(0, slides.length - 1));
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveErr, setLiveErr] = useState<string | null>(null);
   const touchStartX = useRef<number | null>(null);
-  const syncingSlideFromParentRef = useRef(false);
   const onCurrentSlideChangeRef = useRef(onCurrentSlideChange);
   onCurrentSlideChangeRef.current = onCurrentSlideChange;
 
   const slidesKey = useMemo(() => JSON.stringify(slides), [slides]);
 
+  // Navigate: when controlled, only request the change upward; the new value flows
+  // back through `activeSlideIndex`. This one-directional flow removes the ping-pong.
+  const goToIndex = useCallback(
+    (i: number) => {
+      const clamped = Math.max(0, Math.min(Math.max(0, slides.length - 1), i));
+      if (!isSlideControlled) setInternalIndex(clamped);
+      onCurrentSlideChangeRef.current?.(clamped + 1);
+    },
+    [isSlideControlled, slides.length]
+  );
+
   useEffect(() => {
     setSlides(initialSlides);
-    setCurrentIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
+    setInternalIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
     setSavedAt(null);
   }, [initialSlides]);
 
-  useEffect(() => {
-    if (syncingSlideFromParentRef.current) {
-      syncingSlideFromParentRef.current = false;
-      return;
-    }
-    onCurrentSlideChangeRef.current?.(currentIndex + 1);
-  }, [currentIndex]);
-
-  useEffect(() => {
-    if (activeSlideIndex == null || slides.length === 0) return;
-    const idx = Math.max(0, Math.min(slides.length - 1, activeSlideIndex - 1));
-    setCurrentIndex((cur) => {
-      if (cur === idx) return cur;
-      syncingSlideFromParentRef.current = true;
-      return idx;
-    });
-  }, [activeSlideIndex, slides.length]);
+  // Resizable split between the "Text blocks" column and the "Text layout" panel.
+  const SPLIT_KEY = "caf.mimicEditSplit";
+  const [splitLeft, setSplitLeft] = useState<number>(() => {
+    if (typeof window === "undefined") return 0.34;
+    const saved = Number(window.localStorage.getItem(SPLIT_KEY));
+    return Number.isFinite(saved) && saved >= 0.18 && saved <= 0.7 ? saved : 0.34;
+  });
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+  const splitDraggingRef = useRef(false);
+  const onSplitPointerDown = useCallback((e: React.PointerEvent) => {
+    splitDraggingRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+  const onSplitPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!splitDraggingRef.current || !splitContainerRef.current) return;
+    const rect = splitContainerRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const frac = (e.clientX - rect.left) / rect.width;
+    setSplitLeft(Math.min(0.7, Math.max(0.18, frac)));
+  }, []);
+  const onSplitPointerUp = useCallback(
+    (e: React.PointerEvent) => {
+      splitDraggingRef.current = false;
+      e.currentTarget.releasePointerCapture(e.pointerId);
+      if (typeof window !== "undefined") window.localStorage.setItem(SPLIT_KEY, String(splitLeft));
+    },
+    [splitLeft]
+  );
 
   useEffect(() => {
     if (heyGenVideoMode || readOnly || !livePreview?.template) {
@@ -237,13 +274,20 @@ export function CarouselSlider({
 
   const updateMimicTextBlock = useCallback(
     (slideIndex: number, blockIndex: number, text: string) => {
+      if (mimicFullBleed && onMimicLayoutTextBlockChange) {
+        onMimicLayoutTextBlockChange(blockIndex, text);
+      } else if (mimicTemplateBg && onMimicLayoutTextBlockChange && mimicLayoutTextBlocks?.length) {
+        onMimicLayoutTextBlockChange(blockIndex, text);
+      }
       setSavedAt(null);
       setSlides((prev) => {
         const next = prev.map((s, i) => {
           if (i !== slideIndex) return s;
-          const blocks = resolveMimicTextBlocksForSlide(s).map((b, bi) =>
-            bi === blockIndex ? { ...b, text } : b
-          );
+          const blocks = (
+            mimicFullBleed && mimicLayoutTextBlocks?.length
+              ? mimicLayoutTextBlocks
+              : resolveMimicTextBlocksForSlide(s)
+          ).map((b, bi) => (bi === blockIndex ? { ...b, text } : b));
           const fields = mimicSlideFieldsFromTextBlocks(blocks);
           return {
             ...s,
@@ -257,7 +301,7 @@ export function CarouselSlider({
         return next;
       });
     },
-    [onSlidesChange]
+    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, mimicLayoutTextBlocks, onSlidesChange]
   );
 
   const updateMimicTemplateBgField = useCallback(
@@ -281,8 +325,8 @@ export function CarouselSlider({
     setSavedAt(currentIndex);
   }, [currentIndex, onSlidesChange, slides]);
 
-  const goPrev = useCallback(() => setCurrentIndex((i) => Math.max(0, i - 1)), []);
-  const goNext = useCallback(() => setCurrentIndex((i) => Math.min(initialSlides.length - 1, i + 1)), [initialSlides.length]);
+  const goPrev = useCallback(() => goToIndex(currentIndex - 1), [goToIndex, currentIndex]);
+  const goNext = useCallback(() => goToIndex(currentIndex + 1), [goToIndex, currentIndex]);
 
   const onTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.targetTouches[0].clientX;
@@ -306,10 +350,18 @@ export function CarouselSlider({
         : [],
     [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]
   );
-  const mimicTextBlocks = useMemo(
-    () => (mimicCopyEditor && !mimicTemplateBg ? resolveMimicTextBlocksForSlide(slide) : []),
-    [mimicCopyEditor, mimicTemplateBg, slide]
-  );
+  const mimicTextBlocks = useMemo(() => {
+    if (!mimicCopyEditor || mimicTemplateBg) {
+      if (mimicCopyEditor && mimicTemplateBg && mimicLayoutTextBlocks?.length) {
+        return mimicLayoutTextBlocks.map((b) => ({ role: b.role || "body", text: b.text }));
+      }
+      return [];
+    }
+    if (mimicFullBleed && mimicLayoutTextBlocks?.length) {
+      return mimicLayoutTextBlocks.map((b) => ({ role: b.role || "body", text: b.text }));
+    }
+    return resolveMimicTextBlocksForSlide(slide);
+  }, [mimicCopyEditor, mimicTemplateBg, mimicFullBleed, mimicLayoutTextBlocks, slide]);
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
@@ -331,25 +383,11 @@ export function CarouselSlider({
 
   return (
     <div className={`card ${className ?? ""}${mimicCopyEditor ? " mimic-carousel-review" : ""}`}>
-      {mimicCopyEditor ? (
-        <div className="mimic-caption-bar">
-          <label className="filter-label">Post caption</label>
-          <textarea
-            value={caption}
-            onChange={(e) => onCaptionChange?.(e.target.value)}
-            placeholder="No caption on this job yet"
-            rows={2}
-            readOnly={!onCaptionChange}
-            className="mimic-caption-bar__input"
-          />
-        </div>
-      ) : null}
-
-      <div className="flex items-center justify-between mb-3 mimic-carousel-review__header">
+      <div className="flex items-center justify-between mimic-carousel-review__header">
         <h3 style={{ fontSize: 13, fontWeight: 600 }}>{heyGenVideoMode ? "Video preview" : "Carousel slides"}</h3>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
-          {mimicCopyEditor && onRegenerateSlide ? (
+          {mimicCopyEditor && onRegenerateSlide && !copySidePanel ? (
             <button
               type="button"
               className="btn-secondary btn-sm"
@@ -359,7 +397,7 @@ export function CarouselSlider({
               {regenerateSlideBusy ? "Regenerating…" : "Regenerate"}
             </button>
           ) : null}
-          {mimicCopyEditor && onDeleteSlide && total > 1 ? (
+          {mimicCopyEditor && onDeleteSlide && total > 1 && !copySidePanel ? (
             <button type="button" className="btn-danger-ghost btn-sm" onClick={onDeleteSlide}>
               Delete slide
             </button>
@@ -367,6 +405,7 @@ export function CarouselSlider({
         </div>
       </div>
 
+      <div className={previewSidePanel ? "mimic-preview-row" : undefined}>
       <div className={`flex items-center gap-2${mimicCopyEditor ? " mimic-compare-row" : ""}`} style={{ marginBottom: 12 }}>
         <button
           type="button"
@@ -395,14 +434,14 @@ export function CarouselSlider({
             alignItems: "center",
             justifyContent: "center",
             ...(mimicCopyEditor && referenceSlideUrl?.trim()
-              ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1, background: "var(--border)" }
+              ? { display: "grid", gridTemplateColumns: "minmax(0, 0.38fr) minmax(0, 0.62fr)", gap: 1, background: "var(--border)" }
               : {}),
           }}
           onTouchStart={onTouchStart}
           onTouchEnd={onTouchEnd}
         >
           {mimicCopyEditor && referenceSlideUrl?.trim() ? (
-            <div className="mimic-compare-pane">
+            <div className="mimic-compare-pane mimic-compare-pane--original">
               <span className="mimic-compare-pane__label">Original</span>
               <img
                 src={referenceSlideUrl}
@@ -413,7 +452,14 @@ export function CarouselSlider({
               />
             </div>
           ) : null}
-          <div className={mimicCopyEditor && referenceSlideUrl?.trim() ? "mimic-compare-pane" : undefined} style={mimicCopyEditor && referenceSlideUrl?.trim() ? { display: "flex", flexDirection: "column", minHeight: 0 } : undefined}>
+          <div
+            className={
+              mimicCopyEditor && referenceSlideUrl?.trim()
+                ? "mimic-compare-pane mimic-compare-pane--generated"
+                : undefined
+            }
+            style={mimicCopyEditor && referenceSlideUrl?.trim() ? { display: "flex", flexDirection: "column", minHeight: 0 } : undefined}
+          >
             {mimicCopyEditor && referenceSlideUrl?.trim() ? (
               <span className="mimic-compare-pane__label">Generated</span>
             ) : null}
@@ -468,6 +514,8 @@ export function CarouselSlider({
           &#8250;
         </button>
       </div>
+        {previewSidePanel ? <div className="mimic-preview-side">{previewSidePanel}</div> : null}
+      </div>
       {!heyGenVideoMode && livePreview?.template && (
         <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
           {liveBusy
@@ -481,12 +529,21 @@ export function CarouselSlider({
       )}
 
       {!readOnly && !heyGenVideoMode && (
-        <div className={copySidePanel ? "carousel-edit-split" : undefined} style={{ marginBottom: 12 }}>
+        <div
+          ref={splitContainerRef}
+          className={copySidePanel ? "carousel-edit-split" : undefined}
+          style={{
+            marginBottom: 8,
+            ...(copySidePanel
+              ? { gridTemplateColumns: `minmax(0, ${splitLeft}fr) 10px minmax(0, ${1 - splitLeft}fr)` }
+              : {}),
+          }}
+        >
           <div
             className="carousel-edit-copy"
-            style={{ padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
+            style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
           >
-          {mimicCopyEditor && mimicTemplateBg ? (
+          {mimicCopyEditor && mimicTemplateBg && mimicTextBlocks.length === 0 ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Slide copy</label>
               <p className="mimic-text-blocks__hint">
@@ -532,17 +589,15 @@ export function CarouselSlider({
                 })}
               </div>
             </div>
-          ) : mimicCopyEditor ? (
+          ) : mimicCopyEditor && (mimicFullBleed || mimicTemplateBg || mimicTextBlocks.length > 0) ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
-              <p className="mimic-text-blocks__hint">
-                One field per OCR copy cluster — synced to layout boxes below.
-              </p>
               <div className="mimic-text-blocks__list">
                 {mimicTextBlocks.map((block, bi) => {
                   const isHandle = isMimicHandleTextBlock(block);
                   const displayText = mimicTextBlockDisplayText(block, projectHandle);
                   const linked = activeTextBlockIndex === bi;
+                  const useNeutralLabels = mimicFullBleed || mimicTemplateBg;
                   return (
                   <div
                     key={bi}
@@ -550,17 +605,13 @@ export function CarouselSlider({
                     onClick={() => onActiveTextBlockIndexChange?.(bi)}
                   >
                     <label className="filter-label mimic-text-block-field__label">
-                      <span>{mimicTextBlockEditorLabel(block, bi, mimicTextBlocks.length)}</span>
-                      <span className="mimic-text-block-field__meta">
-                        Box {bi + 1}
-                        {block.role && block.role !== "body" ? ` · ${block.role}` : ""}
-                      </span>
+                      <span>{mimicTextBlockEditorLabel(block, bi, mimicTextBlocks.length, { fullBleed: useNeutralLabels })}</span>
                     </label>
                     <textarea
-                      value={isHandle ? displayText : block.text}
-                      readOnly={isHandle && Boolean(projectHandle.trim())}
+                      value={isHandle && projectHandle.trim() && !mimicTemplateBg ? displayText : block.text}
+                      readOnly={isHandle && Boolean(projectHandle.trim()) && !mimicTemplateBg}
                       onChange={(e) => {
-                        if (isHandle && projectHandle.trim()) return;
+                        if (isHandle && projectHandle.trim() && !mimicTemplateBg) return;
                         updateMimicTextBlock(currentIndex, bi, e.target.value);
                       }}
                       rows={Math.min(4, Math.max(2, (isHandle ? displayText : block.text).split("\n").length))}
@@ -568,7 +619,7 @@ export function CarouselSlider({
                       className="mimic-text-block-field__input"
                       onFocus={() => onActiveTextBlockIndexChange?.(bi)}
                     />
-                    {isHandle ? (
+                    {isHandle && projectHandle.trim() && !mimicTemplateBg ? (
                       <p className="mimic-text-block-field__note">
                         Always prints project handle on reprint
                       </p>
@@ -578,6 +629,8 @@ export function CarouselSlider({
                 })}
               </div>
             </div>
+          ) : mimicCopyEditor ? (
+            <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>Loading text boxes…</p>
           ) : (
             <>
           {(slide.type === "cover" || slide.type === "body") && (
@@ -792,7 +845,22 @@ export function CarouselSlider({
             {savedAt === currentIndex ? "Saved" : "Save slide"}
           </button>
           </div>
-          {copySidePanel ? <div className="carousel-edit-side-panel">{copySidePanel}</div> : null}
+          {copySidePanel ? (
+            <>
+              <div
+                className="carousel-edit-split__handle"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize text panels"
+                onPointerDown={onSplitPointerDown}
+                onPointerMove={onSplitPointerMove}
+                onPointerUp={onSplitPointerUp}
+              >
+                <span className="carousel-edit-split__grip" aria-hidden />
+              </div>
+              <div className="carousel-edit-side-panel">{copySidePanel}</div>
+            </>
+          ) : null}
         </div>
       )}
 
@@ -844,7 +912,7 @@ export function CarouselSlider({
               key={i}
               type="button"
               aria-label={`Go to slide ${i + 1}`}
-              onClick={() => setCurrentIndex(i)}
+              onClick={() => goToIndex(i)}
               style={{
                 width: 8, height: 8, borderRadius: "50%", padding: 0, border: "none",
                 background: i === currentIndex ? "var(--accent)" : "rgba(255,255,255,0.3)",

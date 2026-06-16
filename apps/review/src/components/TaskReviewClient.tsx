@@ -30,6 +30,7 @@ import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isCarouselFlow, isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
+import { JobInfoBar } from "@/components/JobInfoBar";
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow } from "@/lib/flow-kind";
@@ -112,6 +113,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
   const [viewerSlideIndex, setViewerSlideIndex] = useState(1);
   const [activeTextBlockIndex, setActiveTextBlockIndex] = useState<number | null>(null);
+  const [mimicLayoutTextBlocks, setMimicLayoutTextBlocks] = useState<Array<{ role: string; text: string }>>([]);
+  const mimicTextBlockUpdaterRef = useRef<((blockIndex: number, text: string) => void) | null>(null);
   const [regenerateSlideBusy, setRegenerateSlideBusy] = useState(false);
   const [editedCaption, setEditedCaption] = useState("");
   const [editedTitle, setEditedTitle] = useState("");
@@ -248,7 +251,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         fetch(`/api/task/assets?${qs}`),
       ]);
       if (taskRes.status === 404) {
-        setError("Task not found");
+        setError("Job not found");
         setData(null);
         setTaskAssets([]);
         return;
@@ -413,6 +416,54 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       }
     };
     run();
+    return () => {
+      cancelled = true;
+    };
+  }, [data?.project, projectFromUrl]);
+
+  // Brand palette swatches + logo for the mimic text editor (1.5).
+  const [brandPalette, setBrandPalette] = useState<string[]>([]);
+  const [brandLogoUrl, setBrandLogoUrl] = useState<string>("");
+  useEffect(() => {
+    const slug = (data?.project ?? projectFromUrl ?? "").trim();
+    if (!slug) {
+      setBrandPalette([]);
+      setBrandLogoUrl("");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/project-config/brand-assets?project=${encodeURIComponent(slug)}`, {
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          brand_assets?: Array<{ kind?: string; public_url?: string | null; metadata_json?: Record<string, unknown> }>;
+        };
+        if (cancelled) return;
+        const assets = Array.isArray(json.brand_assets) ? json.brand_assets : [];
+        const colors: string[] = [];
+        for (const a of assets) {
+          if (a.kind !== "palette") continue;
+          const raw = a.metadata_json?.colors;
+          if (Array.isArray(raw)) {
+            for (const c of raw) {
+              const hex = typeof c === "string" ? c.trim() : "";
+              if (/^#[0-9a-fA-F]{3,8}$/.test(hex) && !colors.includes(hex)) colors.push(hex);
+            }
+          }
+        }
+        setBrandPalette(colors.slice(0, 12));
+        const logo = assets.find((a) => a.kind === "logo" && typeof a.public_url === "string" && a.public_url.trim());
+        setBrandLogoUrl(logo?.public_url?.trim() ?? "");
+      } catch {
+        if (!cancelled) {
+          setBrandPalette([]);
+          setBrandLogoUrl("");
+        }
+      }
+    })();
     return () => {
       cancelled = true;
     };
@@ -643,6 +694,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   useEffect(() => {
     setActiveTextBlockIndex(null);
+    setMimicLayoutTextBlocks([]);
   }, [viewerSlideIndex]);
 
   const handleDeleteMimicSlide = useCallback((slideIndex1Based: number) => {
@@ -998,10 +1050,25 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               carouselActiveSlideIndex={mimicCarouselFlow ? viewerSlideIndex : undefined}
               referenceSlideUrl={mimicCarouselFlow ? mimicReferenceUrlForViewer : undefined}
               projectHandle={mimicCarouselFlow ? instagramHandleForPreview : undefined}
-              caption={mimicCarouselFlow ? editedCaption : undefined}
-              onCaptionChange={mimicCarouselFlow ? setEditedCaption : undefined}
               activeTextBlockIndex={mimicCarouselFlow ? activeTextBlockIndex : undefined}
               onActiveTextBlockIndexChange={mimicCarouselFlow ? setActiveTextBlockIndex : undefined}
+              mimicFullBleed={mimicCarouselFlow && !mimicTemplateBg}
+              mimicLayoutTextBlocks={mimicCarouselFlow ? mimicLayoutTextBlocks : undefined}
+              onMimicLayoutTextBlockChange={
+                mimicCarouselFlow
+                  ? (blockIndex, text) => mimicTextBlockUpdaterRef.current?.(blockIndex, text)
+                  : undefined
+              }
+              carouselPreviewSidePanel={
+                mimicCarouselFlow ? (
+                  <MimicCarouselEdits
+                    caption={editedCaption}
+                    onCaptionChange={setEditedCaption}
+                    hashtags={editedHashtags}
+                    onHashtagsChange={setEditedHashtags}
+                  />
+                ) : undefined
+              }
               onDeleteSlide={mimicCarouselFlow ? handleDeleteMimicSlide : undefined}
               onRegenerateSlide={mimicCarouselFlow ? handleRegenerateMimicSlide : undefined}
               regenerateSlideBusy={mimicCarouselFlow ? regenerateSlideBusy : undefined}
@@ -1029,90 +1096,60 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     onDeleteSlide={handleDeleteMimicSlide}
                     activeTextBlockIndex={activeTextBlockIndex}
                     onActiveTextBlockIndexChange={setActiveTextBlockIndex}
+                    fullBleedMode={!mimicTemplateBg}
+                    brandPalette={brandPalette}
+                    brandLogoUrl={brandLogoUrl}
+                    onLayoutTextBlocksChange={(_slide, blocks) => {
+                      setMimicLayoutTextBlocks(blocks.map((b) => ({ role: b.role, text: b.text })));
+                    }}
+                    registerTextBlockUpdater={(fn) => {
+                      mimicTextBlockUpdaterRef.current = fn;
+                    }}
                   />
                 ) : undefined
               }
             />
 
-            <div className="card mt-4 surface-teal">
-              <div className="card-header">Task Info</div>
-              <div className="info-row"><span className="info-label">Task ID</span><span className="info-value font-mono">{execTaskId}</span></div>
-              {(data.project ?? "").trim() && (
-                <div className="info-row"><span className="info-label">Project</span><span className="info-value">{(data.project ?? "").trim()}</span></div>
-              )}
-              <div className="info-row"><span className="info-label">Platform</span><span className="info-value">{data.platform || "—"}</span></div>
-              <div className="info-row"><span className="info-label">Flow type</span><span className="info-value">{data.flow_type || "—"}</span></div>
-              <div className="info-row"><span className="info-label">Route</span><span className="info-value">{data.recommended_route || "—"}</span></div>
-              <div className="info-row"><span className="info-label">Run ID</span><span className="info-value">{runId || "—"}</span></div>
-              <div className="info-row"><span className="info-label">Risk</span><span className="info-value">{data.risk_score || "—"}</span></div>
-              <div className="info-row"><span className="info-label">QC</span><span className="info-value">{data.qc_status || "—"}</span></div>
-              {textOverlayReprintBanner ? (
-                <div className="info-row">
-                  <span className="info-label">Text reprint</span>
-                  <span className="info-value">{textOverlayReprintBanner}</span>
-                </div>
-              ) : null}
-              {(data.overrides_from_last_review ?? "").trim() !== "" && (
-                <div className="info-row">
-                  <span className="info-label">Stored overrides</span>
-                  <span className="info-value" title="Fields with text on the latest NEEDS_EDIT row">
-                    {(data.overrides_from_last_review ?? "").trim()}
-                  </span>
-                </div>
-              )}
-              {(data.latest_rejection_tags ?? "").trim() !== "" && (
-                <div className="info-row">
-                  <span className="info-label">Last issue tags</span>
-                  <span className="info-value font-mono" style={{ fontSize: 12 }}>
-                    {(data.latest_rejection_tags ?? "").trim()}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {mimicCarouselFlow && fullJob ? (
-              <details className="mimic-inspect-details mt-4">
-                <summary className="mimic-inspect-details__summary">Advanced — mimic package inspect</summary>
-                <MimicCarouselInspectPanel
-                  job={fullJob}
-                  taskId={execTaskId}
-                  projectSlug={(data.project ?? projectFromUrl).trim()}
-                  slideCount={editedSlides.length}
-                  activeSlideIndex={viewerSlideIndex}
-                  onInspectSlideChange={setViewerSlideIndex}
-                  template={mimicCarouselInspectContext?.template ?? carouselTemplate}
-                  instagramHandle={instagramHandleForPreview}
-                  buildInspectPayload={
-                    mimicCarouselInspectContext?.getPayload ?? carouselLivePreview?.getPayload
-                  }
-                  getBackgroundUrl={
-                    mimicCarouselInspectContext?.getBackgroundUrl ?? carouselLivePreview?.getBackgroundUrl
-                  }
-                />
-              </details>
-            ) : null}
-
-            <div className="card mt-4 surface-purple">
-              <div className="card-header">Upstream lineage (inspect fields)</div>
-              <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--fg-secondary)" }}>
-                Run → Signal pack → Idea → Grounding insights → Evidence rows.
-              </p>
-              <details style={{ marginTop: 10, fontSize: 13 }}>
-                <summary style={{ cursor: "pointer", color: "var(--fg-secondary)" }}>
-                  {upstreamLineage ? "Show lineage JSON" : "No lineage loaded"}
-                </summary>
-                <pre className="slides-json" style={{ marginTop: 8 }}>
-                  {JSON.stringify(upstreamLineage, null, 2)}
-                </pre>
-              </details>
-            </div>
-
             <div className="mt-4">
-              <InspectValidationJson job={fullJob} />
+              <JobInfoBar
+                jobId={execTaskId}
+                projectSlug={(data.project ?? "").trim()}
+                platform={data.platform || undefined}
+                flowType={data.flow_type || undefined}
+                route={data.recommended_route || undefined}
+                runId={runId || undefined}
+                risk={data.risk_score || undefined}
+                qc={data.qc_status || undefined}
+                textReprint={textOverlayReprintBanner || undefined}
+                storedOverrides={(data.overrides_from_last_review ?? "").trim() || undefined}
+                lastIssueTags={(data.latest_rejection_tags ?? "").trim() || undefined}
+                lineage={upstreamLineage}
+                validationNode={<InspectValidationJson job={fullJob} />}
+                mimicInspectNode={
+                  mimicCarouselFlow && fullJob ? (
+                    <MimicCarouselInspectPanel
+                      job={fullJob}
+                      taskId={execTaskId}
+                      projectSlug={(data.project ?? projectFromUrl).trim()}
+                      slideCount={editedSlides.length}
+                      activeSlideIndex={viewerSlideIndex}
+                      onInspectSlideChange={setViewerSlideIndex}
+                      template={mimicCarouselInspectContext?.template ?? carouselTemplate}
+                      instagramHandle={instagramHandleForPreview}
+                      buildInspectPayload={
+                        mimicCarouselInspectContext?.getPayload ?? carouselLivePreview?.getPayload
+                      }
+                      getBackgroundUrl={
+                        mimicCarouselInspectContext?.getBackgroundUrl ?? carouselLivePreview?.getBackgroundUrl
+                      }
+                    />
+                  ) : undefined
+                }
+              />
             </div>
           </div>
 
-          <div className={mimicCarouselFlow ? "mimic-review-sidebar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className={mimicCarouselFlow ? "mimic-decision-bar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {heygenWorkbench && (
               <HeyGenReviewEdits
                 heygenAvatarId={heygenAvatarId}
@@ -1156,14 +1193,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 skipImageRegeneration={skipImageRegeneration}
                 onSkipImageRegenerationChange={setSkipImageRegeneration}
               />
-            ) : mimicCarouselFlow ? (
-              <MimicCarouselEdits
-                fontScale={fontScale}
-                onFontScaleChange={setFontScale}
-                hashtags={editedHashtags}
-                onHashtagsChange={setEditedHashtags}
-              />
-            ) : (
+            ) : mimicCarouselFlow ? null : (
               <CarouselEdits
                 taskId={execTaskId}
                 runId={runId || undefined}

@@ -21,6 +21,8 @@
 | **Admin** | `src/routes/admin.ts` |
 | **Renderer templates** (public GETs for workers) | `src/routes/renderer-templates.ts` |
 | **Integrations** | `src/routes/project-integrations.ts` |
+| **Creative intelligence** | `src/routes/creative-intelligence.ts` — top-performer ingest, styling merge |
+| **Mimic text overlay lab** | `src/routes/mimic-text-overlay-lab-routes.ts` (dev/ops) |
 
 ## Auth
 
@@ -43,4 +45,6 @@ None durable in the API process — all truth is **Postgres**.
 ## See also
 
 - [orchestration.md](./orchestration.md)
+- [../CREATIVE_INTELLIGENCE.md](../CREATIVE_INTELLIGENCE.md)
+- [../MIMIC_IMAGE_FLOWS.md](../MIMIC_IMAGE_FLOWS.md)
 - [../TECH_STACK.md](../TECH_STACK.md)

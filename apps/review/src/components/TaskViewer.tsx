@@ -34,6 +34,8 @@ export interface TaskViewerProps {
   onCarouselSlideChange?: (slideIndex1Based: number) => void;
   /** Right panel beside slide copy fields (mimic text layout editor). */
   carouselCopySidePanel?: ReactNode;
+  /** Panel beside the slide preview (e.g. caption editor) to fill dead space. */
+  carouselPreviewSidePanel?: ReactNode;
   /** Sync carousel slide when side panel changes slide (1-based). */
   carouselActiveSlideIndex?: number;
   /** Mimic: original reference frame URL for current slide. */
@@ -47,6 +49,9 @@ export interface TaskViewerProps {
   onRegenerateSlide?: (slideIndex1Based: number) => void;
   regenerateSlideBusy?: boolean;
   mimicTemplateBg?: boolean;
+  mimicFullBleed?: boolean;
+  mimicLayoutTextBlocks?: Array<{ role: string; text: string }>;
+  onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
 }
 
 export function TaskViewer({
@@ -63,6 +68,7 @@ export function TaskViewer({
   previewToolbar,
   onCarouselSlideChange,
   carouselCopySidePanel,
+  carouselPreviewSidePanel,
   carouselActiveSlideIndex,
   referenceSlideUrl,
   projectHandle,
@@ -74,6 +80,9 @@ export function TaskViewer({
   onRegenerateSlide,
   regenerateSlideBusy,
   mimicTemplateBg,
+  mimicFullBleed,
+  mimicLayoutTextBlocks,
+  onMimicLayoutTextBlockChange,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -191,6 +200,7 @@ export function TaskViewer({
           onSpokenScriptChange={heyGenVideoMode && !readOnly ? onSpokenScriptChange : undefined}
           onCurrentSlideChange={onCarouselSlideChange}
           copySidePanel={carouselCopySidePanel}
+          previewSidePanel={carouselPreviewSidePanel}
           mimicCopyEditor={Boolean(carouselCopySidePanel)}
           activeSlideIndex={carouselActiveSlideIndex}
           referenceSlideUrl={referenceSlideUrl}
@@ -203,6 +213,9 @@ export function TaskViewer({
           onRegenerateSlide={onRegenerateSlide ? () => onRegenerateSlide(carouselActiveSlideIndex ?? 1) : undefined}
           regenerateSlideBusy={regenerateSlideBusy}
           mimicTemplateBg={mimicTemplateBg}
+          mimicFullBleed={mimicFullBleed}
+          mimicLayoutTextBlocks={mimicLayoutTextBlocks}
+          onMimicLayoutTextBlockChange={onMimicLayoutTextBlockChange}
         />
       </div>
     );

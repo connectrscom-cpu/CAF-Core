@@ -27,6 +27,7 @@ What runs **in this repo**, what runs **beside** it, and how configuration ties 
 | Structured output | Prompt templates + **`output_schemas`** validation; tri-state rollout via **`CAF_OUTPUT_SCHEMA_VALIDATION_MODE`** (`skip` / `warn` / `enforce`) with legacy **`CAF_SKIP_OUTPUT_SCHEMA_VALIDATION`** as fallback |
 | Video clips (scene path) | **OpenAI Videos API** / Sora when **`SCENE_ASSEMBLY_CLIP_PROVIDER=sora`** (`src/config.ts`) |
 | Vision / approval review | Configurable model **`OPENAI_APPROVAL_REVIEW_MODEL`** |
+| Top-performer mimic render | **`MIMIC_IMAGE_PROVIDER`** (default **`bfl`**) — BFL FLUX, DashScope Qwen edit, NVIDIA NIM, or OpenAI `gpt-image-1`; gated by **`MIMIC_IMAGE_ENABLED`**. Copy for mimic jobs still uses OpenAI. See **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**. |
 
 ## Media & rendering (out-of-process services)
 
@@ -43,6 +44,9 @@ Core **calls** these over HTTP; it does not embed Puppeteer/ffmpeg for carousel/
 | Provider | Purpose | Env |
 |----------|---------|-----|
 | **HeyGen** | Avatar / video agent renders | **`HEYGEN_API_KEY`**, **`HEYGEN_API_BASE`** |
+| **BFL** | Mimic image edit (default provider) | **`BFL_API_KEY`**, **`MIMIC_IMAGE_BFL_MODEL`** |
+| **DashScope** | Mimic image edit (Alibaba) | **`DASHSCOPE_API_KEY`**, **`MIMIC_IMAGE_DASHSCOPE_MODEL`** |
+| **NVIDIA NIM** | Mimic Qwen image edit | **`NVIDIA_NIM_API_KEY`**, **`MIMIC_IMAGE_NVIDIA_MODEL`** |
 | **Supabase** | Object storage for assets | **`SUPABASE_URL`**, **`SUPABASE_SERVICE_ROLE_KEY`**, **`SUPABASE_ASSETS_BUCKET`** |
 | **Meta Graph** | Publishing when **`CAF_PUBLISH_EXECUTOR=meta`** | Page tokens + **`META_GRAPH_API_VERSION`** |
 
@@ -81,4 +85,5 @@ Core **calls** these over HTTP; it does not embed Puppeteer/ffmpeg for carousel/
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
 - [layers/http-api.md](./layers/http-api.md)
 - [layers/rendering.md](./layers/rendering.md)
+- [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)
 - `README.md` — quick start

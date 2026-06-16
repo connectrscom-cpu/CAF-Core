@@ -504,6 +504,7 @@ export async function reprintMimicTextOverlay(
     textBacking?: boolean;
     textBackingColor?: string;
     docaiLayerPositions?: Record<string, MimicDocAiLayerPositionRow[]>;
+    logoOverlay?: { url: string; position?: string };
   }
 ): Promise<ReprintTextOverlayResult> {
   const slug = projectSlug.trim();
@@ -526,6 +527,12 @@ export async function reprintMimicTextOverlay(
   }
   if (opts?.docaiLayerPositions && Object.keys(opts.docaiLayerPositions).length > 0) {
     body.docai_layer_positions = opts.docaiLayerPositions;
+  }
+  if (opts?.logoOverlay?.url?.trim()) {
+    body.logo_overlay = {
+      url: opts.logoOverlay.url.trim(),
+      position: opts.logoOverlay.position?.trim() || "br",
+    };
   }
   const base = CAF_CORE_URL.replace(/\/$/, "");
   const url = `${base}${path}`;
@@ -555,7 +562,8 @@ export type RegenerateCarouselSlidesResult = {
 export async function regenerateMimicCarouselSlides(
   projectSlug: string,
   taskId: string,
-  slideIndices: number[]
+  slideIndices: number[],
+  opts?: { visualSimilarityPct?: number; imageInputMode?: "reference_edit" | "analysis_t2i" }
 ): Promise<RegenerateCarouselSlidesResult> {
   const slug = projectSlug.trim();
   const tid = taskId.trim();
@@ -568,10 +576,17 @@ export async function regenerateMimicCarouselSlides(
     : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/regenerate-carousel-slides`;
   const base = CAF_CORE_URL.replace(/\/$/, "");
   const url = `${base}${path}`;
+  const reqBody: Record<string, unknown> = { slide_indices: indices };
+  if (typeof opts?.visualSimilarityPct === "number" && Number.isFinite(opts.visualSimilarityPct)) {
+    reqBody.visual_similarity_pct = Math.max(0, Math.min(100, Math.round(opts.visualSimilarityPct)));
+  }
+  if (opts?.imageInputMode === "reference_edit" || opts?.imageInputMode === "analysis_t2i") {
+    reqBody.image_input_mode = opts.imageInputMode;
+  }
   const res = await fetch(url, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({ slide_indices: indices }),
+    body: JSON.stringify(reqBody),
     cache: "no-store",
   });
   const json = (await res.json()) as RegenerateCarouselSlidesResult;

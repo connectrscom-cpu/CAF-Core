@@ -178,10 +178,31 @@ Fill in **outside** the repo (which spreadsheet belongs to which env).
 
 ---
 
-## 10. Duplicate reference
+## 10. CAF Core API — top-performer mimic (`src/config.ts`)
+
+Set on the **Core** host (repo root `.env` / Fly secrets). Copy generation requires **`OPENAI_API_KEY`** even when render uses BFL/DashScope/NVIDIA.
+
+| Variable | Secret? | Default | Purpose |
+|----------|---------|---------|---------|
+| `MIMIC_IMAGE_ENABLED` | no | `false` | Master switch for mimic draft/render |
+| `MIMIC_IMAGE_PROVIDER` | no | `bfl` | `bfl` \| `dashscope` \| `nvidia` \| `openai` |
+| `BFL_API_KEY` | **yes** | — | BFL FLUX edits when provider=`bfl` |
+| `DASHSCOPE_API_KEY` | **yes** | — | Alibaba Qwen edit when provider=`dashscope` |
+| `NVIDIA_NIM_API_KEY` | **yes** | — | NIM Qwen edit when provider=`nvidia` |
+| `MIMIC_IMAGE_BFL_MODEL` | no | `flux-2-klein-4b` | BFL model slug |
+| `MIMIC_VISUAL_SIMILARITY_PCT` | no | `70` | Reference-edit fidelity hint |
+| `MIMIC_IMAGE_INPUT_MODE` | no | `reference_edit` | `reference_edit` or `analysis_t2i` |
+| `MIMIC_IMAGE_DEFAULT_SIZE` | no | `1024x1536` | Output dimensions |
+| `LLM_MIMIC_*_MAX_CHARS` | no | see `.env.example` | Mimic prompt context caps |
+
+Full list: **`.env.example`** (comments) and **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`** §13.
+
+---
+
+## 11. Duplicate reference
 
 Canonical **comments** for many Next.js vars also live in **`.env.example`** at the repo root. Prefer updating **`.env.example`** when adding new app-level vars, and add a row here in the matching section.
 
 ---
 
-*Inventory version: aligned with repo scan 2026-04-05. Update when new `process.env.*` appears in code.*
+*Inventory version: aligned with repo scan 2026-06-15. Update when new `process.env.*` appears in code.*

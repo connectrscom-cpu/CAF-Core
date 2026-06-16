@@ -22,3 +22,5 @@ Cross-cutting topics:
 - [../QUALITY_CHECKS.md](../QUALITY_CHECKS.md) — QC checklists
 - [../GENERATION_GUIDANCE.md](../GENERATION_GUIDANCE.md) — prompt guidance
 - [../RISK_RULES.md](../RISK_RULES.md) — risk policies vs project risk rows
+- [../MIMIC_FLOWS_COMPLETE_GUIDE.md](../MIMIC_FLOWS_COMPLETE_GUIDE.md) — top-performer mimic flows
+- [../CREATIVE_INTELLIGENCE.md](../CREATIVE_INTELLIGENCE.md) — top-performer ingest upstream

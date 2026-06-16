@@ -353,17 +353,19 @@ export function DecisionPanel({
             </span>
           </label>
           <p className="decision-panel--mimic__regen-note">
-            For one slide now, use <strong>Regenerate image</strong> in the text layout panel (billed).
+            Per-slide regen is in the text layout panel.
           </p>
         </div>
       )}
 
       {hasEdits && (
         <div style={{ marginBottom: 14 }}>
-          <p style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
-            Approve is only for no edits. Use <strong>Needs Edit</strong> when you changed:
-          </p>
-          <p style={{ fontSize: 12, fontWeight: 600, color: "var(--yellow)", marginTop: 4 }}>
+          {!mimicReviewMode ? (
+            <p style={{ fontSize: 12, color: "var(--fg-secondary)" }}>
+              Approve is only for no edits. Use <strong>Needs Edit</strong> when you changed:
+            </p>
+          ) : null}
+          <p style={{ fontSize: 12, fontWeight: 600, color: "var(--yellow)", marginTop: mimicReviewMode ? 0 : 4 }}>
             {editsSummary.length > 0 ? editsSummary.join(" · ") : "—"}
           </p>
         </div>
@@ -490,21 +492,31 @@ export function DecisionPanel({
               style={{ marginTop: 3 }}
             />
             <span>
-              <strong>Rewrite copy (LLM)</strong> — let the language model produce new narrative copy on rework. Uncheck to
-              patch in your edited text only (override-only) when the pipeline allows it.
-              <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
-                Independent from <strong>Regenerate rendered assets</strong> above: this toggle does{" "}
-                <strong>not</strong> turn carousel PNGs or HeyGen on or off — use the regenerate checkbox for billed
-                renders.
-              </span>
-              {includeHeyGenFields ? (
-                <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 4 }}>
-                  For HeyGen: uncheck to drive re-render from your script / avatar / voice edits without a full LLM rewrite.
-                </span>
+              <strong>Rewrite copy (LLM)</strong>
+              {mimicReviewMode ? (
+                <> — let the model rewrite narrative on rework. Uncheck to keep your edited text.</>
               ) : (
-                <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 4 }}>
-                  If checked while override-only is possible, the model may still run but can be instructed to keep your text verbatim.
-                </span>
+                <>
+                  {" "}
+                  — let the language model produce new narrative copy on rework. Uncheck to patch in your edited text
+                  only (override-only) when the pipeline allows it.
+                  <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 6 }}>
+                    Independent from <strong>Regenerate rendered assets</strong> above: this toggle does{" "}
+                    <strong>not</strong> turn carousel PNGs or HeyGen on or off — use the regenerate checkbox for billed
+                    renders.
+                  </span>
+                  {includeHeyGenFields ? (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 4 }}>
+                      For HeyGen: uncheck to drive re-render from your script / avatar / voice edits without a full LLM
+                      rewrite.
+                    </span>
+                  ) : (
+                    <span style={{ display: "block", fontSize: 12, color: "var(--fg-secondary)", marginTop: 4 }}>
+                      If checked while override-only is possible, the model may still run but can be instructed to keep
+                      your text verbatim.
+                    </span>
+                  )}
+                </>
               )}
             </span>
           </label>

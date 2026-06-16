@@ -14,10 +14,11 @@
 4. Set run **`PLANNING`**.
 5. **`ensureDefaultAllowedFlowsIfNone`**, **`listAllowedFlowTypes`**; drop **offline** flows (**`offline-flow-types.ts`**).
 6. Optionally route/expand planner rows for scene assembly (LLM seed expansion).
-7. Build in-memory candidate rows × enabled flows from **`runs.candidates_json`** (materialized from the signal pack via `POST /v1/runs/:project_slug/:run_id/candidates`).
-8. **`decideGenerationPlan`** — scoring, caps, suppression, learning boosts → **`selected`** jobs.
-9. Persist prompt/context snapshots, then loop **`upsertContentJob`** + **`insertJobStateTransition`** for each planned row.
-10. Set run **`PLANNED`** / **`GENERATING`** / **`COMPLETED`** / **`FAILED`** as appropriate.
+7. **Mimic image expansion** — `shouldExpandTopPerformerMimicImageForRow` gates `FLOW_TOP_PERFORMER_MIMIC_IMAGE` to eligible single-frame references (`mimic-planning-guards.ts`).
+8. Build in-memory candidate rows × enabled flows from **`runs.candidates_json`** (materialized from the signal pack via `POST /v1/runs/:project_slug/:run_id/candidates`).
+9. **`decideGenerationPlan`** — scoring, caps, suppression, learning boosts → **`selected`** jobs.
+10. Persist prompt/context snapshots, then loop **`upsertContentJob`** + **`insertJobStateTransition`** for each planned row.
+11. Set run **`PLANNED`** / **`GENERATING`** / **`COMPLETED`** / **`FAILED`** as appropriate.
 
 ## Inputs
 

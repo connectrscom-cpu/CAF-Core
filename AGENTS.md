@@ -32,6 +32,7 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 9. **Structured logs**: when adding new pipeline logging, prefer **`logPipelineEvent(level, stage, message, { run_id, task_id, job_id, ... })`** from **`src/services/pipeline-logger.ts`** over `console.*`. Correlation fields are how we trace a single job across stages.
 10. **Upstream recommendations** (`src/domain/upstream-recommendations.ts`) are the structured shape the post-approval LLM reviewer emits. Writers must use `parseUpstreamRecommendations` (tolerant) and persist via **`insertLlmApprovalReview`**; each parsed item is also logged as its own `learning_observation` — do not bypass either when extending the reviewer.
 11. **Run context snapshot** (`src/services/run-context-snapshot.ts`) is the canonical record of "what we actually generated with" (prompt versions + brand/strategy slice + learning fingerprints). Persist via `setRunContextSnapshot`. Snapshot failures are logged but must never abort a run.
+12. **Mimic carousel package** — only `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` uses `mimic_carousel_package`; do not conflate with `FLOW_CAROUSEL` / `carousel_package`. Render truth is **`mimic_v1`** on `generation_payload`. Mimic LLM prompts must filter signal pack to the job's single planned idea (`llm-creation-pack-budget.ts`, `mimicFlowOnly: true`).
 
 ## Where to change behavior
 
@@ -41,6 +42,7 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 | LLM prompts & creation pack | `src/services/llm-generator.ts`, `src/repositories/flow-engine.ts` |
 | QC checks / risk keywords | `src/services/qc-runtime.ts`, checklist rows, scoped `risk_policies` via `listRiskPoliciesForJob` |
 | Job lifecycle & render | `src/services/job-pipeline.ts` |
+| Top-performer mimic (prep, render, modes) | `src/services/mimic-draft-prep.ts`, `mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-mode-classifier.ts`, `src/domain/mimic-payload.ts` |
 | Human review & rework | `src/routes/v1.ts`, `src/services/rework-orchestrator.ts` |
 | Publications | `src/routes/publications.ts` |
 | Learning APIs & compiled guidance | `src/routes/learning.ts`, facade at `src/services/learning-rule-selection.ts` |
@@ -78,6 +80,8 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 | `docs/QUALITY_CHECKS.md` | QC runtime |
 | `docs/GENERATION_GUIDANCE.md` | Prompt guidance |
 | `docs/RISK_RULES.md` | Risk policies vs project `risk_rules` |
+| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Top-performer mimic (full); `docs/MIMIC_IMAGE_FLOWS.md` quick ref |
+| `docs/CREATIVE_INTELLIGENCE.md` | Top-performer ingest upstream of mimic |
 | `docs/API_REFERENCE.md` | HTTP examples |
 
 ## Optional rules (Cursor)

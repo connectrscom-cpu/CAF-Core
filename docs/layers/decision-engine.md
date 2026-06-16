@@ -16,6 +16,7 @@
 | **`route_selector.ts`** | **`selectRoute`** — `HUMAN_REVIEW` vs **`AUTO_PUBLISH`** heuristics from score/risk (planning-time). |
 | **`prompt_selector.ts`** | **`resolvePromptVersion`** — ties to **`prompt_versions`** / flow engine. |
 | **`default-plan-caps.ts`** | Per-flow caps when constraints omit values. |
+| **`format-routing.ts`** | Separate planning lanes for **`mimic_carousel`** / **`mimic_image`** vs standard carousel. |
 | **`flow-kind.ts`** | **`isCarouselFlow`**, **`isVideoFlow`** for caps and behavior flags. |
 
 ## Inputs

@@ -59,3 +59,13 @@ When `CREATIVE_INTEL_INJECT_IN_GENERATION=1`, a capped **creative style guidance
 - Video temporal understanding requires a **direct downloadable** MP4 (or similar) and **ffmpeg** on the Core host (or frames are skipped).
 - OpenAI vision needs **HTTPS** image URLs (Supabase `public_url` after upload works).
 - Template mimicry v1 adjusts **palette variables only** — not full layout cloning.
+
+## Downstream: top-performer mimic flows
+
+When **`visual_guidelines_pack_v1`** entries include archived inspection media (`stored_inspection_media_json`) and Nemotron **`mimic_evaluation`**, signal-pack ideas grounded to those **`insights_id`** values can become **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** or **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** jobs (requires **`MIMIC_IMAGE_ENABLED=1`** on Core).
+
+| Doc | Content |
+|-----|---------|
+| [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md) | Full mimic pipeline (modes, payloads, render providers) |
+| [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md) | Operator quick reference |
+| [CAF_INPUTS_PIPELINE_ROADMAP.md](./CAF_INPUTS_PIPELINE_ROADMAP.md) | Admin inputs → top-performer insight tiers |

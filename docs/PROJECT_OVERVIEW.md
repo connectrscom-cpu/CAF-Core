@@ -29,6 +29,7 @@ Teams that produce **scaled social content** (carousels, reels, scripted video) 
 5. **Media production** — carousel PNGs, HeyGen/Sora/ffmpeg pipelines, assets in storage.
 6. **Publishing intent** — placements, schedules, outcomes (Meta or external workers).
 7. **Learning** — rules and evidence so future runs can score better and prompts can include guidance.
+8. **Top-performer mimic (optional)** — recreate visual patterns from archived high performers with fresh copy (`FLOW_TOP_PERFORMER_MIMIC_*` flows; requires Creative Intelligence ingest + `MIMIC_IMAGE_ENABLED`).
 
 CAF Core implements that **as data in Postgres** and **HTTP APIs**, not as a single monolithic LLM script.
 
@@ -60,6 +61,7 @@ For a **technical** walkthrough (files, tables, boundaries), see **[ARCHITECTURE
 | Engineers implementing features | `docs/CAF_CORE_COMPLETE_GUIDE.md` (single file), or `docs/ARCHITECTURE.md`, `docs/layers/README.md`, `README.md`, `docs/API_REFERENCE.md` |
 | Lifecycle & states | `docs/LIFECYCLE.md` |
 | QC / guidance / risk behavior | `docs/QUALITY_CHECKS.md`, `docs/GENERATION_GUIDANCE.md`, `docs/RISK_RULES.md` |
+| Top-performer mimic | `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`, `docs/MIMIC_IMAGE_FLOWS.md`, `docs/CREATIVE_INTELLIGENCE.md` |
 | AI assistants / tooling | `AGENTS.md` (repo root) |
 | Environment & secrets | `docs/USER_INPUT_AND_SECRETS.md`, `ENV_AND_SECRETS_INVENTORY.md` |
 
@@ -77,3 +79,6 @@ Marketing may call CAF a “content operating system.” In **this repository**,
 - [QUALITY_CHECKS.md](./QUALITY_CHECKS.md), [GENERATION_GUIDANCE.md](./GENERATION_GUIDANCE.md), [RISK_RULES.md](./RISK_RULES.md)
 - [API_REFERENCE.md](./API_REFERENCE.md) — HTTP examples
 - [VIDEO_FLOWS.md](./VIDEO_FLOWS.md) — video-specific behavior
+- [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md) — top-performer mimic (full)
+- [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md) — mimic quick reference
+- [CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md) — top-performer ingest

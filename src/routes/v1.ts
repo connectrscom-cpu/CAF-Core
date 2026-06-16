@@ -1220,6 +1220,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     render_typography: z.record(z.union([z.number(), z.string()])).optional(),
     text_backing: z.boolean().optional(),
     text_backing_color: z.string().min(1).max(64).optional(),
+    logo_overlay: z
+      .object({
+        url: z.string().min(1).max(2048),
+        position: z.string().max(8).optional(),
+      })
+      .optional(),
     docai_layer_positions: z
       .record(
         z.string(),
@@ -1248,6 +1254,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     textBacking: boolean | undefined,
     textBackingColor: string | undefined,
     docaiLayerPositions: Record<string, MimicDocAiLayerPositionOverride[]> | undefined,
+    logoOverlay: { url: string; position?: string } | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
     | { ok: true; accepted: true; task_id: string; message: string }
@@ -1289,6 +1296,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         : {}),
       textBacking: textBacking !== false,
       ...(textBackingColor?.trim() ? { textBackingColor: textBackingColor.trim() } : {}),
+      ...(logoOverlay?.url?.trim()
+        ? { logoOverlay: { url: logoOverlay.url.trim(), position: logoOverlay.position?.trim() || "br" } }
+        : {}),
     })
       .then(() => {
         log.info(
@@ -1350,6 +1360,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       body.data.docai_layer_positions
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,
+      body.data.logo_overlay,
       request.log
     );
     if (!result.ok) {
@@ -1379,6 +1390,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       body.data.docai_layer_positions
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,
+      body.data.logo_overlay,
       request.log
     );
     if (!result.ok) {
@@ -1390,12 +1402,15 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
 
   const regenerateCarouselSlidesBodySchema = z.object({
     slide_indices: z.array(z.number().int().positive()).min(1),
+    visual_similarity_pct: z.number().int().min(0).max(100).optional(),
+    image_input_mode: z.enum(["reference_edit", "analysis_t2i"]).optional(),
   });
 
   async function scheduleRegenerateCarouselSlides(
     projectSlug: string,
     taskId: string,
     slideIndices: number[],
+    routeOverrides: { visualSimilarityPct?: number; imageInputMode?: "reference_edit" | "analysis_t2i" } | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
     | { ok: true; accepted: true; task_id: string; message: string }
@@ -1416,7 +1431,14 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     );
     if (indices.length === 0) return { ok: false, error: "slide_indices_required" };
 
-    void rerenderCarouselSlidesAtIndices(db, config, jobId, indices)
+    void rerenderCarouselSlidesAtIndices(db, config, jobId, indices, {
+      ...(typeof routeOverrides?.visualSimilarityPct === "number"
+        ? { mimicVisualSimilarityPctOverride: routeOverrides.visualSimilarityPct }
+        : {}),
+      ...(routeOverrides?.imageInputMode
+        ? { mimicImageInputModeOverride: routeOverrides.imageInputMode }
+        : {}),
+    })
       .then(() => {
         log.info({ task_id: taskId, slide_indices: indices }, "mimic carousel slide regenerate completed");
       })
@@ -1445,6 +1467,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       params.data.project_slug,
       params.data.task_id,
       body.data.slide_indices,
+      {
+        ...(body.data.visual_similarity_pct !== undefined
+          ? { visualSimilarityPct: body.data.visual_similarity_pct }
+          : {}),
+        ...(body.data.image_input_mode ? { imageInputMode: body.data.image_input_mode } : {}),
+      },
       request.log
     );
     if (!result.ok) {
@@ -1466,6 +1494,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       params.data.project_slug,
       query.data.task_id,
       body.data.slide_indices,
+      {
+        ...(body.data.visual_similarity_pct !== undefined
+          ? { visualSimilarityPct: body.data.visual_similarity_pct }
+          : {}),
+        ...(body.data.image_input_mode ? { imageInputMode: body.data.image_input_mode } : {}),
+      },
       request.log
     );
     if (!result.ok) {

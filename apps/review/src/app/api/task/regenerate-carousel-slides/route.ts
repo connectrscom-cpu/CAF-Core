@@ -51,7 +51,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await regenerateMimicCarouselSlides(slug, tid, slideIndices);
+    const rawPct = Number(body?.visual_similarity_pct);
+    const visualSimilarityPct = Number.isFinite(rawPct)
+      ? Math.max(0, Math.min(100, Math.round(rawPct)))
+      : undefined;
+    const rawMode = typeof body?.image_input_mode === "string" ? body.image_input_mode.trim() : "";
+    const imageInputMode =
+      rawMode === "reference_edit" || rawMode === "analysis_t2i" ? rawMode : undefined;
+
+    const result = await regenerateMimicCarouselSlides(slug, tid, slideIndices, {
+      visualSimilarityPct,
+      imageInputMode,
+    });
     if (!result.ok) {
       const status = result.error === "job_not_found" ? 404 : 400;
       return NextResponse.json(result, { status });

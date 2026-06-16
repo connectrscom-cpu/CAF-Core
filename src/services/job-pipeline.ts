@@ -120,6 +120,7 @@ import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import { refreshMimicPayloadReferenceUrls } from "./mimic-reference-urls.js";
 import { isNvidiaVisualGenAiReachable, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
+import type { MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import { isOpenAiPlaceholderModeForProject } from "./openai-generation-placeholder.js";
 import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
 import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
@@ -1672,6 +1673,12 @@ export type CarouselRenderOpts = {
   textBacking?: boolean;
   /** CSS color for text highlight pad (#RRGGBB or rgba). */
   textBackingColor?: string;
+  /** Optional brand logo composited onto each slide (reprint option). */
+  logoOverlay?: { url: string; position?: string };
+  /** Per-call mimic visual similarity % override (regenerate route picker). */
+  mimicVisualSimilarityPctOverride?: number;
+  /** Per-call mimic image input mode override: reference_edit vs analysis_t2i (no reference). */
+  mimicImageInputModeOverride?: MimicImageInputMode;
 };
 
 async function processCarouselJob(
@@ -1923,9 +1930,15 @@ async function processCarouselJob(
   }
   const mimicBflModelOverride = mimicProjectRender?.bflModel ?? null;
   const mimicVisualSimilarityPct =
-    mimicProjectRender?.visualSimilarityPct ?? config.MIMIC_VISUAL_SIMILARITY_PCT;
+    (typeof renderOpts?.mimicVisualSimilarityPctOverride === "number"
+      ? renderOpts.mimicVisualSimilarityPctOverride
+      : undefined) ??
+    mimicProjectRender?.visualSimilarityPct ??
+    config.MIMIC_VISUAL_SIMILARITY_PCT;
   const mimicImageInputMode =
-    mimicProjectRender?.imageInputMode ?? config.MIMIC_IMAGE_INPUT_MODE;
+    renderOpts?.mimicImageInputModeOverride ??
+    mimicProjectRender?.imageInputMode ??
+    config.MIMIC_IMAGE_INPUT_MODE;
   const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarouselRender
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
@@ -2297,6 +2310,16 @@ async function processCarouselJob(
           );
         }
       }
+      if (renderOpts?.logoOverlay?.url?.trim()) {
+        ctx = {
+          ...ctx,
+          logo_overlay: {
+            url: renderOpts.logoOverlay.url.trim(),
+            position: renderOpts.logoOverlay.position?.trim() || "br",
+          },
+        };
+      }
+
       const body = {
         task_id: job.task_id,
         run_id: job.run_id,
@@ -2559,7 +2582,10 @@ export async function rerenderCarouselSlidesAtIndices(
   config: AppConfig,
   jobId: string,
   slideIndices1Based: number[],
-  renderOpts?: Pick<CarouselRenderOpts, "textOverlayOnly">
+  renderOpts?: Pick<
+    CarouselRenderOpts,
+    "textOverlayOnly" | "mimicVisualSimilarityPctOverride" | "mimicImageInputModeOverride"
+  >
 ): Promise<void> {
   const job = await reloadJobRow(db, jobId);
   if (!job || !isCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
@@ -2586,6 +2612,12 @@ export async function rerenderCarouselSlidesAtIndices(
   await processCarouselJob(db, config, pipeConfig, job, run, null, {
     onlySlideIndices: indices,
     textOverlayOnly: renderOpts?.textOverlayOnly,
+    ...(typeof renderOpts?.mimicVisualSimilarityPctOverride === "number"
+      ? { mimicVisualSimilarityPctOverride: renderOpts.mimicVisualSimilarityPctOverride }
+      : {}),
+    ...(renderOpts?.mimicImageInputModeOverride
+      ? { mimicImageInputModeOverride: renderOpts.mimicImageInputModeOverride }
+      : {}),
   });
 }
 
@@ -2638,7 +2670,7 @@ export async function rerenderCarouselTextOverlay(
   slideIndices1Based?: number[],
   renderExtras?: Pick<
     CarouselRenderOpts,
-    "slideCopyOverrides" | "renderTypographyPatch" | "textBacking" | "textBackingColor"
+    "slideCopyOverrides" | "renderTypographyPatch" | "textBacking" | "textBackingColor" | "logoOverlay"
   >
 ): Promise<void> {
   if (renderExtras?.renderTypographyPatch && Object.keys(renderExtras.renderTypographyPatch).length > 0) {
@@ -2668,6 +2700,7 @@ export async function rerenderCarouselTextOverlay(
       : {}),
     textBacking: renderExtras?.textBacking !== false,
     ...(renderExtras?.textBackingColor?.trim() ? { textBackingColor: renderExtras.textBackingColor } : {}),
+    ...(renderExtras?.logoOverlay?.url?.trim() ? { logoOverlay: renderExtras.logoOverlay } : {}),
   });
 }
 

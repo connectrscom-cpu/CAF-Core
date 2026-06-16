@@ -20,7 +20,7 @@ This backlog tracks **CAF Core** (APIs + Admin). The **Review** app stays focuse
 - **Rating + synthesis** — OpenAI batch scoring → persisted rating columns → synthesis to `overall_candidates_json` (planner contract aligned with XLSX packs).
 - **Admin UI** — **Inputs** vs **Processing** (sidebar); Processing segments: Evidence, broad insights per platform, top performers (image / carousel / video), profile & audit.
 - **Inputs Admin** — tabs: **Imports** (XLSX upload unchanged), **Sources** (sidebar sheet picker + sync source tabs from workbook), **Scrapers** (Apify + HTML, run history → evidence import).
-- **030–032** — `inputs_evidence_row_insights`: tiers `broad_llm`, `top_performer_deep`, `top_performer_video`, `top_performer_carousel` (migrations **030**, **031**, **032**).
+- **030–032** — `inputs_evidence_row_insights`: tiers `broad_llm`, `top_performer_deep`, `top_performer_video`, `top_performer_carousel` (migrations **030**, **031**, **032**). These tiers feed **`visual_guidelines_pack_v1`** used by **top-performer mimic** jobs — see **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)**.
 
 ### Stage 2 (evidence insights) — complete
 

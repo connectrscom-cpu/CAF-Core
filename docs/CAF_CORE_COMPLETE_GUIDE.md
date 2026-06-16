@@ -76,6 +76,7 @@ Core is **self-contained**: all planning, job, QC, render, review, publish, and 
 | Structured output | Flow Engine `output_schemas`; validation controlled by `CAF_OUTPUT_SCHEMA_VALIDATION_MODE` (`skip` / `warn` / `enforce`, wins over legacy `CAF_SKIP_OUTPUT_SCHEMA_VALIDATION`) |
 | Scene clips | OpenAI Videos / Sora when configured — `SCENE_ASSEMBLY_CLIP_PROVIDER` |
 | Post-approval vision | `OPENAI_APPROVAL_REVIEW_MODEL` |
+| Top-performer mimic render | `MIMIC_IMAGE_PROVIDER` (default `bfl`); copy uses OpenAI — see section 11 |
 
 ### Out-of-process media
 
@@ -91,6 +92,7 @@ Core calls these over **HTTP**; it does not run Puppeteer/ffmpeg inside the main
 | Provider | Purpose |
 |----------|---------|
 | HeyGen | Avatar / video agent — `HEYGEN_API_KEY`, polling `HEYGEN_POLL_MAX_MS` |
+| BFL / DashScope / NVIDIA NIM | Mimic image edit when `MIMIC_IMAGE_ENABLED=1` — `BFL_API_KEY`, `DASHSCOPE_API_KEY`, `NVIDIA_NIM_API_KEY` |
 | Supabase | Asset storage — `SUPABASE_*` |
 | Meta Graph | Publishing when `CAF_PUBLISH_EXECUTOR=meta` |
 
@@ -187,6 +189,8 @@ Statuses: `draft`, `scheduled`, `publishing`, `published`, `failed`, `cancelled`
 5. **Publish** — `publication_placements`; executor `none` | `dry_run` | `meta`.
 6. **Learn** — Rules APIs, metrics, optional editorial cron.
 
+**Optional mimic path:** when `FLOW_TOP_PERFORMER_MIMIC_*` is enabled and `MIMIC_IMAGE_ENABLED=1`, generate resolves references before copy, render uses image providers + HBS/DocAI overlays — see section 11.
+
 ---
 
 ## 6. Critical contract: `generation_payload`
@@ -199,6 +203,7 @@ Contains (non-exhaustive):
 - LLM: `generated_output`
 - QC: `qc_result` (also `qc_status`, `recommended_route` on columns)
 - Render: HeyGen/scene/video URLs, `render_state` / nested provider data
+- **Mimic (optional):** `mimic_v1` (render SSOT), `mimic_render_context`, `mimic_job_grounding`, `draft_package_snapshot` with `mimic_carousel_package` for carousel mimic review
 - Publish helpers: `publish_media_urls_json`, `publish_video_url`, …
 
 ### Typed readers (incremental contract hardening)
@@ -369,6 +374,22 @@ Every write path that touches **project risk rules** (`caf_core.risk_rules`) now
 - **`flow-kind.ts`:** `isCarouselFlow`, `isVideoFlow` (regex + product video).
 - **`product-flow-types.ts`:** `FLOW_PRODUCT_*` video; `FLOW_IMG_*` image flows **not** wired to generation.
 - **`offline-flow-types.ts`:** excluded from planning/pipeline (e.g. some reel/hook variation names).
+- **`top-performer-mimic-flow-types.ts`:** `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` (render when **`MIMIC_IMAGE_ENABLED=1`**); `FLOW_TOP_PERFORMER_MIMIC_VIDEO` placeholder.
+- **`format-routing.ts`:** separate planning lanes `mimic_image` / `mimic_carousel` parallel to standard carousel.
+
+### Top-performer mimic (summary)
+
+Recreate archived top-performer **visual patterns** with fresh LLM copy. Upstream: Creative Intelligence ingest → `visual_guidelines_pack_v1` on signal packs → ideas grounded to `insights_id`.
+
+| Phase | Module | Output on job |
+|-------|--------|----------------|
+| Pre-copy | `mimic-draft-prep.ts` | `mimic_v1`, `mimic_render_context`, `mimic_job_grounding` |
+| Copy | `llm-generator.ts` + mimic prompts | `generated_output`; carousel mimic → `mimic_carousel_package` snapshot |
+| Render | `mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-image-provider.ts` | `MIMIC_BACKGROUND`, `MIMIC_VISUAL_PLATE`, `STATIC_IMAGE` assets |
+
+**Modes (`mimic_v1.mode`):** `image_full` (single frame), `template_bg` (text-heavy → bg plate + HBS), `carousel_visual` (per-slide art + overlay). Classifier: `mimic-mode-classifier.ts`.
+
+**Providers:** `MIMIC_IMAGE_PROVIDER` default **`bfl`**; copy always uses OpenAI. Full guide: **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**; quick ref: **`docs/MIMIC_IMAGE_FLOWS.md`**.
 
 ---
 
@@ -456,6 +477,7 @@ For smaller files to edit in isolation:
 | Per-layer pages | `docs/layers/*.md` |
 | HTTP examples | `docs/API_REFERENCE.md` |
 | Video / HeyGen details | `docs/VIDEO_FLOWS.md`, `docs/HEYGEN_API_V3.md` |
+| Top-performer mimic | `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`, `docs/MIMIC_IMAGE_FLOWS.md`, `docs/CREATIVE_INTELLIGENCE.md` |
 | AI agent onboarding | `AGENTS.md` |
 | Domain IDs | `.cursor/rules/caf-domain-model.mdc` |
 

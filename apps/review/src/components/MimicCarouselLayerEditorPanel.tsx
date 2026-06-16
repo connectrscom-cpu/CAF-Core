@@ -333,6 +333,26 @@ export interface MimicCarouselLayerEditorPanelProps {
 
   onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
 
+  /** Full-bleed mimic (not template_bg): neutral box labels + text-block sync. */
+  fullBleedMode?: boolean;
+
+  /** Fired when layout boxes for the active slide change (for left-column text fields). */
+  onLayoutTextBlocksChange?: (
+    slideIndex: number,
+    blocks: Array<{ role: string; text: string; layer_key: string }>
+  ) => void;
+
+  /** Register handler so left-column text edits update layout box copy. */
+  registerTextBlockUpdater?: (
+    fn: ((blockIndex: number, text: string) => void) | null
+  ) => void;
+
+  /** Project brand palette (hex) for color quick-pick swatches. */
+  brandPalette?: string[];
+
+  /** Project brand logo URL — composited lower-right when the logo toggle is on. */
+  brandLogoUrl?: string;
+
 }
 
 
@@ -371,9 +391,28 @@ export function MimicCarouselLayerEditorPanel({
 
   onActiveTextBlockIndexChange,
 
+  fullBleedMode = false,
+
+  onLayoutTextBlocksChange,
+
+  registerTextBlockUpdater,
+
+  brandPalette = [],
+
+  brandLogoUrl = "",
+
 }: MimicCarouselLayerEditorPanelProps) {
 
-  const [editorSlide, setEditorSlide] = useState(activeSlideIndex);
+  const [logoEnabled, setLogoEnabled] = useState(false);
+  const logoOverlayPayload = useMemo(
+    () => (logoEnabled && brandLogoUrl.trim() ? { url: brandLogoUrl.trim(), position: "br" } : undefined),
+    [logoEnabled, brandLogoUrl]
+  );
+
+  // Current slide is controlled by the parent (`activeSlideIndex`) — single source of
+  // truth. No local slide state, so carousel arrows and these slide buttons can never
+  // ping-pong against each other.
+  const editorSlide = Math.max(1, Math.min(Math.max(slideCount, 1), Math.floor(activeSlideIndex) || 1));
 
   const [renderInspect, setRenderInspect] = useState<Record<string, unknown> | null>(null);
 
@@ -408,6 +447,11 @@ export function MimicCarouselLayerEditorPanel({
 
   const [regenerateError, setRegenerateError] = useState<string | null>(null);
 
+  // Regenerate route picker (1.6): similarity preset + reference on/off.
+  const [regenSimilarityPct, setRegenSimilarityPct] = useState<number>(85);
+  const [regenUseReference, setRegenUseReference] = useState<boolean>(true);
+  const [showRegenRoute, setShowRegenRoute] = useState<boolean>(false);
+
   const [layerPosDraft, setLayerPosDraft] = useState<DocAiLayerOverride[]>([]);
 
   const [slideDrafts, setSlideDrafts] = useState<Record<number, DocAiLayerOverride[]>>({});
@@ -436,8 +480,6 @@ export function MimicCarouselLayerEditorPanel({
   getBackgroundUrlRef.current = getBackgroundUrl;
 
 
-
-  const prevCarouselSlideRef = useRef(activeSlideIndex);
 
   const gp = useMemo(() => asRec(job?.generation_payload) ?? {}, [job]);
 
@@ -575,6 +617,7 @@ export function MimicCarouselLayerEditorPanel({
           ...(docai_layer_positions ? { docai_layer_positions } : {}),
           text_backing: reprintTextBacking,
           text_backing_color: reprintTextBackingCss,
+          ...(logoOverlayPayload ? { logo_overlay: logoOverlayPayload } : {}),
         }),
       });
       const json = (await res.json()) as { ok?: boolean; accepted?: boolean; message?: string; error?: string };
@@ -590,6 +633,7 @@ export function MimicCarouselLayerEditorPanel({
       mimicV1,
       reprintTextBacking,
       reprintTextBackingCss,
+      logoOverlayPayload,
       buildReprintTypographyPatch,
       refreshCarouselAfterReprint,
     ]
@@ -664,83 +708,41 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
-  useEffect(() => {
-
-    if (activeSlideIndex === editorSlide) {
-
-      prevCarouselSlideRef.current = activeSlideIndex;
-
-      return;
-
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-
-      if (userTouchedLayout && layoutDirty) {
-
-        const ok = await flushCurrentSlideLayout();
-
-        if (!ok || cancelled) return;
-
-      }
-
-      if (cancelled) return;
-
-      prevCarouselSlideRef.current = activeSlideIndex;
-
-      setEditorSlide(activeSlideIndex);
-
-      setLayerPosMsg(null);
-
-      setLayerPosError(null);
-
-    })();
-
-    return () => {
-
-      cancelled = true;
-
-    };
-
-  }, [activeSlideIndex, editorSlide, userTouchedLayout, layoutDirty, flushCurrentSlideLayout]);
-
-
-
-  const trySetEditorSlide = useCallback(
-
+  // Persist any pending layout for the slide we are leaving, then ask the parent to
+  // switch. The parent updates `activeSlideIndex`, which flows back as `editorSlide`.
+  const goToSlide = useCallback(
     (nextSlide: number) => {
-
       const n = Math.max(1, Math.min(slideCount, Math.floor(nextSlide) || 1));
-
       if (n === editorSlide) return;
-
-      void (async () => {
-
-        if (userTouchedLayout && layoutDirty) {
-
-          const ok = await flushCurrentSlideLayout();
-
-          if (!ok) return;
-
-        }
-
-        setEditorSlide(n);
-
-        setLayerPosMsg(null);
-
-        setLayerPosError(null);
-
-        onSlideSelect?.(n);
-
-      })();
-
+      if (userTouchedLayout && layoutDirty) {
+        void flushCurrentSlideLayout();
+      }
+      setLayerPosMsg(null);
+      setLayerPosError(null);
+      onSlideSelect?.(n);
     },
-
-    [editorSlide, userTouchedLayout, layoutDirty, flushCurrentSlideLayout, onSlideSelect, slideCount]
-
+    [editorSlide, slideCount, userTouchedLayout, layoutDirty, flushCurrentSlideLayout, onSlideSelect]
   );
+
+  // Silent debounced auto-save: persist layout positions (cheap, no billed reprint) so
+  // box moves/deletes survive slide switches and refetches. Reprint stays explicit.
+  useEffect(() => {
+    if (!userTouchedLayout || !layoutDirty || layerPosDraft.length === 0) return;
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          await persistLayerPositions(editorSlide, layerPosDraft);
+          setSlideDrafts((prev) => ({ ...prev, [editorSlide]: layerPosDraft }));
+          setLayoutBaseline(JSON.stringify(layerPosDraft));
+          setUserTouchedLayout(false);
+          setSlidesWithSavedLayout((prev) => new Set(prev).add(editorSlide));
+        } catch (e) {
+          setLayerPosError(e instanceof Error ? e.message : "Auto-save failed");
+        }
+      })();
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [layerPosDraft, userTouchedLayout, layoutDirty, editorSlide, persistLayerPositions]);
 
 
 
@@ -778,20 +780,6 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
-  const inspectCopyKey = useMemo(() => {
-
-    const payload = buildInspectPayload?.() ?? {};
-
-    const slides = Array.isArray(payload.slides) ? payload.slides : [];
-
-    const slide = slides[editorSlide - 1];
-
-    return JSON.stringify(slide ?? {});
-
-  }, [buildInspectPayload, editorSlide]);
-
-
-
   const persistedPositionsForInspect = useMemo(
 
     () =>
@@ -802,6 +790,12 @@ export function MimicCarouselLayerEditorPanel({
     [layerPosDraft, slideDrafts, editorSlide]
 
   );
+
+  // Inspect only needs the *base* OCR layer geometry, which changes per slide — not on
+  // every keystroke. We read the current copy/positions from refs so typing never
+  // retriggers the fetch (this is what caused the flicker between text blocks).
+  const persistedPositionsForInspectRef = useRef(persistedPositionsForInspect);
+  persistedPositionsForInspectRef.current = persistedPositionsForInspect;
 
 
 
@@ -853,9 +847,9 @@ export function MimicCarouselLayerEditorPanel({
 
               text_backing_color: reprintTextBackingCss,
 
-              ...(persistedPositionsForInspect.length > 0
+              ...(persistedPositionsForInspectRef.current.length > 0
 
-                ? { docai_layer_positions: persistedPositionsForInspect }
+                ? { docai_layer_positions: persistedPositionsForInspectRef.current }
 
                 : {}),
 
@@ -895,11 +889,79 @@ export function MimicCarouselLayerEditorPanel({
 
     };
 
-  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss, inspectCopyKey, persistedPositionsForInspect]);
+  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss]);
 
 
 
   const docAiLayerBoxes = useMemo(() => parseDocAiLayerBoxes(renderInspect), [renderInspect]);
+
+  const layoutTextBlocks = useMemo(() => {
+    const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
+    return docAiLayerBoxes
+      .filter((layer) => !draftByKey.get(layer.layer_key)?.hidden)
+      .map((layer, blockIndex) => {
+        const row = draftByKey.get(layer.layer_key);
+        const role =
+          layer.role === "handle" || row?.layer_key?.includes("handle") ? "handle" : fullBleedMode ? "body" : layer.role;
+        return {
+          role,
+          text: row?.text?.trim() || layer.text,
+          layer_key: layer.layer_key,
+          block_index: blockIndex,
+        };
+      });
+  }, [docAiLayerBoxes, layerPosDraft, fullBleedMode]);
+
+  const lastEmittedTextBlocksRef = useRef<string>("");
+  useEffect(() => {
+    if (!onLayoutTextBlocksChange || layoutTextBlocks.length === 0) return;
+    const next = layoutTextBlocks.map(({ role, text, layer_key }) => ({ role, text, layer_key }));
+    const fingerprint = `${editorSlide}:${JSON.stringify(next)}`;
+    if (fingerprint === lastEmittedTextBlocksRef.current) return;
+    lastEmittedTextBlocksRef.current = fingerprint;
+    onLayoutTextBlocksChange(editorSlide, next);
+  }, [layoutTextBlocks, editorSlide, onLayoutTextBlocksChange]);
+
+  useEffect(() => {
+    if (!registerTextBlockUpdater) return;
+    registerTextBlockUpdater((blockIndex, text) => {
+      const target = layoutTextBlocks[blockIndex];
+      if (!target) return;
+      const base =
+        layerPosDraft.length > 0
+          ? layerPosDraft
+          : docAiLayerBoxes.map((layer) => ({
+              layer_key: layer.layer_key,
+              x_px: layer.x_px,
+              y_px: layer.y_px,
+              w_px: layer.w_px,
+              h_px: layer.h_px,
+              font_size_px: layer.font_size_px,
+              text: layer.text,
+              box_locked: true,
+            }));
+      const next = base.some((r) => r.layer_key === target.layer_key)
+        ? base.map((r) => (r.layer_key === target.layer_key ? { ...r, text } : r))
+        : [
+            ...base,
+            {
+              layer_key: target.layer_key,
+              x_px: 0,
+              y_px: 0,
+              text,
+              box_locked: true,
+            },
+          ];
+      handleLayerDraftChange(next);
+    });
+    return () => registerTextBlockUpdater(null);
+  }, [
+    registerTextBlockUpdater,
+    layoutTextBlocks,
+    layerPosDraft,
+    docAiLayerBoxes,
+    handleLayerDraftChange,
+  ]);
 
   const docAiSavedOverrides = useMemo(() => parseDocAiSavedOverrides(renderInspect), [renderInspect]);
 
@@ -1055,6 +1117,10 @@ export function MimicCarouselLayerEditorPanel({
 
           slide_indices: [editorSlide],
 
+          visual_similarity_pct: regenSimilarityPct,
+
+          image_input_mode: regenUseReference ? "reference_edit" : "analysis_t2i",
+
         }),
 
       });
@@ -1097,13 +1163,9 @@ export function MimicCarouselLayerEditorPanel({
 
     <div className="mimic-layer-editor-panel">
 
-      <p className="mimic-layer-editor-panel__title">Text layout</p>
-
-      <p className="mimic-layer-editor-panel__hint">
-
-        Drag boxes on the art plate — the editor is your live preview. Save layout, then Reprint to bake text into carousel PNGs.
-
-      </p>
+      <div className="mimic-layer-editor-panel__head">
+        <p className="mimic-layer-editor-panel__title">Text layout</p>
+      </div>
 
 
 
@@ -1123,7 +1185,7 @@ export function MimicCarouselLayerEditorPanel({
               key={n}
               type="button"
               className={`mimic-layer-editor-panel__slide-btn ${active ? "btn-primary" : "btn-ghost"}`}
-              onClick={() => trySetEditorSlide(n)}
+              onClick={() => goToSlide(n)}
             >
 
               {n}
@@ -1147,6 +1209,16 @@ export function MimicCarouselLayerEditorPanel({
         ) : null}
 
         <span className="mimic-layer-editor-panel__slide-row-spacer" aria-hidden />
+
+        <button
+          type="button"
+          className={`btn-ghost btn-sm${showRegenRoute ? " mimic-regen-route__toggle--open" : ""}`}
+          onClick={() => setShowRegenRoute((v) => !v)}
+          title="Pick how the image regenerates"
+          aria-expanded={showRegenRoute}
+        >
+          Route ▾
+        </button>
 
         <button
           type="button"
@@ -1175,6 +1247,61 @@ export function MimicCarouselLayerEditorPanel({
 
       </div>
 
+      {showRegenRoute ? (
+        <div className="mimic-regen-route">
+          <div className="mimic-regen-route__group">
+            <span className="mimic-regen-route__label">Similarity</span>
+            {[
+              { pct: 85, label: "Close ~85%" },
+              { pct: 60, label: "Variant ~60%" },
+              { pct: 25, label: "Bold ~25%" },
+            ].map((opt) => (
+              <button
+                key={opt.pct}
+                type="button"
+                className={`mimic-regen-route__chip${regenSimilarityPct === opt.pct ? " mimic-regen-route__chip--on" : ""}`}
+                onClick={() => setRegenSimilarityPct(opt.pct)}
+              >
+                {opt.label}
+              </button>
+            ))}
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={regenSimilarityPct}
+              onChange={(e) => {
+                const n = Math.max(0, Math.min(100, Math.round(Number(e.target.value) || 0)));
+                setRegenSimilarityPct(n);
+              }}
+              className="mimic-regen-route__num"
+              title="Visual similarity %"
+            />
+          </div>
+          <div className="mimic-regen-route__group">
+            <span className="mimic-regen-route__label">Reference</span>
+            <button
+              type="button"
+              className={`mimic-regen-route__chip${regenUseReference ? " mimic-regen-route__chip--on" : ""}`}
+              onClick={() => setRegenUseReference(true)}
+            >
+              Use reference
+            </button>
+            <button
+              type="button"
+              className={`mimic-regen-route__chip${!regenUseReference ? " mimic-regen-route__chip--on" : ""}`}
+              onClick={() => setRegenUseReference(false)}
+              title="Generate from analysis only (no reference image)"
+            >
+              No reference
+            </button>
+          </div>
+          <p className="mimic-regen-route__note">
+            Text is always added as an editable HTML overlay — image models never bake copy.
+          </p>
+        </div>
+      ) : null}
+
       {regenerateMsg ? <p className="mimic-layer-editor-panel__status">{regenerateMsg}</p> : null}
       {regenerateError ? <p className="mimic-layer-editor-panel__error">{regenerateError}</p> : null}
 
@@ -1198,7 +1325,39 @@ export function MimicCarouselLayerEditorPanel({
             />
           </label>
         ) : null}
+        {reprintTextBacking && brandPalette.length > 0 ? (
+          <div className="brand-swatches" title="Brand palette">
+            {brandPalette.map((hex) => (
+              <button
+                key={hex}
+                type="button"
+                className="brand-swatch"
+                style={{ background: hex }}
+                title={hex}
+                aria-label={`Use ${hex}`}
+                onClick={() => setReprintTextBackingHex(hex)}
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
+
+      {brandLogoUrl.trim() ? (
+        <div className="mimic-layer-editor-panel__highlight">
+          <label className="mimic-layer-editor-panel__option">
+            <input
+              type="checkbox"
+              checked={logoEnabled}
+              onChange={(e) => setLogoEnabled(e.target.checked)}
+            />
+            <span>Stamp brand logo (lower-right)</span>
+          </label>
+          {logoEnabled ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={brandLogoUrl} alt="Brand logo" className="brand-logo-chip" />
+          ) : null}
+        </div>
+      ) : null}
 
       {!showEditor && !renderInspectLoading ? (
 
@@ -1237,6 +1396,12 @@ export function MimicCarouselLayerEditorPanel({
             activeBlockIndex={activeTextBlockIndex}
 
             onActiveBlockIndexChange={onActiveTextBlockIndexChange}
+
+            fullBleedMode={fullBleedMode}
+
+            brandPalette={brandPalette}
+
+            logoOverlayUrl={logoOverlayPayload ? brandLogoUrl : ""}
 
           />
 

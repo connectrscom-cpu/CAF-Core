@@ -14,7 +14,7 @@
 4. **QC** — **`runQcForJob`** persists results through **`mergeGenerationPayloadQc`** (`src/domain/generation-payload-qc.ts`, typed by `qcResultSchema`) — see **[../QUALITY_CHECKS.md](../QUALITY_CHECKS.md)**.
 5. **Post-QC routing** — **`routeJobAfterQc`** (**`validation-router.ts`**) for DISCARD / REWORK.
 6. **Diagnostic** — **`runDiagnosticAudit`**.
-7. **Render** — carousel slides via **`RENDERER_BASE_URL`**; video via HeyGen / scene pipeline / video-assembly (flow-dependent).
+7. **Render** — carousel slides via **`RENDERER_BASE_URL`**; **mimic carousel/image** via `mimic-image-provider.ts` + HBS/DocAI overlays when `MIMIC_IMAGE_ENABLED`; video via HeyGen / scene pipeline / video-assembly (flow-dependent).
 8. **Terminal pre-review** — **`IN_REVIEW`**, **`finalJobStatusAfterRender`**.
 
 ## Inputs
@@ -46,5 +46,5 @@ For new pipeline-stage logs, prefer **`logPipelineEvent(level, stage, message, {
 
 ## Boundaries
 
-- **Depends on:** **`llm-generator`**, **`qc-runtime`**, **`diagnostic-runner`**, **`validation-router`**, render helpers, **Supabase** upload.
-- **See:** [generation.md](./generation.md), [rendering.md](./rendering.md), [../LIFECYCLE.md](../LIFECYCLE.md).
+- **Depends on:** **`llm-generator`**, **`qc-runtime`**, **`diagnostic-runner`**, **`validation-router`**, render helpers, **Supabase** upload, **`mimic-draft-prep`**, **`mimic-carousel-render`**, **`mimic-image-job`** (when mimic flows enabled).
+- **See:** [generation.md](./generation.md), [rendering.md](./rendering.md), [../MIMIC_IMAGE_FLOWS.md](../MIMIC_IMAGE_FLOWS.md), [../LIFECYCLE.md](../LIFECYCLE.md).

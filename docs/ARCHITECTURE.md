@@ -111,6 +111,17 @@ Rules must be **`active`** (and correctly **`rule_family`**) to affect the right
 
 **`src/decision_engine/flow-kind.ts`** classifies carousel vs video flows (regex + product flow helpers). **`src/domain/product-flow-types.ts`** defines **`FLOW_PRODUCT_*`** (video) and **`FLOW_IMG_*`** (image flows not fully wired). **`src/services/offline-flow-types.ts`** excludes certain flow names from the pipeline.
 
+## Top-performer mimic flows
+
+Optional lanes **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** and **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** recreate archived top-performer **visual patterns** with fresh LLM copy. Gated by **`MIMIC_IMAGE_ENABLED`**; copy uses **OpenAI**; render uses **`MIMIC_IMAGE_PROVIDER`** (default BFL FLUX, or DashScope / NVIDIA / OpenAI).
+
+- **Render contract:** **`generation_payload.mimic_v1`** (`src/domain/mimic-payload.ts`) — mode (`image_full` \| `template_bg` \| `carousel_visual`), reference frames, slide plans.
+- **Review snapshot:** **`mimic_carousel_package`** on carousel mimic jobs only — distinct from **`FLOW_CAROUSEL`** / `carousel_package` (`src/domain/mimic-carousel-package.ts`).
+- **Pipeline:** reference resolve before LLM (`mimic-draft-prep.ts`) → generate → optional template-bg extract → render (`mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-image-provider.ts`) inside **`job-pipeline.ts`**.
+- **Planning:** separate lanes `mimic_image` / `mimic_carousel` (`format-routing.ts`); image mimic expansion guarded by **`mimic-planning-guards.ts`**.
+
+**Docs:** [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md) (full), [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md) (quick ref), [CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md) (upstream ingest).
+
 ## Where not to look first
 
 - **`src/routes/admin.ts`** — Large operator UI/API; search by endpoint.
@@ -125,5 +136,6 @@ Rules must be **`active`** (and correctly **`rule_family`**) to affect the right
 - [layers/README.md](./layers/README.md) — per-layer pages
 - [QUALITY_CHECKS.md](./QUALITY_CHECKS.md), [GENERATION_GUIDANCE.md](./GENERATION_GUIDANCE.md), [RISK_RULES.md](./RISK_RULES.md)
 - [API_REFERENCE.md](./API_REFERENCE.md)
+- [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md), [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md), [CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)
 - `README.md` — quick start, CLI, deploy
 - `.cursor/rules/caf-domain-model.mdc` — ID conventions (always-on rule)

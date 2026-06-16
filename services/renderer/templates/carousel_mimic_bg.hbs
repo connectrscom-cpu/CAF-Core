@@ -244,6 +244,22 @@
     .mimic-docai-layer--contrast-adapted{
       text-shadow: inherit;
     }
+
+    /* Brand logo stamp (reviewer toggle) — small, lower-right by default. */
+    .mimic-brand-logo{
+      position:absolute;
+      z-index:6;
+      width:150px;
+      max-width:18%;
+      max-height:120px;
+      object-fit:contain;
+      opacity:0.96;
+      right:48px;
+      bottom:48px;
+    }
+    .mimic-brand-logo--bl{ left:48px; right:auto; }
+    .mimic-brand-logo--tr{ top:48px; bottom:auto; }
+    .mimic-brand-logo--tl{ top:48px; left:48px; right:auto; bottom:auto; }
   </style>
 </head>
 
@@ -252,6 +268,9 @@
   <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -289,6 +308,9 @@
     {{#if ../background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
     {{/if}}
+    {{#if ../logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if ../logo_overlay.position}} mimic-brand-logo--{{../logo_overlay.position}}{{/if}}" src="{{{../logo_overlay.url}}}" alt="" />
+    {{/if}}
     <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if ../mimic_text_backing_color}} style="--mimic-text-back-bg:{{../mimic_text_backing_color}}"{{/if}}">
       {{#if ../mimic_render_text_layers}}
         {{#each ../mimic_render_text_layers}}
@@ -308,6 +330,9 @@
   <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
