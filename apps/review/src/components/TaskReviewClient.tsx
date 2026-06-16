@@ -507,13 +507,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.role);
   }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
 
-  const templateBgCopyFingerprint = useMemo(() => {
-    if (!mimicTemplateBg || editedSlides.length < 1) return "";
+  const templateBgFieldTexts = useMemo(() => {
+    if (!mimicTemplateBg || editedSlides.length < 1) return [];
     const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
-    if (!slide) return "";
-    return JSON.stringify(
-      resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.text)
-    );
+    if (!slide) return [];
+    return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.text);
   }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
 
   useEffect(() => {
@@ -1129,7 +1127,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     fullBleedMode={!mimicTemplateBg}
                     templateBgMode={mimicTemplateBg}
                     templateBgFieldRoles={templateBgFieldRoles}
-                    templateBgCopyFingerprint={templateBgCopyFingerprint}
+                    templateBgFieldTexts={templateBgFieldTexts}
                     brandPalette={brandPalette}
                     brandLogoUrl={brandLogoUrl}
                     onTemplateBgFieldTextChange={(slideIndex, fieldRole, text) => {

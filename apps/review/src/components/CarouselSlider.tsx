@@ -198,7 +198,7 @@ export function CarouselSlider({
   );
 
   useEffect(() => {
-    if (heyGenVideoMode || readOnly || !livePreview?.template) {
+    if (heyGenVideoMode || readOnly || mimicTemplateBg || !livePreview?.template) {
       setLiveUrl((u) => {
         if (u) URL.revokeObjectURL(u);
         return null;
@@ -255,7 +255,7 @@ export function CarouselSlider({
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [heyGenVideoMode, readOnly, livePreview, livePreview?.fontScale, currentIndex, slidesKey]);
+  }, [heyGenVideoMode, readOnly, mimicTemplateBg, livePreview, livePreview?.fontScale, currentIndex, slidesKey]);
 
   const updateSlide = useCallback(
     (
@@ -495,6 +495,7 @@ export function CarouselSlider({
             <div className="mimic-compare-pane mimic-compare-pane--original">
               <span className="mimic-compare-pane__label">Original</span>
               <img
+                key={`ref-${currentIndex}`}
                 src={referenceSlideUrl}
                 alt={`Original slide ${currentIndex + 1}`}
                 className="mimic-compare-pane__img"
@@ -516,7 +517,7 @@ export function CarouselSlider({
             ) : null}
           {livePngUrl ? (
             <img
-              key={livePngUrl}
+              key={`live-${currentIndex}`}
               src={livePngUrl}
               alt={`Slide ${currentIndex + 1} live preview`}
               style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
@@ -525,7 +526,7 @@ export function CarouselSlider({
           ) : mediaUrl ? (
             mediaKind === "video" ? (
               <video
-                key={mediaUrl}
+                key={`vid-${currentIndex}`}
                 src={mediaUrl}
                 controls
                 playsInline
@@ -533,6 +534,7 @@ export function CarouselSlider({
               />
             ) : (
               <img
+                key={`gen-${currentIndex}`}
                 src={mediaUrl}
                 alt={`Slide ${currentIndex + 1}`}
                 style={{
@@ -567,7 +569,7 @@ export function CarouselSlider({
       </div>
         {previewSidePanel ? <div className="mimic-preview-side">{previewSidePanel}</div> : null}
       </div>
-      {!heyGenVideoMode && livePreview?.template && (
+      {!heyGenVideoMode && !mimicTemplateBg && livePreview?.template && (
         <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
           {liveBusy
             ? "Rendering live preview…"
