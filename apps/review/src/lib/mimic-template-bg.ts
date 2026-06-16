@@ -247,7 +247,6 @@ export function templateBgLlmSlideForDocAi(
   const text_blocks = [
     ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
     ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
-    ...(handle ? [{ role: "handle", text: handle }] : []),
   ];
   return {
     ...rawLlmSlide,

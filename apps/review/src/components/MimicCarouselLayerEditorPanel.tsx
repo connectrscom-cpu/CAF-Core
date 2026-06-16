@@ -56,8 +56,17 @@ function layoutRoleMatchesField(layerRole: string, fieldRole: string): boolean {
 function inferDocAiLayerRole(
   layer: DocAiLayerBox,
   row: DocAiLayerOverride | undefined,
-  fullBleed: boolean
+  fullBleed: boolean,
+  templateBg = false
 ): string {
+  const ocrRole = (layer.role ?? "").trim().toLowerCase();
+  if (templateBg) {
+    if (ocrRole === "handle") return "handle";
+    if (ocrRole === "headline" || ocrRole === "title" || ocrRole === "hook" || ocrRole === "subheadline") {
+      return "headline";
+    }
+    if (ocrRole === "body" || ocrRole === "subtitle" || ocrRole === "caption") return "body";
+  }
   const text = (row?.text ?? layer.text ?? "").trim();
   if (looksLikeHandleText(text)) return "handle";
   if (layer.role === "handle" || layer.layer_key?.includes("handle")) return "handle";
@@ -902,7 +911,8 @@ export function MimicCarouselLayerEditorPanel({
               h_px: row.h_px ?? 48,
             },
             row,
-            fullBleedMode
+            fullBleedMode,
+            templateBgMode
           );
           const fieldRole = templateBgFieldRoles.find((fr) => layoutRoleMatchesField(role, fr));
           if (fieldRole) onTemplateBgFieldTextChange(editorSlide, fieldRole, nextText);
@@ -1065,7 +1075,7 @@ export function MimicCarouselLayerEditorPanel({
     const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
     return docAiLayerBoxes.map((layer) => {
       const row = draftByKey.get(layer.layer_key);
-      const role = inferDocAiLayerRole(layer, row, fullBleedMode);
+      const role = inferDocAiLayerRole(layer, row, fullBleedMode, templateBgMode);
       return {
         role,
         text: row?.text?.trim() || layer.text,
@@ -1118,7 +1128,7 @@ export function MimicCarouselLayerEditorPanel({
       const inspectBoxes = parseDocAiLayerBoxes(renderInspect);
       const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
       const roleForBox = (layer: DocAiLayerBox) =>
-        inferDocAiLayerRole(layer, draftByKey.get(layer.layer_key), fullBleedMode);
+        inferDocAiLayerRole(layer, draftByKey.get(layer.layer_key), fullBleedMode, templateBgMode);
 
       const resolveLayoutBlockToBox = (
         layoutBlock: (typeof layoutTextBlocks)[number] | undefined

@@ -20,6 +20,34 @@ function isCustomLayerKey(layerKey: string): boolean {
   return layerKey.startsWith(CUSTOM_LAYER_KEY_PREFIX);
 }
 
+function looksLikeHandleText(text: string): boolean {
+  return /^@[\w.]{2,}$/i.test(text.trim());
+}
+
+function ocrRoleForLayer(layer: DocAiLayerBox): string {
+  return (layer.role ?? "").trim().toLowerCase();
+}
+
+/** template_bg: never seed a body OCR slot with @handle — handle lives on the handle bbox only. */
+function templateBgLayerSeedText(
+  layer: DocAiLayerBox,
+  savedRow: DocAiLayerOverride | undefined,
+  projectHandle: string
+): string {
+  const ocrRole = ocrRoleForLayer(layer);
+  const fromSaved = savedRow?.text?.trim() ?? "";
+  const fromInspect = layer.text?.trim() ?? "";
+  if (ocrRole === "handle") {
+    return fromInspect || fromSaved || projectHandle.trim() || fromInspect;
+  }
+  if (ocrRole === "body" || ocrRole === "subtitle" || ocrRole === "caption") {
+    if (fromSaved && !looksLikeHandleText(fromSaved)) return fromSaved;
+    if (fromInspect && !looksLikeHandleText(fromInspect)) return fromInspect;
+    return fromSaved;
+  }
+  return fromInspect || fromSaved || "";
+}
+
 function newCustomLayerKey(): string {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   return `${CUSTOM_LAYER_KEY_PREFIX}body@${id}`;
@@ -446,7 +474,7 @@ export function MimicDocAiLayerPositionEditor({
       const key = layer.layer_key;
       const savedRow = resolveSaved(key);
       const text = templateBgMode
-        ? (layer.text?.trim() || savedRow?.text || "")
+        ? templateBgLayerSeedText(layer, savedRow, projectHandle)
         : (savedRow?.text ?? layer.text);
       const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
       const x_px = savedRow?.x_px ?? layer.x_px;
@@ -537,6 +565,16 @@ export function MimicDocAiLayerPositionEditor({
         const row = next[key];
         const freshText = layer.text?.trim();
         if (!row || !freshText || row.text === freshText) continue;
+        const ocrRole = ocrRoleForLayer(layer);
+        if (ocrRole === "body" && looksLikeHandleText(freshText)) continue;
+        if (
+          ocrRole !== "handle" &&
+          looksLikeHandleText(freshText) &&
+          row.text?.trim() &&
+          !looksLikeHandleText(row.text)
+        ) {
+          continue;
+        }
         next[key] = { ...row, text: freshText };
         changed = true;
       }

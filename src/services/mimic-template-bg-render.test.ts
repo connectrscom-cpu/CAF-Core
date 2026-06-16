@@ -67,6 +67,18 @@ describe("templateBgLlmSlideForDocAi", () => {
     expect(scoped.headline).toBe("THE ARIES MOTHER");
     expect(scoped.body).toBe(paragraph);
   });
+
+  it("omits project handle from body-slot text_blocks (handle uses OCR bbox + projectHandle)", () => {
+    const scoped = templateBgLlmSlideForDocAi(2, 12, {
+      headline: "THE ARIES MOTHER",
+      body: "The Aries Mom is a spirited explorer, always ready for adventure.",
+      handle: "@signandsound",
+    });
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "THE ARIES MOTHER" },
+      { role: "body", text: "The Aries Mom is a spirited explorer, always ready for adventure." },
+    ]);
+  });
 });
 
 describe("templateBgGuidelineSlideIndex", () => {

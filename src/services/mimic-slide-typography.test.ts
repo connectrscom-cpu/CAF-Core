@@ -780,6 +780,48 @@ describe("mimic-slide-typography", () => {
     expect(layers.find((l) => l.text.includes("Full of life"))?.role).toBe("body");
   });
 
+  it("buildMimicDocAiRenderTextLayers keeps body copy when slide row carries project handle", () => {
+    const ocrSlide = {
+      slide_index: 2,
+      text_blocks: [
+        {
+          text: "THE ARIES MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Body placeholder from reference",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const scoped = templateBgLlmSlideForDocAi(2, 12, {
+      headline: "THE ARIES MOTHER",
+      body: "The Aries Mom is a spirited explorer, always ready for adventure.",
+      handle: "@signandsound",
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { visual_guideline: { slides: [ocrSlide] } },
+      2,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const bodyLayer = layers.find((l) => l.role === "body");
+    expect(bodyLayer?.text).toContain("spirited explorer");
+    expect(bodyLayer?.text).not.toContain("@signandsound");
+    expect(layers.find((l) => l.text === "@signandsound")?.role).toBe("handle");
+  });
+
   it("buildMimicDocAiRenderTextLayers uses LLM listicle decor title on shared Virgo OCR geometry", () => {
     const ocrSlide = {
       slide_index: 7,
