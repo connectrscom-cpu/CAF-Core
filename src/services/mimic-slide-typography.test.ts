@@ -822,6 +822,79 @@ describe("mimic-slide-typography", () => {
     expect(layers.find((l) => l.text === "@signandsound")?.role).toBe("handle");
   });
 
+  it("buildMimicDocAiRenderTextLayers omits handle on template_bg body slides", () => {
+    const ocrSlide = {
+      slide_index: 2,
+      text_blocks: [
+        {
+          text: "THE ARIES MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Body placeholder from reference",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const scoped = templateBgLlmSlideForDocAi(2, 12, {
+      headline: "THE ARIES MOTHER",
+      body: "The Aries Mom is a spirited explorer, always ready for adventure.",
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      2,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    expect(layers.map((l) => l.text)).not.toContain("@signandsound");
+    expect(layers.some((l) => l.text.includes("spirited explorer"))).toBe(true);
+    expect(layers.some((l) => l.text === "THE ARIES MOTHER")).toBe(true);
+  });
+
+  it("buildMimicDocAiRenderTextLayers keeps handle on template_bg CTA slide", () => {
+    const ocrSlide = {
+      slide_index: 12,
+      text_blocks: [
+        {
+          text: "Follow for more",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.85, w: 0.3, h: 0.04 },
+        },
+      ],
+    };
+    const scoped = templateBgLlmSlideForDocAi(12, 12, {
+      headline: "Follow for more",
+      cta: "Follow for more",
+      handle: "@signandsound",
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      12,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    expect(layers.map((l) => l.text)).toContain("@signandsound");
+  });
+
   it("buildMimicDocAiRenderTextLayers uses LLM listicle decor title on shared Virgo OCR geometry", () => {
     const ocrSlide = {
       slide_index: 7,

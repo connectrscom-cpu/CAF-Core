@@ -21,6 +21,7 @@ import {
 import { refKeyFromLayerPositionKey } from "@caf-core-carousel/mimic-docai-layer-positions";
 import {
   templateBgSlideIndicesForSlot,
+  templateBgSlotForSlide,
   type MimicTemplateBgSlot,
 } from "@/lib/mimic-template-bg";
 
@@ -1048,8 +1049,16 @@ export function MimicCarouselLayerEditorPanel({
   }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss, templateBgCopyFingerprint]);
 
   const docAiLayerBoxes = useMemo(() => {
-    const boxes = parseDocAiLayerBoxes(renderInspect);
+    let boxes = parseDocAiLayerBoxes(renderInspect);
     if (templateBgMode) {
+      const slot = templateBgSlotForSlide(editorSlide, slideCount);
+      if (slot !== "cta") {
+        boxes = boxes.filter((layer) => {
+          if (layer.layer_key?.startsWith("custom@")) return true;
+          const role = (layer.role ?? "").trim().toLowerCase();
+          return role !== "handle";
+        });
+      }
       let blockIndex = 0;
       return boxes.map((layer) => {
         const withIdx = { ...layer, block_index: blockIndex };
@@ -1069,7 +1078,7 @@ export function MimicCarouselLayerEditorPanel({
       blockIndex += 1;
       return withIdx;
     });
-  }, [renderInspect, layerPosDraft, templateBgMode]);
+  }, [renderInspect, layerPosDraft, templateBgMode, editorSlide, slideCount]);
 
   const layoutTextBlocks = useMemo(() => {
     const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));

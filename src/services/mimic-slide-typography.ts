@@ -1324,6 +1324,31 @@ function isListicleMotherDecorText(text: string): boolean {
   return /^THE\s+.+\s+MOTHER$/i.test(String(text ?? "").trim());
 }
 
+type TemplateBgSlot = "cover" | "body" | "cta";
+
+/** template_bg cover/body/cta — handle prints on CTA slide only. */
+function templateBgSlotForOutputSlide(
+  mimicMode: string | null | undefined,
+  slideIndex1Based: number,
+  totalSlides?: number
+): TemplateBgSlot | null {
+  if (String(mimicMode ?? "").trim() !== "template_bg") return null;
+  const n = totalSlides ?? 0;
+  if (n < 1) return "body";
+  if (n <= 1) return "body";
+  if (slideIndex1Based <= 1) return "cover";
+  if (slideIndex1Based >= n) return "cta";
+  return "body";
+}
+
+function templateBgOmitsHandleLayer(slot: TemplateBgSlot | null): boolean {
+  return slot != null && slot !== "cta";
+}
+
+function isOcrHandleLayoutRef(ref: Pick<DocAiLayoutBlock, "role" | "ref_text">): boolean {
+  return isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text);
+}
+
 /** Per-slide decor/headline for template_bg — never reuse reference OCR zodiac when LLM has its own title. */
 function perSlideDecorHeadlineFromLlm(
   llmSlide: Record<string, unknown>,
@@ -1439,6 +1464,7 @@ function buildListicleMotherTemplateBgLayers(
     textBacking: boolean;
     textBackingColor?: string | null;
     avoidCenterSubject?: boolean;
+    omitHandleLayer?: boolean;
   }
 ): MimicDocAiRenderTextLayer[] {
   const decorTitle = perSlideDecorHeadlineFromLlm(llmSlide, llmLines, directLines);
@@ -1465,8 +1491,8 @@ function buildListicleMotherTemplateBgLayers(
       });
       continue;
     }
-    if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) {
-      if (!projectHandle) continue;
+    if (isOcrHandleLayoutRef(ref)) {
+      if (opts.omitHandleLayer || !projectHandle) continue;
       pushDocAiRenderLayer(layers, ref, projectHandle, ref, {
         textBacking: opts.textBacking,
         textBackingColor: opts.textBackingColor,
@@ -2793,7 +2819,13 @@ function buildMimicDocAiStackRenderLayers(
   llmLines: LlmSlideCopyLines,
   transcript: string,
   theme: { ink: string; body: string } | undefined,
-  opts: { projectHandle?: string | null; textBacking: boolean; textBackingColor?: string | null; avoidCenterSubject?: boolean }
+  opts: {
+    projectHandle?: string | null;
+    textBacking: boolean;
+    textBackingColor?: string | null;
+    avoidCenterSubject?: boolean;
+    omitHandleLayer?: boolean;
+  }
 ): MimicDocAiRenderTextLayer[] {
   const textBacking = opts.textBacking;
   const textBackingColor = opts.textBackingColor;
@@ -2807,8 +2839,8 @@ function buildMimicDocAiStackRenderLayers(
 
   for (const ref of orderedRef) {
     if (isPreserveReferenceDecorText(ref.ref_text, ref)) continue;
-    if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) {
-      tailBlocks.push(ref);
+    if (isOcrHandleLayoutRef(ref)) {
+      if (!opts.omitHandleLayer) tailBlocks.push(ref);
       continue;
     }
     if (roleBucket(ref.role) === "cta") {
@@ -2966,7 +2998,8 @@ function appendLeftoverLlmCopyAsSyntheticLayers(
  * Puppeteer performs a second shrink-to-fit pass (see services/renderer/server.js).
  */
 export function buildMimicDocAiRenderTextLayers(
-  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
+  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans"> &
+    Partial<Pick<MimicPayloadV1, "mode">>,
   slideIndex1Based: number,
   llmSlide: Record<string, unknown>,
   theme?: { ink: string; body: string },
@@ -2981,6 +3014,8 @@ export function buildMimicDocAiRenderTextLayers(
   const textBacking = Boolean(opts?.textBacking);
   const textBackingColor = opts?.textBackingColor;
   const avoidCenterSubject = Boolean(opts?.avoidCenterSubject);
+  const templateBgSlot = templateBgSlotForOutputSlide(mimic.mode, slideIndex1Based, opts?.totalSlides);
+  const omitHandleLayer = templateBgOmitsHandleLayer(templateBgSlot);
   const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based, {
     totalSlides: opts?.totalSlides,
   });
@@ -3014,7 +3049,8 @@ export function buildMimicDocAiRenderTextLayers(
   const llmLines = expandLlmLinesForDocAiMapping(llmSlide, {
     referenceHandles: refHandlesArr,
     projectHandle: opts?.projectHandle ?? null,
-    layoutHasHandleBlock: orderedRef.some((r) => isHandleTextBlock(r.role, r.ref_text)),
+    layoutHasHandleBlock:
+      !omitHandleLayer && orderedRef.some((r) => isHandleTextBlock(r.role, r.ref_text)),
   });
   const directLines = orderedLlmTextBlockLines(llmSlide);
   const transcript = String(refSlide.on_screen_text_transcript ?? "").trim();
@@ -3048,6 +3084,7 @@ export function buildMimicDocAiRenderTextLayers(
         textBacking,
         textBackingColor,
         avoidCenterSubject,
+        omitHandleLayer,
       }
     );
     if (listicleLayers.length > 0) {
@@ -3079,6 +3116,7 @@ export function buildMimicDocAiRenderTextLayers(
           textBacking,
           textBackingColor,
           avoidCenterSubject,
+          omitHandleLayer,
         })
       );
     }
@@ -3118,6 +3156,7 @@ export function buildMimicDocAiRenderTextLayers(
 
   for (let i = 0; i < orderedRef.length; i++) {
     const ref = orderedRef[i]!;
+    if (omitHandleLayer && isOcrHandleLayoutRef(ref)) continue;
     const nextRef = orderedRef[i + 1] ?? null;
     const nextInStack =
       !useDirectMapping &&
