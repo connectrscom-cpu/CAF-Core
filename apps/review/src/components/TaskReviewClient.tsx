@@ -40,6 +40,7 @@ import {
 } from "@/lib/text-overlay-reprint-status";
 import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
 import {
+  applyMimicTemplateBgFieldEdit,
   isMimicTemplateBgMode,
   normalizeMimicTemplateBgSlides,
   resolveMimicTemplateBgEditorFields,
@@ -713,8 +714,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
         ? (gp.mimic_v1 as Record<string, unknown>)
         : null;
-    return mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex);
-  }, [mimicCarouselFlow, fullJob, viewerSlideIndex]);
+    return mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length);
+  }, [mimicCarouselFlow, fullJob, viewerSlideIndex, editedSlides.length]);
 
   useEffect(() => {
     setActiveTextBlockIndex(null);
@@ -1131,6 +1132,21 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     templateBgCopyFingerprint={templateBgCopyFingerprint}
                     brandPalette={brandPalette}
                     brandLogoUrl={brandLogoUrl}
+                    onTemplateBgFieldTextChange={(slideIndex, fieldRole, text) => {
+                      setEditedSlides((prev) => {
+                        const idx = slideIndex - 1;
+                        const slide = prev[idx];
+                        if (!slide) return prev;
+                        const fields = resolveMimicTemplateBgEditorFields(slide, slideIndex, prev.length);
+                        const field = fields.find((f) => f.role === fieldRole);
+                        if (!field) return prev;
+                        return prev.map((s, i) =>
+                          i === idx
+                            ? applyMimicTemplateBgFieldEdit(s, slideIndex, prev.length, field.key, text)
+                            : s
+                        );
+                      });
+                    }}
                     onLayoutTextBlocksChange={(slide, blocks) => {
                       if (mimicTemplateBg) return;
                       if (slide !== viewerSlideIndexRef.current) return;

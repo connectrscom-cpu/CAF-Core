@@ -421,6 +421,9 @@ export interface MimicCarouselLayerEditorPanelProps {
     fn: ((blockIndex: number, text: string) => void) | null
   ) => void;
 
+  /** template_bg: push layout-editor copy edits back into slide copy (left column + reprint). */
+  onTemplateBgFieldTextChange?: (slideIndex: number, fieldRole: string, text: string) => void;
+
   /** Project brand palette (hex) for color quick-pick swatches. */
   brandPalette?: string[];
 
@@ -480,6 +483,8 @@ export function MimicCarouselLayerEditorPanel({
   onLayoutTextBlocksChange,
 
   registerTextBlockUpdater,
+
+  onTemplateBgFieldTextChange,
 
   brandPalette = [],
 
@@ -545,6 +550,7 @@ export function MimicCarouselLayerEditorPanel({
   const regenNote = regenerationNoteProp ?? localRegenNote;
   const setRegenNote = onRegenerationNoteChange ?? setLocalRegenNote;
   const [showRegenRoute, setShowRegenRoute] = useState<boolean>(false);
+  const [regenPlateOpen, setRegenPlateOpen] = useState(true);
 
   const lastEmittedTextBlocksRef = useRef<string>("");
   const [layerPosDraft, setLayerPosDraft] = useState<DocAiLayerOverride[]>([]);
@@ -870,9 +876,38 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
+  const renderInspectRef = useRef(renderInspect);
+  renderInspectRef.current = renderInspect;
+
   const handleLayerDraftChange = useCallback(
 
     (overrides: DocAiLayerOverride[]) => {
+
+      if (templateBgMode && onTemplateBgFieldTextChange && templateBgFieldRoles.length > 0) {
+        const prevByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
+        const inspectBoxes = parseDocAiLayerBoxes(renderInspectRef.current);
+        for (const row of overrides) {
+          const prev = prevByKey.get(row.layer_key);
+          const nextText = row.text?.trim();
+          if (!nextText || nextText === prev?.text?.trim()) continue;
+          const layer = inspectBoxes.find((l) => l.layer_key === row.layer_key);
+          const role = inferDocAiLayerRole(
+            layer ?? {
+              layer_key: row.layer_key,
+              text: nextText,
+              role: "body",
+              x_px: row.x_px,
+              y_px: row.y_px,
+              w_px: row.w_px ?? 120,
+              h_px: row.h_px ?? 48,
+            },
+            row,
+            fullBleedMode
+          );
+          const fieldRole = templateBgFieldRoles.find((fr) => layoutRoleMatchesField(role, fr));
+          if (fieldRole) onTemplateBgFieldTextChange(editorSlide, fieldRole, nextText);
+        }
+      }
 
       setLayerPosDraft(overrides);
 
@@ -882,9 +917,19 @@ export function MimicCarouselLayerEditorPanel({
 
     },
 
-    [editorSlide]
+    [
+      editorSlide,
+      templateBgMode,
+      onTemplateBgFieldTextChange,
+      templateBgFieldRoles,
+      layerPosDraft,
+      fullBleedMode,
+    ]
 
   );
+
+  const renderInspectRef = useRef(renderInspect);
+  renderInspectRef.current = renderInspect;
 
 
 
@@ -1509,8 +1554,17 @@ export function MimicCarouselLayerEditorPanel({
 
       {templateBgMode ? (
         <div className="mimic-regen-route mimic-regen-route--slots">
+          <button
+            type="button"
+            className="mimic-regen-route__collapse btn-ghost btn-sm"
+            onClick={() => setRegenPlateOpen((v) => !v)}
+            aria-expanded={regenPlateOpen}
+          >
+            Regen plate {regenPlateOpen ? "▾" : "▸"}
+          </button>
+          {regenPlateOpen ? (
+            <>
           <div className="mimic-regen-route__group">
-            <span className="mimic-regen-route__label">Regen plate</span>
             <button
               type="button"
               className="btn-secondary btn-sm mimic-slot-regen-btn"
@@ -1555,6 +1609,8 @@ export function MimicCarouselLayerEditorPanel({
                 <p className="mimic-layer-editor-panel__error">{regenerateError}</p>
               ) : null}
             </div>
+          ) : null}
+            </>
           ) : null}
         </div>
       ) : null}
@@ -1621,60 +1677,6 @@ export function MimicCarouselLayerEditorPanel({
         <p className="mimic-layer-editor-panel__error">{regenerateError}</p>
       ) : null}
 
-      <div className="mimic-layer-editor-panel__highlight">
-        <label className="mimic-layer-editor-panel__option">
-          <input
-            type="checkbox"
-            checked={reprintTextBacking}
-            onChange={(e) => setReprintTextBacking(e.target.checked)}
-          />
-          <span>Highlight behind text</span>
-        </label>
-        {reprintTextBacking ? (
-          <label className="mimic-layer-editor-panel__highlight-color">
-            <span>Colour</span>
-            <input
-              type="color"
-              value={reprintTextBackingHex}
-              onChange={(e) => setReprintTextBackingHex(e.target.value)}
-              title="Highlight colour behind text"
-            />
-          </label>
-        ) : null}
-        {reprintTextBacking && brandPalette.length > 0 ? (
-          <div className="brand-swatches" title="Brand palette">
-            {brandPalette.map((hex) => (
-              <button
-                key={hex}
-                type="button"
-                className="brand-swatch"
-                style={{ background: hex }}
-                title={hex}
-                aria-label={`Use ${hex}`}
-                onClick={() => setReprintTextBackingHex(hex)}
-              />
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {brandLogoUrl.trim() ? (
-        <div className="mimic-layer-editor-panel__highlight">
-          <label className="mimic-layer-editor-panel__option">
-            <input
-              type="checkbox"
-              checked={logoEnabled}
-              onChange={(e) => setLogoEnabled(e.target.checked)}
-            />
-            <span>Stamp brand logo (lower-right)</span>
-          </label>
-          {logoEnabled ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={brandLogoUrl} alt="Brand logo" className="brand-logo-chip" />
-          ) : null}
-        </div>
-      ) : null}
-
       {!showEditor && !renderInspectLoading ? (
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1727,6 +1729,14 @@ export function MimicCarouselLayerEditorPanel({
             brandPalette={brandPalette}
 
             logoOverlayUrl={logoOverlayPayload ? brandLogoUrl : ""}
+
+            textBackingEnabled={reprintTextBacking}
+            onTextBackingEnabledChange={setReprintTextBacking}
+            textBackingColorHex={reprintTextBackingHex}
+            onTextBackingColorHexChange={setReprintTextBackingHex}
+            logoStampEnabled={logoEnabled}
+            onLogoStampEnabledChange={setLogoEnabled}
+            brandLogoPreviewUrl={brandLogoUrl}
 
           />
 

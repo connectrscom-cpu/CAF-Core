@@ -18,6 +18,7 @@ import {
   isOverlayChromeReferenceText,
   bodySlotIndexForHeadlineRemainder,
   isPreserveReferenceDecorText,
+  isZodiacSignName,
   preferSingleLineTextBackLayer,
   referenceTextMatchesLlmHeadline,
   shouldRenderDocAiLayerSingleLine,
@@ -1323,6 +1324,42 @@ function isListicleMotherDecorText(text: string): boolean {
   return /^THE\s+.+\s+MOTHER$/i.test(String(text ?? "").trim());
 }
 
+/** Per-slide decor/headline for template_bg — never reuse reference OCR zodiac when LLM has its own title. */
+function perSlideDecorHeadlineFromLlm(
+  llmSlide: Record<string, unknown>,
+  llmLines: { headline?: string | null; bodyLines?: string[] },
+  directLines: string[]
+): string {
+  const motherDecor = listicleDecorTitleFromLlmSlide(llmSlide, llmLines, directLines);
+  if (motherDecor) return motherDecor;
+
+  if (Array.isArray(llmSlide.text_blocks)) {
+    for (const item of llmSlide.text_blocks) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      if (roleBucket(mimicTextBlockSemanticRole(rec)) !== "headline") continue;
+      const text = sanitizeMimicOverlayCopyText(rec.text).replace(/:+\s*$/, "").trim();
+      if (!text || looksLikeInstagramHandleText(text)) continue;
+      if (text.length > 56 || text.includes("\n")) continue;
+      if (isListicleMotherDecorText(text) || isZodiacSignName(text)) return text;
+    }
+  }
+
+  const candidates = [
+    llmLines.headline?.trim(),
+    String(llmSlide.headline ?? "").trim(),
+    directLines[0]?.trim(),
+  ].filter(Boolean) as string[];
+
+  for (const raw of candidates) {
+    const text = raw.replace(/:+\s*$/, "").trim();
+    if (!text || looksLikeInstagramHandleText(text)) continue;
+    if (text.includes("\n")) continue;
+    if (isListicleMotherDecorText(text) || isZodiacSignName(text)) return text;
+  }
+  return "";
+}
+
 function listicleDecorTitleFromLlmSlide(
   llmSlide: Record<string, unknown>,
   llmLines: { headline?: string | null; bodyLines?: string[] },
@@ -1354,8 +1391,9 @@ function listicleDecorTitleFromLlmSlide(
 }
 
 function isListicleMotherTemplateBgLayout(orderedRef: DocAiLayoutBlock[]): boolean {
+  const hasDecor = orderedRef.some((r) => isListicleMotherDecorText(r.ref_text));
   return (
-    orderedRef.some((r) => isListicleMotherDecorText(r.ref_text)) &&
+    hasDecor &&
     orderedRef.some(
       (r) => isHandleTextBlock(r.role, r.ref_text) || looksLikeInstagramHandleText(r.ref_text)
     ) &&
@@ -1403,7 +1441,7 @@ function buildListicleMotherTemplateBgLayers(
     avoidCenterSubject?: boolean;
   }
 ): MimicDocAiRenderTextLayer[] {
-  const decorTitle = listicleDecorTitleFromLlmSlide(llmSlide, llmLines, directLines);
+  const decorTitle = perSlideDecorHeadlineFromLlm(llmSlide, llmLines, directLines);
   const bodyText = bodyCopyForListicleMotherSlide(llmSlide, llmLines, directLines);
   const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
   const bodyRefs = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r));
@@ -1472,6 +1510,17 @@ function directMappingSkewsListicleBodySlots(
 }
 
 /** Map text_blocks[] lines onto OCR boxes by reading order (handles handle/decor gaps). */
+function directCopyLinesForCopyableSlots(directLines: string[]): string[] {
+  return directLines.filter((line) => {
+    const t = line.trim();
+    if (!t) return false;
+    if (looksLikeInstagramHandleText(t)) return false;
+    if (isListicleMotherDecorText(t)) return false;
+    if (isZodiacSignName(t)) return false;
+    return true;
+  });
+}
+
 export function buildDirectCopyAssignmentsByIndex(
   orderedRef: DocAiLayoutBlock[],
   directLines: string[]
@@ -1484,7 +1533,7 @@ export function buildDirectCopyAssignmentsByIndex(
     if (docAiRefAcceptsDirectCopyLine(orderedRef[i]!)) copyableIndices.push(i);
   }
 
-  if (directLines.length === orderedRef.length) {
+  if (directLines.length === orderedRef.length && copyableIndices.length === orderedRef.length) {
     for (let i = 0; i < orderedRef.length; i++) {
       assignments[i] = directLines[i] ?? "";
     }
@@ -1493,23 +1542,25 @@ export function buildDirectCopyAssignmentsByIndex(
 
   if (copyableIndices.length === 0) return { useDirect: false, assignments };
 
-  if (directLines.length === copyableIndices.length) {
+  const copyLines = directCopyLinesForCopyableSlots(directLines);
+
+  if (copyLines.length === copyableIndices.length) {
     for (let j = 0; j < copyableIndices.length; j++) {
-      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+      assignments[copyableIndices[j]!] = copyLines[j] ?? "";
     }
     return { useDirect: true, assignments };
   }
 
-  if (directLines.length > copyableIndices.length && copyableIndices.length >= 1) {
+  if (copyLines.length > copyableIndices.length && copyableIndices.length >= 1) {
     for (let j = 0; j < copyableIndices.length; j++) {
-      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+      assignments[copyableIndices[j]!] = copyLines[j] ?? "";
     }
     return { useDirect: true, assignments };
   }
 
-  if (directLines.length < copyableIndices.length && copyableIndices.length >= 1) {
-    for (let j = 0; j < directLines.length; j++) {
-      assignments[copyableIndices[j]!] = directLines[j] ?? "";
+  if (copyLines.length < copyableIndices.length && copyLines.length >= 1) {
+    for (let j = 0; j < copyLines.length; j++) {
+      assignments[copyableIndices[j]!] = copyLines[j] ?? "";
     }
     return { useDirect: true, assignments };
   }
@@ -2728,7 +2779,9 @@ function orderedLlmTextBlockLines(slide: Record<string, unknown>): string[] {
     if (!rec) continue;
     const text = sanitizeMimicOverlayCopyText(rec.text);
     if (!text) continue;
-    if (isOverlayChromeReferenceText(text, roleBucket(mimicTextBlockSemanticRole(rec)))) continue;
+    const role = mimicTextBlockSemanticRole(rec);
+    if (isHandleTextBlock(role, text)) continue;
+    if (isOverlayChromeReferenceText(text, roleBucket(role))) continue;
     lines.push(text);
   }
   return lines;
@@ -3061,7 +3114,7 @@ export function buildMimicDocAiRenderTextLayers(
     : "";
   const layers: MimicDocAiRenderTextLayer[] = [];
   let headlinePrefixAssigned = false;
-  const listicleDecorTitle = listicleDecorTitleFromLlmSlide(llmSlide, llmLines, directLines);
+  const listicleDecorTitle = perSlideDecorHeadlineFromLlm(llmSlide, llmLines, directLines);
 
   for (let i = 0; i < orderedRef.length; i++) {
     const ref = orderedRef[i]!;
@@ -3077,9 +3130,7 @@ export function buildMimicDocAiRenderTextLayers(
 
     let text = "";
     if (isPreserveReferenceDecorText(ref.ref_text, ref)) {
-      text = isListicleMotherDecorText(ref.ref_text)
-        ? listicleDecorTitle || ref.ref_text.trim()
-        : ref.ref_text.trim();
+      text = listicleDecorTitle || ref.ref_text.trim();
     } else if (useDirectMapping) {
       if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
         text = projectHandle;
@@ -3114,7 +3165,12 @@ export function buildMimicDocAiRenderTextLayers(
     } else if (soloBodyRef && editableBodyRefs[0] === ref && soloBodyCopy) {
       text = soloBodyCopy;
       bodyQueue.length = 0;
-    } else if (projectHandle && bodyQueue[0] && looksLikeInstagramHandleText(bodyQueue[0]!)) {
+    } else if (
+      projectHandle &&
+      bodyQueue[0] &&
+      looksLikeInstagramHandleText(bodyQueue[0]!) &&
+      (isHandleTextBlock(ref.role, ref.ref_text) || roleBucket(ref.role) === "handle")
+    ) {
       text = projectHandle;
       bodyQueue.shift();
     } else {
@@ -3132,7 +3188,11 @@ export function buildMimicDocAiRenderTextLayers(
       if (refHandlesArr.length > 0) {
         text = substituteReferenceHandlesInText(text, refHandlesArr, projectHandle);
       }
-      if (looksLikeInstagramHandleText(text) || isHandleTextBlock(ref.role, ref.ref_text)) {
+      const ocrHandleSlot =
+        isHandleTextBlock(ref.role, ref.ref_text) || roleBucket(ref.role) === "handle";
+      if (ocrHandleSlot) {
+        text = projectHandle;
+      } else if (looksLikeInstagramHandleText(text) && looksLikeInstagramHandleText(ref.ref_text)) {
         text = projectHandle;
       }
     }

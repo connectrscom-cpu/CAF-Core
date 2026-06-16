@@ -162,6 +162,14 @@ type MimicDocAiLayerPositionEditorProps = {
   brandPalette?: string[];
   /** When set, preview the brand logo lower-right on the canvas. */
   logoOverlayUrl?: string;
+  /** Highlight behind text (reprint + preview). */
+  textBackingEnabled?: boolean;
+  onTextBackingEnabledChange?: (enabled: boolean) => void;
+  textBackingColorHex?: string;
+  onTextBackingColorHexChange?: (hex: string) => void;
+  logoStampEnabled?: boolean;
+  onLogoStampEnabledChange?: (enabled: boolean) => void;
+  brandLogoPreviewUrl?: string;
 };
 
 type MoveDrag = {
@@ -336,6 +344,13 @@ export function MimicDocAiLayerPositionEditor({
   templateBgMode = false,
   brandPalette = [],
   logoOverlayUrl = "",
+  textBackingEnabled,
+  onTextBackingEnabledChange,
+  textBackingColorHex,
+  onTextBackingColorHexChange,
+  logoStampEnabled,
+  onLogoStampEnabledChange,
+  brandLogoPreviewUrl = "",
 }: MimicDocAiLayerPositionEditorProps) {
   const canvasColRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -380,10 +395,6 @@ export function MimicDocAiLayerPositionEditor({
     setContainerWidth(el.clientWidth || 360);
     return () => ro.disconnect();
   }, [previewScale]);
-
-  const bumpPreviewScale = useCallback((delta: number) => {
-    setPreviewScale((prev) => clampPreviewScale(Math.round((prev + delta) * 100) / 100));
-  }, []);
 
   const onPreviewResizeMove = useCallback(
     (e: React.PointerEvent) => {
@@ -834,36 +845,6 @@ export function MimicDocAiLayerPositionEditor({
             </>
           ) : null}
         </div>
-        <div className="mimic-docai-editor__preview-size" title="Resize the slide preview">
-          <span className="mimic-docai-editor__preview-size-label">Preview</span>
-          <button
-            type="button"
-            className="btn-secondary mimic-docai-editor__font-step"
-            aria-label="Shrink preview"
-            onClick={() => bumpPreviewScale(-0.1)}
-          >
-            −
-          </button>
-          <input
-            type="range"
-            className="mimic-docai-editor__preview-size-slider"
-            min={Math.round(MIN_PREVIEW_SCALE * 100)}
-            max={Math.round(MAX_PREVIEW_SCALE * 100)}
-            step={5}
-            value={Math.round(previewScale * 100)}
-            onChange={(e) => setPreviewScale(clampPreviewScale(Number(e.target.value) / 100))}
-            aria-label="Preview size"
-          />
-          <button
-            type="button"
-            className="btn-secondary mimic-docai-editor__font-step"
-            aria-label="Enlarge preview"
-            onClick={() => bumpPreviewScale(0.1)}
-          >
-            +
-          </button>
-          <span className="mimic-docai-editor__preview-size-value">{Math.round(previewScale * 100)}%</span>
-        </div>
       </div>
 
       {visibleLayers.length > 0 ? (
@@ -1224,6 +1205,58 @@ export function MimicDocAiLayerPositionEditor({
               Select a text box on the preview to edit copy and style.
             </div>
           )}
+          {onTextBackingEnabledChange ? (
+            <div className="mimic-docai-editor__overlay-options">
+              <label className="mimic-layer-editor-panel__option">
+                <input
+                  type="checkbox"
+                  checked={textBackingEnabled ?? textBacking}
+                  onChange={(e) => onTextBackingEnabledChange(e.target.checked)}
+                />
+                <span>Highlight behind text</span>
+              </label>
+              {(textBackingEnabled ?? textBacking) && onTextBackingColorHexChange ? (
+                <label className="mimic-layer-editor-panel__highlight-color">
+                  <span>Colour</span>
+                  <input
+                    type="color"
+                    value={textBackingColorHex ?? "#ffffff"}
+                    onChange={(e) => onTextBackingColorHexChange(e.target.value)}
+                    title="Highlight colour behind text"
+                  />
+                </label>
+              ) : null}
+              {(textBackingEnabled ?? textBacking) && brandPalette.length > 0 && onTextBackingColorHexChange ? (
+                <div className="brand-swatches" title="Brand palette">
+                  {brandPalette.map((hex) => (
+                    <button
+                      key={hex}
+                      type="button"
+                      className="brand-swatch"
+                      style={{ background: hex }}
+                      title={hex}
+                      aria-label={`Use ${hex}`}
+                      onClick={() => onTextBackingColorHexChange(hex)}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {brandLogoPreviewUrl.trim() && onLogoStampEnabledChange ? (
+                <label className="mimic-layer-editor-panel__option">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(logoStampEnabled)}
+                    onChange={(e) => onLogoStampEnabledChange(e.target.checked)}
+                  />
+                  <span>Stamp brand logo (lower-right)</span>
+                </label>
+              ) : null}
+              {logoStampEnabled && brandLogoPreviewUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={brandLogoPreviewUrl} alt="Brand logo" className="brand-logo-chip" />
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

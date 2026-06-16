@@ -877,6 +877,53 @@ describe("mimic-slide-typography", () => {
     expect(byRole.get("handle")).toBe("@signandsound");
   });
 
+  it("buildMimicDocAiRenderTextLayers uses per-slide zodiac headline over shared OCR decor", () => {
+    const ocrSlide = {
+      slide_index: 4,
+      text_blocks: [
+        {
+          text: "Cancer",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@signandsound",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Body placeholder from reference",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const scoped = templateBgLlmSlideForDocAi(4, 12, {
+      headline: "Gemini",
+      body: "Gemini: First impressions do not always capture the entire picture.",
+      text_blocks: [
+        { role: "headline", text: "Gemini" },
+        { role: "body", text: "Gemini: First impressions do not always capture the entire picture." },
+        { role: "handle", text: "@signandsound" },
+      ],
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { visual_guideline: { slides: [ocrSlide] } },
+      4,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    expect(layers.map((l) => l.text)).toEqual(
+      expect.arrayContaining(["Gemini", "@signandsound"])
+    );
+    expect(layers.map((l) => l.text).join(" ")).toContain("First impressions");
+    expect(layers.map((l) => l.text)).not.toContain("Cancer");
+  });
+
   it("docAiBlocksShareVerticalStack detects same column", () => {
     expect(
       docAiBlocksShareVerticalStack(
