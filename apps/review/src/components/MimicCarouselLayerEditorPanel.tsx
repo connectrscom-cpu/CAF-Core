@@ -928,11 +928,6 @@ export function MimicCarouselLayerEditorPanel({
 
   );
 
-  const renderInspectRef = useRef(renderInspect);
-  renderInspectRef.current = renderInspect;
-
-
-
   const persistedPositionsForInspect = useMemo(
     () =>
       overridesForInspect(
