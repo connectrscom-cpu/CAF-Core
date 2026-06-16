@@ -113,6 +113,15 @@ function pickCarouselTemplateName(generationPayload: Record<string, unknown>): s
 
 
 
+/** template_bg: hidden is reprint-only — never hydrate the editor from saved hidden markers. */
+function stripTemplateBgHiddenOverrides(rows: DocAiLayerOverride[]): DocAiLayerOverride[] {
+  return rows.map((row) => {
+    if (!row.hidden) return row;
+    const { hidden: _hidden, ...rest } = row;
+    return rest as DocAiLayerOverride;
+  });
+}
+
 function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
   return rows.map((r) => {
     if (r.hidden) return r;
@@ -414,6 +423,10 @@ export interface MimicCarouselLayerEditorPanelProps {
   /** Project brand logo URL — composited lower-right when the logo toggle is on. */
   brandLogoUrl?: string;
 
+  /** Shared mimic slide-regen prompt note (carousel header + layout editor). */
+  regenerationNote?: string;
+  onRegenerationNoteChange?: (value: string) => void;
+
 }
 
 
@@ -468,6 +481,10 @@ export function MimicCarouselLayerEditorPanel({
 
   brandLogoUrl = "",
 
+  regenerationNote: regenerationNoteProp,
+
+  onRegenerationNoteChange,
+
 }: MimicCarouselLayerEditorPanelProps) {
 
   const [logoEnabled, setLogoEnabled] = useState(false);
@@ -517,6 +534,9 @@ export function MimicCarouselLayerEditorPanel({
   // Regenerate route picker (1.6): similarity preset + reference on/off.
   const [regenSimilarityPct, setRegenSimilarityPct] = useState<number>(85);
   const [regenUseReference, setRegenUseReference] = useState<boolean>(true);
+  const [localRegenNote, setLocalRegenNote] = useState("");
+  const regenNote = regenerationNoteProp ?? localRegenNote;
+  const setRegenNote = onRegenerationNoteChange ?? setLocalRegenNote;
   const [showRegenRoute, setShowRegenRoute] = useState<boolean>(false);
 
   const lastEmittedTextBlocksRef = useRef<string>("");
@@ -534,8 +554,10 @@ export function MimicCarouselLayerEditorPanel({
     setRenderInspectLoading(true);
 
     const cached = slideDrafts[editorSlide];
-    setLayerPosDraft(cached?.length ? [...cached] : []);
-  }, [editorSlide]);
+    setLayerPosDraft(
+      cached?.length ? (templateBgMode ? stripTemplateBgHiddenOverrides(cached) : [...cached]) : []
+    );
+  }, [editorSlide, templateBgMode]);
 
   // Initial load: if slideDrafts arrives after first render, hydrate layerPosDraft
   // only when we currently have no draft.
@@ -594,7 +616,9 @@ export function MimicCarouselLayerEditorPanel({
 
       if (!Number.isFinite(slideIndex) || slideIndex < 1) continue;
 
-      fromServer[slideIndex] = rows as DocAiLayerOverride[];
+      fromServer[slideIndex] = templateBgMode
+        ? stripTemplateBgHiddenOverrides(rows as DocAiLayerOverride[])
+        : (rows as DocAiLayerOverride[]);
 
     }
 
@@ -602,7 +626,7 @@ export function MimicCarouselLayerEditorPanel({
 
     setSlideDrafts((prev) => ({ ...fromServer, ...prev }));
 
-  }, [mimicV1, taskId]);
+  }, [mimicV1, taskId, templateBgMode]);
 
 
 
@@ -1119,11 +1143,15 @@ export function MimicCarouselLayerEditorPanel({
 
     const cached = slideDrafts[editorSlide];
 
-    if (cached?.length) return cached;
+    if (cached?.length) {
+      return templateBgMode ? stripTemplateBgHiddenOverrides(cached) : cached;
+    }
 
-    return docAiSavedOverrides;
+    return templateBgMode
+      ? stripTemplateBgHiddenOverrides(docAiSavedOverrides)
+      : docAiSavedOverrides;
 
-  }, [slideDrafts, editorSlide, docAiSavedOverrides]);
+  }, [slideDrafts, editorSlide, docAiSavedOverrides, templateBgMode]);
 
 
 
@@ -1271,6 +1299,8 @@ export function MimicCarouselLayerEditorPanel({
 
           image_input_mode: regenUseReference ? "reference_edit" : "analysis_t2i",
 
+          ...(regenNote.trim() ? { regeneration_note: regenNote.trim().slice(0, 400) } : {}),
+
         }),
 
       });
@@ -1365,6 +1395,17 @@ export function MimicCarouselLayerEditorPanel({
         ) : null}
 
         <span className="mimic-layer-editor-panel__slide-row-spacer" aria-hidden />
+
+        <input
+          type="text"
+          className="mimic-regen-route__note-input"
+          value={regenNote}
+          onChange={(e) => setRegenNote(e.target.value.slice(0, 400))}
+          placeholder="Regen note (optional)"
+          maxLength={400}
+          disabled={regenerateBusy}
+          title="Short instruction appended to the image prompt for this regenerate"
+        />
 
         <button
           type="button"

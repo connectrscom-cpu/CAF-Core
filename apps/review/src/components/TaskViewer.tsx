@@ -48,6 +48,9 @@ export interface TaskViewerProps {
   onDeleteSlide?: (slideIndex1Based: number) => void;
   onRegenerateSlide?: (slideIndex1Based: number) => void;
   regenerateSlideBusy?: boolean;
+  /** Mimic slide image regen — optional prompt note (shared with layout editor). */
+  mimicRegenerationNote?: string;
+  onMimicRegenerationNoteChange?: (value: string) => void;
   mimicTemplateBg?: boolean;
   mimicFullBleed?: boolean;
   mimicLayoutTextBlocks?: Array<{ role: string; text: string }>;
@@ -79,6 +82,8 @@ export function TaskViewer({
   onDeleteSlide,
   onRegenerateSlide,
   regenerateSlideBusy,
+  mimicRegenerationNote,
+  onMimicRegenerationNoteChange,
   mimicTemplateBg,
   mimicFullBleed,
   mimicLayoutTextBlocks,
@@ -212,6 +217,8 @@ export function TaskViewer({
           onDeleteSlide={onDeleteSlide ? () => onDeleteSlide(carouselActiveSlideIndex ?? 1) : undefined}
           onRegenerateSlide={onRegenerateSlide ? () => onRegenerateSlide(carouselActiveSlideIndex ?? 1) : undefined}
           regenerateSlideBusy={regenerateSlideBusy}
+          mimicRegenerationNote={mimicRegenerationNote}
+          onMimicRegenerationNoteChange={onMimicRegenerationNoteChange}
           mimicTemplateBg={mimicTemplateBg}
           mimicFullBleed={mimicFullBleed}
           mimicLayoutTextBlocks={mimicLayoutTextBlocks}

@@ -1404,13 +1404,20 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     slide_indices: z.array(z.number().int().positive()).min(1),
     visual_similarity_pct: z.number().int().min(0).max(100).optional(),
     image_input_mode: z.enum(["reference_edit", "analysis_t2i"]).optional(),
+    regeneration_note: z.string().max(400).optional(),
   });
 
   async function scheduleRegenerateCarouselSlides(
     projectSlug: string,
     taskId: string,
     slideIndices: number[],
-    routeOverrides: { visualSimilarityPct?: number; imageInputMode?: "reference_edit" | "analysis_t2i" } | undefined,
+    routeOverrides:
+      | {
+          visualSimilarityPct?: number;
+          imageInputMode?: "reference_edit" | "analysis_t2i";
+          regenerationNote?: string;
+        }
+      | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
     | { ok: true; accepted: true; task_id: string; message: string }
@@ -1437,6 +1444,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         : {}),
       ...(routeOverrides?.imageInputMode
         ? { mimicImageInputModeOverride: routeOverrides.imageInputMode }
+        : {}),
+      ...(routeOverrides?.regenerationNote?.trim()
+        ? { mimicRegenerationNote: routeOverrides.regenerationNote.trim() }
         : {}),
     })
       .then(() => {
@@ -1472,6 +1482,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
           ? { visualSimilarityPct: body.data.visual_similarity_pct }
           : {}),
         ...(body.data.image_input_mode ? { imageInputMode: body.data.image_input_mode } : {}),
+        ...(body.data.regeneration_note?.trim()
+          ? { regenerationNote: body.data.regeneration_note.trim() }
+          : {}),
       },
       request.log
     );
@@ -1499,6 +1512,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
           ? { visualSimilarityPct: body.data.visual_similarity_pct }
           : {}),
         ...(body.data.image_input_mode ? { imageInputMode: body.data.image_input_mode } : {}),
+        ...(body.data.regeneration_note?.trim()
+          ? { regenerationNote: body.data.regeneration_note.trim() }
+          : {}),
       },
       request.log
     );

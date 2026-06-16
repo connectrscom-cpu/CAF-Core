@@ -52,6 +52,21 @@ describe("templateBgLlmSlideForDocAi", () => {
       ])
     );
   });
+
+  it("maps inverted listicle body when LLM put handle in body and paragraph in headline", () => {
+    const paragraph =
+      "The Aries Mom is a spirited explorer, always ready for adventure. She wants her kids to cherish their childhood memories full of love and joy.";
+    const scoped = templateBgLlmSlideForDocAi(2, 12, {
+      headline: paragraph,
+      body: "@sistersvillage",
+      text_blocks: [
+        { llm_field: "body", text: paragraph },
+        { llm_field: "handle", text: "@sistersvillage" },
+      ],
+    });
+    expect(scoped.headline).toBe("THE ARIES MOTHER");
+    expect(scoped.body).toBe(paragraph);
+  });
 });
 
 describe("templateBgGuidelineSlideIndex", () => {

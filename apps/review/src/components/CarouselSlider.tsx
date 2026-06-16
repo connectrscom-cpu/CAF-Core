@@ -76,6 +76,9 @@ export interface CarouselSliderProps {
   onDeleteSlide?: () => void;
   onRegenerateSlide?: () => void;
   regenerateSlideBusy?: boolean;
+  /** Optional note appended to the mimic image prompt on slide regenerate. */
+  mimicRegenerationNote?: string;
+  onMimicRegenerationNoteChange?: (value: string) => void;
   /** template_bg listicle — headline/body fields instead of OCR clusters. */
   mimicTemplateBg?: boolean;
   /** Full-bleed mimic: layout boxes drive left-column text fields (1:1 with editor). */
@@ -109,6 +112,8 @@ export function CarouselSlider({
   onDeleteSlide,
   onRegenerateSlide,
   regenerateSlideBusy = false,
+  mimicRegenerationNote = "",
+  onMimicRegenerationNoteChange,
   mimicTemplateBg = false,
   mimicFullBleed = false,
   mimicLayoutTextBlocks,
@@ -405,15 +410,29 @@ export function CarouselSlider({
         <h3 style={{ fontSize: 13, fontWeight: 600 }}>{heyGenVideoMode ? "Video preview" : "Carousel slides"}</h3>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>Slide {currentIndex + 1} of {total}</span>
-          {mimicCopyEditor && onRegenerateSlide && !copySidePanel ? (
-            <button
-              type="button"
-              className="btn-secondary btn-sm"
-              disabled={regenerateSlideBusy}
-              onClick={onRegenerateSlide}
-            >
-              {regenerateSlideBusy ? "Regenerating…" : "Regenerate"}
-            </button>
+          {mimicCopyEditor && onRegenerateSlide ? (
+            <>
+              <input
+                type="text"
+                className="mimic-regen-route__note-input"
+                value={mimicRegenerationNote}
+                onChange={(e) =>
+                  onMimicRegenerationNoteChange?.(e.target.value.slice(0, 400))
+                }
+                placeholder="Regen note (optional)"
+                maxLength={400}
+                disabled={regenerateSlideBusy || !onMimicRegenerationNoteChange}
+                title="Short instruction appended to the image prompt for this regenerate"
+              />
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                disabled={regenerateSlideBusy}
+                onClick={onRegenerateSlide}
+              >
+                {regenerateSlideBusy ? "Regenerating…" : "Regenerate"}
+              </button>
+            </>
           ) : null}
           {mimicCopyEditor && onDeleteSlide && total > 1 && !copySidePanel ? (
             <button type="button" className="btn-danger-ghost btn-sm" onClick={onDeleteSlide}>

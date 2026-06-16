@@ -455,7 +455,7 @@ export function MimicDocAiLayerPositionEditor({
         ...(style.font_family ? { font_family: style.font_family } : {}),
         ...(style.font_style_italic ? { font_style_italic: true } : {}),
         text,
-        ...(savedRow?.hidden ? { hidden: true } : {}),
+        ...(savedRow?.hidden && !templateBgMode ? { hidden: true } : {}),
         box_locked: templateBgMode ? locked : true,
       };
     }
@@ -473,7 +473,7 @@ export function MimicDocAiLayerPositionEditor({
       };
     }
     for (const savedRow of initialOverrides ?? []) {
-      if (!savedRow.hidden || isCustomLayerKey(savedRow.layer_key)) continue;
+      if (templateBgMode || !savedRow.hidden || isCustomLayerKey(savedRow.layer_key)) continue;
       const ref = refKeyFromLayerPositionKey(savedRow.layer_key);
       const matchedVisible = layers.some(
         (layer) =>

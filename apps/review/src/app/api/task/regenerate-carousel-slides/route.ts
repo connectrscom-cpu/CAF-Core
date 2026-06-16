@@ -58,10 +58,13 @@ export async function POST(request: NextRequest) {
     const rawMode = typeof body?.image_input_mode === "string" ? body.image_input_mode.trim() : "";
     const imageInputMode =
       rawMode === "reference_edit" || rawMode === "analysis_t2i" ? rawMode : undefined;
+    const regenerationNote =
+      typeof body?.regeneration_note === "string" ? body.regeneration_note.trim() : undefined;
 
     const result = await regenerateMimicCarouselSlides(slug, tid, slideIndices, {
       visualSimilarityPct,
       imageInputMode,
+      regenerationNote: regenerationNote || undefined,
     });
     if (!result.ok) {
       const status = result.error === "job_not_found" ? 404 : 400;

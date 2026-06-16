@@ -32,6 +32,7 @@ import {
   finalizeMimicImageModelPrompt,
   MIMIC_IMAGE_ART_ONLY_HARD_GUARD,
   mimicPromptForMode,
+  appendMimicRegenerationNote,
   type MimicPromptOverrides,
   type MimicRenderPromptSettings,
 } from "./mimic-prompt-builder.js";
@@ -44,6 +45,8 @@ type MimicRenderImageOpts = {
   bflModelOverride?: MimicBflModelSlug | null;
   visualSimilarityPct?: number;
   imageInputMode?: MimicImageInputMode;
+  /** Reviewer note appended to the image-model prompt (slide regenerate). */
+  regenerationNote?: string;
 };
 import {
   slidesFromGeneratedOutput,
@@ -475,7 +478,7 @@ export async function extractMimicSlideBackground(
 
   const { buffer, mimeType } = await generateMimicSlideImage(config, {
     ...(referenceUrl ? { referenceUrl } : {}),
-    prompt: resolvedPrompt.prompt,
+    prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, opts?.regenerationNote),
     imageInputMode: resolvedPrompt.imageInputMode,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,
@@ -1553,7 +1556,7 @@ export async function renderMimicCarouselSlideFullBleed(
 
   return generateMimicSlideImage(config, {
     ...(referenceUrl ? { referenceUrl } : {}),
-    prompt: resolvedPrompt.prompt,
+    prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, opts?.regenerationNote),
     imageInputMode: resolvedPrompt.imageInputMode,
     size: "1024x1536",
     bflModelOverride: opts?.bflModelOverride,

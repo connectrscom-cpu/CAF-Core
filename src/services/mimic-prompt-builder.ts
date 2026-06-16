@@ -103,6 +103,26 @@ export function finalizeMimicImageModelPrompt(
   return `${base} ${MIMIC_IMAGE_ART_ONLY_HARD_GUARD}`.replace(/\s{2,}/g, " ").trim();
 }
 
+/** Max chars for reviewer regeneration notes on mimic slide image prompts. */
+export const MIMIC_REGENERATION_NOTE_MAX_CHARS = 400;
+
+/** Normalize optional reviewer regen note (collapse whitespace, cap length). */
+export function sanitizeMimicRegenerationNote(raw: unknown): string | undefined {
+  const t = String(raw ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!t) return undefined;
+  return t.slice(0, MIMIC_REGENERATION_NOTE_MAX_CHARS);
+}
+
+/** Append a reviewer regen note to an image-model prompt (slide regenerate route). */
+export function appendMimicRegenerationNote(prompt: string, note: unknown): string {
+  const n = sanitizeMimicRegenerationNote(note);
+  const base = String(prompt ?? "").trim();
+  if (!n) return base;
+  return `${base} Reviewer regeneration note: ${n}`.replace(/\s{2,}/g, " ").trim();
+}
+
 /** @deprecated Image-model typography — prefer art-only + HBS overlay. Kept for Prompt Labs overrides. */
 export const DEFAULT_MIMIC_CAROUSEL_SLIDE_PROMPT = DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT;
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendMimicRegenerationNote,
   buildMimicCarouselSlideArtOnlyPrompt,
   buildMimicCarouselSlidePrompt,
   buildMimicImageFullPrompt,
@@ -156,5 +157,17 @@ describe("flux text-on-image prompts", () => {
     expect(finalizeMimicImageModelPrompt("Render headline: hello", { allowOnImageText: true })).toBe(
       "Render headline: hello"
     );
+  });
+});
+
+describe("appendMimicRegenerationNote", () => {
+  it("appends sanitized reviewer note to the image prompt", () => {
+    const out = appendMimicRegenerationNote("Remove ALL on-image text.", "strip leftover headline text");
+    expect(out).toContain("Remove ALL on-image text.");
+    expect(out).toContain("Reviewer regeneration note: strip leftover headline text");
+  });
+
+  it("ignores empty notes", () => {
+    expect(appendMimicRegenerationNote("Base prompt", "   ")).toBe("Base prompt");
   });
 });

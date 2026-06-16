@@ -1680,6 +1680,8 @@ export type CarouselRenderOpts = {
   mimicVisualSimilarityPctOverride?: number;
   /** Per-call mimic image input mode override: reference_edit vs analysis_t2i (no reference). */
   mimicImageInputModeOverride?: MimicImageInputMode;
+  /** Optional reviewer note appended to mimic image prompts (slide regenerate). */
+  mimicRegenerationNote?: string;
 };
 
 async function processCarouselJob(
@@ -1940,6 +1942,7 @@ async function processCarouselJob(
     renderOpts?.mimicImageInputModeOverride ??
     mimicProjectRender?.imageInputMode ??
     config.MIMIC_IMAGE_INPUT_MODE;
+  const mimicRegenerationNote = renderOpts?.mimicRegenerationNote?.trim() || undefined;
   const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarouselRender
     ? MIMIC_LAYOUT_TEMPLATE_DEFAULT
@@ -2036,6 +2039,7 @@ async function processCarouselJob(
             bflModelOverride: mimicBflModelOverride,
             visualSimilarityPct: mimicVisualSimilarityPct,
             imageInputMode: mimicImageInputMode,
+            ...(mimicRegenerationNote ? { regenerationNote: mimicRegenerationNote } : {}),
           });
         }
       }
@@ -2106,6 +2110,7 @@ async function processCarouselJob(
             bflModelOverride: mimicBflModelOverride,
             visualSimilarityPct: mimicVisualSimilarityPct,
             imageInputMode: mimicImageInputMode,
+            ...(mimicRegenerationNote ? { regenerationNote: mimicRegenerationNote } : {}),
           }
         );
         const plateUrl = await persistMimicVisualPlateForSlide(db, config, job, i, buffer, mimeType);
@@ -2127,6 +2132,7 @@ async function processCarouselJob(
             reuseStoredPlatesOnly: textOverlayOnly,
             visualSimilarityPct: mimicVisualSimilarityPct,
             imageInputMode: mimicImageInputMode,
+            ...(mimicRegenerationNote ? { regenerationNote: mimicRegenerationNote } : {}),
           });
           slideRenderBase = { ...renderBase, background_image_url: slideBg };
         }
@@ -2180,6 +2186,7 @@ async function processCarouselJob(
           bflModelOverride: mimicBflModelOverride,
           visualSimilarityPct: mimicVisualSimilarityPct,
           imageInputMode: mimicImageInputMode,
+          ...(mimicRegenerationNote ? { regenerationNote: mimicRegenerationNote } : {}),
         });
         const fluxBuf = rendered.buffer;
         const fluxMime = rendered.mimeType;
@@ -2591,7 +2598,10 @@ export async function rerenderCarouselSlidesAtIndices(
   slideIndices1Based: number[],
   renderOpts?: Pick<
     CarouselRenderOpts,
-    "textOverlayOnly" | "mimicVisualSimilarityPctOverride" | "mimicImageInputModeOverride"
+    | "textOverlayOnly"
+    | "mimicVisualSimilarityPctOverride"
+    | "mimicImageInputModeOverride"
+    | "mimicRegenerationNote"
   >
 ): Promise<void> {
   const job = await reloadJobRow(db, jobId);
@@ -2624,6 +2634,9 @@ export async function rerenderCarouselSlidesAtIndices(
       : {}),
     ...(renderOpts?.mimicImageInputModeOverride
       ? { mimicImageInputModeOverride: renderOpts.mimicImageInputModeOverride }
+      : {}),
+    ...(renderOpts?.mimicRegenerationNote?.trim()
+      ? { mimicRegenerationNote: renderOpts.mimicRegenerationNote.trim() }
       : {}),
   });
 }

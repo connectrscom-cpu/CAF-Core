@@ -611,6 +611,20 @@ textarea { resize: vertical; }
   color: var(--muted);
   line-height: 1.4;
 }
+.mimic-regen-route__note-input {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 280px;
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+}
+.mimic-regen-route__note-input::placeholder {
+  color: var(--muted);
+}
 .carousel-edit-copy {
   min-width: 0;
   max-height: min(78vh, 760px);

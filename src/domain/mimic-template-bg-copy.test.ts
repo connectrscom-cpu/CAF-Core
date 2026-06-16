@@ -2,12 +2,21 @@ import { describe, expect, it } from "vitest";
 import {
   isListicleBodyInvertedLlmCopy,
   listicleDecorTitleFromKicker,
+  listicleDecorTitleFromParagraph,
   resolveTemplateBgBodyOnScreenCopy,
 } from "./mimic-template-bg-copy.js";
 
 describe("mimic-template-bg-copy", () => {
   it("derives THE ARIES MOTHER from kicker", () => {
     expect(listicleDecorTitleFromKicker("Aries Mother Traits")).toBe("THE ARIES MOTHER");
+  });
+
+  it("derives THE ARIES MOTHER from inverted paragraph copy", () => {
+    expect(
+      listicleDecorTitleFromParagraph(
+        "The Aries Mom is a spirited explorer, always ready for adventure."
+      )
+    ).toBe("THE ARIES MOTHER");
   });
 
   it("detects inverted listicle body copy", () => {
@@ -30,5 +39,17 @@ describe("mimic-template-bg-copy", () => {
     expect(mapped.headline).toBe("THE ARIES MOTHER");
     expect(mapped.body).toContain("She is spirited");
     expect(mapped.body).toContain("fierce and vibrant");
+  });
+
+  it("maps inverted copy with handle in body field and no kicker", () => {
+    const paragraph =
+      "The Aries Mom is a spirited explorer, always ready for adventure. She wants her kids to cherish their childhood memories full of love and joy.";
+    const mapped = resolveTemplateBgBodyOnScreenCopy({
+      headline: paragraph,
+      body: "@sistersvillage",
+    });
+    expect(mapped.inverted).toBe(true);
+    expect(mapped.headline).toBe("THE ARIES MOTHER");
+    expect(mapped.body).toBe(paragraph);
   });
 });

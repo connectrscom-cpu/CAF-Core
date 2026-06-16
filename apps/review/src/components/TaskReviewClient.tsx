@@ -120,6 +120,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   viewerSlideIndexRef.current = viewerSlideIndex;
   const mimicTextBlockUpdaterRef = useRef<((blockIndex: number, text: string) => void) | null>(null);
   const [regenerateSlideBusy, setRegenerateSlideBusy] = useState(false);
+  const [mimicRegenNote, setMimicRegenNote] = useState("");
   const [editedCaption, setEditedCaption] = useState("");
   const [editedTitle, setEditedTitle] = useState("");
   const [editedHook, setEditedHook] = useState("");
@@ -746,6 +747,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             task_id: execTaskId,
             project,
             slide_indices: [slideIndex1Based],
+            ...(mimicRegenNote.trim() ? { regeneration_note: mimicRegenNote.trim().slice(0, 400) } : {}),
           }),
         });
         const json = (await res.json()) as { ok?: boolean; error?: string; message?: string };
@@ -759,7 +761,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         setRegenerateSlideBusy(false);
       }
     },
-    [data?.project, projectFromUrl, execTaskId, refreshTaskAssets]
+    [data?.project, projectFromUrl, execTaskId, refreshTaskAssets, mimicRegenNote]
   );
 
   const decorateCarouselSlidesPayload = useCallback(
@@ -1095,6 +1097,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               onDeleteSlide={mimicCarouselFlow ? handleDeleteMimicSlide : undefined}
               onRegenerateSlide={mimicCarouselFlow ? handleRegenerateMimicSlide : undefined}
               regenerateSlideBusy={mimicCarouselFlow ? regenerateSlideBusy : undefined}
+              mimicRegenerationNote={mimicCarouselFlow ? mimicRegenNote : undefined}
+              onMimicRegenerationNoteChange={mimicCarouselFlow ? setMimicRegenNote : undefined}
               mimicTemplateBg={mimicCarouselFlow && mimicTemplateBg}
               carouselCopySidePanel={
                 mimicCarouselFlow && fullJob ? (
@@ -1117,6 +1121,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     onMimicLayoutSaved={handleMimicLayoutSaved}
                     onSlideSelect={setViewerSlideIndex}
                     onDeleteSlide={handleDeleteMimicSlide}
+                    regenerationNote={mimicRegenNote}
+                    onRegenerationNoteChange={setMimicRegenNote}
                     activeTextBlockIndex={activeTextBlockIndex}
                     onActiveTextBlockIndexChange={setActiveTextBlockIndex}
                     fullBleedMode={!mimicTemplateBg}

@@ -563,7 +563,11 @@ export async function regenerateMimicCarouselSlides(
   projectSlug: string,
   taskId: string,
   slideIndices: number[],
-  opts?: { visualSimilarityPct?: number; imageInputMode?: "reference_edit" | "analysis_t2i" }
+  opts?: {
+    visualSimilarityPct?: number;
+    imageInputMode?: "reference_edit" | "analysis_t2i";
+    regenerationNote?: string;
+  }
 ): Promise<RegenerateCarouselSlidesResult> {
   const slug = projectSlug.trim();
   const tid = taskId.trim();
@@ -583,6 +587,8 @@ export async function regenerateMimicCarouselSlides(
   if (opts?.imageInputMode === "reference_edit" || opts?.imageInputMode === "analysis_t2i") {
     reqBody.image_input_mode = opts.imageInputMode;
   }
+  const note = opts?.regenerationNote?.trim();
+  if (note) reqBody.regeneration_note = note.slice(0, 400);
   const res = await fetch(url, {
     method: "POST",
     headers: headers(),

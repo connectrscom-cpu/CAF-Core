@@ -37,12 +37,20 @@ import {
   repairDanglingStackTexts,
   semanticBodyCopyForStacks,
 } from "./mimic-semantic-copy-units.js";
+import { listicleDecorTitleFromParagraph } from "../domain/mimic-template-bg-copy.js";
 
 export { joinOrphanWordBodyLines } from "./mimic-semantic-copy-units.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
   return null;
+}
+
+/** `role` from Nemotron/OCR, else mimic LLM `llm_field` when role is absent. */
+function mimicTextBlockSemanticRole(rec: Record<string, unknown>): string {
+  const role = String(rec.role ?? rec.semantic_role ?? "").trim().toLowerCase();
+  if (role) return role;
+  return String(rec.llm_field ?? "").trim().toLowerCase();
 }
 
 function slideOnScreenTextChars(slide: Record<string, unknown>): number {
@@ -1317,22 +1325,32 @@ function isListicleMotherDecorText(text: string): boolean {
 
 function listicleDecorTitleFromLlmSlide(
   llmSlide: Record<string, unknown>,
-  llmLines: { headline?: string | null },
+  llmLines: { headline?: string | null; bodyLines?: string[] },
   directLines: string[]
 ): string {
   if (Array.isArray(llmSlide.text_blocks)) {
     for (const item of llmSlide.text_blocks) {
       const rec = asRecord(item);
       if (!rec) continue;
-      const role = String(rec.role ?? "").toLowerCase();
+      const role = mimicTextBlockSemanticRole(rec);
       const text = sanitizeMimicOverlayCopyText(rec.text);
-      if ((role === "headline" || role === "title" || role === "hook") && text && isListicleMotherDecorText(text)) {
+      if (roleBucket(role) === "headline" && text && isListicleMotherDecorText(text)) {
         return text;
       }
     }
   }
-  const headline = llmLines.headline?.trim() || directLines[0]?.trim() || "";
-  return headline && isListicleMotherDecorText(headline) ? headline : headline;
+  const candidates = [
+    llmLines.headline?.trim(),
+    directLines[0]?.trim(),
+    llmLines.bodyLines?.[0]?.trim(),
+    String(llmSlide.headline ?? "").trim(),
+  ].filter(Boolean) as string[];
+  for (const candidate of candidates) {
+    if (isListicleMotherDecorText(candidate)) return candidate;
+    const derived = listicleDecorTitleFromParagraph(candidate);
+    if (derived) return derived;
+  }
+  return "";
 }
 
 function isListicleMotherTemplateBgLayout(orderedRef: DocAiLayoutBlock[]): boolean {
@@ -1354,7 +1372,7 @@ function bodyCopyForListicleMotherSlide(
     for (const item of llmSlide.text_blocks) {
       const rec = asRecord(item);
       if (!rec) continue;
-      if (String(rec.role ?? "").toLowerCase() !== "body") continue;
+      if (roleBucket(mimicTextBlockSemanticRole(rec)) !== "body") continue;
       const text = sanitizeMimicOverlayCopyText(rec.text);
       if (text && !looksLikeInstagramHandleText(text)) return text;
     }
@@ -1392,7 +1410,7 @@ function buildListicleMotherTemplateBgLayers(
   const bodyRef =
     bodyRefs.length > 0
       ? [...bodyRefs].sort((a, b) => b.w * b.h - a.w * a.h || a.y - b.y)[0]!
-      : null;
+      : orderedRef.find((r) => docAiRefAcceptsDirectCopyLine(r)) ?? null;
   const layers: MimicDocAiRenderTextLayer[] = [];
   let bodyAssigned = false;
 
@@ -1420,7 +1438,8 @@ function buildListicleMotherTemplateBgLayers(
       });
       continue;
     }
-    if (!bodyAssigned && bodyRef && ref === bodyRef && bodyText.trim()) {
+    if (!bodyAssigned && bodyRef && bodyText.trim()) {
+      if (ref !== bodyRef) continue;
       bodyAssigned = true;
       pushDocAiRenderLayer(layers, ref, bodyText, ref, {
         textBacking: opts.textBacking,
@@ -2580,19 +2599,22 @@ export function expandLlmLinesForDocAiMapping(
   ) {
     const headlines: string[] = [];
     const bodyLines: string[] = [];
+    let hasHeadlineBlock = false;
     for (const item of slide.text_blocks) {
       const rec = asRecord(item);
       if (!rec) continue;
       const text = String(rec.text ?? "").trim();
       if (!text) continue;
-      const bucket = roleBucket(String(rec.role ?? ""));
+      const role = mimicTextBlockSemanticRole(rec);
+      const bucket = roleBucket(role);
+      if (bucket === "headline") hasHeadlineBlock = true;
       const lines = text.split(/\n/).map((l) => l.trim()).filter(Boolean);
       if (bucket === "headline") {
         for (const line of lines.length > 0 ? lines : [text]) {
           const h = substituteReferenceHandlesInText(line, refHandles, projectHandle);
           if (h) headlines.push(h);
         }
-      } else if (isHandleTextBlock(String(rec.role ?? ""), text)) {
+      } else if (isHandleTextBlock(role, text)) {
         continue;
       } else {
         for (const line of lines.length > 0 ? lines : [text]) {
@@ -2612,7 +2634,7 @@ export function expandLlmLinesForDocAiMapping(
       refHandles,
       projectHandle
     ).replace(/\s+/g, " ").trim();
-    const mergedHeadline = headline || headlineField || null;
+    const mergedHeadline = headline || (hasHeadlineBlock ? headlineField : null) || null;
     let nonEmptyBlockCount = 0;
     for (const item of slide.text_blocks) {
       const text = String(asRecord(item)?.text ?? "").trim();
@@ -2706,7 +2728,7 @@ function orderedLlmTextBlockLines(slide: Record<string, unknown>): string[] {
     if (!rec) continue;
     const text = sanitizeMimicOverlayCopyText(rec.text);
     if (!text) continue;
-    if (isOverlayChromeReferenceText(text, roleBucket(String(rec.role ?? "")))) continue;
+    if (isOverlayChromeReferenceText(text, roleBucket(mimicTextBlockSemanticRole(rec)))) continue;
     lines.push(text);
   }
   return lines;

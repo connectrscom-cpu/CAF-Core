@@ -22,6 +22,17 @@ export function listicleDecorTitleFromKicker(kicker: string): string {
   return "";
 }
 
+/** Derive decor title from inverted paragraph copy ("The Aries Mom is…" → "THE ARIES MOTHER"). */
+export function listicleDecorTitleFromParagraph(text: string): string {
+  const t = text.trim();
+  if (!t) return "";
+  const mother = t.match(/^The\s+([A-Za-z][A-Za-z'-]*)\s+Mother\b/i);
+  if (mother) return `THE ${mother[1]!.toUpperCase()} MOTHER`;
+  const mom = t.match(/^The\s+([A-Za-z][A-Za-z'-]*)\s+Mom\b/i);
+  if (mom) return `THE ${mom[1]!.toUpperCase()} MOTHER`;
+  return "";
+}
+
 export function looksLikeInstagramHandleLine(text: string): boolean {
   return /^@[a-z0-9_.]{2,}$/i.test(text.trim());
 }
@@ -55,6 +66,7 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
   const decorTitle =
     slideTitle ||
     listicleDecorTitleFromKicker(kicker) ||
+    listicleDecorTitleFromParagraph(headline) ||
     (headline.length <= 56 && !headline.includes("\n") ? headline : "");
 
   let bodyText = headline;
@@ -66,7 +78,7 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
   }
 
   return {
-    headline: decorTitle || headline.slice(0, 56),
+    headline: decorTitle,
     body: bodyText,
     inverted: true,
   };

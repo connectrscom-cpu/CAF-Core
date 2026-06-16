@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { templateBgLlmSlideForDocAi } from "./mimic-template-bg-render.js";
 import {
   bboxIntersectsFullBleedSubjectZone,
   buildMimicDocAiRenderTextLayers,
@@ -827,6 +828,53 @@ describe("mimic-slide-typography", () => {
     expect(texts.some((t) => t.includes("genuine relationships"))).toBe(true);
     expect(layers.find((l) => l.text === "@signandsound")?.role).toBe("handle");
     expect(layers.find((l) => l.text.includes("genuine relationships"))?.role).toBe("body");
+  });
+
+  it("buildMimicDocAiRenderTextLayers maps inverted llm_field copy onto listicle decor+body OCR", () => {
+    const ocrSlide = {
+      slide_index: 2,
+      text_blocks: [
+        {
+          text: "THE ARIES MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Deeply rooted in family",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const paragraph =
+      "The Aries Mom is a spirited explorer, always ready for adventure. She wants her kids to cherish their childhood memories full of love and joy.";
+    const scoped = templateBgLlmSlideForDocAi(2, 12, {
+      headline: paragraph,
+      body: "@sistersvillage",
+      text_blocks: [
+        { llm_field: "body", text: paragraph },
+        { llm_field: "handle", text: "@sistersvillage" },
+      ],
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { visual_guideline: { slides: [ocrSlide] } },
+      2,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const byRole = new Map(layers.map((l) => [l.role, l.text]));
+    expect(byRole.get("headline")).toBe("THE ARIES MOTHER");
+    expect(byRole.get("body")).toBe(paragraph);
+    expect(byRole.get("handle")).toBe("@signandsound");
   });
 
   it("docAiBlocksShareVerticalStack detects same column", () => {
