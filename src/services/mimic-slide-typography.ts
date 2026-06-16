@@ -3169,7 +3169,7 @@ export function buildMimicDocAiRenderTextLayers(
       projectHandle &&
       bodyQueue[0] &&
       looksLikeInstagramHandleText(bodyQueue[0]!) &&
-      (isHandleTextBlock(ref.role, ref.ref_text) || roleBucket(ref.role) === "handle")
+      (isHandleTextBlock(ref.role, ref.ref_text))
     ) {
       text = projectHandle;
       bodyQueue.shift();
@@ -3188,8 +3188,7 @@ export function buildMimicDocAiRenderTextLayers(
       if (refHandlesArr.length > 0) {
         text = substituteReferenceHandlesInText(text, refHandlesArr, projectHandle);
       }
-      const ocrHandleSlot =
-        isHandleTextBlock(ref.role, ref.ref_text) || roleBucket(ref.role) === "handle";
+      const ocrHandleSlot = isHandleTextBlock(ref.role, ref.ref_text);
       if (ocrHandleSlot) {
         text = projectHandle;
       } else if (looksLikeInstagramHandleText(text) && looksLikeInstagramHandleText(ref.ref_text)) {
