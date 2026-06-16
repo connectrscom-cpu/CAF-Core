@@ -18,7 +18,7 @@ import {
   buildCreationPack,
   interpolateTemplate,
 } from "./llm-generator-helpers.js";
-import { budgetCreationPackForMimicFlow } from "./llm-creation-pack-budget.js";
+import { budgetCreationPackForCarouselFlow, budgetCreationPackForMimicFlow } from "./llm-creation-pack-budget.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import {
@@ -139,17 +139,19 @@ function truncateForContext(s: string, maxChars: number, label: string): string 
 const OPENAI_128K_MESSAGE_CHAR_BUDGET = 96_000;
 const MIMIC_CAROUSEL_SYSTEM_PROMPT_MAX_CHARS = 120_000;
 
-function shrinkMimicCarouselPromptsIfNeeded(opts: {
+function shrinkLlmPromptsIfOverContextBudget(opts: {
   systemPrompt: string;
   userPrompt: string;
   userTemplate: string;
   templateContext: Record<string, unknown>;
   creationPack: Record<string, unknown>;
+  candidateData: Record<string, unknown>;
   mimicGroundingBlocks?: Parameters<typeof appendMimicGroundedReferenceToUserPrompt>[1];
   maxGroundingJsonChars?: number;
   appCfg: ReturnType<typeof loadConfig>;
   taskId: string;
   runId: string;
+  isMimicCarousel: boolean;
 }): { systemPrompt: string; userPrompt: string } {
   let { systemPrompt, userPrompt } = opts;
   let total = systemPrompt.length + userPrompt.length;
@@ -157,14 +159,25 @@ function shrinkMimicCarouselPromptsIfNeeded(opts: {
     return { systemPrompt, userPrompt };
   }
 
-  logPipelineEvent("warn", "generate", "mimic_carousel_prompt_over_context_budget", {
+  logPipelineEvent("warn", "generate", "llm_prompt_over_context_budget", {
     task_id: opts.taskId,
     run_id: opts.runId,
-    data: { prompt_chars: total, budget_chars: OPENAI_128K_MESSAGE_CHAR_BUDGET },
+    data: {
+      prompt_chars: total,
+      budget_chars: OPENAI_128K_MESSAGE_CHAR_BUDGET,
+      mimic_carousel: opts.isMimicCarousel,
+    },
   });
 
-  const packCap = Math.max(8_000, Math.floor(opts.appCfg.LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS * 0.45));
-  const emergencyPack = budgetCreationPackForMimicFlow({ ...opts.creationPack }, packCap);
+  const packCap = opts.isMimicCarousel
+    ? Math.max(8_000, Math.floor(opts.appCfg.LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS * 0.45))
+    : Math.max(12_000, Math.floor(opts.appCfg.LLM_CREATION_PACK_JSON_MAX_CHARS * 0.45));
+  const emergencyPack = opts.isMimicCarousel
+    ? budgetCreationPackForMimicFlow({ ...opts.creationPack }, packCap)
+    : budgetCreationPackForCarouselFlow({ ...opts.creationPack }, packCap, {
+        candidateData: opts.candidateData,
+        signalPackJsonMaxChars: Math.max(8_000, Math.floor(packCap * 0.6)),
+      });
   const emergencyCtx: Record<string, unknown> = {
     ...opts.templateContext,
     ...emergencyPack,
@@ -189,7 +202,7 @@ function shrinkMimicCarouselPromptsIfNeeded(opts: {
   };
   delete emergencyCtx.mimic_job_grounding;
   userPrompt = interpolateTemplate(opts.userTemplate, emergencyCtx);
-  if (opts.mimicGroundingBlocks) {
+  if (opts.isMimicCarousel && opts.mimicGroundingBlocks) {
     const groundingCap = Math.max(
       12_000,
       Math.floor((opts.maxGroundingJsonChars ?? opts.appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS) * 0.55)
@@ -765,18 +778,20 @@ export async function generateForJob(
         }
       : undefined;
 
-  if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
-    const shrunk = shrinkMimicCarouselPromptsIfNeeded({
+  if (systemPrompt.length + userPrompt.length > OPENAI_128K_MESSAGE_CHAR_BUDGET) {
+    const shrunk = shrinkLlmPromptsIfOverContextBudget({
       systemPrompt,
       userPrompt,
       userTemplate: promptTemplate.user_prompt_template ?? "Generate content using: {{creation_pack_json}}",
       templateContext,
       creationPack,
+      candidateData,
       mimicGroundingBlocks,
       maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS,
       appCfg,
       taskId: job.task_id,
       runId: job.run_id,
+      isMimicCarousel: isTopPerformerMimicCarouselFlow(job.flow_type),
     });
     systemPrompt = shrunk.systemPrompt;
     userPrompt = shrunk.userPrompt;

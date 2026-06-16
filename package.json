@@ -28,6 +28,7 @@
     "mimic-text-lab": "node --import tsx src/cli/mimic-text-overlay-lab.ts",
     "rerender-carousel-text": "node --import tsx src/cli/rerender-carousel-text.ts",
     "replan-run": "node --import tsx src/cli/replan-run.ts",
+    "export:doc-pdfs": "node scripts/export-doc-pdfs.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "deploy:review-vercel": "npx vercel deploy --prod --yes"
@@ -55,6 +56,7 @@
     "@types/node": "^22.10.5",
     "@types/pg": "^8.11.10",
     "debug": "^4.4.3",
+    "md-to-pdf": "^5.2.5",
     "next": "^14.2.21",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

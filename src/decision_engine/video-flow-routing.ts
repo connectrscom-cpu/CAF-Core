@@ -7,6 +7,7 @@ import {
   isProductVideoFlow,
   type ProductHeygenMode,
 } from "../domain/product-flow-types.js";
+import { normalizeContentLens } from "../domain/idea-structure.js";
 import { isVideoFlow } from "./flow-kind.js";
 import { DEFAULT_VIDEO_FLOW_PLAN_CAP } from "./default-plan-caps.js";
 
@@ -224,13 +225,17 @@ export interface EnabledFlowRef {
 export function pickVideoFlowForIntent(
   enabledFlows: EnabledFlowRef[],
   intent: VideoPipelineIntent,
-  productModes: Map<string, ProductHeygenMode | null>
+  productModes: Map<string, ProductHeygenMode | null>,
+  opts?: { contentLens?: "niche" | "product" | null }
 ): string | null {
   const sorted = [...enabledFlows].sort(
     (a, b) => Number(b.priority_weight ?? 0) - Number(a.priority_weight ?? 0)
   );
-  const core = sorted.filter((f) => !isProductVideoFlow(f.flow_type));
-  const product = sorted.filter((f) => isProductVideoFlow(f.flow_type));
+  const lens = opts?.contentLens ?? null;
+  let core = sorted.filter((f) => !isProductVideoFlow(f.flow_type));
+  let product = sorted.filter((f) => isProductVideoFlow(f.flow_type));
+  if (lens === "product") core = [];
+  if (lens === "niche") product = [];
   for (const bucket of [core, product]) {
     for (const f of bucket) {
       const mode = productModes.get(f.flow_type) ?? null;
@@ -346,12 +351,35 @@ export function assignVideoFlowForPlanningRow(
 ): VideoFlowAssignment | null {
   const platform = String(row.platform ?? row.target_platform ?? "Instagram");
   const route = resolveVideoIntent(row, cfg);
+  const targetFlow = String(row.target_flow_type ?? "").trim();
+  if (targetFlow && isProductVideoFlow(targetFlow)) {
+    const mode = productModes.get(targetFlow) ?? null;
+    if (flowTypeMatchesVideoIntent(targetFlow, route.intent, mode)) {
+      if (!budget || budget.canAssign(targetFlow)) {
+        if (budget) budget.assign(targetFlow);
+        return {
+          flowType: targetFlow,
+          matchedIntent: route.intent,
+          assignment: "natural",
+          route: {
+            intent: route.intent,
+            reason: "target_flow_type on planner row (product angle)",
+            confidence: "explicit",
+          },
+        };
+      }
+    }
+  }
+
+  const contentLens = row.content_lens != null ? normalizeContentLens(row.content_lens) : null;
   const tryOrder = budget
     ? buildVideoIntentTryOrder(route, platform, cfg)
     : [route.intent];
 
   for (const intent of tryOrder) {
-    const flowType = pickVideoFlowForIntent(enabledFlows, intent, productModes);
+    const flowType = pickVideoFlowForIntent(enabledFlows, intent, productModes, {
+      contentLens,
+    });
     if (!flowType) continue;
     if (budget && !budget.canAssign(flowType)) continue;
 

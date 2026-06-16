@@ -142,8 +142,7 @@ import {
   TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
 } from "../services/inputs-deep-video-insights.js";
 import {
-  IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
-  IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
+  buildIdeasFromInsightsPromptLabsEntries,
 } from "../services/ideas-from-insights-llm.js";
 import {
   EVIDENCE_RATING_SYSTEM_PROMPT,
@@ -2344,18 +2343,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         system_prompt: TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
         user_prompt_template: TOP_PERFORMER_VIDEO_USER_PROMPT_TEMPLATE,
       },
-      {
-        prompt_name: "IDEAS__From_Insights_v1",
-        flow_type: "PROCESSING_IDEAS",
-        prompt_role: "processing",
-        active: true,
-        labs_readonly: true,
-        labs_short_description:
-          "Synthesize a curated ideas list from broad + top-performer insights into signal_packs.ideas_json.",
-        labs_flow_description: "Processing: Insights → curated ideas (ideas_json).",
-        system_prompt: IDEAS_FROM_INSIGHTS_SYSTEM_PROMPT_TEMPLATE,
-        user_prompt_template: IDEAS_FROM_INSIGHTS_USER_PROMPT_TEMPLATE,
-      },
+      ...buildIdeasFromInsightsPromptLabsEntries(),
       {
         prompt_name: "SIGNAL_PACK__Rating_Batch_v1",
         flow_type: "PROCESSING_SIGNAL_PACK",
@@ -3931,12 +3919,14 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-toolbar{display:flex;flex-wrap:wrap;gap:20px 28px;align-items:flex-start;margin-bottom:12px}
 .plan-cap-toolbar-block{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .plan-cap-toolbar-block .runs-ops-hint{flex:1;min-width:200px;max-width:none;margin:0}
-.plan-cap-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start}
-@media (max-width:1200px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.plan-cap-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;align-items:start}
+@media (max-width:1400px){.plan-cap-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:960px){.plan-cap-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media (max-width:720px){.plan-cap-grid{grid-template-columns:1fr}}
 .plan-cap-col{border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surface-2)}
-.plan-cap-col[data-plan-cap-cat="regular_carousel"]{border-color:rgba(251,146,60,.32);background:linear-gradient(135deg,rgba(251,146,60,.12) 0%,var(--surface-2) 100%)}
-.plan-cap-col[data-plan-cap-cat="core_video"]{border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="niche_carousel"]{border-color:rgba(251,146,60,.32);background:linear-gradient(135deg,rgba(251,146,60,.12) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="product_carousel"]{border-color:rgba(245,158,11,.28);background:linear-gradient(135deg,rgba(245,158,11,.1) 0%,var(--surface-2) 100%)}
+.plan-cap-col[data-plan-cap-cat="niche_core_video"]{border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-col[data-plan-cap-cat="product_video"]{border-color:rgba(34,197,94,.28);background:linear-gradient(135deg,rgba(34,197,94,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-col[data-plan-cap-cat="top_performer_mimic"]{border-color:rgba(168,85,247,.28);background:linear-gradient(135deg,rgba(168,85,247,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-toolbar--mimic{border-top:1px dashed var(--border);padding-top:10px;margin-top:2px}
@@ -4721,7 +4711,7 @@ async function loadPlanningCaps(){
         var ceff=cset?cval:DEFAULT_MAX_CAROUSEL_PER_FLOW;
         cParts.push(g.label.split('(')[0].trim()+': '+ceff);
       });
-      if(chint)chint.textContent='Regular carousel aggregate: '+cEff+' / run ('+(cHas?'saved in System limits':'server default '+DEFAULT_MAX_CAROUSEL)+') — FLOW_CAROUSEL only; mimic carousels are separate. Per family: '+cParts.join(' · ')+'.';
+      if(chint)chint.textContent='Niche carousel lane: '+cEff+' / run aggregate ('+(cHas?'saved in System limits':'server default '+DEFAULT_MAX_CAROUSEL)+') — ideas with content_lens=niche. Per lane: '+cParts.join(' · ')+'.';
     }
     if(aggInp){
       const vv=d.constraints&&d.constraints.max_video_jobs_per_run;
@@ -5682,11 +5672,12 @@ ${initialRunId ? adminRunHubTabsHtml("jobs", currentSlug, initialRunId) : ""}
 <style>
 .job-row{cursor:pointer}
 .job-row:hover td{background:var(--card2)}
+.jobs-main-table tbody tr.job-row td{padding:12px 10px;vertical-align:middle;line-height:1.35}
 .job-detail-row td{background:var(--bg2);border-bottom:1px solid var(--border);vertical-align:top;padding:12px 14px}
 .job-detail-pre{margin:0;padding:12px;font-size:11px;line-height:1.45;overflow:auto;max-height:280px;border-radius:8px;border:1px solid var(--border);background:var(--bg);white-space:pre-wrap;word-break:break-word}
-.job-err-cell{max-width:360px;vertical-align:top}
-.job-err-inner{display:flex;align-items:flex-start;gap:8px;min-width:0}
-.job-err-text{color:var(--red);font-size:12px;flex:1;min-width:0;white-space:pre-wrap;word-break:break-word}
+.job-err-cell{max-width:280px;vertical-align:middle}
+.job-err-inner{display:flex;align-items:flex-start;gap:8px;min-width:0;max-height:3.9em}
+.job-err-text{color:var(--red);font-size:12px;flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-height:1.3;max-height:3.9em;word-break:break-word;white-space:normal}
 .job-err-copy{padding:2px 8px;font-size:10px;line-height:1.2;flex-shrink:0;margin-top:1px}
 .job-h{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:10px 0 6px}
 .jobs-live-row{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap;font-size:13px;color:var(--fg2)}
@@ -6177,7 +6168,7 @@ async function loadJobs(p,silent){
     h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+esc(rph||'—')+'</td>';
-    h+='<td class="job-err-cell"><div class="job-err-inner"><span class="job-err-text" title="'+escAttr(j.last_error||'')+'">'+esc(trunc(j.last_error,200))+'</span>';
+    h+='<td class="job-err-cell"><div class="job-err-inner"><span class="job-err-text" title="'+escAttr(j.last_error||'')+'">'+esc(trunc(j.last_error,96))+'</span>';
     if(j.last_error){
       h+='<button type="button" class="btn-ghost job-err-copy" title="Copy full error text" onclick="copyJobLastErr(event,'+i+')">Copy</button>';
     }
@@ -6615,13 +6606,76 @@ function plRenderPromptCard(p,kind,ix){
   out+='</div>';
   return out;
 }
+function plRenderIdeasPromptGroup(rows,kind){
+  if(!rows||!rows.length)return '';
+  var groupLabel=String((rows[0].p&&rows[0].p.labs_prompt_group_label)||'Ideas from insights');
+  var overview=[];
+  var byKey={};
+  var groupOrder=[];
+  for(var i=0;i<rows.length;i++){
+    var row=rows[i];
+    var p=row.p||{};
+    if(p.labs_prompt_subgroup==='overview'){overview.push(row);continue;}
+    var gk=String(p.labs_prompt_group_key||'');
+    if(!gk)continue;
+    if(!byKey[gk]){
+      byKey[gk]={
+        title:String(p.labs_prompt_group_title||gk),
+        group:null,
+        buckets:[]
+      };
+      groupOrder.push(gk);
+    }
+    if(p.labs_prompt_subgroup==='group'){
+      byKey[gk].group=row;
+      if(p.labs_prompt_group_title)byKey[gk].title=String(p.labs_prompt_group_title);
+    }
+    else if(p.labs_prompt_subgroup==='bucket')byKey[gk].buckets.push(row);
+  }
+  var out='<details class="pl-prompt-group" open style="border:1px solid var(--border);border-radius:12px;padding:4px 14px 14px;margin-bottom:16px;background:var(--card)">';
+  out+='<summary style="cursor:pointer;font-weight:600;font-size:15px;color:var(--fg);padding:10px 0;list-style-position:outside">'+esc(groupLabel)+' <span style="font-weight:400;color:var(--muted);font-size:12px">('+rows.length+' prompts)</span></summary>';
+  out+='<p style="font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.5">Build ideas step: one grouped LLM call per <span class="mono">content_lens + format</span> (niche carousel, product video, …). Shared user message injects project notes, brand/product profile, and insight context. Expand a group to see the runtime system prompt; expand fallback buckets only when grouped calls fail.</p>';
+  for(var oi=0;oi<overview.length;oi++){
+    out+=plRenderPromptCard(overview[oi].p,kind,overview[oi].ix);
+  }
+  for(var gi=0;gi<groupOrder.length;gi++){
+    var key=groupOrder[gi];
+    var g=byKey[key];
+    if(!g)continue;
+    var groupTitle=g.title;
+    if(g.group&&g.group.p&&g.group.p.labs_prompt_group_title)groupTitle=String(g.group.p.labs_prompt_group_title);
+    out+='<details class="pl-prompt-subgroup" style="border:1px solid var(--border);border-radius:10px;padding:2px 12px 10px;margin:0 0 10px;background:var(--card2)">';
+    out+='<summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--accent);padding:8px 0">'+esc(groupTitle);
+    if(g.buckets.length)out+=' <span style="font-weight:400;color:var(--muted);font-size:11px">· '+g.buckets.length+' fallback bucket'+(g.buckets.length===1?'':'s')+'</span>';
+    out+='</summary>';
+    if(g.group)out+=plRenderPromptCard(g.group.p,kind,g.group.ix);
+    if(g.buckets.length){
+      out+='<details style="margin:0 0 4px 8px"><summary style="cursor:pointer;font-size:12px;color:var(--muted);padding:6px 0">Per-bucket fallback prompts</summary>';
+      for(var bi=0;bi<g.buckets.length;bi++){
+        out+=plRenderPromptCard(g.buckets[bi].p,kind,g.buckets[bi].ix);
+      }
+      out+='</details>';
+    }
+    out+='</details>';
+  }
+  out+='</details>';
+  return out;
+}
 function plRenderPromptList(rows,kind){
   if(!rows||!rows.length)return '<div class="empty">No prompts in this list.</div>';
-  var out='';
+  var ideasRows=[];
+  var rest=[];
   for(var ri=0;ri<rows.length;ri++){
     var row=rows[ri];
-    var ix=kind==='processing'||kind==='learning'?row.ix:row.ix;
-    out+=plRenderPromptCard(row.p,kind,ix);
+    if(row.p&&row.p.labs_prompt_group==='ideas_from_insights')ideasRows.push(row);
+    else rest.push(row);
+  }
+  var out='';
+  if(ideasRows.length)out+=plRenderIdeasPromptGroup(ideasRows,kind);
+  for(var rj=0;rj<rest.length;rj++){
+    var row2=rest[rj];
+    var ix=kind==='processing'||kind==='learning'?row2.ix:row2.ix;
+    out+=plRenderPromptCard(row2.p,kind,ix);
   }
   return out;
 }

@@ -83,6 +83,8 @@ Core **calls** these over HTTP; it does not embed Puppeteer/ffmpeg for carousel/
 ## Related docs
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md)
+- [EXTERNAL_CONTEXT_PACK.md](./EXTERNAL_CONTEXT_PACK.md)
+- [REBUILD_FROM_DOCS.md](./REBUILD_FROM_DOCS.md)
 - [layers/http-api.md](./layers/http-api.md)
 - [layers/rendering.md](./layers/rendering.md)
 - [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)

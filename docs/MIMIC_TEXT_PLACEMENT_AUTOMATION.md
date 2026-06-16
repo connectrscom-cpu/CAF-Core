@@ -1,95 +1,195 @@
 # Mimic Text Placement — Automation Path (Design)
 
-> **Status: design only.** This document describes how the human text-layout editor
-> evolves into automated text placement. No data-capture plumbing is built yet — this
-> is the architecture the current editor is deliberately built to support.
+> **Status: design only.** No capture or post-render analyzer is built yet. This doc
+> describes where automation must actually live given unpredictable image generation.
+>
+> **For AI assistants:** Cursor rule [`.cursor/rules/mimic-text-placement-automation.mdc`](../.cursor/rules/mimic-text-placement-automation.mdc) — read when the user asks to automate mimic text placement.
 
-## Why this is mostly already automated
+## The real problem (not “learn placement once”)
 
-Automated placement already partially exists. For a top-performer mimic carousel:
+Mimic carousel text placement has **two different inputs** that must not be conflated:
 
-1. **Document AI OCR** reads the original top-performer slide.
+| Input | Stable? | What it tells you |
+|-------|---------|-------------------|
+| **Reference top-performer slide** (OCR) | Yes, per mimic job | Where text *was* on the *original* — roles, rough geometry, copy structure |
+| **Generated art plate** (Flux/Qwen) | **No** — changes every regen | Where faces, products, logos, and busy texture land *on this slide* |
+
+Reference OCR → initial boxes is only a **seed**. It cannot be trusted as final placement
+because the model may put the subject exactly where the seed box sits. That is why a human
+opens the layout editor today: **on this specific rendered slide**, text is covering something
+important or sitting on illegible background.
+
+**Automation cannot primarily mean “learn from past human moves.”** Past jobs had different
+plates; a delta from slide A does not predict slide B. Automation must mean:
+
+```text
+seed boxes (reference OCR) → HTML reprint → final composite PNG
+    → analyze THIS composite
+    → “box X is bad here; move to Y”
+    → reprint (cheap) → re-analyze or route to human
+```
+
+The human editor remains the **exception handler** when the post-render loop cannot reach
+confidence. It is not a training-data farm for a static placer.
+
+## What exists today (and what it is *not*)
+
+**Seed path (before human):**
+
+1. Document AI OCR on the **reference** slide.
 2. [`src/services/mimic-docai-overlay-layout.ts`](../src/services/mimic-docai-overlay-layout.ts)
-   solves OCR boxes into `docai_text_layers` (role bucketing, single vs. multi-line).
-3. [`services/renderer/mimic-docai-fit.js`](../services/renderer/mimic-docai-fit.js) auto-fits
-   each layer at render time.
+   maps copy → `docai_text_layers` (roles, single vs multi-line).
+3. [`services/renderer/mimic-docai-fit.js`](../services/renderer/mimic-docai-fit.js) fits
+   font size and resolves **box–box** collisions at render time.
+4. [`services/renderer/mimic-docai-contrast.js`](../services/renderer/mimic-docai-contrast.js)
+   samples the **background plate** (not the composite) for text color/contrast.
 
-The human drag editor ([`MimicDocAiLayerPositionEditor.tsx`](../apps/review/src/components/MimicDocAiLayerPositionEditor.tsx))
-only writes **corrections** as `docai_layer_positions`. So the human tool is an
-**override layer on top of an existing automation spine** — not a from-scratch placer.
+**Human path:**
 
-## Design principle: one schema for human and machine
+- [`MimicDocAiLayerPositionEditor.tsx`](../apps/review/src/components/MimicDocAiLayerPositionEditor.tsx)
+  writes corrections to `docai_layer_positions`.
 
-The editor's per-box output is intentionally identical to what an automated placer would
-emit, so swapping human → machine is a drop-in:
+**Cheap iteration:**
+
+- **Reprint** recomposites HTML on stored plates (no Flux). This is the loop motor for any
+  automated fixer.
+
+**Gap:** Nothing today re-examines the **printed slide** (image + overlay together) and asks
+“did we ruin this slide?” Pre-render `mimic_avoid_center_subject` uses heuristics on the
+plate only — it cannot see that headline landed on a face after this particular generation.
+
+## The automation spine: post-composite placement QA
+
+This is the step automation must solve. Everything else is supporting.
+
+```mermaid
+flowchart TD
+  REF[Reference OCR + solver seed] --> REP1[Reprint composite]
+  PLATE[Generated plate] --> REP1
+  REP1 --> PNG[Final slide PNG]
+  PNG --> QA[Post-composite analyzer]
+  QA -->|pass| DONE[Auto-approve or skip human]
+  QA -->|fixes| PATCH[Patch docai_layer_positions]
+  PATCH --> REP2[Reprint]
+  REP2 --> PNG
+  QA -->|low confidence| HUMAN[Human layout editor]
+  HUMAN --> PATCH
+```
+
+### What the analyzer looks at
+
+Re-running “OCR” on a slide that already contains your text is noisy (it reads overlay +
+background). The useful signal is **placement QA on the composite**, not re-extracting copy:
+
+| Check | Question | Typical failure |
+|-------|----------|-----------------|
+| **Saliency / subject overlap** | Do text boxes intersect faces, products, logos, or high-detail regions? | Headline on a face |
+| **Legibility** | Is contrast sufficient in the box region (extend existing contrast pass to composite)? | Light text on light sky |
+| **Box collision** | Do boxes overlap each other after fit? | Already partly in `mimic-docai-fit.js` |
+| **Margin / safe zone** | Are boxes clipped or hugging edges? | CTA cut off |
+| **Copy completeness** | Is all intended copy visible (not hidden/off-canvas)? | Solver dropped a line |
+
+Outputs are still **`docai_layer_positions` patches** — same schema as the human editor:
 
 ```jsonc
 {
   "layer_key": "headline@0",
-  "role": "headline",
-  "x_px": 96, "y_px": 140, "w_px": 888, "h_px": 220,
-  "font_size_px": 72,
-  "font_weight": 700,
-  "color_hex": "#111111",
-  "font_family": "Inter",
-  "font_style_italic": false,
-  "hidden": false,
-  "box_locked": false,
-  "source": "human"        // NEW: ocr | human | vision  (provenance tag)
+  "x_px": 96, "y_px": 280, "w_px": 888, "h_px": 200,
+  "source": "post_render_qa",   // ocr | post_render_qa | human | vision
+  "fix_reason": "subject_overlap" // optional: why this move was proposed
 }
 ```
 
-The only new concept is the **`source` tag** (added to `DocAiLayerOverride` as an optional
-field today). It records who produced each box:
+Provenance values:
 
-- `ocr` — deterministic solver seed (default).
-- `human` — a reviewer edit in the drag editor.
-- `vision` — a vision-model suggestion (future).
+- `ocr` — seed from reference layout solver (default, pre-QA).
+- `post_render_qa` — moved by the composite analyzer (automation).
+- `human` — reviewer edit in the drag editor.
+- `vision` — optional vision-LLM suggestion before first print (see below).
 
-Persisting `source` end-to-end (Core zod schema + payload) is the **only** capture
-plumbing required later; the shape is otherwise unchanged.
+### Analyzer implementation options (ranked)
 
-## Recommended automation routes (ranked)
+**1. Deterministic composite QA (build first)**  
+Render once, run vision/heuristics on the PNG:
 
-### A. Strengthen the deterministic OCR → layout solver  *(lowest cost, already the spine)*
-Improve copy → reference-box anchoring, role classification, and collision / center-avoid
-in `mimic-docai-overlay-layout.ts`. Most slides already work this way; better anchoring
-shrinks the human correction delta.
+- Subject/saliency map on the **composite** (or plate + known box mask).
+- Penalize boxes whose area overlaps salient pixels above a threshold.
+- Search nearby positions (grid or slide “quiet zones”) that preserve copy and clear overlap.
+- Reuse contrast sampling from `mimic-docai-contrast.js` against the region under each box.
 
-### B. Vision-model placement  *(suggestion layer)*
-Send the generated art plate + target copy to a vision LLM; get back boxes in the **same
-JSON schema** with `source: "vision"`. Render as "suggested," human accepts/nudges. Fall
-back to the solver (route A) on low confidence.
+No training data required; works per slide, per generation.
 
-### C. Closed-loop learning from human corrections
-Pair the OCR-suggested box with the human-final box (the delta) as labeled data to
-few-shot / finetune the placer. We already persist the finals (`docai_layer_positions`);
-the missing half is storing the **OCR original alongside** (this is the capture plumbing
-intentionally deferred). The `source` tag is what makes original-vs-final separable.
+**2. Vision-model QA (suggestion / hard cases)**  
+Send the **composite PNG** + box list + target copy to a vision model: “which boxes should
+move and where?” Return the same JSON schema with `source: "post_render_qa"`. Use when
+deterministic QA is uncertain.
 
-### D. Auto-contrast / auto-color
-Extend [`services/renderer/mimic-docai-fit.js`](../services/renderer/mimic-docai-fit.js)
-(and the contrast pass) with saliency / contrast detection to place text over low-detail
-regions and auto-pick a legible colour from the **brand palette** (already surfaced in the
-editor as swatches, see 1.5).
+**3. Vision-model pre-placement (optional, not sufficient alone)**  
+Propose initial boxes from **generated plate + copy** before first print (`source: "vision"`).
+Still must pass through step 1 after print — unpredictable generation means pre-placement
+alone is never enough.
 
-### E. Confidence gate  *(bridge from assisted → fully automated)*
-Compute a placement confidence (OCR alignment + collision + contrast). Auto-approve
-high-confidence slides; route low-confidence slides to the human editor. This is the
-switch that turns the human tool into an exception handler rather than the default path.
+**4. Stronger reference seed (supporting only)**  
+Improve `mimic-docai-overlay-layout.ts` (copy anchoring, roles, center-avoid). Reduces how
+often QA must move boxes; does **not** replace post-composite QA.
 
-## How the current editor already supports this
+**5. Learning from human corrections (deprioritized)**  
+Storing OCR seed vs human final across jobs is optional telemetry for improving heuristics or
+few-shot prompts. It is **not** the primary automation path because plates differ every time.
 
-| Capability | Where it lives today | Automation reuse |
-|---|---|---|
-| Box geometry + style schema | `DocAiLayerOverride` | Machine placer emits the same shape |
-| Per-box provenance | `source` tag (optional, this change) | Separates ocr / human / vision |
-| Brand palette | swatches in editor (1.5) | Route D auto-colour source |
-| Regenerate route knobs | similarity / reference (1.6) | Lets a confidence gate pick a route |
-| Reprint = overlay only | `carousel_mimic_bg.hbs` + DocAI | Text never baked → boxes stay editable/automatable |
+## Confidence gate (when to skip the human)
 
-## Not in scope this round
+After each reprint, compute a **placement score** from composite QA:
 
-- Persisting `source` through Core (zod schema + `mimic_v1` payload).
-- Storing the OCR original next to the human final (route C capture).
-- Any vision-model call or confidence scorer.
+- overlap with salient regions (weight high),
+- contrast legibility,
+- inter-box collision,
+- margin violations.
+
+| Score | Action |
+|-------|--------|
+| High | Auto-approve slide for review queue (or auto-publish path later) |
+| Medium | Apply QA patches, reprint once more, re-score |
+| Low | Open human layout editor with QA suggestions pre-loaded |
+
+This turns the editor from “default for every slide” into “only when this generation fought us.”
+
+## Design principle: one schema, two phases
+
+Keep a single box schema for seed, QA fixes, and human edits so the pipeline stays one path:
+
+| Phase | Who writes boxes | When |
+|-------|------------------|------|
+| Seed | Reference OCR + solver | After plate exists, before or after first print |
+| **QA fix** | **Post-composite analyzer** | **After each print — the automation step** |
+| Human override | Reviewer | When QA confidence is low or brand judgment needed |
+
+The editor overhaul already emits this shape; `source` (and optional `fix_reason`) records
+which phase last moved a box. Persisting `source` through Core is small future plumbing.
+
+## How current product pieces support this
+
+| Piece | Role in post-render loop |
+|-------|--------------------------|
+| HTML overlay + reprint | Cheap iterate: QA → patch → reprint without Flux |
+| `docai_layer_positions` | QA and human write the same patch format |
+| Brand palette swatches (editor 1.5) | QA can auto-pick legible `color_hex` from palette |
+| Regenerate route (similarity / reference) | Only when the **plate** is wrong, not placement |
+| `mimic-docai-contrast.js` | Extend to sample **composite** under each box |
+| Human layout editor | Exception UI; show QA moves as suggestions to accept/nudge |
+
+## Suggested build order
+
+1. **Composite overlap detector** — given PNG + box list, flag boxes intersecting salient/busy
+   regions (deterministic or light vision model).
+2. **Box nudge solver** — search local positions that clear flags; emit `post_render_qa` patches.
+3. **Reprint loop in pipeline** — after mimic render, run QA → patch → reprint (cap N iterations).
+4. **Confidence gate** — score → auto-pass vs human queue; surface QA suggestions in editor.
+5. *(Optional)* Vision QA for hard slides; *(optional)* telemetry from human finals.
+
+## Not in scope yet
+
+- Post-composite analyzer service or pipeline hook.
+- Persisting `source` / `fix_reason` through Core `mimic_v1`.
+- Auto reprint loop without human-in-the-loop approval.
+- Training / finetuning on historical correction pairs.

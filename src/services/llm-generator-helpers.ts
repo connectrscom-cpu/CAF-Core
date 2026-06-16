@@ -22,6 +22,8 @@ import {
 import { filterSignalPackHashtagCandidates } from "../domain/signal-hashtag-sanitize.js";
 import { loadConfig } from "../config.js";
 import {
+  budgetCreationPackForCarouselFlow,
+  budgetCreationPackForLlm,
   budgetCreationPackForMimicFlow,
   budgetSignalPackContextForLlm,
   slimCandidateForMimicLlm,
@@ -507,7 +509,10 @@ export async function buildCreationPack(
     return budgetCreationPackForMimicFlow(pack, cfg.LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS);
   }
 
-  return pack;
+  return budgetCreationPackForLlm(pack, cfg.LLM_CREATION_PACK_JSON_MAX_CHARS, {
+    candidateData,
+    signalPackJsonMaxChars: signalPackJsonMaxChars,
+  });
 }
 
 export { appendMimicGroundedReferenceToUserPrompt } from "../domain/mimic-job-grounding.js";

@@ -272,11 +272,44 @@ export function CarouselSlider({
     [onSlidesChange]
   );
 
+  const updateMimicTemplateBgField = useCallback(
+    (slideIndex: number, field: MimicTemplateBgEditorField, text: string) => {
+      setSavedAt(null);
+      setSlides((prev) => {
+        const next = prev.map((s, i) =>
+          i === slideIndex
+            ? applyMimicTemplateBgFieldEdit(s, slideIndex + 1, prev.length, field.key, text)
+            : s
+        );
+        if (onMimicLayoutTextBlockChange) {
+          const updated = next[slideIndex];
+          if (updated) {
+            const fields = resolveMimicTemplateBgEditorFields(updated, slideIndex + 1, next.length);
+            fields.forEach((f, bi) => onMimicLayoutTextBlockChange(bi, f.text));
+          }
+        }
+        onSlidesChange?.(next);
+        return next;
+      });
+    },
+    [onSlidesChange, onMimicLayoutTextBlockChange]
+  );
+
   const updateMimicTextBlock = useCallback(
     (slideIndex: number, blockIndex: number, text: string) => {
+      if (mimicTemplateBg) {
+        const slideAt = slides[slideIndex];
+        if (!slideAt) return;
+        const fields = resolveMimicTemplateBgEditorFields(slideAt, slideIndex + 1, slides.length);
+        const field = fields[blockIndex];
+        if (!field) return;
+        updateMimicTemplateBgField(slideIndex, field, text);
+        if (onMimicLayoutTextBlockChange) {
+          onMimicLayoutTextBlockChange(blockIndex, text);
+        }
+        return;
+      }
       if (mimicFullBleed && onMimicLayoutTextBlockChange) {
-        onMimicLayoutTextBlockChange(blockIndex, text);
-      } else if (mimicTemplateBg && onMimicLayoutTextBlockChange && mimicLayoutTextBlocks?.length) {
         onMimicLayoutTextBlockChange(blockIndex, text);
       }
       setSavedAt(null);
@@ -301,23 +334,7 @@ export function CarouselSlider({
         return next;
       });
     },
-    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, mimicLayoutTextBlocks, onSlidesChange]
-  );
-
-  const updateMimicTemplateBgField = useCallback(
-    (slideIndex: number, field: MimicTemplateBgEditorField, text: string) => {
-      setSavedAt(null);
-      setSlides((prev) => {
-        const next = prev.map((s, i) =>
-          i === slideIndex
-            ? applyMimicTemplateBgFieldEdit(s, slideIndex + 1, prev.length, field.key, text)
-            : s
-        );
-        onSlidesChange?.(next);
-        return next;
-      });
-    },
-    [onSlidesChange]
+    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, mimicLayoutTextBlocks, onSlidesChange, slides, updateMimicTemplateBgField]
   );
 
   const handleSaveSlide = useCallback(() => {
@@ -351,17 +368,18 @@ export function CarouselSlider({
     [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]
   );
   const mimicTextBlocks = useMemo(() => {
-    if (!mimicCopyEditor || mimicTemplateBg) {
-      if (mimicCopyEditor && mimicTemplateBg && mimicLayoutTextBlocks?.length) {
-        return mimicLayoutTextBlocks.map((b) => ({ role: b.role || "body", text: b.text }));
-      }
-      return [];
+    if (!mimicCopyEditor) return [];
+    if (mimicTemplateBg) {
+      return resolveMimicTemplateBgEditorFields(slide, currentIndex + 1, slides.length).map((f) => ({
+        role: f.role,
+        text: f.text,
+      }));
     }
     if (mimicFullBleed && mimicLayoutTextBlocks?.length) {
       return mimicLayoutTextBlocks.map((b) => ({ role: b.role || "body", text: b.text }));
     }
     return resolveMimicTextBlocksForSlide(slide);
-  }, [mimicCopyEditor, mimicTemplateBg, mimicFullBleed, mimicLayoutTextBlocks, slide]);
+  }, [mimicCopyEditor, mimicTemplateBg, mimicFullBleed, mimicLayoutTextBlocks, slide, currentIndex, slides.length]);
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
@@ -543,11 +561,11 @@ export function CarouselSlider({
             className="carousel-edit-copy"
             style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
           >
-          {mimicCopyEditor && mimicTemplateBg && mimicTextBlocks.length === 0 ? (
+          {mimicCopyEditor && mimicTemplateBg ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Slide copy</label>
               <p className="mimic-text-blocks__hint">
-                Listicle format — headline and body per slide (cover uses subtitle; last slide uses CTA + handle).
+                Listicle format — title and body per slide (cover uses subtitle; last slide uses CTA + handle).
               </p>
               <div className="mimic-text-blocks__list">
                 {mimicTemplateBgFields.map((field, bi) => {
@@ -567,7 +585,6 @@ export function CarouselSlider({
                     >
                       <label className="filter-label mimic-text-block-field__label">
                         <span>{field.label}</span>
-                        <span className="mimic-text-block-field__meta">Box {bi + 1}</span>
                       </label>
                       <textarea
                         value={isHandle && projectHandle.trim() ? displayText : field.text}
@@ -576,7 +593,7 @@ export function CarouselSlider({
                           if (isHandle && projectHandle.trim()) return;
                           updateMimicTemplateBgField(currentIndex, field, e.target.value);
                         }}
-                        rows={Math.min(5, Math.max(2, displayText.split("\n").length))}
+                        rows={Math.min(8, Math.max(2, displayText.split("\n").length))}
                         placeholder={`${field.label}…`}
                         className="mimic-text-block-field__input"
                         onFocus={() => onActiveTextBlockIndexChange?.(bi)}
@@ -589,7 +606,7 @@ export function CarouselSlider({
                 })}
               </div>
             </div>
-          ) : mimicCopyEditor && (mimicFullBleed || mimicTemplateBg || mimicTextBlocks.length > 0) ? (
+          ) : mimicCopyEditor && (mimicFullBleed || mimicTextBlocks.length > 0) ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
               <div className="mimic-text-blocks__list">
@@ -597,7 +614,7 @@ export function CarouselSlider({
                   const isHandle = isMimicHandleTextBlock(block);
                   const displayText = mimicTextBlockDisplayText(block, projectHandle);
                   const linked = activeTextBlockIndex === bi;
-                  const useNeutralLabels = mimicFullBleed || mimicTemplateBg;
+                  const useNeutralLabels = mimicFullBleed;
                   return (
                   <div
                     key={bi}

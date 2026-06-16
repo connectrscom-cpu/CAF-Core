@@ -1311,6 +1311,147 @@ function docAiRefAcceptsDirectCopyLine(
   return true;
 }
 
+function isListicleMotherDecorText(text: string): boolean {
+  return /^THE\s+.+\s+MOTHER$/i.test(String(text ?? "").trim());
+}
+
+function listicleDecorTitleFromLlmSlide(
+  llmSlide: Record<string, unknown>,
+  llmLines: { headline?: string | null },
+  directLines: string[]
+): string {
+  if (Array.isArray(llmSlide.text_blocks)) {
+    for (const item of llmSlide.text_blocks) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      const role = String(rec.role ?? "").toLowerCase();
+      const text = sanitizeMimicOverlayCopyText(rec.text);
+      if ((role === "headline" || role === "title" || role === "hook") && text && isListicleMotherDecorText(text)) {
+        return text;
+      }
+    }
+  }
+  const headline = llmLines.headline?.trim() || directLines[0]?.trim() || "";
+  return headline && isListicleMotherDecorText(headline) ? headline : headline;
+}
+
+function isListicleMotherTemplateBgLayout(orderedRef: DocAiLayoutBlock[]): boolean {
+  return (
+    orderedRef.some((r) => isListicleMotherDecorText(r.ref_text)) &&
+    orderedRef.some(
+      (r) => isHandleTextBlock(r.role, r.ref_text) || looksLikeInstagramHandleText(r.ref_text)
+    ) &&
+    orderedRef.some((r) => docAiRefAcceptsDirectCopyLine(r))
+  );
+}
+
+function bodyCopyForListicleMotherSlide(
+  llmSlide: Record<string, unknown>,
+  llmLines: LlmSlideCopyLines,
+  directLines: string[]
+): string {
+  if (Array.isArray(llmSlide.text_blocks)) {
+    for (const item of llmSlide.text_blocks) {
+      const rec = asRecord(item);
+      if (!rec) continue;
+      if (String(rec.role ?? "").toLowerCase() !== "body") continue;
+      const text = sanitizeMimicOverlayCopyText(rec.text);
+      if (text && !looksLikeInstagramHandleText(text)) return text;
+    }
+  }
+  const fromBodyLines = llmLines.bodyLines
+    .filter((line) => line.trim() && !looksLikeInstagramHandleText(line))
+    .join("\n")
+    .trim();
+  if (fromBodyLines) return fromBodyLines;
+  for (const line of directLines) {
+    const text = line.trim();
+    if (!text || isListicleMotherDecorText(text) || looksLikeInstagramHandleText(text)) continue;
+    return text;
+  }
+  return "";
+}
+
+function buildListicleMotherTemplateBgLayers(
+  orderedRef: DocAiLayoutBlock[],
+  llmSlide: Record<string, unknown>,
+  llmLines: LlmSlideCopyLines,
+  directLines: string[],
+  theme: { ink: string; body: string } | undefined,
+  opts: {
+    projectHandle?: string | null;
+    textBacking: boolean;
+    textBackingColor?: string | null;
+    avoidCenterSubject?: boolean;
+  }
+): MimicDocAiRenderTextLayer[] {
+  const decorTitle = listicleDecorTitleFromLlmSlide(llmSlide, llmLines, directLines);
+  const bodyText = bodyCopyForListicleMotherSlide(llmSlide, llmLines, directLines);
+  const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
+  const bodyRefs = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r));
+  const bodyRef =
+    bodyRefs.length > 0
+      ? [...bodyRefs].sort((a, b) => b.w * b.h - a.w * a.h || a.y - b.y)[0]!
+      : null;
+  const layers: MimicDocAiRenderTextLayer[] = [];
+  let bodyAssigned = false;
+
+  for (const ref of orderedRef) {
+    if (isListicleMotherDecorText(ref.ref_text)) {
+      const text = decorTitle || ref.ref_text.trim();
+      if (!text.trim()) continue;
+      pushDocAiRenderLayer(layers, ref, text, ref, {
+        textBacking: opts.textBacking,
+        textBackingColor: opts.textBackingColor,
+        theme,
+        avoidCenterSubject: opts.avoidCenterSubject,
+        projectHandle,
+      });
+      continue;
+    }
+    if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) {
+      if (!projectHandle) continue;
+      pushDocAiRenderLayer(layers, ref, projectHandle, ref, {
+        textBacking: opts.textBacking,
+        textBackingColor: opts.textBackingColor,
+        theme,
+        avoidCenterSubject: opts.avoidCenterSubject,
+        projectHandle,
+      });
+      continue;
+    }
+    if (!bodyAssigned && bodyRef && ref === bodyRef && bodyText.trim()) {
+      bodyAssigned = true;
+      pushDocAiRenderLayer(layers, ref, bodyText, ref, {
+        textBacking: opts.textBacking,
+        textBackingColor: opts.textBackingColor,
+        theme,
+        avoidCenterSubject: opts.avoidCenterSubject,
+        projectHandle,
+      });
+    }
+  }
+
+  layers.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
+  return normalizeDocAiRenderLayerFontSizes(layers, {
+    textBacking: opts.textBacking,
+    projectHandle: opts.projectHandle ?? null,
+  });
+}
+
+function directMappingSkewsListicleBodySlots(
+  orderedRef: DocAiLayoutBlock[],
+  directLines: string[]
+): boolean {
+  if (directLines.length < 2) return false;
+  const copyableCount = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r)).length;
+  const hasHandle = orderedRef.some(
+    (r) => isHandleTextBlock(r.role, r.ref_text) || looksLikeInstagramHandleText(r.ref_text)
+  );
+  const hasListicleDecor = orderedRef.some((r) => isListicleMotherDecorText(r.ref_text));
+  return hasListicleDecor && hasHandle && copyableCount > 0 && directLines.length > copyableCount;
+}
+
 /** Map text_blocks[] lines onto OCR boxes by reading order (handles handle/decor gaps). */
 export function buildDirectCopyAssignmentsByIndex(
   orderedRef: DocAiLayoutBlock[],
@@ -1974,6 +2115,7 @@ function pushDocAiRenderLayer(
         ? clampDocAiFontSizePx(ref.font_size_px)
         : ref.font_size_px;
   const isHandleLayer = isMimicDocAiHandleLayer(ref.role ?? bucket, trimmed, opts.projectHandle);
+  const layerRole = isHandleLayer ? "handle" : ref.role ?? bucket;
   const styled = buildDocAiLayerCssStyle({
     px,
     text: trimmed,
@@ -1999,7 +2141,7 @@ function pushDocAiRenderLayer(
 
   layers.push({
     text: trimmed,
-    role: ref.role ?? bucket,
+    role: layerRole,
     x_pct: pct01(renderBBox.x),
     y_pct: pct01(renderBBox.y),
     w_pct: pct01(renderBBox.w),
@@ -2803,7 +2945,9 @@ export function buildMimicDocAiRenderTextLayers(
   const transcript = String(refSlide.on_screen_text_transcript ?? "").trim();
   let directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
   let useDirectMapping =
-    directCopy.useDirect && textBlocksPreferDirectMapping(orderedRef, directLines, llmLines);
+    directCopy.useDirect &&
+    textBlocksPreferDirectMapping(orderedRef, directLines, llmLines) &&
+    !directMappingSkewsListicleBodySlots(orderedRef, directLines);
 
   if (directLines.length > 0 && !useDirectMapping) {
     const shrunk = shrinkOrderedRefToTextBlockLines(orderedRef, directLines);
@@ -2811,7 +2955,28 @@ export function buildMimicDocAiRenderTextLayers(
       orderedRef = orderDocAiBlocksForLlmCopyMapping(shrunk);
       directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
       useDirectMapping =
-        directCopy.useDirect && textBlocksPreferDirectMapping(orderedRef, directLines, llmLines);
+        directCopy.useDirect &&
+        textBlocksPreferDirectMapping(orderedRef, directLines, llmLines) &&
+        !directMappingSkewsListicleBodySlots(orderedRef, directLines);
+    }
+  }
+
+  if (isListicleMotherTemplateBgLayout(orderedRef)) {
+    const listicleLayers = buildListicleMotherTemplateBgLayers(
+      orderedRef,
+      llmSlide,
+      llmLines,
+      directLines,
+      theme,
+      {
+        projectHandle: opts?.projectHandle ?? null,
+        textBacking,
+        textBackingColor,
+        avoidCenterSubject,
+      }
+    );
+    if (listicleLayers.length > 0) {
+      return dedupeDocAiRenderLayersByNormalizedText(listicleLayers);
     }
   }
 
@@ -2874,6 +3039,7 @@ export function buildMimicDocAiRenderTextLayers(
     : "";
   const layers: MimicDocAiRenderTextLayer[] = [];
   let headlinePrefixAssigned = false;
+  const listicleDecorTitle = listicleDecorTitleFromLlmSlide(llmSlide, llmLines, directLines);
 
   for (let i = 0; i < orderedRef.length; i++) {
     const ref = orderedRef[i]!;
@@ -2889,7 +3055,9 @@ export function buildMimicDocAiRenderTextLayers(
 
     let text = "";
     if (isPreserveReferenceDecorText(ref.ref_text, ref)) {
-      text = ref.ref_text.trim();
+      text = isListicleMotherDecorText(ref.ref_text)
+        ? listicleDecorTitle || ref.ref_text.trim()
+        : ref.ref_text.trim();
     } else if (useDirectMapping) {
       if (isHandleTextBlock(ref.role, ref.ref_text) && projectHandle) {
         text = projectHandle;

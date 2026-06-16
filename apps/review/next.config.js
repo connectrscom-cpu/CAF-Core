@@ -18,6 +18,10 @@ const nextConfig = {
       coreDomain,
       "mimic-docai-layer-positions.ts"
     );
+    config.resolve.alias["@caf-core-carousel/mimic-template-bg-copy"] = path.join(
+      coreDomain,
+      "mimic-template-bg-copy.ts"
+    );
     config.plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^\.\/supabase-storage\.js$/, path.join(coreServices, "supabase-storage.ts")),
       new webpack.NormalModuleReplacementPlugin(

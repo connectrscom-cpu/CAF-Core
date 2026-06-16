@@ -732,6 +732,103 @@ describe("mimic-slide-typography", () => {
     expect(byRole.get("body")).toContain("brings energy into every moment");
   });
 
+  it("buildMimicDocAiRenderTextLayers maps text_blocks on listicle decor+handle+body OCR", () => {
+    const ocrSlide = {
+      slide_index: 2,
+      text_blocks: [
+        {
+          text: "THE ARIES MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Deeply rooted in family",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const layers = buildMimicDocAiRenderTextLayers(
+      { visual_guideline: { slides: [ocrSlide] } },
+      2,
+      {
+        text_blocks: [
+          { role: "headline", text: "THE ARIES MOTHER" },
+          {
+            role: "body",
+            text: "Full of life and passion, she brings energy into every moment",
+          },
+        ],
+      },
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true }
+    );
+    const texts = layers.map((l) => l.text);
+    expect(texts).toContain("THE ARIES MOTHER");
+    expect(texts).toContain("@signandsound");
+    expect(texts.some((t) => t.includes("Full of life and passion"))).toBe(true);
+    expect(layers.find((l) => l.text === "@signandsound")?.role).toBe("handle");
+    expect(layers.find((l) => l.text.includes("Full of life"))?.role).toBe("body");
+  });
+
+  it("buildMimicDocAiRenderTextLayers uses LLM listicle decor title on shared Virgo OCR geometry", () => {
+    const ocrSlide = {
+      slide_index: 7,
+      text_blocks: [
+        {
+          text: "THE VIRGO MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "She values genuine relationships",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    const layers = buildMimicDocAiRenderTextLayers(
+      { visual_guideline: { slides: [ocrSlide] } },
+      7,
+      {
+        headline: "THE LIBRA MOTHER",
+        body: "She values genuine relationships, standing as both a devoted mother and a true friend.",
+        text_blocks: [
+          { role: "headline", text: "THE LIBRA MOTHER" },
+          {
+            role: "body",
+            text: "She values genuine relationships, standing as both a devoted mother and a true friend.",
+          },
+        ],
+      },
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true }
+    );
+    const texts = layers.map((l) => l.text);
+    expect(texts).toContain("THE LIBRA MOTHER");
+    expect(texts).not.toContain("THE VIRGO MOTHER");
+    expect(texts).toContain("@signandsound");
+    expect(texts.some((t) => t.includes("genuine relationships"))).toBe(true);
+    expect(layers.find((l) => l.text === "@signandsound")?.role).toBe("handle");
+    expect(layers.find((l) => l.text.includes("genuine relationships"))?.role).toBe("body");
+  });
+
   it("docAiBlocksShareVerticalStack detects same column", () => {
     expect(
       docAiBlocksShareVerticalStack(

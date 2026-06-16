@@ -2,6 +2,10 @@ import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { z } from "zod";
+import {
+  ideaGenerationQuotasSchema,
+  readIdeaGenerationQuotasFromCriteria,
+} from "../domain/idea-structure.js";
 import { ensureProject } from "../repositories/core.js";
 import { listApiCallAuditsForInputsPipeline } from "../repositories/api-call-audit.js";
 import { listInsightsPacks } from "../repositories/insights-packs.js";
@@ -431,6 +435,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
         context_insight_cap: z.number().int().min(20).max(2000).optional(),
         min_top_performer_in_context: z.number().int().min(0).max(2000).optional(),
         extra_instructions: z.string().max(8000).optional(),
+        idea_quotas: ideaGenerationQuotasSchema.optional(),
       })
       .safeParse(request.body ?? {});
     if (!params.success || !UUID_RE.test(params.data.import_id) || !body.success) {
@@ -450,11 +455,15 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     const contextInsightCap = body.data.context_insight_cap ?? Number(profile.max_insights_for_ideas_llm ?? 200);
     const minTop = body.data.min_top_performer_in_context ?? Number(profile.min_top_performer_insights_for_ideas_llm ?? 20);
     const extra = body.data.extra_instructions ?? profile.extra_instructions ?? "";
+    const ideaQuotas =
+      body.data.idea_quotas ??
+      readIdeaGenerationQuotasFromCriteria(profile.criteria_json, targetIdeaCount);
 
     const result = await synthesizeIdeasJsonFromInsightsLlm(db, config, project.id, {
       importId: params.data.import_id,
       packRunId: `IDEAS_${new Date().toISOString().slice(0, 10).replace(/-/g, "")}_${Date.now().toString(36).toUpperCase()}`,
       targetIdeaCount,
+      ideaQuotas,
       contextInsightCap,
       minTopPerformerInContext: minTop,
       model: synthModel,
@@ -468,6 +477,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       params_json: {
         model: synthModel,
         target_idea_count: targetIdeaCount,
+        idea_quotas: ideaQuotas,
         context_insight_cap: contextInsightCap,
         min_top_performer_in_context: minTop,
         extra_instructions: extra ? "[set]" : "",

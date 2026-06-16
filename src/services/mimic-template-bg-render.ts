@@ -9,6 +9,7 @@ import {
   referenceIndexForTemplateSlot,
   templateBgSlotForIndex,
 } from "../domain/mimic-template-library.js";
+import { resolveTemplateBgBodyOnScreenCopy } from "../domain/mimic-template-bg-copy.js";
 import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
 
 function mimicGuidelineEntry(mimic: Pick<MimicPayloadV1, "visual_guideline">): Record<string, unknown> {
@@ -58,18 +59,28 @@ export function templateBgLlmSlideForDocAi(
   const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
 
   if (slot === "cover") {
+    const coverBody = subtitle || (body && headline ? "" : body);
+    const text_blocks = [
+      ...(headline ? [{ role: "headline", text: headline }] : []),
+      ...(coverBody ? [{ role: "body", text: coverBody }] : []),
+    ];
     return {
       ...rawLlmSlide,
       headline,
       title: headline,
-      body: subtitle || (body && headline ? "" : body),
+      body: coverBody,
       cover_subtitle: subtitle || body,
       subtitle: subtitle || body,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
     };
   }
   if (slot === "cta") {
     const ctaHeadline = cta || headline;
     const ctaBody = handle || body || subtitle;
+    const text_blocks = [
+      ...(ctaHeadline ? [{ role: "headline", text: ctaHeadline }] : []),
+      ...(ctaBody ? [{ role: "handle", text: ctaBody }] : []),
+    ];
     return {
       ...rawLlmSlide,
       headline: ctaHeadline,
@@ -78,11 +89,26 @@ export function templateBgLlmSlideForDocAi(
       cta_text: ctaHeadline,
       handle: ctaBody,
       cta_handle: ctaBody,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
     };
   }
+  const kicker = String(rawLlmSlide.kicker ?? "").trim();
+  const slideTitle = String(rawLlmSlide.slide_title ?? "").trim();
+  const onScreen = resolveTemplateBgBodyOnScreenCopy({
+    headline,
+    body,
+    kicker: kicker || subtitle,
+    slide_title: slideTitle,
+  });
+  const text_blocks = [
+    ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
+    ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
+    ...(handle ? [{ role: "handle", text: handle }] : []),
+  ];
   return {
     ...rawLlmSlide,
-    headline,
-    body: body || subtitle,
+    headline: onScreen.headline,
+    body: onScreen.body,
+    ...(text_blocks.length > 0 ? { text_blocks } : {}),
   };
 }

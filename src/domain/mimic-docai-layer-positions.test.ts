@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMimicDocAiLayerPositionOverrides,
+  coerceTemplateBgInspectOverrides,
   mimicDocAiLayerPositionKey,
   mimicDocAiLayerRefKey,
   parseMimicDocAiLayerPositionsBySlide,
@@ -8,6 +9,7 @@ import {
   patchMimicDocAiLayerPxPosition,
   patchMimicDocAiLayerSize,
   patchMimicDocAiLayerText,
+  sanitizeTemplateBgDocAiOverridesForInspect,
 } from "./mimic-docai-layer-positions.js";
 import type { MimicDocAiLayerPositionLayer } from "./mimic-docai-layer-positions.js";
 
@@ -149,5 +151,52 @@ describe("mimic-docai-layer-positions", () => {
       "2": [{ layer_key: key, x_px: 100, y_px: 200, hidden: true }],
     });
     expect(parsed?.["2"]?.[0]?.hidden).toBe(true);
+  });
+
+  it("applyMimicDocAiLayerPositionOverrides can keep mapped copy when applySavedTextOnBaseLayers is false", () => {
+    const layer = sampleLayer();
+    const key = mimicDocAiLayerPositionKey(layer);
+    const out = applyMimicDocAiLayerPositionOverrides(
+      [layer],
+      [{ layer_key: key, x_px: 12, y_px: 34, text: "@stalehandle", box_locked: true }],
+      { applySavedTextOnBaseLayers: false }
+    );
+    expect(out[0]!.x_px).toBe(12);
+    expect(out[0]!.text).toBe("gets playful when bored");
+  });
+
+  it("applyMimicDocAiLayerPositionOverrides omits hidden layers matched by ref key", () => {
+    const layer = sampleLayer({ text: "THE ARIES MOTHER" });
+    const refKey = mimicDocAiLayerRefKey(layer);
+    const out = applyMimicDocAiLayerPositionOverrides([layer], [
+      { layer_key: refKey, x_px: 100, y_px: 200, hidden: true },
+    ]);
+    expect(out).toHaveLength(0);
+  });
+
+  it("coerceTemplateBgInspectOverrides strips hidden markers for template_bg inspect", () => {
+    const layer = sampleLayer({ text: "THE ARIES MOTHER" });
+    const refKey = mimicDocAiLayerRefKey(layer);
+    const coerced = coerceTemplateBgInspectOverrides([layer], [
+      { layer_key: refKey, x_px: 100, y_px: 200, hidden: true },
+    ]);
+    expect(coerced.some((o) => o.hidden)).toBe(false);
+    const visible = applyMimicDocAiLayerPositionOverrides([layer], coerced, {
+      applySavedTextOnBaseLayers: false,
+    });
+    expect(visible).toHaveLength(1);
+  });
+
+  it("sanitizeTemplateBgDocAiOverridesForInspect drops placeholder custom layers and OCR text", () => {
+    const layer = sampleLayer();
+    const key = mimicDocAiLayerPositionKey(layer);
+    const out = sanitizeTemplateBgDocAiOverridesForInspect([
+      { layer_key: key, x_px: 10, y_px: 20, text: "@stale", box_locked: true },
+      { layer_key: "custom@body@abc", x_px: 1, y_px: 2, text: "New text", box_locked: true },
+      { layer_key: "custom@body@def", x_px: 3, y_px: 4, text: "Real custom", box_locked: true },
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[0]?.text).toBeUndefined();
+    expect(out[1]?.text).toBe("Real custom");
   });
 });

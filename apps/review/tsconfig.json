@@ -29,6 +29,9 @@
       "@caf-core-carousel/mimic-docai-layer-positions": [
         "../../src/domain/mimic-docai-layer-positions.ts"
       ],
+      "@caf-core-carousel/mimic-template-bg-copy": [
+        "../../src/domain/mimic-template-bg-copy.ts"
+      ],
       "@caf-core-carousel/*": [
         "../../src/services/*"
       ]

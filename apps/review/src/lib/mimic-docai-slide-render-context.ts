@@ -8,6 +8,7 @@ import {
   applyMimicDocAiLayerPositionOverrides,
   mimicDocAiLayerPositionKey,
   pickMimicDocAiLayerPositionsForSlide,
+  coerceTemplateBgInspectOverrides,
   type MimicDocAiLayerPositionOverride,
 } from "@caf-core-carousel/mimic-docai-layer-positions";
 import {
@@ -72,16 +73,17 @@ export function enrichSlideRenderContextWithMimicDocAi(
     mimicMode === "template_bg" && totalSlides > 0
       ? templateBgLlmSlideForDocAi(slideIndex1Based, totalSlides, rawLlmSlide)
       : rawLlmSlide;
-  const layerPosOverrides =
+  const isTemplateBg = mimicMode === "template_bg";
+  const rawLayerPosOverrides =
     opts?.layerPosOverrides ?? pickMimicDocAiLayerPositionsForSlide(mimicV1, slideIndex1Based);
-  const hasReviewerLayout = Boolean(layerPosOverrides?.length);
+  const hasReviewerLayout = Boolean(rawLayerPosOverrides?.length);
 
   if (!usesDocAi) {
     return {
       renderContext,
       docaiTextLayers: [],
       docaiLayerCount: 0,
-      docaiLayerPositions: layerPosOverrides ?? [],
+      docaiLayerPositions: rawLayerPosOverrides ?? [],
       usesDocAi: false,
     };
   }
@@ -100,8 +102,14 @@ export function enrichSlideRenderContextWithMimicDocAi(
       totalSlides,
     }
   );
+  const layerPosOverrides =
+    isTemplateBg && rawLayerPosOverrides?.length
+      ? coerceTemplateBgInspectOverrides(docAiLayers, rawLayerPosOverrides)
+      : rawLayerPosOverrides;
   if (layerPosOverrides?.length) {
-    docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides);
+    docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides, {
+      applySavedTextOnBaseLayers: !isTemplateBg,
+    });
     if (textBacking) {
       docAiLayers = docAiLayers.map((layer) => ({ ...layer, text_backing: true }));
     }

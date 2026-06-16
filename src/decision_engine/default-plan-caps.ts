@@ -7,6 +7,10 @@ import {
   FLOW_PRODUCT_USECASE,
 } from "../domain/product-flow-types.js";
 import {
+  PLAN_LANE_NICHE_CAROUSEL,
+  PLAN_LANE_PRODUCT_CAROUSEL,
+} from "../domain/idea-structure.js";
+import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
@@ -31,8 +35,9 @@ const CAROUSEL_CAP = DEFAULT_CAROUSEL_FLOW_PLAN_CAP;
 
 /** Admin Runs → planning caps column groupings. */
 export type PlanCapUiCategory =
-  | "regular_carousel"
-  | "core_video"
+  | "niche_carousel"
+  | "product_carousel"
+  | "niche_core_video"
   | "product_video"
   | "top_performer_mimic";
 
@@ -42,19 +47,24 @@ export const PLAN_CAP_UI_CATEGORIES: readonly {
   readonly hint: string;
 }[] = [
   {
-    id: "regular_carousel",
-    label: "Regular carousel",
-    hint: "Standard FLOW_CAROUSEL renderer jobs — not top-performer mimic (separate column).",
+    id: "niche_carousel",
+    label: "Niche carousel",
+    hint: "Editorial FLOW_CAROUSEL jobs from niche ideas (text-heavy or visual-first). Separate from product carousels.",
   },
   {
-    id: "core_video",
-    label: "Core video flows",
-    hint: "Scene assembly, HeyGen script/prompt paths, render-only step.",
+    id: "product_carousel",
+    label: "Product carousel",
+    hint: "Brand/product FLOW_CAROUSEL jobs from product-tagged ideas. Same renderer; filtered by content_lens at planning.",
+  },
+  {
+    id: "niche_core_video",
+    label: "Niche core video",
+    hint: "Organic niche video — scene assembly, HeyGen script/prompt paths, no-avatar agent. Not product marketing angles.",
   },
   {
     id: "product_video",
     label: "Product video",
-    hint: "Direct-response marketing angles — one cap per hook type.",
+    hint: "Direct-response product marketing — one cap per hook type. Ideas with matching product_angle route here.",
   },
   {
     id: "top_performer_mimic",
@@ -83,11 +93,18 @@ const DEFAULT_CAROUSEL_FLOW_GROUPS: readonly (readonly string[])[] = [
  */
 export const CAROUSEL_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
-    id: "standard_carousel",
-    label: "Standard carousel (FLOW_CAROUSEL)",
-    category: "regular_carousel",
+    id: "niche_carousel",
+    label: "Niche carousel (FLOW_CAROUSEL)",
+    category: "niche_carousel",
     uiChannel: "carousel",
-    keys: DEFAULT_CAROUSEL_FLOW_GROUPS[0]!,
+    keys: [PLAN_LANE_NICHE_CAROUSEL],
+  },
+  {
+    id: "product_carousel",
+    label: "Product carousel (FLOW_CAROUSEL)",
+    category: "product_carousel",
+    uiChannel: "carousel",
+    keys: [PLAN_LANE_PRODUCT_CAROUSEL],
   },
 ] as const;
 
@@ -99,7 +116,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "scene_assembly",
     label: "Scene / assembly (multi-scene)",
-    category: "core_video",
+    category: "niche_core_video",
     uiChannel: "video",
     keys: [
       "FLOW_VID_SCENES",
@@ -114,7 +131,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "script_video",
     label: "Script-led video (HeyGen avatar script)",
-    category: "core_video",
+    category: "niche_core_video",
     uiChannel: "video",
     keys: [
       "FLOW_VID_SCRIPT",
@@ -129,7 +146,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "prompt_video_avatar",
     label: "Prompt-led video (HeyGen avatar)",
-    category: "core_video",
+    category: "niche_core_video",
     uiChannel: "video",
     keys: [
       "FLOW_VID_PROMPT",
@@ -145,7 +162,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "prompt_video_no_avatar",
     label: "Video prompt — no avatar (HeyGen Video Agent)",
-    category: "core_video",
+    category: "niche_core_video",
     uiChannel: "video",
     keys: [
       "FLOW_VID_PROMPT_NO_AVATAR",
@@ -160,7 +177,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "heygen_render",
     label: "HeyGen render-only step",
-    category: "core_video",
+    category: "niche_core_video",
     uiChannel: "video",
     keys: ["HeyGen_Render_Video"],
   },
@@ -259,6 +276,8 @@ export function defaultMaxJobsPerFlowType(): Record<string, number> {
       out[k] = CAROUSEL_CAP;
     }
   }
+  out[PLAN_LANE_NICHE_CAROUSEL] = CAROUSEL_CAP;
+  out[PLAN_LANE_PRODUCT_CAROUSEL] = Math.max(1, Math.floor(CAROUSEL_CAP / 3));
   for (const group of DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS) {
     for (const k of group) {
       out[k] = TOP_PERFORMER_MIMIC_CAP;

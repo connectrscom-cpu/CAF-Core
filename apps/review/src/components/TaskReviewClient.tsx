@@ -42,7 +42,9 @@ import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
 import {
   isMimicTemplateBgMode,
   normalizeMimicTemplateBgSlides,
+  resolveMimicTemplateBgEditorFields,
 } from "@/lib/mimic-template-bg";
+import { resolveBrandLogoDisplayUrl } from "@/lib/brand-asset-url";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -114,6 +116,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [viewerSlideIndex, setViewerSlideIndex] = useState(1);
   const [activeTextBlockIndex, setActiveTextBlockIndex] = useState<number | null>(null);
   const [mimicLayoutTextBlocks, setMimicLayoutTextBlocks] = useState<Array<{ role: string; text: string }>>([]);
+  const viewerSlideIndexRef = useRef(1);
+  viewerSlideIndexRef.current = viewerSlideIndex;
   const mimicTextBlockUpdaterRef = useRef<((blockIndex: number, text: string) => void) | null>(null);
   const [regenerateSlideBusy, setRegenerateSlideBusy] = useState(false);
   const [editedCaption, setEditedCaption] = useState("");
@@ -455,8 +459,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           }
         }
         setBrandPalette(colors.slice(0, 12));
-        const logo = assets.find((a) => a.kind === "logo" && typeof a.public_url === "string" && a.public_url.trim());
-        setBrandLogoUrl(logo?.public_url?.trim() ?? "");
+        setBrandLogoUrl(resolveBrandLogoDisplayUrl(slug, assets));
       } catch {
         if (!cancelled) {
           setBrandPalette([]);
@@ -494,6 +497,26 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         : null;
     return isMimicTemplateBgMode(mimicV1);
   }, [fullJob]);
+
+  const templateBgFieldRoles = useMemo(() => {
+    if (!mimicTemplateBg || editedSlides.length < 1) return [];
+    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
+    if (!slide) return [];
+    return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.role);
+  }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
+
+  const templateBgCopyFingerprint = useMemo(() => {
+    if (!mimicTemplateBg || editedSlides.length < 1) return "";
+    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
+    if (!slide) return "";
+    return JSON.stringify(
+      resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.text)
+    );
+  }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
+
+  useEffect(() => {
+    if (mimicTemplateBg) setMimicLayoutTextBlocks([]);
+  }, [mimicTemplateBg, execTaskId]);
 
   useEffect(() => {
     if (!mimicCarouselFlow || !fullJob || editedSlides.length === 0) return;
@@ -1097,9 +1120,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     activeTextBlockIndex={activeTextBlockIndex}
                     onActiveTextBlockIndexChange={setActiveTextBlockIndex}
                     fullBleedMode={!mimicTemplateBg}
+                    templateBgMode={mimicTemplateBg}
+                    templateBgFieldRoles={templateBgFieldRoles}
+                    templateBgCopyFingerprint={templateBgCopyFingerprint}
                     brandPalette={brandPalette}
                     brandLogoUrl={brandLogoUrl}
-                    onLayoutTextBlocksChange={(_slide, blocks) => {
+                    onLayoutTextBlocksChange={(slide, blocks) => {
+                      if (mimicTemplateBg) return;
+                      if (slide !== viewerSlideIndexRef.current) return;
                       setMimicLayoutTextBlocks(blocks.map((b) => ({ role: b.role, text: b.text })));
                     }}
                     registerTextBlockUpdater={(fn) => {

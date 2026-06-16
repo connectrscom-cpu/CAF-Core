@@ -17,7 +17,6 @@ type Section =
   | "constraints"
   | "platforms"
   | "flow-types"
-  | "project-risk-rules"
   | "heygen-defaults"
   | "heygen-config"
   | "project-prompts";
@@ -25,59 +24,47 @@ type Section =
 const TABS: { id: Section; label: string }[] = [
   { id: "strategy", label: "Strategy" },
   { id: "brand", label: "Brand" },
-  { id: "product", label: "Product" },
+  { id: "product", label: "Product (video flows)" },
   { id: "constraints", label: "System limits" },
   { id: "platforms", label: "Platforms" },
-  { id: "flow-types", label: "Flow Types" },
-  { id: "project-risk-rules", label: "Project risk rules" },
+  { id: "flow-types", label: "Flow types" },
   { id: "heygen-defaults", label: "Video defaults" },
-  { id: "heygen-config", label: "HeyGen" },
-  { id: "project-prompts", label: "Project prompts & versions" },
+  { id: "heygen-config", label: "HeyGen (advanced)" },
+  { id: "project-prompts", label: "Prompts" },
 ];
 
 const STRATEGY_FIELDS = [
-  { key: "project_type", label: "Project Type", type: "text" },
-  { key: "core_offer", label: "Core Offer", type: "textarea" },
-  { key: "target_audience", label: "Target Audience", type: "textarea" },
-  { key: "audience_problem", label: "Audience Problem", type: "textarea" },
-  { key: "transformation_promise", label: "Transformation Promise", type: "textarea" },
-  { key: "positioning_statement", label: "Positioning Statement", type: "textarea" },
-  { key: "primary_business_goal", label: "Primary Business Goal", type: "text" },
-  { key: "primary_content_goal", label: "Primary Content Goal", type: "text" },
-  { key: "north_star_metric", label: "North Star Metric", type: "text" },
-  { key: "monetization_model", label: "Monetization Model", type: "text" },
-  { key: "traffic_destination", label: "Traffic Destination", type: "text" },
-  { key: "funnel_stage_focus", label: "Funnel Stage Focus", type: "text" },
-  { key: "brand_archetype", label: "Brand Archetype", type: "text" },
-  { key: "strategic_content_pillars", label: "Content Pillars", type: "textarea" },
-  { key: "authority_angle", label: "Authority Angle", type: "textarea" },
-  { key: "differentiation_angle", label: "Differentiation Angle", type: "textarea" },
-  { key: "growth_strategy", label: "Growth Strategy", type: "text" },
-  { key: "publishing_intensity", label: "Publishing Intensity", type: "text" },
-  { key: "time_horizon", label: "Time Horizon", type: "text" },
-  { key: "owner", label: "Owner", type: "text" },
-  { key: "instagram_handle", label: "Instagram handle (for carousel CTA; optional @)", type: "text" },
-  { key: "notes", label: "Notes", type: "textarea" },
+  { key: "project_type", label: "Project type", type: "text" },
+  { key: "core_offer", label: "Core offer", type: "textarea" },
+  { key: "target_audience", label: "Target audience", type: "textarea" },
+  { key: "transformation_promise", label: "Transformation promise", type: "textarea" },
+  { key: "positioning_statement", label: "Positioning statement", type: "textarea" },
+  { key: "primary_business_goal", label: "Primary business goal", type: "text" },
+  { key: "primary_content_goal", label: "Primary content goal", type: "text" },
+  { key: "brand_archetype", label: "Brand archetype", type: "text" },
+  { key: "strategic_content_pillars", label: "Content pillars", type: "textarea" },
+  { key: "differentiation_angle", label: "Differentiation angle", type: "textarea" },
+  {
+    key: "instagram_handle",
+    label: "Instagram handle (carousel CTA; optional @)",
+    type: "text",
+  },
 ] as const;
 
 const BRAND_FIELDS = [
   { key: "tone", label: "Tone", type: "textarea" },
-  { key: "voice_style", label: "Voice Style", type: "text" },
-  { key: "audience_level", label: "Audience Level", type: "text" },
-  { key: "emotional_intensity", label: "Emotional Intensity (1-10)", type: "number" },
-  { key: "humor_level", label: "Humor Level (1-10)", type: "number" },
-  { key: "emoji_policy", label: "Emoji Policy", type: "text" },
-  { key: "max_emojis_per_caption", label: "Max Emojis/Caption", type: "number" },
-  { key: "banned_claims", label: "Banned Claims", type: "textarea" },
-  { key: "banned_words", label: "Banned Words", type: "textarea" },
-  { key: "mandatory_disclaimers", label: "Mandatory Disclaimers", type: "textarea" },
-  { key: "cta_style_rules", label: "CTA Style Rules", type: "textarea" },
-  { key: "storytelling_style", label: "Storytelling Style", type: "text" },
-  { key: "positioning_statement", label: "Positioning Statement", type: "textarea" },
-  { key: "differentiation_angle", label: "Differentiation Angle", type: "textarea" },
-  { key: "risk_level_default", label: "Default Risk Level", type: "text" },
-  { key: "manual_review_required", label: "Manual Review Required", type: "boolean" },
-  { key: "notes", label: "Notes", type: "textarea" },
+  { key: "voice_style", label: "Voice style", type: "text" },
+  { key: "audience_level", label: "Audience level", type: "text" },
+  { key: "emoji_policy", label: "Emoji policy", type: "text" },
+  { key: "banned_claims", label: "Banned claims (prompt guidance)", type: "textarea" },
+  {
+    key: "banned_words",
+    label: "Banned words (QC enforced; semicolon-separated)",
+    type: "textarea",
+  },
+  { key: "mandatory_disclaimers", label: "Mandatory disclaimers", type: "textarea" },
+  { key: "cta_style_rules", label: "CTA style rules", type: "textarea" },
+  { key: "storytelling_style", label: "Storytelling style", type: "text" },
 ] as const;
 
 const PRODUCT_FIELDS = [
@@ -93,7 +80,6 @@ const PRODUCT_FIELDS = [
   { key: "audience_pain_points", label: "Audience pain points", type: "textarea" },
   { key: "audience_desires", label: "Audience desires", type: "textarea" },
   { key: "use_cases", label: "Top use cases / scenarios (1 per line)", type: "textarea" },
-  { key: "anti_audience", label: "Who this is NOT for", type: "textarea" },
   // Differentiation
   { key: "key_features", label: "Key features (1 per line — concrete)", type: "textarea" },
   { key: "key_benefits", label: "Key benefits (what the user gets)", type: "textarea" },
@@ -112,8 +98,6 @@ const PRODUCT_FIELDS = [
   // Language
   { key: "do_say", label: "Always say / preferred phrasing", type: "textarea" },
   { key: "dont_say", label: "Never say / forbidden phrasing", type: "textarea" },
-  { key: "taglines", label: "Approved taglines (1 per line)", type: "textarea" },
-  { key: "keywords", label: "SEO / talking-point keywords", type: "textarea" },
 ] as const;
 
 const CONSTRAINT_FIELDS = [
@@ -149,60 +133,35 @@ const PLATFORM_FIELDS = [
   { key: "max_hashtags", label: "Max Hashtags", type: "number" },
   { key: "hashtag_format_rule", label: "Hashtag Format Rule", type: "text" },
   { key: "line_break_policy", label: "Line Break Policy", type: "text" },
-  { key: "formatting_rules", label: "Formatting Rules", type: "textarea" },
-  { key: "posting_frequency_limit", label: "Posting Frequency", type: "text" },
-  { key: "best_posting_window", label: "Best Posting Window", type: "text" },
-  { key: "notes", label: "Notes", type: "textarea" },
+  { key: "formatting_rules", label: "Formatting rules", type: "textarea" },
 ] as const;
 
 const FLOW_TYPE_FIELDS = [
-  { key: "flow_type", label: "Flow Type", type: "text", required: true },
+  { key: "flow_type", label: "Flow type", type: "text", required: true },
   { key: "enabled", label: "Enabled", type: "boolean" },
-  { key: "default_variation_count", label: "Default Variations", type: "number" },
-  { key: "requires_signal_pack", label: "Requires Signal Pack", type: "boolean" },
-  { key: "requires_learning_context", label: "Requires Learning Context", type: "boolean" },
-  { key: "allowed_platforms", label: "Allowed Platforms (comma-sep)", type: "text" },
-  { key: "output_schema_version", label: "Output Schema Version", type: "text" },
-  { key: "qc_checklist_version", label: "QC Checklist Version", type: "text" },
-  { key: "prompt_template_id", label: "Prompt Template ID", type: "text" },
-  { key: "priority_weight", label: "Priority Weight (0-1)", type: "number" },
+  { key: "allowed_platforms", label: "Allowed platforms (comma-separated)", type: "text" },
+  { key: "priority_weight", label: "Priority weight (0–1; video routing)", type: "number" },
   {
     key: "heygen_mode",
-    label: "HeyGen mode (product videos only — leave blank for code default)",
+    label: "HeyGen mode (FLOW_PRODUCT_* only; blank = code default)",
     type: "select",
     options: [
       { value: "", label: "Default (FEATURE/COMPARISON/OFFER/USECASE → script-led; PROBLEM/SOCIAL_PROOF → prompt-led)" },
-      { value: "script_led", label: "script_led — /v3/videos, avatar reads spoken_script verbatim" },
-      { value: "prompt_led", label: "prompt_led — /v3/video-agents, HeyGen writes and speaks its own VO" },
+      { value: "script_led", label: "script_led — avatar reads spoken_script" },
+      { value: "prompt_led", label: "prompt_led — HeyGen Video Agent writes VO" },
     ],
   },
-  { key: "notes", label: "Notes", type: "textarea" },
-] as const;
-
-const RISK_RULE_FIELDS = [
-  { key: "flow_type", label: "Flow Type", type: "text", required: true },
-  { key: "trigger_condition", label: "Trigger Condition", type: "textarea" },
-  { key: "risk_level", label: "Risk Level", type: "text" },
-  { key: "auto_approve_allowed", label: "Auto Approve Allowed", type: "boolean" },
-  { key: "requires_manual_review", label: "Requires Manual Review", type: "boolean" },
-  { key: "escalation_level", label: "Escalation Level", type: "text" },
-  { key: "sensitive_topics", label: "Sensitive Topics", type: "textarea" },
-  { key: "claim_restrictions", label: "Claim Restrictions", type: "textarea" },
-  { key: "rejection_reason_tag", label: "Rejection Reason Tag", type: "text" },
-  { key: "rollback_flag", label: "Rollback Flag", type: "boolean" },
-  { key: "notes", label: "Notes", type: "textarea" },
 ] as const;
 
 const HEYGEN_FIELDS = [
   { key: "config_id", label: "Config ID", type: "text", required: true },
   { key: "platform", label: "Platform", type: "text" },
-  { key: "flow_type", label: "Flow Type", type: "text" },
-  { key: "config_key", label: "Config Key", type: "text", required: true },
+  { key: "flow_type", label: "Flow type", type: "text" },
+  { key: "config_key", label: "Config key", type: "text", required: true },
   { key: "value", label: "Value", type: "textarea" },
-  { key: "render_mode", label: "Render Mode", type: "text" },
-  { key: "value_type", label: "Value Type", type: "text" },
+  { key: "render_mode", label: "Render mode", type: "text" },
+  { key: "value_type", label: "Value type", type: "text" },
   { key: "is_active", label: "Active", type: "boolean" },
-  { key: "notes", label: "Notes", type: "textarea" },
 ] as const;
 
 const HEYGEN_DEFAULTS_FIELDS = [
@@ -322,7 +281,7 @@ export default function ProjectConfigPage() {
         setData(json.strategy ?? json.brand ?? json.product ?? {});
         setListData(null);
       } else {
-        setListData(json.platforms ?? json.flow_types ?? json.risk_rules ?? json.heygen_config ?? []);
+        setListData(json.platforms ?? json.flow_types ?? json.heygen_config ?? []);
         setData(null);
       }
     } catch {
@@ -404,10 +363,9 @@ export default function ProjectConfigPage() {
         };
       }
 
-      const method = activeTab === "project-risk-rules" ? "POST" : "PUT";
       const suffix = projectApiSuffix(multiProject, activeProjectSlug);
       const res = await fetch(`/api/project-config/${activeTab}${suffix}`, {
-        method,
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
@@ -430,7 +388,9 @@ export default function ProjectConfigPage() {
       <div className="page-header">
         <div>
           <h2>Project Configuration</h2>
-          <span className="page-header-sub">Manage project profiles, brand rules, platform constraints and more</span>
+          <span className="page-header-sub">
+            Strategy, brand voice, planning limits, and flows that actually drive generation
+          </span>
         </div>
       </div>
 
@@ -711,7 +671,6 @@ function getFieldsForSection(section: Section): FieldDef[] {
     case "constraints": return [...CONSTRAINT_FIELDS];
     case "platforms": return [...PLATFORM_FIELDS];
     case "flow-types": return [...FLOW_TYPE_FIELDS];
-    case "project-risk-rules": return [...RISK_RULE_FIELDS];
     case "heygen-defaults": return [...HEYGEN_DEFAULTS_FIELDS];
     case "heygen-config": return [...HEYGEN_FIELDS];
     case "project-prompts": return [];

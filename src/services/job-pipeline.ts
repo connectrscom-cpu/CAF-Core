@@ -134,6 +134,7 @@ import {
 import {
   applyMimicDocAiLayerPositionOverrides,
   pickMimicDocAiLayerPositionsForSlide,
+  sanitizeTemplateBgDocAiOverridesForInspect,
 } from "../domain/mimic-docai-layer-positions.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { estimateCarouselSlideFlyUsd } from "./render-cost-estimate.js";
@@ -2230,9 +2231,13 @@ async function processCarouselJob(
           !Array.isArray(job.generation_payload)
             ? (job.generation_payload as Record<string, unknown>).mimic_v1
             : null;
-        const layerPosOverrides =
+        const rawLayerPosOverrides =
           pickMimicDocAiLayerPositionsForSlide(mimicV1Raw, i) ??
           pickMimicDocAiLayerPositionsForSlide(mimicPayload, i);
+        const layerPosOverrides =
+          mimicTemplateBgJob && rawLayerPosOverrides?.length
+            ? sanitizeTemplateBgDocAiOverridesForInspect(rawLayerPosOverrides)
+            : rawLayerPosOverrides;
         const hasReviewerLayout = Boolean(layerPosOverrides?.length);
         const useTextBacking = Boolean(
           (textOverlayOnly || slideUsesFullBleed) && renderOpts?.textBacking !== false
@@ -2262,7 +2267,9 @@ async function processCarouselJob(
           }
         );
         if (layerPosOverrides?.length) {
-          docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides);
+          docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides, {
+            applySavedTextOnBaseLayers: !mimicTemplateBgJob,
+          });
           docAiLayers = docAiLayers.map((layer) => ({ ...layer, text_backing: useTextBacking }));
         }
         const useDocAiLayers =

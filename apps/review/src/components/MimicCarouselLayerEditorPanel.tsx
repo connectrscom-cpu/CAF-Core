@@ -18,8 +18,54 @@ import {
   formatMimicTextBackingBackground,
   mimicTextBackingColorToHex,
 } from "@caf-core-carousel/mimic-slide-typography";
+import { refKeyFromLayerPositionKey } from "@caf-core-carousel/mimic-docai-layer-positions";
 
 
+
+function isDraftHiddenForLayer(
+  layerKey: string,
+  draftByKey: Map<string, DocAiLayerOverride>
+): boolean {
+  if (draftByKey.get(layerKey)?.hidden) return true;
+  const refKey = refKeyFromLayerPositionKey(layerKey);
+  if (draftByKey.get(refKey)?.hidden) return true;
+  for (const draft of draftByKey.values()) {
+    if (draft.hidden && refKeyFromLayerPositionKey(draft.layer_key) === refKey) return true;
+  }
+  return false;
+}
+
+function looksLikeHandleText(text: string): boolean {
+  return /^@[a-z0-9_.]{2,}$/i.test(text.trim());
+}
+
+function layoutRoleMatchesField(layerRole: string, fieldRole: string): boolean {
+  const lr = layerRole.toLowerCase();
+  const fr = fieldRole.toLowerCase();
+  if (lr === fr) return true;
+  if (fr === "headline" && ["headline", "title", "hook", "subheadline"].includes(lr)) return true;
+  if (fr === "body" && ["body", "subtitle", "caption"].includes(lr)) return true;
+  if (fr === "handle" && ["handle", "watermark"].includes(lr)) return true;
+  return false;
+}
+
+function inferDocAiLayerRole(
+  layer: DocAiLayerBox,
+  row: DocAiLayerOverride | undefined,
+  fullBleed: boolean
+): string {
+  const text = (row?.text ?? layer.text ?? "").trim();
+  if (looksLikeHandleText(text)) return "handle";
+  if (layer.role === "handle" || layer.layer_key?.includes("handle")) return "handle";
+  if (fullBleed) return "body";
+  return layer.role || "body";
+}
+
+function isPlaceholderCustomLayer(layer: DocAiLayerBox, row: DocAiLayerOverride | undefined): boolean {
+  if (!layer.layer_key?.startsWith("custom_")) return false;
+  const text = (row?.text ?? layer.text ?? "").trim();
+  return !text || text === "New text";
+}
 
 function asRec(v: unknown): Record<string, unknown> | null {
 
@@ -67,7 +113,7 @@ function pickCarouselTemplateName(generationPayload: Record<string, unknown>): s
 
 
 
-function overridesForPersist(rows: DocAiLayerOverride[]): DocAiLayerOverride[] {
+function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
   return rows.map((r) => {
     if (r.hidden) return r;
     if (r.layer_key.startsWith("custom@")) {
@@ -79,22 +125,31 @@ function overridesForPersist(rows: DocAiLayerOverride[]): DocAiLayerOverride[] {
         text: r.text?.trim() || "New text",
       };
     }
+    if (templateBgMode) {
+      const { text: _text, ...rest } = r;
+      if (r.box_locked) return rest as DocAiLayerOverride;
+      const { w_px: _w, h_px: _h, box_locked: _b, ...posOnly } = rest;
+      return posOnly as DocAiLayerOverride;
+    }
     if (r.box_locked) return r;
     const { w_px: _w, h_px: _h, box_locked: _b, text: _t, ...rest } = r;
     return rest;
   });
 }
 
+/** Inspect must always return full OCR slots — hidden is reprint-only for template_bg. */
+function overridesForInspect(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
+  const persisted = overridesForPersist(rows, templateBgMode);
+  if (!templateBgMode) return persisted;
+  return persisted.filter((row) => !row.hidden);
+}
+
 function mergeDocAiLayerPositionsForReprint(
-
   mimicV1: Record<string, unknown> | null,
-
   slideDrafts: Record<number, DocAiLayerOverride[]>,
-
   editorSlide: number,
-
-  currentDraft: DocAiLayerOverride[]
-
+  currentDraft: DocAiLayerOverride[],
+  templateBgMode = false
 ): Record<string, DocAiLayerOverride[]> | undefined {
 
   const raw = mimicV1?.docai_layer_positions;
@@ -115,13 +170,10 @@ function mergeDocAiLayerPositionsForReprint(
 
   for (const [slideKey, rows] of Object.entries(slideDrafts)) {
 
-    if (rows.length > 0) merged[slideKey] = overridesForPersist(rows);
-
+    if (rows.length > 0) merged[slideKey] = overridesForPersist(rows, templateBgMode);
   }
-
   if (currentDraft.length > 0) {
-
-    merged[String(editorSlide)] = overridesForPersist(currentDraft);
+    merged[String(editorSlide)] = overridesForPersist(currentDraft, templateBgMode);
 
   }
 
@@ -336,6 +388,15 @@ export interface MimicCarouselLayerEditorPanelProps {
   /** Full-bleed mimic (not template_bg): neutral box labels + text-block sync. */
   fullBleedMode?: boolean;
 
+  /** template_bg: map left-column fields to layout layers by OCR role, not array index. */
+  templateBgMode?: boolean;
+
+  /** Ordered roles for left-column fields (e.g. ["headline", "body"]). */
+  templateBgFieldRoles?: string[];
+
+  /** Changes when template_bg slide copy changes — triggers layout inspect refresh. */
+  templateBgCopyFingerprint?: string;
+
   /** Fired when layout boxes for the active slide change (for left-column text fields). */
   onLayoutTextBlocksChange?: (
     slideIndex: number,
@@ -392,6 +453,12 @@ export function MimicCarouselLayerEditorPanel({
   onActiveTextBlockIndexChange,
 
   fullBleedMode = false,
+
+  templateBgMode = false,
+
+  templateBgFieldRoles = [],
+
+  templateBgCopyFingerprint = "",
 
   onLayoutTextBlocksChange,
 
@@ -452,9 +519,31 @@ export function MimicCarouselLayerEditorPanel({
   const [regenUseReference, setRegenUseReference] = useState<boolean>(true);
   const [showRegenRoute, setShowRegenRoute] = useState<boolean>(false);
 
+  const lastEmittedTextBlocksRef = useRef<string>("");
   const [layerPosDraft, setLayerPosDraft] = useState<DocAiLayerOverride[]>([]);
 
   const [slideDrafts, setSlideDrafts] = useState<Record<number, DocAiLayerOverride[]>>({});
+
+  // Slide change: clear inspect snapshot so the left-column text blocks never
+  // render stale copy from the previous slide.
+  useEffect(() => {
+    lastEmittedTextBlocksRef.current = "";
+    setLayoutBaseline("");
+    setUserTouchedLayout(false);
+    setRenderInspect(null);
+    setRenderInspectLoading(true);
+
+    const cached = slideDrafts[editorSlide];
+    setLayerPosDraft(cached?.length ? [...cached] : []);
+  }, [editorSlide]);
+
+  // Initial load: if slideDrafts arrives after first render, hydrate layerPosDraft
+  // only when we currently have no draft.
+  useEffect(() => {
+    if (layerPosDraft.length > 0) return;
+    const cached = slideDrafts[editorSlide];
+    if (cached?.length) setLayerPosDraft([...cached]);
+  }, [slideDrafts, editorSlide]);
 
   const [layerPosSaving, setLayerPosSaving] = useState(false);
 
@@ -517,16 +606,6 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
-  useEffect(() => {
-
-    setLayoutBaseline("");
-
-    setUserTouchedLayout(false);
-
-  }, [editorSlide]);
-
-
-
   const layoutDirty =
 
     userTouchedLayout &&
@@ -561,7 +640,7 @@ export function MimicCarouselLayerEditorPanel({
 
           slide_index: slideIndex,
 
-          positions: overridesForPersist(positions),
+          positions: overridesForPersist(positions, templateBgMode),
 
         }),
 
@@ -575,12 +654,9 @@ export function MimicCarouselLayerEditorPanel({
 
       }
 
-      onMimicLayoutSaved?.(slideIndex, overridesForPersist(positions));
-
+      onMimicLayoutSaved?.(slideIndex, overridesForPersist(positions, templateBgMode));
     },
-
-    [taskId, projectSlug, onMimicLayoutSaved]
-
+    [taskId, projectSlug, onMimicLayoutSaved, templateBgMode]
   );
 
 
@@ -603,7 +679,8 @@ export function MimicCarouselLayerEditorPanel({
         mimicV1,
         allDrafts,
         currentSlide,
-        currentDraft
+        currentDraft,
+        templateBgMode
       );
       const render_typography = buildReprintTypographyPatch?.();
       const res = await fetch("/api/task/reprint-text-overlay", {
@@ -734,7 +811,7 @@ export function MimicCarouselLayerEditorPanel({
           await persistLayerPositions(editorSlide, layerPosDraft);
           setSlideDrafts((prev) => ({ ...prev, [editorSlide]: layerPosDraft }));
           setLayoutBaseline(JSON.stringify(layerPosDraft));
-          setUserTouchedLayout(false);
+          if (!templateBgMode) setUserTouchedLayout(false);
           setSlidesWithSavedLayout((prev) => new Set(prev).add(editorSlide));
         } catch (e) {
           setLayerPosError(e instanceof Error ? e.message : "Auto-save failed");
@@ -742,7 +819,7 @@ export function MimicCarouselLayerEditorPanel({
       })();
     }, 1200);
     return () => clearTimeout(t);
-  }, [layerPosDraft, userTouchedLayout, layoutDirty, editorSlide, persistLayerPositions]);
+  }, [layerPosDraft, userTouchedLayout, layoutDirty, editorSlide, persistLayerPositions, templateBgMode]);
 
 
 
@@ -781,14 +858,12 @@ export function MimicCarouselLayerEditorPanel({
 
 
   const persistedPositionsForInspect = useMemo(
-
     () =>
-      overridesForPersist(
-        layerPosDraft.length > 0 ? layerPosDraft : slideDrafts[editorSlide] ?? []
+      overridesForInspect(
+        layerPosDraft.length > 0 ? layerPosDraft : slideDrafts[editorSlide] ?? [],
+        templateBgMode
       ),
-
-    [layerPosDraft, slideDrafts, editorSlide]
-
+    [layerPosDraft, slideDrafts, editorSlide, templateBgMode]
   );
 
   // Inspect only needs the *base* OCR layer geometry, which changes per slide — not on
@@ -889,32 +964,48 @@ export function MimicCarouselLayerEditorPanel({
 
     };
 
-  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss]);
+  }, [templateUsed, editorSlide, slideCount, instagramHandle, reprintTextBacking, reprintTextBackingCss, templateBgCopyFingerprint]);
 
-
-
-  const docAiLayerBoxes = useMemo(() => parseDocAiLayerBoxes(renderInspect), [renderInspect]);
+  const docAiLayerBoxes = useMemo(() => {
+    const boxes = parseDocAiLayerBoxes(renderInspect);
+    if (templateBgMode) {
+      let blockIndex = 0;
+      return boxes.map((layer) => {
+        const withIdx = { ...layer, block_index: blockIndex };
+        blockIndex += 1;
+        return withIdx;
+      });
+    }
+    const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
+    const filtered = boxes.filter((layer) => {
+      if (isDraftHiddenForLayer(layer.layer_key, draftByKey)) return false;
+      if (isPlaceholderCustomLayer(layer, draftByKey.get(layer.layer_key))) return false;
+      return true;
+    });
+    let blockIndex = 0;
+    return filtered.map((layer) => {
+      const withIdx = { ...layer, block_index: blockIndex };
+      blockIndex += 1;
+      return withIdx;
+    });
+  }, [renderInspect, layerPosDraft, templateBgMode]);
 
   const layoutTextBlocks = useMemo(() => {
     const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
-    return docAiLayerBoxes
-      .filter((layer) => !draftByKey.get(layer.layer_key)?.hidden)
-      .map((layer, blockIndex) => {
-        const row = draftByKey.get(layer.layer_key);
-        const role =
-          layer.role === "handle" || row?.layer_key?.includes("handle") ? "handle" : fullBleedMode ? "body" : layer.role;
-        return {
-          role,
-          text: row?.text?.trim() || layer.text,
-          layer_key: layer.layer_key,
-          block_index: blockIndex,
-        };
-      });
+    return docAiLayerBoxes.map((layer) => {
+      const row = draftByKey.get(layer.layer_key);
+      const role = inferDocAiLayerRole(layer, row, fullBleedMode);
+      return {
+        role,
+        text: row?.text?.trim() || layer.text,
+        layer_key: layer.layer_key,
+        block_index: layer.block_index ?? 0,
+      };
+    });
   }, [docAiLayerBoxes, layerPosDraft, fullBleedMode]);
 
-  const lastEmittedTextBlocksRef = useRef<string>("");
   useEffect(() => {
-    if (!onLayoutTextBlocksChange || layoutTextBlocks.length === 0) return;
+    if (!onLayoutTextBlocksChange) return;
     const next = layoutTextBlocks.map(({ role, text, layer_key }) => ({ role, text, layer_key }));
     const fingerprint = `${editorSlide}:${JSON.stringify(next)}`;
     if (fingerprint === lastEmittedTextBlocksRef.current) return;
@@ -922,11 +1013,53 @@ export function MimicCarouselLayerEditorPanel({
     onLayoutTextBlocksChange(editorSlide, next);
   }, [layoutTextBlocks, editorSlide, onLayoutTextBlocksChange]);
 
+  const activeLayoutBlockIndex = useMemo(() => {
+    if (activeTextBlockIndex == null) return null;
+    if (!templateBgMode || templateBgFieldRoles.length === 0) return activeTextBlockIndex;
+    const fieldRole = templateBgFieldRoles[activeTextBlockIndex];
+    if (!fieldRole) return activeTextBlockIndex;
+    const match = layoutTextBlocks.find((layer) => layoutRoleMatchesField(layer.role, fieldRole));
+    return match?.block_index ?? activeTextBlockIndex;
+  }, [activeTextBlockIndex, templateBgMode, templateBgFieldRoles, layoutTextBlocks]);
+
+  const handleActiveLayoutBlockChange = useCallback(
+    (blockIndex: number | null) => {
+      if (!onActiveTextBlockIndexChange) return;
+      if (!templateBgMode || blockIndex == null) {
+        onActiveTextBlockIndexChange(blockIndex);
+        return;
+      }
+      const layer = layoutTextBlocks.find((l) => l.block_index === blockIndex);
+      if (!layer) {
+        onActiveTextBlockIndexChange(blockIndex);
+        return;
+      }
+      const fieldIdx = templateBgFieldRoles.findIndex((role) => layoutRoleMatchesField(layer.role, role));
+      onActiveTextBlockIndexChange(fieldIdx >= 0 ? fieldIdx : blockIndex);
+    },
+    [onActiveTextBlockIndexChange, templateBgMode, templateBgFieldRoles, layoutTextBlocks]
+  );
+
   useEffect(() => {
     if (!registerTextBlockUpdater) return;
     registerTextBlockUpdater((blockIndex, text) => {
-      const target = layoutTextBlocks[blockIndex];
+      const fieldRole = templateBgMode ? templateBgFieldRoles[blockIndex] : undefined;
+      const inspectBoxes = parseDocAiLayerBoxes(renderInspect);
+      const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
+      const roleForBox = (layer: DocAiLayerBox) =>
+        inferDocAiLayerRole(layer, draftByKey.get(layer.layer_key), fullBleedMode);
+
+      let target =
+        fieldRole != null
+          ? inspectBoxes.find((layer) => layoutRoleMatchesField(roleForBox(layer), fieldRole))
+          : inspectBoxes[blockIndex] ?? layoutTextBlocks[blockIndex];
+      if (!target && fieldRole != null) {
+        target = layoutTextBlocks.find((layer) => layoutRoleMatchesField(layer.role, fieldRole));
+      }
+      if (!target) target = layoutTextBlocks[blockIndex];
       if (!target) return;
+      if (fieldRole === "body" && roleForBox(target) === "handle") return;
+      if (fieldRole === "headline" && roleForBox(target) === "handle") return;
       const base =
         layerPosDraft.length > 0
           ? layerPosDraft
@@ -961,6 +1094,10 @@ export function MimicCarouselLayerEditorPanel({
     layerPosDraft,
     docAiLayerBoxes,
     handleLayerDraftChange,
+    templateBgMode,
+    templateBgFieldRoles,
+    renderInspect,
+    fullBleedMode,
   ]);
 
   const docAiSavedOverrides = useMemo(() => parseDocAiSavedOverrides(renderInspect), [renderInspect]);
@@ -1156,6 +1293,12 @@ export function MimicCarouselLayerEditorPanel({
 
 
   const showEditor = docAiLayerBoxes.length > 0;
+  const hasHiddenDraftLayers = layerPosDraft.some((row) => row.hidden);
+
+  const restoreDefaultLayout = useCallback(() => {
+    const cleared = layerPosDraft.filter((row) => !row.hidden);
+    handleLayerDraftChange(cleared);
+  }, [layerPosDraft, handleLayerDraftChange]);
 
 
 
@@ -1361,7 +1504,14 @@ export function MimicCarouselLayerEditorPanel({
 
       {!showEditor && !renderInspectLoading ? (
 
-        <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>No text layers on this slide.</p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>No text layers on this slide.</p>
+          {hasHiddenDraftLayers ? (
+            <button type="button" className="btn-secondary btn-sm" onClick={restoreDefaultLayout}>
+              Restore default text boxes
+            </button>
+          ) : null}
+        </div>
 
       ) : !showEditor && renderInspectLoading ? (
 
@@ -1393,11 +1543,13 @@ export function MimicCarouselLayerEditorPanel({
 
             suppressReseed={userTouchedLayout}
 
-            activeBlockIndex={activeTextBlockIndex}
+            activeBlockIndex={activeLayoutBlockIndex}
 
-            onActiveBlockIndexChange={onActiveTextBlockIndexChange}
+            onActiveBlockIndexChange={handleActiveLayoutBlockChange}
 
             fullBleedMode={fullBleedMode}
+
+            templateBgMode={templateBgMode}
 
             brandPalette={brandPalette}
 

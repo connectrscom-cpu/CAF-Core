@@ -7,9 +7,11 @@ import {
   adminPipelineSketchHtml,
   adminSignalPackMimicModeScript,
 } from "./admin-ui-shared.js";
+import { IDEA_GENERATION_BUCKET_DEFS } from "../domain/idea-structure.js";
 
 export function adminProcessingBody(currentSlug: string): string {
   const SLUG = JSON.stringify(currentSlug);
+  const ideaBucketDefsJson = JSON.stringify(IDEA_GENERATION_BUCKET_DEFS);
   const inputsPq = currentSlug ? `?project=${encodeURIComponent(currentSlug)}` : "";
   const T = adminCafTermHtml;
   const PL = adminLlmPromptTitleAttr;
@@ -61,10 +63,10 @@ export function adminProcessingBody(currentSlug: string): string {
           <button type="button" class="caf-step-pill step-btn" id="step-insights" data-step="insights" title="${PL("INSIGHTS__Broad_LLM_v1 (+ top-performer passes)", "Processing", "Broad insights + image/carousel/video deep passes")}">
             3 <span data-caf-term="insights">Insights</span> <span class="badge badge-b" id="step-badge-insights">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="${PL("IDEAS__From_Insights_v1", "Processing")}">
+          <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="${PL("IDEAS__From_Insights__Overview_v1 (+ grouped calls)", "Processing")}">
             4 Build <span data-caf-term="ideas">ideas</span> <span class="badge badge-b" id="step-badge-ideas">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1", "Processing", "Full import also runs IDEAS__From_Insights_v1")}">
+          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1", "Processing", "Full import also runs IDEAS__From_Insights__Overview_v1")}">
             5 <span data-caf-term="signalPack">Signal pack</span> <span class="badge badge-b" id="step-badge-pack">not started</span>
           </button>
           <button type="button" class="caf-step-pill step-btn" id="step-run" data-step="run" title="Proceed to Runs — jobs are created when you start a run from the signal pack.">
@@ -608,8 +610,30 @@ export function adminProcessingBody(currentSlug: string): string {
               <label style="font-size:12px">Target # ideas</label>
               <input type="number" id="idea-list-target" min="1" max="200" value="35" style="width:100%;font-size:12px;padding:6px 8px;border-radius:8px;border:1px solid var(--border)"/>
             </div>
-            <button type="button" class="btn btn-sm" id="btn-generate-idea-list" title="${PL("IDEAS__From_Insights_v1", "Processing")}">Generate idea list (LLM)</button>
+            <button type="button" class="btn btn-sm" id="btn-generate-idea-list" title="${PL("IDEAS__From_Insights__Overview_v1 (+ grouped calls)", "Processing")}">Generate idea list (LLM)</button>
             <span id="idea-list-generate-msg" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <div id="idea-bucket-quotas" style="margin:0 0 12px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--card)">
+            <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px">
+              <div style="font-size:12px;font-weight:600">Idea bucket quotas</div>
+              <button type="button" class="btn-ghost btn-sm" id="btn-idea-buckets-default" title="Fill buckets from target count (~70% niche / ~30% product)">Apply defaults</button>
+              <label style="font-size:11px;color:var(--muted);display:flex;gap:6px;align-items:center;margin-left:auto">
+                <input type="checkbox" id="idea-product-angles-enabled" />
+                Product video angles (6 hook types)
+              </label>
+              <span id="idea-bucket-total" style="font-size:11px;color:var(--muted)">Total: 0</span>
+            </div>
+            <p class="runs-ops-hint" style="margin:0 0 10px;font-size:11px">Set how many <strong>new</strong> ideas to generate per bucket. Niche = editorial content; Product = brand/product ideas grounded in product profile + insights. Mimic replications are picked separately at run time.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+              <div>
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Niche</div>
+                <div id="idea-buckets-niche" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+              <div>
+                <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Product</div>
+                <div id="idea-buckets-product" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+            </div>
           </div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
             <label style="font-size:12px;color:var(--muted)">Idea list
@@ -633,6 +657,13 @@ export function adminProcessingBody(currentSlug: string): string {
                   <option value="video">video</option>
                   <option value="post">post</option>
                   <option value="thread">thread</option>
+                </select>
+              </label>
+              <label style="font-size:11px;color:var(--muted)">Lens<br />
+                <select id="ideas-filter-lens" style="font-size:12px;min-width:110px;padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text)">
+                  <option value="">Any</option>
+                  <option value="niche">niche</option>
+                  <option value="product">product</option>
                 </select>
               </label>
               <label style="font-size:11px;color:var(--muted)">Platform<br />
@@ -706,7 +737,7 @@ export function adminProcessingBody(currentSlug: string): string {
           </div>
           <p class="runs-ops-hint" style="margin-bottom:8px"><strong>Full pipeline</strong> — rate + synthesize + idea LLM in one go (ignores idea lists). Review profile caps first.</p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1 + IDEAS__From_Insights_v1", "Processing", "Full import pipeline — rating, synthesize, then ideas LLM")}">Build signal pack (full import)</button>
+            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1 + IDEAS__From_Insights__Overview_v1", "Processing", "Full import pipeline — rating, synthesize, then ideas LLM")}">Build signal pack (full import)</button>
             <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
           </div>
           <details id="pack-settings-debug" style="margin:10px 0">
@@ -801,6 +832,7 @@ export function adminProcessingBody(currentSlug: string): string {
 </script>
 <script>
 const SLUG=${SLUG};
+const IDEA_GENERATION_BUCKET_DEFS=${ideaBucketDefsJson};
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function apiErr(d,fallback){return (d&&d.message)||(d&&d.error)||fallback;}
 function bind(id,ev,fn){var e=document.getElementById(id);if(e)e.addEventListener(ev,fn);}
@@ -4008,15 +4040,116 @@ var lastIdeasAllRows=null;
 var lastIdeasDisplayRows=null;
 var ideasFilterTimer=null;
 
+function ideaBucketsAnglesEnabled(){
+  var el=document.getElementById('idea-product-angles-enabled');
+  return !!(el&&el.checked);
+}
+function activeIdeaBucketDefs(){
+  var angles=ideaBucketsAnglesEnabled();
+  return (IDEA_GENERATION_BUCKET_DEFS||[]).filter(function(d){
+    if(d.requires_product_angles&&!angles)return false;
+    if(d.id==='product_video'&&angles)return false;
+    return true;
+  });
+}
+function renderIdeaBucketInputs(){
+  var niche=document.getElementById('idea-buckets-niche');
+  var product=document.getElementById('idea-buckets-product');
+  if(!niche||!product)return;
+  niche.innerHTML='';
+  product.innerHTML='';
+  activeIdeaBucketDefs().forEach(function(d){
+    var host=d.section==='product'?product:niche;
+    var row=document.createElement('label');
+    row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;color:var(--text)';
+    row.innerHTML='<span style="flex:1;line-height:1.3">'+esc(d.label)+'</span><input type="number" class="idea-bucket-count" data-bucket-id="'+esc(d.id)+'" min="0" max="200" step="1" value="0" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)"/>';
+    host.appendChild(row);
+  });
+  updateIdeaBucketTotal();
+}
+function readIdeaBucketQuotas(){
+  var buckets={};
+  document.querySelectorAll('.idea-bucket-count').forEach(function(inp){
+    var id=inp.getAttribute('data-bucket-id')||'';
+    if(!id)return;
+    var n=parseInt(String(inp.value||'0'),10);
+    buckets[id]=Number.isFinite(n)?Math.max(0,Math.min(200,n)):0;
+  });
+  return {buckets:buckets,product_angles_enabled:ideaBucketsAnglesEnabled()};
+}
+function updateIdeaBucketTotal(){
+  var q=readIdeaBucketQuotas();
+  var sum=0;
+  for(var k in q.buckets)sum+=q.buckets[k]||0;
+  var el=document.getElementById('idea-bucket-total');
+  if(el)el.textContent='Total: '+String(sum);
+  var tgt=document.getElementById('idea-list-target');
+  if(tgt&&sum>0)tgt.value=String(sum);
+}
+function defaultIdeaBucketCountsClient(target,angles){
+  var n=Math.max(1,Math.min(200,target||35));
+  var out={};
+  function set(id,v){out[id]=Math.max(0,v|0);}
+  var carousel=Math.floor(n*0.4), video=Math.floor(n*0.3), post=Math.floor(n*0.1), thread=Math.floor(n*0.1);
+  var used=carousel+video+post+thread; var idx=0; var order=['carousel','video','post','thread'];
+  while(used<n){ if(order[idx%4]==='carousel')carousel++; else if(order[idx%4]==='video')video++; else if(order[idx%4]==='post')post++; else thread++; used++; idx++; }
+  var nicheCarousel=Math.round(carousel*0.7);
+  set('niche_carousel_text',Math.floor(nicheCarousel*0.45));
+  set('niche_carousel_visual',nicheCarousel-(out.niche_carousel_text||0));
+  var nicheVideo=Math.round(video*0.7);
+  set('niche_video_no_avatar',Math.floor(nicheVideo*0.35));
+  set('niche_video_prompt_avatar',Math.floor(nicheVideo*0.45));
+  set('niche_video_script_avatar',nicheVideo-(out.niche_video_no_avatar||0)-(out.niche_video_prompt_avatar||0));
+  set('niche_post',Math.max(0,Math.round(post*0.85)));
+  set('niche_thread',Math.max(0,Math.round(thread*0.85)));
+  var productCarousel=Math.max(0,carousel-nicheCarousel);
+  set('product_carousel_text',Math.floor(productCarousel*0.4));
+  set('product_carousel_visual',productCarousel-(out.product_carousel_text||0));
+  var productVideo=Math.max(0,video-nicheVideo);
+  if(angles&&productVideo>0){
+    var per=Math.floor(productVideo/6), rem=productVideo-per*6;
+    ['problem','feature','comparison','usecase','social_proof','offer'].forEach(function(a,i){
+      set('product_video_'+a,per+(i<rem?1:0));
+    });
+  }else set('product_video',productVideo);
+  set('product_post',Math.max(0,post-(out.niche_post||0)));
+  set('product_thread',Math.max(0,thread-(out.niche_thread||0)));
+  return out;
+}
+function applyDefaultIdeaBuckets(){
+  var tgtEl=document.getElementById('idea-list-target');
+  var tRaw=tgtEl?parseInt(tgtEl.value,10):35;
+  var target=Number.isFinite(tRaw)?Math.min(200,Math.max(1,tRaw)):35;
+  var defs=defaultIdeaBucketCountsClient(target,ideaBucketsAnglesEnabled());
+  document.querySelectorAll('.idea-bucket-count').forEach(function(inp){
+    var id=inp.getAttribute('data-bucket-id')||'';
+    inp.value=String(defs[id]||0);
+  });
+  updateIdeaBucketTotal();
+}
+function initIdeaBucketQuotasUi(){
+  renderIdeaBucketInputs();
+  applyDefaultIdeaBuckets();
+}
+bind('idea-product-angles-enabled','change',function(){renderIdeaBucketInputs();applyDefaultIdeaBuckets();});
+bind('btn-idea-buckets-default','click',applyDefaultIdeaBuckets);
+document.addEventListener('input',function(ev){
+  var t=ev&&ev.target;
+  if(t&&t.classList&&t.classList.contains('idea-bucket-count'))updateIdeaBucketTotal();
+});
+initIdeaBucketQuotasUi();
+
 function readIdeasFilters(){
   var searchEl=document.getElementById('ideas-filter-search');
   var fmtEl=document.getElementById('ideas-filter-format');
+  var lensEl=document.getElementById('ideas-filter-lens');
   var platEl=document.getElementById('ideas-filter-platform');
   var selEl=document.getElementById('ideas-filter-selected');
   var sortEl=document.getElementById('ideas-sort');
   return {
     search:searchEl?String(searchEl.value||'').trim().toLowerCase():'',
     format:fmtEl?String(fmtEl.value||'').trim().toLowerCase():'',
+    lens:lensEl?String(lensEl.value||'').trim().toLowerCase():'',
     platform:platEl?String(platEl.value||'').trim().toLowerCase():'',
     selectedOnly:!!(selEl&&selEl.checked),
     sort:sortEl?String(sortEl.value||'confidence_desc'):'confidence_desc'
@@ -4060,6 +4193,7 @@ function applyIdeasFiltersAndSort(ideas){
     var id=String(x.id||'');
     if(f.selectedOnly&&(!id||!sel[id]))continue;
     if(f.format&&String(x.format||'').toLowerCase()!==f.format)continue;
+    if(f.lens&&String(x.content_lens||'niche').toLowerCase()!==f.lens)continue;
     if(f.platform&&String(x.platform||'').toLowerCase()!==f.platform)continue;
     if(f.search){
       var blob=(String(x.title||'')+' '+String(x.hook||'')+' '+String(x.three_liner||'')).toLowerCase();
@@ -4223,17 +4357,21 @@ function renderIdeasTable(rows,opts){
     if(!id)continue;
     if(!sel[id]){checkedAll=false;break;}
   }
-  var tb='<table class="sp-modal-table" style="width:100%;min-width:1500px;table-layout:auto"><thead><tr>'+
+  var tb='<table class="sp-modal-table" style="width:100%;min-width:1680px;table-layout:auto"><thead><tr>'+
     '<th style="width:44px"><input type="checkbox" id="ideas-check-all" '+(checkedAll?'checked':'')+' title="Select/deselect all ideas in this list"/></th>'+
-    '<th>Title</th><th>Format</th><th>Platform</th><th>Hook</th><th>3-liner</th><th class="mono">Conf.</th><th class="mono">ID</th></tr></thead><tbody>';
+    '<th>Title</th><th>Lens</th><th>Format</th><th>Execution</th><th>Angle</th><th>Platform</th><th>Hook</th><th>3-liner</th><th class="mono">Conf.</th><th class="mono">ID</th></tr></thead><tbody>';
   for(var j=0;j<rows.length;j++){
     var x=rows[j];
     var id2=String(x.id||'');
     var on=!!sel[id2];
+    var exec=String(x.execution_profile||x.carousel_style||x.video_style||'');
     tb+='<tr class="idea-row" data-id="'+esc(id2)+'" style="cursor:pointer;'+(on?'':'opacity:0.65')+'">'+
       '<td><input class="idea-check" type="checkbox" data-id="'+esc(id2)+'" '+(on?'checked':'')+' /></td>'+
-      '<td style="max-width:340px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
+      '<td style="max-width:300px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
+      '<td class="mono">'+esc(x.content_lens||'niche')+'</td>'+
       '<td class="mono">'+esc(x.format||'')+'</td>'+
+      '<td class="mono" style="font-size:11px">'+esc(exec)+'</td>'+
+      '<td class="mono" style="font-size:11px">'+esc(x.product_angle||'')+'</td>'+
       '<td class="mono">'+esc(x.platform||'')+'</td>'+
       '<td style="max-width:300px;white-space:pre-wrap;word-break:break-word">'+esc(x.hook||'')+'</td>'+
       '<td style="max-width:520px;white-space:pre-wrap;word-break:break-word">'+esc(x.three_liner||'')+'</td>'+
@@ -4344,6 +4482,11 @@ async function loadIdeaListIdeasTable(){
         id:j.id||row.idea_id||'',
         title:j.title||'',
         format:j.format||'',
+        content_lens:j.content_lens||'',
+        execution_profile:j.execution_profile||'',
+        carousel_style:j.carousel_style||'',
+        video_style:j.video_style||'',
+        product_angle:j.product_angle||'',
         platform:j.platform||'',
         hook:j.hook||j.hook_text||'',
         confidence_score:j.confidence_score,
@@ -4641,17 +4784,20 @@ bind('btn-reload-idea-lists','click',function(){
 });
 bind('ideas-filter-search','input',scheduleIdeasFilterRerender);
 bind('ideas-filter-format','change',rerenderIdeasTableFromCache);
+bind('ideas-filter-lens','change',rerenderIdeasTableFromCache);
 bind('ideas-filter-platform','change',rerenderIdeasTableFromCache);
 bind('ideas-filter-selected','change',rerenderIdeasTableFromCache);
 bind('ideas-sort','change',rerenderIdeasTableFromCache);
 bind('btn-ideas-clear-filters','click',function(){
   var s=document.getElementById('ideas-filter-search');
   var f=document.getElementById('ideas-filter-format');
+  var lens=document.getElementById('ideas-filter-lens');
   var p=document.getElementById('ideas-filter-platform');
   var sel=document.getElementById('ideas-filter-selected');
   var sort=document.getElementById('ideas-sort');
   if(s)s.value='';
   if(f)f.value='';
+  if(lens)lens.value='';
   if(p)p.value='';
   if(sel)sel.checked=false;
   if(sort)sort.value='confidence_desc';
@@ -4679,7 +4825,10 @@ bind('btn-generate-idea-list','click',async function(){
     var title=titleEl&&titleEl.value?String(titleEl.value).trim():'';
     var tRaw=tgtEl?parseInt(tgtEl.value,10):35;
     var target=Number.isFinite(tRaw)?Math.min(200,Math.max(1,tRaw)):35;
-    var body={target_idea_count:target};
+    var quotas=readIdeaBucketQuotas();
+    var qSum=0; for(var qk in quotas.buckets)qSum+=quotas.buckets[qk]||0;
+    if(qSum<=0){if(msg)msg.textContent='Set at least one idea bucket count > 0.';return;}
+    var body={target_idea_count:qSum,idea_quotas:quotas};
     if(title)body.title=title;
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/build-ideas-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json();

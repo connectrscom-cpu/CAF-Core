@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  deckHasShortCopyThroughout,
   deckUsesUnifiedBackgroundPlate,
   isTextOverlayDeckFromGuideline,
   isVisualLedShortCopyDeck,
   MIMIC_MAX_REFERENCE_ON_SCREEN_TEXT_CHARS,
+  MIMIC_SHORT_COPY_CHAR_THRESHOLD,
   nemotronSuggestsTextOnTemplate,
   referenceHasHeavyOnScreenText,
   documentAiReferenceSlideText,
@@ -43,6 +45,14 @@ describe("mimic-text-heavy", () => {
     };
     expect(isVisualLedShortCopyDeck(entry)).toBe(true);
     expect(requiresCopyBeforeVisualMimic(entry)).toBe(false);
+  });
+
+  it("treats slides up to MIMIC_SHORT_COPY_CHAR_THRESHOLD as short copy throughout", () => {
+    const slides = [{ on_screen_text_transcript: "x".repeat(MIMIC_SHORT_COPY_CHAR_THRESHOLD) }];
+    expect(deckHasShortCopyThroughout(slides)).toBe(true);
+    expect(deckHasShortCopyThroughout([{ on_screen_text_transcript: "x".repeat(MIMIC_SHORT_COPY_CHAR_THRESHOLD + 1) }])).toBe(
+      false
+    );
   });
 
   it("unifies background plate for listicles and text-overlay decks", () => {

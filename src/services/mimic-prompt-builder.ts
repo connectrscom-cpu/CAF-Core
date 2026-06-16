@@ -280,9 +280,11 @@ export function buildMimicTemplateBackgroundPrompt(
       : buildArtOnlyVariantPrompt(opts?.visualSimilarityPct);
   if (!override || isFluxTextBakePromptOverride(override)) {
     if (!bold || !styleHints) return template;
-    return appendFullBleedSlidePromptHints(template, {
-      consistencyHint: buildBoldVariantDeckMoodHint(opts?.deckAesthetic, opts?.deckVisualConsistency),
-    });
+    return finalizeMimicImageModelPrompt(
+      appendFullBleedSlidePromptHints(template, {
+        consistencyHint: buildBoldVariantDeckMoodHint(opts?.deckAesthetic, opts?.deckVisualConsistency),
+      })
+    );
   }
   if (bold) {
     return interpolateMimicTemplate(template, {
@@ -352,7 +354,10 @@ export function buildMimicCarouselSlideArtOnlyPrompt(
       : "";
     if (!override || isFluxTextBakePromptOverride(override)) {
       const base = template;
-      return styleExtras ? `${base} ${styleExtras}`.replace(/\s{2,}/g, " ").trim() : base;
+      const withStyle = styleExtras ? `${base} ${styleExtras}` : base;
+      const intent = opts.intentInstruction?.trim();
+      const withIntent = intent ? `${withStyle} ${intent}` : withStyle;
+      return styleHints ? finalizeMimicImageModelPrompt(withIntent) : withIntent.replace(/\s{2,}/g, " ").trim();
     }
     return interpolateMimicTemplate(template, {
       safe_zone_instruction: "",
@@ -371,7 +376,7 @@ export function buildMimicCarouselSlideArtOnlyPrompt(
         safeZoneInstruction: opts.safeZoneInstruction,
       });
     }
-    return appendFullBleedSlidePromptHints(template, opts);
+    return finalizeMimicImageModelPrompt(appendFullBleedSlidePromptHints(template, opts));
   }
   const layoutInstruction = styleHints && opts.layoutTemplate?.trim()
     ? `Layout style: ${opts.layoutTemplate.trim()}.`
@@ -511,14 +516,14 @@ export function mimicPromptForMode(
   const visualSimilarityPct =
     renderSettings?.visualSimilarityPct ?? slide?.visualSimilarityPct ?? DEFAULT_MIMIC_VISUAL_SIMILARITY_PCT;
   const includeStyleHints = renderSettings?.includeStyleHints === true;
+  let prompt: string;
   if (mode === "image_full") {
-    return buildMimicImageFullPrompt(
+    prompt = buildMimicImageFullPrompt(
       { onImageCopy: slide?.onImageCopy, visualSimilarityPct },
       overrides
     );
-  }
-  if (mode === "template_bg") {
-    return buildMimicTemplateBackgroundPrompt(
+  } else if (mode === "template_bg") {
+    prompt = buildMimicTemplateBackgroundPrompt(
       {
         consistencyHint: includeStyleHints ? slide?.consistencyHint : "",
         layoutTemplate: includeStyleHints ? slide?.layout : null,
@@ -530,9 +535,8 @@ export function mimicPromptForMode(
       },
       overrides
     );
-  }
-  if (mode === "template_bg_compose") {
-    return buildMimicTemplateBgComposePrompt(
+  } else if (mode === "template_bg_compose") {
+    prompt = buildMimicTemplateBgComposePrompt(
       {
         onImageCopy: slide?.onImageCopy,
         consistencyHint: slide?.consistencyHint,
@@ -540,25 +544,30 @@ export function mimicPromptForMode(
       },
       overrides
     );
+  } else {
+    prompt = buildMimicCarouselSlidePrompt(
+      {
+        slideIndex: slide?.index ?? 1,
+        layoutTemplate: includeStyleHints ? slide?.layout : null,
+        visualDescription: includeStyleHints ? slide?.visual : null,
+        onImageCopy: slide?.onImageCopy,
+        consistencyHint: includeStyleHints ? slide?.consistencyHint : "",
+        intentInstruction: includeStyleHints ? slide?.intentInstruction : "",
+        projectHandle: slide?.projectHandle,
+        artOnly: slide?.artOnly,
+        safeZoneInstruction: slide?.safeZoneInstruction,
+        visualSimilarityPct,
+        slidePurpose: includeStyleHints ? slide?.slidePurpose : null,
+        deckAesthetic: includeStyleHints ? slide?.deckAesthetic : null,
+        deckVisualConsistency: includeStyleHints ? slide?.deckVisualConsistency : null,
+        includeStyleHints,
+      },
+      overrides
+    );
   }
-  return buildMimicCarouselSlidePrompt(
-    {
-      slideIndex: slide?.index ?? 1,
-      layoutTemplate: includeStyleHints ? slide?.layout : null,
-      visualDescription: includeStyleHints ? slide?.visual : null,
-      onImageCopy: slide?.onImageCopy,
-      consistencyHint: includeStyleHints ? slide?.consistencyHint : "",
-      intentInstruction: includeStyleHints ? slide?.intentInstruction : "",
-      projectHandle: slide?.projectHandle,
-      artOnly: slide?.artOnly,
-      safeZoneInstruction: slide?.safeZoneInstruction,
-      visualSimilarityPct,
-      slidePurpose: includeStyleHints ? slide?.slidePurpose : null,
-      deckAesthetic: includeStyleHints ? slide?.deckAesthetic : null,
-      deckVisualConsistency: includeStyleHints ? slide?.deckVisualConsistency : null,
-      includeStyleHints,
-    },
-    overrides
-  );
+  if (includeStyleHints && (mode === "template_bg" || mode === "carousel_visual")) {
+    return finalizeMimicImageModelPrompt(prompt);
+  }
+  return prompt;
 }
 

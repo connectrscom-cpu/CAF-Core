@@ -27,6 +27,8 @@ Allowed values are constrained in SQL (see **`migrations/002_project_config_and_
 
 Jobs are **`caf_core.content_jobs`**, unique on **`(project_id, task_id)`**.
 
+**Full guide:** **[JOB_LIFECYCLE.md](./JOB_LIFECYCLE.md)** — stage-by-stage from `PLANNED` through review, rework, and publish.
+
 Typical pipeline path (**`src/services/job-pipeline.ts`**):
 
 ```

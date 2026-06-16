@@ -1,5 +1,6 @@
 FROM node:20-slim AS review-builder
 WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 # Core deps for webpack when Review bundles ../../src/services (e.g. @supabase/supabase-js).
 COPY package.json package-lock.json* ./
 # Review build typechecks ../../src (needs @types/pg etc.)
@@ -14,6 +15,7 @@ RUN cp -r apps/review/.next/static apps/review/.next/standalone/.next/static
 
 FROM node:20-slim AS builder
 WORKDIR /app
+ENV PUPPETEER_SKIP_DOWNLOAD=true
 COPY package.json package-lock.json* ./
 RUN npm install
 COPY tsconfig.json ./

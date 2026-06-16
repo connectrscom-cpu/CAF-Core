@@ -18,7 +18,33 @@ function asRecord(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
-const VISUAL_GUIDELINE_BLOB_KEYS = ["inspection_media", "stored_inspection_media_json"] as const;
+const VISUAL_GUIDELINE_BLOB_KEYS = [
+  "inspection_media",
+  "stored_inspection_media_json",
+  /** Document AI slide geometry — render/mimic only; blows past 128k when embedded in copy prompts. */
+  "aesthetic_analysis_json",
+] as const;
+
+const IDEA_ROW_VISUAL_BLOB_KEYS = [
+  "inspection_media",
+  "stored_inspection_media_json",
+  "aesthetic_analysis_json",
+] as const;
+
+const PRODUCT_PROFILE_SLIM_KEYS = [
+  "product_name",
+  "product_category",
+  "one_liner",
+  "value_proposition",
+  "primary_audience",
+  "current_offer",
+  "primary_cta",
+  "secondary_cta",
+  "do_say",
+  "dont_say",
+  "keywords",
+  "taglines",
+] as const;
 
 const MIMIC_SIGNAL_PACK_DROP_KEYS = [
   "html_findings_raw",
@@ -53,6 +79,15 @@ const MIMIC_IDEA_ROW_KEEP_KEYS = [
   "source_insights_id",
   "candidate_id",
 ] as const;
+
+/** Drop vision/OCR blobs from idea rows; keep editorial fields for carousel/video copy. */
+export function slimSignalPackIdeaRowForLlm(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...row };
+  for (const k of IDEA_ROW_VISUAL_BLOB_KEYS) {
+    delete out[k];
+  }
+  return out;
+}
 
 /** Idea rows from deep inspection can embed full aesthetic JSON — copy step uses `mimic_v1` on the job. */
 export function slimSignalPackIdeaRowForMimicLlm(row: Record<string, unknown>): Record<string, unknown> {
@@ -202,12 +237,20 @@ export function budgetSignalPackContextForLlm(
   let o: Record<string, unknown> = normalizeOverallCandidatesJson({ ...pack });
   const mimicFlowOnly = opts?.mimicFlowOnly === true;
 
-  if (mimicFlowOnly && Array.isArray(o.ideas_json)) {
-    const filtered = filterSignalPackIdeasForCandidate(o.ideas_json as unknown[], opts?.candidateData ?? null);
+  if (Array.isArray(o.ideas_json) && opts?.candidateData) {
+    const ideas = o.ideas_json as unknown[];
+    const filtered =
+      ideas.length > 1
+        ? filterSignalPackIdeasForCandidate(ideas, opts.candidateData)
+        : ideas;
     o = {
       ...o,
       ideas_json: filtered
-        .map((row) => slimSignalPackIdeaRowForMimicLlm(asRecord(row) ?? {}))
+        .map((row) =>
+          mimicFlowOnly
+            ? slimSignalPackIdeaRowForMimicLlm(asRecord(row) ?? {})
+            : slimSignalPackIdeaRowForLlm(asRecord(row) ?? {})
+        )
         .filter((row) => Object.keys(row).length > 0),
     };
   }
@@ -239,7 +282,7 @@ export function budgetSignalPackContextForLlm(
   while (json.length > limits.maxTotalJsonChars) {
     let progressed = false;
 
-    if (mimicFlowOnly && Array.isArray(o.ideas_json) && (o.ideas_json as unknown[]).length > 1) {
+    if (Array.isArray(o.ideas_json) && (o.ideas_json as unknown[]).length > 1) {
       const rows = o.ideas_json as unknown[];
       o = shrinkArrayField(o, "ideas_json", Math.max(1, rows.length - 1));
       progressed = true;
@@ -282,37 +325,132 @@ export function budgetSignalPackContextForLlm(
     }
   }
 
-  /** Mimic-only: strip visual guideline entries from derived_globals if still over budget. */
-  if (mimicFlowOnly) {
-    while (json.length > limits.maxTotalJsonChars) {
-      const dg2 = asRecord(o.derived_globals_json);
-      const tags = dg2 && Array.isArray(dg2.hashtag_leaderboard_v1) ? (dg2.hashtag_leaderboard_v1 as unknown[]) : null;
-      if (tags && tags.length > 5) {
-        o = {
-          ...o,
-          derived_globals_json: slimDerivedGlobalsForMimicCopyLlm({
-            ...dg2,
-            hashtag_leaderboard_v1: tags.slice(0, Math.max(5, tags.length - 5)),
-          }),
-        };
-        json = JSON.stringify(o);
-        continue;
-      }
-      if (Array.isArray(o.ideas_json) && (o.ideas_json as unknown[]).length > 0) {
-        o = { ...o, ideas_json: [] };
-        json = JSON.stringify(o);
-        continue;
-      }
-      break;
-    }
-    if (json.length > limits.maxTotalJsonChars) {
-      o = trimDeepStrings(o, Math.min(limits.maxStringFieldChars, 1_200), 0) as Record<string, unknown>;
+  while (json.length > limits.maxTotalJsonChars) {
+    const dg2 = asRecord(o.derived_globals_json);
+    const vgp = dg2 ? asRecord(dg2.visual_guidelines_pack_v1) : null;
+    const vgEntries = vgp && Array.isArray(vgp.entries) ? (vgp.entries as unknown[]) : null;
+    if (vgEntries && vgEntries.length > 0) {
+      const nextCount = mimicFlowOnly ? 0 : Math.max(0, vgEntries.length - 1);
+      o = {
+        ...o,
+        derived_globals_json: slimDerivedGlobalsForLlm(
+          { ...dg2, visual_guidelines_pack_v1: { ...vgp, entries: vgEntries.slice(0, nextCount) } },
+          mimicFlowOnly ? { maxVisualGuidelineEntries: 0, maxHashtagLeaderboardRows: 20 } : { maxVisualGuidelineEntries: nextCount }
+        ),
+      };
       json = JSON.stringify(o);
+      continue;
     }
+
+    const tags = dg2 && Array.isArray(dg2.hashtag_leaderboard_v1) ? (dg2.hashtag_leaderboard_v1 as unknown[]) : null;
+    if (tags && tags.length > (mimicFlowOnly ? 5 : 10)) {
+      const floor = mimicFlowOnly ? 5 : 10;
+      o = {
+        ...o,
+        derived_globals_json: mimicFlowOnly
+          ? slimDerivedGlobalsForMimicCopyLlm({
+              ...dg2,
+              hashtag_leaderboard_v1: tags.slice(0, Math.max(floor, tags.length - 5)),
+            })
+          : slimDerivedGlobalsForLlm({
+              ...dg2,
+              hashtag_leaderboard_v1: tags.slice(0, Math.max(floor, tags.length - 5)),
+            }),
+      };
+      json = JSON.stringify(o);
+      continue;
+    }
+
+    if (mimicFlowOnly && Array.isArray(o.ideas_json) && (o.ideas_json as unknown[]).length > 0) {
+      o = { ...o, ideas_json: [] };
+      json = JSON.stringify(o);
+      continue;
+    }
+    break;
+  }
+
+  if (json.length > limits.maxTotalJsonChars) {
+    o = trimDeepStrings(o, Math.min(limits.maxStringFieldChars, mimicFlowOnly ? 1_200 : 2_400), 0) as Record<string, unknown>;
+    json = JSON.stringify(o);
   }
 
   return o;
 }
+
+function slimProductProfileForLlm(profile: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!profile) return {};
+  const out: Record<string, unknown> = {};
+  for (const k of PRODUCT_PROFILE_SLIM_KEYS) {
+    if (k in profile) out[k] = profile[k];
+  }
+  return out;
+}
+
+/** Standard LLM copy: cap whole creation_pack JSON (idea-list packs + product profile can exceed signal_pack cap alone). */
+export function budgetCreationPackForCarouselFlow(
+  pack: Record<string, unknown>,
+  maxTotalJsonChars: number,
+  opts?: { candidateData?: Record<string, unknown> | null; signalPackJsonMaxChars?: number }
+): Record<string, unknown> {
+  let o: Record<string, unknown> = { ...pack };
+  let json = JSON.stringify(o);
+  const signalCap = opts?.signalPackJsonMaxChars ?? Math.max(12_000, Math.floor(maxTotalJsonChars * 0.55));
+
+  const shrinkSteps: Array<() => boolean> = [
+    () => {
+      const sp = asRecord(o.signal_pack);
+      if (!sp) return false;
+      o = {
+        ...o,
+        signal_pack: budgetSignalPackContextForLlm(
+          sp,
+          {
+            maxTotalJsonChars: signalCap,
+            maxCandidateRows: 1,
+            maxStringFieldChars: 2_400,
+          },
+          { candidateData: opts?.candidateData ?? asRecord(o.candidate), mimicFlowOnly: false }
+        ),
+      };
+      return true;
+    },
+    () => {
+      const pp = asRecord(o.product_profile);
+      if (!pp || Object.keys(pp).length <= PRODUCT_PROFILE_SLIM_KEYS.length) return false;
+      o = { ...o, product_profile: slimProductProfileForLlm(pp) };
+      return true;
+    },
+    () => {
+      if (!("product_profile" in o)) return false;
+      o = { ...o, product_profile: {} };
+      return true;
+    },
+    () => {
+      if (!("strategy" in o)) return false;
+      o = { ...o, strategy: {} };
+      return true;
+    },
+  ];
+
+  let stepCursor = 0;
+  while (json.length > maxTotalJsonChars && stepCursor < shrinkSteps.length * 3) {
+    const before = json.length;
+    const step = shrinkSteps[stepCursor % shrinkSteps.length];
+    stepCursor += 1;
+    if (!step()) continue;
+    json = JSON.stringify(o);
+    if (json.length < before) stepCursor = 0;
+  }
+
+  if (json.length > maxTotalJsonChars) {
+    o = trimDeepStrings(o, 1_800, 0) as Record<string, unknown>;
+  }
+
+  return o;
+}
+
+/** Alias — same pack budget for carousel, product video, and other non-mimic LLM flows. */
+export const budgetCreationPackForLlm = budgetCreationPackForCarouselFlow;
 
 export function slimCandidateForMimicLlm(candidate: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

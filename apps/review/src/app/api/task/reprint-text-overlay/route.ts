@@ -3,10 +3,12 @@ import {
   getJobDetail,
   getJobDetailAll,
   reprintMimicTextOverlay,
+  listBrandAssets,
   type MimicDocAiLayerPositionRow,
 } from "@/lib/caf-core-client";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 import { isMimicCarouselFlow } from "@/lib/flow-kind";
+import { resolveBrandLogoReprintUrl } from "@/lib/brand-asset-url";
 
 export const dynamic = "force-dynamic";
 
@@ -64,10 +66,14 @@ export async function POST(request: NextRequest) {
         : undefined;
 
     const rawLogo = body?.logo_overlay;
-    const logoUrl =
+    let logoUrl =
       rawLogo && typeof rawLogo === "object" && !Array.isArray(rawLogo) && typeof rawLogo.url === "string"
         ? rawLogo.url.trim()
         : "";
+    if (logoUrl.startsWith("/api/project-config/brand-assets/proxy")) {
+      const assets = await listBrandAssets(slug);
+      logoUrl = resolveBrandLogoReprintUrl(assets?.brand_assets ?? []);
+    }
     const logoOverlay = logoUrl
       ? { url: logoUrl, position: typeof rawLogo.position === "string" ? rawLogo.position.trim() : "br" }
       : undefined;

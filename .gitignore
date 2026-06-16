@@ -22,3 +22,14 @@ services/video-assembly/workdir/
 
 # Local debug artifacts
 tmp-slide-review/
+tmp-*.ts
+tmp-*.txt
+tmp-*.json
+tmp-*.html
+_wip_local/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Regenerated PDF export intermediates (keep docs/export/pdf/)
+docs/export/bundles/

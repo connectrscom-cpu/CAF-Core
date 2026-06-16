@@ -2,10 +2,17 @@ import { describe, expect, it } from "vitest";
 import type { EvidenceRowInsightEnrichedRow } from "../repositories/inputs-evidence-insights.js";
 import {
   budgetInsightContextForIdeasLlm,
+  buildIdeasBucketSystemPrompt,
+  buildIdeasFromInsightsPromptLabsEntries,
+  buildIdeasGroupSystemPrompt,
+  buildLlmIdeaSchema,
   compactTopPerformerStylesForIdeasLlm,
   extractNemotronAnalysisForIdeasLlm,
+  groupIdeaGenerationBuckets,
+  parseLlmIdeasFromResponse,
   type IdeasLlmInsightContextRow,
 } from "./ideas-from-insights-llm.js";
+import { defaultIdeaGenerationQuotas, resolveBucketCounts } from "../domain/idea-structure.js";
 
 function tpRow(overrides: Partial<EvidenceRowInsightEnrichedRow> = {}): EvidenceRowInsightEnrichedRow {
   return {
@@ -145,5 +152,83 @@ describe("budgetInsightContextForIdeasLlm", () => {
     expect(budgeted.length).toBeGreaterThanOrEqual(5);
     expect(JSON.stringify(budgeted).length).toBeLessThanOrEqual(12_000);
     expect(budgeted[0]?.source_evidence_row_id).toBe("1");
+  });
+});
+
+describe("ideas prompt labs registry", () => {
+  it("builds grouped + bucket entries from shared prompt builders", () => {
+    const entries = buildIdeasFromInsightsPromptLabsEntries();
+    expect(entries.some((e) => e.prompt_name === "IDEAS__From_Insights__Overview_v1")).toBe(true);
+    expect(entries.some((e) => e.labs_prompt_subgroup === "group" && e.prompt_name === "IDEAS__Group__niche_carousel_v1")).toBe(
+      true
+    );
+    expect(entries.some((e) => e.labs_prompt_subgroup === "bucket" && e.prompt_name === "IDEAS__Bucket__niche_carousel_text_v1")).toBe(
+      true
+    );
+
+    const quotas = defaultIdeaGenerationQuotas(12, false);
+    const plan = resolveBucketCounts(quotas);
+    const grouped = groupIdeaGenerationBuckets(plan);
+    const group = grouped.find((g) => g.key === "niche|carousel");
+    expect(group).toBeTruthy();
+    const system = buildIdeasGroupSystemPrompt({
+      total: group!.total,
+      format: group!.format,
+      content_lens: group!.content_lens,
+      buckets: group!.buckets.map((b) => ({
+        execution_profile: b.execution_profile,
+        count: b.count,
+        label: b.label,
+      })),
+    });
+    expect(system).toContain('content_lens MUST be "niche"');
+    expect(system).toContain("execution_profile=");
+
+    const bucket = plan.find((b) => b.id === "niche_carousel_text");
+    expect(bucket).toBeTruthy();
+    const bucketSystem = buildIdeasBucketSystemPrompt(bucket!);
+    expect(bucketSystem).toContain('execution_profile MUST be "text_heavy"');
+  });
+
+  it("coerces partial LLM idea rows before schema validation", () => {
+    const context: IdeasLlmInsightContextRow[] = [
+      {
+        source_evidence_row_id: "42",
+        evidence_kind: "instagram_carousel",
+        evidence_rating: 0.8,
+        grounding_insight_ids: ["ins_42"],
+        broad: { why_it_worked: "hook" },
+        top_performer_styles: null,
+      },
+    ];
+    const schema = buildLlmIdeaSchema();
+    const { ideas, errors } = parseLlmIdeasFromResponse(
+      [
+        {
+          title: "Mercury retrograde myths",
+          thesis: "Debunk the top 3 myths with receipts",
+          key_points: "Myth one",
+          grounding_insight_ids: ["42"],
+          cta_class: "Product Awareness",
+        },
+      ],
+      context,
+      schema,
+      {
+        id: "niche_carousel_text",
+        label: "Niche carousel — text-heavy",
+        format: "carousel",
+        content_lens: "niche",
+        execution_profile: "text_heavy",
+        section: "niche",
+        count: 1,
+      }
+    );
+    expect(errors).toEqual([]);
+    expect(ideas).toHaveLength(1);
+    expect(ideas[0]?.grounding_insight_ids).toEqual(["ins_42"]);
+    expect(ideas[0]?.carousel_style).toBe("text_heavy");
+    expect(ideas[0]?.cta_class).toBe("product_awareness");
+    expect((ideas[0]?.key_points ?? []).length).toBeGreaterThanOrEqual(3);
   });
 });

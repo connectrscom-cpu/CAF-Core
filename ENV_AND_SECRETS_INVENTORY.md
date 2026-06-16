@@ -2,6 +2,8 @@
 
 **Purpose:** One checklist of **every** configuration name used by this repo and adjacent ops (n8n, Fly, Vercel), where to set it, and whether it is secret.
 
+**External readers:** See also **`docs/EXTERNAL_CONTEXT_PACK.md`** (Tier 1 includes this file + `.env.example`) and **`docs/REBUILD_FROM_DOCS.md`** (minimum env for bootstrap).
+
 **Security — non-negotiable**
 
 - **Never** commit real tokens, keys, JSON service accounts, or refresh tokens to git.
@@ -20,32 +22,51 @@
 
 ---
 
-## 1. Next.js app (Vercel / local) — `lib/`, `app/api/`
+## 0. CAF Core API (repo root) — `src/config.ts`
 
-| Variable | Secret? | Required | Where to set | Used for | Your value (vault only) |
-|----------|-----------|----------|--------------|----------|-------------------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | no | yes | Vercel env, local `.env` | Supabase project URL (browser + server) | |
-| `SUPABASE_SERVICE_ROLE_KEY` | **yes** | yes | Vercel env, local `.env` | Server API: tasks, assets, templates (bypasses RLS) | |
-| `REVIEW_WRITE_TOKEN` | **yes** | yes (for POST decision) | Vercel env, local `.env` | `x-review-token` on `POST /api/task/.../decision` | |
-| `NEXT_PUBLIC_REVIEW_WRITE_TOKEN` | **yes** | optional | Vercel env | Client-side DecisionPanel when you embed token (prefer header from secure origin in prod) | |
-| `DECISION_WEBHOOK_URL` | optional secret | no | Vercel env | POST after sheet decision | |
-| `RENDERER_BASE_URL` | no | recommended | Vercel env | Proxy to renderer: health, templates, preview | |
-| `VIDEO_ASSEMBLY_BASE_URL` | no | optional | Vercel env | If UI or tools call stitch/mux via app | |
-| `CAF_TEMPLATE_API_URL` | no | optional | Vercel env | Not required on Next.js for DB templates; **renderer** uses this to pull `.hbs` from `GET /api/templates` | |
-| `GOOGLE_REVIEW_QUEUE_SPREADSHEET_ID` | no* | yes* | Vercel env | Validation sheet ID(s); comma/semicolon/newline for merge | |
-| `GOOGLE_REVIEW_QUEUE_SPREADSHEET_IDS_EXTRA` | no | optional | Vercel env | Additional queue spreadsheets | |
-| `GOOGLE_REVIEW_QUEUE_SHEET_NAME` | no | optional | Vercel env | Tab name (default `Review Queue`) | |
-| `REVIEW_QUEUE_NO_CUISINA_SHEET` | no | optional | Vercel env | `1` / `true` to skip hardcoded Cuisina merge in `google-sheets.ts` | |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | **yes** | one auth path | Vercel env (string) | Sheets API as service account | |
-| `GOOGLE_APPLICATION_CREDENTIALS` | no (path) | local only | local `.env` | Path to SA key file | |
-| `GOOGLE_CLIENT_ID` | no | OAuth path | Vercel env | Sheets OAuth (see `review-queue-oauth-setup.md`) | |
-| `GOOGLE_CLIENT_SECRET` | **yes** | OAuth path | Vercel env | OAuth client secret | |
-| `GOOGLE_REFRESH_TOKEN` | **yes** | OAuth path | Vercel env | Long-lived refresh token | |
-| `NEXT_PUBLIC_APP_URL` | no | recommended | Vercel env | Absolute `preview_url` / content links | |
-| `CACHE_TTL_SECONDS` | no | optional | Vercel env | Sheet/queue cache TTL | |
-| `REVIEW_QUEUE_STORAGE_THUMB_MAX` | no | optional | Vercel env | Cap Storage probes for video thumbs on list | |
+**Canonical list:** every variable is defined in **`src/config.ts`** (Zod) with defaults. Comments in **`.env.example`**.
 
-\*If Review Queue is disabled/missing, console shows empty queue (still set for production).
+| Variable | Secret? | Required | Purpose |
+|----------|---------|----------|---------|
+| `DATABASE_URL` | **yes** | **yes** | PostgreSQL connection (`caf_core` schema) |
+| `OPENAI_API_KEY` | **yes** | for LLM | Generation, QC helpers, mimic copy, insights |
+| `OPENAI_MODEL` | no | recommended | Default chat model |
+| `PORT` / `HOST` | no | optional | API listen (default **3847**) |
+| `CAF_CORE_REQUIRE_AUTH` | no | optional | `1` to require token on protected routes |
+| `CAF_CORE_API_TOKEN` | **yes** | when auth on | `x-caf-core-token` or `Authorization: Bearer` |
+| `CAF_RUN_MIGRATIONS_ON_START` | no | optional | Apply migrations on startup (default on) |
+| `RENDERER_BASE_URL` | no | for carousel | Carousel worker URL |
+| `VIDEO_ASSEMBLY_BASE_URL` | no | for video | ffmpeg worker URL |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ASSETS_BUCKET` | **yes** / no | for assets | Object storage uploads |
+| `HEYGEN_API_KEY` | **yes** | for HeyGen flows | Video agent / avatar renders |
+| `MIMIC_IMAGE_ENABLED` | no | optional | Master switch for mimic render |
+| `MIMIC_IMAGE_PROVIDER` | no | optional | `bfl` \| `dashscope` \| `nvidia` \| `openai` |
+| `BFL_API_KEY`, `DASHSCOPE_API_KEY`, `NVIDIA_NIM_API_KEY` | **yes** | per provider | Mimic image edit providers |
+| `CAF_PUBLISH_EXECUTOR` | no | optional | `none` \| `dry_run` \| `meta` |
+| `CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC` | no | optional | Human gate after QC (default true) |
+| `CAF_OUTPUT_SCHEMA_VALIDATION_MODE` | no | optional | `skip` \| `warn` \| `enforce` |
+
+Mimic-specific vars: **§10** below. Full bootstrap: **`docs/REBUILD_FROM_DOCS.md`**.
+
+---
+
+## 1. Review app (`apps/review`) — Vercel / local
+
+Review is a **Next.js client of CAF Core** — job state lives in Postgres via Core APIs, not in the Review app database.
+
+| Variable | Secret? | Required | Where to set | Used for |
+|----------|---------|----------|--------------|----------|
+| `CAF_CORE_URL` | no | **yes** | Vercel env, `apps/review/.env.local` | Core API base (e.g. `http://localhost:3847`) |
+| `CAF_CORE_TOKEN` | **yes** | when Core auth on | Vercel env | Sent to Core as `x-caf-core-token` |
+| `CAF_CORE_API_TOKEN` | **yes** | optional alias | Some routes | Alternate name used by a few API routes |
+| `REVIEW_WRITE_TOKEN` | **yes** | optional | Vercel env | Protects `POST /api/task/.../decision` in Review |
+| `RENDERER_BASE_URL` | no | recommended | Vercel env | Carousel preview proxies (default `http://localhost:3333`) |
+| `NEXT_PUBLIC_APP_URL` | no | recommended | Vercel env | Absolute links in UI |
+| `PROJECT_SLUG` | no | optional | Vercel env | Lock workbench to one tenant; empty = all active projects |
+| `REVIEW_ALL_PROJECTS` | no | optional | Vercel env | `1`/`true` = cross-project queue even if `PROJECT_SLUG` set |
+| `REVIEW_FALLBACK_PROJECT_SLUG` | no | optional | Vercel env | Fallback when older Core lacks `/v1/review-queue-all/*` |
+
+**Legacy (not used by current Core-backed Review):** Google Sheets queue vars (`GOOGLE_REVIEW_QUEUE_*`, `GOOGLE_SERVICE_ACCOUNT_JSON`, etc.) may appear in old deploy notes — the current app reads the review queue from **Core `/v1/` APIs**.
 
 ---
 

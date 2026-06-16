@@ -30,6 +30,27 @@ describe("templateBgLlmSlideForDocAi", () => {
     });
     expect(scoped.headline).toBe("Tip three");
     expect(scoped.body).toBe("Detail line");
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "Tip three" },
+      { role: "body", text: "Detail line" },
+    ]);
+  });
+
+  it("maps inverted listicle body slides to decor title + paragraph", () => {
+    const scoped = templateBgLlmSlideForDocAi(3, 12, {
+      headline:
+        "She is spirited and adventurous, constantly passing it on as she guides her kids toward pursuing their ambitions.",
+      body: "A fierce and vibrant spirit defines the Aries mom.",
+      kicker: "Aries Mother Traits",
+    });
+    expect(scoped.headline).toBe("THE ARIES MOTHER");
+    expect(String(scoped.body)).toContain("She is spirited");
+    expect(scoped.text_blocks).toEqual(
+      expect.arrayContaining([
+        { role: "headline", text: "THE ARIES MOTHER" },
+        expect.objectContaining({ role: "body" }),
+      ])
+    );
   });
 });
 

@@ -8,7 +8,13 @@ CAF (Content Automation Framework) is a **content operating system**: **signals 
 
 | Document | Purpose |
 |----------|---------|
-| **[docs/CAF_CORE_COMPLETE_GUIDE.md](docs/CAF_CORE_COMPLETE_GUIDE.md)** | **Single merged reference** — overview, stack, lifecycles, layers, QC, risk, guidance, repos (for one-file onboarding / print) |
+| **[docs/CAF_PRODUCT_PITCH.md](docs/CAF_PRODUCT_PITCH.md)** | **Product pitch** — leadership, investors, evaluators |
+| **[docs/CAF_COMPLETE_PRODUCT_GUIDE.md](docs/CAF_COMPLETE_PRODUCT_GUIDE.md)** | **Complete product guide** — what CAF is and does (all capabilities) |
+| **[docs/EXTERNAL_CONTEXT_PACK.md](docs/EXTERNAL_CONTEXT_PACK.md)** | **ChatGPT / other repos** — tiered bundle index + system prompt template |
+| **[docs/REBUILD_FROM_DOCS.md](docs/REBUILD_FROM_DOCS.md)** | Bootstrap CAF Core from docs (DB → API → media → review) |
+| **[docs/CAF_CORE_COMPLETE_GUIDE.md](docs/CAF_CORE_COMPLETE_GUIDE.md)** | **Single merged reference** — overview, stack, lifecycles, layers, QC, risk, guidance, repos |
+| **[docs/DOMAIN_MODEL.md](docs/DOMAIN_MODEL.md)** | Entities, ID patterns, lifecycles (for external readers) |
+| **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** | Postgres `caf_core` table catalog |
 | **[docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md)** | What CAF Core is, who it is for, workflow in plain language |
 | **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** | Technical layers, lifecycle, critical files, integration contracts |
 | **[docs/LIFECYCLE.md](docs/LIFECYCLE.md)** | Run & job state machines, editorial & publishing states |
@@ -24,6 +30,7 @@ CAF (Content Automation Framework) is a **content operating system**: **signals 
 | [docs/CREATIVE_INTELLIGENCE.md](docs/CREATIVE_INTELLIGENCE.md) | Top-performer ingest, vision analysis, signal-pack styling |
 | [docs/USER_INPUT_AND_SECRETS.md](docs/USER_INPUT_AND_SECRETS.md) | Safety and secrets |
 | [ENV_AND_SECRETS_INVENTORY.md](ENV_AND_SECRETS_INVENTORY.md) | Environment variable list |
+| **[docs/export/README.md](docs/export/README.md)** | **Shareable PDF bundles** by topic (`docs/export/pdf/`) |
 
 ---
 
@@ -179,6 +186,11 @@ Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applica
 
 | Doc | Use |
 |-----|-----|
+| `docs/CAF_PRODUCT_PITCH.md` | Product pitch for leadership / evaluators |
+| `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` | Complete product guide (what CAF is and does) |
+| `docs/EXTERNAL_CONTEXT_PACK.md` | **ChatGPT / external repos** — tiered upload list + system prompt |
+| `docs/REBUILD_FROM_DOCS.md` | Bootstrap stack from documentation |
+| `docs/DOMAIN_MODEL.md`, `docs/DATABASE_SCHEMA.md` | IDs + Postgres tables for re-implementers |
 | `docs/CAF_CORE_COMPLETE_GUIDE.md` | **All-in-one** project logic: stack, lifecycle, layers, QC, risk, guidance, invariants |
 | `docs/PROJECT_OVERVIEW.md` | Stakeholder / onboarding summary of the product and workflow |
 | `docs/ARCHITECTURE.md` | Engineering: stack, modules, `generation_payload`, QC/learning notes |

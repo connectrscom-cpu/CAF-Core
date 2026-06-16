@@ -10,6 +10,13 @@ import {
   isStandardTemplatedCarouselFlow,
   type IdeaFormatBucket,
 } from "./format-routing.js";
+import {
+  carouselLaneCapKey,
+  normalizeContentLens,
+  PLAN_LANE_NICHE_CAROUSEL,
+  PLAN_LANE_PRODUCT_CAROUSEL,
+} from "../domain/idea-structure.js";
+import { CANONICAL_FLOW_TYPES } from "../domain/canonical-flow-types.js";
 import type { GenerationPlanResult, PlannedJob, ScoredCandidate } from "./types.js";
 
 export interface PlanSelectionContext {
@@ -35,6 +42,7 @@ export interface PlanSelectionState {
   plannedCarousel: number;
   plannedVideo: number;
   perFlowPlanned: Record<string, number>;
+  perLanePlanned: Record<string, number>;
   usedIdeaKeys: Set<string>;
 }
 
@@ -48,8 +56,28 @@ export function createPlanSelectionState(ctx: PlanSelectionContext): PlanSelecti
     plannedCarousel: 0,
     plannedVideo: 0,
     perFlowPlanned: {},
+    perLanePlanned: {},
     usedIdeaKeys: new Set<string>(),
   };
+}
+
+function carouselLaneCapForCandidate(
+  c: ScoredCandidate,
+  perFlowCaps: Record<string, number>
+): { laneKey: string; cap: number } | null {
+  if (!countsTowardCarouselRunCap(c.flow_type)) return null;
+  const payload = (c.payload ?? {}) as Record<string, unknown>;
+  const lens = normalizeContentLens(payload.content_lens);
+  const laneKey = carouselLaneCapKey(lens);
+  const laneCap = perFlowCaps[laneKey];
+  const flowCap = perFlowCaps[c.flow_type] ?? perFlowCaps[CANONICAL_FLOW_TYPES.CAROUSEL] ?? 0;
+  const cap =
+    laneCap !== undefined
+      ? laneCap
+      : lens === "product"
+        ? perFlowCaps[PLAN_LANE_PRODUCT_CAROUSEL] ?? flowCap
+        : perFlowCaps[PLAN_LANE_NICHE_CAROUSEL] ?? flowCap;
+  return { laneKey, cap };
 }
 
 function duplicateReason(pass: "primary" | "fallback"): string {
@@ -99,6 +127,11 @@ export async function selectJobsFromCandidates(
     const usedFt = state.perFlowPlanned[ft] ?? 0;
     const capFt = ctx.perFlowCaps[ft] ?? 0;
     varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, capFt - usedFt));
+    const laneInfo = carouselLaneCapForCandidate(c, ctx.perFlowCaps);
+    if (laneInfo) {
+      const laneUsed = state.perLanePlanned[laneInfo.laneKey] ?? 0;
+      varsThisCandidate = Math.min(varsThisCandidate, Math.max(0, laneInfo.cap - laneUsed));
+    }
     if (countsTowardCarouselRunCap(ft)) {
       varsThisCandidate = Math.min(
         varsThisCandidate,
@@ -141,6 +174,9 @@ export async function selectJobsFromCandidates(
       if (countsTowardCarouselRunCap(ft)) state.plannedCarousel += 1;
       if (isVideoFlow(ft)) state.plannedVideo += 1;
       state.perFlowPlanned[ft] = (state.perFlowPlanned[ft] ?? 0) + 1;
+      if (laneInfo) {
+        state.perLanePlanned[laneInfo.laneKey] = (state.perLanePlanned[laneInfo.laneKey] ?? 0) + 1;
+      }
     }
   }
 }

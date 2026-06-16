@@ -415,6 +415,11 @@ const envSchema = z.object({
    * Serialized `creation_pack` cap for top-performer mimic flows (signal pack + strategy + brand + hints).
    * Job-level `mimic_v1.visual_guideline` is injected separately — avoid duplicating full pack entries here.
    */
+  /**
+   * Serialized full `creation_pack` cap for standard carousel flows (strategy + brand + product + signal_pack).
+   * Mimic flows use `LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS` instead.
+   */
+  LLM_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(64_000),
   /** Max JSON size for mimic-flow `{{creation_pack_json}}` (visual structure lives on job `mimic_v1`). */
   LLM_MIMIC_CREATION_PACK_JSON_MAX_CHARS: z.coerce.number().int().min(2000).max(600_000).default(16_000),
   /** Tighter cap for `signal_pack` inside mimic creation packs (full pack default is too large). */

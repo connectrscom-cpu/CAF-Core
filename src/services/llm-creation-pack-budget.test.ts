@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  budgetCreationPackForCarouselFlow,
   budgetCreationPackForMimicFlow,
   budgetSignalPackContextForLlm,
   filterSignalPackIdeasForCandidate,
   slimDerivedGlobalsForLlm,
+  slimSignalPackIdeaRowForLlm,
   slimSignalPackIdeaRowForMimicLlm,
   slimVisualGuidelineEntryForLlm,
 } from "./llm-creation-pack-budget.js";
@@ -79,7 +81,7 @@ describe("llm-creation-pack-budget", () => {
     expect(JSON.stringify(budgeted).length).toBeLessThanOrEqual(20_000);
   });
 
-  it("does not filter ideas_json when mimicFlowOnly is false", () => {
+  it("filters ideas_json to the candidate for standard flows when idea-list packs are large", () => {
     const pack = {
       ideas_json: [fakeIdea("idea_a"), fakeIdea("idea_b")],
       overall_candidates_json: [],
@@ -89,7 +91,66 @@ describe("llm-creation-pack-budget", () => {
       { maxTotalJsonChars: 50_000, maxCandidateRows: 55, maxStringFieldChars: 2000 },
       { candidateData: { idea_id: "idea_b" }, mimicFlowOnly: false }
     );
-    expect((budgeted.ideas_json as unknown[]).length).toBe(2);
+    expect((budgeted.ideas_json as unknown[]).length).toBe(1);
+    expect((budgeted.ideas_json as Record<string, unknown>[])[0]?.id).toBe("idea_b");
+  });
+
+  it("strips aesthetic_analysis_json from visual guideline entries", () => {
+    const slim = slimVisualGuidelineEntryForLlm({
+      insights_id: "ins_1",
+      deck_as_whole_summary: "Dark celestial carousel",
+      aesthetic_analysis_json: { slides: [{ text_blocks: [{ text: "x".repeat(5000) }] }] },
+    });
+    expect(slim.aesthetic_analysis_json).toBeUndefined();
+    expect(slim.deck_as_whole_summary).toBe("Dark celestial carousel");
+  });
+
+  it("slims idea rows for standard LLM copy (drops OCR blobs, keeps editorial fields)", () => {
+    const slim = slimSignalPackIdeaRowForLlm({
+      id: "idea_1",
+      title: "Hook",
+      three_liner: "summary",
+      aesthetic_analysis_json: { slides: [] },
+    });
+    expect(slim.title).toBe("Hook");
+    expect(slim.aesthetic_analysis_json).toBeUndefined();
+  });
+
+  it("budgetCreationPackForCarouselFlow caps oversized idea-list + visual guideline packs", () => {
+    const pack = {
+      strategy: { thesis: "s".repeat(8_000) },
+      brand_constraints: { voice: "warm" },
+      product_profile: {
+        product_name: "Sign & Sound",
+        one_liner: "Daily horoscope + music",
+        elevator_pitch: "p".repeat(20_000),
+        proof_points: "x".repeat(20_000),
+      },
+      signal_pack: {
+        ideas_json: Array.from({ length: 12 }, (_, i) => fakeIdea(`idea_${i}`)),
+        derived_globals_json: {
+          visual_guidelines_pack_v1: {
+            entries: Array.from({ length: 6 }, (_, i) => ({
+              insights_id: `ins_${i}`,
+              aesthetic_analysis_json: {
+                slides: Array.from({ length: 12 }, () => ({
+                  text_blocks: [{ text: "d".repeat(2000), bbox_norm: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 } }],
+                })),
+              },
+            })),
+          },
+        },
+      },
+      candidate: { idea_id: "idea_3", title: "Planned" },
+    };
+    const out = budgetCreationPackForCarouselFlow(pack, 24_000, { candidateData: { idea_id: "idea_3" } });
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(24_000);
+    expect((out.signal_pack as Record<string, unknown>).ideas_json).toHaveLength(1);
+    const dg = (out.signal_pack as Record<string, unknown>).derived_globals_json as Record<string, unknown>;
+    const vgp = dg.visual_guidelines_pack_v1 as Record<string, unknown>;
+    for (const entry of (vgp.entries as Record<string, unknown>[]) ?? []) {
+      expect(entry.aesthetic_analysis_json).toBeUndefined();
+    }
   });
 
   it("slims derived globals hashtag leaderboard", () => {

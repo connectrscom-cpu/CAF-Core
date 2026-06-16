@@ -29,6 +29,8 @@ import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask 
 import { generateMimicSlideImage, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
 import { normalizeMimicReferenceItems } from "./mimic-reference-resolver.js";
 import {
+  finalizeMimicImageModelPrompt,
+  MIMIC_IMAGE_ART_ONLY_HARD_GUARD,
   mimicPromptForMode,
   type MimicPromptOverrides,
   type MimicRenderPromptSettings,
@@ -462,6 +464,7 @@ export async function extractMimicSlideBackground(
   );
   if (promptFields.intentInstruction) bgPrompt = `${bgPrompt} ${promptFields.intentInstruction}`;
   if (promptFields.safeZoneInstruction) bgPrompt = `${bgPrompt} ${promptFields.safeZoneInstruction}`;
+  if (styleHints) bgPrompt = finalizeMimicImageModelPrompt(bgPrompt);
 
   const resolvedPrompt = resolveMimicSlideImagePrompt(mimic, slideIndex, bgPrompt, imageInputMode);
   let referenceUrl: string | undefined;
@@ -753,6 +756,7 @@ function mimicSlidePromptFields(
       layout: hints.layout,
       visual: hints.visual,
       safeZoneInstruction: "",
+      intentInstruction: includeStyleHints ? buildSlideIntentInstruction(intent) : "",
       slidePurpose: includeStyleHints ? intent.slidePurpose : null,
       deckAesthetic: mood.aesthetic,
       deckVisualConsistency: mood.consistency,
@@ -799,7 +803,10 @@ const FULL_BLEED_TEXT_CAP = 200;
  * Tells Qwen what kind of slide this is and how to handle text/branding.
  */
 export function buildSlideIntentInstruction(intent: SlideIntentHints): string {
-  const parts: string[] = [];
+  const parts: string[] = [
+    "Nemotron layout guidance is for composition only — the image must be art-only with no readable text.",
+    MIMIC_IMAGE_ART_ONLY_HARD_GUARD,
+  ];
 
   if (intent.referenceTextLength > FULL_BLEED_TEXT_CAP) {
     parts.push(

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertMimicCarouselCopySlideCount,
   assertMimicSlideBackgroundPresent,
+  buildSlideIntentInstruction,
   effectiveMimicSlideRenderMode,
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
@@ -637,5 +638,25 @@ describe("pickStoredMimicPlateUrl", () => {
       3
     );
     expect(url).toBe("https://cdn.example/plate3.png");
+  });
+});
+
+describe("buildSlideIntentInstruction", () => {
+  it("always requires art-only output with no readable text for Nemotron-guided prompts", () => {
+    const minimal = buildSlideIntentInstruction({
+      slidePurpose: null,
+      brandSpecificity: null,
+      referenceTextLength: 0,
+    });
+    expect(minimal).toContain("ZERO readable text");
+    expect(minimal).toContain("art-only");
+
+    const hook = buildSlideIntentInstruction({
+      slidePurpose: "hook",
+      brandSpecificity: null,
+      referenceTextLength: 12,
+    });
+    expect(hook).toContain("ZERO readable text");
+    expect(hook).toContain("hook/cover slide");
   });
 });

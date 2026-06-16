@@ -48,9 +48,9 @@ One page per layer: **[layers/README.md](./layers/README.md)**.
 | **Asset** | `caf_core.assets` | Render outputs |
 | **Publication** | `caf_core.publication_placements` | Publish intent + outcome |
 
-Run planning does **not** consume `signal_packs.*_json` directly at start time. The current run-start path requires materializing planner rows into **`runs.candidates_json`** first:
-- `POST /v1/runs/:project_slug/:run_id/candidates` writes `runs.candidates_json` from the run’s attached signal pack (ideas JSON or legacy overall candidates).
-- `POST /v1/runs/:project_slug/:run_id/start` expects `runs.candidates_json` to exist and will error if it is missing.
+Run planning does **not** consume `signal_packs.*_json` directly at start time. The current run-start path requires materializing planner rows into **`runs.planned_jobs_json`** first (dual-written with legacy **`runs.candidates_json`**):
+- `POST /v1/runs/:project_slug/:run_id/jobs` (canonical) or legacy `.../candidates` — writes planner rows from the run’s attached signal pack.
+- `POST /v1/runs/:project_slug/:run_id/start` expects materialized rows and will error if missing.
 
 The schema also includes **`caf_core.candidates`** historically; do not assume it is the planning source of truth.
 
@@ -58,8 +58,8 @@ The schema also includes **`caf_core.candidates`** historically; do not assume i
 
 Full detail: **[LIFECYCLE.md](./LIFECYCLE.md)**.
 
-0. **Materialize candidates** (`POST /v1/runs/:project_slug/:run_id/candidates`) → **`materializeRunCandidates`**: writes `runs.candidates_json` from the run’s attached signal pack.
-1. **Start run** (`POST /v1/runs/:project_slug/:run_id/start`) → **`startRun`**: reads `runs.candidates_json`, runs **`decideGenerationPlan`**, **`upsertContentJob`** for each selected row → run advances through planning/generating.
+0. **Materialize jobs** (`POST /v1/runs/:project_slug/:run_id/jobs`) → writes `runs.planned_jobs_json` from the run’s attached signal pack.
+1. **Start run** (`POST /v1/runs/:project_slug/:run_id/start`) → **`startRun`**: reads `runs.planned_jobs_json`, runs **`decideGenerationPlan`**, **`upsertContentJob`** for each selected row → run advances through planning/generating.
 2. **Process run** (`processRunJobs` in **`job-pipeline.ts`**) for each job: **`PLANNED`** → generation → **`runQcForJob`** → routing / diagnostic → carousel or video render → **`IN_REVIEW`** (human gate; QC does not auto-approve by default—see **`CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC`**).
 3. **Review** updates **`content_jobs.status`** and **`editorial_reviews`** via **`v1`** routes.
 4. **Publishing** mutates **`publication_placements`**; executor mode from **`CAF_PUBLISH_EXECUTOR`**.
@@ -129,6 +129,10 @@ Optional lanes **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** and **`FLOW_TOP_PERFORMER_MI
 
 ## Related docs
 
+- [EXTERNAL_CONTEXT_PACK.md](./EXTERNAL_CONTEXT_PACK.md) — tiered docs for ChatGPT / other repos
+- [REBUILD_FROM_DOCS.md](./REBUILD_FROM_DOCS.md) — bootstrap from documentation
+- [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) — IDs and lifecycles (external)
+- [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) — Postgres table catalog
 - [CAF_CORE_COMPLETE_GUIDE.md](./CAF_CORE_COMPLETE_GUIDE.md) — merged single-file reference (overview + stack + layers + QC/risk/guidance)
 - [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md) — non-technical summary
 - [LIFECYCLE.md](./LIFECYCLE.md) — run & job states
@@ -138,4 +142,5 @@ Optional lanes **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** and **`FLOW_TOP_PERFORMER_MI
 - [API_REFERENCE.md](./API_REFERENCE.md)
 - [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md), [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md), [CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)
 - `README.md` — quick start, CLI, deploy
-- `.cursor/rules/caf-domain-model.mdc` — ID conventions (always-on rule)
+- `.cursor/rules/caf-domain-model.mdc` — ID conventions (Cursor always-on rule)
+- [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) — same domain rules for external readers

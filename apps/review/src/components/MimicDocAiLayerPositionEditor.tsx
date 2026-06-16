@@ -156,6 +156,8 @@ type MimicDocAiLayerPositionEditorProps = {
   onActiveBlockIndexChange?: (blockIndex: number | null) => void;
   /** Full-bleed mimic: neutral box labels (no headline/body roles in UI). */
   fullBleedMode?: boolean;
+  /** template_bg: slide copy drives OCR layer text; positions may still be edited. */
+  templateBgMode?: boolean;
   /** Project brand palette (hex) for the per-box colour quick-pick. */
   brandPalette?: string[];
   /** When set, preview the brand logo lower-right on the canvas. */
@@ -181,6 +183,12 @@ type ResizeDrag = {
   origH: number;
 };
 
+type PreviewResizeDrag = {
+  startX: number;
+  startScale: number;
+  colWidth: number;
+};
+
 const FONT_FAMILY_OPTIONS = [
   { label: "Sans (default)", value: "" },
   { label: "Inter / System", value: "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
@@ -202,6 +210,23 @@ const CORNER_CURSORS: Record<ResizeCorner, string> = {
   sw: "nesw-resize",
   se: "nwse-resize",
 };
+
+const PREVIEW_SCALE_KEY = "caf.mimic-docai.previewScale";
+const MIN_PREVIEW_SCALE = 0.45;
+const MAX_PREVIEW_SCALE = 2;
+const DEFAULT_PREVIEW_SCALE = 1;
+
+function clampPreviewScale(value: number): number {
+  return Math.max(MIN_PREVIEW_SCALE, Math.min(MAX_PREVIEW_SCALE, value));
+}
+
+function readStoredPreviewScale(): number {
+  if (typeof window === "undefined") return DEFAULT_PREVIEW_SCALE;
+  const stored = window.localStorage.getItem(PREVIEW_SCALE_KEY);
+  if (!stored) return DEFAULT_PREVIEW_SCALE;
+  const n = Number(stored);
+  return Number.isFinite(n) ? clampPreviewScale(n) : DEFAULT_PREVIEW_SCALE;
+}
 
 function layerStyleFromRow(
   layer: DocAiLayerBox,
@@ -233,6 +258,13 @@ function roleLabel(role: string, fullBleed?: boolean, blockIndex?: number): stri
   if (r === "body" || r === "subtitle" || r === "caption") return "Body";
   if (r && r !== "cta") return r.charAt(0).toUpperCase() + r.slice(1);
   return "Text";
+}
+
+function inferDisplayRole(layer: DocAiLayerBox, row?: DocAiLayerOverride): string {
+  const text = (row?.text ?? layer.text ?? "").trim();
+  if (/^@[a-z0-9_.]{2,}$/i.test(text)) return "handle";
+  if (layer.role === "handle" || layer.layer_key?.includes("handle")) return "handle";
+  return layer.role || "body";
 }
 
 function clampBox(
@@ -301,11 +333,15 @@ export function MimicDocAiLayerPositionEditor({
   activeBlockIndex = null,
   onActiveBlockIndexChange,
   fullBleedMode = false,
+  templateBgMode = false,
   brandPalette = [],
   logoOverlayUrl = "",
 }: MimicDocAiLayerPositionEditorProps) {
+  const canvasColRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(360);
+  const [previewScale, setPreviewScale] = useState(DEFAULT_PREVIEW_SCALE);
+  const [previewResizeDrag, setPreviewResizeDrag] = useState<PreviewResizeDrag | null>(null);
   const [overrides, setOverrides] = useState<Record<string, DocAiLayerOverride>>({});
   const [customLayers, setCustomLayers] = useState<DocAiLayerBox[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -328,12 +364,39 @@ export function MimicDocAiLayerPositionEditor({
     : "rgba(0,0,0,0.35)";
 
   useEffect(() => {
+    setPreviewScale(readStoredPreviewScale());
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(PREVIEW_SCALE_KEY, String(previewScale));
+  }, [previewScale]);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setContainerWidth(el.clientWidth || 360));
     ro.observe(el);
     setContainerWidth(el.clientWidth || 360);
     return () => ro.disconnect();
+  }, [previewScale]);
+
+  const bumpPreviewScale = useCallback((delta: number) => {
+    setPreviewScale((prev) => clampPreviewScale(Math.round((prev + delta) * 100) / 100));
+  }, []);
+
+  const onPreviewResizeMove = useCallback(
+    (e: React.PointerEvent) => {
+      if (!previewResizeDrag) return;
+      const dx = e.clientX - previewResizeDrag.startX;
+      const next = previewResizeDrag.startScale + dx / Math.max(120, previewResizeDrag.colWidth);
+      setPreviewScale(clampPreviewScale(Math.round(next * 100) / 100));
+    },
+    [previewResizeDrag]
+  );
+
+  const endPreviewResize = useCallback(() => {
+    setPreviewResizeDrag(null);
   }, []);
 
   const layerKeysFingerprint = useMemo(
@@ -371,7 +434,9 @@ export function MimicDocAiLayerPositionEditor({
     for (const layer of layers) {
       const key = layer.layer_key;
       const savedRow = resolveSaved(key);
-      const text = savedRow?.text ?? layer.text;
+      const text = templateBgMode
+        ? (layer.text?.trim() || savedRow?.text || "")
+        : (savedRow?.text ?? layer.text);
       const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
       const x_px = savedRow?.x_px ?? layer.x_px;
       const y_px = savedRow?.y_px ?? layer.y_px;
@@ -391,7 +456,7 @@ export function MimicDocAiLayerPositionEditor({
         ...(style.font_style_italic ? { font_style_italic: true } : {}),
         text,
         ...(savedRow?.hidden ? { hidden: true } : {}),
-        box_locked: true,
+        box_locked: templateBgMode ? locked : true,
       };
     }
     for (const savedRow of initialOverrides ?? []) {
@@ -444,7 +509,29 @@ export function MimicDocAiLayerPositionEditor({
     initialOverridesFingerprint,
     projectHandle,
     suppressReseed,
+    templateBgMode,
   ]);
+
+  const layerCopyFingerprintRef = useRef("");
+  useEffect(() => {
+    if (!templateBgMode || layers.length === 0) return;
+    const fp = layers.map((l) => `${l.layer_key}:${l.text}`).join("\0");
+    if (fp === layerCopyFingerprintRef.current) return;
+    layerCopyFingerprintRef.current = fp;
+    setOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const layer of layers) {
+        const key = layer.layer_key;
+        const row = next[key];
+        const freshText = layer.text?.trim();
+        if (!row || !freshText || row.text === freshText) continue;
+        next[key] = { ...row, text: freshText };
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [layers, templateBgMode]);
 
   const overrideList = useMemo(() => Object.values(overrides), [overrides]);
   const onOverridesChangeRef = useRef(onOverridesChange);
@@ -560,20 +647,27 @@ export function MimicDocAiLayerPositionEditor({
     return new Map(sorted.map((layer, index) => [layer.layer_key, index]));
   }, [visibleLayers, overrides]);
   useEffect(() => {
+    lastActiveBlockIndexRef.current = null;
+    setSelectedKey(null);
+  }, [slideIndex]);
+
+  useEffect(() => {
     if (activeBlockIndex == null) {
       lastActiveBlockIndexRef.current = null;
       return;
     }
     if (lastActiveBlockIndexRef.current === activeBlockIndex) return;
     lastActiveBlockIndexRef.current = activeBlockIndex;
-    const match = visibleLayers[activeBlockIndex];
+    const match =
+      visibleLayers.find((l) => l.block_index === activeBlockIndex) ?? visibleLayers[activeBlockIndex];
     if (match) setSelectedKey(match.layer_key);
   }, [activeBlockIndex, visibleLayers]);
 
   const selectLayer = useCallback(
     (key: string) => {
       setSelectedKey(key);
-      const idx = visibleLayers.findIndex((l) => l.layer_key === key);
+      const layer = visibleLayers.find((l) => l.layer_key === key);
+      const idx = layer?.block_index ?? visibleLayers.findIndex((l) => l.layer_key === key);
       if (idx >= 0) {
         lastActiveBlockIndexRef.current = idx;
         onActiveBlockIndexChange?.(idx);
@@ -651,12 +745,43 @@ export function MimicDocAiLayerPositionEditor({
         return next;
       });
     } else {
-      updateOverride(selectedKey, { hidden: true });
+      const refKey = refKeyFromLayerPositionKey(selectedKey);
+      const layerMeta = displayLayers.find((l) => l.layer_key === selectedKey);
+      setOverrides((prev) => {
+        const next = { ...prev };
+        for (const [key, entry] of Object.entries(next)) {
+          if (!entry || isCustomLayerKey(key)) continue;
+          if (key === selectedKey || refKeyFromLayerPositionKey(key) === refKey) {
+            next[key] = { ...entry, hidden: true };
+          }
+        }
+        next[refKey] = {
+          layer_key: refKey,
+          x_px: row.x_px ?? layerMeta?.x_px ?? 0,
+          y_px: row.y_px ?? layerMeta?.y_px ?? 0,
+          hidden: true,
+        };
+        return next;
+      });
     }
     setSelectedKey(null);
     lastActiveBlockIndexRef.current = null;
     onActiveBlockIndexChange?.(null);
-  }, [selectedKey, overrides, updateOverride, onActiveBlockIndexChange]);
+  }, [selectedKey, overrides, displayLayers, onActiveBlockIndexChange]);
+
+  const restoreHiddenLayers = useCallback(() => {
+    setOverrides((prev) => {
+      const next: Record<string, DocAiLayerOverride> = {};
+      for (const [key, row] of Object.entries(prev)) {
+        if (!row || row.hidden) continue;
+        next[key] = row;
+      }
+      return next;
+    });
+    setSelectedKey(null);
+    lastActiveBlockIndexRef.current = null;
+    onActiveBlockIndexChange?.(null);
+  }, [onActiveBlockIndexChange]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -701,8 +826,43 @@ export function MimicDocAiLayerPositionEditor({
             </button>
           ) : null}
           {hiddenCount > 0 ? (
-            <span className="mimic-docai-editor__hidden-count">{hiddenCount} hidden</span>
+            <>
+              <button type="button" className="btn-secondary btn-sm" onClick={restoreHiddenLayers}>
+                Restore hidden
+              </button>
+              <span className="mimic-docai-editor__hidden-count">{hiddenCount} hidden</span>
+            </>
           ) : null}
+        </div>
+        <div className="mimic-docai-editor__preview-size" title="Resize the slide preview">
+          <span className="mimic-docai-editor__preview-size-label">Preview</span>
+          <button
+            type="button"
+            className="btn-secondary mimic-docai-editor__font-step"
+            aria-label="Shrink preview"
+            onClick={() => bumpPreviewScale(-0.1)}
+          >
+            −
+          </button>
+          <input
+            type="range"
+            className="mimic-docai-editor__preview-size-slider"
+            min={Math.round(MIN_PREVIEW_SCALE * 100)}
+            max={Math.round(MAX_PREVIEW_SCALE * 100)}
+            step={5}
+            value={Math.round(previewScale * 100)}
+            onChange={(e) => setPreviewScale(clampPreviewScale(Number(e.target.value) / 100))}
+            aria-label="Preview size"
+          />
+          <button
+            type="button"
+            className="btn-secondary mimic-docai-editor__font-step"
+            aria-label="Enlarge preview"
+            onClick={() => bumpPreviewScale(0.1)}
+          >
+            +
+          </button>
+          <span className="mimic-docai-editor__preview-size-value">{Math.round(previewScale * 100)}%</span>
         </div>
       </div>
 
@@ -723,7 +883,7 @@ export function MimicDocAiLayerPositionEditor({
                 onClick={() => selectLayer(key)}
                 title={preview}
               >
-                {roleLabel(layer.role, fullBleedMode, blockIndex)}: {short}
+                {roleLabel(inferDisplayRole(layer, row), fullBleedMode, blockIndex)}: {short}
               </button>
             );
           })}
@@ -731,13 +891,23 @@ export function MimicDocAiLayerPositionEditor({
       ) : null}
 
       <div className="mimic-docai-editor__workspace">
-        <div className="mimic-docai-editor__canvas-col">
+        <div ref={canvasColRef} className="mimic-docai-editor__canvas-col">
           <div
             ref={containerRef}
             className="mimic-docai-editor__canvas"
-            onPointerMove={onPointerMove}
-            onPointerUp={endPointer}
-            onPointerLeave={endPointer}
+            style={{ width: `${previewScale * 100}%` }}
+            onPointerMove={(e) => {
+              onPreviewResizeMove(e);
+              onPointerMove(e);
+            }}
+            onPointerUp={(e) => {
+              endPreviewResize();
+              endPointer();
+            }}
+            onPointerLeave={(e) => {
+              endPreviewResize();
+              endPointer();
+            }}
           >
             <div className="mimic-docai-editor__canvas-inner">
               {baseImageUrl ? (
@@ -785,7 +955,8 @@ export function MimicDocAiLayerPositionEditor({
                 const padX = 10 * scale;
                 const corners: ResizeCorner[] = ["nw", "ne", "sw", "se"];
                 const paintIndex = layerPaintOrder.get(key) ?? 0;
-                const linkedBlock = visibleLayers.findIndex((l) => l.layer_key === key) === activeBlockIndex;
+                const linkedBlock =
+                  (layer.block_index ?? visibleLayers.findIndex((l) => l.layer_key === key)) === activeBlockIndex;
                 return (
                   <div
                     key={key}
@@ -878,6 +1049,20 @@ export function MimicDocAiLayerPositionEditor({
                 );
               })}
             </div>
+            <div
+              className="mimic-docai-editor__canvas-resize-handle"
+              title="Drag to resize preview"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.currentTarget.setPointerCapture(e.pointerId);
+                const colWidth = canvasColRef.current?.clientWidth ?? containerWidth;
+                setPreviewResizeDrag({
+                  startX: e.clientX,
+                  startScale: previewScale,
+                  colWidth,
+                });
+              }}
+            />
           </div>
         </div>
 
@@ -887,7 +1072,7 @@ export function MimicDocAiLayerPositionEditor({
               <p className="mimic-docai-editor__selected-header">
                 <span>
                   {roleLabel(
-                    selectedLayer.role,
+                    inferDisplayRole(selectedLayer, selected),
                     fullBleedMode,
                     selectedLayer.block_index ?? visibleLayers.findIndex((l) => l.layer_key === selected.layer_key)
                   )}

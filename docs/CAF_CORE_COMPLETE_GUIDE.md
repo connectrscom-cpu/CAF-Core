@@ -24,6 +24,10 @@
 14. [Repository layout & companion services](#14-repository-layout--companion-services)
 15. [Engineering invariants](#15-engineering-invariants)
 16. [Split documentation map](#16-split-documentation-map)
+17. [External context pack (ChatGPT / other repos)](#17-external-context-pack-chatgpt--other-repos)
+18. [Database schema summary](#18-database-schema-summary)
+19. [Rebuild from documentation](#19-rebuild-from-documentation)
+20. [Inputs pipeline (upstream)](#20-inputs-pipeline-upstream)
 
 ---
 
@@ -185,9 +189,9 @@ Statuses: `draft`, `scheduled`, `publishing`, `published`, `failed`, `cancelled`
 3. **Start run** — `startRun`: plan → `upsertContentJob` each selected row.
 4. **Process (draft packages)** — run endpoints `POST /v1/runs/:project_slug/:run_id/process` / `/start-and-process` generate LLM output + QC + diagnostics in background and stop jobs at `GENERATED` (package ready).
 5. **Render** — `POST /v1/runs/:project_slug/:run_id/render` runs rendering for `GENERATED` jobs in background.
-4. **Review** — Human decision; optional rework (`rework-orchestrator.ts`).
-5. **Publish** — `publication_placements`; executor `none` | `dry_run` | `meta`.
-6. **Learn** — Rules APIs, metrics, optional editorial cron.
+6. **Review** — Human decision; optional rework (`rework-orchestrator.ts`).
+7. **Publish** — `publication_placements`; executor `none` | `dry_run` | `meta`.
+8. **Learn** — Rules APIs, metrics, optional editorial cron.
 
 **Optional mimic path:** when `FLOW_TOP_PERFORMER_MIMIC_*` is enabled and `MIMIC_IMAGE_ENABLED=1`, generate resolves references before copy, render uses image providers + HBS/DocAI overlays — see section 11.
 
@@ -467,6 +471,8 @@ For smaller files to edit in isolation:
 
 | Topic | File |
 |-------|------|
+| Product pitch | `docs/CAF_PRODUCT_PITCH.md` |
+| Complete product guide | `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` |
 | Overview | `docs/PROJECT_OVERVIEW.md` |
 | Architecture (short) | `docs/ARCHITECTURE.md` |
 | Lifecycle only | `docs/LIFECYCLE.md` |
@@ -479,7 +485,73 @@ For smaller files to edit in isolation:
 | Video / HeyGen details | `docs/VIDEO_FLOWS.md`, `docs/HEYGEN_API_V3.md` |
 | Top-performer mimic | `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`, `docs/MIMIC_IMAGE_FLOWS.md`, `docs/CREATIVE_INTELLIGENCE.md` |
 | AI agent onboarding | `AGENTS.md` |
-| Domain IDs | `.cursor/rules/caf-domain-model.mdc` |
+| Domain IDs | `docs/DOMAIN_MODEL.md` (external) or `.cursor/rules/caf-domain-model.mdc` |
+| **External / ChatGPT bundle** | **`docs/EXTERNAL_CONTEXT_PACK.md`** |
+| **Rebuild from docs** | **`docs/REBUILD_FROM_DOCS.md`** |
+| **Database tables** | **`docs/DATABASE_SCHEMA.md`** |
+
+---
+
+## 17. External context pack (ChatGPT / other repos)
+
+To give **another LLM or repository** enough context without uploading all source code:
+
+1. Start with **`docs/EXTERNAL_CONTEXT_PACK.md`** — tiered file list + system prompt template.
+2. **Tier 1 (always):** `AGENTS.md`, this file, `docs/DOMAIN_MODEL.md`, `docs/ARCHITECTURE.md`, `docs/LIFECYCLE.md`, `docs/TECH_STACK.md`, `docs/layers/README.md`.
+3. **Tier 2 (by topic):** mimic, inputs, video, API reference, QC, risk — see EXTERNAL_CONTEXT_PACK table.
+4. **Tier 3 (implementation):** attach only the 3–15 relevant `src/` files for the task.
+
+**Do not** paste `node_modules`, full `admin.ts`, or entire `migrations/` into ChatGPT. For schema truth, use **`docs/DATABASE_SCHEMA.md`** + specific migration files.
+
+---
+
+## 18. Database schema summary
+
+All tables live in PostgreSQL schema **`caf_core`**. ~70 migrations in `migrations/`.
+
+| Domain | Key tables |
+|--------|------------|
+| Pipeline | `projects`, `runs`, `signal_packs`, `content_jobs`, `job_drafts`, `assets` |
+| Review/QC | `editorial_reviews`, `diagnostic_audits`, `qc_checklists`, `risk_policies` |
+| Config | `brand_constraints`, `allowed_flow_types`, `flow_definitions`, `prompt_templates` |
+| Learning | `learning_rules`, `learning_observations`, `performance_metrics` |
+| Publishing | `publication_placements` |
+| Inputs | `inputs_evidence_*`, `inputs_ideas`, `ideas`, `signal_pack_ideas` |
+| Creative Intel | `creative_source_assets`, `creative_visual_analyses`, `creative_insights` |
+
+Full catalog: **`docs/DATABASE_SCHEMA.md`**.
+
+---
+
+## 19. Rebuild from documentation
+
+Another team can bootstrap a working stack using:
+
+1. Postgres + `npm run migrate`
+2. `.env` from `.env.example` (minimum: `DATABASE_URL`, `OPENAI_API_KEY`)
+3. Optional: media workers + Review app
+4. Seed flows + demo project
+5. Ingest signal pack → materialize jobs → start → process → render → review
+
+Step-by-step: **`docs/REBUILD_FROM_DOCS.md`**.
+
+---
+
+## 20. Inputs pipeline (upstream)
+
+Research intake before signal packs:
+
+| Stage | Where | Tables |
+|-------|-------|--------|
+| Evidence upload | Admin `/admin/inputs`, `POST /v1/inputs-evidence/upload` | `inputs_evidence_imports`, `inputs_evidence_rows` |
+| Scrapers | Admin scrapers tab, `npm run run-scraper` | `inputs_scraper_*` |
+| Insights | Admin `/admin/processing` | `inputs_evidence_row_insights` |
+| Build signal pack | Processing API | `signal_packs`, `ideas` |
+| Creative Intelligence | Ingest APIs | `creative_*` |
+
+Review app: **pipeline** pages proxy read-only evidence/signal-pack inspect — processing controls stay in Core admin.
+
+Roadmap: **`docs/CAF_INPUTS_PIPELINE_ROADMAP.md`**.
 
 ---
 

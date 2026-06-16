@@ -25,6 +25,7 @@ import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { synthesizeIdeasJsonFromInsightsLlm } from "./ideas-from-insights-llm.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
+import { readIdeaGenerationQuotasFromCriteria } from "../domain/idea-structure.js";
 import { upsertIdea, replaceIdeaGroundingInsights } from "../repositories/ideas.js";
 import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds, backfillTopPerformerInsightPerformanceReviews } from "../repositories/inputs-evidence-insights.js";
@@ -328,6 +329,7 @@ export async function buildSignalPackFromEvidenceImport(
     importId,
     packRunId,
     targetIdeaCount: maxIdeas,
+    ideaQuotas: readIdeaGenerationQuotasFromCriteria(profile.criteria_json, maxIdeas),
     contextInsightCap,
     minTopPerformerInContext,
     model: synthModel,

@@ -8,6 +8,7 @@ import {
   DEFAULT_MIMIC_TEXT_REMOVAL_PROMPT,
   finalizeMimicImageModelPrompt,
   isFluxTextBakePromptOverride,
+  mimicPromptForMode,
   sanitizeVisualDescriptionForImagePrompt,
 } from "./mimic-prompt-builder.js";
 
@@ -46,12 +47,12 @@ describe("buildMimicTemplateBackgroundPrompt", () => {
     expect(prompt).toContain("~10%");
     expect(prompt).toContain("Make a new slide like this");
     expect(prompt).toContain("Remove ALL on-image text");
+    expect(prompt).toContain("ZERO readable text");
     expect(prompt).not.toContain("centered in the frame");
     expect(prompt).toContain("Black woolen cat figurine");
     expect(prompt).not.toContain("how you should text");
     expect(prompt).not.toContain("Body text");
-    expect(prompt).not.toContain("Leave the lower 45%");
-    expect(prompt).not.toContain("reference slide has dense");
+    expect(prompt).toContain("dense on-image text");
   });
 
   it("ignores vision hints unless Prompt Labs override is set", () => {
@@ -64,12 +65,15 @@ describe("buildMimicTemplateBackgroundPrompt", () => {
   });
 
   it("interpolates hints when a custom override template is provided", () => {
-    const prompt = buildMimicTemplateBackgroundPrompt(
-      { visualDescription: "sunset hill", layoutTemplate: "text on photo", includeStyleHints: true },
-      { template_bg: "Strip text. {{visual_instruction}}" }
+    const prompt = mimicPromptForMode(
+      "template_bg",
+      { layout: "text on photo", visual: "sunset hill" },
+      { template_bg: "Strip text. {{visual_instruction}}" },
+      { includeStyleHints: true }
     );
     expect(prompt).toContain("sunset hill");
     expect(prompt).toContain("text on photo");
+    expect(prompt).toContain("ZERO readable text");
   });
 });
 

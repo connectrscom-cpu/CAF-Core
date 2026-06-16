@@ -208,11 +208,12 @@ function slideRowsFromParsed(parsed: Record<string, unknown>): Record<string, un
   return slides.filter((s) => s && typeof s === "object" && !Array.isArray(s)) as Record<string, unknown>[];
 }
 
-const FLUX_PROMPT_LLM_SYSTEM = `You write text-to-image prompts for Instagram carousel background plates.
+const FLUX_PROMPT_LLM_SYSTEM = `You write text-to-image prompts for Instagram carousel background plates (art-only visual plates — template backgrounds and full-bleed slides).
 
 Rules:
 - Output ONLY valid JSON: { "slides": [ { "slide_index": number, "flux_image_prompt": string } ] }
 - One flux_image_prompt per requested slide_index.
+- CRITICAL: Every flux_image_prompt must state that the image contains ZERO readable text — no words, letters, numbers, logos, @handles, watermarks, captions, signs, UI labels, or gibberish. All copy is added later via HTML/CSS overlay only.
 - NEVER include readable text, letters, numbers, logos, watermarks, UI labels, or @handles in the image.
 - Do NOT quote reference on-screen copy verbatim — convey message and mood visually only.
 - Preserve overlay safe zones described in safe_zone_hint (keep those regions smooth and low-detail).

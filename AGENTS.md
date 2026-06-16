@@ -12,7 +12,9 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 
 | Resource | Why |
 |----------|-----|
-| `.cursor/rules/caf-domain-model.mdc` | **ID conventions**, `task_id` joins, lifecycle states |
+| `docs/EXTERNAL_CONTEXT_PACK.md` | **Tiered doc bundle** for ChatGPT / other repos / rebuilds |
+| `docs/DOMAIN_MODEL.md` | **ID conventions**, `task_id` joins, lifecycle states (external copy) |
+| `.cursor/rules/caf-domain-model.mdc` | Same domain rules (Cursor always-on) |
 | `docs/ARCHITECTURE.md` | Layers, critical files, QC/learning split |
 | `src/config.ts` | Env flags (Zod); defaults for validation, human review after QC, URLs |
 
@@ -70,6 +72,12 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 
 | Doc | Audience |
 |-----|----------|
+| `docs/CAF_PRODUCT_PITCH.md` | Leadership / investors / evaluators |
+| `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` | **Complete product guide** — what CAF is and does |
+| `docs/EXTERNAL_CONTEXT_PACK.md` | **ChatGPT / external repos** — what to upload, system prompt |
+| `docs/REBUILD_FROM_DOCS.md` | Engineers bootstrapping from scratch |
+| `docs/DATABASE_SCHEMA.md` | Postgres table catalog |
+| `docs/DOMAIN_MODEL.md` | Entities, IDs, lifecycles |
 | `README.md` | Quick start, API index, deploy |
 | `docs/CAF_CORE_COMPLETE_GUIDE.md` | **Single-file** full project reference |
 | `docs/PROJECT_OVERVIEW.md` | Stakeholders / onboarding |
@@ -81,6 +89,7 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 | `docs/GENERATION_GUIDANCE.md` | Prompt guidance |
 | `docs/RISK_RULES.md` | Risk policies vs project `risk_rules` |
 | `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Top-performer mimic (full); `docs/MIMIC_IMAGE_FLOWS.md` quick ref |
+| `docs/MIMIC_TEXT_PLACEMENT_AUTOMATION.md` | **Future** mimic text placement QA (post-render composite loop) — read before automating |
 | `docs/CREATIVE_INTELLIGENCE.md` | Top-performer ingest upstream of mimic |
 | `docs/API_REFERENCE.md` | HTTP examples |
 
@@ -89,6 +98,7 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 - `scene-assembly-n8n-legacy.mdc` — when touching scene/n8n-legacy paths
 - `mimic-signal-pack-llm-filter.mdc` — mimic LLM creation pack; single-idea `signal_pack` filter
 - `mimic-carousel-package.mdc` — `mimic_carousel_package` vs `FLOW_CAROUSEL` / `carousel_package`
+- `mimic-text-placement-automation.mdc` — **before automating mimic text placement**: post-render composite QA loop, HTML overlay invariants, `docai_layer_positions` schema
 - `caf-domain-model.mdc` — **alwaysApply**
 
 If the user’s request conflicts with **domain invariants**, **ask** or **surface the tradeoff** before renaming IDs or changing status enums.

@@ -349,10 +349,44 @@ export function pickMimicDocAiLayerPositionsForSlide(
   return rows?.length ? rows : null;
 }
 
+/** Drop junk custom layers and stale OCR copy text before template_bg inspect/reprint. */
+export function sanitizeTemplateBgDocAiOverridesForInspect(
+  overrides: MimicDocAiLayerPositionOverride[]
+): MimicDocAiLayerPositionOverride[] {
+  return overrides
+    .filter((o) => {
+      if (!isCustomAddedMimicDocAiLayerKey(o.layer_key)) return true;
+      if (o.hidden) return false;
+      const t = o.text?.trim();
+      return Boolean(t && t !== "New text");
+    })
+    .map((o) => {
+      if (isCustomAddedMimicDocAiLayerKey(o.layer_key)) return o;
+      const { text: _text, ...rest } = o;
+      return rest;
+    });
+}
+
+/** Inspect/preview only — hidden markers are reprint-only; always show all OCR slots in editor. */
+export function coerceTemplateBgInspectOverrides<T extends MimicDocAiLayerPositionLayer>(
+  baseLayers: T[],
+  overrides: MimicDocAiLayerPositionOverride[]
+): MimicDocAiLayerPositionOverride[] {
+  const sanitized = sanitizeTemplateBgDocAiOverridesForInspect(overrides).filter((o) => !o.hidden);
+  if (!sanitized.length || !baseLayers.length) return sanitized;
+  const visible = applyMimicDocAiLayerPositionOverrides(baseLayers, sanitized, {
+    applySavedTextOnBaseLayers: false,
+  });
+  if (visible.length > 0) return sanitized;
+  return sanitized.filter((o) => !o.hidden);
+}
+
 export function applyMimicDocAiLayerPositionOverrides<T extends MimicDocAiLayerPositionLayer>(
   layers: T[],
-  overrides: MimicDocAiLayerPositionOverride[]
+  overrides: MimicDocAiLayerPositionOverride[],
+  opts?: { applySavedTextOnBaseLayers?: boolean }
 ): T[] {
+  const applySavedTextOnBaseLayers = opts?.applySavedTextOnBaseLayers !== false;
   if (!overrides.length) return layers;
   const baseOverrides = overrides.filter((o) => !isCustomAddedMimicDocAiLayerKey(o.layer_key));
   const customOverrides = overrides.filter(
@@ -393,7 +427,8 @@ export function applyMimicDocAiLayerPositionOverrides<T extends MimicDocAiLayerP
       if (
         o.text != null &&
         o.text.trim() &&
-        (isCustomAddedMimicDocAiLayerKey(o.layer_key) || o.box_locked)
+        (isCustomAddedMimicDocAiLayerKey(o.layer_key) ||
+          (applySavedTextOnBaseLayers && o.box_locked))
       ) {
         next = patchMimicDocAiLayerText(next, o.text);
       }

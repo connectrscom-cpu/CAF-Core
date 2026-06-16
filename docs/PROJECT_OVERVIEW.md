@@ -57,8 +57,14 @@ For a **technical** walkthrough (files, tables, boundaries), see **[ARCHITECTURE
 
 | Audience | Doc |
 |----------|-----|
-| Product / ops / leadership | This file |
+| **Pitch / investors / evaluators** | **`docs/CAF_PRODUCT_PITCH.md`** |
+| **Complete product guide (what CAF does)** | **`docs/CAF_COMPLETE_PRODUCT_GUIDE.md`** |
+| Product / ops / leadership (short) | This file |
+| **External LLM / other repository** | **`docs/EXTERNAL_CONTEXT_PACK.md`** + Tier 1 bundle |
+| **Rebuild / bootstrap** | **`docs/REBUILD_FROM_DOCS.md`** |
 | Engineers implementing features | `docs/CAF_CORE_COMPLETE_GUIDE.md` (single file), or `docs/ARCHITECTURE.md`, `docs/layers/README.md`, `README.md`, `docs/API_REFERENCE.md` |
+| Database / schema | `docs/DATABASE_SCHEMA.md` |
+| Domain IDs & lifecycles | `docs/DOMAIN_MODEL.md` |
 | Lifecycle & states | `docs/LIFECYCLE.md` |
 | QC / guidance / risk behavior | `docs/QUALITY_CHECKS.md`, `docs/GENERATION_GUIDANCE.md`, `docs/RISK_RULES.md` |
 | Top-performer mimic | `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`, `docs/MIMIC_IMAGE_FLOWS.md`, `docs/CREATIVE_INTELLIGENCE.md` |
@@ -71,6 +77,12 @@ Marketing may call CAF a “content operating system.” In **this repository**,
 
 ## See also
 
+- [CAF_PRODUCT_PITCH.md](./CAF_PRODUCT_PITCH.md) — product pitch for evaluators
+- [CAF_COMPLETE_PRODUCT_GUIDE.md](./CAF_COMPLETE_PRODUCT_GUIDE.md) — **full product guide**
+- [EXTERNAL_CONTEXT_PACK.md](./EXTERNAL_CONTEXT_PACK.md) — **ChatGPT / external repo bundle index**
+- [REBUILD_FROM_DOCS.md](./REBUILD_FROM_DOCS.md) — bootstrap guide
+- [DOMAIN_MODEL.md](./DOMAIN_MODEL.md) — entities and IDs
+- [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md) — table catalog
 - [CAF_CORE_COMPLETE_GUIDE.md](./CAF_CORE_COMPLETE_GUIDE.md) — **everything in one document** (merged from split docs)
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — layers, modules, lifecycle
 - [LIFECYCLE.md](./LIFECYCLE.md) — state machines

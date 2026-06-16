@@ -190,6 +190,7 @@ const BODY_KEYS = [
 
 const EXTRA_KEYS = [
   "kicker",
+  "slide_title",
   "note",
   "tag",
   "badge",
@@ -690,6 +691,36 @@ export function parseSlidesFromJson(json: string | undefined): {
 }
 
 
+export function buildFlatSlidesFromNormalized(slides: NormalizedSlide[]): Record<string, unknown>[] {
+  const mergeExtras = (base: Record<string, unknown>, extras: Record<string, string> | undefined): Record<string, unknown> => {
+    if (!extras) return base;
+    const next: Record<string, unknown> = { ...base };
+    for (const [k, v] of Object.entries(extras)) {
+      const t = String(v ?? "").trim();
+      if (t) next[k] = t;
+      else delete next[k];
+    }
+    return next;
+  };
+
+  return slides.map((cur, i) => {
+    const slideIndex = i + 1;
+    return syncSlideTextBlocksFromNormalized(
+      mergeExtras(
+        {
+          slide_index: slideIndex,
+          slide_number: slideIndex,
+          headline: cur.headline || undefined,
+          body: cur.body || undefined,
+          ...(cur.handle?.trim() ? { handle: cur.handle.trim() } : {}),
+        },
+        cur.extras
+      ) as Record<string, unknown>,
+      cur
+    );
+  });
+}
+
 export function buildSlidesJson(slides: NormalizedSlide[], raw: CarouselSlidesPayload | null): CarouselSlidesPayload {
   const out: CarouselSlidesPayload = raw ? { ...raw } : {};
   const cover = slides.find((s) => s.type === "cover");
@@ -750,26 +781,10 @@ export function buildSlidesJson(slides: NormalizedSlide[], raw: CarouselSlidesPa
     out.cta_handle = cta.handle?.trim() || undefined;
   }
 
-  // If the raw payload was already a flat `slides[]` deck, keep those objects in sync so extra
-  // slot fields persist through the review → export flow.
-  if (Array.isArray(out.slides) && out.slides.length === slides.length) {
-    out.slides = out.slides.map((orig, i) => {
-      const cur = slides[i]!;
-      const base: Record<string, unknown> =
-        orig && typeof orig === "object" && !Array.isArray(orig) ? { ...(orig as Record<string, unknown>) } : {};
-      return syncSlideTextBlocksFromNormalized(
-        mergeExtras(
-          {
-            ...base,
-            headline: cur.headline || undefined,
-            body: cur.body || undefined,
-            ...(cur.handle?.trim() ? { handle: cur.handle.trim() } : {}),
-          },
-          cur.extras
-        ) as Record<string, unknown>,
-        cur
-      );
-    });
+  // Always rebuild flat `slides[]` from the editor deck — inspect/reprint prefer this array over
+  // legacy cover/body/cta keys, and a length mismatch used to leave stale per-slide copy behind.
+  if (slides.length > 0) {
+    out.slides = buildFlatSlidesFromNormalized(slides);
   }
 
   return out;

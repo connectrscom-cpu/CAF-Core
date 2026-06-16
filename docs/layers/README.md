@@ -17,6 +17,10 @@ Each file describes **one vertical slice** of CAF Core: responsibility, main mod
 
 Cross-cutting topics:
 
+- [../EXTERNAL_CONTEXT_PACK.md](../EXTERNAL_CONTEXT_PACK.md) — **ChatGPT / external repo** doc bundle
+- [../REBUILD_FROM_DOCS.md](../REBUILD_FROM_DOCS.md) — bootstrap guide
+- [../DOMAIN_MODEL.md](../DOMAIN_MODEL.md) — entities and IDs
+- [../DATABASE_SCHEMA.md](../DATABASE_SCHEMA.md) — Postgres tables
 - [../LIFECYCLE.md](../LIFECYCLE.md) — run & job state machines
 - [../TECH_STACK.md](../TECH_STACK.md) — technologies
 - [../QUALITY_CHECKS.md](../QUALITY_CHECKS.md) — QC checklists

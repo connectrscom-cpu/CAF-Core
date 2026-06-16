@@ -4,7 +4,7 @@ import { parseMimicTextBlocks } from "../services/mimic-slide-typography.js";
 export const MIMIC_ON_SCREEN_TEXT_CHAR_THRESHOLD = 200;
 
 /** Slides at or below this length are treated as short punchy copy (whole-slide visual mimic path). */
-export const MIMIC_SHORT_COPY_CHAR_THRESHOLD = 120;
+export const MIMIC_SHORT_COPY_CHAR_THRESHOLD = 240;
 
 /**
  * When Document AI OCR is present on a slide, frames above this on-screen text length are

@@ -1,5 +1,9 @@
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import { mimicSlideFieldsFromTextBlocks, type MimicTextBlock } from "@/lib/carousel-slides";
+import {
+  isListicleBodyInvertedLlmCopy,
+  resolveTemplateBgBodyOnScreenCopy,
+} from "@caf-core-carousel/mimic-template-bg-copy";
 
 export type MimicTemplateBgSlot = "cover" | "body" | "cta";
 
@@ -74,9 +78,24 @@ export function resolveMimicTemplateBgEditorFields(
     ];
   }
 
+  const kicker = String(slide.extras?.kicker ?? "").trim();
+  const slideTitle = String(slide.extras?.slide_title ?? "").trim();
+  const onScreen = resolveTemplateBgBodyOnScreenCopy({
+    headline,
+    body,
+    kicker,
+    slide_title: slideTitle,
+  });
+  if (onScreen.inverted) {
+    return [
+      { key: "headline", label: "Title", role: "headline", text: onScreen.headline },
+      { key: "body", label: "Body", role: "body", text: onScreen.body },
+    ];
+  }
+
   return [
-    { key: "headline", label: "Headline", role: "headline", text: headline },
-    { key: "body", label: "Body", role: "body", text: body },
+    { key: "headline", label: "Headline", role: "headline", text: onScreen.headline },
+    { key: "body", label: "Body", role: "body", text: onScreen.body },
   ];
 }
 
@@ -89,11 +108,17 @@ export function applyMimicTemplateBgFieldEdit(
 ): NormalizedSlide {
   const slot = templateBgSlotForSlide(slideIndex1Based, totalSlides);
   let next: NormalizedSlide = { ...slide };
+  const kicker = String(slide.extras?.kicker ?? "").trim();
+  const inverted =
+    slot === "body" &&
+    isListicleBodyInvertedLlmCopy(slide.headline.trim(), slide.body.trim(), kicker);
 
   if (fieldKey === "headline") {
-    next = { ...next, headline: text };
+    next = inverted
+      ? { ...next, extras: { ...(next.extras ?? {}), slide_title: text } }
+      : { ...next, headline: text };
   } else if (fieldKey === "body") {
-    next = { ...next, body: text };
+    next = inverted ? { ...next, headline: text } : { ...next, body: text };
   } else if (fieldKey === "subtitle") {
     next = {
       ...next,
@@ -168,18 +193,28 @@ export function templateBgLlmSlideForDocAi(
   const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
 
   if (slot === "cover") {
+    const coverBody = subtitle || (body && headline ? "" : body);
+    const text_blocks = [
+      ...(headline ? [{ role: "headline", text: headline }] : []),
+      ...(coverBody ? [{ role: "body", text: coverBody }] : []),
+    ];
     return {
       ...rawLlmSlide,
       headline,
       title: headline,
-      body: subtitle || (body && headline ? "" : body),
+      body: coverBody,
       cover_subtitle: subtitle || body,
       subtitle: subtitle || body,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
     };
   }
   if (slot === "cta") {
     const ctaHeadline = cta || headline;
     const ctaBody = handle || body || subtitle;
+    const text_blocks = [
+      ...(ctaHeadline ? [{ role: "headline", text: ctaHeadline }] : []),
+      ...(ctaBody ? [{ role: "handle", text: ctaBody }] : []),
+    ];
     return {
       ...rawLlmSlide,
       headline: ctaHeadline,
@@ -188,11 +223,26 @@ export function templateBgLlmSlideForDocAi(
       cta_text: ctaHeadline,
       handle: ctaBody,
       cta_handle: ctaBody,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
     };
   }
+  const kickerField = String(rawLlmSlide.kicker ?? "").trim();
+  const slideTitle = String(rawLlmSlide.slide_title ?? "").trim();
+  const onScreen = resolveTemplateBgBodyOnScreenCopy({
+    headline,
+    body,
+    kicker: kickerField || subtitle,
+    slide_title: slideTitle,
+  });
+  const text_blocks = [
+    ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
+    ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
+    ...(handle ? [{ role: "handle", text: handle }] : []),
+  ];
   return {
     ...rawLlmSlide,
-    headline,
-    body: body || subtitle,
+    headline: onScreen.headline,
+    body: onScreen.body,
+    ...(text_blocks.length > 0 ? { text_blocks } : {}),
   };
 }

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  carouselExecutionProfileSchema,
+  contentLensSchema,
+  productAngleSchema,
+  videoExecutionProfileSchema,
+} from "./idea-structure.js";
 
 export const ideaPlatformSchema = z
   .enum(["Instagram", "TikTok", "Reddit", "Facebook", "Multi"])
@@ -40,6 +46,13 @@ export const signalPackIdeaSchema = z.object({
 
   confidence_score: z.number().min(0).max(1).optional(),
   idea_score: z.number().min(0).max(1).optional(),
+
+  content_lens: contentLensSchema.optional(),
+  execution_profile: z.string().min(1).max(40).optional(),
+  carousel_style: carouselExecutionProfileSchema.optional(),
+  video_style: videoExecutionProfileSchema.optional(),
+  product_angle: productAngleSchema.optional(),
+  cta_class: z.enum(["engage", "educate", "product_awareness", "soft_convert"]).optional(),
 });
 
 export type SignalPackIdeaV2 = z.infer<typeof signalPackIdeaSchema>;

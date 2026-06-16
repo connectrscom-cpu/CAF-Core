@@ -13,6 +13,7 @@ import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
 import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
+import { applyIdeaStructureToPlannerRow } from "../domain/idea-structure.js";
 import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
 import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 import { getBrandConstraints, getProductProfile, getStrategyDefaults } from "../repositories/project-config.js";
@@ -181,13 +182,17 @@ function mapIdeasV2ToPlannerSourceRows(
     const contentIdea = title || thesis || three || id || "Selected idea";
     const summary = three || [whyNow, novelty].filter(Boolean).join(" — ") || contentIdea;
 
-    return {
+    return applyIdeaStructureToPlannerRow({
       idea_id: id,
       candidate_id: id,
       platform,
       target_platform: platform,
       format,
-      ...(format.toLowerCase() === "video" && videoStyle ? { video_style: videoStyle } : {}),
+      content_lens: i.content_lens,
+      execution_profile: i.execution_profile,
+      carousel_style: i.carousel_style,
+      video_style: videoStyle ?? i.video_style,
+      product_angle: i.product_angle,
       content_idea: contentIdea,
       summary,
       confidence_score: confidence ?? ideaScore ?? 0.8,
@@ -203,7 +208,7 @@ function mapIdeasV2ToPlannerSourceRows(
       risk_flags: riskFlags.length ? riskFlags : undefined,
       grounding_insight_ids: grounding.length ? grounding : undefined,
       provenance: "signal_pack.ideas_json",
-    } satisfies Record<string, unknown>;
+    });
   });
 }
 
