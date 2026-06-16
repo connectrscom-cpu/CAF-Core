@@ -1049,14 +1049,27 @@ export function MimicCarouselLayerEditorPanel({
       const roleForBox = (layer: DocAiLayerBox) =>
         inferDocAiLayerRole(layer, draftByKey.get(layer.layer_key), fullBleedMode);
 
-      let target =
-        fieldRole != null
-          ? inspectBoxes.find((layer) => layoutRoleMatchesField(roleForBox(layer), fieldRole))
-          : inspectBoxes[blockIndex] ?? layoutTextBlocks[blockIndex];
-      if (!target && fieldRole != null) {
-        target = layoutTextBlocks.find((layer) => layoutRoleMatchesField(layer.role, fieldRole));
+      const resolveLayoutBlockToBox = (
+        layoutBlock: (typeof layoutTextBlocks)[number] | undefined
+      ): DocAiLayerBox | undefined => {
+        if (!layoutBlock) return undefined;
+        return docAiLayerBoxes.find((layer) => layer.layer_key === layoutBlock.layer_key);
+      };
+
+      let target: DocAiLayerBox | undefined;
+      if (fieldRole != null) {
+        target = inspectBoxes.find((layer) => layoutRoleMatchesField(roleForBox(layer), fieldRole));
+        if (!target) {
+          const layoutMatch = layoutTextBlocks.find((layer) =>
+            layoutRoleMatchesField(layer.role, fieldRole)
+          );
+          target = resolveLayoutBlockToBox(layoutMatch);
+        }
+      } else {
+        target =
+          inspectBoxes[blockIndex] ?? resolveLayoutBlockToBox(layoutTextBlocks[blockIndex]);
       }
-      if (!target) target = layoutTextBlocks[blockIndex];
+      if (!target) target = resolveLayoutBlockToBox(layoutTextBlocks[blockIndex]);
       if (!target) return;
       if (fieldRole === "body" && roleForBox(target) === "handle") return;
       if (fieldRole === "headline" && roleForBox(target) === "handle") return;
