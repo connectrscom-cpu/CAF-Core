@@ -19,6 +19,16 @@ export function templateBgSlotForSlide(slideIndex1Based: number, totalSlides: nu
   return "body";
 }
 
+/** All output slide indices (1-based) for a template_bg slot — middle slides share one background plate. */
+export function templateBgSlideIndicesForSlot(slot: MimicTemplateBgSlot, totalSlides: number): number[] {
+  if (totalSlides < 1) return [];
+  if (totalSlides === 1) return slot === "body" ? [1] : [];
+  if (slot === "cover") return [1];
+  if (slot === "cta") return [totalSlides];
+  if (totalSlides <= 2) return [];
+  return Array.from({ length: totalSlides - 2 }, (_, i) => i + 2);
+}
+
 export type MimicTemplateBgEditorField = {
   key: "headline" | "body" | "subtitle" | "handle";
   label: string;

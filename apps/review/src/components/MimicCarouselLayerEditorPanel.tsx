@@ -19,6 +19,10 @@ import {
   mimicTextBackingColorToHex,
 } from "@caf-core-carousel/mimic-slide-typography";
 import { refKeyFromLayerPositionKey } from "@caf-core-carousel/mimic-docai-layer-positions";
+import {
+  templateBgSlideIndicesForSlot,
+  type MimicTemplateBgSlot,
+} from "@/lib/mimic-template-bg";
 
 
 
@@ -1269,9 +1273,9 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
-  async function handleRegenerateSlideImage() {
+  async function regenerateSlideImages(slideIndices: number[]) {
 
-    if (!taskId.trim() || !projectSlug.trim()) return;
+    if (!taskId.trim() || !projectSlug.trim() || slideIndices.length === 0) return;
 
     setRegenerateBusy(true);
 
@@ -1293,7 +1297,7 @@ export function MimicCarouselLayerEditorPanel({
 
           project: projectSlug.trim(),
 
-          slide_indices: [editorSlide],
+          slide_indices: slideIndices,
 
           visual_similarity_pct: regenSimilarityPct,
 
@@ -1313,7 +1317,7 @@ export function MimicCarouselLayerEditorPanel({
 
       }
 
-      setRegenerateMsg(json.message ?? `Regenerating slide ${editorSlide}…`);
+      setRegenerateMsg(json.message ?? `Regenerating ${slideIndices.length} slide(s)…`);
 
       refreshCarouselAfterReprint();
 
@@ -1331,12 +1335,35 @@ export function MimicCarouselLayerEditorPanel({
 
 
 
+  async function handleRegenerateSlideImage() {
+
+    await regenerateSlideImages([editorSlide]);
+
+  }
+
+
+
+  async function handleRegenerateTemplateBgSlot(slot: MimicTemplateBgSlot) {
+
+    const indices = templateBgSlideIndicesForSlot(slot, slideCount);
+
+    if (indices.length === 0) return;
+
+    await regenerateSlideImages(indices);
+
+  }
+
+
+
   if (!job) return null;
 
 
 
   const showEditor = docAiLayerBoxes.length > 0;
   const hasHiddenDraftLayers = layerPosDraft.some((row) => row.hidden);
+  const templateBgMiddleSlideCount = templateBgMode
+    ? templateBgSlideIndicesForSlot("body", slideCount).length
+    : 0;
 
   const restoreDefaultLayout = useCallback(() => {
     const cleared = layerPosDraft.filter((row) => !row.hidden);
@@ -1424,7 +1451,7 @@ export function MimicCarouselLayerEditorPanel({
           onClick={() => void handleRegenerateSlideImage()}
           title="Run Flux/Qwen again for this slide (billed)"
         >
-          {regenerateBusy ? "Regenerating…" : "Regenerate"}
+          {regenerateBusy ? "Regenerating…" : templateBgMode ? "This slide" : "Regenerate"}
         </button>
 
         {onDeleteSlide && slideCount > 1 ? (
@@ -1443,6 +1470,48 @@ export function MimicCarouselLayerEditorPanel({
         ) : null}
 
       </div>
+
+      {templateBgMode ? (
+        <div className="mimic-regen-route mimic-regen-route--slots">
+          <div className="mimic-regen-route__group">
+            <span className="mimic-regen-route__label">Background slot</span>
+            <button
+              type="button"
+              className="mimic-regen-route__chip"
+              disabled={regenerateBusy || reprintBusy || layerPosSaving}
+              onClick={() => void handleRegenerateTemplateBgSlot("cover")}
+              title="Regenerate cover slide background (slide 1)"
+            >
+              Cover
+            </button>
+            {templateBgMiddleSlideCount > 0 ? (
+              <button
+                type="button"
+                className="mimic-regen-route__chip"
+                disabled={regenerateBusy || reprintBusy || layerPosSaving}
+                onClick={() => void handleRegenerateTemplateBgSlot("body")}
+                title={`Regenerate shared middle background for slides 2–${slideCount - 1}`}
+              >
+                Middle ({templateBgMiddleSlideCount})
+              </button>
+            ) : null}
+            {slideCount > 1 ? (
+              <button
+                type="button"
+                className="mimic-regen-route__chip"
+                disabled={regenerateBusy || reprintBusy || layerPosSaving}
+                onClick={() => void handleRegenerateTemplateBgSlot("cta")}
+                title={`Regenerate CTA slide background (slide ${slideCount})`}
+              >
+                CTA
+              </button>
+            ) : null}
+          </div>
+          <p className="mimic-regen-route__note">
+            Middle slides share one background plate — regen middle updates all list slides at once.
+          </p>
+        </div>
+      ) : null}
 
       {showRegenRoute ? (
         <div className="mimic-regen-route">

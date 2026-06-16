@@ -3,6 +3,8 @@ import {
   mimicTemplateLibraryObjectPath,
   referenceIndexForTemplateSlot,
   resolveTemplateStorageDecision,
+  templateBgAssetPositionsForSlideIndices,
+  templateBgSlideIndicesForSlot,
   templateBgSlidePlanRef,
   templateBgSlotForIndex,
 } from "./mimic-template-library.js";
@@ -124,6 +126,16 @@ describe("templateBgSlotForIndex", () => {
     expect(templateBgSlotForIndex(1, 5)).toBe("cover");
     expect(templateBgSlotForIndex(3, 5)).toBe("body");
     expect(templateBgSlotForIndex(5, 5)).toBe("cta");
+  });
+});
+
+describe("templateBgSlideIndicesForSlot", () => {
+  it("returns cover, middle, and cta slide indices for a 12-slide deck", () => {
+    expect(templateBgSlideIndicesForSlot("cover", 12)).toEqual([1]);
+    expect(templateBgSlideIndicesForSlot("body", 12)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(templateBgSlideIndicesForSlot("cta", 12)).toEqual([12]);
+    expect(templateBgAssetPositionsForSlideIndices([2, 11], 12)).toEqual([1]);
+    expect(templateBgAssetPositionsForSlideIndices([1, 12], 12)).toEqual([0, 11]);
   });
 });
 

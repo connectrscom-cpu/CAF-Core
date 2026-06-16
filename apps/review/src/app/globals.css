@@ -572,6 +572,9 @@ textarea { resize: vertical; }
   border-radius: 8px;
   background: var(--bg-secondary);
 }
+.mimic-regen-route--slots {
+  margin-top: 8px;
+}
 .mimic-regen-route__group {
   display: flex;
   flex-wrap: wrap;

@@ -102,7 +102,9 @@ import {
   resolveMimicCarouselRenderSlideCount,
   targetMimicCarouselCopySlideCount,
   slideMimicRenderMode,
+  mimicDeckUsesSlotDeduplication,
 } from "./mimic-carousel-render.js";
+import { templateBgAssetPositionsForSlideIndices } from "../domain/mimic-template-library.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { ensureMimicEvidenceCarouselTemplate } from "./mimic-evidence-carousel-template.js";
 import { MIMIC_FULL_BLEED_RENDER_TEMPLATE, MIMIC_LAYOUT_TEMPLATE_DEFAULT } from "./mimic-carousel-template-layout.js";
@@ -2616,11 +2618,26 @@ export async function rerenderCarouselSlidesAtIndices(
   if (!renderOpts?.textOverlayOnly) {
     await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, indices);
     await deleteMimicVisualPlateAssetsAtPositions(db, job.project_id, job.task_id, indices);
+    const mimicPayload = pickMimicPayload(job.generation_payload);
+    const usesTemplateBgSlots =
+      isTopPerformerMimicCarouselFlow(job.flow_type) &&
+      mimicPayload?.mode === "template_bg" &&
+      mimicDeckUsesSlotDeduplication(mimicPayload);
+    const totalSlides =
+      usesTemplateBgSlots && mimicPayload
+        ? (targetMimicCarouselCopySlideCount(
+            job.generation_payload as Record<string, unknown>,
+            mimicPayload
+          ) ?? Math.max(...indices, 1))
+        : Math.max(...indices, 1);
+    const bgAssetPositions = usesTemplateBgSlots
+      ? templateBgAssetPositionsForSlideIndices(indices, totalSlides)
+      : indices.map((i) => i - 1);
     await deleteMimicBackgroundAssetsAtPositions(
       db,
       job.project_id,
       job.task_id,
-      indices.map((i) => i - 1)
+      bgAssetPositions
     );
   }
 

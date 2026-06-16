@@ -156,6 +156,37 @@ export function templateBgSlotForIndex(slideIndex: number, totalSlides: number):
   return "body";
 }
 
+/** MIMIC_BACKGROUND asset position for a template_bg slot (cover=0, shared body=1, cta=last). */
+export function templateBgAssetPositionForSlot(slot: TemplateBgSlot, totalSlides: number): number {
+  if (slot === "cover") return 0;
+  if (slot === "cta") return Math.max(0, totalSlides - 1);
+  return 1;
+}
+
+/** All output slide indices (1-based) that share a template_bg slot type. */
+export function templateBgSlideIndicesForSlot(slot: TemplateBgSlot, totalSlides: number): number[] {
+  if (totalSlides < 1) return [];
+  if (totalSlides === 1) return slot === "body" ? [1] : [];
+  if (slot === "cover") return [1];
+  if (slot === "cta") return [totalSlides];
+  if (totalSlides <= 2) return [];
+  return Array.from({ length: totalSlides - 2 }, (_, i) => i + 2);
+}
+
+/** Unique MIMIC_BACKGROUND positions to invalidate when re-rendering these output slides. */
+export function templateBgAssetPositionsForSlideIndices(
+  slideIndices1Based: number[],
+  totalSlides: number
+): number[] {
+  const positions = new Set<number>();
+  for (const i of slideIndices1Based) {
+    if (!Number.isFinite(i) || i < 1) continue;
+    const slot = templateBgSlotForIndex(Math.floor(i), totalSlides);
+    positions.add(templateBgAssetPositionForSlot(slot, totalSlides));
+  }
+  return [...positions].sort((a, b) => a - b);
+}
+
 /**
  * Pick a non-promotional reference index for cover / body / CTA extraction.
  */
