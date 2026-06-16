@@ -14,6 +14,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+  FLOW_VISUAL_FIRST_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 
 /**
@@ -105,6 +106,13 @@ export const CAROUSEL_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
     category: "product_carousel",
     uiChannel: "carousel",
     keys: [PLAN_LANE_PRODUCT_CAROUSEL],
+  },
+  {
+    id: "visual_first_carousel",
+    label: "Carousel — visual-first (top-performer render)",
+    category: "niche_carousel",
+    uiChannel: "carousel",
+    keys: [FLOW_VISUAL_FIRST_CAROUSEL],
   },
 ] as const;
 
@@ -232,7 +240,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
 export const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   {
     id: "tp_mimic_video",
-    label: "Top performer mimic — video (not wired)",
+    label: "Top performer mimic — video (routes to HeyGen)",
     category: "top_performer_mimic",
     uiChannel: "mimic",
     keys: [FLOW_TOP_PERFORMER_MIMIC_VIDEO],
@@ -276,6 +284,7 @@ export function defaultMaxJobsPerFlowType(): Record<string, number> {
       out[k] = CAROUSEL_CAP;
     }
   }
+  out[FLOW_VISUAL_FIRST_CAROUSEL] = CAROUSEL_CAP;
   out[PLAN_LANE_NICHE_CAROUSEL] = CAROUSEL_CAP;
   out[PLAN_LANE_PRODUCT_CAROUSEL] = Math.max(1, Math.floor(CAROUSEL_CAP / 3));
   for (const group of DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS) {

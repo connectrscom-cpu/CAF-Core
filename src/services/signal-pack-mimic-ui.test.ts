@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { SignalPackRow } from "../repositories/signal-packs.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "../domain/signal-pack-top-performer-knowledge.js";
+import { CANONICAL_FLOW_TYPES } from "../domain/canonical-flow-types.js";
+import { FLOW_TOP_PERFORMER_MIMIC_VIDEO } from "../domain/top-performer-mimic-flow-types.js";
 import {
   buildSignalPackMimicReferencesForUi,
   mimicKindToFlowType,
@@ -200,5 +202,56 @@ describe("plannerRowsFromMimicPicks", () => {
     expect(rows[0]?.target_flow_type).toBe(mimicKindToFlowType("carousel"));
     expect(rows[0]?.grounding_insight_ids).toEqual(["ins_car_1"]);
     expect(rows[0]?.manual_mimic_pick).toBe(true);
+  });
+
+  it("routes video mimic picks to HeyGen flow from format_pattern", () => {
+    const pack = {
+      derived_globals_json: {
+        [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]: {
+          entries: [
+            {
+              insights_id: "ins_vid_1",
+              analysis_tier: "top_performer_video",
+              source_evidence_row_id: "303",
+              evidence_kind: "tiktok_video",
+              hook_text_preview: "UGC hook",
+              format_pattern: "ugc",
+            },
+          ],
+        },
+      },
+    } as unknown as SignalPackRow;
+
+    const rows = plannerRowsFromMimicPicks(
+      pack,
+      [{ insights_id: "ins_vid_1", mimic_kind: "video" }],
+      "RUN_TEST"
+    );
+    expect(rows[0]?.target_flow_type).toBe(CANONICAL_FLOW_TYPES.VID_SCRIPT);
+    expect(rows[0]?.video_style).toBe("script_avatar");
+    expect(rows[0]?.target_flow_type).not.toBe(FLOW_TOP_PERFORMER_MIMIC_VIDEO);
+  });
+
+  it("shows HeyGen lane label for video references in UI", () => {
+    const pack = {
+      derived_globals_json: {
+        [SIGNAL_PACK_DERIVED_GLOBALS_KEYS.visualGuidelinesPackV1]: {
+          entries: [
+            {
+              insights_id: "ins_vid_2",
+              analysis_tier: "top_performer_video",
+              source_evidence_row_id: "304",
+              evidence_kind: "tiktok_video",
+              hook_text_preview: "B-roll style",
+              format_pattern: "b_roll",
+            },
+          ],
+        },
+      },
+    } as unknown as SignalPackRow;
+
+    const rows = buildSignalPackMimicReferencesForUi(pack);
+    expect(rows[0]?.predicted_render_label).toContain("No avatar");
+    expect(rows[0]?.predicted_render_detail).toContain("FLOW_VID_PROMPT_NO_AVATAR");
   });
 });

@@ -12,12 +12,17 @@ import {
   isTopPerformerMimicCarouselFlow,
   isTopPerformerMimicImageFlow,
   isTopPerformerMimicRenderableFlow,
+  isVisualFirstCarouselFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
 /** Standard renderer carousel (not top-performer mimic). */
 export function isStandardTemplatedCarouselFlow(flowType: string): boolean {
-  if (isTopPerformerMimicCarouselFlow(flowType) || isTopPerformerMimicImageFlow(flowType)) {
+  if (
+    isTopPerformerMimicCarouselFlow(flowType) ||
+    isVisualFirstCarouselFlow(flowType) ||
+    isTopPerformerMimicImageFlow(flowType)
+  ) {
     return false;
   }
   return resolveCanonicalFlowType(flowType) === CANONICAL_FLOW_TYPES.CAROUSEL;
@@ -98,6 +103,7 @@ const STRICT_FORMAT_BUCKETS = new Set<IdeaFormatBucket>(["carousel", "video"]);
  * (one job per idea); mimic flows use separate lanes so they can run parallel to FLOW_CAROUSEL.
  */
 export function planningLaneForFlowType(flowType: string): string {
+  if (isVisualFirstCarouselFlow(flowType)) return "visual_first_carousel";
   if (isTopPerformerMimicCarouselFlow(flowType)) return "mimic_carousel";
   if (isTopPerformerMimicImageFlow(flowType)) return "mimic_image";
   if (isCarouselFlow(flowType)) return "carousel";

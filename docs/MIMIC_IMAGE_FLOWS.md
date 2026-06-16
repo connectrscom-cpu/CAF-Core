@@ -7,10 +7,11 @@ Optional pipeline lanes that recreate **visual patterns** from archived top-perf
 | Flow | Format | Reference tier |
 |------|--------|----------------|
 | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single post | `top_performer_deep` (exactly **one** frame) |
-| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` |
-| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | — | Placeholder (not wired) |
+| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` | Manual mimic picks |
+| `FLOW_VISUAL_FIRST_CAROUSEL` | Carousel | `top_performer_carousel` | Visual-first ideas (`carousel_style: visual_first` / `mixed`) |
+| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | Video | `top_performer_video` | Routes to **HeyGen** (`FLOW_VID_*`) — not pixel mimic |
 
-Mimic lanes (`mimic_image`, `mimic_carousel`) run **in parallel** with `FLOW_CAROUSEL` — separate plan caps.
+TP-grounded carousel lanes (`mimic_carousel`, `visual_first_carousel`) share render/copy (`isTpGroundedCarouselRenderFlow`) but have **separate** plan caps and prompts.
 
 ## Enable (both required)
 
@@ -22,7 +23,7 @@ Mimic lanes (`mimic_image`, `mimic_carousel`) run **in parallel** with `FLOW_CAR
 | Key | Role |
 |-----|------|
 | `mimic_v1` | **Render source of truth** — mode, references, slide plans |
-| `mimic_carousel_package` | Review snapshot only (`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`) — **not** `carousel_package` |
+| `mimic_carousel_package` | Review snapshot for TP-grounded carousel flows (`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, `FLOW_VISUAL_FIRST_CAROUSEL`) — **not** `carousel_package` |
 | `mimic_render_context` | Copy-time hints (slide count, template path) |
 | `mimic_job_grounding` | Per-slide layout for copy LLM |
 

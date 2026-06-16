@@ -6,7 +6,7 @@ import {
   ideaKeyPrimaryPass,
   planningLaneForFlowType,
 } from "./format-routing.js";
-import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_IMAGE } from "../domain/top-performer-mimic-flow-types.js";
+import { FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, FLOW_TOP_PERFORMER_MIMIC_IMAGE, FLOW_VISUAL_FIRST_CAROUSEL } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
 function cand(
@@ -73,6 +73,7 @@ describe("format-routing", () => {
   it("does not route carousel-format ideas to mimic image flow", () => {
     expect(flowTypeMatchesRowFormat(FLOW_TOP_PERFORMER_MIMIC_IMAGE, "carousel")).toBe(false);
     expect(planningLaneForFlowType(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL)).toBe("mimic_carousel");
+    expect(planningLaneForFlowType(FLOW_VISUAL_FIRST_CAROUSEL)).toBe("visual_first_carousel");
     expect(planningLaneForFlowType("FLOW_CAROUSEL")).toBe("carousel");
   });
 

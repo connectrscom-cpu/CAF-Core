@@ -21,6 +21,7 @@ import {
 } from "./publish-metadata-enrich.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
+import { topPerformerVideoHeygenSystemSuffix } from "../domain/top-performer-video-knowledge.js";
 
 /**
  * Editorial pattern: reviewers repeatedly flagged videos where captions were "extremely weak"
@@ -155,7 +156,7 @@ export async function ensureVideoPromptInPayload(
     apiKey,
     {
       model: config.OPENAI_MODEL,
-      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}${productCaptionAddendum}`.trim(),
+      system_prompt: `${withVideoPromptDurationPolicy(baseSys, config).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}${productCaptionAddendum}${topPerformerVideoHeygenSystemSuffix(pack)}`.trim(),
       user_prompt: userPrompt,
       max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2000),
     },

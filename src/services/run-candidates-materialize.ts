@@ -25,6 +25,12 @@ import {
   TIER_FOR_KIND,
 } from "./signal-pack-mimic-ui.js";
 import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
+import {
+  readTopPerformerVideoFormatPattern,
+  resolveTopPerformerVideoHeygenRoute,
+} from "../domain/top-performer-video-heygen-routing.js";
+import { findVisualGuidelineEntryForGrounding } from "../domain/top-performer-grounding.js";
+import { VISUAL_FIRST_CAROUSEL_PROVENANCE } from "../domain/visual-first-carousel-flow-types.js";
 
 export type RunCandidatesMimicPick = {
   insights_id: string;
@@ -152,8 +158,16 @@ function selectedIdeaIds(pack: SignalPackRow): string[] {
 
 function mapIdeasV2ToPlannerSourceRows(
   ideas: Record<string, unknown>[],
-  config?: AppConfig
+  config?: AppConfig,
+  pack?: SignalPackRow
 ): Record<string, unknown>[] {
+  const derived =
+    pack?.derived_globals_json &&
+    typeof pack.derived_globals_json === "object" &&
+    !Array.isArray(pack.derived_globals_json)
+      ? (pack.derived_globals_json as Record<string, unknown>)
+      : null;
+
   return ideas.map((i) => {
     const id = String(i.id ?? "").trim() || String(i.idea_id ?? "").trim();
     const title = String(i.title ?? "").trim();
@@ -161,7 +175,6 @@ function mapIdeasV2ToPlannerSourceRows(
     const thesis = String(i.thesis ?? "").trim();
     const platform = String(i.platform ?? "Multi").trim() || "Multi";
     const format = String(i.format ?? "post").trim();
-    const videoStyle = normalizeVideoStyle(i.video_style ?? i.video_pipeline);
     const cta = String(i.cta ?? "").trim();
     const whyNow = String(i.why_now ?? "").trim();
     const novelty = String(i.novelty_angle ?? "").trim();
@@ -178,6 +191,16 @@ function mapIdeasV2ToPlannerSourceRows(
         ? Math.min(0.99, config.CREATIVE_INTEL_PLANNER_PAST_PERFORMANCE_BOOST)
         : 0.5;
 
+    let videoStyle = normalizeVideoStyle(i.video_style ?? i.video_pipeline);
+    if (!videoStyle && format === "video" && derived && grounding.length > 0) {
+      const tpEntry = findVisualGuidelineEntryForGrounding(derived, grounding[0]!);
+      if (tpEntry && String(tpEntry.analysis_tier ?? "").trim() === "top_performer_video") {
+        videoStyle = resolveTopPerformerVideoHeygenRoute(tpEntry).intent;
+      }
+    }
+
+    const carouselStyle = String(i.carousel_style ?? i.execution_profile ?? "").trim();
+
     // Planner expects a loose "overall_candidates_json-like" row shape.
     const contentIdea = title || thesis || three || id || "Selected idea";
     const summary = three || [whyNow, novelty].filter(Boolean).join(" — ") || contentIdea;
@@ -192,6 +215,12 @@ function mapIdeasV2ToPlannerSourceRows(
       execution_profile: i.execution_profile,
       carousel_style: i.carousel_style,
       video_style: videoStyle ?? i.video_style,
+      visual_first_carousel_lane:
+        format === "carousel" &&
+        (carouselStyle === "visual_first" || carouselStyle === "mixed") &&
+        grounding.length > 0
+          ? true
+          : undefined,
       product_angle: i.product_angle,
       content_idea: contentIdea,
       summary,
@@ -207,7 +236,11 @@ function mapIdeasV2ToPlannerSourceRows(
       key_points: keyPoints.length ? keyPoints : undefined,
       risk_flags: riskFlags.length ? riskFlags : undefined,
       grounding_insight_ids: grounding.length ? grounding : undefined,
-      provenance: "signal_pack.ideas_json",
+      provenance:
+        format === "carousel" &&
+        (carouselStyle === "visual_first" || carouselStyle === "mixed")
+          ? VISUAL_FIRST_CAROUSEL_PROVENANCE
+          : "signal_pack.ideas_json",
     });
   });
 }
@@ -226,7 +259,7 @@ export function plannerRowsFromIdeaSubset(
   // Prefer canonical rich ideas stored in ideas_json (id field), fall back to legacy idea_id shape.
   const rich = ideasJsonAsRich(pack).filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
   if (rich.length > 0) {
-    const mapped = mapIdeasV2ToPlannerSourceRows(rich, config);
+    const mapped = mapIdeasV2ToPlannerSourceRows(rich, config, pack);
     return normalizePlannerRows(mapped, runIdHint);
   }
   const legacy = ideasArray(pack).filter((i) => want.has(String(i.idea_id ?? "").trim()));
@@ -270,7 +303,10 @@ export function plannerRowsFromMimicPicks(
       );
     }
 
-    const flowType = mimicKindToFlowType(pick.mimic_kind);
+    const flowType =
+      pick.mimic_kind === "video"
+        ? resolveTopPerformerVideoHeygenRoute(entry).flow_type
+        : mimicKindToFlowType(pick.mimic_kind);
     const rowId = stringField(entry.source_evidence_row_id, 40);
     const hook = stringField(entry.hook_text_preview, 400);
     const why = stringField(entry.why_it_worked, 600);
@@ -280,6 +316,9 @@ export function plannerRowsFromMimicPicks(
     const contentIdea = hook || why.slice(0, 400) || `Mimic ${pick.mimic_kind} · ${insightsId}`;
     const format =
       pick.mimic_kind === "carousel" ? "carousel" : pick.mimic_kind === "video" ? "video" : "post";
+
+    const videoRoute =
+      pick.mimic_kind === "video" ? resolveTopPerformerVideoHeygenRoute(entry) : null;
 
     rows.push({
       idea_id: ideaId,
@@ -301,6 +340,8 @@ export function plannerRowsFromMimicPicks(
       analysis_tier: tier || expectedTier,
       grounding_insight_ids: [insightsId],
       target_flow_type: flowType,
+      video_style: videoRoute?.intent,
+      top_performer_video_route_reason: videoRoute?.reason,
       manual_mimic_pick: true,
       mimic_kind: pick.mimic_kind,
       provenance: "signal_pack.visual_guidelines_pack_v1",
@@ -334,7 +375,7 @@ export async function materializeRunCandidates(
     // Canonical: rich ideas are stored in ideas_json.
     const rich = ideasJsonAsRich(pack);
     if (rich.length > 0) {
-      const mapped = mapIdeasV2ToPlannerSourceRows(rich, config);
+      const mapped = mapIdeasV2ToPlannerSourceRows(rich, config, pack);
       rows = normalizePlannerRows(mapped, run.run_id);
       provenance = { ...provenance, source: "signal_pack.ideas_json", idea_count: rich.length, row_count: rows.length };
     } else {
@@ -368,7 +409,7 @@ export async function materializeRunCandidates(
       source = "signal_pack.selected_idea_ids_json + ideas_v2_json(deprecated)";
     }
     if (chosen.length === 0) throw new Error("No matching ideas_v2_json rows for selected_idea_ids_json");
-    const mapped = mapIdeasV2ToPlannerSourceRows(chosen, config);
+    const mapped = mapIdeasV2ToPlannerSourceRows(chosen, config, pack);
     rows = normalizePlannerRows(mapped, run.run_id);
     provenance = {
       ...provenance,

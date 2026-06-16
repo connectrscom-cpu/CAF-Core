@@ -2,7 +2,7 @@ import type { AppConfig } from "../config.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { listAssetsByTask } from "../repositories/assets.js";
 import { resolveProjectInstagramHandle } from "../domain/instagram-handle.js";
 import { getContentJobByTaskId } from "../repositories/jobs.js";
@@ -60,7 +60,7 @@ export async function listMimicCarouselJobsForRun(
 
   const out: MimicOverlayLabJobRow[] = [];
   for (const row of r.rows) {
-    if (!isTopPerformerMimicCarouselFlow(row.flow_type)) continue;
+    if (!isTpGroundedCarouselRenderFlow(row.flow_type)) continue;
     const mimic = pickMimicPayload(row.generation_payload ?? {});
     if (!mimic) continue;
 

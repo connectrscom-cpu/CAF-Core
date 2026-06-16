@@ -3,6 +3,7 @@ import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "../domain/signal-pack-top-perf
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+  FLOW_VISUAL_FIRST_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { JobLineageResult } from "../repositories/job-lineage.js";
 import { enrichGuidelineEntryFromLineageInsight } from "../domain/mimic-job-grounding.js";
@@ -39,7 +40,9 @@ const MIMIC_TIER_FALLBACKS: Record<string, readonly string[]> = {
 
 function expectedTier(flowType: string): string {
   if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) return "top_performer_deep";
-  if (flowType === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL) return "top_performer_carousel";
+  if (flowType === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || flowType === FLOW_VISUAL_FIRST_CAROUSEL) {
+    return "top_performer_carousel";
+  }
   return "";
 }
 
@@ -163,6 +166,21 @@ export function mimicImageReferenceEligible(
     FLOW_TOP_PERFORMER_MIMIC_IMAGE
   );
   return resolved != null && entryReferenceFrameCount(resolved.entry) <= 1;
+}
+
+/** True when grounding resolves to a carousel reference with 2+ archived slides. */
+export function mimicCarouselReferenceEligible(
+  derived: Record<string, unknown> | null,
+  insightIds: string[]
+): boolean {
+  if (insightIds.length === 0) return false;
+  const resolved = resolveGuidelineEntry(
+    derived,
+    insightIds,
+    "top_performer_carousel",
+    FLOW_TOP_PERFORMER_MIMIC_CAROUSEL
+  );
+  return resolved != null && entryReferenceFrameCount(resolved.entry) >= 2;
 }
 
 export function resolveMimicReferenceFromLineage(

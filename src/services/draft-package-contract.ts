@@ -1,5 +1,5 @@
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 import { extractExplicitVideoPromptText, extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 
@@ -153,7 +153,7 @@ function normalizeCarouselPublishMetadata(out: Record<string, unknown>): void {
 }
 
 function inferPackageType(flowType: string | null | undefined): DraftPackageType | null {
-  if (isTopPerformerMimicCarouselFlow(flowType ?? "")) return "mimic_carousel_package";
+  if (isTpGroundedCarouselRenderFlow(flowType ?? "")) return "mimic_carousel_package";
   if (isImageFlow(flowType ?? "")) return "image_package";
   if (isCarouselFlow(flowType ?? "")) return "carousel_package";
   if (isVideoFlow(flowType ?? "")) return "heygen_package";

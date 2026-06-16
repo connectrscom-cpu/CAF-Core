@@ -139,6 +139,12 @@ ${bucketConstraintLines(bucket)}
 Every idea needs title, three_liner, thesis, who_for, platform, content_lens, execution_profile, why_now, key_points, novelty_angle, cta, cta_class, grounding_insight_ids, expected_outcome. Never propose app downloads, quizzes, or unsupported CTAs.`;
 }
 
+export const CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM = `Carousel visual-first ideas (separate lane from manual mimic picks):
+- When insight context includes top_performer_carousel rows, each visual_first idea MUST ground to at least one top_performer_carousel insights_id.
+- Propose NEW original concepts inspired by deck mechanics (slide arc, visual consistency, hook structure) — do NOT copy competitor slide text verbatim.
+- Set carousel_style to visual_first (or mixed when appropriate).
+- Downstream execution uses FLOW_VISUAL_FIRST_CAROUSEL (not FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).`;
+
 export function buildIdeasGroupSystemPrompt(group: {
   total: number;
   format: string;
@@ -153,6 +159,12 @@ export function buildIdeasGroupSystemPrompt(group: {
     })
     .join("\n");
 
+  const hasVisualFirstCarousel =
+    group.format === "carousel" &&
+    group.buckets.some((b) => b.execution_profile === "visual_first" || b.execution_profile === "mixed");
+
+  const visualFirstBlock = hasVisualFirstCarousel ? `\n\n${CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM}` : "";
+
   return `${IDEAS_SYSTEM_PREAMBLE}
 
 Generate EXACTLY ${group.total} ideas.
@@ -166,7 +178,7 @@ Rules:
 - Respect the per-execution_profile counts above.
 - Every idea must include execution_profile and the required fields.
 - If content_lens=product and format=video, include product_angle (problem|feature|comparison|usecase|social_proof|offer).
-- Never propose app downloads, quizzes, giveaways, or unsupported CTAs.`;
+- Never propose app downloads, quizzes, giveaways, or unsupported CTAs.${visualFirstBlock}`;
 }
 
 export function groupIdeaGenerationBuckets(
@@ -760,7 +772,8 @@ export function selectInsightContextForIdeasLlm(
   broad: BroadInsightWithRating[],
   topRows: EvidenceRowInsightEnrichedRow[],
   contextCap: number,
-  minTopInContext: number
+  minTopInContext: number,
+  opts?: { preferCarouselTier?: boolean }
 ): Array<{
   source_evidence_row_id: string;
   evidence_kind: string;
@@ -789,6 +802,11 @@ export function selectInsightContextForIdeasLlm(
   }
 
   const tpIdsSorted = [...tpByEvidence.keys()].sort((a, b) => {
+    if (opts?.preferCarouselTier) {
+      const aCarousel = (tpByEvidence.get(a) ?? []).some((r) => r.analysis_tier === "top_performer_carousel");
+      const bCarousel = (tpByEvidence.get(b) ?? []).some((r) => r.analysis_tier === "top_performer_carousel");
+      if (aCarousel !== bCarousel) return aCarousel ? -1 : 1;
+    }
     const ba = broadByEvidence.get(a);
     const bb = broadByEvidence.get(b);
     return ratingNum(bb?.evidence_rating_score) - ratingNum(ba?.evidence_rating_score);
@@ -1196,22 +1214,27 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
     return { ideas: [], context_insights_used: 0, top_performer_rows_in_context: 0 };
   }
 
-  const rawContext = selectInsightContextForIdeasLlm(
-    broad,
-    topRows,
-    opts.contextInsightCap,
-    opts.minTopPerformerInContext
-  );
-  const context = budgetInsightContextForIdeasLlm(rawContext);
-
-  const topInCtx = context.filter((c) => c.top_performer_styles != null).length;
-
   const target = clamp(opts.targetIdeaCount, 1, 200);
   const ideaQuotas = opts.ideaQuotas ?? defaultIdeaGenerationQuotas(target, false);
   const bucketPlan = resolveBucketCounts(ideaQuotas);
   if (totalBucketCount(ideaQuotas) === 0) {
     throw new Error("Ideas-from-insights: idea bucket quotas sum to zero — set at least one bucket count");
   }
+
+  const wantsCarouselVisual = bucketPlan.some(
+    (b) => b.format === "carousel" && (b.execution_profile === "visual_first" || b.execution_profile === "mixed")
+  );
+
+  const rawContext = selectInsightContextForIdeasLlm(
+    broad,
+    topRows,
+    opts.contextInsightCap,
+    Math.max(opts.minTopPerformerInContext, wantsCarouselVisual ? 2 : 0),
+    { preferCarouselTier: wantsCarouselVisual }
+  );
+  const context = budgetInsightContextForIdeasLlm(rawContext);
+
+  const topInCtx = context.filter((c) => c.top_performer_styles != null).length;
 
   const brandBlock = await loadBrandContextForIdeas(db, projectId);
   const llmIdeaSchema = buildLlmIdeaSchema();

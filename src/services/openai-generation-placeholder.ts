@@ -3,7 +3,7 @@
  */
 import type { AppConfig } from "../config.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { targetMimicCarouselCopySlideCount } from "./mimic-carousel-render.js";
 import type { OpenAiChatParams } from "./openai-chat.js";
@@ -183,7 +183,7 @@ export function buildJobGenerationPlaceholderOutput(
     };
   }
 
-  if (isTopPerformerMimicCarouselFlow(opts.flowType)) {
+  if (isTpGroundedCarouselRenderFlow(opts.flowType)) {
     const mimic = pickMimicPayload(opts.payload);
     const layout = resolveMimicPlaceholderLayout(opts.payload, opts.mimicSlideCopyLayout);
     const fromTarget = targetMimicCarouselCopySlideCount(opts.payload, mimic);

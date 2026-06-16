@@ -41,12 +41,24 @@ export function isProductImageFlow(flowType: string | null | undefined): boolean
 }
 
 export function isCarouselFlow(flowType: string): boolean {
-  if (flowType === "FLOW_CAROUSEL" || flowType === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL") return true;
+  if (
+    flowType === "FLOW_CAROUSEL" ||
+    flowType === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" ||
+    flowType === "FLOW_VISUAL_FIRST_CAROUSEL"
+  ) {
+    return true;
+  }
   return /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
 }
 
+/** TP-grounded carousel render (manual mimic pick or visual-first ideas lane). */
+export function isTpGroundedCarouselRenderFlow(flowType: string | null | undefined): boolean {
+  const ft = (flowType ?? "").trim();
+  return ft === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" || ft === "FLOW_VISUAL_FIRST_CAROUSEL";
+}
+
 export function isMimicCarouselFlow(flowType: string | null | undefined): boolean {
-  return (flowType ?? "").trim() === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL";
+  return isTpGroundedCarouselRenderFlow(flowType);
 }
 
 export function isVideoFlow(flowType: string): boolean {

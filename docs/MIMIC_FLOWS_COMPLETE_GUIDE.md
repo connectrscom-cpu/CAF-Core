@@ -30,14 +30,18 @@ Each mimic job is keyed by **`task_id`** like any other content job. Render meta
 | Flow type | Platform format | Reference tier | When to use |
 |-----------|-----------------|----------------|-------------|
 | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single post (`post`) | `top_performer_deep` | Idea grounded to a top performer with **exactly one** archived reference frame |
-| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` | Multi-slide decks, carousel-format ideas, or references with **2+** frames |
-| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | (placeholder) | — | **Not wired** to render in current code |
+| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` | **Manual mimic picks** (Mimic · Carousel tab) with **2+** archived frames |
+| `FLOW_VISUAL_FIRST_CAROUSEL` | Carousel | `top_performer_carousel` | **Ideas-from-insights** with `carousel_style: visual_first` or `mixed` — separate product lane, same render engine |
+| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | Video | `top_performer_video` | **Planning alias only** — manual video picks route to HeyGen (`FLOW_VID_SCRIPT` / `FLOW_VID_PROMPT` / `FLOW_VID_PROMPT_NO_AVATAR`) from Nemotron `format_pattern`; no pixel mimic render |
 
 **Routing rules:**
 
 - Image mimic **fails early** if more than one reference frame resolves.
 - Carousel mimic handles multi-slide archives, video-slide skipping, and promotional-slide filtering.
-- Mimic flows use **separate planning lanes** (`mimic_image`, `mimic_carousel`) so they can run **in parallel** with standard `FLOW_CAROUSEL` without sharing the `max_carousel_jobs_per_run` cap.
+- **Video top performers** do not use pixel mimic — Nemotron `top_performer_video` insights route to **HeyGen** via `resolveTopPerformerVideoHeygenRoute()` (`src/domain/top-performer-video-heygen-routing.ts`). Creation packs include `top_performer_video_knowledge` when jobs ground to video insights.
+- **Visual-first carousel ideas** (`carousel_style: visual_first` or `mixed`) grounded to `top_performer_carousel` with archived slides plan **`FLOW_VISUAL_FIRST_CAROUSEL`** when enabled (`shouldExpandVisualFirstCarouselForRow()`).
+- **Manual mimic carousel picks** plan **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** (`shouldExpandMimicCarouselPickForRow()`). Both share the same TP-grounded render engine (`isTpGroundedCarouselRenderFlow`).
+- Mimic flows use **separate planning lanes** (`mimic_image`, `mimic_carousel`, `visual_first_carousel`) so they can run **in parallel** with standard `FLOW_CAROUSEL` without sharing the `max_carousel_jobs_per_run` cap.
 
 **Code:** `src/domain/top-performer-mimic-flow-types.ts`, `src/decision_engine/format-routing.ts`
 
@@ -67,7 +71,7 @@ Each mimic job is keyed by **`task_id`** like any other content job. Render meta
 
 ### 3.3 Project settings
 
-- Enable `FLOW_TOP_PERFORMER_MIMIC_IMAGE` and/or `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` in allowed flow types.
+- Enable `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, and/or `FLOW_VISUAL_FIRST_CAROUSEL` in allowed flow types.
 - Set plan cap **> 0** for the mimic flow (flows are seeded **disabled** via `seedMimicFlowTypesSkeleton()`).
 - Optional per-project overrides in `project_system_constraints`: `mimic_image_bfl_model`, `mimic_visual_similarity_pct`, `mimic_carousel_text_via_flux`, `mimic_image_input_mode`.
 

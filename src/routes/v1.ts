@@ -69,7 +69,7 @@ import {
   rerenderCarouselSlidesAtIndices,
 } from "../services/job-pipeline.js";
 import { parseCarouselRenderTypographyPatch } from "../domain/carousel-render-typography.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -1264,7 +1264,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isCarouselFlow(flowType) || !isTopPerformerMimicCarouselFlow(flowType)) {
+    if (!isCarouselFlow(flowType) || !isTpGroundedCarouselRenderFlow(flowType)) {
       return { ok: false, error: "reprint_text_overlay_requires_mimic_carousel_job" };
     }
     const jobId = String(job.id ?? "");
@@ -1427,7 +1427,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isCarouselFlow(flowType) || !isTopPerformerMimicCarouselFlow(flowType)) {
+    if (!isCarouselFlow(flowType) || !isTpGroundedCarouselRenderFlow(flowType)) {
       return { ok: false, error: "regenerate_slide_requires_mimic_carousel_job" };
     }
     const jobId = String(job.id ?? "");
@@ -1553,7 +1553,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isTopPerformerMimicCarouselFlow(flowType)) {
+    if (!isTpGroundedCarouselRenderFlow(flowType)) {
       return { ok: false, error: "mimic_docai_layer_positions_requires_mimic_carousel_job" };
     }
     const gp = job.generation_payload as Record<string, unknown>;

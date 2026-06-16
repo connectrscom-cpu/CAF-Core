@@ -66,7 +66,7 @@ import { RenderNotReadyError } from "../domain/render-not-ready-error.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
 import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
 import {
-  isTopPerformerMimicCarouselFlow,
+  isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
   TOP_PERFORMER_MIMIC_RENDER_NOT_READY_MESSAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
@@ -945,7 +945,7 @@ async function shouldResumeAsTextOverlayReprint(
   db: Pool,
   job: JobRow & { render_state?: unknown }
 ): Promise<boolean> {
-  if (!isTopPerformerMimicCarouselFlow(job.flow_type)) return false;
+  if (!isTpGroundedCarouselRenderFlow(job.flow_type)) return false;
   const rs = pickRenderStateRecord(job.render_state) ?? {};
   const phase = String(rs.phase ?? "").trim();
   const renderStatus = String(rs.status ?? "").trim().toLowerCase();
@@ -1752,7 +1752,7 @@ async function processCarouselJob(
   baseRender = normalizeLlmParsedForSchemaValidation(job.flow_type, baseRender);
   const mimicForSlidePick = pickMimicPayload(job.generation_payload);
   const mimicSlideTarget =
-    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForSlidePick
+    isTpGroundedCarouselRenderFlow(job.flow_type) && mimicForSlidePick
       ? targetMimicCarouselCopySlideCount(job.generation_payload as Record<string, unknown>, mimicForSlidePick)
       : null;
   const slides = slidesFromGeneratedOutput(
@@ -1808,7 +1808,7 @@ async function processCarouselJob(
   let mimicPayload = mimicPayloadRaw;
   if (
     (config.MIMIC_IMAGE_ENABLED || textOverlayOnly) &&
-    isTopPerformerMimicCarouselFlow(job.flow_type) &&
+    isTpGroundedCarouselRenderFlow(job.flow_type) &&
     mimicPayloadRaw
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
@@ -1906,7 +1906,7 @@ async function processCarouselJob(
 
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
   const mimicJob =
-    isTopPerformerMimicCarouselFlow(job.flow_type) && Boolean(mimicPayload);
+    isTpGroundedCarouselRenderFlow(job.flow_type) && Boolean(mimicPayload);
   /** Text-only reprint must use mimic DocAI/HBS path even when image gen is disabled globally. */
   const isMimicCarousel =
     config.MIMIC_IMAGE_ENABLED &&
@@ -2620,7 +2620,7 @@ export async function rerenderCarouselSlidesAtIndices(
     await deleteMimicVisualPlateAssetsAtPositions(db, job.project_id, job.task_id, indices);
     const mimicPayload = pickMimicPayload(job.generation_payload);
     const usesTemplateBgSlots =
-      isTopPerformerMimicCarouselFlow(job.flow_type) &&
+      isTpGroundedCarouselRenderFlow(job.flow_type) &&
       mimicPayload?.mode === "template_bg" &&
       mimicDeckUsesSlotDeduplication(mimicPayload);
     const totalSlides =
@@ -2717,7 +2717,7 @@ export async function rerenderCarouselTextOverlay(
     await persistCarouselTextBackingColor(db, jobId, renderExtras.textBackingColor);
   }
   const job = await reloadJobRow(db, jobId);
-  if (!job || !isTopPerformerMimicCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
+  if (!job || !isTpGroundedCarouselRenderFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
     throw new Error("carousel_text_overlay_reprint_requires_mimic_carousel_job");
   }
   const run = await getRunByRunId(db, job.project_id, job.run_id);

@@ -46,5 +46,6 @@ describe("defaultMaxJobsPerFlowType", () => {
     expect(d.FLOW_TOP_PERFORMER_MIMIC_VIDEO).toBe(5);
     expect(d.FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).toBe(5);
     expect(d.FLOW_TOP_PERFORMER_MIMIC_IMAGE).toBe(5);
+    expect(d.FLOW_VISUAL_FIRST_CAROUSEL).toBe(10);
   });
 });

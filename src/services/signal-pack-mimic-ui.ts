@@ -7,6 +7,10 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
 } from "../domain/top-performer-mimic-flow-types.js";
+import {
+  heygenLaneLabelForIntent,
+  resolveTopPerformerVideoHeygenRoute,
+} from "../domain/top-performer-video-heygen-routing.js";
 import { classifyMimicMode } from "./mimic-mode-classifier.js";
 import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
 
@@ -39,6 +43,11 @@ export function mimicKindToFlowType(kind: MimicPickKind): string {
     case "video":
       return FLOW_TOP_PERFORMER_MIMIC_VIDEO;
   }
+}
+
+/** Resolve planner target_flow_type for a video top-performer reference (HeyGen lane). */
+export function mimicVideoPickFlowType(entry: Record<string, unknown>): string {
+  return resolveTopPerformerVideoHeygenRoute(entry).flow_type;
 }
 
 export function mimicPickTabLabel(tab: MimicPickTabId): string {
@@ -159,7 +168,12 @@ function predictedRenderForEntry(
   modeOverride?: MimicMode | null
 ): { mode: MimicMode | null; label: string; detail: string } {
   if (mimicKind === "video") {
-    return { mode: null, label: "—", detail: "Video mimic not wired yet" };
+    const route = resolveTopPerformerVideoHeygenRoute(entry);
+    return {
+      mode: null,
+      label: heygenLaneLabelForIntent(route.intent),
+      detail: `Routes to ${route.flow_type} (${route.reason})`,
+    };
   }
   const flow = mimicKindToFlowType(mimicKind);
   const { mode, slide_plans } = classifyMimicMode(flow, entry, modeOverride ?? null);

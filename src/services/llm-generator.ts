@@ -27,7 +27,7 @@ import {
   PRODUCT_IMAGE_FLOW_NOT_READY_MESSAGE,
 } from "../domain/product-flow-types.js";
 import {
-  isTopPerformerMimicCarouselFlow,
+  isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
   TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
@@ -546,7 +546,7 @@ export async function generateForJob(
   const mimicRenderContextFromPayload = asRecord(payload.mimic_render_context);
   const mimicJobGrounding = asRecord(payload.mimic_job_grounding);
   let mimicHookPreview: string | null = null;
-  if (mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)) {
+  if (mimicForCopy && isTpGroundedCarouselRenderFlow(job.flow_type)) {
     const copyLayout = Array.isArray(mimicJobGrounding?.slide_copy_layout)
       ? mimicJobGrounding!.slide_copy_layout
       : [];
@@ -645,7 +645,7 @@ export async function generateForJob(
 
   if (isCarouselFlow(job.flow_type)) {
     const mimicCopyBranch =
-      mimicForCopy && isTopPerformerMimicCarouselFlow(job.flow_type)
+      mimicForCopy && isTpGroundedCarouselRenderFlow(job.flow_type)
         ? mimicCarouselCopyBranch(mimicForCopy, asRecord(templateContext.mimic_render_context))
         : "default";
     systemPrompt = `${systemPrompt.trim()}\n\n${mimicCarouselCopySystemAddendum(mimicCopyBranch)}`.trim();
@@ -655,13 +655,13 @@ export async function generateForJob(
   }
 
   const mimicSlideCopyLayout =
-    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForCopy != null
+    isTpGroundedCarouselRenderFlow(job.flow_type) && mimicForCopy != null
       ? filterSlideCopyLayoutForMimic(mimicForCopy, buildSlideCopyLayoutForLlmFromPayload(payload))
-      : isTopPerformerMimicCarouselFlow(job.flow_type)
+      : isTpGroundedCarouselRenderFlow(job.flow_type)
         ? buildSlideCopyLayoutForLlmFromPayload(payload)
         : [];
 
-  if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
+  if (isTpGroundedCarouselRenderFlow(job.flow_type)) {
     userPrompt = appendMimicGroundedReferenceToUserPrompt(
       userPrompt,
       {
@@ -770,7 +770,7 @@ export async function generateForJob(
   }
 
   const mimicGroundingBlocks =
-    isTopPerformerMimicCarouselFlow(job.flow_type) && mimicForCopy != null
+    isTpGroundedCarouselRenderFlow(job.flow_type) && mimicForCopy != null
       ? {
           mimic_render_context: templateContext.mimic_render_context,
           hook_text_preview: mimicHookPreview,
@@ -791,7 +791,7 @@ export async function generateForJob(
       appCfg,
       taskId: job.task_id,
       runId: job.run_id,
-      isMimicCarousel: isTopPerformerMimicCarouselFlow(job.flow_type),
+      isMimicCarousel: isTpGroundedCarouselRenderFlow(job.flow_type),
     });
     systemPrompt = shrunk.systemPrompt;
     userPrompt = shrunk.userPrompt;
@@ -908,7 +908,7 @@ export async function generateForJob(
 
     let parsed = normalizeLlmParsedForSchemaValidation(job.flow_type, parsedRaw);
 
-    if (isTopPerformerMimicCarouselFlow(job.flow_type)) {
+    if (isTpGroundedCarouselRenderFlow(job.flow_type)) {
       const mimicForCount = pickMimicPayload(payload);
       const targetSlides = targetMimicCarouselCopySlideCount(payload, mimicForCount);
       if (targetSlides != null && targetSlides > 0) {
@@ -1036,7 +1036,7 @@ export async function generateForJob(
       }
     }
 
-    if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimicSlideCopyLayout.length > 0) {
+    if (isTpGroundedCarouselRenderFlow(job.flow_type) && mimicSlideCopyLayout.length > 0) {
       const strategy = asRecord(creationPack.strategy);
       const igRaw =
         typeof strategy?.instagram_handle === "string" ? strategy.instagram_handle.trim() : "";

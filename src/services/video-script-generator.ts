@@ -30,6 +30,7 @@ import {
 } from "./publish-metadata-enrich.js";
 import { VIDEO_CAPTION_SYSTEM_ADDENDUM } from "./video-prompt-generator.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { topPerformerVideoHeygenSystemSuffix } from "../domain/top-performer-video-knowledge.js";
 import { bareHashtagToken } from "../domain/signal-hashtag-sanitize.js";
 import { clampHashtagsToSignalPackAllowlist } from "./product-video-hashtags.js";
 
@@ -412,7 +413,7 @@ export async function ensureVideoScriptInPayload(
       openAiMaxTokens(tplEarly?.max_tokens_default ?? 2500),
       (job.generation_payload.signal_pack_id as string) ?? null,
       {
-        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${alignEarly}`,
+        retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSysEarly, config, { multiScene: multiSceneEarly }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${alignEarly}${topPerformerVideoHeygenSystemSuffix(packEarly)}`,
         retryUserPromptBase: `You are revising an existing video script JSON. Meet the word count while preserving structure and other fields.\n\nDraft JSON:\n${JSON.stringify(gen).slice(0, 14000)}`,
         stepPrefix: `llm_video_script_prep_${job.flow_type}`,
       }
@@ -482,7 +483,7 @@ export async function ensureVideoScriptInPayload(
       apiKey,
       {
         model: config.OPENAI_MODEL,
-        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}`.trim(),
+        system_prompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}${topPerformerVideoHeygenSystemSuffix(pack)}`.trim(),
         user_prompt: user,
         max_tokens: openAiMaxTokens(tpl.max_tokens_default ?? 2500),
       },
@@ -522,7 +523,7 @@ export async function ensureVideoScriptInPayload(
     openAiMaxTokens(tpl.max_tokens_default ?? 2500),
     (job.generation_payload.signal_pack_id as string) ?? null,
     {
-      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}`,
+      retrySystemPrompt: `${withVideoScriptDurationPolicy(baseSys, config, { multiScene }).trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}\n\n${VIDEO_CAPTION_SYSTEM_ADDENDUM}\n\n${VIDEO_SCRIPT_OUTPUT_CAPTION_ADDENDUM}${sceneAlign}${topPerformerVideoHeygenSystemSuffix(pack)}`,
       retryUserPromptBase: userPrompt,
       stepPrefix: `llm_video_script_prep_${job.flow_type}`,
     }

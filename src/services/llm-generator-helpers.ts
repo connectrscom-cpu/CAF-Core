@@ -7,10 +7,10 @@ import {
   type PlatformConstraintsRow,
 } from "../repositories/project-config.js";
 import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
-import { isCarouselFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import {
-  isTopPerformerMimicCarouselFlow,
+  isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import {
@@ -31,6 +31,11 @@ import {
 } from "./llm-creation-pack-budget.js";
 import { buildMimicCopyJobBriefForLlm } from "../domain/mimic-render-context.js";
 import { PUBLICATION_SYSTEM_ADDENDUM } from "./publish-metadata-enrich.js";
+import { buildTopPerformerVideoKnowledgeForLlm } from "../domain/top-performer-video-knowledge.js";
+import {
+  groundingInsightIdsFromRow,
+  isTopPerformerVideoGroundedRow,
+} from "../domain/top-performer-grounding.js";
 
 /** Full research context for prompts (`{{creation_pack_json}}` / `{{signal_pack}}`). */
 function signalPackContextForLlm(sp: SignalPackRow): Record<string, unknown> {
@@ -490,7 +495,7 @@ export async function buildCreationPack(
     const step = topPerformerKnowledgeStepForFlowType(flowType);
     if (step) {
       const slice = pickTopPerformerKnowledgeForStep(derivedGlobals, step);
-      if (isTopPerformerMimicCarouselFlow(flowType) && "media_lane" in slice) {
+      if (isTpGroundedCarouselRenderFlow(flowType) && "media_lane" in slice) {
         const lane = slice as TopPerformerMediaLaneSlice;
         pack.top_performer_mimic_knowledge = {
           media_lane: lane.media_lane,
@@ -501,6 +506,22 @@ export async function buildCreationPack(
         };
       } else {
         pack.top_performer_mimic_knowledge = slimTopPerformerKnowledgeForLlm(slice);
+      }
+    }
+  }
+
+  if (flowType && isVideoFlow(flowType)) {
+    const derivedGlobals =
+      signalPack?.derived_globals_json &&
+      typeof signalPack.derived_globals_json === "object" &&
+      !Array.isArray(signalPack.derived_globals_json)
+        ? (signalPack.derived_globals_json as Record<string, unknown>)
+        : null;
+    if (isTopPerformerVideoGroundedRow(candidateData, derivedGlobals)) {
+      const insightIds = groundingInsightIdsFromRow(candidateData);
+      const videoKnowledge = buildTopPerformerVideoKnowledgeForLlm(derivedGlobals, insightIds);
+      if (videoKnowledge) {
+        pack.top_performer_video_knowledge = videoKnowledge;
       }
     }
   }

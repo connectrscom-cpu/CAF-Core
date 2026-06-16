@@ -11,8 +11,8 @@ import {
 import { pickMimicEvaluationFromEntry, templateBgSlidePlanRef } from "../domain/mimic-template-library.js";
 import { entryReferenceFrameCount } from "./mimic-reference-resolver.js";
 import {
-  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
+  isTpGroundedCarouselRenderFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -51,7 +51,7 @@ export function classifyMimicMode(
   if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) {
     return { mode: "image_full" };
   }
-  if (flowType !== FLOW_TOP_PERFORMER_MIMIC_CAROUSEL) {
+  if (!isTpGroundedCarouselRenderFlow(flowType)) {
     return { mode: "carousel_visual" };
   }
 
@@ -220,7 +220,7 @@ export function reconcileMimicPayloadAtRender(
   mimic: MimicPayloadV1,
   opts?: ReconcileMimicPayloadAtRenderOptions
 ): MimicPayloadV1 {
-  if (flowType !== FLOW_TOP_PERFORMER_MIMIC_CAROUSEL) return mimic;
+  if (!isTpGroundedCarouselRenderFlow(flowType)) return mimic;
   const vg = mimic.visual_guideline ?? {};
   const entry: Record<string, unknown> = {
     ...vg,

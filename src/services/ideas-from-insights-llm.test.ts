@@ -231,4 +231,15 @@ describe("ideas prompt labs registry", () => {
     expect(ideas[0]?.cta_class).toBe("product_awareness");
     expect((ideas[0]?.key_points ?? []).length).toBeGreaterThanOrEqual(3);
   });
+
+  it("includes visual-first carousel addendum in grouped system prompt", () => {
+    const system = buildIdeasGroupSystemPrompt({
+      total: 2,
+      format: "carousel",
+      content_lens: "niche",
+      buckets: [{ execution_profile: "visual_first", count: 2 }],
+    });
+    expect(system).toContain("FLOW_VISUAL_FIRST_CAROUSEL");
+    expect(system).toContain("visual_first");
+  });
 });

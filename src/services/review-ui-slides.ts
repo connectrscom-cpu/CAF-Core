@@ -8,7 +8,7 @@ import {
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { isCarouselFlow } from "../decision_engine/flow-kind.js";
-import { isTopPerformerMimicCarouselFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 
 /**
  * Flat slide list for the human review UI — same merge/normalize path as carousel rendering
@@ -45,7 +45,7 @@ export function slidesJsonForReviewUi(
     if (isCarouselFlow(flowType ?? "")) {
       const shaped = splitFlatSlidesToTemplateShape(deckSlides, {
         skipPanelDefaults:
-          isTopPerformerMimicCarouselFlow(flowType ?? "") ||
+          isTpGroundedCarouselRenderFlow(flowType ?? "") ||
           isMimicFullBleedCarouselRenderBase(generationPayload),
       });
       const flat = [shaped.cover_slide, ...shaped.body_slides, shaped.cta_slide].filter(
