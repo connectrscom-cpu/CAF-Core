@@ -2,10 +2,12 @@
  * Top-performer mimic flow_type keys (image + carousel wired when MIMIC_IMAGE_ENABLED).
  * Video mimic remains a placeholder. Read knowledge via `pickTopPerformerKnowledgeForStep`.
  *
- * Carousel visual execution splits into two lanes:
+ * Carousel visual execution splits into two **planning** lanes (same **render** engine):
  * - FLOW_VISUAL_FIRST_CAROUSEL — ideas-from-insights visual_first bucket
  * - FLOW_TOP_PERFORMER_MIMIC_CAROUSEL — manual top-performer mimic picks
- * Both use the same reference-grounded render pipeline (`isTpGroundedCarouselRenderFlow`).
+ *
+ * Both use `isTpGroundedCarouselRenderFlow`: template_bg OR carousel_visual per deck,
+ * art-only image-model plates, copy via HTML/HBS/DocAI overlay only.
  */
 import {
   FLOW_VISUAL_FIRST_CAROUSEL,

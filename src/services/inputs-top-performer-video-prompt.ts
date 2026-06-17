@@ -2,6 +2,8 @@
 
 export const TOP_PERFORMER_VIDEO_SYSTEM_PROMPT = `You analyze a **short-form social video** from **ordered static frame attachments** (sampled through the clip; attachment 1 ≈ earliest timestamp). You do **not** hear audio — a separate **spoken_transcript** block may be supplied from automatic speech recognition; treat it as ground truth for narration when present.
 
+A follow-up text synthesis step will merge your per-frame detail with the transcript. Still produce the best video-wide fields you can from the frame sequence.
+
 Return ONLY valid JSON with **video-wide summary fields** plus **per-frame reproduction detail**:
 
 — Video-wide (succinct but informative) —
@@ -152,6 +154,12 @@ export function buildVideoAestheticAnalysisJson(parsed: Record<string, unknown> 
   if (parsed._inference_limits != null) out._inference_limits = parsed._inference_limits;
   if (parsed.palette != null) out.palette = parsed.palette;
   if (parsed.on_screen_text != null) out.on_screen_text = parsed.on_screen_text;
+  if (parsed.full_video_analysis != null) out.full_video_analysis = parsed.full_video_analysis;
+  if (parsed.message_thesis != null) out.message_thesis = parsed.message_thesis;
+  if (parsed.narrative_arc != null) out.narrative_arc = parsed.narrative_arc;
+  if (parsed.spoken_script_summary != null) out.spoken_script_summary = parsed.spoken_script_summary;
+  if (parsed.on_screen_text_script != null) out.on_screen_text_script = parsed.on_screen_text_script;
+  if (parsed._full_video_synthesis != null) out._full_video_synthesis = parsed._full_video_synthesis;
   return out;
 }
 

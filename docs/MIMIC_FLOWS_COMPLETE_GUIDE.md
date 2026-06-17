@@ -39,8 +39,8 @@ Each mimic job is keyed by **`task_id`** like any other content job. Render meta
 - Image mimic **fails early** if more than one reference frame resolves.
 - Carousel mimic handles multi-slide archives, video-slide skipping, and promotional-slide filtering.
 - **Video top performers** do not use pixel mimic — Nemotron `top_performer_video` insights route to **HeyGen** via `resolveTopPerformerVideoHeygenRoute()` (`src/domain/top-performer-video-heygen-routing.ts`). Creation packs include `top_performer_video_knowledge` when jobs ground to video insights.
-- **Visual-first carousel ideas** (`carousel_style: visual_first` or `mixed`) grounded to `top_performer_carousel` with archived slides plan **`FLOW_VISUAL_FIRST_CAROUSEL`** when enabled (`shouldExpandVisualFirstCarouselForRow()`).
-- **Manual mimic carousel picks** plan **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** (`shouldExpandMimicCarouselPickForRow()`). Both share the same TP-grounded render engine (`isTpGroundedCarouselRenderFlow`).
+- **Visual-first carousel ideas** (`carousel_style: visual_first` or `mixed`) grounded to `top_performer_carousel` with archived slides plan **`FLOW_VISUAL_FIRST_CAROUSEL`** when enabled (`shouldExpandVisualFirstCarouselForRow()`). **Review:** TP-grounded workbench (layer editor, slide regen) — **no** original-vs-generated compare.
+- **Manual mimic carousel picks** plan **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** (`shouldExpandMimicCarouselPickForRow()`). **Review:** same workbench **plus** original-vs-generated compare.
 - Mimic flows use **separate planning lanes** (`mimic_image`, `mimic_carousel`, `visual_first_carousel`) so they can run **in parallel** with standard `FLOW_CAROUSEL` without sharing the `max_carousel_jobs_per_run` cap.
 
 **Code:** `src/domain/top-performer-mimic-flow-types.ts`, `src/decision_engine/format-routing.ts`

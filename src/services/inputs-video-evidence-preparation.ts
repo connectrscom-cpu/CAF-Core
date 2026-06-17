@@ -1,13 +1,14 @@
 /**
  * Resolve HTTPS frame URLs for top-performer **video** vision:
- * 1) payload `analysis_frame_urls` / aliases,
- * 2) archived rows in `evidence_media_assets`,
- * 3) download source video → ffmpeg JPEG frames → Storage + DB.
+ * 1) ffmpeg multi-frame sample from source video (preferred when URL exists),
+ * 2) archived multi-frame rows in `evidence_media_assets`,
+ * 3) payload `analysis_frame_urls` only when not a lone thumbnail fallback.
  */
 
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import {
+  findArchivedSourceVideoUrlForEvidenceRow,
   listEvidenceMediaVisionFrameUrls,
   upsertEvidenceMediaAssetArchived,
 } from "../repositories/inputs-evidence-media.js";
@@ -230,6 +231,8 @@ export interface EnsureVideoFramesArgs {
   audit?: OpenAiAuditContext | null;
 }
 
+export const MIN_FRAMES_FOR_FULL_VIDEO_SAMPLE = 3;
+
 /**
  * Returns HTTPS (or data-URI) image URLs suitable for OpenAI vision, persisting media to
  * `evidence_media_assets` (+ Supabase when configured) when extraction runs.
@@ -255,11 +258,15 @@ export async function ensureVideoFramesForEvidenceRow(
 
   const videoUrl = parseVideoSourceUrlForArchive(args.payload);
   const canExtract = resolveExtractVideoFramesFromSource(config, args.criteria);
-  const preferSourceDownload = resolvePreferSourceVideoDownload(config, args.criteria);
+  const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
+  const payloadUsesBlockedCdn = fromPayload.some((u) => shouldRelayImageUrlForOpenAi(u));
+  const sparsePayloadFrames = fromPayload.length > 0 && fromPayload.length < MIN_FRAMES_FOR_FULL_VIDEO_SAMPLE;
 
-  if (!args.forceReextract && !preferSourceDownload) {
+  let ffmpegFailed: VideoFramePreparationResult | null = null;
+
+  if (!args.forceReextract) {
     const fromDb = await listEvidenceMediaVisionFrameUrls(db, args.projectId, args.evidenceRowId, maxFrames);
-    if (fromDb.length > 0) {
+    if (fromDb.length >= MIN_FRAMES_FOR_FULL_VIDEO_SAMPLE) {
       const whisper = videoUrl
         ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript)
         : null;
@@ -276,10 +283,7 @@ export async function ensureVideoFramesForEvidenceRow(
     }
   }
 
-  const fromPayload = parseVideoAnalysisFrameUrls(args.payload, maxFrames);
-  const payloadUsesBlockedCdn = fromPayload.some((u) => shouldRelayImageUrlForOpenAi(u));
-
-  if (videoUrl && canExtract && (preferSourceDownload || payloadUsesBlockedCdn)) {
+  if (videoUrl && canExtract) {
     const extracted = await downloadExtractAndArchiveSourceVideo(
       db,
       config,
@@ -291,23 +295,36 @@ export async function ensureVideoFramesForEvidenceRow(
     if (extracted.frame_urls.length > 0) {
       return extracted;
     }
+    ffmpegFailed = extracted;
     if (args.forceReextract) {
       return extracted;
     }
   }
 
   if (fromPayload.length > 0 && !payloadUsesBlockedCdn) {
-    const whisper = videoUrl ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript) : null;
-    return {
-      frame_urls: fromPayload,
-      frame_timestamps_sec: videoSampleTimestamps(null, fromPayload.length),
-      source: "payload",
-      evidence_media_rows_written: 0,
-      frames_extracted: 0,
-      source_video_archived: false,
-      caption_transcript: captionTranscript,
-      whisper_transcript: whisper,
-    };
+    if (videoUrl && canExtract && sparsePayloadFrames && ffmpegFailed) {
+      return {
+        ...ffmpegFailed,
+        frame_urls: [],
+        source: "none",
+        extraction_error:
+          ffmpegFailed.extraction_error ??
+          "refused_single_thumbnail_after_ffmpeg_failed",
+      };
+    }
+    if (!(videoUrl && canExtract && sparsePayloadFrames)) {
+      const whisper = videoUrl ? await tryWhisperFromVideoUrl(config, args, videoUrl, captionTranscript) : null;
+      return {
+        frame_urls: fromPayload,
+        frame_timestamps_sec: videoSampleTimestamps(null, fromPayload.length),
+        source: "payload",
+        evidence_media_rows_written: 0,
+        frames_extracted: 0,
+        source_video_archived: false,
+        caption_transcript: captionTranscript,
+        whisper_transcript: whisper,
+      };
+    }
   }
 
   if (fromPayload.length > 0 && payloadUsesBlockedCdn) {
@@ -377,15 +394,33 @@ async function downloadExtractAndArchiveSourceVideo(
     let videoExt: string;
     let videoContentType: string;
     try {
-      const dl = await fetchRemoteVideoFile(
-        videoUrl,
-        config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
-        config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
-        proxyAgent ?? undefined
-      );
-      videoBuf = dl.buf;
-      videoExt = dl.ext;
-      videoContentType = dl.contentType;
+      try {
+        const dl = await fetchRemoteVideoFile(
+          videoUrl,
+          config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
+          config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
+          proxyAgent ?? undefined
+        );
+        videoBuf = dl.buf;
+        videoExt = dl.ext;
+        videoContentType = dl.contentType;
+      } catch (cdnErr) {
+        const archivedUrl = await findArchivedSourceVideoUrlForEvidenceRow(
+          db,
+          args.projectId,
+          args.evidenceRowId
+        );
+        if (!archivedUrl) throw cdnErr;
+        const dl = await fetchRemoteVideoFile(
+          archivedUrl,
+          config.CAF_TOP_PERFORMER_ARCHIVE_SOURCE_VIDEO_TIMEOUT_MS,
+          config.CAF_TOP_PERFORMER_ARCHIVE_MAX_BYTES_SOURCE_VIDEO,
+          proxyAgent ?? undefined
+        );
+        videoBuf = dl.buf;
+        videoExt = dl.ext;
+        videoContentType = dl.contentType;
+      }
     } catch (e) {
       await upsertEvidenceMediaAssetArchived(db, {
         projectId: args.projectId,

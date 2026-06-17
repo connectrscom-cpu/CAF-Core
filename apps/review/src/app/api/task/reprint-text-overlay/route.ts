@@ -7,7 +7,7 @@ import {
   type MimicDocAiLayerPositionRow,
 } from "@/lib/caf-core-client";
 import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
-import { isMimicCarouselFlow } from "@/lib/flow-kind";
+import { isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
 import { resolveBrandLogoReprintUrl } from "@/lib/brand-asset-url";
 
 export const dynamic = "force-dynamic";
@@ -49,9 +49,9 @@ export async function POST(request: NextRequest) {
     if (!job) {
       return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
     }
-    if (!isMimicCarouselFlow(job.flow_type)) {
+    if (!isTpGroundedCarouselReviewFlow(job.flow_type)) {
       return NextResponse.json(
-        { ok: false, error: "reprint_text_overlay_requires_mimic_carousel_job" },
+        { ok: false, error: "reprint_text_overlay_requires_tp_grounded_carousel_job" },
         { status: 400 }
       );
     }

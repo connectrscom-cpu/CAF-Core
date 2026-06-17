@@ -160,31 +160,33 @@ export default function SignalPackDetailPage() {
   }, [rows, filter]);
 
   const columns = useMemo(() => {
-    const keys = new Set<string>();
-    for (const r of filtered.slice(0, 400)) {
-      for (const k of Object.keys(r)) {
-        keys.add(k);
-        if (keys.size >= 16) break;
-      }
-      if (keys.size >= 16) break;
-    }
     const preferred = [
       "id",
       "title",
       "format",
+      "carousel_style",
+      "execution_profile",
+      "video_style",
       "platform",
       "status",
+      "content_lens",
       "thesis",
       "three_liner",
       "why_now",
       "novelty_angle",
       "who_for",
       "key_points",
+      "grounding_insight_ids",
       "cta",
+      "cta_class",
       "confidence_score",
       "run_id",
       "created_at",
     ];
+    const keys = new Set<string>(preferred);
+    for (const r of filtered.slice(0, 400)) {
+      for (const k of Object.keys(r)) keys.add(k);
+    }
     const discovered = Array.from(keys);
     return discovered.sort((a, b) => {
       const ia = preferred.indexOf(a.toLowerCase());
@@ -658,11 +660,27 @@ function formatFamilyLabel(raw: string): string {
     memo: "Memo",
     slides: "Slides",
     script: "Script",
+    text_heavy: "Text-heavy",
+    visual_first: "Visual-first",
+    mixed: "Mixed",
   };
   return labels[key] ?? raw.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function formatSubtitleFromRow(row: Record<string, unknown>): string | null {
+  const format = String(row.format ?? "")
+    .toLowerCase()
+    .trim();
+  if (format === "carousel") {
+    for (const key of ["carousel_style", "execution_profile"]) {
+      const v = row[key];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  }
+  if (format === "video") {
+    const v = row.video_style;
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
   for (const key of ["format_style", "format_subtype", "format_pattern", "visual_style", "hook_type"]) {
     const v = row[key];
     if (typeof v === "string" && v.trim()) return v.trim();

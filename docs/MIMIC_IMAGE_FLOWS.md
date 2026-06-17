@@ -37,13 +37,15 @@ TP-grounded carousel lanes (`mimic_carousel`, `visual_first_carousel`) share ren
 
 Classifier: `classifyMimicMode()` — reviewer override → Nemotron `mimic_evaluation.recommended_mode` → heuristics (`src/services/mimic-mode-classifier.ts`).
 
+**Text invariant (all TP-grounded carousels, including `FLOW_VISUAL_FIRST_CAROUSEL`):** image models produce **art-only plates**. LLM copy is composited via **HTML/CSS** (Puppeteer HBS or DocAI `docai_layer_positions`). `MIMIC_CAROUSEL_TEXT_VIA_FLUX` is ignored at render — never bake typography into Flux for these jobs.
+
 ## Operator workflow
 
 1. **Plan run** — mimic flows compete with `FLOW_CAROUSEL` when both enabled.
 2. **Resolve reference** (before LLM) — `mimic_v1`, `mimic_render_context`, `template_storage_decision`.
 3. **Template backgrounds** (`template_bg` only, optional pre-copy) — extract plates → `MIMIC_BACKGROUND`.
 4. **Generate** — OpenAI copy; carousel mimic writes `mimic_carousel_package` snapshot → **GENERATED**.
-5. **Review** — copy + mimic metadata (assets may not exist yet).
+5. **Review** — TP-grounded workbench for both lanes (layer editor, per-slide regen, reprint overlay). Manual mimic adds original-vs-generated compare; visual-first does not.
 6. **Render** — image provider + Puppeteer/DocAI overlays → **IN_REVIEW**.
 
 ## Prerequisites

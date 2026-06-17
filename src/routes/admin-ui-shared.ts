@@ -316,10 +316,15 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .caf-manual-pick-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0;background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,transparent 100%)}
 .caf-manual-pick-head h3{margin:0;font-size:17px;font-weight:600}
 .caf-manual-pick-summary{font-size:13px;color:var(--muted);margin-top:4px}
+.caf-manual-pick-run-hint{font-size:12px;margin-top:8px;padding:8px 10px;border-radius:8px;border:1px solid rgba(234,179,8,.35);background:rgba(234,179,8,.1);color:var(--yellow)}
+.caf-manual-pick-run-hint.is-error{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.12);color:var(--red)}
 .caf-manual-pick-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--surface-2)}
 .caf-manual-pick-tab{padding:7px 14px;font-size:13px;font-weight:500;border-radius:9999px;border:1px solid var(--border);background:var(--card2);color:var(--fg2);cursor:pointer;transition:all .12s}
 .caf-manual-pick-tab:hover{border-color:var(--fg2);color:var(--fg)}
 .caf-manual-pick-tab.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.caf-manual-pick-tab.tab-visual-first{border-color:rgba(168,85,247,.45);background:rgba(168,85,247,.12)}
+.caf-manual-pick-tab.tab-visual-first.active{background:#9333ea;border-color:#9333ea}
+.caf-manual-pick-pill--visual-first{font-size:10px;padding:2px 7px;border-radius:9999px;background:rgba(168,85,247,.22);color:#d8b4fe;margin-left:6px;vertical-align:middle}
 .caf-manual-pick-tab .tab-count{display:inline-flex;min-width:18px;height:16px;padding:0 5px;margin-left:6px;border-radius:9999px;font-size:10px;font-weight:700;background:rgba(255,255,255,.2);align-items:center;justify-content:center}
 .caf-manual-pick-tab:not(.active) .tab-count{background:var(--blue-bg);color:var(--accent)}
 .caf-manual-pick-tab.tab-mimic:not(.active){border-color:rgba(168,85,247,.35);color:var(--purple)}
@@ -558,7 +563,8 @@ export function adminManualIdeaPickModalHtml(): string {
     <div class="caf-manual-pick-head">
       <div>
         <h3 id="caf-manual-pick-title">Pick ideas &amp; mimic references</h3>
-        <div class="caf-manual-pick-summary" id="caf-manual-pick-summary">Select pack ideas by format, or top performers to mimic (image / carousel / video). Save each tab, then apply overall.</div>
+        <div class="caf-manual-pick-summary" id="caf-manual-pick-summary">Select ideas by format (<strong>Carousel · visual-first</strong> is separate from text-heavy). Manual mimic picks use the Mimic tabs. <strong>Apply &amp; start run</strong> saves picks and creates planned content jobs (run must still be CREATED — before Start).</div>
+        <div id="caf-manual-pick-run-hint" class="caf-manual-pick-run-hint" style="display:none"></div>
       </div>
       <button type="button" class="btn-ghost btn-sm" id="caf-manual-pick-close" aria-label="Close">✕</button>
     </div>
@@ -575,7 +581,7 @@ export function adminManualIdeaPickModalHtml(): string {
         <button type="button" class="btn-ghost btn-sm" id="caf-manual-pick-tab-none">Clear tab</button>
         <button type="button" class="btn-ghost btn-sm" id="caf-manual-pick-tab-all">Select all in tab</button>
         <button type="button" class="btn btn-sm" id="caf-manual-pick-tab-save">Save tab</button>
-        <button type="button" class="btn btn-sm" id="caf-manual-pick-apply">Apply overall selection</button>
+        <button type="button" class="btn btn-sm" id="caf-manual-pick-apply">Apply &amp; start run</button>
       </div>
     </div>
   </div>
@@ -586,7 +592,7 @@ export function adminManualIdeaPickModalHtml(): string {
 export function adminManualIdeaPickScript(): string {
   return `
 (function(){
-  var FORMAT_ORDER=['video','carousel','post','thread','blog','slides','script','memo','other'];
+  var FORMAT_ORDER=['video','carousel_visual','carousel','post','thread','blog','slides','script','memo','other'];
   var MIMIC_TAB_ORDER=['mimic_image','mimic_carousel','mimic_video'];
   function mimicTabLabel(tab){
     if(tab==='mimic_image')return 'Mimic · Image';
@@ -616,9 +622,23 @@ export function adminManualIdeaPickScript(): string {
     if(FORMAT_ORDER.indexOf(x)>=0)return x;
     return 'other';
   }
-  function fmtLabel(tab){return tab==='other'?'Other':tab.charAt(0).toUpperCase()+tab.slice(1);}
+  function carouselStyle(it){
+    return String((it&&it.carousel_style)||(it&&it.execution_profile)||'').trim().toLowerCase().replace(/-/g,'_');
+  }
+  function isVisualFirstCarouselIdea(it){
+    return normFormat(it&&it.format)==='carousel'&&(carouselStyle(it)==='visual_first'||carouselStyle(it)==='mixed');
+  }
+  function ideaPickTab(it){
+    if(isVisualFirstCarouselIdea(it))return 'carousel_visual';
+    return normFormat(it&&it.format);
+  }
+  function fmtLabel(tab){
+    if(tab==='carousel_visual')return 'Carousel · visual-first';
+    if(tab==='carousel')return 'Carousel · text-heavy';
+    return tab==='other'?'Other':tab.charAt(0).toUpperCase()+tab.slice(1);
+  }
   var st={
-    runId:null,signalPackId:null,ideas:[],mimicRefs:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
+    runId:null,runStatus:'CREATED',signalPackId:null,ideas:[],mimicRefs:[],byTab:{},savedByTab:{},draftByTab:{},activeTab:null,
     onApplied:null,statusElId:null,busy:false
   };
   function overlay(){return document.getElementById('caf-manual-pick-overlay');}
@@ -671,7 +691,7 @@ export function adminManualIdeaPickScript(): string {
       var draftN=Object.keys(draft).filter(function(k){return draft[k];}).length;
       var count=savedN||draftN;
       var label=isMimicTab(t)?mimicTabLabel(t):fmtLabel(t);
-      var cls='caf-manual-pick-tab'+(t===st.activeTab?' active':'')+(savedN>0?' tab-saved':'')+(isMimicTab(t)?' tab-mimic':'');
+      var cls='caf-manual-pick-tab'+(t===st.activeTab?' active':'')+(savedN>0?' tab-saved':'')+(isMimicTab(t)?' tab-mimic':'')+(t==='carousel_visual'?' tab-visual-first':'');
       h+='<button type="button" class="'+cls+'" data-mp-tab="'+mpEscAttr(t)+'">'+mpEsc(label);
       if(count)h+='<span class="tab-count">'+count+'</span>';
       h+='</button>';
@@ -708,9 +728,11 @@ export function adminManualIdeaPickScript(): string {
     var draft=st.draftByTab[tab]||{};
     var saved=st.savedByTab[tab]||{};
     var mimic=isMimicTab(tab);
+    var showStyle=!mimic;
     var h='<div class="caf-manual-pick-table-wrap"><table class="caf-manual-pick-table"><thead><tr>';
     h+='<th style="width:36px"><input type="checkbox" id="caf-manual-pick-head-cb" title="Toggle all in tab"/></th>';
     h+='<th>'+(mimic?'Reference':'Title')+'</th><th>Platform</th>';
+    if(showStyle)h+='<th>Style</th>';
     if(mimic)h+='<th>Render</th>';
     h+='<th>Summary</th><th>'+(mimic?'Insights ID':'Idea ID')+'</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
@@ -720,12 +742,20 @@ export function adminManualIdeaPickScript(): string {
       h+='<tr class="'+(on?'is-selected':'')+'">';
       h+='<td><input type="checkbox" class="caf-manual-pick-cb" value="'+mpEscAttr(id)+'"'+(on?' checked':'')+'/></td>';
       h+='<td><div class="pick-title">'+mpEsc(it.title||id);
+      if(!mimic&&isVisualFirstCarouselIdea(it)){
+        h+=' <span class="caf-manual-pick-pill--visual-first">FLOW_VISUAL_FIRST</span>';
+      }
       if(mimic){
         var mediaOk=!!it.has_inspection_media;
         h+=' <span class="caf-manual-pick-pill'+(mediaOk?' caf-manual-pick-pill--ok':'')+'">'+(mediaOk?'media':'no media')+'</span>';
       }
       h+='</div></td>';
       h+='<td><span class="badge badge-b">'+mpEsc(it.platform||'—')+'</span></td>';
+      if(showStyle){
+        var lane=String(it.carousel_lane_label||carouselStyle(it)||it.video_style||'—');
+        if(lane!=='—'&&lane.indexOf('_')>=0)lane=lane.replace(/_/g,' ');
+        h+='<td><span class="mono" style="font-size:11px">'+mpEsc(lane)+'</span></td>';
+      }
       if(mimic){
         var rl=String(it.predicted_render_label||'—');
         var rCls='caf-manual-pick-render';
@@ -766,7 +796,7 @@ export function adminManualIdeaPickScript(): string {
     st.byTab={};
     for(var i=0;i<ideas.length;i++){
       var it=ideas[i]||{};
-      var tab=normFormat(it.format);
+      var tab=ideaPickTab(it);
       if(!st.byTab[tab])st.byTab[tab]=[];
       st.byTab[tab].push(it);
     }
@@ -783,11 +813,14 @@ export function adminManualIdeaPickScript(): string {
   }
   function allSavedIds(){
     var out={};
-    var tabs=Object.keys(st.savedByTab);
+    var tabs=Object.keys(st.byTab);
     for(var i=0;i<tabs.length;i++){
       if(isMimicTab(tabs[i]))continue;
-      var set=st.savedByTab[tabs[i]]||{};
-      Object.keys(set).forEach(function(id){if(set[id])out[id]=1;});
+      var tab=tabs[i];
+      var saved=st.savedByTab[tab]||{};
+      var draft=st.draftByTab[tab]||{};
+      Object.keys(saved).forEach(function(id){if(saved[id])out[id]=1;});
+      Object.keys(draft).forEach(function(id){if(draft[id])out[id]=1;});
     }
     return Object.keys(out);
   }
@@ -795,13 +828,31 @@ export function adminManualIdeaPickScript(): string {
     var picks=[];
     for(var mi=0;mi<MIMIC_TAB_ORDER.length;mi++){
       var tab=MIMIC_TAB_ORDER[mi];
-      var set=st.savedByTab[tab]||{};
+      var saved=st.savedByTab[tab]||{};
+      var draft=st.draftByTab[tab]||{};
       var kind=mimicKindForTab(tab);
-      Object.keys(set).forEach(function(insightsId){
-        if(set[insightsId])picks.push({insights_id:insightsId,mimic_kind:kind});
-      });
+      var seen={};
+      function addFrom(set){
+        Object.keys(set).forEach(function(insightsId){
+          if(set[insightsId]&&!seen[insightsId]){seen[insightsId]=1;picks.push({insights_id:insightsId,mimic_kind:kind});}
+        });
+      }
+      addFrom(saved);
+      addFrom(draft);
     }
     return picks;
+  }
+  function renderRunHint(){
+    var el=document.getElementById('caf-manual-pick-run-hint');
+    if(!el)return;
+    if(st.runStatus&&st.runStatus!=='CREATED'){
+      el.style.display='block';
+      el.className='caf-manual-pick-run-hint is-error';
+      el.textContent='Run status is '+st.runStatus+' — picks can only be applied before Start. Create a new run (manual picking) or use Re-plan after changing planned jobs.';
+      return;
+    }
+    el.style.display='none';
+    el.textContent='';
   }
   function closePicker(){
     var ov=overlay();
@@ -833,10 +884,12 @@ export function adminManualIdeaPickScript(): string {
       st.ideas=Array.isArray(d.signal_pack_ideas_ui)?d.signal_pack_ideas_ui:[];
       st.mimicRefs=Array.isArray(d.signal_pack_mimic_references_ui)?d.signal_pack_mimic_references_ui:[];
       st.signalPackId=(d.signal_pack_meta&&d.signal_pack_meta.id)||(d.run&&d.run.signal_pack_id)||null;
+      st.runStatus=d.run&&d.run.status?String(d.run.status):'CREATED';
       st.byTab={};
       groupIdeas(st.ideas);
       groupMimicRefs(st.mimicRefs);
       if(!st.ideas.length&&!st.mimicRefs.length)throw new Error('Signal pack has no ideas_json and no top-performer references — build insights and rebuild the pack.');
+      renderRunHint();
       renderTabs();
       renderTable();
       updateSummary();
@@ -868,16 +921,20 @@ export function adminManualIdeaPickScript(): string {
   });
   document.getElementById('caf-manual-pick-apply')?.addEventListener('click',async function(){
     persistDraftTab();
+    if(st.runStatus&&st.runStatus!=='CREATED'){
+      setMsg('Run is already '+st.runStatus+' — create a new run or Re-plan. Manual pick only works before Start.',true);
+      return;
+    }
     var ids=allSavedIds();
     var mimicPicks=allSavedMimicPicks();
     if(!ids.length&&!mimicPicks.length){
-      setMsg('Save at least one tab (ideas or mimic references) before applying.',true);
+      setMsg('Select at least one idea or mimic reference, then Apply & start run.',true);
       return;
     }
     if(st.busy)return;
     st.busy=true;
     var total=ids.length+mimicPicks.length;
-    setMsg('Saving '+total+' selection(s) to planned jobs…',false);
+    setMsg('Saving '+total+' selection(s) and starting run…',false);
     try{
       var body={mode:'manual'};
       if(ids.length)body.idea_ids=ids;
@@ -887,11 +944,23 @@ export function adminManualIdeaPickScript(): string {
         body:JSON.stringify(body)
       });
       var d=await r.json();
-      if(!r.ok||!d.ok)throw new Error((d&&d.message)||(d&&d.error)||'HTTP '+r.status);
-      setMsg('Saved '+d.planner_rows+' planned job row(s).',false);
+      if(!r.ok||!d.ok){
+        var errMsg=(d&&d.message)||(d&&d.error)||('HTTP '+r.status);
+        if(String(errMsg).toLowerCase().indexOf('created')>=0){
+          throw new Error('Run already started — manual pick only works before Start. Create a new run with Manual picking.');
+        }
+        throw new Error(errMsg);
+      }
+      var startR=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(st.runId)+'/start',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
+      });
+      var startD=await startR.json();
+      if(!startR.ok||!startD.ok)throw new Error((startD&&startD.message)||(startD&&startD.error)||'Start failed after saving picks');
+      var planned=startD.planned_jobs!=null?startD.planned_jobs:0;
+      setMsg('Saved '+d.planner_rows+' planner row(s) · '+planned+' content job(s) planned. Open Jobs → Generate to create packages.',false);
       closePicker();
-      if(typeof st.onApplied==='function')st.onApplied(d);
-      else if(typeof showToast==='function')showToast('Manual pick saved: '+d.planner_rows+' row(s).',true);
+      if(typeof st.onApplied==='function')st.onApplied(Object.assign({},d,{start:startD}));
+      else if(typeof showToast==='function')showToast('Run started: '+planned+' job(s) from manual pick.',true,12000);
     }catch(e){
       setMsg(String(e.message||e),true);
     }finally{st.busy=false;}

@@ -1920,7 +1920,8 @@ async function processCarouselJob(
   const mimicProjectRender = isMimicCarouselRender
     ? await loadProjectMimicRenderSettings(db, job.project_id, config)
     : null;
-  // template_bg always uses clean plates + HBS/DocAI overlay — never bake typography into image models.
+  // TP-grounded carousel (manual mimic + visual-first ideas): art-only plates + HTML/DocAI text.
+  // Never bake copy into image models — required for reprint-text-overlay and layer editor.
   const mimicCarouselTextViaFlux = false;
   if (
     isMimicCarousel &&
@@ -1931,6 +1932,7 @@ async function processCarouselJob(
     logPipelineEvent("info", "render", "ignoring mimic_carousel_text_via_flux — text is HTML/DocAI overlay only", {
       run_id: job.run_id,
       task_id: job.task_id,
+      flow_type: job.flow_type,
     });
   }
   const mimicBflModelOverride = mimicProjectRender?.bflModel ?? null;

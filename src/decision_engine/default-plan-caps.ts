@@ -50,7 +50,7 @@ export const PLAN_CAP_UI_CATEGORIES: readonly {
   {
     id: "niche_carousel",
     label: "Niche carousel",
-    hint: "Editorial FLOW_CAROUSEL jobs from niche ideas (text-heavy or visual-first). Separate from product carousels.",
+    hint: "Text-heavy FLOW_CAROUSEL jobs from niche ideas. Visual-first carousels use FLOW_VISUAL_FIRST_CAROUSEL (separate cap below).",
   },
   {
     id: "product_carousel",
@@ -109,7 +109,7 @@ export const CAROUSEL_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
   },
   {
     id: "visual_first_carousel",
-    label: "Carousel — visual-first (top-performer render)",
+    label: "Carousel — visual-first (FLOW_VISUAL_FIRST_CAROUSEL)",
     category: "niche_carousel",
     uiChannel: "carousel",
     keys: [FLOW_VISUAL_FIRST_CAROUSEL],

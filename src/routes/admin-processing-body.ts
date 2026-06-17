@@ -623,7 +623,7 @@ export function adminProcessingBody(currentSlug: string): string {
               </label>
               <span id="idea-bucket-total" style="font-size:11px;color:var(--muted)">Total: 0</span>
             </div>
-            <p class="runs-ops-hint" style="margin:0 0 10px;font-size:11px">Set how many <strong>new</strong> ideas to generate per bucket. Niche = editorial content; Product = brand/product ideas grounded in product profile + insights. Mimic replications are picked separately at run time.</p>
+            <p class="runs-ops-hint" style="margin:0 0 10px;font-size:11px">Set how many <strong>new</strong> ideas to generate per bucket. <strong>Visual-first carousel</strong> buckets set <code>carousel_style: visual_first</code> — they plan to <code>FLOW_VISUAL_FIRST_CAROUSEL</code> at run start (not manual Mimic · Carousel picks). Niche = editorial; Product = brand/product ideas.</p>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
               <div>
                 <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:6px">Niche</div>
@@ -4365,9 +4365,13 @@ function renderIdeasTable(rows,opts){
     var id2=String(x.id||'');
     var on=!!sel[id2];
     var exec=String(x.execution_profile||x.carousel_style||x.video_style||'');
+    var vfPill='';
+    if(String(x.format||'').toLowerCase()==='carousel'&&(exec==='visual_first'||exec==='mixed')){
+      vfPill=' <span style="font-size:10px;padding:2px 6px;border-radius:9999px;background:rgba(168,85,247,.22);color:#d8b4fe;white-space:nowrap">visual-first lane</span>';
+    }
     tb+='<tr class="idea-row" data-id="'+esc(id2)+'" style="cursor:pointer;'+(on?'':'opacity:0.65')+'">'+
       '<td><input class="idea-check" type="checkbox" data-id="'+esc(id2)+'" '+(on?'checked':'')+' /></td>'+
-      '<td style="max-width:300px;white-space:pre-wrap">'+esc(x.title||id2)+'</td>'+
+      '<td style="max-width:300px;white-space:pre-wrap">'+esc(x.title||id2)+vfPill+'</td>'+
       '<td class="mono">'+esc(x.content_lens||'niche')+'</td>'+
       '<td class="mono">'+esc(x.format||'')+'</td>'+
       '<td class="mono" style="font-size:11px">'+esc(exec)+'</td>'+

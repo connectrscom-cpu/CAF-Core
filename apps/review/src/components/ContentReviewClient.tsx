@@ -12,7 +12,7 @@ import { decodeTaskIdParam } from "@/lib/task-id";
 import { taskApiQuery } from "@/lib/task-links";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
-import { isMimicCarouselFlow } from "@/lib/flow-kind";
+import { isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
 
 interface ContentResponse {
   data: ReviewQueueRow;
@@ -103,7 +103,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
   useEffect(() => { fetchContent(); }, [fetchContent]);
 
   const flowTypeStr = (data?.flow_type ?? "").trim();
-  const mimicCarouselFlow = flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false;
+  const tpGroundedCarouselReview = flowTypeStr ? isTpGroundedCarouselReviewFlow(flowTypeStr) : false;
 
   return (
     <>
@@ -124,7 +124,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
             workbenchRow={data}
             fullJob={fullJob}
             taskAssets={taskAssets}
-            fetchMimicAudits={mimicCarouselFlow}
+            fetchMimicAudits={tpGroundedCarouselReview}
           />
         </div>
       ) : (
@@ -157,7 +157,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
                 workbenchRow={data}
                 fullJob={fullJob}
                 taskAssets={taskAssets}
-                fetchMimicAudits={mimicCarouselFlow}
+                fetchMimicAudits={tpGroundedCarouselReview}
                 variant="compact"
               />
             }

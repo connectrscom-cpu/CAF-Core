@@ -2,7 +2,10 @@
  * Mirrors Core `src/decision_engine/flow-kind.ts` for the Review UI.
  *
  * Three review kinds drive the workbench layout:
- *   - **carousel** — slide grid + per-slide copy editor.
+ *   - **carousel** — slide grid + per-slide copy editor (`FLOW_CAROUSEL`).
+ *   - **tp-grounded carousel** — `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` and `FLOW_VISUAL_FIRST_CAROUSEL`:
+ *     layer editor, slide regen, reprint overlay (visual-first skips original-vs-generated compare).
+ *   - **mimic compare** — only manual mimic: side-by-side reference vs generated frames.
  *   - **video**    — single media preview + AI-video prompt viewer + prompt-analysis notes.
  *   - **image**    — single media preview + image prompt viewer + caption / hashtag edits
  *                    (no slide grid, no title override — image posts ship as single frame).
@@ -51,14 +54,25 @@ export function isCarouselFlow(flowType: string): boolean {
   return /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
 }
 
-/** TP-grounded carousel render (manual mimic pick or visual-first ideas lane). */
+/** TP-grounded carousel render on Core (manual mimic + visual-first ideas). */
 export function isTpGroundedCarouselRenderFlow(flowType: string | null | undefined): boolean {
   const ft = (flowType ?? "").trim();
   return ft === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" || ft === "FLOW_VISUAL_FIRST_CAROUSEL";
 }
 
-export function isMimicCarouselFlow(flowType: string | null | undefined): boolean {
+/** Review workbench for TP-grounded carousels (layer editor, slide regen, reprint overlay). */
+export function isTpGroundedCarouselReviewFlow(flowType: string | null | undefined): boolean {
   return isTpGroundedCarouselRenderFlow(flowType);
+}
+
+/** Ideas-from-insights visual-first lane. */
+export function isVisualFirstCarouselFlow(flowType: string | null | undefined): boolean {
+  return (flowType ?? "").trim() === "FLOW_VISUAL_FIRST_CAROUSEL";
+}
+
+/** Manual top-performer mimic picks — includes original-vs-generated compare in Review. */
+export function isMimicCarouselFlow(flowType: string | null | undefined): boolean {
+  return (flowType ?? "").trim() === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL";
 }
 
 export function isVideoFlow(flowType: string): boolean {

@@ -98,6 +98,7 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 - `scene-assembly-n8n-legacy.mdc` — when touching scene/n8n-legacy paths
 - `mimic-signal-pack-llm-filter.mdc` — mimic LLM creation pack; single-idea `signal_pack` filter
 - `mimic-carousel-package.mdc` — `mimic_carousel_package` vs `FLOW_CAROUSEL` / `carousel_package`
+- `visual-first-carousel-flow.mdc` — `FLOW_VISUAL_FIRST_CAROUSEL`: same TP-grounded **render** on Core; Review uses TP-grounded workbench (regen, layer editor) without original-vs-generated compare
 - `mimic-text-placement-automation.mdc` — **before automating mimic text placement**: post-render composite QA loop, HTML overlay invariants, `docai_layer_positions` schema
 - `caf-domain-model.mdc` — **alwaysApply**
 

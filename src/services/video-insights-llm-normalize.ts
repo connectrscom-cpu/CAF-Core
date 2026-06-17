@@ -27,6 +27,10 @@ const ROOT_STRING_FIELDS = [
   "format_pattern",
   "why_it_worked",
   "video_as_whole_summary",
+  "message_thesis",
+  "narrative_arc",
+  "spoken_script_summary",
+  "on_screen_text_script",
 ] as const;
 
 const FORMAT_PATTERN_VALUES = new Set([
@@ -67,9 +71,90 @@ const JUNK_ROOT_KEYS = new Set([
   "asset_sources",
   "tooling_notes",
   "how_to_recreate",
+  // Nemotron hallucination / meta keys (objects or strings)
+  "actual",
+  "angles",
+  "backup",
+  "chains",
+  "counter",
+  "metadata",
+  "takeaway",
+  "verifier",
+  "benchmark",
+  "framework",
+  "llm_token",
+  "timestamp",
+  "directions",
+  "guardrails",
+  "offsetTuppn",
+  "trace_index",
+  "fringe_score",
+  "post_details",
+  "retry_policy",
+  "approach_note",
+  "frame_details",
+  "image_history",
+  "return_status",
+  "analysis_style",
+  "framework_type",
+  "priority_index",
+  "aesthetic_notes",
+  "audio_recording",
+  "document_vector",
+  "event_iteration",
+  "completed_chains",
+  "cultural_context",
+  "image_processing",
+  "image_properties",
+  "text_annotations",
+  "correction_status",
+  "device_recordings",
+  "frame_annotations",
+  "p_practice_system",
+  "question_variance",
+  "reach_implication",
+  "relevance_factors",
+  "spoken_transcript",
+  "taxonomic_weights",
+  "additional_context",
+  "device_geolocation",
+  "framework_selector",
+  "replication_frames",
+  "specific_recording",
+  "diagnostic_response",
+  "pre_llm_frame_count",
+  "discussion_questions",
+  "analyze_single_corpus",
+  "approach_verification",
+  "correlation_structure",
+  "speculative_embedding",
+  "veracity_verification",
+  "additional_frame_details",
+  "attribution_approximation",
+  "title",
+  "risk_basis",
+  "colorpalette",
+  "behavioral_notes",
+  "knowledge_domain",
+  "scenario_thinkfast",
+  "process_descriptors",
+  "sensitive_design_op",
+  "strategy_disruption",
+  "content_optimization",
+  "composition_benchmarks",
+  "risk_suggested_actions",
+  "design_alignment_verdict",
+  "astrology_content_analysis",
+  "platform_composition_alignment",
 ]);
 
-const SINGLE_FRAME_TEMPORAL_FIELDS = ["video_arc", "opening_vs_body", "pacing_notes"] as const;
+const PROMPT_ECHO_OCR =
+  /every readable on-screen word|\[illegible\] when needed|use \\n between lines|reading order/i;
+
+const WEAK_SUMMARY_PLACEHOLDER = /unable to summarize|not inferable from a single frame|not observable in a single frame/i;
+
+const SPOKEN_HOOK_PLACEHOLDER =
+  /^(n\/?a|none|unknown|not applicable|no audio|no speech|silent|not available|needs spoken transcript)[\s\-—.:,()]*|^empty$/i;
 
 const SINGLE_FRAME_HONEST = {
   video_arc: "Single-frame sample — clip progression is not observable from one still.",
@@ -124,6 +209,8 @@ export interface VideoInsightQualityResult {
 export interface FinalizeVideoInsightOptions {
   frameCount: number;
   captionTranscript?: string;
+  /** Whisper ASR transcript — used when model returns N/A for spoken_hook. */
+  spokenTranscript?: string;
 }
 
 export interface FinalizeVideoInsightResult {
@@ -192,16 +279,111 @@ function normalizeFormatPattern(raw: unknown): string | null {
   return "unknown";
 }
 
+const PERSISTED_ROOT_KEYS = new Set<string>([
+  ...ROOT_STRING_FIELDS,
+  "frames",
+  "risk_flags",
+  "video_composition_system",
+  "video_visual_system",
+  "replication_blueprint",
+  "_inference_limits",
+  "_format_pattern_refined",
+  "style_summary",
+  "video_as_whole_summary",
+  "full_video_analysis",
+  "on_screen_text_script",
+  "message_thesis",
+  "narrative_arc",
+  "spoken_script_summary",
+  "_full_video_synthesis",
+]);
+
+const SINGLE_FRAME_TEMPORAL_FIELDS = ["video_arc", "opening_vs_body", "pacing_notes"] as const;
+
+export function isPromptEchoOcrText(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  return PROMPT_ECHO_OCR.test(t);
+}
+
+export function isSpokenHookPlaceholder(s: string): boolean {
+  const t = s.trim();
+  if (!t) return true;
+  return SPOKEN_HOOK_PLACEHOLDER.test(t) || isGibberishInsightText(t);
+}
+
+/** Best hook line for DB hook_text — spoken hook, then opening line of ASR, then OCR. */
+export function pickVideoInsightHookText(
+  parsed: Record<string, unknown> | null | undefined,
+  whisperTranscript?: string | null
+): string | null {
+  if (!parsed) return null;
+
+  const fullAnalysis = asRecord(parsed.full_video_analysis);
+  const hookAnalysis = asRecord(fullAnalysis?.hook_analysis);
+  const hookSpoken = typeof hookAnalysis?.spoken === "string" ? hookAnalysis.spoken.trim() : "";
+  if (hookSpoken && !isSpokenHookPlaceholder(hookSpoken)) {
+    return hookSpoken.length > 400 ? `${hookSpoken.slice(0, 400)}…` : hookSpoken;
+  }
+
+  const spoken = typeof parsed.spoken_hook === "string" ? parsed.spoken_hook.trim() : "";
+  if (spoken && !isSpokenHookPlaceholder(spoken)) {
+    return spoken.length > 400 ? `${spoken.slice(0, 400)}…` : spoken;
+  }
+
+  const whisper = whisperTranscript?.trim();
+  if (whisper) {
+    const firstLine =
+      whisper
+        .split(/\n+/)
+        .map((x) => x.trim())
+        .find(Boolean) ??
+      whisper.split(/[.!?]+\s+/)[0]?.trim() ??
+      "";
+    if (firstLine) return firstLine.length > 400 ? `${firstLine.slice(0, 400)}…` : firstLine;
+  }
+
+  const frames = Array.isArray(parsed.frames) ? parsed.frames : [];
+  for (const raw of frames) {
+    const frame = asRecord(raw);
+    if (!frame) continue;
+    let ocr = String(frame.on_screen_text_transcript ?? "").trim();
+    if (!ocr || isPromptEchoOcrText(ocr)) {
+      const bp = asRecord(frame.composition_blueprint);
+      const blocks = Array.isArray(bp?.text_blocks) ? bp!.text_blocks : [];
+      const fromBlocks = blocks
+        .map((b) => String(asRecord(b)?.text ?? "").trim())
+        .filter((x) => x && !isPromptEchoOcrText(x));
+      if (fromBlocks.length > 0) ocr = fromBlocks.join("\n");
+    }
+    if (!ocr || isPromptEchoOcrText(ocr)) continue;
+    const line = ocr.split(/\n+/).map((x) => x.trim()).find(Boolean);
+    if (line) return line.length > 4000 ? `${line.slice(0, 4000)}…` : line;
+  }
+
+  const summary = String(parsed.on_screen_text_summary ?? "").trim();
+  if (summary && !isPromptEchoOcrText(summary)) {
+    return summary.length > 4000 ? `${summary.slice(0, 4000)}…` : summary;
+  }
+  return null;
+}
+
 export function isGibberishInsightText(s: string): boolean {
   const t = s.trim();
   if (!t) return false;
 
   if (
-    /utteranceunknown|alternative_tsla|artifactementing|muscular use of astrological|pruning weapon bonito|davinci resident/i.test(
+    /utteranceunknown|alternative_tsla|artifactementing|muscular use of astrological|pruning weapon bonito|davinci resident|haptenic|actfallin|ppcmd|generative_enaffineteness|jiang-ting|mythoinfinity|pret \|/i.test(
       t
     )
   ) {
     return true;
+  }
+
+  // Mixed-script / token-salad blobs Nemotron sometimes emits mid-collapse.
+  if (t.length > 120 && /[\u0370-\u03FF\u0400-\u04FF]/.test(t) && /[a-zA-Z]{4,}/.test(t)) {
+    const nonAscii = (t.match(/[^\x00-\x7F]/g) ?? []).length;
+    if (nonAscii / t.length > 0.08) return true;
   }
 
   if (t.length < 80) return false;
@@ -358,12 +540,101 @@ function sanitizeCompositionBlueprint(raw: unknown): Record<string, unknown> | n
   return Object.keys(out).length > 0 ? out : null;
 }
 
+function isHallucinatedRiskFlag(s: string): boolean {
+  const t = s.trim();
+  if (!t || t.length > 160) return true;
+  if (/^[IVX]+[A-Z0-9_]{10,}/.test(t)) return true;
+  if (/vdscore|thinkfast|non-disclosed_copyrighted|inappropriate_all_materials/i.test(t)) return true;
+  return false;
+}
+
+export function sanitizeVideoInsightRiskFlags(v: unknown): string[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => String(x ?? "").trim())
+    .filter((s) => s && !isHallucinatedRiskFlag(s))
+    .slice(0, 12);
+}
+
+function hoistMisplacedFrameFields(out: Record<string, unknown>): void {
+  const typo = asRecord(out.typography);
+  if (!typo) return;
+  const hoistKeys = [
+    "shot_type",
+    "text_density",
+    "layout_template",
+    "graphic_elements",
+    "visual_description",
+    "color_tokens",
+    "composition_blueprint",
+  ] as const;
+  for (const key of hoistKeys) {
+    if (out[key] == null && typo[key] != null) {
+      out[key] = typo[key];
+    }
+    delete typo[key];
+  }
+  if (Object.keys(typo).length === 0) delete out.typography;
+}
+
+function salvageFrameOcr(frame: Record<string, unknown>, root: Record<string, unknown>): void {
+  const t = String(frame.on_screen_text_transcript ?? "").trim();
+  if (t && !isPromptEchoOcrText(t)) return;
+
+  const bp = asRecord(frame.composition_blueprint);
+  const blocks = Array.isArray(bp?.text_blocks) ? bp!.text_blocks : [];
+  const fromBlocks = blocks
+    .map((b) => String(asRecord(b)?.text ?? "").trim())
+    .filter((x) => x && !isPromptEchoOcrText(x));
+  if (fromBlocks.length > 0) {
+    frame.on_screen_text_transcript = fromBlocks.join("\n");
+    return;
+  }
+
+  const summary = String(root.on_screen_text_summary ?? "").trim();
+  if (summary && !isPromptEchoOcrText(summary)) {
+    frame.on_screen_text_transcript = summary;
+    return;
+  }
+
+  if (!t || isPromptEchoOcrText(t)) delete frame.on_screen_text_transcript;
+}
+
+function sanitizeWeakSummaries(root: Record<string, unknown>): void {
+  const summary = typeof root.video_as_whole_summary === "string" ? root.video_as_whole_summary.trim() : "";
+  if (!summary || !WEAK_SUMMARY_PLACEHOLDER.test(summary)) return;
+  const alt =
+    pickString(root, "why_it_worked", "message_clarity", "hook_visual", "on_screen_text_summary") ?? "";
+  if (alt && !WEAK_SUMMARY_PLACEHOLDER.test(alt)) {
+    root.video_as_whole_summary = truncateInsightString(alt);
+    root.style_summary = root.video_as_whole_summary;
+  }
+}
+
+function sanitizeFramesArray(root: Record<string, unknown>): void {
+  const frames = Array.isArray(root.frames) ? root.frames : [];
+  if (frames.length === 0) return;
+  root.frames = frames
+    .map((raw, i) => {
+      const frame = normalizeFrameRecord(raw, i + 1);
+      if (!frame) return null;
+      hoistMisplacedFrameFields(frame);
+      salvageFrameOcr(frame, root);
+      return frame;
+    })
+    .filter((f): f is Record<string, unknown> => f != null);
+}
+
 function stripDegenerateRootFields(root: Record<string, unknown>): void {
   for (const key of JUNK_ROOT_KEYS) {
     delete root[key];
   }
 
   for (const [key, value] of Object.entries(root)) {
+    if (JUNK_ROOT_KEYS.has(key)) {
+      delete root[key];
+      continue;
+    }
     if (typeof value === "string") {
       if (isGibberishInsightText(value)) {
         delete root[key];
@@ -371,6 +642,70 @@ function stripDegenerateRootFields(root: Record<string, unknown>): void {
       }
       root[key] = truncateInsightString(value);
     }
+  }
+}
+
+/** Keep only schema fields CAF downstream consumers read — drops Nemotron object noise. */
+export function pruneVideoInsightRootForPersist(root: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const key of PERSISTED_ROOT_KEYS) {
+    if (root[key] !== undefined) out[key] = root[key];
+  }
+  return out;
+}
+
+function firstSpokenLine(transcript: string): string | null {
+  const t = transcript.trim();
+  if (!t) return null;
+  const line = t.split(/\n+/).map((x) => x.trim()).find(Boolean);
+  if (!line || line.length < 3) return null;
+  return line.length > 400 ? `${line.slice(0, 400)}…` : line;
+}
+
+function enrichSpokenHookFromTranscripts(
+  root: Record<string, unknown>,
+  opts: FinalizeVideoInsightOptions
+): void {
+  const current = typeof root.spoken_hook === "string" ? root.spoken_hook.trim() : "";
+  if (current && !isSpokenHookPlaceholder(current)) {
+    return;
+  }
+
+  const whisper = opts.spokenTranscript?.trim() ?? "";
+  const fromWhisper = firstSpokenLine(whisper);
+  if (fromWhisper) {
+    root.spoken_hook = fromWhisper;
+    return;
+  }
+
+  const caption = opts.captionTranscript?.trim() ?? "";
+  const fromCaption = firstSpokenLine(caption);
+  if (fromCaption && !fromCaption.startsWith("#")) {
+    root.spoken_hook = fromCaption;
+    return;
+  }
+
+  if (current && isSpokenHookPlaceholder(current)) {
+    delete root.spoken_hook;
+  }
+}
+
+/**
+ * Static single-frame promos with no narration read better as text_on_screen → HeyGen no-avatar.
+ */
+function refineSingleFrameFormatPattern(root: Record<string, unknown>, frameCount: number): void {
+  if (frameCount !== 1) return;
+  const fp = String(root.format_pattern ?? "").trim();
+  if (fp !== "product_demo" && fp !== "mixed") return;
+
+  const vis = asRecord(root.video_visual_system);
+  const motion = String(vis?.motion_or_energy ?? "").toLowerCase();
+  const spoken = String(root.spoken_hook ?? "").trim();
+  const noNarration = !spoken || isSpokenHookPlaceholder(spoken);
+
+  if (noNarration && (motion.includes("static") || motion === "")) {
+    root.format_pattern = "text_on_screen";
+    root._format_pattern_refined = "single_static_text_card";
   }
 }
 
@@ -526,16 +861,22 @@ export function finalizeVideoInsightParsed(
 
   stripDegenerateRootFields(normalized);
   sanitizeRootStrings(normalized);
+  sanitizeWeakSummaries(normalized);
+  sanitizeFramesArray(normalized);
+  normalized.risk_flags = sanitizeVideoInsightRiskFlags(normalized.risk_flags);
+  enrichSpokenHookFromTranscripts(normalized, opts);
   applySingleFrameHonesty(normalized, opts.frameCount);
+  refineSingleFrameFormatPattern(normalized, opts.frameCount);
+  const pruned = pruneVideoInsightRootForPersist(normalized);
 
-  const quality = assessVideoInsightQuality(normalized, { frameCount: opts.frameCount });
-  const hashtags = extractHashtagsFromVideoInsight(normalized, opts.captionTranscript ?? "");
+  const quality = assessVideoInsightQuality(pruned, { frameCount: opts.frameCount });
+  const hashtags = extractHashtagsFromVideoInsight(pruned, opts.captionTranscript ?? "");
 
   if (!quality.ok) {
     return { parsed: null, quality, hashtags };
   }
 
-  return { parsed: normalized, quality, hashtags };
+  return { parsed: pruned, quality, hashtags };
 }
 
 function looksLikeGarbageVideoPayload(root: Record<string, unknown>): boolean {
@@ -743,7 +1084,7 @@ NVIDIA / Nemotron — strict output contract:
   - composition_blueprint.qwen_prompt_notes
 - format_pattern MUST be one of: talking_head, b_roll, text_on_screen, ugc, product_demo, mixed, unknown
 - When only ONE frame is attached: do NOT invent cuts, body frames, or motion. State honestly that progression is not observable.
-- Never emit extra research/meta keys (e.g. research_questions, concrete_examples, alternative_tsla_*).`;
+- Never emit extra research/meta keys (e.g. research_questions, concrete_examples, alternative_tsla_*, actual, angles, chains, backup, image_history, llm_token, framework_selector).`;
 
 export const TOP_PERFORMER_VIDEO_SINGLE_FRAME_USER_APPENDIX = `
 

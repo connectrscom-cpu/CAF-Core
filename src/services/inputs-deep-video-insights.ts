@@ -22,7 +22,15 @@ import {
 } from "../repositories/inputs-evidence.js";
 import { ratingReviewSnapshotsByRowId } from "../domain/evidence-performance-review-snapshot.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
-import { finalizeVideoInsightParsed } from "./video-insights-llm-normalize.js";
+import {
+  finalizeVideoInsightParsed,
+  pickVideoInsightHookText,
+  sanitizeVideoInsightRiskFlags,
+} from "./video-insights-llm-normalize.js";
+import {
+  mergeFullVideoAnalysisIntoParsed,
+  synthesizeVideoInsightFullAnalysis,
+} from "./video-insight-full-analysis.js";
 import { runVideoFramesVisionAnalysis } from "./video-insights-vision.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
@@ -32,7 +40,6 @@ import {
   TOP_PERFORMER_VIDEO_SYSTEM_PROMPT,
   buildVideoAestheticAnalysisJson,
   buildVideoInsightUserText,
-  parseTopPerformerVideoRiskFlags,
 } from "./inputs-top-performer-video-prompt.js";
 import {
   buildTopPerformerRatingGateRequestOverrides,
@@ -220,7 +227,7 @@ export async function runDeepVideoInsightsForImport(
     buildTopPerformerRatingGateRequestOverrides(opts),
     opts.min_pre_llm_score
   );
-  const maxFrames = clamp(opts.max_frames ?? 12, 1, 16);
+  const maxFrames = clamp(opts.max_frames ?? 10, 6, 16);
 
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
   const sourceVideoArchiveRequested = mediaArchiveRequested && resolveTopPerformerArchiveSourceVideo(config, criteria);
@@ -493,9 +500,31 @@ export async function runDeepVideoInsightsForImport(
       auditStep: STEP,
     });
 
-    const finalized = finalizeVideoInsightParsed(visionOut.parsed, {
+    let visionParsed = visionOut.parsed;
+    if (visionParsed && openAiApiKey) {
+      try {
+        const synthesis = await synthesizeVideoInsightFullAnalysis({
+          config,
+          openAiApiKey,
+          captionTranscript: prep.caption_transcript,
+          whisperTranscript: prep.whisper_transcript ?? "",
+          frameCount: frameUrls.length,
+          frameTimestampsSec: prep.frame_timestamps_sec,
+          visionParsed,
+          audit: auditBase,
+        });
+        if (synthesis.parsed) {
+          visionParsed = mergeFullVideoAnalysisIntoParsed(visionParsed, synthesis.parsed);
+        }
+      } catch {
+        /* synthesis optional — vision-only insight still valuable */
+      }
+    }
+
+    const finalized = finalizeVideoInsightParsed(visionParsed, {
       frameCount: frameUrls.length,
       captionTranscript: prep.caption_transcript,
+      spokenTranscript: prep.whisper_transcript ?? "",
     });
     if (!finalized.parsed) {
       rowsInsightRejectedQuality++;
@@ -512,12 +541,15 @@ export async function runDeepVideoInsightsForImport(
     const aesthetic = buildVideoAestheticAnalysisJson(parsed);
     if (prep.whisper_transcript) {
       aesthetic.spoken_transcript_whisper = prep.whisper_transcript;
+      if (!aesthetic.spoken_script_summary) {
+        aesthetic.spoken_script_summary = prep.whisper_transcript;
+      }
     }
     if (finalized.quality.reasons.length > 0) {
       aesthetic.insight_quality = finalized.quality;
     }
 
-    const risks = parseTopPerformerVideoRiskFlags(parsed?.risk_flags);
+    const risks = sanitizeVideoInsightRiskFlags(parsed?.risk_flags);
 
     if (
       mediaArchiveRequested &&
@@ -586,13 +618,7 @@ export async function runDeepVideoInsightsForImport(
       cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
       hashtags: finalized.hashtags,
       caption_style: null,
-      hook_text: (() => {
-        const whisper = prep.whisper_transcript?.trim();
-        if (whisper) return whisper.length > 4000 ? `${whisper.slice(0, 4000)}…` : whisper;
-        if (typeof parsed?.spoken_hook === "string" && parsed.spoken_hook.trim()) return parsed.spoken_hook;
-        if (typeof parsed?.hook_visual === "string" && parsed.hook_visual.trim()) return parsed.hook_visual;
-        return null;
-      })(),
+      hook_text: pickVideoInsightHookText(parsed, prep.whisper_transcript),
       risk_flags_json: risks,
       aesthetic_analysis_json: aesthetic,
       raw_llm_json: parsed,

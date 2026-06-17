@@ -4,8 +4,12 @@ import {
   extractHashtagsFromVideoInsight,
   finalizeVideoInsightParsed,
   isGibberishInsightText,
+  isPromptEchoOcrText,
   mergeVideoInsightChunks,
   normalizeVideoInsightsLlmJson,
+  pickVideoInsightHookText,
+  pruneVideoInsightRootForPersist,
+  sanitizeVideoInsightRiskFlags,
 } from "./video-insights-llm-normalize.js";
 
 describe("normalizeVideoInsightsLlmJson", () => {
@@ -201,6 +205,103 @@ describe("finalizeVideoInsightParsed", () => {
     const bp = out.parsed?.replication_blueprint as Record<string, unknown>;
     expect(bp.tooling_notes).toEqual(["CapCut"]);
   });
+
+  it("strips nemotron object noise and refines static product_demo to text_on_screen", () => {
+    const out = finalizeVideoInsightParsed(
+      {
+        format_pattern: "product_demo",
+        hook_visual: "Vibrant galaxy backdrop frames dramatic phone silhouette",
+        why_it_worked: "Merges cosmic visuals with tech innovation for niche market",
+        message_clarity: "Emphasizes global astrological platform launch",
+        spoken_hook: "N/A - No audio present",
+        video_visual_system: { motion_or_energy: "static composition", canvas_aspect: "portrait_9_16" },
+        replication_blueprint: {
+          steps_to_remake: ["Source galaxy texture background", "Add glowing constellation elements"],
+        },
+        frames: [
+          {
+            frame_index: 1,
+            on_screen_text_transcript: "THE\nKNOWTHEZODIAC APP\nIS BACK!",
+            visual_description: "Smartphone silhouette against cosmic background",
+          },
+        ],
+        actual: { actfallin: "organic garden junk haptenic προέρχειν" },
+        chains: [{ viral_note: "noise" }],
+        image_history: ["debug_progress"],
+      },
+      { frameCount: 1, captionTranscript: "#knowthezodiac launch" }
+    );
+    expect(out.quality.ok).toBe(true);
+    expect(out.parsed?.actual).toBeUndefined();
+    expect(out.parsed?.chains).toBeUndefined();
+    expect(out.parsed?.format_pattern).toBe("text_on_screen");
+    expect(out.parsed?._format_pattern_refined).toBe("single_static_text_card");
+    expect(out.parsed?.spoken_hook).toBeUndefined();
+  });
+
+  it("uses whisper transcript for spoken_hook when model returns N/A", () => {
+    const out = finalizeVideoInsightParsed(
+      {
+        format_pattern: "talking_head",
+        hook_visual: "Creator centered",
+        why_it_worked: "Direct address",
+        spoken_hook: "N/A - No audio present",
+        frames: [{ frame_index: 1, on_screen_text_transcript: "Hello" }],
+      },
+      {
+        frameCount: 1,
+        spokenTranscript: "The app is finally back.\nDownload today.",
+      }
+    );
+    expect(out.parsed?.spoken_hook).toBe("The app is finally back.");
+  });
+
+  it("salvages prompt-echo OCR from composition text_blocks", () => {
+    const out = finalizeVideoInsightParsed(
+      {
+        format_pattern: "text_on_screen",
+        hook_visual: "Stage performers",
+        why_it_worked: "Bold contrast",
+        on_screen_text_summary: "#gemini #jealous",
+        frames: [
+          {
+            frame_index: 1,
+            on_screen_text_transcript: "Every readable on-screen word in reading order",
+            composition_blueprint: {
+              text_blocks: [{ role: "headline", text: "May Gemini vs June Gemini?" }],
+            },
+          },
+        ],
+      },
+      { frameCount: 1 }
+    );
+    const frame = (out.parsed?.frames as Record<string, unknown>[])[0]!;
+    expect(frame.on_screen_text_transcript).toBe("May Gemini vs June Gemini?");
+    expect(pickVideoInsightHookText(out.parsed)).toBe("May Gemini vs June Gemini?");
+  });
+
+  it("replaces weak single-frame summary with why_it_worked", () => {
+    const out = finalizeVideoInsightParsed(
+      {
+        format_pattern: "talking_head",
+        hook_visual: "Two women in interview",
+        why_it_worked: "Engaging astrology debate drives comments",
+        video_as_whole_summary: "Unable to summarize the video as a whole since it consists of only one frame.",
+        frames: [{ frame_index: 1, on_screen_text_transcript: "Do you agree?" }],
+      },
+      { frameCount: 1 }
+    );
+    expect(out.parsed?.video_as_whole_summary).toContain("Engaging astrology debate");
+  });
+
+  it("drops hallucinated nemotron risk flags", () => {
+    expect(
+      sanitizeVideoInsightRiskFlags([
+        "IIIB_Non-Disclosed_Copyrighted_Material_Old_Template",
+        "brand_safety",
+      ])
+    ).toEqual(["brand_safety"]);
+  });
 });
 
 describe("extractHashtagsFromVideoInsight", () => {
@@ -212,6 +313,22 @@ describe("extractHashtagsFromVideoInsight", () => {
       "Launch #KnowTheZodiac"
     );
     expect(tags?.split(" ").sort()).toEqual(["#gemini", "#knowthezodiac", "#memes"].sort());
+  });
+});
+
+describe("pruneVideoInsightRootForPersist", () => {
+  it("keeps only downstream schema keys", () => {
+    const pruned = pruneVideoInsightRootForPersist({
+      format_pattern: "product_demo",
+      hook_visual: "ok",
+      why_it_worked: "ok",
+      frames: [{ frame_index: 1 }],
+      metadata: { junk: true },
+      chains: [],
+    });
+    expect(pruned.format_pattern).toBe("product_demo");
+    expect(pruned.metadata).toBeUndefined();
+    expect(pruned.chains).toBeUndefined();
   });
 });
 

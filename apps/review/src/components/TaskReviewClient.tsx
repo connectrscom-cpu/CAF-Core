@@ -33,7 +33,7 @@ import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPane
 import { JobInfoBar } from "@/components/JobInfoBar";
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
-import { isMimicCarouselFlow } from "@/lib/flow-kind";
+import { isMimicCarouselFlow, isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
 import {
   textOverlayReprintBannerMessage,
   textOverlayReprintUiState,
@@ -490,6 +490,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     () => (flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false),
     [flowTypeStr]
   );
+  const tpGroundedCarouselReview = useMemo(
+    () => (flowTypeStr ? isTpGroundedCarouselReviewFlow(flowTypeStr) : false),
+    [flowTypeStr]
+  );
 
   const mimicTemplateBg = useMemo(() => {
     const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
@@ -519,7 +523,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [mimicTemplateBg, execTaskId]);
 
   useEffect(() => {
-    if (!mimicCarouselFlow || !fullJob || editedSlides.length === 0) return;
+    if (!tpGroundedCarouselReview || !fullJob || editedSlides.length === 0) return;
     if (mimicTemplateBg) {
       if (mimicOcrEnrichedForTask.current === execTaskId) return;
       mimicOcrEnrichedForTask.current = execTaskId;
@@ -549,7 +553,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       if (prev.length === 0) return prev;
       return enrichMimicSlidesFromVisualGuideline(prev, vg, slideCopyLayout);
     });
-  }, [mimicCarouselFlow, mimicTemplateBg, fullJob, editedSlides.length, execTaskId]);
+  }, [tpGroundedCarouselReview, mimicTemplateBg, fullJob, editedSlides.length, execTaskId]);
 
   const carouselFlow = useMemo(
     () => (flowTypeStr ? isCarouselFlow(flowTypeStr) : false),
@@ -840,7 +844,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const carouselLivePreview = useMemo(() => {
     // Mimic carousel slides are final Qwen-generated PNGs — no HBS template to live-preview.
-    if (videoFlow || imageFlow || mimicCarouselFlow || !carouselTemplate || editedSlides.length === 0) return null;
+    if (videoFlow || imageFlow || tpGroundedCarouselReview || !carouselTemplate || editedSlides.length === 0) return null;
     return {
       template: carouselTemplate,
       taskId: execTaskId,
@@ -910,7 +914,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   ]);
 
   const mimicCarouselInspectContext = useMemo(() => {
-    if (!mimicCarouselFlow || editedSlides.length === 0) return null;
+    if (!tpGroundedCarouselReview || editedSlides.length === 0) return null;
     const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
     const templateFromGp = String(gp?.template ?? carouselTemplate ?? "carousel_mimic_bg")
       .replace(/\.hbs$/i, "")
@@ -972,7 +976,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       },
     };
   }, [
-    mimicCarouselFlow,
+    tpGroundedCarouselReview,
     editedSlides,
     fullJob,
     carouselTemplate,
@@ -1002,7 +1006,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     taskAssets,
     upstreamLineage,
     heygenSubmit: submittedHeygenPrompt,
-    fetchMimicAudits: mimicCarouselFlow,
+    fetchMimicAudits: tpGroundedCarouselReview,
     reviewerUi: {
       edited_slides: !videoFlow && !imageFlow && editedSlides.length > 0 ? editedSlides : undefined,
       edited_caption: editedCaption,
@@ -1058,7 +1062,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
 
       {data && !loading && (
-        <div className={`detail-grid${mimicCarouselFlow ? " detail-grid--mimic-carousel" : ""}`}>
+        <div className={`detail-grid${tpGroundedCarouselReview ? " detail-grid--mimic-carousel" : ""}`}>
           <div style={{ minWidth: 0 }}>
             <TaskViewer
               data={data}
@@ -1071,20 +1075,20 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               carouselLivePreview={carouselLivePreview}
               previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
               onCarouselSlideChange={setViewerSlideIndex}
-              carouselActiveSlideIndex={mimicCarouselFlow ? viewerSlideIndex : undefined}
+              carouselActiveSlideIndex={tpGroundedCarouselReview ? viewerSlideIndex : undefined}
               referenceSlideUrl={mimicCarouselFlow ? mimicReferenceUrlForViewer : undefined}
-              projectHandle={mimicCarouselFlow ? instagramHandleForPreview : undefined}
-              activeTextBlockIndex={mimicCarouselFlow ? activeTextBlockIndex : undefined}
-              onActiveTextBlockIndexChange={mimicCarouselFlow ? setActiveTextBlockIndex : undefined}
-              mimicFullBleed={mimicCarouselFlow && !mimicTemplateBg}
-              mimicLayoutTextBlocks={mimicCarouselFlow ? mimicLayoutTextBlocks : undefined}
+              projectHandle={tpGroundedCarouselReview ? instagramHandleForPreview : undefined}
+              activeTextBlockIndex={tpGroundedCarouselReview ? activeTextBlockIndex : undefined}
+              onActiveTextBlockIndexChange={tpGroundedCarouselReview ? setActiveTextBlockIndex : undefined}
+              mimicFullBleed={tpGroundedCarouselReview && !mimicTemplateBg}
+              mimicLayoutTextBlocks={tpGroundedCarouselReview ? mimicLayoutTextBlocks : undefined}
               onMimicLayoutTextBlockChange={
-                mimicCarouselFlow
+                tpGroundedCarouselReview
                   ? (blockIndex, text) => mimicTextBlockUpdaterRef.current?.(blockIndex, text)
                   : undefined
               }
               carouselPreviewSidePanel={
-                mimicCarouselFlow ? (
+                tpGroundedCarouselReview ? (
                   <MimicCarouselEdits
                     caption={editedCaption}
                     onCaptionChange={setEditedCaption}
@@ -1093,14 +1097,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                   />
                 ) : undefined
               }
-              onDeleteSlide={mimicCarouselFlow ? handleDeleteMimicSlide : undefined}
-              onRegenerateSlide={mimicCarouselFlow ? handleRegenerateMimicSlide : undefined}
-              regenerateSlideBusy={mimicCarouselFlow ? regenerateSlideBusy : undefined}
-              mimicRegenerationNote={mimicCarouselFlow ? mimicRegenNote : undefined}
-              onMimicRegenerationNoteChange={mimicCarouselFlow ? setMimicRegenNote : undefined}
-              mimicTemplateBg={mimicCarouselFlow && mimicTemplateBg}
+              onDeleteSlide={tpGroundedCarouselReview ? handleDeleteMimicSlide : undefined}
+              onRegenerateSlide={tpGroundedCarouselReview ? handleRegenerateMimicSlide : undefined}
+              regenerateSlideBusy={tpGroundedCarouselReview ? regenerateSlideBusy : undefined}
+              mimicRegenerationNote={tpGroundedCarouselReview ? mimicRegenNote : undefined}
+              onMimicRegenerationNoteChange={tpGroundedCarouselReview ? setMimicRegenNote : undefined}
+              mimicTemplateBg={tpGroundedCarouselReview && mimicTemplateBg}
               carouselCopySidePanel={
-                mimicCarouselFlow && fullJob ? (
+                tpGroundedCarouselReview && fullJob ? (
                   <MimicCarouselLayerEditorPanel
                     job={fullJob}
                     taskId={execTaskId}
@@ -1174,7 +1178,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 lineage={upstreamLineage}
                 validationNode={<InspectValidationJson job={fullJob} />}
                 mimicInspectNode={
-                  mimicCarouselFlow && fullJob ? (
+                  tpGroundedCarouselReview && fullJob ? (
                     <MimicCarouselInspectPanel
                       job={fullJob}
                       taskId={execTaskId}
@@ -1197,7 +1201,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             </div>
           </div>
 
-          <div className={mimicCarouselFlow ? "mimic-decision-bar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className={tpGroundedCarouselReview ? "mimic-decision-bar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {heygenWorkbench && (
               <HeyGenReviewEdits
                 heygenAvatarId={heygenAvatarId}
@@ -1241,7 +1245,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 skipImageRegeneration={skipImageRegeneration}
                 onSkipImageRegenerationChange={setSkipImageRegeneration}
               />
-            ) : mimicCarouselFlow ? null : (
+            ) : tpGroundedCarouselReview ? null : (
               <CarouselEdits
                 taskId={execTaskId}
                 runId={runId || undefined}
@@ -1306,10 +1310,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               skipVideoRegeneration={videoFlow ? skipVideoRegeneration : undefined}
               skipImageRegeneration={imageFlow ? skipImageRegeneration : undefined}
-              showCarouselTemplateControl={carouselFlow && !videoFlow && !imageFlow && !mimicCarouselFlow}
-              showCarouselSlideRework={carouselFlow && !videoFlow && !imageFlow && !mimicCarouselFlow}
-              hideIssueTags={mimicCarouselFlow}
-              mimicReviewMode={mimicCarouselFlow}
+              showCarouselTemplateControl={carouselFlow && !videoFlow && !imageFlow && !tpGroundedCarouselReview}
+              showCarouselSlideRework={carouselFlow && !videoFlow && !imageFlow && !tpGroundedCarouselReview}
+              hideIssueTags={tpGroundedCarouselReview}
+              mimicReviewMode={tpGroundedCarouselReview}
               carouselSlideCount={carouselSlideCount}
               existingSlideReworkIndices={existingSlideReworkIndices}
               existingCarouselReworkChangeTemplate={
@@ -1320,7 +1324,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     : undefined
               }
             />
-            {!videoFlow && !imageFlow && !mimicCarouselFlow && (
+            {!videoFlow && !imageFlow && !tpGroundedCarouselReview && (
               <CarouselEditsExport
                 taskId={execTaskId}
                 runId={runId || undefined}

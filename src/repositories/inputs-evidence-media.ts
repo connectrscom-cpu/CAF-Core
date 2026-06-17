@@ -80,6 +80,29 @@ export async function findEvidenceMediaBySourceUrl(
   return rows[0] ?? null;
 }
 
+/** Archived source video public URL when Instagram CDN is stale but Storage has `source.mp4`. */
+export async function findArchivedSourceVideoUrlForEvidenceRow(
+  db: Pool,
+  projectId: string,
+  evidenceRowId: string
+): Promise<string | null> {
+  const rows = await q<{ public_url: string | null; source_url: string }>(
+    db,
+    `SELECT public_url, source_url
+       FROM caf_core.evidence_media_assets
+      WHERE project_id = $1
+        AND evidence_row_id = $2::bigint
+        AND asset_role = 'source_video'
+        AND archive_status = 'archived'
+        AND public_url IS NOT NULL
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [projectId, evidenceRowId]
+  );
+  const u = rows[0]?.public_url?.trim();
+  return u || null;
+}
+
 /** Archived frame URLs for vision (extracted frames first, then thumbnails). */
 export async function listEvidenceMediaVisionFrameUrls(
   db: Pool,

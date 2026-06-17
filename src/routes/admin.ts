@@ -743,11 +743,13 @@ function renderPlanCapRowHtml(g: PlanCapGroupDef): string {
         ? DEFAULT_CAROUSEL_FLOW_PLAN_CAP
         : DEFAULT_VIDEO_FLOW_PLAN_CAP;
   const title =
-    g.uiChannel === "mimic"
-      ? `Planner cap for ${g.keys[0] ?? ""}. Empty = default ${defaultCap}. Not counted toward regular carousel run cap.`
-      : g.uiChannel === "carousel"
-        ? `Planner cap for standard carousel family (all listed flow_type synonyms). Empty = default ${defaultCap}.`
-        : `Planner cap for this video family (all listed flow_type synonyms). Empty = default ${defaultCap}.`;
+    g.id === "visual_first_carousel"
+      ? `Planner cap for FLOW_VISUAL_FIRST_CAROUSEL (ideas with carousel_style visual_first/mixed). Empty = default ${defaultCap}. Not counted toward FLOW_CAROUSEL run cap.`
+      : g.uiChannel === "mimic"
+        ? `Planner cap for ${g.keys[0] ?? ""}. Empty = default ${defaultCap}. Not counted toward regular carousel run cap.`
+        : g.uiChannel === "carousel"
+          ? `Planner cap for standard carousel family (all listed flow_type synonyms). Empty = default ${defaultCap}.`
+          : `Planner cap for this video family (all listed flow_type synonyms). Empty = default ${defaultCap}.`;
   return `
       <div class="plan-cap-row">
         <label for="${inputId}">${esc(g.label)}</label>
@@ -1386,7 +1388,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     if (!pack || pack.project_id !== project.id) {
       return reply.code(404).send({ ok: false, error: "signal_pack_not_found" });
     }
-    return { ok: true, signal_pack: pack };
+    return { ok: true, signal_pack: pack, ideas_ui: buildSignalPackIdeasForUi(pack) };
   });
 
   app.get("/v1/admin/signal-packs", async (request, reply) => {
@@ -4075,7 +4077,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
             <input type="radio" name="idea_picking_mode" value="manual" class="idea-pick-input"/>
             <div class="idea-pick-card-body">
               <div class="idea-pick-card-title"><span data-caf-term="ideaPickingManual">Manual picking</span></div>
-              <div class="idea-pick-card-desc">Create the run, then pick pack ideas by format and/or top performers to mimic (image, carousel, video) — save each tab, then apply overall.</div>
+              <div class="idea-pick-card-desc">Create the run, then pick pack ideas by format (<strong>Carousel · visual-first</strong> is separate from text-heavy). Manual top-performer mimic picks use the Mimic tabs — save each tab, then apply overall.</div>
             </div>
           </label>
         </div>
@@ -4513,6 +4515,7 @@ async function loadRuns(p,silent){
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='runCarouselOutputAnalysis("+JSON.stringify(run.run_id)+")' title='Document AI text QA + Nemotron visual QA on rendered carousel assets (IN_REVIEW / APPROVED)'>Analyze outputs</button> ";
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
+    if(canStart&&typeof window.cafOpenManualIdeaPicker==='function')h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px' onclick='cafOpenManualIdeaPicker("+JSON.stringify(run.run_id)+",{statusElId:null,onApplied:function(){loadRuns(runsPage);}})'>Pick ideas</button> ";
     if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
     if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title="+JSON.stringify(LLM_JOB_GEN_TITLE)+">Generate</button>";
     if(canRender)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'render')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("render")+")' title='Render GENERATED jobs for this run (manual step).'>Render</button>";
@@ -5064,14 +5067,36 @@ async function loadPackView(){
     }
     const p=d.signal_pack;
     const idz=Array.isArray(p.ideas_json)?p.ideas_json:[];
-    let ib='<table class="sp-modal-table"><thead><tr><th>#</th><th>Idea (insights-backed)</th></tr></thead><tbody>';
-    const ni=Math.min(idz.length,150);
-    for(let i=0;i<ni;i++){
-      const row=idz[i];
-      ib+='<tr><td>'+(i+1)+'</td><td><pre style="margin:0;font-size:10px;white-space:pre-wrap;word-break:break-word">'+esc(pretty(row))+'</pre></td></tr>';
+    const ideasUi=Array.isArray(d.ideas_ui)?d.ideas_ui:[];
+    let ib='';
+    if(ideasUi.length){
+      ib='<table class="sp-modal-table" style="width:100%;min-width:1200px"><thead><tr><th>#</th><th>Title</th><th>Format</th><th>Style</th><th>Lens</th><th>Platform</th><th>Summary</th><th class="mono">ID</th></tr></thead><tbody>';
+      const ni=Math.min(ideasUi.length,150);
+      for(let i=0;i<ni;i++){
+        const row=ideasUi[i]||{};
+        const vf=row.visual_first_carousel===true;
+        ib+='<tr><td>'+(i+1)+'</td>';
+        ib+='<td style="max-width:280px;white-space:pre-wrap">'+esc(String(row.title||''))+(vf?' <span style="font-size:10px;padding:2px 6px;border-radius:9999px;background:rgba(168,85,247,.22);color:#d8b4fe">visual-first</span>':'')+'</td>';
+        ib+='<td class="mono">'+esc(String(row.format||'—'))+'</td>';
+        ib+='<td class="mono" style="font-size:11px">'+esc(String(row.carousel_lane_label||row.carousel_style||row.execution_profile||row.video_style||'—'))+'</td>';
+        ib+='<td class="mono">'+esc(String(row.content_lens||'—'))+'</td>';
+        ib+='<td class="mono">'+esc(String(row.platform||'—'))+'</td>';
+        ib+='<td style="max-width:420px;white-space:pre-wrap;word-break:break-word">'+esc(String(row.detail||'—'))+'</td>';
+        ib+='<td class="mono">'+esc(String(row.idea_id||''))+'</td></tr>';
+      }
+      ib+='</tbody></table>';
+      if(ideasUi.length>150)ib+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+ideasUi.length+' ideas.</p>';
+      ib+='<p class="runs-ops-hint" style="margin:10px 0 0"><strong>Visual-first</strong> carousel ideas (<code>carousel_style: visual_first</code>) plan to <code>FLOW_VISUAL_FIRST_CAROUSEL</code> when enabled — not manual Mimic · Carousel picks.</p>';
+    }else if(idz.length){
+      ib='<table class="sp-modal-table"><thead><tr><th>#</th><th>Idea (raw JSON)</th></tr></thead><tbody>';
+      const ni=Math.min(idz.length,150);
+      for(let i=0;i<ni;i++){
+        const row=idz[i];
+        ib+='<tr><td>'+(i+1)+'</td><td><pre style="margin:0;font-size:10px;white-space:pre-wrap;word-break:break-word">'+esc(pretty(row))+'</pre></td></tr>';
+      }
+      ib+='</tbody></table>';
+      if(idz.length>150)ib+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+idz.length+' ideas.</p>';
     }
-    ib+='</tbody></table>';
-    if(idz.length>150)ib+='<p style="color:var(--muted);font-size:12px">Showing 150 of '+idz.length+' ideas.</p>';
     const dg=(p.derived_globals_json&&typeof p.derived_globals_json==='object'&&!Array.isArray(p.derived_globals_json))?p.derived_globals_json:{};
     const tags=Array.isArray(dg.hashtag_leaderboard_v1)?dg.hashtag_leaderboard_v1:[];
     const vgp=(dg.visual_guidelines_pack_v1&&typeof dg.visual_guidelines_pack_v1==='object')?dg.visual_guidelines_pack_v1:null;

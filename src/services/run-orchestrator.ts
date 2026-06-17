@@ -51,7 +51,10 @@ import {
   type LearningSliceInput,
 } from "./run-context-snapshot.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
-import { shouldSkipMimicFlowExpansion } from "./mimic-planning-guards.js";
+import {
+  shouldExpandVisualFirstCarouselForRow,
+  shouldSkipMimicFlowExpansion,
+} from "./mimic-planning-guards.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 import { buildMimicJobPlanningGrounding } from "../domain/mimic-job-grounding.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
@@ -64,7 +67,11 @@ import {
   VideoPlanningSlotBudget,
   type VideoRoutingConfig,
 } from "../decision_engine/video-flow-routing.js";
-import { bucketForRowFormat, flowTypeMatchesRowFormat } from "../decision_engine/format-routing.js";
+import {
+  bucketForRowFormat,
+  flowTypeMatchesRowFormat,
+  isStandardTemplatedCarouselFlow,
+} from "../decision_engine/format-routing.js";
 import { readRunPlannedJobsJson } from "../domain/jobs-json-compat.js";
 import { loadProductHeygenModesForFlows, loadVideoRoutingConfig } from "./video-routing-config.js";
 
@@ -585,6 +592,14 @@ function buildCandidatesFromSignalPack(
       }
 
       if (shouldSkipMimicFlowExpansion(flow.flow_type, row, opts?.derivedGlobals)) {
+        continue;
+      }
+
+      // Visual-first carousel ideas route to FLOW_VISUAL_FIRST_CAROUSEL only — not templated FLOW_CAROUSEL.
+      if (
+        isStandardTemplatedCarouselFlow(flow.flow_type) &&
+        shouldExpandVisualFirstCarouselForRow(row, opts?.derivedGlobals)
+      ) {
         continue;
       }
 
