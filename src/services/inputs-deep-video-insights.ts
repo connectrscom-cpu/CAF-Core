@@ -378,6 +378,39 @@ export async function runDeepVideoInsightsForImport(
 
     const system = TOP_PERFORMER_VIDEO_SYSTEM_PROMPT;
 
+    let preferredSourceVideoUrl: string | null = null;
+    const payloadVideoUrl = parseVideoSourceUrlForArchive(c.payload);
+    if (
+      mediaArchiveRequested &&
+      mediaSupabaseConfigured &&
+      sourceVideoArchiveRequested &&
+      payloadVideoUrl
+    ) {
+      try {
+        const preArch = await archiveTopPerformerVisionMedia(config, {
+          projectSlug,
+          inputsImportId: importId,
+          sourceEvidenceRowId: c.id,
+          tier: "top_performer_video",
+          role: "video_frame",
+          urls: [],
+          archive_source_video: true,
+          source_video_url: payloadVideoUrl,
+          ...(mediaArchiveHttpProxyCfg.url ? { http_proxy_url: mediaArchiveHttpProxyCfg.url } : {}),
+        });
+        const sv = preArch.items.find((it) => it.role === "source_video" && it.ok);
+        preferredSourceVideoUrl = (sv?.vision_fetch_url || sv?.public_url || null)?.trim() || null;
+        if (sv?.ok) {
+          mediaArchiveFilesSaved++;
+          mediaArchiveSourceVideoFilesSaved++;
+        } else if (sv?.error) {
+          mediaArchiveErrors++;
+        }
+      } catch {
+        /* frame prep may still use prior inspection archive or CDN */
+      }
+    }
+
     const prep = await ensureVideoFramesForEvidenceRow(db, config, {
       projectId: project.id,
       projectSlug,
@@ -392,6 +425,7 @@ export async function runDeepVideoInsightsForImport(
       ownerUsername: String(c.payload.username ?? c.payload.owner ?? "").trim() || null,
       httpProxyUrl: mediaArchiveHttpProxyCfg.url,
       forceReextract: !!opts.rescan,
+      preferredSourceVideoUrl,
       openAiApiKey,
       audit: { ...auditBase, step: "inputs_top_performer_video_whisper" },
     });
@@ -555,7 +589,8 @@ export async function runDeepVideoInsightsForImport(
       mediaArchiveRequested &&
       mediaSupabaseConfigured &&
       sourceVideoArchiveRequested &&
-      prep.source !== "extracted_from_video"
+      prep.source !== "extracted_from_video" &&
+      !preferredSourceVideoUrl
     ) {
       const sourceVideoUrl = parseVideoSourceUrlForArchive(c.payload);
       if (sourceVideoUrl) {

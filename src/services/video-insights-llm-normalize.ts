@@ -154,7 +154,7 @@ const PROMPT_ECHO_OCR =
 const WEAK_SUMMARY_PLACEHOLDER = /unable to summarize|not inferable from a single frame|not observable in a single frame/i;
 
 const SPOKEN_HOOK_PLACEHOLDER =
-  /^(n\/?a|none|unknown|not applicable|no audio|no speech|silent|not available|needs spoken transcript)[\s\-—.:,()]*|^empty$/i;
+  /^(n\/?a|none|unknown|not applicable|no audio|no speech|silent|not available|needs spoken transcript|\(inaudible\))[\s\-—.:,()]*|^empty$/i;
 
 const SINGLE_FRAME_HONEST = {
   video_arc: "Single-frame sample — clip progression is not observable from one still.",

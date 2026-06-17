@@ -568,6 +568,42 @@ export async function getEvidenceRowInsightById(
   );
 }
 
+/** Pick Supabase `source.mp4` URL from a prior `stored_inspection_media_json` blob. */
+export function pickSourceVideoUrlFromStoredInspectionMedia(stored: unknown): string | null {
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
+  const items = (stored as Record<string, unknown>).items;
+  if (!Array.isArray(items)) return null;
+  for (const raw of items) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const it = raw as Record<string, unknown>;
+    if (it.role !== "source_video" || it.ok === false) continue;
+    const u = String(it.vision_fetch_url ?? it.public_url ?? "").trim();
+    if (u.startsWith("https://")) return u;
+  }
+  return null;
+}
+
+/** Latest archived inspection `source.mp4` for a video top-performer row (rescan / CDN fallback). */
+export async function findInspectionArchivedSourceVideoUrl(
+  db: Pool,
+  projectId: string,
+  evidenceRowId: string
+): Promise<string | null> {
+  const row = await qOne<{ stored_inspection_media_json: unknown }>(
+    db,
+    `SELECT stored_inspection_media_json
+       FROM caf_core.inputs_evidence_row_insights
+      WHERE project_id = $1
+        AND source_evidence_row_id = $2::bigint
+        AND analysis_tier = 'top_performer_video'
+        AND stored_inspection_media_json IS NOT NULL
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [projectId, evidenceRowId]
+  );
+  return pickSourceVideoUrlFromStoredInspectionMedia(row?.stored_inspection_media_json);
+}
+
 /** Full vision row for a single top-performer insight (mimic per-job grounding at plan time). */
 export async function getEvidenceRowInsightByInsightsId(
   db: Pool,

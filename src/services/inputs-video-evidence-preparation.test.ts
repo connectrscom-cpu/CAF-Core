@@ -5,6 +5,7 @@ import {
   resolveWhisperSkipWhenCaptionChars,
   shouldRunWhisper,
 } from "./inputs-video-evidence-preparation.js";
+import { pickSourceVideoUrlFromStoredInspectionMedia } from "../repositories/inputs-evidence-insights.js";
 
 function miniConfig(overrides: Record<string, unknown> = {}) {
   return {
@@ -61,6 +62,18 @@ describe("resolvePreferSourceVideoDownload", () => {
         top_performer: { download_source_video: false },
       })
     ).toBe(false);
+  });
+});
+
+describe("pickSourceVideoUrlFromStoredInspectionMedia", () => {
+  it("returns public_url for archived source_video item", () => {
+    const url = pickSourceVideoUrlFromStoredInspectionMedia({
+      items: [
+        { role: "video_frame", ok: true, public_url: "https://cdn.example/frame.jpg" },
+        { role: "source_video", ok: true, public_url: "https://supabase.example/source.mp4" },
+      ],
+    });
+    expect(url).toBe("https://supabase.example/source.mp4");
   });
 });
 
