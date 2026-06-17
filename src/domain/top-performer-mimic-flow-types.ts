@@ -1,6 +1,6 @@
 /**
  * Top-performer mimic flow_type keys (image + carousel wired when MIMIC_IMAGE_ENABLED).
- * Video mimic remains a placeholder. Read knowledge via `pickTopPerformerKnowledgeForStep`.
+ * Video mimic picks route to HeyGen FLOW_VID_* flows; FLOW_TOP_PERFORMER_MIMIC_VIDEO is a planning-cap alias only.
  *
  * Carousel visual execution splits into two **planning** lanes (same **render** engine):
  * - FLOW_VISUAL_FIRST_CAROUSEL — ideas-from-insights visual_first bucket

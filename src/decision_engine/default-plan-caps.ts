@@ -234,7 +234,7 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
 ] as const;
 
 /**
- * Top-performer mimic flows — carousel + image wired when MIMIC_IMAGE_ENABLED; video placeholder.
+ * Top-performer mimic flows — carousel + image wired when MIMIC_IMAGE_ENABLED; video routes to HeyGen.
  * Shown on Runs → planning caps; uses `max_jobs_per_flow_type` like video families.
  */
 export const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [

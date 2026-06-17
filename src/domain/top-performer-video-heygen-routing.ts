@@ -90,3 +90,10 @@ export function heygenLaneLabelForIntent(intent: VideoPipelineIntent): string {
       return "HeyGen · No avatar";
   }
 }
+
+/** HeyGen flows used when operators pick top_performer_video references (not FLOW_TOP_PERFORMER_MIMIC_VIDEO). */
+export const TOP_PERFORMER_MIMIC_VIDEO_HEYGEN_FLOWS = [
+  CANONICAL_FLOW_TYPES.VID_SCRIPT,
+  CANONICAL_FLOW_TYPES.VID_PROMPT,
+  CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
+] as const;
