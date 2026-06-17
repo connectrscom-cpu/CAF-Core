@@ -389,6 +389,8 @@ export interface RunDeepCarouselInsightsResult {
    * `top_performer_carousel` insights and `rescan` was false.
    */
   skipped_existing_carousel_insight?: number;
+  /** Nemotron/OpenAI vision threw for this row — pass continued with other rows. */
+  rows_vision_failed?: number;
   /** Rows with ≥2 slides that failed `min_pre_llm_score` (request or profile). */
   skipped_pre_llm_below_cutoff?: number;
   min_pre_llm_score_applied?: number;
@@ -865,6 +867,7 @@ export async function runDeepCarouselInsightsForImport(
   };
 
   let analyzed = 0;
+  let rowsVisionFailed = 0;
   const totalRows = top.length;
   let rowIndex = 0;
   for (const c of top) {
@@ -1012,74 +1015,89 @@ ${textBundle}`;
       `Row ${rowIndex}/${totalRows} · ${visionCall.provider} vision (${visionCall.model}) on ${visionSlideUrls.length} slide(s)…`,
       "nemotron_vision"
     );
-    const visionOut = await runCarouselDeckVisionAnalysis({
-      config,
-      profileModel: model,
-      systemPrompt: systemForVision,
-      userText,
-      visionSlideUrls,
-      deckSlideCount: c.slide_urls.length,
-      finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
-      audit: auditBase,
-      auditStep: STEP,
-    });
+    try {
+      const visionOut = await runCarouselDeckVisionAnalysis({
+        config,
+        profileModel: model,
+        systemPrompt: systemForVision,
+        userText,
+        visionSlideUrls,
+        deckSlideCount: c.slide_urls.length,
+        finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
+        audit: auditBase,
+        auditStep: STEP,
+      });
 
-    let parsed = finalizeCarouselInsightJson(visionOut.parsed, c.slide_urls.length);
-    if (parsed && ocrBySlide.size > 0) {
-      parsed = mergeCarouselReferenceAnalysis(parsed, ocrBySlide) ?? parsed;
-    }
-    const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
-    const mechanism = resolveCarouselMechanismFields({
-      parsed,
-      broad: broadMechanismByRow.get(c.id) ?? null,
-      evidenceKind: c.evidence_kind,
-      payload: c.payload,
-      caption: c.caption,
-    });
+      let parsed = finalizeCarouselInsightJson(visionOut.parsed, c.slide_urls.length);
+      if (parsed && ocrBySlide.size > 0) {
+        parsed = mergeCarouselReferenceAnalysis(parsed, ocrBySlide) ?? parsed;
+      }
+      const aesthetic: Record<string, unknown> = buildCarouselAestheticAnalysisJson(parsed);
+      const mechanism = resolveCarouselMechanismFields({
+        parsed,
+        broad: broadMechanismByRow.get(c.id) ?? null,
+        evidenceKind: c.evidence_kind,
+        payload: c.payload,
+        caption: c.caption,
+      });
 
-    const risks = parseRiskFlags(parsed?.risk_flags);
+      const risks = parseRiskFlags(parsed?.risk_flags);
 
-    if (mediaArchiveRequested && !mediaSupabaseConfigured) {
-      storedInspection = {
-        archived_at: new Date().toISOString(),
-        tier: "top_performer_carousel",
-        project_slug: projectSlug,
+      if (mediaArchiveRequested && !mediaSupabaseConfigured) {
+        storedInspection = {
+          archived_at: new Date().toISOString(),
+          tier: "top_performer_carousel",
+          project_slug: projectSlug,
+          inputs_import_id: importId,
+          source_evidence_row_id: c.id,
+          skipped_reason: "supabase_not_configured",
+          items: [],
+        };
+      }
+      await upsertEvidenceRowInsight(db, {
+        project_id: project.id,
         inputs_import_id: importId,
         source_evidence_row_id: c.id,
-        skipped_reason: "supabase_not_configured",
-        items: [],
-      };
+        insights_id: makeCarouselInsightsId(importId, c.id),
+        analysis_tier: "top_performer_carousel",
+        pre_llm_score: c.pre_llm_score,
+        llm_model: visionOut.model || model,
+        why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
+        primary_emotion: mechanism.primary_emotion,
+        secondary_emotion: mechanism.secondary_emotion,
+        hook_type: typeof parsed?.format_pattern === "string" ? parsed.format_pattern : null,
+        custom_label_1: mechanism.custom_label_1,
+        custom_label_2: mechanism.custom_label_2,
+        custom_label_3: mechanism.custom_label_3,
+        cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
+        hashtags: mechanism.hashtags,
+        caption_style: mechanism.caption_style,
+        hook_text: typeof parsed?.slide_arc === "string" ? parsed.slide_arc : null,
+        risk_flags_json: risks,
+        aesthetic_analysis_json: aesthetic,
+        raw_llm_json: parsed,
+        evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
+        ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
+      });
+      analyzed++;
+      logStep(
+        `Row ${rowIndex}/${totalRows} · saved (${visionOut.model || model})`,
+        "row_done"
+      );
+    } catch (visionErr) {
+      rowsVisionFailed++;
+      const msg = visionErr instanceof Error ? visionErr.message : String(visionErr);
+      logStep(`Row ${rowIndex}/${totalRows} · vision failed: ${msg}`, "vision_failed");
+      logPipelineEvent("warn", "other", "top performer carousel vision failed for row", {
+        data: {
+          import_id: importId,
+          evidence_row_id: c.id,
+          slide_count: visionSlideUrls.length,
+          vision_provider: config.PROCESSING_VISION_PROVIDER,
+          error: msg,
+        },
+      });
     }
-    await upsertEvidenceRowInsight(db, {
-      project_id: project.id,
-      inputs_import_id: importId,
-      source_evidence_row_id: c.id,
-      insights_id: makeCarouselInsightsId(importId, c.id),
-      analysis_tier: "top_performer_carousel",
-      pre_llm_score: c.pre_llm_score,
-      llm_model: visionOut.model || model,
-      why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
-      primary_emotion: mechanism.primary_emotion,
-      secondary_emotion: mechanism.secondary_emotion,
-      hook_type: typeof parsed?.format_pattern === "string" ? parsed.format_pattern : null,
-      custom_label_1: mechanism.custom_label_1,
-      custom_label_2: mechanism.custom_label_2,
-      custom_label_3: mechanism.custom_label_3,
-      cta_type: typeof parsed?.cta_clarity === "string" ? parsed.cta_clarity : null,
-      hashtags: mechanism.hashtags,
-      caption_style: mechanism.caption_style,
-      hook_text: typeof parsed?.slide_arc === "string" ? parsed.slide_arc : null,
-      risk_flags_json: risks,
-      aesthetic_analysis_json: aesthetic,
-      raw_llm_json: parsed,
-      evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
-      ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
-    });
-    analyzed++;
-    logStep(
-      `Row ${rowIndex}/${totalRows} · saved (${visionOut.model || model})`,
-      "row_done"
-    );
   }
 
   const carouselTotal = await countEvidenceRowInsightsByImportTier(db, importId, "top_performer_carousel");
@@ -1164,6 +1182,7 @@ ${textBundle}`;
     top_performer_media_archive_errors: mediaArchiveErrors,
     rescan: !!opts.rescan,
     skipped_existing_carousel_insight: skippedExistingCarouselInsight,
+    rows_vision_failed: rowsVisionFailed,
     deep_carousel_zero_work_summary: zeroWorkSummary,
     ...(ratingGateNote != null ? { rating_gate_note: ratingGateNote } : {}),
   };

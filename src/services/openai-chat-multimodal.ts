@@ -42,6 +42,8 @@ export interface OpenAiMultimodalTransportOptions {
   endpoint?: string;
   /** Stored on api_call_audit.provider (e.g. openai, nvidia). */
   provider?: string;
+  /** Overrides OPENAI_CHAT_TIMEOUT_MS for this call. */
+  timeoutMs?: number;
 }
 
 export async function openaiChatMultimodal(
@@ -83,7 +85,7 @@ export async function openaiChatMultimodal(
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .reduce((n, p) => n + p.text.length, 0);
 
-  const timeoutMs = envInt("OPENAI_CHAT_TIMEOUT_MS", 180_000);
+  const timeoutMs = transport?.timeoutMs ?? envInt("OPENAI_CHAT_TIMEOUT_MS", 180_000);
   const maxRetries = Math.min(8, Math.max(0, envInt("OPENAI_CHAT_MAX_RETRIES", 2)));
   let attempt = 0;
 

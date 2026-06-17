@@ -310,6 +310,8 @@ const envSchema = z.object({
   PROCESSING_VISION_NVIDIA_MODEL: z.string().default("nvidia/nemotron-nano-12b-v2-vl"),
   /** Nemotron VL accepts up to 4 images per request; carousel/video frames are trimmed. */
   PROCESSING_VISION_NVIDIA_MAX_IMAGES: z.coerce.number().int().min(1).max(8).default(4),
+  /** Per-request timeout for processing vision (Nemotron/OpenAI multimodal); large carousels can be slow. */
+  PROCESSING_VISION_CHAT_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(900_000).default(300_000),
 
   /**
    * Google Document AI Enterprise OCR for carousel reference + output text analysis.

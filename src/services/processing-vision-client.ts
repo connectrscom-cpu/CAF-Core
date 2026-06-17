@@ -134,7 +134,11 @@ export async function processingVisionChatMultimodal(
       response_format: params.response_format,
     },
     audit,
-    { endpoint: call.endpoint, provider: call.provider }
+    {
+      endpoint: call.endpoint,
+      provider: call.provider,
+      timeoutMs: config.PROCESSING_VISION_CHAT_TIMEOUT_MS,
+    }
   );
 
   return { ...out, provider: call.provider };
