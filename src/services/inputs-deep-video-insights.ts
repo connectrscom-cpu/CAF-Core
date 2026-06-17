@@ -511,7 +511,7 @@ export async function runDeepVideoInsightsForImport(
           frameCount: frameUrls.length,
           frameTimestampsSec: prep.frame_timestamps_sec,
           visionParsed,
-          audit: auditBase,
+          audit: { ...auditBase, step: "inputs_top_performer_video_full_analysis" },
         });
         if (synthesis.parsed) {
           visionParsed = mergeFullVideoAnalysisIntoParsed(visionParsed, synthesis.parsed);
