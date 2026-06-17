@@ -100,12 +100,16 @@ export async function extractAudioMp3FromVideo(
 export async function extractVideoFramesJpeg(
   config: AppConfig,
   videoPath: string,
-  timestampsSec: number[]
+  timestampsSec: number[],
+  opts?: { maxWidth?: number }
 ): Promise<Buffer[]> {
   const ffmpeg = ffmpegBin(config);
+  const maxWidth = opts?.maxWidth && opts.maxWidth > 0 ? Math.round(opts.maxWidth) : null;
   const out: Buffer[] = [];
   for (const ts of timestampsSec) {
     try {
+      const vfArgs =
+        maxWidth != null ? ["-vf", `scale='min(${maxWidth},iw)':-2`, "-q:v", "6"] : [];
       const { stdout } = await execFileAsync(
         ffmpeg,
         [
@@ -116,6 +120,7 @@ export async function extractVideoFramesJpeg(
           String(Math.max(0, ts)),
           "-i",
           videoPath,
+          ...vfArgs,
           "-frames:v",
           "1",
           "-f",

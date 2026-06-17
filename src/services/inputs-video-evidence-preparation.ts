@@ -579,7 +579,7 @@ async function downloadExtractAndArchiveSourceVideo(
     const timestamps = videoSampleTimestamps(null, maxFrames);
     const frameBuffers: Buffer[] = [];
     await withTempVideoFile(videoBuf, videoExt, async (fp) => {
-      const frames = await extractVideoFramesJpeg(config, fp, timestamps);
+      const frames = await extractVideoFramesJpeg(config, fp, timestamps, { maxWidth: 720 });
       frameBuffers.push(...frames);
     });
 

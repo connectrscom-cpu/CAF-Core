@@ -32,6 +32,7 @@ import {
   synthesizeVideoInsightFullAnalysis,
 } from "./video-insight-full-analysis.js";
 import { runVideoFramesVisionAnalysis } from "./video-insights-vision.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { finalizeHttpsImageUrlForOpenAiVision, isVideoLikeEvidence } from "./inputs-image-url-for-analysis.js";
 import { parseVideoAnalysisFrameUrls, parseVideoSourceUrlForArchive } from "./inputs-video-evidence-bundle.js";
@@ -147,6 +148,8 @@ export interface RunDeepVideoInsightsResult {
   skipped_duplicate_post_url?: number;
   /** Vision returned but failed quality gates — insight not persisted. */
   rows_insight_rejected_quality?: number;
+  /** Nemotron/OpenAI vision threw for this row — pass continued with other rows. */
+  rows_vision_failed?: number;
   deep_video_zero_work_summary?: string | null;
 }
 
@@ -227,7 +230,10 @@ export async function runDeepVideoInsightsForImport(
     buildTopPerformerRatingGateRequestOverrides(opts),
     opts.min_pre_llm_score
   );
-  const maxFrames = clamp(opts.max_frames ?? 10, 6, 16);
+  const maxFrames =
+    config.PROCESSING_VISION_PROVIDER === "nvidia"
+      ? clamp(opts.max_frames ?? 8, 6, 12)
+      : clamp(opts.max_frames ?? 10, 6, 16);
 
   const mediaArchiveRequested = resolveTopPerformerArchiveMedia(config, criteria);
   const sourceVideoArchiveRequested = mediaArchiveRequested && resolveTopPerformerArchiveSourceVideo(config, criteria);
@@ -350,6 +356,7 @@ export async function runDeepVideoInsightsForImport(
   let evidenceMediaRowsWritten = 0;
   let skippedDuplicatePostUrl = 0;
   let rowsInsightRejectedQuality = 0;
+  let rowsVisionFailed = 0;
 
   const seenPostUrls = new Set<string>();
   if (!opts.rescan) {
@@ -527,17 +534,33 @@ export async function runDeepVideoInsightsForImport(
     visionFrameUrls = frameRelay.urls;
     assertVisionImageUrlsSafeForRemoteFetch(visionFrameUrls);
 
-    const visionOut = await runVideoFramesVisionAnalysis({
-      config,
-      profileModel: model,
-      systemPrompt: system,
-      userText,
-      visionFrameUrls,
-      frameCount: frameUrls.length,
-      finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
-      audit: auditBase,
-      auditStep: STEP,
-    });
+    let visionOut: Awaited<ReturnType<typeof runVideoFramesVisionAnalysis>>;
+    try {
+      visionOut = await runVideoFramesVisionAnalysis({
+        config,
+        profileModel: model,
+        systemPrompt: system,
+        userText,
+        visionFrameUrls,
+        frameCount: frameUrls.length,
+        finalizeImageUrl: finalizeHttpsImageUrlForOpenAiVision,
+        audit: auditBase,
+        auditStep: STEP,
+      });
+    } catch (visionErr) {
+      rowsVisionFailed++;
+      const msg = visionErr instanceof Error ? visionErr.message : String(visionErr);
+      logPipelineEvent("warn", "other", "top performer video vision failed for row", {
+        data: {
+          import_id: importId,
+          evidence_row_id: c.id,
+          frame_count: frameUrls.length,
+          vision_provider: config.PROCESSING_VISION_PROVIDER,
+          error: msg,
+        },
+      });
+      continue;
+    }
 
     let visionParsed = visionOut.parsed;
     if (visionParsed && openAiApiKey) {
@@ -728,6 +751,7 @@ export async function runDeepVideoInsightsForImport(
     rows_whisper_transcribed: rowsWhisperTranscribed,
     skipped_duplicate_post_url: skippedDuplicatePostUrl,
     rows_insight_rejected_quality: rowsInsightRejectedQuality,
+    rows_vision_failed: rowsVisionFailed,
     deep_video_zero_work_summary: deepVideoZeroWorkSummary,
   };
 }
