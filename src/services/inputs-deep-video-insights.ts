@@ -434,7 +434,12 @@ export async function runDeepVideoInsightsForImport(
     if (prep.source_video_archived) rowsSourceVideoArchived++;
     if (prep.whisper_transcript?.trim()) rowsWhisperTranscribed++;
 
-    const frameUrls = prep.frame_urls.length > 0 ? prep.frame_urls : c.frame_urls;
+    const frameUrls =
+      prep.frame_urls.length > 0
+        ? prep.frame_urls
+        : prep.extraction_error
+          ? []
+          : c.frame_urls;
     if (frameUrls.length === 0) {
       continue;
     }
