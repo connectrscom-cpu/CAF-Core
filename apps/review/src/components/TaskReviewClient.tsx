@@ -39,6 +39,10 @@ import {
   textOverlayReprintBannerMessage,
   textOverlayReprintUiState,
 } from "@/lib/text-overlay-reprint-status";
+import {
+  registerReviewBackgroundJob,
+  REVIEW_JOB_COMPLETED_EVENT,
+} from "@/lib/review-background-jobs";
 import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
 import {
   applyMimicTemplateBgFieldEdit,
@@ -347,6 +351,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     }, 15_000);
     return () => window.clearInterval(id);
   }, [textOverlayReprint.active, fetchTask]);
+
+  useEffect(() => {
+    const onJobCompleted = (event: Event) => {
+      const detail = (event as CustomEvent<{ taskId?: string; project?: string }>).detail;
+      const project = (data?.project ?? projectFromUrl).trim();
+      if (!detail?.taskId || detail.taskId !== execTaskId.trim()) return;
+      if (detail.project && project && detail.project !== project) return;
+      void refreshTaskAssets();
+    };
+    window.addEventListener(REVIEW_JOB_COMPLETED_EVENT, onJobCompleted);
+    return () => window.removeEventListener(REVIEW_JOB_COMPLETED_EVENT, onJobCompleted);
+  }, [data?.project, projectFromUrl, execTaskId, refreshTaskAssets]);
 
   /**
    * Fetch the exact prompt/script_text HeyGen received for this task (from api_call_audit).
@@ -783,6 +799,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         if ((!res.ok && res.status !== 202) || !json.ok) {
           throw new Error(json.error ?? json.message ?? `Regenerate failed (${res.status})`);
         }
+        void registerReviewBackgroundJob({
+          kind: "image_regenerate",
+          taskId: execTaskId,
+          project,
+          slideIndices: [slideIndex1Based],
+          startedMessage: "Image regenerate queued — you can leave this page.",
+        });
         void refreshTaskAssets();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Regenerate failed");

@@ -26,6 +26,7 @@ import {
   templateBgSlotForSlide,
   type MimicTemplateBgSlot,
 } from "@/lib/mimic-template-bg";
+import { registerReviewBackgroundJob } from "@/lib/review-background-jobs";
 import {
   clusterIndexForOcrBoxIndex,
   ocrBoxSpanForClusterIndex,
@@ -961,7 +962,14 @@ export function MimicCarouselLayerEditorPanel({
       if ((!res.ok && res.status !== 202) || !json.ok) {
         throw new Error(json.error ?? json.message ?? `Reprint failed (${res.status})`);
       }
-      setReprintMsg(json.message ?? "Reprint started — updating carousel preview…");
+      void registerReviewBackgroundJob({
+        kind: "text_reprint",
+        taskId,
+        project: projectSlug.trim(),
+        slideIndices,
+        startedMessage: "Text reprint queued — you can leave this page.",
+      });
+      setReprintMsg("Reprint started — we'll notify you when it's ready.");
       refreshCarouselAfterReprint();
     },
     [
@@ -2022,17 +2030,14 @@ export function MimicCarouselLayerEditorPanel({
 
       }
 
-      setRegenerateMsg(
-        json.message ??
-          (opts?.slot === "cover"
-            ? "Cover background regen started — refresh in 2–5 minutes."
-            : opts?.slot === "cta"
-              ? "CTA background regen started — refresh in 2–5 minutes."
-              : opts?.slot === "body"
-                ? `Middle background regen started for ${slideIndices.length} slides — refresh in 2–5 minutes.`
-                : `Regenerating ${slideIndices.length} slide(s)…`)
-      );
-
+      void registerReviewBackgroundJob({
+        kind: "image_regenerate",
+        taskId,
+        project: projectSlug.trim(),
+        slideIndices,
+        startedMessage: "Image regenerate queued — you can leave this page.",
+      });
+      setRegenerateMsg("Regenerate started — we'll notify you when new images are ready.");
       refreshCarouselAfterReprint();
 
     } catch (e) {

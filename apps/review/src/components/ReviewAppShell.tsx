@@ -3,6 +3,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
+import { ReviewBackgroundJobToasts } from "@/components/ReviewBackgroundJobToasts";
 import { ReviewProjectProvider } from "@/components/ReviewProjectContext";
 
 function ShellInner({ children }: { children: React.ReactNode }) {
@@ -14,6 +15,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
       <div className={embeddedInAdmin ? "app-shell app-shell--embedded" : "app-shell"}>
         {!embeddedInAdmin && <Sidebar />}
         <main className="main-content">{children}</main>
+        <ReviewBackgroundJobToasts />
       </div>
     </ReviewProjectProvider>
   );
