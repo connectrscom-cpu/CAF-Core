@@ -11,6 +11,7 @@ import {
   isBflFlexModel,
   bflFlexTuningParams,
   isReadableImageBuffer,
+  isBflTransientError,
 } from "./mimic-image-provider.js";
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -183,6 +184,28 @@ describe("isNvidiaVisualGenAiUnavailable", () => {
   it("detects integrate 404 page", () => {
     expect(isNvidiaVisualGenAiUnavailable(404, "404 page not found\n")).toBe(true);
     expect(isNvidiaVisualGenAiUnavailable(401, "unauthorized")).toBe(false);
+  });
+});
+
+describe("isBflTransientError", () => {
+  it("detects HTTP 503 poll failures", () => {
+    expect(
+      isBflTransientError(
+        'BFL FLUX image edit poll failed (503): {"status":"Error","details":{"error":"Generation failed due to a temporarily unavailable dependency"}}'
+      )
+    ).toBe(true);
+  });
+
+  it("detects temporarily unavailable dependency message", () => {
+    expect(
+      isBflTransientError(
+        'BFL FLUX image edit task abc failed (Error): Generation failed due to a temporarily unavailable dependency'
+      )
+    ).toBe(true);
+  });
+
+  it("does not treat moderation as transient", () => {
+    expect(isBflTransientError("BFL FLUX image edit task abc failed (Request Moderated): policy")).toBe(false);
   });
 });
 

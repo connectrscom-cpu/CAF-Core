@@ -4,6 +4,7 @@ import {
   listicleDecorTitleFromKicker,
   listicleDecorTitleFromParagraph,
   resolveTemplateBgBodyOnScreenCopy,
+  resolveTemplateBgCtaOnScreenCopy,
 } from "./mimic-template-bg-copy.js";
 
 describe("mimic-template-bg-copy", () => {
@@ -51,5 +52,31 @@ describe("mimic-template-bg-copy", () => {
     expect(mapped.inverted).toBe(true);
     expect(mapped.headline).toBe("THE ARIES MOTHER");
     expect(mapped.body).toBe(paragraph);
+  });
+
+  it("maps listicle CTA with substantive body to headline + body + handle slots", () => {
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline: "AQUARIUS: THE VISIONARY",
+      body: "Aquarius moms inspire their children to dream big.",
+      cta: "AQUARIUS: THE VISIONARY",
+      handle: "@signandsound",
+    });
+    expect(mapped.listicle_style).toBe(true);
+    expect(mapped.headline).toBe("AQUARIUS: THE VISIONARY");
+    expect(mapped.body).toContain("Aquarius moms");
+    expect(mapped.handle).toBe("@signandsound");
+  });
+
+  it("keeps simple follow CTA as headline + handle only", () => {
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline: "ignored",
+      body: "",
+      cta: "Follow for more",
+      handle: "@brand",
+    });
+    expect(mapped.listicle_style).toBe(false);
+    expect(mapped.headline).toBe("Follow for more");
+    expect(mapped.body).toBe("");
+    expect(mapped.handle).toBe("@brand");
   });
 });

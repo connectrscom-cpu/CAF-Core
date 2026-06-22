@@ -889,10 +889,21 @@ textarea { resize: vertical; }
   resize: vertical;
   box-sizing: border-box;
 }
-.mimic-docai-editor__font-label,
+.mimic-docai-editor__font-label {
+  font-size: 11px;
+  color: var(--fg-secondary);
+}
 .mimic-docai-editor__box-dims {
   font-size: 11px;
   color: var(--fg-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mimic-docai-editor__fit-one-btn {
+  font-size: 10px;
+  padding: 2px 8px;
 }
 .mimic-docai-editor__style-toggle {
   display: inline-flex;
@@ -1166,6 +1177,37 @@ textarea { resize: vertical; }
   width: 64px;
   font-size: 12px;
   padding: 4px 6px;
+}
+.mimic-docai-editor__apply-typography-btn {
+  width: 100%;
+  text-align: left;
+  font-size: 12px;
+}
+.mimic-docai-editor__deck-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.mimic-docai-editor__deck-actions-title {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-secondary);
+}
+.mimic-docai-editor__deck-actions-hint {
+  margin: 0 0 4px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.mimic-layer-editor-panel__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
 }
 .mimic-layer-editor-panel__status {
   margin: 4px 0 0;

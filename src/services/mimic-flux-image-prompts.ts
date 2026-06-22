@@ -11,7 +11,11 @@ import type {
 } from "../domain/mimic-payload.js";
 import type { MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
-import { finalizeMimicImageModelPrompt, sanitizeVisualDescriptionForImagePrompt } from "./mimic-prompt-builder.js";
+import {
+  finalizeMimicImageModelPrompt,
+  sanitizeLayoutTemplateForImagePrompt,
+  sanitizeVisualDescriptionForImagePrompt,
+} from "./mimic-prompt-builder.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
@@ -128,10 +132,11 @@ export function buildMimicFluxSlideAnalysisInput(
       typeof guidelineSlide?.slide_purpose === "string"
         ? guidelineSlide.slide_purpose.trim().toLowerCase()
         : null,
-    layout_template:
+    layout_template: sanitizeLayoutTemplateForImagePrompt(
       typeof guidelineSlide?.layout_template === "string"
         ? guidelineSlide.layout_template.trim()
-        : opts?.layoutRow?.layout_template ?? null,
+        : opts?.layoutRow?.layout_template ?? null
+    ) || null,
     visual_description: sanitizeVisualDescriptionForImagePrompt(
       (typeof guidelineSlide?.visual_description === "string"
         ? guidelineSlide.visual_description

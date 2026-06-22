@@ -15,12 +15,35 @@ describe("templateBgLlmSlideForDocAi", () => {
   it("scopes CTA slide to cta + handle", () => {
     const scoped = templateBgLlmSlideForDocAi(5, 5, {
       headline: "Wrong for CTA",
-      body: "Also wrong",
+      body: "",
       cta: "Follow for more",
       handle: "@brand",
     });
     expect(scoped.headline).toBe("Follow for more");
     expect(scoped.body).toBe("@brand");
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "Follow for more" },
+      { role: "handle", text: "@brand" },
+    ]);
+  });
+
+  it("maps listicle CTA slide to headline + body + handle text_blocks", () => {
+    const scoped = templateBgLlmSlideForDocAi(12, 12, {
+      headline: "AQUARIUS: THE VISIONARY",
+      body: "Aquarius moms inspire their children to dream big and embrace their uniqueness.",
+      cta: "AQUARIUS: THE VISIONARY",
+      handle: "@signandsound",
+    });
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "AQUARIUS: THE VISIONARY" },
+      {
+        role: "body",
+        text: "Aquarius moms inspire their children to dream big and embrace their uniqueness.",
+      },
+      { role: "handle", text: "@signandsound" },
+    ]);
+    expect(scoped.headline).toBe("AQUARIUS: THE VISIONARY");
+    expect(scoped.body).toContain("Aquarius moms");
   });
 
   it("maps body slides to headline + body", () => {

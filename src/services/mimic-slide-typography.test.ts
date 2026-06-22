@@ -860,6 +860,12 @@ describe("mimic-slide-typography", () => {
     expect(layers.map((l) => l.text)).not.toContain("@signandsound");
     expect(layers.some((l) => l.text.includes("spirited explorer"))).toBe(true);
     expect(layers.some((l) => l.text === "THE ARIES MOTHER")).toBe(true);
+    for (const layer of layers) {
+      expect(layer.text_backing).toBe(true);
+      expect(layer.reviewer_box_locked).toBe(true);
+    }
+    const bodyLayer = layers.find((l) => l.text.includes("spirited explorer"));
+    expect(bodyLayer?.w_px).toBeGreaterThan(0.8 * 1080 * 0.95);
   });
 
   it("buildMimicDocAiRenderTextLayers keeps handle on template_bg CTA slide", () => {
@@ -893,6 +899,52 @@ describe("mimic-slide-typography", () => {
       { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
     );
     expect(layers.map((l) => l.text)).toContain("@signandsound");
+  });
+
+  it("buildMimicDocAiRenderTextLayers uses LLM CTA headline + body on listicle CTA slide", () => {
+    const ocrSlide = {
+      slide_index: 12,
+      text_blocks: [
+        {
+          text: "THE AQUARIUS MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "Reference body placeholder",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.85, w: 0.3, h: 0.04 },
+        },
+      ],
+    };
+    const scoped = templateBgLlmSlideForDocAi(12, 12, {
+      headline: "AQUARIUS: THE VISIONARY",
+      body: "Aquarius moms inspire their children to dream big and embrace their uniqueness.",
+      cta: "AQUARIUS: THE VISIONARY",
+      handle: "@signandsound",
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      12,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    expect(layers.map((l) => l.text)).toContain("AQUARIUS: THE VISIONARY");
+    expect(layers.map((l) => l.text)).toContain(
+      "Aquarius moms inspire their children to dream big and embrace their uniqueness."
+    );
+    expect(layers.map((l) => l.text)).toContain("@signandsound");
+    expect(layers.map((l) => l.text)).not.toContain("THE AQUARIUS MOTHER");
+    expect(layers.map((l) => l.text)).not.toContain("Reference body placeholder");
   });
 
   it("buildMimicDocAiRenderTextLayers uses LLM listicle decor title on shared Virgo OCR geometry", () => {

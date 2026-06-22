@@ -95,9 +95,8 @@ export interface CarouselSliderProps {
   onMimicRegenerationNoteChange?: (value: string) => void;
   /** template_bg listicle — headline/body fields instead of OCR clusters. */
   mimicTemplateBg?: boolean;
-  /** Full-bleed mimic: layout boxes drive left-column text fields (1:1 with editor). */
+  /** Full-bleed mimic: layout editor highlights boxes; copy fields are per phrase (copy slot). */
   mimicFullBleed?: boolean;
-  mimicLayoutTextBlocks?: Array<{ role: string; text: string }>;
   onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
 }
 
@@ -130,7 +129,6 @@ export function CarouselSlider({
   onMimicRegenerationNoteChange,
   mimicTemplateBg = false,
   mimicFullBleed = false,
-  mimicLayoutTextBlocks,
   onMimicLayoutTextBlockChange,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
@@ -149,6 +147,18 @@ export function CarouselSlider({
   const onCurrentSlideChangeRef = useRef(onCurrentSlideChange);
   onCurrentSlideChangeRef.current = onCurrentSlideChange;
 
+  // Single owner of the upward `onSlidesChange` emit. We stash the serialized payload
+  // so the sync effect below can recognise the parent echoing our own edit back as
+  // `initialSlides` and NOT clobber local state (which caused cursor jumps and lost
+  // trailing characters while typing).
+  const onSlidesChangeRef = useRef(onSlidesChange);
+  onSlidesChangeRef.current = onSlidesChange;
+  const lastEmittedSlidesKeyRef = useRef<string>("");
+  const emitSlides = useCallback((next: NormalizedSlide[]) => {
+    lastEmittedSlidesKeyRef.current = JSON.stringify(next);
+    onSlidesChangeRef.current?.(next);
+  }, []);
+
   const slidesKey = useMemo(() => JSON.stringify(slides), [slides]);
 
   // Navigate: when controlled, only request the change upward; the new value flows
@@ -163,6 +173,9 @@ export function CarouselSlider({
   );
 
   useEffect(() => {
+    // If `initialSlides` is just the parent echoing back the edit we emitted, keep our
+    // local state (and caret / "Saved" badge) intact. Only adopt genuine external changes.
+    if (JSON.stringify(initialSlides) === lastEmittedSlidesKeyRef.current) return;
     setSlides(initialSlides);
     setInternalIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
     setSavedAt(null);
@@ -265,11 +278,11 @@ export function CarouselSlider({
       setSavedAt(null);
       setSlides((prev) => {
         const next = prev.map((s, i) => (i === index ? { ...s, ...patch } : s));
-        onSlidesChange?.(next);
+        emitSlides(next);
         return next;
       });
     },
-    [onSlidesChange]
+    [emitSlides]
   );
 
   const updateExtraField = useCallback(
@@ -284,15 +297,15 @@ export function CarouselSlider({
           else delete extras[key];
           return { ...s, extras: Object.keys(extras).length ? extras : undefined };
         });
-        onSlidesChange?.(next);
+        emitSlides(next);
         return next;
       });
     },
-    [onSlidesChange]
+    [emitSlides]
   );
 
   const updateMimicTemplateBgField = useCallback(
-    (slideIndex: number, field: MimicTemplateBgEditorField, text: string) => {
+    (slideIndex: number, field: MimicTemplateBgEditorField, text: string, blockIndex?: number) => {
       setSavedAt(null);
       setSlides((prev) => {
         const next = prev.map((s, i) =>
@@ -300,18 +313,21 @@ export function CarouselSlider({
             ? applyMimicTemplateBgFieldEdit(s, slideIndex + 1, prev.length, field.key, text)
             : s
         );
-        if (onMimicLayoutTextBlockChange) {
-          const updated = next[slideIndex];
-          if (updated) {
-            const fields = resolveMimicTemplateBgEditorFields(updated, slideIndex + 1, next.length);
-            fields.forEach((f, bi) => onMimicLayoutTextBlockChange(bi, f.text));
-          }
-        }
-        onSlidesChange?.(next);
+        emitSlides(next);
         return next;
       });
+      if (onMimicLayoutTextBlockChange) {
+        const idx =
+          blockIndex ??
+          resolveMimicTemplateBgEditorFields(
+            slides[slideIndex] ?? { index: slideIndex, type: "body", headline: "", body: "", handle: "" },
+            slideIndex + 1,
+            slides.length
+          ).findIndex((f) => f.key === field.key);
+        if (idx >= 0) onMimicLayoutTextBlockChange(idx, text);
+      }
     },
-    [onSlidesChange, onMimicLayoutTextBlockChange]
+    [emitSlides, onMimicLayoutTextBlockChange, slides]
   );
 
   const updateMimicTextBlock = useCallback(
@@ -322,7 +338,7 @@ export function CarouselSlider({
         const fields = resolveMimicTemplateBgEditorFields(slideAt, slideIndex + 1, slides.length);
         const field = fields[blockIndex];
         if (!field) return;
-        updateMimicTemplateBgField(slideIndex, field, text);
+        updateMimicTemplateBgField(slideIndex, field, text, blockIndex);
         if (onMimicLayoutTextBlockChange) {
           onMimicLayoutTextBlockChange(blockIndex, text);
         }
@@ -335,31 +351,29 @@ export function CarouselSlider({
       setSlides((prev) => {
         const next = prev.map((s, i) => {
           if (i !== slideIndex) return s;
-          const blocks = (
-            mimicFullBleed && mimicLayoutTextBlocks?.length
-              ? mimicLayoutTextBlocks
-              : resolveMimicTextBlocksForSlide(s)
-          ).map((b, bi) => (bi === blockIndex ? { ...b, text } : b));
-          const fields = mimicSlideFieldsFromTextBlocks(blocks);
+          const blocks = resolveMimicTextBlocksForSlide(s);
+          while (blocks.length <= blockIndex) blocks.push({ role: "body", text: "" });
+          const nextBlocks = blocks.map((b, bi) => (bi === blockIndex ? { ...b, text } : b));
+          const fields = mimicSlideFieldsFromTextBlocks(nextBlocks);
           return {
             ...s,
-            text_blocks: blocks,
+            text_blocks: nextBlocks,
             on_slide_lines: fields.on_slide_lines,
             headline: fields.headline,
             body: fields.body,
           };
         });
-        onSlidesChange?.(next);
+        emitSlides(next);
         return next;
       });
     },
-    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, mimicLayoutTextBlocks, onSlidesChange, slides, updateMimicTemplateBgField]
+    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, emitSlides, slides, updateMimicTemplateBgField]
   );
 
   const handleSaveSlide = useCallback(() => {
-    onSlidesChange?.(slides);
+    emitSlides(slides);
     setSavedAt(currentIndex);
-  }, [currentIndex, onSlidesChange, slides]);
+  }, [currentIndex, emitSlides, slides]);
 
   const goPrev = useCallback(() => goToIndex(currentIndex - 1), [goToIndex, currentIndex]);
   const goNext = useCallback(() => goToIndex(currentIndex + 1), [goToIndex, currentIndex]);
@@ -394,11 +408,8 @@ export function CarouselSlider({
         text: f.text,
       }));
     }
-    if (mimicFullBleed && mimicLayoutTextBlocks?.length) {
-      return mimicLayoutTextBlocks.map((b) => ({ role: b.role || "body", text: b.text }));
-    }
     return resolveMimicTextBlocksForSlide(slide);
-  }, [mimicCopyEditor, mimicTemplateBg, mimicFullBleed, mimicLayoutTextBlocks, slide, currentIndex, slides.length]);
+  }, [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]);
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
@@ -626,7 +637,7 @@ export function CarouselSlider({
                         readOnly={isHandle && Boolean(projectHandle.trim())}
                         onChange={(e) => {
                           if (isHandle && projectHandle.trim()) return;
-                          updateMimicTemplateBgField(currentIndex, field, e.target.value);
+                          updateMimicTemplateBgField(currentIndex, field, e.target.value, bi);
                         }}
                         rows={mimicCopyTextareaRows(isHandle ? displayText : field.text, { min: 3, max: 24 })}
                         placeholder={`${field.label}…`}
@@ -648,7 +659,12 @@ export function CarouselSlider({
             </div>
           ) : mimicCopyEditor && (mimicFullBleed || mimicTextBlocks.length > 0) ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
-              <label className="filter-label">Text blocks ({mimicTextBlocks.length})</label>
+              <label className="filter-label">Text phrases ({mimicTextBlocks.length})</label>
+              {mimicFullBleed ? (
+                <p className="mimic-text-blocks__hint">
+                  One field per on-slide phrase (like the reference). The layout editor may show more boxes — copy is split across them on reprint.
+                </p>
+              ) : null}
               <div className="mimic-text-blocks__list">
                 {mimicTextBlocks.map((block, bi) => {
                   const isHandle = isMimicHandleTextBlock(block);

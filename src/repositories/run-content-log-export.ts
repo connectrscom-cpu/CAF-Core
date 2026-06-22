@@ -5,6 +5,7 @@ import type { SignalPackRow } from "./signal-packs.js";
 import { listRunContentOutcomesForAdmin, type RunContentOutcomeRow } from "./run-content-outcomes.js";
 import { qcDetailFromGenerationPayload } from "../services/qc-runtime.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
+import { resolveJobFlowDisplayLabel } from "../domain/job-flow-display-label.js";
 
 type JsonRec = Record<string, unknown>;
 
@@ -46,6 +47,8 @@ function pickStageSnapshots(jobRow: JsonRec): {
 export interface RunContentLogExportJob {
   task_id: string;
   flow_type: string;
+  flow_label: string;
+  is_mimic_replication: boolean;
   platform: string;
   status: string;
   qc_status: string;
@@ -242,6 +245,7 @@ export async function buildRunContentLogExport(
       }
     })();
     const qc_detail = gp ? qcDetailFromGenerationPayload(gp) : null;
+    const flowDisplay = resolveJobFlowDisplayLabel(flowForPreview, job.generation_payload ?? null);
 
     // If we have an outcomes row, merge in its “summary” fields onto the job row for convenience
     // (but keep tables separate in the export).
@@ -251,6 +255,8 @@ export async function buildRunContentLogExport(
     return {
       task_id,
       flow_type: strVal(job.flow_type).trim(),
+      flow_label: flowDisplay.flow_label,
+      is_mimic_replication: flowDisplay.is_mimic_replication,
       platform: strVal(job.platform).trim(),
       status: strVal(job.status).trim(),
       qc_status: strVal(job.qc_status).trim(),

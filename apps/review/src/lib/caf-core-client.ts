@@ -197,7 +197,20 @@ export interface ReviewQueueJob {
   project_display_name?: string | null;
   /** First asset URL for list thumbnails (prefers images). */
   preview_thumb_url?: string | null;
+  /** Human label — includes Mimic · … for top-performer replication jobs. */
+  flow_label?: string | null;
+  is_mimic_replication?: boolean;
   render_state?: Record<string, unknown> | null;
+  top_performer_reference?: TopPerformerReviewReference | null;
+}
+
+export interface TopPerformerReviewReference {
+  kind: "video" | "carousel" | "image";
+  insights_id: string | null;
+  hook_text_preview: string | null;
+  format_pattern: string | null;
+  source_video_url: string | null;
+  reference_frame_urls: string[];
 }
 
 export interface ReviewQueueCounts {

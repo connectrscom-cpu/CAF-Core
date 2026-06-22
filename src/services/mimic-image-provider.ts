@@ -611,7 +611,33 @@ async function editViaDashScope(config: AppConfig, params: MimicImageEditParams)
   throw lastError ?? new Error("DashScope image edit: max retries exceeded");
 }
 
+const BFL_MAX_RETRIES = 3;
+const BFL_RETRY_BASE_MS = 10_000;
 const BFL_TERMINAL_FAILURE = new Set(["Error", "Failed", "Task not found", "Request Moderated", "Content Moderated"]);
+
+/** BFL 503 / busy dependency errors — safe to re-submit the whole job after backoff. */
+export function isBflTransientError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/\((429|502|503|504)\)/.test(msg)) return true;
+  return /temporarily unavailable|service unavailable|rate limit|try again later|overloaded/i.test(msg);
+}
+
+function bflFailureDetail(parsed: Record<string, unknown>, rawText = ""): string {
+  const details = asRecord(parsed.details);
+  const nested = details?.error;
+  if (typeof nested === "string" && nested.trim()) return nested.trim();
+  if (typeof parsed.detail === "string" && parsed.detail.trim()) return parsed.detail.trim();
+  return JSON.stringify(parsed.details ?? parsed).slice(0, 400) || rawText.slice(0, 400);
+}
+
+function isBflTransientPollFailure(status: number, parsed: Record<string, unknown>, rawText = ""): boolean {
+  if (status === 429 || status === 502 || status === 503 || status === 504) return true;
+  const pollStatus = typeof parsed.status === "string" ? parsed.status : "";
+  if (pollStatus === "Error" || pollStatus === "Failed") {
+    return isBflTransientError(new Error(bflFailureDetail(parsed, rawText)));
+  }
+  return false;
+}
 
 /** True when buffer magic bytes look like a raster image BFL can consume. */
 export function isReadableImageBuffer(buf: Buffer): boolean {
@@ -674,18 +700,15 @@ async function pollBflFluxTask(args: {
     }
 
     if (!res.ok) {
-      const detail =
-        typeof parsed.detail === "string"
-          ? parsed.detail
-          : JSON.stringify(parsed.detail ?? parsed).slice(0, 300);
+      const detail = bflFailureDetail(parsed, rawText);
       throw new Error(`${providerErrorLabel("bfl")} poll failed (${res.status}): ${detail}`);
     }
 
     const status = typeof parsed.status === "string" ? parsed.status : "";
     if (status === "Ready") return parsed;
-    if (BFL_TERMINAL_FAILURE.has(status)) {
+    if (BFL_TERMINAL_FAILURE.has(status) || status === "Error" || status === "Failed") {
       throw new Error(
-        `${providerErrorLabel("bfl")} task ${args.taskId} failed (${status}): ${JSON.stringify(parsed).slice(0, 400)}`
+        `${providerErrorLabel("bfl")} task ${args.taskId} failed (${status}): ${bflFailureDetail(parsed, rawText)}`
       );
     }
   }
@@ -695,7 +718,7 @@ async function pollBflFluxTask(args: {
   );
 }
 
-async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+async function editViaBflOnce(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
 
@@ -741,7 +764,7 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
     const detail =
       typeof submitParsed.detail === "string"
         ? submitParsed.detail
-        : JSON.stringify(submitParsed.detail ?? submitParsed).slice(0, 300);
+        : bflFailureDetail(submitParsed, submitRaw);
     if (params.audit) {
       await tryInsertApiCallAudit(params.audit.db, {
         projectId: params.audit.projectId,
@@ -823,6 +846,24 @@ async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Prom
   }
 
   return { buffer, mimeType };
+}
+
+async function editViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= BFL_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const backoff = BFL_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 3_000;
+      await sleep(backoff);
+    }
+    try {
+      return await editViaBflOnce(config, params);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < BFL_MAX_RETRIES && isBflTransientError(lastError)) continue;
+      throw lastError;
+    }
+  }
+  throw lastError ?? new Error(`${providerErrorLabel("bfl")}: max retries exceeded`);
 }
 
 const MIMIC_ART_ONLY_NEGATIVE_PROMPT =
@@ -909,7 +950,7 @@ async function generateViaDashScope(
   return parseDashScopeImageEditResponse(parsed);
 }
 
-async function generateViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+async function generateViaBflOnce(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
 
@@ -1035,6 +1076,24 @@ async function generateViaBfl(config: AppConfig, params: MimicImageEditParams): 
   }
 
   return { buffer, mimeType };
+}
+
+async function generateViaBfl(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= BFL_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const backoff = BFL_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 3_000;
+      await sleep(backoff);
+    }
+    try {
+      return await generateViaBflOnce(config, params);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < BFL_MAX_RETRIES && isBflTransientError(lastError)) continue;
+      throw lastError;
+    }
+  }
+  throw lastError ?? new Error(`${providerErrorLabel("bfl")} text-to-image: max retries exceeded`);
 }
 
 async function generateViaOpenAi(config: AppConfig, params: MimicImageEditParams): Promise<MimicImageEditResult> {

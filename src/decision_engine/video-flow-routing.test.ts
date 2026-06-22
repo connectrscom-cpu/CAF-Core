@@ -38,6 +38,32 @@ describe("video-flow-routing", () => {
     expect(d.confidence).toBe("heuristic");
   });
 
+  it("maps animated-sequence language to prompt_avatar", () => {
+    const d = resolveVideoIntent(
+      {
+        format: "video",
+        summary:
+          "Host a light-hearted exploration of Gemini traits, using animated sequences to depict their duality",
+      },
+      DEFAULT_VIDEO_ROUTING
+    );
+    expect(d.intent).toBe("prompt_avatar");
+    expect(d.confidence).toBe("heuristic");
+  });
+
+  it("overrides script_avatar when idea copy calls for animation", () => {
+    const d = resolveVideoIntent(
+      {
+        format: "video",
+        video_style: "script_avatar",
+        summary: "Animated graphics showing zodiac traits with motion graphics",
+      },
+      DEFAULT_VIDEO_ROUTING
+    );
+    expect(d.intent).toBe("prompt_avatar");
+    expect(d.confidence).toBe("heuristic");
+  });
+
   it("excludes scene assembly from routing", () => {
     expect(isSceneAssemblyFlowType("FLOW_VID_SCENES")).toBe(true);
     expect(flowTypeMatchesVideoIntent("FLOW_VID_SCENES", "no_avatar", null)).toBe(false);

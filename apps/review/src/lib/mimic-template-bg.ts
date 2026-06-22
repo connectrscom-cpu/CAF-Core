@@ -3,6 +3,7 @@ import { mimicSlideFieldsFromTextBlocks, type MimicTextBlock } from "@/lib/carou
 import {
   isListicleBodyInvertedLlmCopy,
   resolveTemplateBgBodyOnScreenCopy,
+  resolveTemplateBgCtaOnScreenCopy,
 } from "@caf-core-carousel/mimic-template-bg-copy";
 
 export type MimicTemplateBgSlot = "cover" | "body" | "cta";
@@ -82,9 +83,28 @@ export function resolveMimicTemplateBgEditorFields(
   }
 
   if (slot === "cta") {
+    const ctaText = String(slide.extras?.cta ?? "").trim();
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline,
+      body,
+      cta: ctaText,
+      handle,
+      kicker: String(slide.extras?.kicker ?? "").trim(),
+      slide_title: String(slide.extras?.slide_title ?? "").trim(),
+    });
+    if (mapped.listicle_style) {
+      const fields: MimicTemplateBgEditorField[] = [
+        { key: "headline", label: "Headline", role: "headline", text: mapped.headline },
+        { key: "body", label: "Body", role: "body", text: mapped.body },
+      ];
+      if (mapped.handle) {
+        fields.push({ key: "handle", label: "Handle", role: "handle", text: mapped.handle });
+      }
+      return fields;
+    }
     return [
-      { key: "headline", label: "CTA headline", role: "headline", text: headline },
-      { key: "handle", label: "Handle", role: "handle", text: handle || body },
+      { key: "headline", label: "CTA headline", role: "headline", text: mapped.headline },
+      { key: "handle", label: "Handle", role: "handle", text: mapped.handle },
     ];
   }
 
@@ -136,11 +156,19 @@ export function applyMimicTemplateBgFieldEdit(
       extras: { ...(next.extras ?? {}), cover_subtitle: text },
     };
   } else if (fieldKey === "handle") {
-    next = {
-      ...next,
-      handle: text,
-      ...(slot === "cta" ? { body: text } : {}),
-    };
+    next = { ...next, handle: text };
+    if (slot === "cta") {
+      const cta = resolveTemplateBgCtaOnScreenCopy({
+        headline: next.headline,
+        body: next.body,
+        handle: text,
+        kicker: String(next.extras?.kicker ?? "").trim(),
+        slide_title: String(next.extras?.slide_title ?? "").trim(),
+      });
+      if (!cta.listicle_style) {
+        next = { ...next, body: text };
+      }
+    }
   }
 
   const fields = resolveMimicTemplateBgEditorFields(next, slideIndex1Based, totalSlides);
@@ -199,7 +227,6 @@ export function templateBgLlmSlideForDocAi(
   const subtitle = String(
     rawLlmSlide.subtitle ?? rawLlmSlide.cover_subtitle ?? rawLlmSlide.kicker ?? ""
   ).trim();
-  const cta = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
   const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
 
   if (slot === "cover") {
@@ -219,20 +246,45 @@ export function templateBgLlmSlideForDocAi(
     };
   }
   if (slot === "cta") {
-    const ctaHeadline = cta || headline;
-    const ctaBody = handle || body || subtitle;
+    const ctaText = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline,
+      body,
+      cta: ctaText,
+      handle,
+      kicker: String(rawLlmSlide.kicker ?? "").trim(),
+      slide_title: String(rawLlmSlide.slide_title ?? "").trim(),
+    });
+    const ctaHeadline = ctaText || headline;
+    if (mapped.listicle_style) {
+      const text_blocks = [
+        ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
+        ...(mapped.body ? [{ role: "body", text: mapped.body }] : []),
+        ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
+      ];
+      return {
+        ...rawLlmSlide,
+        headline: mapped.headline,
+        body: mapped.body,
+        cta: ctaHeadline,
+        cta_text: ctaHeadline,
+        handle: mapped.handle,
+        cta_handle: mapped.handle,
+        ...(text_blocks.length > 0 ? { text_blocks } : {}),
+      };
+    }
     const text_blocks = [
-      ...(ctaHeadline ? [{ role: "headline", text: ctaHeadline }] : []),
-      ...(ctaBody ? [{ role: "handle", text: ctaBody }] : []),
+      ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
+      ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
     ];
     return {
       ...rawLlmSlide,
-      headline: ctaHeadline,
-      body: ctaBody,
-      cta: ctaHeadline,
-      cta_text: ctaHeadline,
-      handle: ctaBody,
-      cta_handle: ctaBody,
+      headline: mapped.headline,
+      body: mapped.handle,
+      cta: mapped.headline,
+      cta_text: mapped.headline,
+      handle: mapped.handle,
+      cta_handle: mapped.handle,
       ...(text_blocks.length > 0 ? { text_blocks } : {}),
     };
   }

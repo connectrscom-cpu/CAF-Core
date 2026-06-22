@@ -37,6 +37,26 @@ describe("mimic-job-grounding", () => {
     expect(findVisualGuidelinePackEntry(derived, ["ins_target"])?.insights_id).toBe("ins_target");
   });
 
+  it("resolves broad grounding id to cdeep pack entry on same row", () => {
+    const derived = {
+      visual_guidelines_pack_v1: {
+        entries: [
+          {
+            insights_id: "ins_aebcb95dd2_27439_cdeep",
+            analysis_tier: "top_performer_carousel",
+            hook_text_preview: "zodiac sign behavior",
+            inspection_media: {
+              items: [{ role: "carousel_slide", index: 1, public_url: "https://example.com/slide1.jpg" }],
+            },
+          },
+        ],
+      },
+    };
+    expect(findVisualGuidelinePackEntry(derived, ["ins_aebcb95dd2_27439_broad"])?.insights_id).toBe(
+      "ins_aebcb95dd2_27439_cdeep"
+    );
+  });
+
   it("buildMimicJobPlanningGrounding returns only this job reference", async () => {
     const g = await buildMimicJobPlanningGrounding(
       null,

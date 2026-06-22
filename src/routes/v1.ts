@@ -42,6 +42,11 @@ import {
   resolveTaskToProject,
   type ReviewQueueFilters,
 } from "../repositories/review-queue.js";
+import { enrichJobFlowDisplay } from "../services/review-queue-display.js";
+import {
+  resolveTopPerformerReviewReference,
+  type TopPerformerReviewReference,
+} from "../services/review-top-performer-reference.js";
 import {
   buildCarouselPublishUrls,
   buildImagePublishUrl,
@@ -423,6 +428,55 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       out.publish_image_urls = next;
     }
     return out;
+  }
+
+  async function withSignedReviewJob<
+    T extends {
+      flow_type: string | null;
+      project_id?: string;
+      task_id?: string;
+      generation_payload?: Record<string, unknown> | null | undefined;
+    },
+  >(
+    detail: T
+  ): Promise<
+    T & {
+      flow_label: string;
+      is_mimic_replication: boolean;
+      top_performer_reference: TopPerformerReviewReference | null;
+    }
+  > {
+    const signed = await withSignedGenerationPayload(detail);
+    const gp = (signed.generation_payload ?? {}) as Record<string, unknown>;
+    const enriched = enrichJobFlowDisplay({
+      ...signed,
+      generation_payload: gp,
+    });
+    let top_performer_reference: TopPerformerReviewReference | null = null;
+    const projectId = String(detail.project_id ?? "").trim();
+    const taskId = String(detail.task_id ?? "").trim();
+    if (projectId && taskId) {
+      top_performer_reference = await resolveTopPerformerReviewReference(db, projectId, {
+        task_id: taskId,
+        flow_type: detail.flow_type,
+        generation_payload: gp,
+      });
+      if (top_performer_reference) {
+        top_performer_reference = {
+          ...top_performer_reference,
+          source_video_url: top_performer_reference.source_video_url
+            ? (await maybeSignPublicAssetUrl(top_performer_reference.source_video_url)) ??
+              top_performer_reference.source_video_url
+            : null,
+          reference_frame_urls: await Promise.all(
+            top_performer_reference.reference_frame_urls.map(
+              async (u) => (await maybeSignPublicAssetUrl(u)) ?? u
+            )
+          ),
+        };
+      }
+    }
+    return { ...enriched, top_performer_reference };
   }
 
   async function withSignedGenerationPayload<
@@ -1021,10 +1075,15 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       reviewQueueStatusBreakdownAllProjects(db, params.data.tab, filters),
     ]);
     const signedJobs = await Promise.all(
-      (jobs ?? []).map(async (j) => ({
-        ...j,
-        preview_thumb_url: await maybeSignPublicAssetUrl((j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null),
-      }))
+      (jobs ?? []).map(async (j) => {
+        const enriched = enrichJobFlowDisplay(j);
+        return {
+          ...enriched,
+          preview_thumb_url: await maybeSignPublicAssetUrl(
+            (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
+          ),
+        };
+      })
     );
     return {
       ok: true,
@@ -1048,7 +1107,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, resolved.project_id, tid);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    const signed = await withSignedGenerationPayload(detail);
+    const signed = await withSignedReviewJob(detail);
     return { ok: true, job: { ...signed, assets, project_slug: resolved.project_slug } };
   });
 
@@ -1061,7 +1120,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, resolved.project_id, params.data.task_id.trim());
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    const signed = await withSignedGenerationPayload(detail);
+    const signed = await withSignedReviewJob(detail);
     return { ok: true, job: { ...signed, assets, project_slug: resolved.project_slug } };
   });
 
@@ -1092,7 +1151,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, project.id, tid);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    const signed = await withSignedGenerationPayload(detail);
+    const signed = await withSignedReviewJob(detail);
     return {
       ok: true,
       job: { ...signed, assets, project_slug: params.data.project_slug },
@@ -1113,10 +1172,15 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       reviewQueueStatusBreakdown(db, project.id, params.data.tab, filters),
     ]);
     const signedJobs = await Promise.all(
-      (jobs ?? []).map(async (j) => ({
-        ...j,
-        preview_thumb_url: await maybeSignPublicAssetUrl((j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null),
-      }))
+      (jobs ?? []).map(async (j) => {
+        const enriched = enrichJobFlowDisplay(j);
+        return {
+          ...enriched,
+          preview_thumb_url: await maybeSignPublicAssetUrl(
+            (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
+          ),
+        };
+      })
     );
     return {
       ok: true,
@@ -1135,7 +1199,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const detail = await getReviewJobDetail(db, project.id, params.data.task_id);
     if (!detail) return reply.code(404).send({ ok: false, error: "not_found" });
     const assets = await signJobAssets(detail.assets as Array<{ public_url: string | null; bucket?: string | null; object_path?: string | null }>);
-    const signed = await withSignedGenerationPayload(detail);
+    const signed = await withSignedReviewJob(detail);
     return {
       ok: true,
       job: { ...signed, assets, project_slug: params.data.project_slug },

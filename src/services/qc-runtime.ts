@@ -14,6 +14,8 @@ import { getBrandConstraints } from "../repositories/project-config.js";
 import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js";
 import { mergeGenerationPayloadQc } from "../domain/generation-payload-qc.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+import { detectVideoScriptRuntimeMismatch } from "../domain/video-script-runtime-qc.js";
+import { CANONICAL_FLOW_TYPES } from "../domain/canonical-flow-types.js";
 
 export interface QcCheckResult {
   check_id: string;
@@ -73,6 +75,8 @@ export interface QcResultPayload {
   }>;
   /** Optional per-flow hints from `caf_core.qc_flow_profiles` (Admin → Inputs & processing). */
   flow_profile_hints?: Record<string, unknown>;
+  /** Non-blocking warnings surfaced in review (e.g. script runtime vs word count). */
+  advisory_warnings?: string[];
 }
 
 export function buildQcResultPayload(args: {
@@ -562,6 +566,18 @@ export async function runQcForJob(
     riskLevel,
     recommendedRoute,
   });
+
+  const advisoryWarnings: string[] = [];
+  if (
+    job.flow_type === CANONICAL_FLOW_TYPES.VID_SCRIPT ||
+    /video_script|script_generator/i.test(job.flow_type)
+  ) {
+    const runtimeMismatch = detectVideoScriptRuntimeMismatch(qcContent);
+    if (runtimeMismatch) advisoryWarnings.push(runtimeMismatch.message);
+  }
+  if (advisoryWarnings.length > 0) {
+    qcPayload = { ...qcPayload, advisory_warnings: advisoryWarnings };
+  }
 
   try {
     const fp = await getQcFlowProfile(db, job.project_id, job.flow_type);

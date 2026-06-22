@@ -168,9 +168,20 @@ export function sanitizeVisualDescriptionForImagePrompt(raw: string | null | und
     /\b(body\s*text|headline|subhead|hook|caption|cta|on[-\s]?screen\s*text|overlay\s*copy)\s*:?\s*[^\n.]*/gi,
     ""
   );
+  s = s.replace(/\b(?:but\s+)?with\s+text\s+(?:focusing\s+on|about)\s+[^.]+/gi, "");
+  s = s.replace(/\b(?:different|specific)\s+content\s+specific\s+to\s+[^.]+/gi, "");
   s = s.replace(/['"][^'"]{6,}['"]/g, "");
   s = s.replace(/\.\s*(\.|$)/g, ".");
   return s.replace(/\s{2,}/g, " ").trim().replace(/\.$/, "").slice(0, 300);
+}
+
+/** Strip layout labels that invite on-image copy when authoring art-only plates. */
+export function sanitizeLayoutTemplateForImagePrompt(raw: string | null | undefined): string {
+  let s = String(raw ?? "").trim();
+  if (!s) return "";
+  s = s.replace(/\b(?:different|specific)\s+content\s+specific\s+to\s+[^.]+/gi, "");
+  s = s.replace(/\bwith\s+text\s+(?:focusing\s+on|about)\s+[^.]+/gi, "");
+  return s.replace(/\s{2,}/g, " ").trim().replace(/[;,]\s*$/, "").slice(0, 160);
 }
 
 /** Soft reference cues for bold variants — inspired-by visuals only, never reference copy. */

@@ -58,6 +58,75 @@ describe("stripAirQuotesFromSlideCopy", () => {
   });
 });
 
+describe("slidesFromGeneratedOutput body line handling", () => {
+  it("repairs comma-stringified line arrays back into newline-separated body", () => {
+    // Reproduces a deck whose `body` was flattened with Array.toString() (bare commas, no space).
+    const gen = {
+      carousel: {
+        slides: [
+          {
+            headline: "Taurus Love Insights",
+            body:
+              "Dear Taurus, your steady nature is finding balance.,Awareness of true desires blooms this month.,Learn to embrace what aligns with your spirit.",
+          },
+        ],
+      },
+    };
+    const slides = slidesFromGeneratedOutput(gen as Record<string, unknown>);
+    const body = String(slides[0]?.body ?? "");
+    expect(body).not.toMatch(/\.,/);
+    expect(body.split("\n")).toEqual([
+      "Dear Taurus, your steady nature is finding balance.",
+      "Awareness of true desires blooms this month.",
+      "Learn to embrace what aligns with your spirit.",
+    ]);
+    // Prose commas (followed by a space) must be preserved.
+    expect(body).toContain("Dear Taurus, your steady nature");
+  });
+
+  it("joins an array body with newlines (never commas)", () => {
+    const gen = {
+      slides: [
+        {
+          slide_role: "body",
+          headline: "Gemini's Birthday Season",
+          body: ["Happy Birthday, Gemini! Expand your horizons.", "Balance energy, giving to what truly matters."],
+        },
+      ],
+    };
+    const slides = slidesFromGeneratedOutput(gen as Record<string, unknown>);
+    const body = String(slides[0]?.body ?? "");
+    expect(body).toBe(
+      "Happy Birthday, Gemini! Expand your horizons.\nBalance energy, giving to what truly matters."
+    );
+  });
+
+  it("does not split numeric thousands separators", () => {
+    const gen = {
+      carousel: { slides: [{ headline: "Stat", body: "Over 1,000 readers agree.,Join them today." }] },
+    };
+    const slides = slidesFromGeneratedOutput(gen as Record<string, unknown>);
+    const body = String(slides[0]?.body ?? "");
+    expect(body).toContain("1,000 readers");
+    expect(body.split("\n")).toEqual(["Over 1,000 readers agree.", "Join them today."]);
+  });
+
+  it("prefers variations[0].slides with array bodies over comma-flattened carousel.slides", () => {
+    const gen = {
+      carousel: {
+        slides: [{ headline: "Taurus Love Insights", body: "line one.,line two." }],
+      },
+      variations: [
+        {
+          slides: [{ headline: "Taurus Love Insights", body: ["line one.", "line two."] }],
+        },
+      ],
+    };
+    const slides = slidesFromGeneratedOutput(gen as Record<string, unknown>);
+    expect(String(slides[0]?.body)).toBe("line one.\nline two.");
+  });
+});
+
 describe("stripLeakedFieldLabelsFromSlideCopy", () => {
   it("removes leading label prefixes like 'Kicker:'", () => {
     expect(stripLeakedFieldLabelsFromSlideCopy("Kicker: Community Spotlight\nHello")).toBe("Community Spotlight\nHello");

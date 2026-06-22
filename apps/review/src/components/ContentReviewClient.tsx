@@ -13,6 +13,7 @@ import { taskApiQuery } from "@/lib/task-links";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
+import { displayFlowLabel } from "@/lib/display-flow-label";
 
 interface ContentResponse {
   data: ReviewQueueRow;
@@ -115,7 +116,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
         <div className="detail-header-row">
           <p className="detail-subtitle">
             {data.platform && <>{data.platform} · </>}
-            {data.flow_type && <>{data.flow_type}</>}
+            {displayFlowLabel(data)}
           </p>
           <CopyTaskDebugBundleButton
             taskId={task_id}
@@ -130,7 +131,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
       ) : (
         <p className="detail-subtitle">
           {data?.platform && <>{data.platform} · </>}
-          {data?.flow_type && <>{data.flow_type}</>}
+          {data ? displayFlowLabel(data) : null}
         </p>
       )}
 

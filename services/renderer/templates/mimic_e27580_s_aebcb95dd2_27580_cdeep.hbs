@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<!--
+  mimic_evidence_template
+  layout_base_template=carousel_mimic_bg
+  semantic_layout_hint=carousel_notes_app_minimal
+  source_insights_id=ins_aebcb95dd2_27580_cdeep
+  source_evidence_row_id=27580
+  analysis_tier=top_performer_carousel
+  seeded_by_task_id=RUN_20260622_MQP0HP5I__IG__VISUAL_FIRST_CAROUSEL__r0001__v1
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1080, height=1350">
+  <style>
+    /* mimic_evidence_template — palette from top-performer analysis */
+    :root{
+      --paper: #fffef9;
+      --ink: #1c1c1e;
+      --body: #3a3a3c;
+      --text-shadow-headline: 0 1px 12px rgba(255,254,249,0.85);
+      --text-shadow-body: 0 1px 10px rgba(255,254,249,0.8);
+    }
+
+    *{
+      box-sizing:border-box;
+      margin:0;
+      padding:0;
+    }
+
+    body{
+      background:var(--paper);
+    }
+
+    .slide{
+      width:1080px;
+      height:1350px;
+      overflow:hidden;
+      flex-shrink:0;
+      position:relative;
+      background:var(--paper);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      color:var(--ink);
+      -webkit-font-smoothing:antialiased;
+    }
+
+    .slide-bg{
+      position:absolute;
+      inset:0;
+      z-index:0;
+      background-color:var(--paper);
+      background-size:cover;
+      background-position:center;
+      background-repeat:no-repeat;
+    }
+
+    .page{
+      position:relative;
+      z-index:1;
+      width:100%;
+      height:100%;
+      max-height:100%;
+      padding: var(--pad-y) var(--pad-x);
+      display:flex;
+      flex-direction:column;
+      align-items: var(--caf-page-align, stretch);
+      justify-content: var(--caf-page-justify, flex-start);
+      text-align: var(--caf-text-align, left);
+      overflow-y:auto;
+      overflow-x:hidden;
+      -webkit-overflow-scrolling:touch;
+      box-sizing:border-box;
+    }
+
+    .mimic-text-stack{
+      display:flex;
+      flex-direction:column;
+      width:100%;
+      max-width:920px;
+      box-sizing:border-box;
+    }
+
+  .page.mimic-block-positioned{
+      display:block;
+      padding:0;
+    }
+
+    .page.mimic-block-positioned .mimic-text-stack{
+      position:absolute;
+      z-index:2;
+      left:calc(var(--pad-x) + var(--caf-text-x, 0.08) * (100% - 2 * var(--pad-x)));
+      top:calc(var(--pad-y) + var(--caf-text-y, 0.12) * (100% - 2 * var(--pad-y)));
+      width:calc(var(--caf-text-w, 0.84) * (100% - 2 * var(--pad-x)));
+      max-width:none;
+      margin:0;
+    }
+
+    .page .headline,
+    .page .body,
+    .page .sub,
+    .page .handle,
+    .page .cta-handle,
+    .mimic-text-stack .headline,
+    .mimic-text-stack .body,
+    .mimic-text-stack .sub,
+    .mimic-text-stack .handle,
+    .mimic-text-stack .cta-handle{
+      width:100%;
+      max-width:920px;
+    }
+
+    .headline{
+      font-weight:700;
+      font-size:68px;
+      line-height:1.12;
+      letter-spacing:-0.028em;
+      color:var(--ink);
+      text-align:inherit;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      text-shadow: var(--text-shadow-headline, 0 1px 12px rgba(255,254,249,0.85));
+    }
+
+    .cover .headline{
+      line-height:1.06;
+    }
+
+    .body,
+    .sub,
+    .handle,
+    .cta-handle{
+      margin-top:28px;
+      font-weight:400;
+      font-size:38px;
+      line-height:1.45;
+      color:var(--body);
+      text-align:inherit;
+      white-space:pre-wrap;
+      overflow-wrap:anywhere;
+      word-break:break-word;
+      min-width:0;
+      max-width:100%;
+      text-shadow: var(--text-shadow-body, 0 1px 10px rgba(255,254,249,0.8));
+    }
+
+    .handle,
+    .cta-handle{
+      margin-top:12px;
+      font-weight:700;
+    }
+
+    .cta .headline{
+      line-height:1.08;
+    }
+
+    .kicker{
+      font-size: var(--caf-carousel-kicker-size, 18px) !important;
+    }
+
+    .main-headline{
+      font-size: var(--caf-carousel-headline-size, 72px) !important;
+    }
+
+    .main-body{
+      font-size: var(--caf-carousel-body-size, 72px) !important;
+    }
+
+    .cta-text{
+      font-size: var(--caf-carousel-cta-size, 72px) !important;
+    }
+
+    /* Document AI per-block text overlay — px coords from OCR bbox on 1080×1350 canvas */
+    .slide.mimic-docai-slide .slide-bg{
+      background-size:100% 100%;
+      background-position:top left;
+    }
+
+    .page.mimic-docai-layers{
+      display:block;
+      position:relative;
+      padding:0;
+      width:1080px;
+      height:1350px;
+    }
+
+    .mimic-docai-layer{
+      position:absolute;
+      z-index:2;
+      margin:0;
+      padding:0;
+      box-sizing:border-box;
+      color:#000000;
+      text-rendering:geometricPrecision;
+      -webkit-font-smoothing:antialiased;
+      text-shadow: var(--text-shadow-headline, 0 1px 12px rgba(255,254,249,0.85));
+    }
+
+    .mimic-docai-layer--single-line{
+      display:flex;
+      align-items:center;
+      justify-content:flex-start;
+      overflow:visible;
+    }
+
+    .mimic-docai-layer--single-line.mimic-docai-layer--text-back{
+      display:inline-block;
+      align-items:unset;
+      justify-content:unset;
+    }
+
+    .mimic-docai-layer--text-back{
+      display:inline-block;
+      vertical-align:top;
+      background:var(--mimic-text-back-bg, rgba(255,255,255,0.92));
+      color:#000000;
+      text-shadow:none;
+      padding:4px 10px;
+      border-radius:4px;
+      overflow:visible;
+      box-decoration-break:clone;
+      -webkit-box-decoration-break:clone;
+    }
+
+    .mimic-docai-layer--multi-line{
+      display:block;
+    }
+
+    .mimic-docai-layer--multi-line.mimic-docai-layer--text-back{
+      display:inline-block;
+      overflow:visible;
+    }
+
+    .mimic-docai-layer--body,
+    .mimic-docai-layer--subtitle,
+    .mimic-docai-layer--caption,
+    .mimic-docai-layer--paragraph,
+    .mimic-docai-layer--sub{
+      text-shadow: var(--text-shadow-body, 0 1px 10px rgba(255,254,249,0.8));
+    }
+
+    /* Renderer sets inline color + shadow after sampling the background plate (mimic-docai-contrast.js). */
+    .mimic-docai-layer--contrast-adapted{
+      text-shadow: inherit;
+    }
+
+    /* Brand logo stamp (reviewer toggle) — small, lower-right by default. */
+    .mimic-brand-logo{
+      position:absolute;
+      z-index:6;
+      width:150px;
+      max-width:18%;
+      max-height:120px;
+      object-fit:contain;
+      opacity:0.96;
+      right:48px;
+      bottom:48px;
+    }
+    .mimic-brand-logo--bl{ left:48px; right:auto; }
+    .mimic-brand-logo--tr{ top:48px; bottom:auto; }
+    .mimic-brand-logo--tl{ top:48px; left:48px; right:auto; bottom:auto; }
+  </style>
+</head>
+
+<body>
+  <!-- Cover -->
+  <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+      {{#if mimic_render_text_layers}}
+        {{#each mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline main-headline">
+        {{#if cover}}
+          {{joinEmojiOrphans cover}}
+        {{else}}
+          {{#if cover_slide}}
+            {{joinEmojiOrphans cover_slide.headline}}
+          {{else}}
+            {{joinEmojiOrphans intro_title}}
+          {{/if}}
+        {{/if}}
+      </div>
+
+      {{#if cover_subtitle}}
+        <div class="body main-body">{{joinEmojiOrphans cover_subtitle}}</div>
+      {{else}}
+        {{#if cover_slide.body}}
+          <div class="body main-body">{{joinEmojiOrphans cover_slide.body}}</div>
+        {{/if}}
+      {{/if}}
+      </div>
+      {{/if}}
+    </div>
+  </div>
+
+  {{#each body_slides}}
+  <div class="slide body-slide{{#if ../mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if ../background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
+    {{/if}}
+    {{#if ../background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
+    {{/if}}
+    {{#if ../logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if ../logo_overlay.position}} mimic-brand-logo--{{../logo_overlay.position}}{{/if}}" src="{{{../logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if ../mimic_text_backing_color}} style="--mimic-text-back-bg:{{../mimic_text_backing_color}}"{{/if}}">
+      {{#if ../mimic_render_text_layers}}
+        {{#each ../mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
+      <div class="body main-body">{{joinEmojiOrphans body}}</div>
+      </div>
+      {{/if}}
+    </div>
+  </div>
+  {{/each}}
+
+  <!-- CTA -->
+  <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+      {{#if mimic_render_text_layers}}
+        {{#each mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline cta-text">
+        {{#if cta_text}}
+          {{joinEmojiOrphans cta_text}}
+        {{else}}
+          {{#if cta_slide}}
+            {{joinEmojiOrphans cta_slide.body}}
+          {{/if}}
+        {{/if}}
+      </div>
+
+      {{#if cta_slide.sub}}
+        <div class="sub main-body">{{joinEmojiOrphans cta_slide.sub}}</div>
+      {{else}}
+        {{#if cta_handle}}
+          <div class="handle main-body">{{cta_handle}}</div>
+        {{else}}
+          {{#if cta_slide.handle}}
+            <div class="handle main-body">{{cta_slide.handle}}</div>
+          {{/if}}
+        {{/if}}
+      {{/if}}
+      </div>
+      {{/if}}
+    </div>
+  </div>
+</body>
+</html>

@@ -141,6 +141,15 @@ describe("flux text-on-image prompts", () => {
     expect(clean).not.toContain("Body text");
   });
 
+  it("sanitizeVisualDescriptionForImagePrompt strips text-inducing scene briefs", () => {
+    const clean = sanitizeVisualDescriptionForImagePrompt(
+      "Same backdrop visual as previous slides, but with text focusing on Virgo mother characteristics"
+    );
+    expect(clean.toLowerCase()).toContain("same backdrop");
+    expect(clean.toLowerCase()).not.toContain("virgo");
+    expect(clean.toLowerCase()).not.toContain("text focusing");
+  });
+
   it("ignores Prompt Labs overrides that bake copy onto Flux", () => {
     const baked = buildMimicTemplateBackgroundPrompt(
       { visualSimilarityPct: 70 },

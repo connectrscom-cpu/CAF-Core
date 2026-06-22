@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { isCarouselFlow, isImageFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { pickStoredQcResult } from "../domain/generation-payload-qc.js";
 import { pickRenderState } from "../domain/content-job-render-state.js";
+import { resolveJobFlowDisplayLabel } from "../domain/job-flow-display-label.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { q } from "../db/queries.js";
 
@@ -409,6 +410,7 @@ export async function buildEnrichedRunContentLogRows(
     const qc = pickStoredQcResult(gp);
     const render = pickRenderState(job.render_state);
     const preview = buildJobContentPreview(job.flow_type, job.generation_payload);
+    const flowDisplay = resolveJobFlowDisplayLabel(job.flow_type, job.generation_payload);
     const slideCount =
       persisted?.slide_count ??
       preview.carousel?.slide_count ??
@@ -419,6 +421,9 @@ export async function buildEnrichedRunContentLogRows(
 
     const summary: Record<string, unknown> = {
       source: "jobs_enriched",
+      flow_label: flowDisplay.flow_label,
+      is_mimic_replication: flowDisplay.is_mimic_replication,
+      mimic_kind: flowDisplay.mimic_kind,
       ...jobSummaryFromPayload(job),
       qc_status: job.qc_status,
       recommended_route: job.recommended_route ?? qc?.recommended_route ?? null,
@@ -454,6 +459,8 @@ export async function buildEnrichedRunContentLogRows(
       task_id: job.task_id,
       flow_kind: flowKindForContentLog(job.flow_type),
       flow_type: job.flow_type,
+      flow_label: flowDisplay.flow_label,
+      is_mimic_replication: flowDisplay.is_mimic_replication,
       outcome: outcomeLabelFromJobStatus(job.status),
       slide_count: slideCount,
       asset_count: Math.max(assetCounts.get(job.task_id) ?? 0, persisted?.asset_count ?? 0),

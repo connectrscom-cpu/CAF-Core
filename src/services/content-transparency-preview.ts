@@ -1,6 +1,7 @@
 /**
  * Human-oriented excerpts from generation_payload for admin transparency (carousel / video / scenes).
  */
+import { resolveJobFlowDisplayLabel } from "../domain/job-flow-display-label.js";
 import { extractSpokenScriptText, extractVideoPromptText } from "./video-gen-fields.js";
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 
@@ -9,7 +10,11 @@ function asRecord(v: unknown): Record<string, unknown> | null {
 }
 
 export interface JobContentPreview {
+  /** Human label (includes Mimic · … for top-performer replication jobs). */
   flow_hint: string | null;
+  /** Canonical execution flow_type. */
+  flow_type: string | null;
+  is_mimic_replication?: boolean;
   /** Present when the job is still at candidate handoff and nothing generated yet. */
   planned?: {
     stage: "PLANNED";
@@ -46,8 +51,13 @@ function excerpt(text: string, maxChars: number): string {
 export function buildJobContentPreview(flowType: string | null, generationPayload: unknown): JobContentPreview {
   const pay = asRecord(generationPayload) ?? {};
   const gen = asRecord(pay.generated_output) ?? {};
+  const display = resolveJobFlowDisplayLabel(flowType, generationPayload);
 
-  const preview: JobContentPreview = { flow_hint: flowType };
+  const preview: JobContentPreview = {
+    flow_hint: display.flow_label,
+    flow_type: flowType,
+    is_mimic_replication: display.is_mimic_replication,
+  };
 
   const resolvedSlides = slidesFromGeneratedOutput(gen);
   if (resolvedSlides.length > 0 && resolvedSlides.some((s) => slideHasRenderableContent(s as Record<string, unknown>))) {

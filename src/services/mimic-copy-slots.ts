@@ -260,6 +260,122 @@ function makeSlot(
   };
 }
 
+const PLATFORM_SUFFIX_TAIL_RE =
+  /^(on\s+)?(tiktok|instagram|ig|youtube|twitter|facebook|snapchat|threads|linkedin|reels?|x)$/i;
+
+/** Short platform tails (e.g. "on TikTok") that belong on the previous list line, not a separate slot. */
+export function isOrphanPlatformSuffixTail(text: string): boolean {
+  const t = String(text ?? "").trim();
+  if (!t) return false;
+  if (PLATFORM_SUFFIX_TAIL_RE.test(t)) return true;
+  return /^on\s+[a-z][a-z0-9]*$/i.test(t) && t.length <= 20;
+}
+
+/** True when OCR lines are independent list bullets, not one sentence wrapped across short fragments. */
+export function isLikelyListBulletTexts(texts: string[]): boolean {
+  if (texts.length < 2) return false;
+  if (isLikelyWrappedSentenceStack(texts)) return false;
+  const wordCounts = texts.map((t) => t.trim().split(/\s+/).filter(Boolean).length);
+  if (wordCounts.every((w) => w <= 3)) return false;
+  return true;
+}
+
+function lineReadsAsIncompleteFragment(text: string): boolean {
+  const t = text.trim();
+  if (!t || /[.!?]$/.test(t)) return false;
+  if (/\b(a|an|the|to|of|in|on|at|for|with|and|or|but|about)$/i.test(t)) return true;
+  if (/\b(is|are|was|were|be|being|like)$/i.test(t)) return true;
+  return false;
+}
+
+function isLikelyWrappedSentenceStack(texts: string[]): boolean {
+  if (texts.length < 2) return false;
+  for (let i = 0; i < texts.length - 1; i++) {
+    if (lineReadsAsIncompleteFragment(texts[i]!)) return true;
+  }
+  const wordCounts = texts.map((t) => t.trim().split(/\s+/).filter(Boolean).length);
+  return wordCounts.every((w) => w <= 3);
+}
+
+function isLikelyListBulletStack(
+  stack: Array<MimicReferenceCopyBlock & { index: number }>
+): boolean {
+  return isLikelyListBulletTexts(stack.map((b) => b.text));
+}
+
+function expandListBodySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  const out: MimicReferenceCopySlot[] = [];
+  for (const slot of sorted) {
+    if (
+      slot.llm_field === "body" &&
+      slot.block_texts.length >= 2 &&
+      slot.split === "single_block" &&
+      isLikelyListBulletTexts(slot.block_texts)
+    ) {
+      for (let li = 0; li < slot.block_texts.length; li++) {
+        out.push(
+          makeSlot(
+            out.length,
+            "body",
+            "single_block",
+            [slot.block_indices[li] ?? slot.block_indices[0]!],
+            [slot.block_texts[li]!]
+          )
+        );
+      }
+      continue;
+    }
+    out.push(slot);
+  }
+  return out.map((s, i) => ({ ...s, slot_index: i }));
+}
+
+function mergeOrphanSuffixTailIntoPrecedingBodySlot(
+  slots: MimicReferenceCopySlot[]
+): MimicReferenceCopySlot[] {
+  if (slots.length < 2) return slots;
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  const out: MimicReferenceCopySlot[] = [];
+  let i = 0;
+  while (i < sorted.length) {
+    const cur = sorted[i]!;
+    const next = sorted[i + 1];
+    if (
+      next &&
+      cur.llm_field === "body" &&
+      (next.llm_field === "cta" || next.llm_field === "body") &&
+      next.block_texts.length <= 1 &&
+      isOrphanPlatformSuffixTail(next.block_texts[0] ?? next.reference_text)
+    ) {
+      const mergedTexts = [...cur.block_texts];
+      const suffix = (next.block_texts[0] ?? next.reference_text).trim();
+      if (mergedTexts.length > 0) {
+        mergedTexts[mergedTexts.length - 1] = `${mergedTexts[mergedTexts.length - 1]!} ${suffix}`.trim();
+      } else {
+        mergedTexts.push(suffix);
+      }
+      out.push({
+        ...cur,
+        block_indices: [...cur.block_indices, ...next.block_indices],
+        block_texts: mergedTexts,
+        reference_text: mergedTexts.join(" ").trim(),
+      });
+      i += 2;
+      continue;
+    }
+    out.push(cur);
+    i++;
+  }
+  return out.map((s, idx) => ({ ...s, slot_index: idx }));
+}
+
+/** Post-process inferred or persisted slots (list bullets + platform tail orphans). */
+export function normalizeInferredCopySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
+  if (slots.length === 0) return slots;
+  return mergeOrphanSuffixTailIntoPrecedingBodySlot(expandListBodySlots(slots));
+}
+
 function groupBlocksIntoVerticalStacks(
   blocks: Array<MimicReferenceCopyBlock & { index: number }>
 ): Array<Array<MimicReferenceCopyBlock & { index: number }>> {
@@ -607,7 +723,11 @@ export function inferMimicReferenceCopySlots(
 
   const bodyStacks = sortStacksForReadingOrder(groupBlocksIntoVerticalStacks(body));
   for (const stack of bodyStacks) {
-    if (stack.length >= 2) {
+    if (stack.length >= 2 && isLikelyListBulletStack(stack)) {
+      for (const block of stack) {
+        slots.push(makeSlot(slotIndex++, "body", "single_block", [block.index], [block.text]));
+      }
+    } else if (stack.length >= 2) {
       slots.push(
         makeSlot(
           slotIndex++,
@@ -629,7 +749,7 @@ export function inferMimicReferenceCopySlots(
     );
   }
 
-  return slots;
+  return normalizeInferredCopySlots(slots);
 }
 
 export function parseCopySlotsFromSlide(slide: Record<string, unknown> | null | undefined): MimicReferenceCopySlot[] {
@@ -675,7 +795,7 @@ export function attachCopySlotsToSlideRecord(slide: Record<string, unknown>): Re
 export function copySlotsForSlideRecord(slide: Record<string, unknown> | null | undefined): MimicReferenceCopySlot[] {
   if (!slide) return [];
   const persisted = parseCopySlotsFromSlide(slide);
-  if (persisted.length > 0) return persisted;
+  if (persisted.length > 0) return normalizeInferredCopySlots(persisted);
   const blocks = copyBlocksFromSlideRecord(slide);
   if (blocks.length === 0) return [];
   const transcript = String(slide.on_screen_text_transcript ?? "").trim();

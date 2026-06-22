@@ -188,21 +188,15 @@ export function buildArtOnlySafeZoneHint(slide: Record<string, unknown> | null |
   const blocks = parseMimicTextBlocks(slide.text_blocks);
   if (blocks.length === 0) return "";
 
-  const zones = blocks.map((b) => ({
-    left: Math.max(0, Math.min(100, Math.round(b.x * 100))),
-    top: Math.max(0, Math.min(100, Math.round(b.y * 100))),
-    right: Math.max(0, Math.min(100, Math.round((b.x + b.w) * 100))),
-    bottom: Math.max(0, Math.min(100, Math.round((b.y + b.h) * 100))),
-  }));
-
-  const hints = zones.map(
-    (z) =>
-      `${z.left}–${z.right}% width × ${z.top}–${z.bottom}% height`
-  );
+  const placement = textPlacementFromSlide(slide);
+  const avgY = blocks.reduce((sum, b) => sum + b.y + b.h / 2, 0) / blocks.length;
+  const zoneLabel =
+    placement ||
+    (avgY >= 0.58 ? "lower band" : avgY <= 0.42 ? "upper band" : "central band");
 
   return (
-    "Reserve smooth low-detail backdrop zones where HTML overlay copy will sit (match these layout regions): " +
-    `${hints.join("; ")}. Do not place faces, busy texture, or high-contrast detail inside those rectangles.`
+    "Reserve smooth low-detail backdrop zones where HTML overlay copy will sit " +
+    `(primarily the ${zoneLabel} of the frame). Do not place faces, busy texture, or high-contrast detail in those areas.`
   );
 }
 
@@ -1036,6 +1030,8 @@ export interface MimicDocAiRenderTextLayer {
   ref_h?: number;
   /** Top decor / handle — do not push away from center subject zone. */
   skip_center_avoid?: boolean;
+  /** Expanded highlight box — Puppeteer fit preserves w/h (matches Review layout editor defaults). */
+  reviewer_box_locked?: boolean;
 }
 
 function roleBucket(role: string | null): "headline" | "body" | "cta" | "other" {
@@ -1381,6 +1377,8 @@ function perSlideDecorHeadlineFromLlm(
     if (!text || looksLikeInstagramHandleText(text)) continue;
     if (text.includes("\n")) continue;
     if (isListicleMotherDecorText(text) || isZodiacSignName(text)) return text;
+    // CTA / variant titles — "AQUARIUS: THE VISIONARY" (not "THE X MOTHER" decor shape).
+    if (/^[A-Za-z][A-Za-z\s]{0,28}:\s*\S/.test(text) && text.length <= 64) return text;
   }
   return "";
 }
@@ -1480,7 +1478,11 @@ function buildListicleMotherTemplateBgLayers(
 
   for (const ref of orderedRef) {
     if (isListicleMotherDecorText(ref.ref_text)) {
-      const text = decorTitle || ref.ref_text.trim();
+      const text =
+        decorTitle ||
+        sanitizeMimicOverlayCopyText(
+          String(llmSlide.headline ?? llmSlide.cta ?? llmSlide.cta_text ?? "").trim()
+        );
       if (!text.trim()) continue;
       pushDocAiRenderLayer(layers, ref, text, ref, {
         textBacking: opts.textBacking,
@@ -2127,11 +2129,11 @@ function expandDocAiBoxForTextContent(
   fontSizePx: number,
   singleLine: boolean
 ): { x: number; y: number; w: number; h: number } {
-  const margin = 32;
-  const padX = 24;
-  const padY = 16;
-  const charW = fontSizePx * 0.52;
-  const lineH = fontSizePx * 1.22;
+  const margin = 28;
+  const padX = 32;
+  const padY = 22;
+  const charW = fontSizePx * 0.56;
+  const lineH = fontSizePx * 1.28;
   const trimmed = text.trim();
   if (!trimmed) return bbox;
   const lineParts = trimmed.split(/\n/).map((l) => l.trim()).filter(Boolean);
@@ -2198,8 +2200,11 @@ function pushDocAiRenderLayer(
       : opts.forceSingleLine || (bucket === "headline" && !trimmed.includes("\n"))
         ? true
         : shouldRenderDocAiLayerSingleLine(ref.ref_text, trimmed, boxWPx, renderBBox.h * CAROUSEL_RENDER_HEIGHT_PX);
-  if (opts.textBacking) {
-    const estFont = ref.font_size_px && ref.font_size_px > 0 ? clampDocAiTextBackFontSizePx(ref.font_size_px) : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
+  {
+    const estFont =
+      ref.font_size_px && ref.font_size_px > 0
+        ? clampDocAiTextBackFontSizePx(ref.font_size_px)
+        : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
     renderBBox = expandDocAiBoxForTextContent(renderBBox, trimmed, estFont, singleLinePreview);
   }
   const px = docAiBBoxToRenderPx(renderBBox.x, renderBBox.y, renderBBox.w, renderBBox.h);
@@ -2260,6 +2265,7 @@ function pushDocAiRenderLayer(
     ref_w: ref.w,
     ref_h: ref.h,
     skip_center_avoid: skipCenterAvoid,
+    ...(opts.textBacking ? { reviewer_box_locked: true } : {}),
   });
 }
 
@@ -3260,7 +3266,7 @@ export function buildMimicDocAiRenderTextLayers(
       : bucket === "headline" && !text.includes("\n")
         ? true
         : shouldRenderDocAiLayerSingleLine(ref.ref_text, text, boxWPx, boxHPx);
-    if (textBacking) {
+    {
       const estFont =
         ref.font_size_px != null && ref.font_size_px > 0
           ? clampDocAiTextBackFontSizePx(ref.font_size_px)
@@ -3321,6 +3327,7 @@ export function buildMimicDocAiRenderTextLayers(
       ref_w: ref.w,
       ref_h: ref.h,
       skip_center_avoid: skipCenterAvoid,
+      ...(textBacking ? { reviewer_box_locked: true } : {}),
     });
   }
 

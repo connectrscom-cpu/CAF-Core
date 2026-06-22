@@ -40,6 +40,8 @@ export interface TaskViewerProps {
   carouselActiveSlideIndex?: number;
   /** Mimic: original reference frame URL for current slide. */
   referenceSlideUrl?: string;
+  /** Mimic video: archived top-performer source video for side-by-side review. */
+  referenceVideoUrl?: string;
   projectHandle?: string;
   caption?: string;
   onCaptionChange?: (value: string) => void;
@@ -53,7 +55,6 @@ export interface TaskViewerProps {
   onMimicRegenerationNoteChange?: (value: string) => void;
   mimicTemplateBg?: boolean;
   mimicFullBleed?: boolean;
-  mimicLayoutTextBlocks?: Array<{ role: string; text: string }>;
   onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
 }
 
@@ -74,6 +75,7 @@ export function TaskViewer({
   carouselPreviewSidePanel,
   carouselActiveSlideIndex,
   referenceSlideUrl,
+  referenceVideoUrl,
   projectHandle,
   caption,
   onCaptionChange,
@@ -86,7 +88,6 @@ export function TaskViewer({
   onMimicRegenerationNoteChange,
   mimicTemplateBg,
   mimicFullBleed,
-  mimicLayoutTextBlocks,
   onMimicLayoutTextBlockChange,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
@@ -221,7 +222,6 @@ export function TaskViewer({
           onMimicRegenerationNoteChange={onMimicRegenerationNoteChange}
           mimicTemplateBg={mimicTemplateBg}
           mimicFullBleed={mimicFullBleed}
-          mimicLayoutTextBlocks={mimicLayoutTextBlocks}
           onMimicLayoutTextBlockChange={onMimicLayoutTextBlockChange}
         />
       </div>
@@ -229,16 +229,85 @@ export function TaskViewer({
   }
 
   if (showFullVideo) {
+    const refVideo = referenceVideoUrl?.trim() ?? "";
+    const refSlide = referenceSlideUrl?.trim() ?? "";
     return (
       <div className="card">
         <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
-        <video
-          src={fullBleedVideoUrl}
-          controls
-          playsInline
-          style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
-          onError={() => setVideoLoadFailed(true)}
-        />
+        {refVideo ? (
+          <div
+            className="mimic-compare-frame"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 0.42fr) minmax(0, 0.58fr)",
+              gap: 1,
+              background: "var(--border)",
+              borderRadius: 8,
+              overflow: "hidden",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <div className="mimic-compare-pane mimic-compare-pane--original">
+              <span className="mimic-compare-pane__label">Original</span>
+              <video
+                src={refVideo}
+                controls
+                playsInline
+                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#000" }}
+              />
+            </div>
+            <div className="mimic-compare-pane mimic-compare-pane--generated">
+              <span className="mimic-compare-pane__label">Generated</span>
+              <video
+                src={fullBleedVideoUrl}
+                controls
+                playsInline
+                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#000" }}
+                onError={() => setVideoLoadFailed(true)}
+              />
+            </div>
+          </div>
+        ) : refSlide ? (
+          <div
+            className="mimic-compare-frame"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "minmax(0, 0.42fr) minmax(0, 0.58fr)",
+              gap: 1,
+              background: "var(--border)",
+              borderRadius: 8,
+              overflow: "hidden",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <div className="mimic-compare-pane mimic-compare-pane--original">
+              <span className="mimic-compare-pane__label">Reference</span>
+              <img
+                src={refSlide}
+                alt="Top-performer reference"
+                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#111" }}
+              />
+            </div>
+            <div className="mimic-compare-pane mimic-compare-pane--generated">
+              <span className="mimic-compare-pane__label">Generated</span>
+              <video
+                src={fullBleedVideoUrl}
+                controls
+                playsInline
+                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#000" }}
+                onError={() => setVideoLoadFailed(true)}
+              />
+            </div>
+          </div>
+        ) : (
+          <video
+            src={fullBleedVideoUrl}
+            controls
+            playsInline
+            style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
+            onError={() => setVideoLoadFailed(true)}
+          />
+        )}
         <div className="preview-action-row mt-3">
           <a href={fullBleedVideoUrl} target="_blank" rel="noopener noreferrer">
             Open video in new tab

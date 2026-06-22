@@ -22,6 +22,10 @@ const nextConfig = {
       coreDomain,
       "mimic-template-bg-copy.ts"
     );
+    config.resolve.alias["@caf-core-carousel/slide-copy-lines"] = path.join(
+      coreDomain,
+      "slide-copy-lines.ts"
+    );
     config.plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^\.\/supabase-storage\.js$/, path.join(coreServices, "supabase-storage.ts")),
       new webpack.NormalModuleReplacementPlugin(
@@ -39,6 +43,10 @@ const nextConfig = {
       new webpack.NormalModuleReplacementPlugin(
         /^\.\/instagram-handle\.js$/,
         path.join(coreDomain, "instagram-handle.ts")
+      ),
+      new webpack.NormalModuleReplacementPlugin(
+        /^\.\/slide-copy-lines\.js$/,
+        path.join(coreDomain, "slide-copy-lines.ts")
       ),
       new webpack.NormalModuleReplacementPlugin(/^\.\.\/domain\/(.+)\.js$/, (resource) => {
         const base = resource.request.match(/^\.\.\/domain\/(.+)\.js$/)?.[1];

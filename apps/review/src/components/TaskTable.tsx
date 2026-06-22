@@ -7,6 +7,7 @@ import { isVideoUrl } from "@/lib/media-url";
 import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
+import { displayFlowLabel } from "@/lib/display-flow-label";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
 
@@ -79,6 +80,7 @@ function TaskRow({
   const project = getVal(row, "project");
   const platform = getVal(row, "platform");
   const flowType = getVal(row, "flow_type");
+  const flowLabel = displayFlowLabel(row);
   const reviewStatus = getVal(row, "review_status");
   const decision = getVal(row, "decision");
   const title = getVal(row, "generated_title") || taskId;
@@ -138,7 +140,7 @@ function TaskRow({
         </td>
       )}
       <td>{platform || "—"}</td>
-      <td>{flowType || "—"}</td>
+      <td title={flowType || undefined}>{flowLabel || "—"}</td>
       <td>{statusBadge(reviewStatus)}</td>
       <td>{decision ? statusBadge(decision) : "—"}</td>
       <td>{getVal(row, "recommended_route") || "—"}</td>

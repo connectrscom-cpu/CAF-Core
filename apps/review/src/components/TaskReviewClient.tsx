@@ -34,6 +34,7 @@ import { JobInfoBar } from "@/components/JobInfoBar";
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow, isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
+import { displayFlowLabel } from "@/lib/display-flow-label";
 import {
   textOverlayReprintBannerMessage,
   textOverlayReprintUiState,
@@ -116,7 +117,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [editedSlides, setEditedSlides] = useState<NormalizedSlide[]>([]);
   const [viewerSlideIndex, setViewerSlideIndex] = useState(1);
   const [activeTextBlockIndex, setActiveTextBlockIndex] = useState<number | null>(null);
-  const [mimicLayoutTextBlocks, setMimicLayoutTextBlocks] = useState<Array<{ role: string; text: string }>>([]);
   const viewerSlideIndexRef = useRef(1);
   viewerSlideIndexRef.current = viewerSlideIndex;
   const mimicTextBlockUpdaterRef = useRef<((blockIndex: number, text: string) => void) | null>(null);
@@ -519,10 +519,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
 
   useEffect(() => {
-    if (mimicTemplateBg) setMimicLayoutTextBlocks([]);
-  }, [mimicTemplateBg, execTaskId]);
-
-  useEffect(() => {
     if (!tpGroundedCarouselReview || !fullJob || editedSlides.length === 0) return;
     if (mimicTemplateBg) {
       if (mimicOcrEnrichedForTask.current === execTaskId) return;
@@ -710,18 +706,48 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [fullJob, projectStrategyHandle]);
 
   const mimicReferenceUrlForViewer = useMemo(() => {
-    if (!mimicCarouselFlow || !fullJob) return undefined;
+    if ((!mimicCarouselFlow && !tpGroundedCarouselReview) || !fullJob) return undefined;
     const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
     const mimicV1 =
       gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
         ? (gp.mimic_v1 as Record<string, unknown>)
         : null;
-    return mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length);
-  }, [mimicCarouselFlow, fullJob, viewerSlideIndex, editedSlides.length]);
+    const fromMimic = mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length);
+    if (fromMimic) return fromMimic;
+    const tpRef = fullJob.top_performer_reference as
+      | { reference_frame_urls?: string[] }
+      | null
+      | undefined;
+    const frames = Array.isArray(tpRef?.reference_frame_urls) ? tpRef!.reference_frame_urls : [];
+    if (frames.length === 0) return undefined;
+    const idx = Math.max(0, viewerSlideIndex - 1);
+    return frames[idx] ?? frames[Math.min(idx, frames.length - 1)];
+  }, [mimicCarouselFlow, tpGroundedCarouselReview, fullJob, viewerSlideIndex, editedSlides.length]);
+
+  const referenceVideoUrl = useMemo(() => {
+    if (!videoFlow || !fullJob) return undefined;
+    const tpRef = fullJob.top_performer_reference as { source_video_url?: string | null } | null | undefined;
+    const url = String(tpRef?.source_video_url ?? "").trim();
+    return url || undefined;
+  }, [videoFlow, fullJob]);
+
+  const videoReferenceSlideUrl = useMemo(() => {
+    if (!videoFlow || !fullJob || referenceVideoUrl) return undefined;
+    const isMimic =
+      data?.is_mimic_replication === "true" ||
+      (fullJob as { is_mimic_replication?: boolean }).is_mimic_replication === true;
+    if (!isMimic) return undefined;
+    const tpRef = fullJob.top_performer_reference as
+      | { reference_frame_urls?: string[]; kind?: string }
+      | null
+      | undefined;
+    const frames = Array.isArray(tpRef?.reference_frame_urls) ? tpRef!.reference_frame_urls : [];
+    if (frames.length === 0) return undefined;
+    return frames[0];
+  }, [videoFlow, fullJob, referenceVideoUrl, data?.is_mimic_replication]);
 
   useEffect(() => {
     setActiveTextBlockIndex(null);
-    setMimicLayoutTextBlocks([]);
   }, [viewerSlideIndex]);
 
   const handleDeleteMimicSlide = useCallback((slideIndex1Based: number) => {
@@ -1033,15 +1059,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         <div className="detail-header-row">
           <p className="detail-subtitle">
             {data.platform && <>{data.platform} · </>}
-            {data.flow_type && <>{data.flow_type} · </>}
-            {task_id}
+            {displayFlowLabel(data)} · {task_id}
           </p>
           <CopyTaskDebugBundleButton {...debugBundleProps} />
         </div>
       ) : (
         <p className="detail-subtitle">
           {data?.platform && <>{data.platform} · </>}
-          {data?.flow_type && <>{data.flow_type} · </>}
+          {data ? <>{displayFlowLabel(data)} · </> : null}
           {task_id}
         </p>
       )}
@@ -1076,12 +1101,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
               onCarouselSlideChange={setViewerSlideIndex}
               carouselActiveSlideIndex={tpGroundedCarouselReview ? viewerSlideIndex : undefined}
-              referenceSlideUrl={mimicCarouselFlow ? mimicReferenceUrlForViewer : undefined}
+              referenceSlideUrl={
+                mimicCarouselFlow || tpGroundedCarouselReview
+                  ? mimicReferenceUrlForViewer
+                  : videoReferenceSlideUrl
+              }
+              referenceVideoUrl={referenceVideoUrl}
               projectHandle={tpGroundedCarouselReview ? instagramHandleForPreview : undefined}
               activeTextBlockIndex={tpGroundedCarouselReview ? activeTextBlockIndex : undefined}
               onActiveTextBlockIndexChange={tpGroundedCarouselReview ? setActiveTextBlockIndex : undefined}
               mimicFullBleed={tpGroundedCarouselReview && !mimicTemplateBg}
-              mimicLayoutTextBlocks={tpGroundedCarouselReview ? mimicLayoutTextBlocks : undefined}
               onMimicLayoutTextBlockChange={
                 tpGroundedCarouselReview
                   ? (blockIndex, text) => mimicTextBlockUpdaterRef.current?.(blockIndex, text)
@@ -1148,11 +1177,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                             : s
                         );
                       });
-                    }}
-                    onLayoutTextBlocksChange={(slide, blocks) => {
-                      if (mimicTemplateBg) return;
-                      if (slide !== viewerSlideIndexRef.current) return;
-                      setMimicLayoutTextBlocks(blocks.map((b) => ({ role: b.role, text: b.text })));
                     }}
                     registerTextBlockUpdater={(fn) => {
                       mimicTextBlockUpdaterRef.current = fn;

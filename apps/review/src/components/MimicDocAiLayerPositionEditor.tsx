@@ -28,6 +28,21 @@ function ocrRoleForLayer(layer: DocAiLayerBox): string {
   return (layer.role ?? "").trim().toLowerCase();
 }
 
+/** On-slide copy for editor sizing — template_bg drafts omit text; fall back to inspect/field layer. */
+function resolveEditorLayerText(
+  layer: DocAiLayerBox | undefined,
+  row: DocAiLayerOverride | undefined,
+  templateBgMode: boolean,
+  projectHandle: string
+): string {
+  // Never trim row.text here — controlled inputs need trailing spaces while typing.
+  if (row?.text != null) return row.text;
+  if (templateBgMode && layer) {
+    return templateBgLayerSeedText(layer, row, projectHandle);
+  }
+  return layer?.text ?? "";
+}
+
 /** template_bg: never seed a body OCR slot with @handle — handle lives on the handle bbox only. */
 function templateBgLayerSeedText(
   layer: DocAiLayerBox,
@@ -57,33 +72,114 @@ const HIGHLIGHT_PAD_X = 16;
 const HIGHLIGHT_PAD_Y = 12;
 const HIGHLIGHT_LINE_HEIGHT = 1.15;
 
-/** Size the white highlight box to fit full copy (single-line when possible). */
-export function openHighlightBoxForText(
+/** Prefer saved geometry, then inspect layer size, then highlight fit — stops dimension flicker. */
+function resolveSeedBoxSize(
+  layer: DocAiLayerBox,
+  savedRow: DocAiLayerOverride | undefined,
   text: string,
   fontSizePx: number,
   xPx: number,
   yPx: number
 ): { w_px: number; h_px: number } {
-  const fontSize = Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(fontSizePx) || DEFAULT_FONT_PX));
-  const lines = String(text ?? "")
+  const savedW = savedRow?.w_px;
+  const savedH = savedRow?.h_px;
+  if (
+    savedW != null &&
+    savedH != null &&
+    Number.isFinite(savedW) &&
+    Number.isFinite(savedH) &&
+    savedW > 0 &&
+    savedH > 0
+  ) {
+    return { w_px: Math.max(MIN_BOX_W, savedW), h_px: Math.max(MIN_BOX_H, savedH) };
+  }
+  if (
+    layer.w_px > 0 &&
+    layer.h_px > 0 &&
+    Number.isFinite(layer.w_px) &&
+    Number.isFinite(layer.h_px)
+  ) {
+    return { w_px: Math.max(MIN_BOX_W, layer.w_px), h_px: Math.max(MIN_BOX_H, layer.h_px) };
+  }
+  return openHighlightBoxForText(text, fontSizePx, xPx, yPx);
+}
+
+/** Estimate how many wrapped lines fit at a given inner width. */
+function wrappedLineCountForText(text: string, innerWidthPx: number, fontSizePx: number): number {
+  const charW = Math.max(1, fontSizePx * 0.52);
+  const charsPerLine = Math.max(1, Math.floor(Math.max(MIN_BOX_W, innerWidthPx) / charW));
+  const paragraphs = String(text ?? "")
     .split("\n")
     .map((l) => l.trimEnd())
     .filter((l, i, arr) => l.length > 0 || arr.length === 1);
-  const safeLines = lines.length > 0 ? lines : [""];
+  const safe = paragraphs.length > 0 ? paragraphs : [""];
+  let lines = 0;
+  for (const para of safe) {
+    lines += Math.max(1, Math.ceil(Math.max(para.length, 1) / charsPerLine));
+  }
+  return Math.max(1, lines);
+}
+
+/** Size the highlight box — wraps long body copy; single-line when short. */
+export function openHighlightBoxForText(
+  text: string,
+  fontSizePx: number,
+  xPx: number,
+  yPx: number,
+  opts?: { fixedWidthPx?: number }
+): { w_px: number; h_px: number } {
+  const fontSize = Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(fontSizePx) || DEFAULT_FONT_PX));
+  const paragraphs = String(text ?? "")
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .filter((l, i, arr) => l.length > 0 || arr.length === 1);
+  const safeLines = paragraphs.length > 0 ? paragraphs : [""];
   const charW = fontSize * 0.52;
-  const maxLineChars = Math.max(...safeLines.map((l) => l.length));
-  const width = Math.min(
-    CANVAS_W - Math.max(0, xPx),
-    Math.max(MIN_BOX_W, Math.ceil(maxLineChars * charW + HIGHLIGHT_PAD_X))
-  );
+  const maxLineChars = Math.max(...safeLines.map((l) => l.length), 0);
+  const maxAvailW = CANVAS_W - Math.max(0, xPx);
+  const naturalSingleLineW = Math.max(MIN_BOX_W, Math.ceil(maxLineChars * charW + HIGHLIGHT_PAD_X));
+  const totalChars = safeLines.join(" ").length;
+  const preferWideWrap = totalChars > 40 || safeLines.length > 1;
+
+  let width: number;
+  if (opts?.fixedWidthPx != null && opts.fixedWidthPx > 0) {
+    width = Math.min(maxAvailW, Math.max(MIN_BOX_W, Math.round(opts.fixedWidthPx)));
+  } else if (preferWideWrap) {
+    width = Math.min(
+      maxAvailW,
+      Math.max(MIN_BOX_W, Math.min(naturalSingleLineW, Math.max(480, Math.round(maxAvailW * 0.88))))
+    );
+  } else {
+    width = Math.min(maxAvailW, naturalSingleLineW);
+  }
+
+  const innerW = Math.max(MIN_BOX_W, width - HIGHLIGHT_PAD_X);
+  const lineCount = wrappedLineCountForText(text, innerW, fontSize);
   const height = Math.min(
     CANVAS_H - Math.max(0, yPx),
     Math.max(
       MIN_BOX_H,
-      Math.ceil(safeLines.length * fontSize * HIGHLIGHT_LINE_HEIGHT + HIGHLIGHT_PAD_Y)
+      Math.ceil(lineCount * fontSize * HIGHLIGHT_LINE_HEIGHT + HIGHLIGHT_PAD_Y)
     )
   );
   return { w_px: width, h_px: height };
+}
+
+/** Saved box size, expanded when copy would overflow (wrapped estimate). */
+function effectiveBoxDimensions(
+  row: Pick<DocAiLayerOverride, "text" | "x_px" | "y_px" | "w_px" | "h_px">,
+  fontSizePx: number
+): { w_px: number; h_px: number } {
+  const w = Math.max(MIN_BOX_W, row.w_px ?? MIN_BOX_W);
+  const h = Math.max(MIN_BOX_H, row.h_px ?? MIN_BOX_H);
+  const fitted = openHighlightBoxForText(
+    row.text ?? "",
+    fontSizePx,
+    row.x_px,
+    row.y_px,
+    w > MIN_BOX_W ? { fixedWidthPx: w } : undefined
+  );
+  return { w_px: Math.max(w, fitted.w_px), h_px: Math.max(h, fitted.h_px) };
 }
 
 function defaultLayerFontPx(
@@ -104,10 +200,10 @@ function customBoxFromOverride(row: DocAiLayerOverride, projectHandle?: string):
   const role = row.layer_key.split("@")[1]?.trim().toLowerCase() || "body";
   const text = row.text?.trim() || "New text";
   const fontSize = defaultLayerFontPx({ role, text }, row.font_size_px, projectHandle);
-  const open =
-    row.box_locked && row.w_px && row.h_px
-      ? { w_px: Math.max(MIN_BOX_W, row.w_px), h_px: Math.max(MIN_BOX_H, row.h_px) }
-      : openHighlightBoxForText(text, fontSize, row.x_px, row.y_px);
+  const open = effectiveBoxDimensions(
+    { text, x_px: row.x_px, y_px: row.y_px, w_px: row.w_px, h_px: row.h_px },
+    fontSize
+  );
   return {
     layer_key: row.layer_key,
     text,
@@ -163,6 +259,25 @@ export type DocAiLayerOverride = {
   source?: "ocr" | "human" | "vision";
 };
 
+export type DocAiLayerTypographyStyle = Pick<
+  DocAiLayerOverride,
+  "font_size_px" | "font_weight" | "color_hex" | "font_family" | "font_style_italic"
+>;
+
+export type DocAiLayerPlacementStyle = Pick<
+  DocAiLayerOverride,
+  "x_px" | "y_px" | "w_px" | "h_px" | "box_locked"
+>;
+
+function roleFromLayerKey(layerKey: string): string {
+  if (layerKey.startsWith("custom@")) {
+    return (layerKey.split("@")[1] ?? "body").trim().toLowerCase();
+  }
+  const at = layerKey.indexOf("@");
+  if (at <= 0) return "body";
+  return layerKey.slice(0, at).toLowerCase();
+}
+
 type MimicDocAiLayerPositionEditorProps = {
   slideIndex: number;
   backgroundUrl?: string;
@@ -198,6 +313,14 @@ type MimicDocAiLayerPositionEditorProps = {
   logoStampEnabled?: boolean;
   onLogoStampEnabledChange?: (enabled: boolean) => void;
   brandLogoPreviewUrl?: string;
+  /** Total slides in the deck — enables apply-typography-to-all actions. */
+  slideCount?: number;
+  /** Apply current box typography to all headline or body boxes in the carousel. */
+  onApplyTypographyToRole?: (role: "headline" | "body", style: DocAiLayerTypographyStyle) => void;
+  /** Apply current box placement to all headline or body boxes in the carousel. */
+  onApplyPlacementToRole?: (role: "headline" | "body", placement: DocAiLayerPlacementStyle) => void;
+  /** Parent bumped after cross-slide apply — merge into local overrides without full reseed. */
+  draftSyncRevision?: number;
 };
 
 type MoveDrag = {
@@ -355,6 +478,36 @@ function resizeFromCorner(
   return clampBox(x, y, w, h);
 }
 
+/**
+ * Stable, order-independent serialization of the override list used to classify an
+ * emit as "programmatic" (seed / auto-fit / prop-sync) vs a genuine user edit. The
+ * editor records the key of every programmatic mutation; the emit effect treats a
+ * matching key as an initialize (baseline, never dirty) and anything else as a user
+ * change. This avoids the prior reliance on effect ordering, which mis-reported the
+ * seeded layout as a user edit and triggered spurious auto-save + reprint on load.
+ */
+function overrideEmitKey(rows: DocAiLayerOverride[]): string {
+  return JSON.stringify(
+    [...rows]
+      .sort((a, b) => a.layer_key.localeCompare(b.layer_key))
+      .map((r) => ({
+        k: r.layer_key,
+        x: r.x_px,
+        y: r.y_px,
+        w: r.w_px,
+        h: r.h_px,
+        f: r.font_size_px,
+        fw: r.font_weight,
+        c: r.color_hex,
+        ff: r.font_family,
+        it: r.font_style_italic,
+        t: r.text,
+        hidden: r.hidden,
+        locked: r.box_locked,
+      }))
+  );
+}
+
 export function MimicDocAiLayerPositionEditor({
   slideIndex,
   backgroundUrl,
@@ -379,6 +532,10 @@ export function MimicDocAiLayerPositionEditor({
   logoStampEnabled,
   onLogoStampEnabledChange,
   brandLogoPreviewUrl = "",
+  slideCount = 1,
+  onApplyTypographyToRole,
+  onApplyPlacementToRole,
+  draftSyncRevision = 0,
 }: MimicDocAiLayerPositionEditorProps) {
   const canvasColRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -387,6 +544,10 @@ export function MimicDocAiLayerPositionEditor({
   const [previewResizeDrag, setPreviewResizeDrag] = useState<PreviewResizeDrag | null>(null);
   const [overrides, setOverrides] = useState<Record<string, DocAiLayerOverride>>({});
   const [customLayers, setCustomLayers] = useState<DocAiLayerBox[]>([]);
+  const layersRef = useRef(layers);
+  const customLayersRef = useRef(customLayers);
+  layersRef.current = layers;
+  customLayersRef.current = customLayers;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [moveDrag, setMoveDrag] = useState<MoveDrag | null>(null);
   const [resizeDrag, setResizeDrag] = useState<ResizeDrag | null>(null);
@@ -422,7 +583,7 @@ export function MimicDocAiLayerPositionEditor({
     ro.observe(el);
     setContainerWidth(el.clientWidth || 360);
     return () => ro.disconnect();
-  }, [previewScale]);
+  }, []);
 
   const onPreviewResizeMove = useCallback(
     (e: React.PointerEvent) => {
@@ -442,8 +603,25 @@ export function MimicDocAiLayerPositionEditor({
     () => layers.map((l) => l.layer_key).join("\0"),
     [layers]
   );
+  function overridesGeometryFingerprint(rows: DocAiLayerOverride[]): string {
+    return JSON.stringify(
+      rows.map((r) => ({
+        k: r.layer_key,
+        x: r.x_px,
+        y: r.y_px,
+        w: r.w_px,
+        h: r.h_px,
+        f: r.font_size_px,
+        hidden: r.hidden,
+        locked: r.box_locked,
+        c: r.color_hex,
+        fw: r.font_weight,
+        ff: r.font_family,
+      }))
+    );
+  }
   const initialOverridesFingerprint = useMemo(
-    () => JSON.stringify(initialOverrides ?? []),
+    () => overridesGeometryFingerprint(initialOverrides ?? []),
     [initialOverrides]
   );
   const slideSeedRef = useRef({ slideIndex: -1, layerKeys: "", overridesKey: "" });
@@ -479,15 +657,21 @@ export function MimicDocAiLayerPositionEditor({
       const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
       const x_px = savedRow?.x_px ?? layer.x_px;
       const y_px = savedRow?.y_px ?? layer.y_px;
-      const locked = savedRow?.box_locked === true;
-      const open = openHighlightBoxForText(text, savedRow?.font_size_px ?? baseFont, x_px, y_px);
+      const seedSize = resolveSeedBoxSize(
+        layer,
+        savedRow,
+        text,
+        savedRow?.font_size_px ?? baseFont,
+        x_px,
+        y_px
+      );
       const style = layerStyleFromRow(layer, savedRow);
       next[key] = {
         layer_key: key,
         x_px,
         y_px,
-        w_px: locked && savedRow?.w_px != null ? Math.max(MIN_BOX_W, savedRow.w_px) : open.w_px,
-        h_px: locked && savedRow?.h_px != null ? Math.max(MIN_BOX_H, savedRow.h_px) : open.h_px,
+        w_px: seedSize.w_px,
+        h_px: seedSize.h_px,
         font_size_px: style.font_size_px,
         font_weight: style.font_weight,
         color_hex: style.color_hex,
@@ -495,7 +679,7 @@ export function MimicDocAiLayerPositionEditor({
         ...(style.font_style_italic ? { font_style_italic: true } : {}),
         text,
         ...(savedRow?.hidden && !templateBgMode ? { hidden: true } : {}),
-        box_locked: templateBgMode ? locked : true,
+        box_locked: true,
       };
     }
     for (const savedRow of initialOverrides ?? []) {
@@ -535,11 +719,11 @@ export function MimicDocAiLayerPositionEditor({
         if (!isCustomLayerKey(key) || merged[key] || row.hidden) continue;
         merged[key] = row;
       }
+      programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(merged)));
       return merged;
     });
     const allKeys = [...layers.map((l) => l.layer_key), ...nextCustom.map((l) => l.layer_key)];
     setSelectedKey((prev) => (prev && next[prev] && !next[prev]?.hidden ? prev : allKeys.find((k) => !next[k]?.hidden) ?? null));
-    skipUserChangeEmitRef.current = true;
   }, [
     layers,
     initialOverrides,
@@ -550,6 +734,30 @@ export function MimicDocAiLayerPositionEditor({
     suppressReseed,
     templateBgMode,
   ]);
+
+  useEffect(() => {
+    if (!draftSyncRevision || !initialOverrides?.length) return;
+    const byKey = new Map(initialOverrides.map((row) => [row.layer_key, row]));
+    const byRefKey = new Map(initialOverrides.map((row) => [refKeyFromLayerPositionKey(row.layer_key), row]));
+    setOverrides((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const layer of layers) {
+        const key = layer.layer_key;
+        const incoming =
+          byKey.get(key) ?? byRefKey.get(refKeyFromLayerPositionKey(key));
+        if (!incoming) continue;
+        const merged = { ...(next[key] ?? incoming), ...incoming, layer_key: key };
+        if (JSON.stringify(merged) !== JSON.stringify(next[key])) {
+          next[key] = merged;
+          changed = true;
+        }
+      }
+      if (!changed) return prev;
+      programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
+      return next;
+    });
+  }, [draftSyncRevision, initialOverrides, layers]);
 
   const layerCopyFingerprintRef = useRef("");
   useEffect(() => {
@@ -563,12 +771,13 @@ export function MimicDocAiLayerPositionEditor({
       for (const layer of layers) {
         const key = layer.layer_key;
         const row = next[key];
-        const freshText = layer.text?.trim();
-        if (!row || !freshText || row.text === freshText) continue;
+        const freshText = layer.text;
+        if (!row || freshText == null || row.text === freshText) continue;
         const ocrRole = ocrRoleForLayer(layer);
-        if (ocrRole === "body" && looksLikeHandleText(freshText)) continue;
+        if (ocrRole === "body" && freshText.trim() && looksLikeHandleText(freshText)) continue;
         if (
           ocrRole !== "handle" &&
+          freshText.trim() &&
           looksLikeHandleText(freshText) &&
           row.text?.trim() &&
           !looksLikeHandleText(row.text)
@@ -578,7 +787,9 @@ export function MimicDocAiLayerPositionEditor({
         next[key] = { ...row, text: freshText };
         changed = true;
       }
-      return changed ? next : prev;
+      if (!changed) return prev;
+      programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
+      return next;
     });
   }, [layers, templateBgMode]);
 
@@ -587,11 +798,15 @@ export function MimicDocAiLayerPositionEditor({
   const onLayoutInitializedRef = useRef(onLayoutInitialized);
   onOverridesChangeRef.current = onOverridesChange;
   onLayoutInitializedRef.current = onLayoutInitialized;
-  const skipUserChangeEmitRef = useRef(false);
+  // Keys of override snapshots produced programmatically (seed / auto-fit / prop sync).
+  // Seeded with the empty-list key so the very first mount emit is treated as init.
+  const programmaticEmitKeysRef = useRef<Set<string>>(new Set([overrideEmitKey([])]));
 
   useEffect(() => {
-    if (skipUserChangeEmitRef.current) {
-      skipUserChangeEmitRef.current = false;
+    const key = overrideEmitKey(overrideList);
+    const programmatic = programmaticEmitKeysRef.current;
+    if (programmatic.has(key)) {
+      programmatic.delete(key);
       onLayoutInitializedRef.current?.(overrideList);
       return;
     }
@@ -602,17 +817,28 @@ export function MimicDocAiLayerPositionEditor({
     setOverrides((prev) => {
       const row = prev[key];
       if (!row) return prev;
+      const layer =
+        layersRef.current.find((l) => l.layer_key === key) ??
+        customLayersRef.current.find((l) => l.layer_key === key);
       const merged = { ...row, ...patch, layer_key: key };
+      if (patch.text === undefined) {
+        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle);
+        if (copyText && copyText !== merged.text) {
+          merged.text = copyText;
+        }
+      }
       const shouldReflow = patch.text != null || patch.font_size_px != null;
       let nextRow = merged;
-      if (shouldReflow && patch.x_px == null && patch.y_px == null && !merged.box_locked) {
+      if (shouldReflow && patch.x_px == null && patch.y_px == null && patch.w_px == null && patch.h_px == null) {
+        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle);
         const open = openHighlightBoxForText(
-          merged.text ?? "",
+          copyText,
           merged.font_size_px ?? MIN_FONT_PX,
           merged.x_px,
-          merged.y_px
+          merged.y_px,
+          merged.w_px && merged.w_px > MIN_BOX_W ? { fixedWidthPx: merged.w_px } : undefined
         );
-        nextRow = { ...merged, w_px: open.w_px, h_px: open.h_px };
+        nextRow = { ...merged, w_px: open.w_px, h_px: open.h_px, box_locked: true };
       }
       return { ...prev, [key]: nextRow };
     });
@@ -632,7 +858,7 @@ export function MimicDocAiLayerPositionEditor({
         })
       );
     }
-  }, []);
+  }, [templateBgMode, projectHandle]);
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
@@ -655,8 +881,8 @@ export function MimicDocAiLayerPositionEditor({
       const dx = (e.clientX - moveDrag.startX) / scale;
       const dy = (e.clientY - moveDrag.startY) / scale;
       const row = overrides[moveDrag.key];
-      const w = row?.w_px ?? MIN_BOX_W;
-      const h = row?.h_px ?? MIN_BOX_H;
+      const w = Math.max(MIN_BOX_W, row?.w_px ?? MIN_BOX_W);
+      const h = Math.max(MIN_BOX_H, row?.h_px ?? MIN_BOX_H);
       const box = clampBox(moveDrag.origX + dx, moveDrag.origY + dy, w, h);
       updateOverride(moveDrag.key, { x_px: box.x_px, y_px: box.y_px });
     },
@@ -681,6 +907,19 @@ export function MimicDocAiLayerPositionEditor({
   const selected = selectedKey ? overrides[selectedKey] : null;
   const displayLayers = useMemo(() => [...layers, ...customLayers], [layers, customLayers]);
   const selectedLayer = selectedKey ? displayLayers.find((l) => l.layer_key === selectedKey) : null;
+  const selectedLayerForPanel: DocAiLayerBox | null =
+    selected && selectedKey
+      ? (selectedLayer ?? {
+          layer_key: selectedKey,
+          text: selected.text ?? "",
+          role: roleFromLayerKey(selectedKey),
+          x_px: selected.x_px,
+          y_px: selected.y_px,
+          w_px: selected.w_px ?? MIN_BOX_W,
+          h_px: selected.h_px ?? MIN_BOX_H,
+          font_size_px: selected.font_size_px,
+        })
+      : null;
   const visibleLayers = useMemo(
     () => displayLayers.filter((layer) => !overrides[layer.layer_key]?.hidden),
     [displayLayers, overrides]
@@ -712,8 +951,49 @@ export function MimicDocAiLayerPositionEditor({
     if (match) setSelectedKey(match.layer_key);
   }, [activeBlockIndex, visibleLayers]);
 
+  useEffect(() => {
+    if (layers.length === 0) return;
+    setOverrides((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const layer of layers) {
+        const key = layer.layer_key;
+        const row = next[key];
+        if (!row || row.hidden) continue;
+        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+        if (!copyText) continue;
+        const fontSize = defaultLayerFontPx(layer, row.font_size_px, projectHandle);
+        const fitted = openHighlightBoxForText(
+          copyText,
+          fontSize,
+          row.x_px,
+          row.y_px,
+          row.w_px && row.w_px > MIN_BOX_W ? { fixedWidthPx: row.w_px } : undefined
+        );
+        const w = row.w_px ?? MIN_BOX_W;
+        const h = row.h_px ?? MIN_BOX_H;
+        const needsText = !row.text?.trim();
+        const needsSize = h < fitted.h_px - 4 || w < fitted.w_px - 4;
+        if (!needsText && !needsSize) continue;
+        next[key] = {
+          ...row,
+          text: copyText,
+          w_px: needsSize ? fitted.w_px : row.w_px,
+          h_px: needsSize ? fitted.h_px : row.h_px,
+          box_locked: true,
+        };
+        changed = true;
+      }
+      if (!changed) return prev;
+      programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
+      return next;
+    });
+  }, [slideIndex, layerKeysFingerprint, layers, templateBgMode, projectHandle]);
+
   const selectLayer = useCallback(
     (key: string) => {
+      // Selection must never mutate geometry — doing so previously marked the layout
+      // dirty (and triggered auto-save + reprint) just from clicking through boxes.
       setSelectedKey(key);
       const layer = visibleLayers.find((l) => l.layer_key === key);
       const idx = layer?.block_index ?? visibleLayers.findIndex((l) => l.layer_key === key);
@@ -728,22 +1008,40 @@ export function MimicDocAiLayerPositionEditor({
   const hiddenCount = displayLayers.length - visibleLayers.length;
   const baseImageUrl = backgroundUrl?.trim() || "";
 
+  const fitBoxToText = useCallback((key: string, row: DocAiLayerOverride) => {
+    const layer =
+      layersRef.current.find((l) => l.layer_key === key) ??
+      customLayersRef.current.find((l) => l.layer_key === key);
+    const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+    const open = openHighlightBoxForText(
+      copyText,
+      row.font_size_px ?? DEFAULT_FONT_PX,
+      row.x_px,
+      row.y_px
+    );
+    updateOverride(key, { text: copyText || row.text, w_px: open.w_px, h_px: open.h_px, box_locked: true });
+  }, [updateOverride, templateBgMode, projectHandle]);
+
   const fitAllBoxesToText = useCallback(() => {
     setOverrides((prev) => {
       const next: Record<string, DocAiLayerOverride> = { ...prev };
       for (const [key, row] of Object.entries(next)) {
         if (!row || row.hidden) continue;
+        const layer =
+          layersRef.current.find((l) => l.layer_key === key) ??
+          customLayersRef.current.find((l) => l.layer_key === key);
+        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
         const open = openHighlightBoxForText(
-          row.text ?? "",
+          copyText,
           row.font_size_px ?? DEFAULT_FONT_PX,
           row.x_px,
           row.y_px
         );
-        next[key] = { ...row, w_px: open.w_px, h_px: open.h_px, box_locked: false };
+        next[key] = { ...row, text: copyText || row.text, w_px: open.w_px, h_px: open.h_px, box_locked: true };
       }
       return next;
     });
-  }, []);
+  }, [templateBgMode, projectHandle]);
 
   const addTextBox = useCallback(() => {
     const key = newCustomLayerKey();
@@ -927,6 +1225,10 @@ export function MimicDocAiLayerPositionEditor({
               endPreviewResize();
               endPointer();
             }}
+            onPointerCancel={(e) => {
+              endPreviewResize();
+              endPointer();
+            }}
           >
             <div className="mimic-docai-editor__canvas-inner">
               {baseImageUrl ? (
@@ -963,13 +1265,17 @@ export function MimicDocAiLayerPositionEditor({
                   text: layer.text,
                 };
                 const style = layerStyleFromRow(layer, row);
-                const boxW = Math.max(MIN_BOX_W, row.w_px ?? layer.w_px);
-                const boxH = Math.max(MIN_BOX_H, row.h_px ?? layer.h_px);
+                const fontSizePx = style.font_size_px;
+                const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+                // Paint at the stored size so a manual resize (incl. shrinking) sticks.
+                // Boxes are kept fitted to copy by the seed + auto-fit + type-reflow paths.
+                const boxW = Math.max(MIN_BOX_W, row.w_px ?? MIN_BOX_W);
+                const boxH = Math.max(MIN_BOX_H, row.h_px ?? MIN_BOX_H);
                 const w = boxW * scale;
                 const h = boxH * scale;
                 const isSelected = selectedKey === key;
                 const previewFont = Math.max(8, style.font_size_px * scale);
-                const displayText = row.text ?? layer.text;
+                const displayText = copyText || layer.text;
                 const padY = 4 * scale;
                 const padX = 10 * scale;
                 const corners: ResizeCorner[] = ["nw", "ne", "sw", "se"];
@@ -1086,14 +1392,15 @@ export function MimicDocAiLayerPositionEditor({
         </div>
 
         <div className="mimic-docai-editor__inspector-col">
-          {selected && selectedLayer ? (
+          {selected && selectedLayerForPanel ? (
             <div className="mimic-docai-editor__selected-panel">
               <p className="mimic-docai-editor__selected-header">
                 <span>
                   {roleLabel(
-                    inferDisplayRole(selectedLayer, selected),
+                    inferDisplayRole(selectedLayerForPanel, selected),
                     fullBleedMode,
-                    selectedLayer.block_index ?? visibleLayers.findIndex((l) => l.layer_key === selected.layer_key)
+                    selectedLayerForPanel.block_index ??
+                      visibleLayers.findIndex((l) => l.layer_key === selected.layer_key)
                   )}
                   {isCustomLayerKey(selected.layer_key) ? " (added)" : ""}
                 </span>
@@ -1109,15 +1416,29 @@ export function MimicDocAiLayerPositionEditor({
               <label className="filter-label">Text</label>
               <textarea
                 ref={textInputRef}
-                value={selected.text ?? ""}
+                value={resolveEditorLayerText(selectedLayerForPanel, selected, templateBgMode, projectHandle)}
                 rows={3}
-                onChange={(e) => updateOverride(selected.layer_key, { text: e.target.value })}
+                readOnly={templateBgMode}
+                onChange={(e) => {
+                  if (templateBgMode) return;
+                  updateOverride(selected.layer_key, { text: e.target.value });
+                }}
                 className="mimic-docai-editor__text-input"
-                placeholder="Type on-slide copy…"
+                placeholder={templateBgMode ? "Edit copy in Slide copy (left column)…" : "Type on-slide copy…"}
               />
+              {templateBgMode ? (
+                <p className="mimic-docai-editor__box-dims" style={{ marginTop: 4, fontSize: 11, color: "var(--muted)" }}>
+                  Copy is edited in the Slide copy panel — this preview follows those fields.
+                </p>
+              ) : null}
               {(() => {
-                const style = layerStyleFromRow(selectedLayer, selected);
-                const fontSizeDisplay = fontSizeDraft ?? String(style.font_size_px);
+                const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                const activeFontPx = selected.font_size_px ?? style.font_size_px;
+                const panelBox = {
+                  w_px: Math.max(MIN_BOX_W, selected.w_px ?? MIN_BOX_W),
+                  h_px: Math.max(MIN_BOX_H, selected.h_px ?? MIN_BOX_H),
+                };
+                const fontSizeDisplay = fontSizeDraft ?? String(activeFontPx);
                 return (
                   <>
                     <div className="mimic-docai-editor__font-row">
@@ -1128,7 +1449,7 @@ export function MimicDocAiLayerPositionEditor({
                         onClick={() => {
                           setFontSizeDraft(null);
                           updateOverride(selected.layer_key, {
-                            font_size_px: Math.max(MIN_FONT_PX, style.font_size_px - 2),
+                            font_size_px: Math.max(MIN_FONT_PX, activeFontPx - 2),
                           });
                         }}
                       >
@@ -1139,7 +1460,7 @@ export function MimicDocAiLayerPositionEditor({
                         inputMode="numeric"
                         className="mimic-docai-editor__font-input"
                         value={fontSizeDisplay}
-                        onFocus={() => setFontSizeDraft(String(style.font_size_px))}
+                        onFocus={() => setFontSizeDraft(String(activeFontPx))}
                         onChange={(e) => setFontSizeDraft(e.target.value)}
                         onBlur={() => {
                           const raw = (fontSizeDraft ?? fontSizeDisplay).trim();
@@ -1161,7 +1482,7 @@ export function MimicDocAiLayerPositionEditor({
                         onClick={() => {
                           setFontSizeDraft(null);
                           updateOverride(selected.layer_key, {
-                            font_size_px: Math.min(MAX_FONT_PX, style.font_size_px + 2),
+                            font_size_px: Math.min(MAX_FONT_PX, activeFontPx + 2),
                           });
                         }}
                       >
@@ -1231,8 +1552,14 @@ export function MimicDocAiLayerPositionEditor({
                       </select>
                     </div>
                     <p className="mimic-docai-editor__box-dims">
-                      {Math.round(selected.w_px ?? selectedLayer.w_px)}×
-                      {Math.round(selected.h_px ?? selectedLayer.h_px)} px
+                      {Math.round(panelBox.w_px)}×{Math.round(panelBox.h_px)} px
+                      <button
+                        type="button"
+                        className="btn-ghost btn-sm mimic-docai-editor__fit-one-btn"
+                        onClick={() => fitBoxToText(selected.layer_key, selected)}
+                      >
+                        Fit box to text
+                      </button>
                     </p>
                   </>
                 );
@@ -1243,6 +1570,94 @@ export function MimicDocAiLayerPositionEditor({
               Select a text box on the preview to edit copy and style.
             </div>
           )}
+          {slideCount >= 1 && (onApplyTypographyToRole || onApplyPlacementToRole) ? (
+            <div className="mimic-docai-editor__deck-actions">
+              <p className="mimic-docai-editor__deck-actions-title">Apply to all slides</p>
+              {!selected ? (
+                <p className="mimic-docai-editor__deck-actions-hint">
+                  Select a box first — its settings become the source.
+                </p>
+              ) : null}
+              {onApplyTypographyToRole ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                    disabled={!selected}
+                    onClick={() => {
+                      if (!selected || !selectedLayerForPanel) return;
+                      const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                      onApplyTypographyToRole("headline", {
+                        font_size_px: style.font_size_px,
+                        font_weight: style.font_weight,
+                        color_hex: style.color_hex,
+                        font_family: style.font_family || undefined,
+                        font_style_italic: style.font_style_italic,
+                      });
+                    }}
+                  >
+                    Typography → all Headline boxes
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                    disabled={!selected}
+                    onClick={() => {
+                      if (!selected || !selectedLayerForPanel) return;
+                      const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                      onApplyTypographyToRole("body", {
+                        font_size_px: style.font_size_px,
+                        font_weight: style.font_weight,
+                        color_hex: style.color_hex,
+                        font_family: style.font_family || undefined,
+                        font_style_italic: style.font_style_italic,
+                      });
+                    }}
+                  >
+                    Typography → all Body boxes
+                  </button>
+                </>
+              ) : null}
+              {onApplyPlacementToRole ? (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                    disabled={!selected}
+                    onClick={() => {
+                      if (!selected || !selectedLayerForPanel) return;
+                      onApplyPlacementToRole("headline", {
+                        x_px: selected.x_px,
+                        y_px: selected.y_px,
+                        w_px: selected.w_px ?? selectedLayerForPanel.w_px,
+                        h_px: selected.h_px ?? selectedLayerForPanel.h_px,
+                        box_locked: true,
+                      });
+                    }}
+                  >
+                    Box placement → all Headline boxes
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                    disabled={!selected}
+                    onClick={() => {
+                      if (!selected || !selectedLayerForPanel) return;
+                      onApplyPlacementToRole("body", {
+                        x_px: selected.x_px,
+                        y_px: selected.y_px,
+                        w_px: selected.w_px ?? selectedLayerForPanel.w_px,
+                        h_px: selected.h_px ?? selectedLayerForPanel.h_px,
+                        box_locked: true,
+                      });
+                    }}
+                  >
+                    Box placement → all Body boxes
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {onTextBackingEnabledChange ? (
             <div className="mimic-docai-editor__overlay-options">
               <label className="mimic-layer-editor-panel__option">

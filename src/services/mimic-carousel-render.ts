@@ -38,8 +38,14 @@ import {
 } from "./mimic-prompt-builder.js";
 import { resolveMimicSlideImagePrompt } from "./mimic-flux-image-prompts.js";
 import { refreshMimicReferenceFetchUrl } from "./mimic-reference-urls.js";
+import { assertMimicBackgroundPlateTextFree } from "./mimic-plate-text-qa.js";
+import { MimicPlateTextPollutionError } from "../domain/mimic-plate-text-qa.js";
 import { isVideoishUrl } from "./instagram-media-normalizer.js";
 import { createSignedUrlForObjectKey, uploadBuffer } from "./supabase-storage.js";
+import { logPipelineEvent } from "./pipeline-logger.js";
+
+const PLATE_TEXT_QA_RETRY_NOTE =
+  "Remove ALL on-image text, labels, stats, percentages, UI chrome, watermarks, and social handles. Background plate must be completely text-free.";
 
 type MimicRenderImageOpts = {
   bflModelOverride?: MimicBflModelSlug | null;
@@ -312,6 +318,47 @@ export function pickStoredMimicPlateUrl(
   return null;
 }
 
+/** Like {@link pickStoredMimicPlateUrl} but signs private-bucket objects via service role. */
+export async function pickStoredMimicPlateFetchableUrl(
+  config: AppConfig,
+  assets: MimicPlateAssetRow[],
+  lookupPosition: number,
+  slideIndex1Based: number
+): Promise<string | null> {
+  const { fetchableUrlFromAssetRow } = await import("./supabase-storage.js");
+  const tryRow = async (row: MimicPlateAssetRow | undefined): Promise<string | null> => {
+    if (!row) return null;
+    return fetchableUrlFromAssetRow(config, row);
+  };
+
+  const bg = assets.find(
+    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_BACKGROUND" && a.position === lookupPosition
+  );
+  const fromBg = await tryRow(bg);
+  if (fromBg) return fromBg;
+
+  const plateByPos = assets.find(
+    (a) => (a.asset_type ?? "").toUpperCase() === "MIMIC_VISUAL_PLATE" && a.position === slideIndex1Based - 1
+  );
+  const fromPos = await tryRow(plateByPos);
+  if (fromPos) return fromPos;
+
+  for (const a of assets) {
+    if ((a.asset_type ?? "").toUpperCase() !== "MIMIC_VISUAL_PLATE") continue;
+    const meta =
+      a.metadata_json && typeof a.metadata_json === "object" && !Array.isArray(a.metadata_json)
+        ? (a.metadata_json as Record<string, unknown>)
+        : null;
+    const idx = Number(meta?.slide_index);
+    if (Number.isFinite(idx) && idx === slideIndex1Based) {
+      const url = await tryRow(a);
+      if (url) return url;
+    }
+  }
+
+  return null;
+}
+
 /** Reuse stored `MIMIC_BACKGROUND` plate when present; otherwise generate via Qwen/Flux. */
 export async function resolveMimicSlideBackgroundPlate(
   db: Pool,
@@ -346,7 +393,7 @@ export async function resolveMimicSlideBackgroundPlate(
   }
 
   const assets = await listAssetsByTask(db, job.project_id, job.task_id);
-  const storedUrl = pickStoredMimicPlateUrl(config, assets, lookupPosition, slideIndex);
+  const storedUrl = await pickStoredMimicPlateFetchableUrl(config, assets, lookupPosition, slideIndex);
   if (storedUrl) return storedUrl;
 
   if (opts?.reuseStoredPlatesOnly) {
@@ -437,9 +484,11 @@ export async function extractMimicSlideBackground(
     totalSlides?: number;
   } & MimicRenderImageOpts
 ): Promise<string | null> {
-  const imageInputMode =
+  const configuredInputMode =
     opts?.imageInputMode ?? effectiveMimicImageInputMode(null, config.MIMIC_IMAGE_INPUT_MODE);
   const item = referenceItemForMimicSlide(mimic, slideIndex);
+  // template_bg plates strip text from archived frames — never use analysis_t2i when a reference exists.
+  const imageInputMode = item ? "reference_edit" : configuredInputMode;
   if (!item && imageInputMode === "reference_edit") return null;
 
   const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
@@ -476,28 +525,70 @@ export async function extractMimicSlideBackground(
     referenceUrl = await refreshMimicReferenceFetchUrl(config, item);
   }
 
-  const { buffer, mimeType } = await generateMimicSlideImage(config, {
-    ...(referenceUrl ? { referenceUrl } : {}),
-    prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, opts?.regenerationNote),
-    imageInputMode: resolvedPrompt.imageInputMode,
-    size: "1024x1536",
-    bflModelOverride: opts?.bflModelOverride,
-    visualSimilarityPct: opts?.visualSimilarityPct,
-    audit: {
-      db,
-      projectId: job.project_id,
-      runId: job.run_id,
-      taskId: job.task_id,
-      step:
-        resolvedPrompt.imageInputMode === "analysis_t2i"
-          ? slideIndex === 1
-            ? "mimic_bg_t2i"
-            : `mimic_bg_t2i_${slideIndex}`
-          : slideIndex === 1
-            ? "mimic_bg_extract"
-            : `mimic_bg_extract_${slideIndex}`,
-    },
-  });
+  const auditStep =
+    resolvedPrompt.imageInputMode === "analysis_t2i"
+      ? slideIndex === 1
+        ? "mimic_bg_t2i"
+        : `mimic_bg_t2i_${slideIndex}`
+      : slideIndex === 1
+        ? "mimic_bg_extract"
+        : `mimic_bg_extract_${slideIndex}`;
+
+  const maxAttempts =
+    config.MIMIC_PLATE_TEXT_QA_ENABLED === false || config.MIMIC_PLATE_TEXT_QA_FAIL_ON_DETECT === false
+      ? 1
+      : Math.max(1, config.MIMIC_PLATE_TEXT_QA_MAX_RETRIES + 1);
+
+  let buffer!: Buffer;
+  let mimeType!: string;
+  let lastPlateQaError: MimicPlateTextPollutionError | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const retryNote =
+      attempt === 1
+        ? opts?.regenerationNote
+        : lastPlateQaError
+          ? `${PLATE_TEXT_QA_RETRY_NOTE} Prior attempt still contained: ${lastPlateQaError.detectedText.slice(0, 3).join("; ")}`
+          : PLATE_TEXT_QA_RETRY_NOTE;
+
+    const generated = await generateMimicSlideImage(config, {
+      ...(referenceUrl ? { referenceUrl } : {}),
+      prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, retryNote),
+      imageInputMode: resolvedPrompt.imageInputMode,
+      size: "1024x1536",
+      bflModelOverride: opts?.bflModelOverride,
+      visualSimilarityPct: opts?.visualSimilarityPct,
+      audit: {
+        db,
+        projectId: job.project_id,
+        runId: job.run_id,
+        taskId: job.task_id,
+        step: attempt === 1 ? auditStep : `${auditStep}_qa_retry_${attempt - 1}`,
+      },
+    });
+    buffer = generated.buffer;
+    mimeType = generated.mimeType;
+
+    try {
+      await assertMimicBackgroundPlateTextFree(config, buffer, mimeType, slideIndex, job);
+      lastPlateQaError = null;
+      break;
+    } catch (err) {
+      if (!(err instanceof MimicPlateTextPollutionError)) throw err;
+      lastPlateQaError = err;
+      if (attempt >= maxAttempts) throw err;
+      logPipelineEvent("warn", "render", "mimic plate text QA failed — retrying background extraction", {
+        task_id: job.task_id,
+        run_id: job.run_id,
+        data: {
+          slide_index: slideIndex,
+          attempt,
+          max_attempts: maxAttempts,
+          detected: err.detectedText.slice(0, 4),
+        },
+      });
+    }
+  }
 
   const assetPos = opts?.assetPosition ?? (slideIndex - 1);
   const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");

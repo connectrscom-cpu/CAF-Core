@@ -110,6 +110,24 @@ describe("mimic-copy-slots", () => {
     });
   });
 
+  it("splits list-column bullets into one copy slot per line and merges orphan on TikTok tail", () => {
+    const blocks = [
+      { text: "Virgo", role: "headline", x: 0.08, y: 0.08, w: 0.2, h: 0.05 },
+      { text: "plans home workouts but stops after a few minutes", role: "body", x: 0.1, y: 0.3, w: 0.35, h: 0.04 },
+      { text: "hosts online catch-ups with pals", role: "body", x: 0.1, y: 0.36, w: 0.35, h: 0.04 },
+      { text: "purchases every idea", role: "body", x: 0.1, y: 0.42, w: 0.35, h: 0.04 },
+      { text: "tackles each DIY", role: "body", x: 0.1, y: 0.48, w: 0.35, h: 0.04 },
+      { text: "on TikTok", role: "cta", x: 0.55, y: 0.48, w: 0.15, h: 0.04 },
+      { text: "@signandsound", role: "handle", x: 0.4, y: 0.85, w: 0.2, h: 0.03 },
+    ];
+    const slots = inferMimicReferenceCopySlots(blocks);
+    const body = slots.filter((s) => s.llm_field === "body");
+    expect(body).toHaveLength(4);
+    expect(body[3]!.reference_text).toMatch(/tackles each DIY.*on TikTok/i);
+    expect(slots.some((s) => s.llm_field === "cta" && /tiktok/i.test(s.reference_text))).toBe(false);
+    expect(slots.find((s) => s.llm_field === "handle")?.reference_text).toBe("@signandsound");
+  });
+
   it("splits one LLM body sentence across stacked OCR lines", () => {
     const slots = inferMimicReferenceCopySlots([
       { text: "mad about", role: "body", x: 0.55, y: 0.35, w: 0.35, h: 0.04 },

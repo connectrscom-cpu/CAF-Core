@@ -58,6 +58,8 @@ export interface JobListRow {
   pipeline_phase: string | null;
   /** Best-effort pipeline/render failure text. */
   last_error: string | null;
+  /** From generation_payload.mimic_v1.mode when present. */
+  mimic_mode: string | null;
 }
 
 export interface JobListFilters {
@@ -259,6 +261,7 @@ export async function listJobs(
               THEN ' · QC=' || trim(c.qc_status)
               ELSE ''
             END AS pipeline_phase,
+            NULLIF(btrim(c.generation_payload->'mimic_v1'->>'mode'), '') AS mimic_mode,
             COALESCE(
               NULLIF(trim(c.render_state->>'error'), ''),
               (SELECT NULLIF(trim(jt.metadata_json->>'error'), '')

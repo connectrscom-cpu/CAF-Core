@@ -10,6 +10,10 @@
 
 import { randomInt } from "node:crypto";
 import { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
+import {
+  coerceSlideBodyCopyText,
+  joinBodyLineArray,
+} from "../domain/slide-copy-lines.js";
 
 export { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
 
@@ -234,8 +238,14 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     BODY_KEYS.map((k) => {
       const v = o[k];
       if (v == null) return undefined;
+      // LLM copy frequently emits `body` as a per-line array; join with newlines
+      // rather than letting a downstream `String(arr)` flatten it with commas.
+      if (Array.isArray(v)) {
+        const joined = joinBodyLineArray(v);
+        return joined.length > 0 ? joined : undefined;
+      }
       if (typeof v === "object") return undefined;
-      const s = String(v).trim();
+      const s = coerceSlideBodyCopyText(v);
       return s.length > 0 ? s : undefined;
     }).find(Boolean);
   if (body == null || String(body).trim() === "") {
@@ -246,7 +256,9 @@ function textFromSlide(o: Record<string, unknown>): { headline: string; body: st
     stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(headline ?? "").trim())))
   );
   const b = stripLeakedFieldLabelsFromSlideCopy(
-    stripAirQuotesFromSlideCopy(stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(String(body ?? "").trim())))
+    stripAirQuotesFromSlideCopy(
+      stripHashtagsFromSlideCopy(stripStandaloneEmojiLines(coerceSlideBodyCopyText(body ?? "")))
+    )
   );
   return { headline: h, body: b };
 }
@@ -566,6 +578,22 @@ function topLevelItemsSlideArray(gen: Record<string, unknown>): Record<string, u
 }
 
 /** Keep slide rows only if at least one has headline or body (skip LLM placeholder shells). */
+/** Flow_Carousel_Copy schema: `variations[0].slides` or flat `variations[]` slide rows. */
+function slidesFromVariationsArray(variationsVal: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(variationsVal) || variationsVal.length === 0) return [];
+  const first = variationsVal[0];
+  if (first && typeof first === "object" && !Array.isArray(first)) {
+    const nested = (first as Record<string, unknown>).slides;
+    if (Array.isArray(nested) && nested.length > 0) {
+      const out = nested
+        .filter((x) => x && typeof x === "object" && !Array.isArray(x))
+        .map((x) => normalizeItemSlide(x as Record<string, unknown>));
+      if (out.length > 0 && out.some(slideHasRenderableContent)) return out;
+    }
+  }
+  return usableSlideArray(variationsVal) ?? [];
+}
+
 function usableSlideArray(arr: unknown): Record<string, unknown>[] | null {
   if (!Array.isArray(arr) || arr.length === 0) return null;
   const out = arr.filter(
@@ -686,7 +714,7 @@ const DECK_PRIORITY: Record<CarouselDeckId, number> = {
   variation_content: 0,
   content_slides: 0,
   output_schema: 0,
-  variations: 1,
+  variations: 0,
   carousel: 2,
   content_carousel: 2,
   items: 3,
@@ -713,8 +741,8 @@ function collectRenderableSlideDecks(gen: Record<string, unknown>): TaggedSlideD
   if (fromStructureSlides.length > 0) out.push({ id: "structure_slides", slides: fromStructureSlides });
   const fromVariationContent = slidesFromVariationContentField(gen.variation_content);
   if (fromVariationContent.length > 0) out.push({ id: "variation_content", slides: fromVariationContent });
-  const fromVariations = usableSlideArray(gen.variations);
-  if (fromVariations) out.push({ id: "variations", slides: fromVariations });
+  const fromVariations = slidesFromVariationsArray(gen.variations);
+  if (fromVariations.length > 0) out.push({ id: "variations", slides: fromVariations });
   const fromCarousel = slidesFromCarouselField(gen.carousel);
   if (fromCarousel.length > 0 && fromCarousel.some(slideHasRenderableContent)) {
     out.push({ id: "carousel", slides: fromCarousel });

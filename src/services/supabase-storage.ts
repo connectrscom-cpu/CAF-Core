@@ -226,6 +226,33 @@ async function storageDownloadWithTimeout(
   return Promise.race([p, timeout]);
 }
 
+type AssetUrlRow = {
+  public_url: string | null;
+  bucket: string | null;
+  object_path: string | null;
+};
+
+/** Signed URL when bucket+path exist (private buckets); else stored or constructed public URL. */
+export async function fetchableUrlFromAssetRow(
+  config: AppConfig,
+  row: AssetUrlRow
+): Promise<string | null> {
+  const bucket = (row.bucket ?? "").trim();
+  const objectPath = (row.object_path ?? "").trim().replace(/^\/+/, "");
+  if (bucket && objectPath) {
+    const signed = await createSignedUrlForObjectKey(config, bucket, objectPath, 7200);
+    if ("signedUrl" in signed) return signed.signedUrl;
+  }
+  const direct = (row.public_url ?? "").trim();
+  if (direct) return direct;
+  const base = (config.SUPABASE_URL ?? "").trim().replace(/\/+$/, "");
+  if (!bucket || !objectPath || !base) return null;
+  return `${base}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/")}`;
+}
+
 export async function downloadBufferFromUrl(config: AppConfig, url: string): Promise<Buffer> {
   const u = url.trim();
   const fetchInit = fetchInitWithOptionalTimeout(config);

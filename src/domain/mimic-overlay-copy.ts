@@ -1,3 +1,5 @@
+import { coerceSlideBodyCopyText } from "./slide-copy-lines.js";
+
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
 }
@@ -36,13 +38,15 @@ export function sanitizeMimicOverlayCopyText(raw: unknown): string {
   t = t.replace(/<\s*br\s*\/?\s*>/gi, "\n");
   t = t.replace(/<\/?[^>]+>/g, "");
   t = t.replace(/\u00a0/g, " ");
-  return t
-    .split("\n")
-    .map((line) => line.replace(/\s+/g, " ").trim())
-    .filter((line, i, arr) => line.length > 0 || (i > 0 && i < arr.length - 1))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  return coerceSlideBodyCopyText(
+    t
+      .split("\n")
+      .map((line) => line.replace(/\s+/g, " ").trim())
+      .filter((line, i, arr) => line.length > 0 || (i > 0 && i < arr.length - 1))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim()
+  );
 }
 
 /** Ordered on-slide copy from reviewer body or explicit per-box lines. */

@@ -2251,7 +2251,8 @@ async function processCarouselJob(
             : rawLayerPosOverrides;
         const hasReviewerLayout = Boolean(layerPosOverrides?.length);
         const useTextBacking = Boolean(
-          (textOverlayOnly || slideUsesFullBleed) && renderOpts?.textBacking !== false
+          (textOverlayOnly || slideUsesFullBleed || mimicTemplateBgJob) &&
+            renderOpts?.textBacking !== false
         );
         const textBackingColor =
           renderOpts?.textBackingColor ??
@@ -2273,7 +2274,9 @@ async function processCarouselJob(
             projectHandle: projectInstagramHandle,
             textBacking: useTextBacking,
             textBackingColor: resolvedTextBackingColor,
-            avoidCenterSubject: Boolean(useTextBacking && slideUsesFullBleed && !hasReviewerLayout),
+            avoidCenterSubject: Boolean(
+              useTextBacking && (slideUsesFullBleed || mimicTemplateBgJob) && !hasReviewerLayout
+            ),
             totalSlides: n,
           }
         );

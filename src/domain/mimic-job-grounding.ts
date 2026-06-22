@@ -54,6 +54,13 @@ export function groundingInsightIdsFromCandidate(
     .filter(Boolean);
 }
 
+/** Strip tier suffix so `ins_*_27439_broad` can match pack entry `ins_*_27439_cdeep`. */
+export function insightIdBaseKey(id: string): string {
+  return String(id ?? "")
+    .trim()
+    .replace(/_(?:broad|cdeep|vdeep)$/i, "");
+}
+
 /** Resolve the single visual-guidelines pack entry for this job's grounding ids. */
 export function findVisualGuidelinePackEntry(
   derivedGlobals: Record<string, unknown> | null | undefined,
@@ -77,6 +84,14 @@ export function findVisualGuidelinePackEntry(
     if (insightIds.some((w) => w === iid || iid.startsWith(`${w}_`) || w.startsWith(`${iid}_`))) {
       return rec;
     }
+  }
+  const wantBases = new Set(insightIds.map((w) => insightIdBaseKey(w)).filter(Boolean));
+  for (const raw of entries) {
+    const rec = asRecord(raw);
+    if (!rec) continue;
+    const iid = String(rec.insights_id ?? "").trim();
+    if (!iid) continue;
+    if (wantBases.has(insightIdBaseKey(iid))) return rec;
   }
   return null;
 }

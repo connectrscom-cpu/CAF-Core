@@ -59,6 +59,9 @@ export interface ReviewQueueJob {
   latest_validation_output_json?: Record<string, unknown> | null;
   /** First asset URL for workbench thumbnails (prefers image-like assets). */
   preview_thumb_url?: string | null;
+  /** Human label — includes Mimic · … for top-performer replication jobs. */
+  flow_label?: string | null;
+  is_mimic_replication?: boolean;
 }
 
 export type ReviewTab = "in_review" | "approved" | "rejected" | "needs_edit";

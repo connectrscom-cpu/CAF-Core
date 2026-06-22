@@ -12,7 +12,7 @@ import { pickSlideByCarouselIndex, slidesFromGeneratedOutput, mergeSlideCopyAtCa
 import { replaceSlidesInGeneratedOutput } from "./editorial-copy-apply.js";
 import {
   mimicDeckUsesSlotDeduplication,
-  pickStoredMimicPlateUrl,
+  pickStoredMimicPlateFetchableUrl,
   publicUrlFromAssetRow,
   templateBgSlotForIndex,
 } from "./mimic-carousel-render.js";
@@ -117,7 +117,7 @@ export async function listJobSlidesForOverlayLab(
     const lookupPosition = usesSlots
       ? assetPositionForSlot(templateBgSlotForIndex(i, n), n)
       : i - 1;
-    const bgUrl = pickStoredMimicPlateUrl(config, assets, lookupPosition, i);
+    const bgUrl = await pickStoredMimicPlateFetchableUrl(config, assets, lookupPosition, i);
     const bgAsset =
       assets.find(
         (a) =>

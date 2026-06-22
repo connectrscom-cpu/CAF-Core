@@ -16,6 +16,8 @@ import {
   getPlatformObservabilitySummary,
 } from "../repositories/observability-metrics.js";
 import { validateAndNormalizeDraftPackage } from "../services/draft-package-contract.js";
+import { resolveJobFlowDisplayLabel } from "../domain/job-flow-display-label.js";
+import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { listLearningRules } from "../repositories/learning.js";
 import {
   getFullProjectProfile, upsertStrategyDefaults, upsertBrandConstraints,
@@ -1046,7 +1048,15 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       run_id: query.run_id || undefined,
       search: query.search || undefined,
     }, limit, offset);
-    return { ok: true, ...result, page: pg, limit };
+    const rows = result.rows.map((row) => {
+      const display = resolveJobFlowDisplayLabel(row.flow_type, {});
+      return {
+        ...row,
+        flow_label: display.flow_label,
+        is_mimic_replication: display.is_mimic_replication,
+      };
+    });
+    return { ok: true, rows, total: result.total, page: pg, limit };
   });
 
   /** Remove all jobs (and related rows) for a run id — works even if the `runs` row is already gone (orphan cleanup). */
@@ -1362,9 +1372,17 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
     );
     const qc_detail = qcDetailFromGenerationPayload(gp as Record<string, unknown>);
     const api_audit = await listApiCallAuditsForTask(db, project.id, taskId, 120);
+    const flow_display = resolveJobFlowDisplayLabel(
+      detail.job.flow_type != null ? String(detail.job.flow_type) : null,
+      gp
+    );
+    const mimic = pickMimicPayload(gp);
     return {
       ok: true,
       job: detail.job,
+      flow_display,
+      mimic_mode: mimic?.mode ?? null,
+      mimic_mode_override: mimic?.mode_override ?? null,
       transitions: detail.transitions,
       drafts: detail.drafts,
       editorial_timeline: detail.editorial_timeline,
@@ -6049,7 +6067,7 @@ function renderJobDetailHtml(d){
   lines.push('<span style="font-size:11px;color:var(--muted)">Same task_id for the job’s life; rework adds drafts + archived snapshots below</span>');
   lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
-  var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
+  var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,flow_label:(d.flow_display&&d.flow_display.flow_label)||null,mimic_mode:d.mimic_mode||null,mimic_mode_override:d.mimic_mode_override||null,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
   lines.push('<pre class="job-detail-pre">'+esc(prettyJson(sum))+'</pre>');
   if(d.qc_detail&&(d.qc_detail.passed===false||(d.qc_detail.blocking_count|0)>0||j.status==='BLOCKED'||String(j.qc_status||'').toUpperCase()==='FAIL')){
     lines.push('<div class="job-h">QC — why this job failed or was blocked</div>');
@@ -6189,7 +6207,7 @@ async function loadJobs(p,silent){
     h+='<td class="mono" style="font-size:11px" title="'+escAttr(j.run_id||"")+'"><div class="job-cell-inner">'+esc(j.run_id||'—')+'</div></td>';
     var pkg=String(j.package_type||'').trim();
     if(pkg==='render_copy')pkg='carousel_package';
-    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px">'+esc(j.flow_type||'—')+'</td><td style="font-size:11px;color:var(--fg2)">'+esc(pkg||'—')+'</td>';
+    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px" title="'+escAttr(j.flow_type||'')+'">'+esc(j.flow_label||j.flow_type||'—')+(j.mimic_mode?' <span style="font-size:10px;color:var(--muted)">('+esc(j.mimic_mode)+')</span>':'')+'</td><td style="font-size:11px;color:var(--fg2)">'+esc(pkg||'—')+'</td>';
     h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+esc(rph||'—')+'</td>';

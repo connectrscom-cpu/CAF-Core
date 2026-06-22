@@ -71,6 +71,8 @@ const BROLL_HINTS =
   /\b(b[- ]?roll|broll|stock footage|montage|visual only|no (?:talking )?head|no presenter|no avatar|motion graphics|graphics[- ]only|voice[- ]over only)\b/i;
 const SCRIPT_HINTS =
   /\b(spoken script|word[- ]for[- ]word|verbatim script|script[- ]led|talking head reads|avatar reads)\b/i;
+const ANIMATION_HINTS =
+  /\b(animated sequences?|animated graphics|motion[- ]graphics|cartoon|2d animation|3d animation|illustrated sequences?|animation[- ]heavy)\b/i;
 
 export function normalizeVideoStyle(raw: unknown): VideoPipelineIntent | null {
   const s = String(raw ?? "")
@@ -117,10 +119,33 @@ export function resolveVideoIntent(
   row: Record<string, unknown>,
   cfg: VideoRoutingConfig
 ): VideoRouteDecision {
+  const text = [
+    row.summary,
+    row.content_idea,
+    row.three_liner,
+    row.thesis,
+    row.novelty_angle,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   const explicit =
     normalizeVideoStyle(row.video_style) ??
     normalizeVideoStyle(row.video_pipeline) ??
     normalizeVideoStyle(row.video_intent);
+
+  if (
+    explicit === "script_avatar" &&
+    ANIMATION_HINTS.test(text) &&
+    !SCRIPT_HINTS.test(text)
+  ) {
+    return {
+      intent: "prompt_avatar",
+      confidence: "heuristic",
+      reason: "animated / motion-graphics language overrides script_avatar",
+    };
+  }
+
   if (explicit) {
     return { intent: explicit, confidence: "explicit", reason: "video_style on planner row" };
   }
@@ -140,17 +165,15 @@ export function resolveVideoIntent(
     }
   }
 
-  const text = [
-    row.summary,
-    row.content_idea,
-    row.three_liner,
-    row.thesis,
-    row.novelty_angle,
-  ]
-    .filter(Boolean)
-    .join(" ");
   if (SCRIPT_HINTS.test(text)) {
     return { intent: "script_avatar", confidence: "heuristic", reason: "script-led language in idea copy" };
+  }
+  if (ANIMATION_HINTS.test(text)) {
+    return {
+      intent: "prompt_avatar",
+      confidence: "heuristic",
+      reason: "animated / motion-graphics language in idea copy",
+    };
   }
   if (BROLL_HINTS.test(text)) {
     return { intent: "no_avatar", confidence: "heuristic", reason: "b-roll / no-presenter language in idea copy" };

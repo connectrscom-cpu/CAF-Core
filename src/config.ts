@@ -247,6 +247,12 @@ const envSchema = z.object({
   MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE: z.coerce.number().min(0.2).max(1.5).default(1),
   /** ± characters allowed vs each reference on-screen line (template_bg + full_bleed). */
   MIMIC_COPY_CHAR_SLACK: z.coerce.number().int().min(0).max(32).default(4),
+  /** When true (default), OCR/heuristic QA rejects mimic background plates that still contain readable text. */
+  MIMIC_PLATE_TEXT_QA_ENABLED: z.coerce.boolean().default(true),
+  /** When true (default), plate text QA throws and aborts upload; when false, logs a warning only. */
+  MIMIC_PLATE_TEXT_QA_FAIL_ON_DETECT: z.coerce.boolean().default(true),
+  /** Extra background-plate extraction attempts after text QA failure (default 2 → 3 total tries). */
+  MIMIC_PLATE_TEXT_QA_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
   /**
    * After mimic carousel text_blocks[] are built, run OpenAI to suggest coherent copy groupings
    * and rewrite per-box lines. Set 0 to disable.

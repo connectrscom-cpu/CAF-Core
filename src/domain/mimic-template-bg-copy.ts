@@ -83,3 +83,53 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
     inverted: true,
   };
 }
+
+export type TemplateBgCtaOnScreenCopy = {
+  headline: string;
+  body: string;
+  handle: string;
+  /** Zodiac/listicle CTA with title + paragraph (vs simple follow + @handle). */
+  listicle_style: boolean;
+};
+
+/** Map CTA slide LLM fields to on-screen headline / body / handle slots. */
+export function resolveTemplateBgCtaOnScreenCopy(raw: {
+  headline?: string;
+  body?: string;
+  cta?: string;
+  cta_text?: string;
+  handle?: string;
+  cta_handle?: string;
+  kicker?: string;
+  slide_title?: string;
+}): TemplateBgCtaOnScreenCopy {
+  const headline = String(raw.headline ?? "").trim();
+  const body = String(raw.body ?? "").trim();
+  const cta = String(raw.cta ?? raw.cta_text ?? "").trim();
+  const handle = String(raw.handle ?? raw.cta_handle ?? "").trim();
+  const ctaHeadline = cta || headline;
+  const bodyIsHandle = looksLikeInstagramHandleLine(body);
+  const hasSubstantiveBody = body.length > 0 && !bodyIsHandle;
+
+  if (hasSubstantiveBody) {
+    const onScreen = resolveTemplateBgBodyOnScreenCopy({
+      headline: ctaHeadline,
+      body,
+      kicker: String(raw.kicker ?? "").trim(),
+      slide_title: String(raw.slide_title ?? "").trim(),
+    });
+    return {
+      headline: onScreen.headline,
+      body: onScreen.body,
+      handle,
+      listicle_style: true,
+    };
+  }
+
+  return {
+    headline: ctaHeadline,
+    body: "",
+    handle: handle || (bodyIsHandle ? body : ""),
+    listicle_style: false,
+  };
+}

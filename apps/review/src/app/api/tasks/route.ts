@@ -83,6 +83,8 @@ export async function GET(request: NextRequest) {
         run_id: j.run_id,
         platform: j.platform ?? "",
         flow_type: j.flow_type ?? "",
+        flow_label: j.flow_label ?? j.flow_type ?? "",
+        is_mimic_replication: j.is_mimic_replication ? "true" : "false",
         review_status: j.status ?? "",
         decision: j.latest_decision ?? "",
         recommended_route: j.recommended_route ?? "",

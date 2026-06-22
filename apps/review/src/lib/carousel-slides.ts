@@ -1,7 +1,10 @@
 import { sanitizeMimicOverlayCopyText } from "../../../../src/domain/mimic-overlay-copy";
+import { coerceSlideBodyCopyText } from "../../../../src/domain/slide-copy-lines";
 import {
   collapseTextBlocksToCopySlots,
   copySlotsForSlideRecord,
+  isLikelyListBulletTexts,
+  isOrphanPlatformSuffixTail,
   type MimicReferenceCopySlot,
 } from "@caf-core-carousel/mimic-copy-slots";
 
@@ -9,6 +12,8 @@ export type MimicTextBlock = {
   role: string;
   text: string;
 };
+
+export type MimicLayoutTextBlock = MimicTextBlock & { layer_key?: string };
 
 export interface NormalizedSlide {
   index: number;
@@ -401,7 +406,8 @@ export function ocrTextBlocksFromVisualGuideline(
   );
 }
 
-function slideRecordForCopySlots(
+/** Resolve visual_guideline / slide_copy_layout row for copy-slot lookup on a slide. */
+export function slideRecordForCopySlots(
   visualGuideline: Record<string, unknown> | null | undefined,
   slideCopyLayout: Array<Record<string, unknown>> | null | undefined,
   slideIndex1Based: number
@@ -430,6 +436,38 @@ function ocrBoxCountForSlots(slots: MimicReferenceCopySlot[]): number {
     .reduce((n, slot) => n + Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length), 0);
 }
 
+/** 0-based OCR box index → copy-slot cluster index (left-column field). */
+export function clusterIndexForOcrBoxIndex(
+  ocrBoxIndex: number,
+  slots: MimicReferenceCopySlot[]
+): number {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  let offset = 0;
+  for (let si = 0; si < sorted.length; si++) {
+    const n = Math.max(1, sorted[si]!.block_texts.map((t) => t.trim()).filter(Boolean).length);
+    if (ocrBoxIndex < offset + n) return si;
+    offset += n;
+  }
+  return Math.max(0, sorted.length - 1);
+}
+
+/** First OCR box index + span for a copy-slot cluster. */
+export function ocrBoxSpanForClusterIndex(
+  clusterIndex: number,
+  slots: MimicReferenceCopySlot[]
+): { start: number; count: number } {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  let start = 0;
+  for (let si = 0; si < clusterIndex && si < sorted.length; si++) {
+    start += Math.max(1, sorted[si]!.block_texts.map((t) => t.trim()).filter(Boolean).length);
+  }
+  const slot = sorted[clusterIndex];
+  const count = slot
+    ? Math.max(1, slot.block_texts.map((t) => t.trim()).filter(Boolean).length)
+    : 1;
+  return { start, count };
+}
+
 function slotsAlreadyMatchSlide(slide: NormalizedSlide, slots: MimicReferenceCopySlot[]): boolean {
   const blocks = resolveMimicTextBlocksForSlide(slide).filter((b) => b.text.trim());
   const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
@@ -442,6 +480,54 @@ function slotsAlreadyMatchSlide(slide: NormalizedSlide, slots: MimicReferenceCop
   });
 }
 
+/** Split legacy newline-joined list bodies; merge orphan platform tails for the left-column editor. */
+function normalizeMimicEditorTextBlocks(
+  blocks: MimicTextBlock[],
+  slots: MimicReferenceCopySlot[]
+): MimicTextBlock[] {
+  const expanded: MimicTextBlock[] = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]!;
+    const slot = slots[i];
+    if (block.role === "body" && block.text.includes("\n")) {
+      const lines = block.text.split(/\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length >= 2 && isLikelyListBulletTexts(lines)) {
+        for (const line of lines) expanded.push({ role: "body", text: line });
+        continue;
+      }
+    }
+    if (
+      block.role === "body" &&
+      slot &&
+      slot.block_texts.length >= 2 &&
+      isLikelyListBulletTexts(slot.block_texts) &&
+      !block.text.includes("\n")
+    ) {
+      expanded.push(block);
+      continue;
+    }
+    expanded.push(block);
+  }
+
+  const merged: MimicTextBlock[] = [];
+  for (let i = 0; i < expanded.length; i++) {
+    const cur = expanded[i]!;
+    const next = expanded[i + 1];
+    if (
+      next &&
+      cur.role === "body" &&
+      (next.role === "cta" || next.role === "body") &&
+      isOrphanPlatformSuffixTail(next.text)
+    ) {
+      merged.push({ role: "body", text: `${cur.text} ${next.text}`.trim() });
+      i++;
+      continue;
+    }
+    merged.push(cur);
+  }
+  return merged;
+}
+
 /** Collapse per-OCR `text_blocks[]` into one row per copy slot cluster. */
 export function enrichMimicSlideToCopyClusters(
   slide: NormalizedSlide,
@@ -452,13 +538,20 @@ export function enrichMimicSlideToCopyClusters(
   if (slotsAlreadyMatchSlide(slide, slots)) return slide;
 
   const existingBlocks = resolveMimicTextBlocksForSlide(slide);
+  const slotCount = slots.length;
+  const ocrCount = ocrBoxCountForSlots(slots);
+  // LLM already emitted one phrase per copy slot — keep (do not re-collapse OCR fragments).
+  if (existingBlocks.length === slotCount && existingBlocks.length < ocrCount) {
+    return slide;
+  }
+
   const collapsed = collapseTextBlocksToCopySlots(existingBlocks, slots);
-  const text_blocks = slots.map((slot, i) => ({
+  const text_blocks: MimicTextBlock[] = slots.map((slot, i) => ({
     role: slot.llm_field,
     text: collapsed[i]?.trim() ?? "",
   }));
   let handleSlotKept = false;
-  const normalizedBlocks = text_blocks.filter((b) => {
+  let normalizedBlocks: MimicTextBlock[] = text_blocks.filter((b) => {
     const isHandle = b.role === "handle";
     if (isHandle) {
       if (handleSlotKept) return false;
@@ -467,6 +560,7 @@ export function enrichMimicSlideToCopyClusters(
     }
     return Boolean(b.text.trim()) || text_blocks.indexOf(b) < slots.length;
   });
+  normalizedBlocks = normalizeMimicEditorTextBlocks(normalizedBlocks, slots);
   const fields = mimicSlideFieldsFromTextBlocks(normalizedBlocks);
   const handleFromBlocks = normalizedBlocks.find((b) => b.role === "handle" || looksLikeHandleLine(b.text))?.text;
   return {
@@ -602,7 +696,10 @@ function textFromSlideObject(o: Record<string, unknown>): {
   }
 
   const headline = cleanOverlayCopy(HEADLINE_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim()));
-  const body = cleanOverlayCopy(BODY_KEYS.map((k) => o[k]).find((v) => v != null && String(v).trim()));
+  const rawBody = BODY_KEYS.map((k) => o[k]).find((v) => v != null && (Array.isArray(v) || String(v).trim()));
+  const body = cleanOverlayCopy(
+    rawBody != null && Array.isArray(rawBody) ? coerceSlideBodyCopyText(rawBody) : rawBody
+  );
   const on_slide_lines = [headline, ...body.split("\n").map((l) => l.trim()).filter(Boolean)].filter(Boolean);
   const text_blocks: MimicTextBlock[] = on_slide_lines.map((text, i) => ({
     role: looksLikeHandleLine(text) ? "handle" : i === 0 && headline && text === headline ? "headline" : "body",
