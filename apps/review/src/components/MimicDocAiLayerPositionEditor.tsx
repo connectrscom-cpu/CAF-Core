@@ -1385,7 +1385,7 @@ export function MimicDocAiLayerPositionEditor({
             const preview = (row?.text ?? layer.text).trim();
             const short = preview.length > 36 ? `${preview.slice(0, 36)}…` : preview || "(empty)";
             const active = selectedKey === key;
-            const blockIndex = layer.block_index ?? visibleLayers.indexOf(layer);
+            const displayIndex = visibleLayers.indexOf(layer);
             return (
               <button
                 key={key}
@@ -1394,7 +1394,7 @@ export function MimicDocAiLayerPositionEditor({
                 onClick={() => selectLayer(key)}
                 title={preview}
               >
-                {roleLabel(inferDisplayRole(layer, row), fullBleedMode, blockIndex)}: {short}
+                {roleLabel(inferDisplayRole(layer, row), fullBleedMode, displayIndex)}: {short}
               </button>
             );
           })}
