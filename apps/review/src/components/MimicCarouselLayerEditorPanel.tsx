@@ -45,10 +45,7 @@ function isDraftHiddenForLayer(
 ): boolean {
   if (draftByKey.get(layerKey)?.hidden) return true;
   const refKey = refKeyFromLayerPositionKey(layerKey);
-  if (draftByKey.get(refKey)?.hidden) return true;
-  for (const draft of draftByKey.values()) {
-    if (draft.hidden && refKeyFromLayerPositionKey(draft.layer_key) === refKey) return true;
-  }
+  if (refKey !== layerKey && draftByKey.get(refKey)?.hidden) return true;
   return false;
 }
 
@@ -1480,14 +1477,26 @@ export function MimicCarouselLayerEditorPanel({
       }
       return true;
     });
-    const seenKeys = new Set(filtered.map((l) => l.layer_key));
+    const dedupedInspect = filtered.filter((layer, index, arr) => {
+      const layerText = normalizePhraseKey(layer.text ?? "");
+      if (layerText.length < 3 || layer.layer_key?.startsWith("custom@")) return true;
+      const firstIndex = arr.findIndex(
+        (other) =>
+          !other.layer_key?.startsWith("custom@") &&
+          normalizePhraseKey(other.text ?? "") === layerText &&
+          Math.abs(other.x_px - layer.x_px) <= 48 &&
+          Math.abs(other.y_px - layer.y_px) <= 48
+      );
+      return firstIndex === index;
+    });
+    const seenKeys = new Set(dedupedInspect.map((l) => l.layer_key));
     for (const row of layerPosDraft) {
       if (row.hidden || seenKeys.has(row.layer_key)) continue;
       if (isPlaceholderCustomLayer(
         { layer_key: row.layer_key, text: row.text ?? "", role: roleFromLayerKey(row.layer_key), x_px: row.x_px, y_px: row.y_px, w_px: row.w_px ?? 120, h_px: row.h_px ?? 48 },
         row
       )) continue;
-      filtered.push({
+      dedupedInspect.push({
         layer_key: row.layer_key,
         text: row.text ?? "",
         role: roleFromLayerKey(row.layer_key),
@@ -1500,7 +1509,7 @@ export function MimicCarouselLayerEditorPanel({
       seenKeys.add(row.layer_key);
     }
     let blockIndex = 0;
-    return filtered.map((layer) => {
+    return dedupedInspect.map((layer) => {
       const withIdx = { ...layer, block_index: blockIndex };
       blockIndex += 1;
       return withIdx;

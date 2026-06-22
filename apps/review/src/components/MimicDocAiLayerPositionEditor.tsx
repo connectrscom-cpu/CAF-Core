@@ -1226,18 +1226,26 @@ export function MimicDocAiLayerPositionEditor({
       const layerMeta = displayLayers.find((l) => l.layer_key === selectedKey);
       setOverrides((prev) => {
         const next = { ...prev };
-        for (const [key, entry] of Object.entries(next)) {
-          if (!entry || isCustomLayerKey(key)) continue;
-          if (key === selectedKey || refKeyFromLayerPositionKey(key) === refKey) {
-            next[key] = { ...entry, hidden: true };
-          }
-        }
-        next[refKey] = {
-          layer_key: refKey,
+        const hiddenRow: DocAiLayerOverride = {
+          ...(next[selectedKey] ?? row),
+          layer_key: selectedKey,
           x_px: row.x_px ?? layerMeta?.x_px ?? 0,
           y_px: row.y_px ?? layerMeta?.y_px ?? 0,
           hidden: true,
         };
+        next[selectedKey] = hiddenRow;
+        // Sync ref-only stub (body@x,y) when deleting the copy-suffixed key — not sibling boxes.
+        if (refKey !== selectedKey) {
+          const stub = next[refKey];
+          next[refKey] = {
+            layer_key: refKey,
+            x_px: stub?.x_px ?? hiddenRow.x_px,
+            y_px: stub?.y_px ?? hiddenRow.y_px,
+            ...(stub?.w_px != null ? { w_px: stub.w_px } : {}),
+            ...(stub?.h_px != null ? { h_px: stub.h_px } : {}),
+            hidden: true,
+          };
+        }
         return next;
       });
     }
