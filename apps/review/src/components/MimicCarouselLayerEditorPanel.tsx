@@ -5,9 +5,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
-
   MimicDocAiLayerPositionEditor,
-
+  openHighlightBoxForText,
   type DocAiLayerBox,
 
   type DocAiLayerOverride,
@@ -30,7 +29,9 @@ import {
 import {
   clusterIndexForOcrBoxIndex,
   ocrBoxSpanForClusterIndex,
+  resolveMimicTextBlocksForSlide,
   slideRecordForCopySlots,
+  type NormalizedSlide,
 } from "@/lib/carousel-slides";
 import {
   copySlotsForSlideRecord,
@@ -126,6 +127,91 @@ function isLegacyInspectEchoOfCustomDraft(
     Math.abs(inspectLayer.x_px - draftRow.x_px) <= 32 &&
     Math.abs(inspectLayer.y_px - draftRow.y_px) <= 32
   );
+}
+
+function normalizePhraseKey(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function layerListCoversPhrase(
+  layers: DocAiLayerBox[],
+  draftRows: DocAiLayerOverride[],
+  phrase: string
+): boolean {
+  const key = normalizePhraseKey(phrase);
+  if (key.length < 3) return true;
+  const draftByKey = new Map(draftRows.map((row) => [row.layer_key, row]));
+  for (const layer of layers) {
+    if (draftByKey.get(layer.layer_key)?.hidden) continue;
+    const t = normalizePhraseKey(draftByKey.get(layer.layer_key)?.text ?? layer.text ?? "");
+    if (t.length >= 3 && (t.includes(key) || key.includes(t))) return true;
+  }
+  return false;
+}
+
+function newCustomLayerKeyForPanel(): string {
+  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  return `custom@body@${id}`;
+}
+
+function buildCustomPhraseOverride(
+  text: string,
+  blockIndex: number,
+  boxes: DocAiLayerBox[]
+): DocAiLayerOverride {
+  const sorted = [...boxes].sort((a, b) => b.y_px - a.y_px || b.x_px - a.x_px);
+  const anchor = sorted[0];
+  const x_px = anchor?.x_px ?? 216;
+  const y_px = anchor
+    ? Math.min(1280, anchor.y_px + (anchor.h_px ?? 72) + 20 + blockIndex * 12)
+    : 200 + blockIndex * 72;
+  const font_size_px = 50;
+  const open = openHighlightBoxForText(text, font_size_px, x_px, y_px);
+  return {
+    layer_key: newCustomLayerKeyForPanel(),
+    x_px,
+    y_px,
+    w_px: open.w_px,
+    h_px: open.h_px,
+    font_size_px,
+    text,
+    box_locked: true,
+  };
+}
+
+function normalizedSlideFromInspectPayload(
+  payload: Record<string, unknown>,
+  slideIndex1Based: number
+): NormalizedSlide | null {
+  const slides = payload.slides;
+  if (!Array.isArray(slides) || slides.length === 0) return null;
+  const raw = slides[slideIndex1Based - 1];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const rec = raw as Record<string, unknown>;
+  const text_blocks = Array.isArray(rec.text_blocks)
+    ? rec.text_blocks
+        .map((item) => {
+          const row = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
+          if (!row) return null;
+          const text = String(row.text ?? "").trim();
+          if (!text) return null;
+          return { role: String(row.role ?? "body"), text };
+        })
+        .filter(Boolean)
+    : undefined;
+  return {
+    index: slideIndex1Based,
+    type: "body",
+    headline: String(rec.headline ?? "").trim(),
+    body: String(rec.body ?? "").trim(),
+    handle: String(rec.handle ?? "").trim(),
+    ...(text_blocks?.length ? { text_blocks: text_blocks as NormalizedSlide["text_blocks"] } : {}),
+    ...(Array.isArray(rec.on_slide_lines) ? { on_slide_lines: rec.on_slide_lines.map(String) } : {}),
+  };
 }
 
 function asRec(v: unknown): Record<string, unknown> | null {
@@ -684,6 +770,7 @@ export function MimicCarouselLayerEditorPanel({
   useEffect(() => {
     lastEmittedTextBlocksRef.current = "";
     lastPersistedKeyRef.current = "";
+    missingPhrasesSeedRef.current = "";
     setLayoutBaseline("");
     setUserTouchedLayout(false);
 
@@ -727,6 +814,7 @@ export function MimicCarouselLayerEditorPanel({
 
   const userTouchedLayoutRef = useRef(false);
   userTouchedLayoutRef.current = userTouchedLayout;
+  const missingPhrasesSeedRef = useRef("");
 
 
 
@@ -1557,8 +1645,13 @@ export function MimicCarouselLayerEditorPanel({
         const byKey = new Map(base.map((r) => [r.layer_key, { ...r }]));
         for (let i = 0; i < count; i++) {
           const box = boxes[start + i];
-          if (!box) continue;
           const piece = splits[i] ?? "";
+          if (!piece.trim()) continue;
+          if (!box) {
+            const custom = buildCustomPhraseOverride(piece, blockIndex + i, boxes);
+            byKey.set(custom.layer_key, custom);
+            continue;
+          }
           const existing = byKey.get(box.layer_key);
           byKey.set(box.layer_key, {
             layer_key: box.layer_key,
@@ -1596,7 +1689,26 @@ export function MimicCarouselLayerEditorPanel({
         target = inspectBoxes[blockIndex] ?? resolveLayoutBlockToBox(blocks[blockIndex]);
       }
       if (!target) target = resolveLayoutBlockToBox(blocks[blockIndex]);
-      if (!target) return;
+      if (!target) {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        const custom = buildCustomPhraseOverride(trimmed, blockIndex, boxes);
+        const base =
+          draft.length > 0
+            ? draft
+            : boxes.map((layer) => ({
+                layer_key: layer.layer_key,
+                x_px: layer.x_px,
+                y_px: layer.y_px,
+                w_px: layer.w_px,
+                h_px: layer.h_px,
+                font_size_px: layer.font_size_px,
+                text: layer.text,
+                box_locked: true,
+              }));
+        handleLayerDraftChangeRef.current([...base, custom]);
+        return;
+      }
       if (fieldRole === "body" && roleForBox(target) === "handle") return;
       if (fieldRole === "headline" && roleForBox(target) === "handle") return;
       const base =
@@ -1672,6 +1784,49 @@ export function MimicCarouselLayerEditorPanel({
   layoutTextBlocksRef.current = layoutTextBlocks;
   const renderInspectRefForUpdater = useRef(renderInspect);
   renderInspectRefForUpdater.current = renderInspect;
+
+  // Full-bleed: when LLM copy has more phrases than reference OCR boxes, auto-add custom
+  // layers so every left-column field has a canvas target (until the user edits layout).
+  useEffect(() => {
+    if (!fullBleedMode || userTouchedLayoutRef.current || renderInspectLoading) return;
+    const payload = buildInspectPayloadRef.current?.();
+    if (!payload || typeof payload !== "object") return;
+    const slide = normalizedSlideFromInspectPayload(payload as Record<string, unknown>, editorSlide);
+    if (!slide) return;
+    const phrases = resolveMimicTextBlocksForSlide(slide).filter((block) => {
+      const text = block.text.trim();
+      return text && !looksLikeHandleText(text);
+    });
+    if (phrases.length === 0) return;
+    const boxes = docAiLayerBoxesRef.current;
+    const draft = layerPosDraftRef.current;
+    const fingerprint = `${editorSlide}:${phrases.map((p) => p.text).join("\0")}:${boxes.map((b) => b.layer_key).join("\0")}`;
+    if (missingPhrasesSeedRef.current === fingerprint) return;
+    const missing = phrases.filter((block) => !layerListCoversPhrase(boxes, draft, block.text));
+    missingPhrasesSeedRef.current = fingerprint;
+    if (missing.length === 0) return;
+    const customRows = missing.map((block) => {
+      const blockIndex = phrases.findIndex((p) => p.text === block.text);
+      return buildCustomPhraseOverride(block.text, blockIndex >= 0 ? blockIndex : 0, boxes);
+    });
+    const base =
+      draft.length > 0
+        ? [...draft]
+        : boxes.map((layer) => ({
+            layer_key: layer.layer_key,
+            x_px: layer.x_px,
+            y_px: layer.y_px,
+            w_px: layer.w_px,
+            h_px: layer.h_px,
+            font_size_px: layer.font_size_px,
+            text: layer.text,
+            box_locked: true,
+          }));
+    const existingKeys = new Set(base.map((row) => row.layer_key));
+    const toAdd = customRows.filter((row) => !existingKeys.has(row.layer_key));
+    if (toAdd.length === 0) return;
+    handleLayerDraftChangeRef.current([...base, ...toAdd]);
+  }, [fullBleedMode, editorSlide, docAiLayerBoxes, layerPosDraft, renderInspectLoading]);
 
   async function handleSaveAllLayerPositions() {
     if (!taskId.trim() || !projectSlug.trim()) return;

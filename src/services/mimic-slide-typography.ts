@@ -3337,10 +3337,23 @@ export function buildMimicDocAiRenderTextLayers(
     const trimmed = String(line ?? "").trim();
     if (trimmed) leftoverLines.push(trimmed);
   }
+  if (directLines.length > 0) {
+    const covered = new Set(
+      layers
+        .map((l) => normalizeCopyChunkForLayerMatch(l.text))
+        .filter((t) => t.length >= 3)
+    );
+    for (const line of directCopyLinesForCopyableSlots(directLines)) {
+      const key = normalizeCopyChunkForLayerMatch(line);
+      if (key.length < 3) continue;
+      const isCovered = [...covered].some((c) => c.includes(key) || key.includes(c));
+      if (!isCovered) leftoverLines.push(line.trim());
+    }
+  }
   const shouldAppendLeftovers =
     leftoverLines.length > 0 &&
     (directLines.length > 0
-      ? layers.length < directLines.length
+      ? layers.length < directLines.length || !mimicDocAiLayersCoverLlmCopy(layers, llmSlide)
       : !mimicDocAiLayersCoverLlmCopy(layers, llmSlide));
   if (shouldAppendLeftovers) {
     appendLeftoverLlmCopyAsSyntheticLayers(layers, leftoverLines, orderedRef, {

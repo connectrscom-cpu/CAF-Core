@@ -631,6 +631,53 @@ describe("mimic-slide-typography", () => {
     expect(texts.some((t) => t.includes("Slide headline"))).toBe(false);
   });
 
+  it("buildMimicDocAiRenderTextLayers appends synthetic layers for LLM lines past OCR slot count", () => {
+    const mimic = {
+      visual_guideline: {
+        slides: [
+          {
+            slide_index: 1,
+            text_blocks: [
+              {
+                text: "Libra",
+                role: "headline",
+                source: "document_ai",
+                bbox_norm: { x: 0.1, y: 0.05, w: 0.3, h: 0.08 },
+              },
+              {
+                text: "line one ref",
+                role: "body",
+                source: "document_ai",
+                bbox_norm: { x: 0.1, y: 0.2, w: 0.8, h: 0.08 },
+              },
+              {
+                text: "line two ref",
+                role: "body",
+                source: "document_ai",
+                bbox_norm: { x: 0.1, y: 0.35, w: 0.8, h: 0.08 },
+              },
+            ],
+          },
+        ],
+      },
+      reference_items: [],
+      slide_plans: [],
+    };
+    const llmSlide = {
+      text_blocks: [
+        { role: "headline", text: "Libra" },
+        { role: "body", text: "loves to socialize but also craves solitude" },
+        { role: "body", text: "frequents spa retreats" },
+        { role: "body", text: "binge-watches series" },
+        { role: "body", text: "renews interest in familiar shows" },
+      ],
+    };
+    const layers = buildMimicDocAiRenderTextLayers(mimic, 1, llmSlide);
+    const texts = layers.map((l) => l.text);
+    expect(texts).toContain("loves to socialize but also craves solitude");
+    expect(texts).toContain("renews interest in familiar shows");
+  });
+
   it("buildMimicDocAiRenderTextLayers reuses body-template OCR when output slide maps to source_slide_index 2", () => {
     const mimic = {
       visual_guideline: {

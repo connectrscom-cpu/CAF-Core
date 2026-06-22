@@ -662,7 +662,7 @@ export function CarouselSlider({
               <label className="filter-label">Text phrases ({mimicTextBlocks.length})</label>
               {mimicFullBleed ? (
                 <p className="mimic-text-blocks__hint">
-                  One field per on-slide phrase (like the reference). The layout editor may show more boxes — copy is split across them on reprint.
+                  One field per on-slide phrase. Box numbers in the layout editor follow OCR slots — they may not match these field numbers when the reference had fewer text regions than your copy.
                 </p>
               ) : null}
               <div className="mimic-text-blocks__list">
