@@ -2345,6 +2345,18 @@ function isBodyStackMergeBlock(block: DocAiLayoutBlock): boolean {
   return bucket === "body" || bucket === "cta";
 }
 
+/** Distinct full lines in one OCR column (listicle traits) — do not merge into one blob. */
+function stackLayersLookLikeIndependentListicleLines(uniqueTexts: string[]): boolean {
+  if (uniqueTexts.length <= 1) return false;
+  if (uniqueTexts.length >= 3) return true;
+  const trimmed = uniqueTexts.map((t) => t.trim()).filter(Boolean);
+  const longLines = trimmed.filter((t) => t.length >= 24);
+  if (longLines.length >= 2) return true;
+  const sentenceEnds = trimmed.filter((t) => /[.!?]$/.test(t));
+  if (sentenceEnds.length >= 2) return true;
+  return trimmed.length === 2 && trimmed.every((t) => t.length >= 16);
+}
+
 function bodyBlocksFromOrderedRef(orderedRef: DocAiLayoutBlock[]): DocAiLayoutBlock[] {
   return orderedRef.filter(isBodyStackMergeBlock);
 }
@@ -2461,6 +2473,14 @@ export function consolidateDocAiRenderLayersInVerticalStacks(
     if (uniqueTexts.length === 1 && stackLayers.length === 1 && stack.length === 1) {
       merged.push(stackLayers[0]!);
       consumed.add(stackLayers[0]!);
+      continue;
+    }
+
+    if (stackLayersLookLikeIndependentListicleLines(uniqueTexts)) {
+      for (const l of stackLayers) {
+        merged.push(l);
+        consumed.add(l);
+      }
       continue;
     }
 
