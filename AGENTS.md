@@ -68,6 +68,8 @@ npm run process-run -- <run_id|uuid> [--project SLUG]
 
 Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 
+**Production Review / Admin UI:** embedded in the Core Fly image — **not** a separate Vercel deploy. Canonical URL: **https://caf-core.fly.dev/admin/workbench**. After `apps/review/` changes, ship with **`fly deploy -a caf-core`** from repo root (rebuilds Next.js standalone in `Dockerfile`). Vercel projects (`caf-core-review`, etc.) are optional/legacy; do not assume they are what operators use.
+
 ## Documentation map
 
 | Doc | Audience |

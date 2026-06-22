@@ -156,12 +156,18 @@ cd services/media-gateway && npm install && node server.js
 
 Each deployable unit has its own **`fly.toml`** + **`Dockerfile`** where applicable:
 
-| App | Config |
-|-----|--------|
-| CAF Core | `fly.toml`, `Dockerfile` |
-| Media gateway | `services/media-gateway/fly.toml`, `services/media-gateway/Dockerfile` |
+| App | Config | Production URL |
+|-----|--------|------------------|
+| **CAF Core + Review workbench** | `fly.toml`, `Dockerfile` | **https://caf-core.fly.dev** — `/admin/workbench`, `/admin/*` |
+| Media gateway / renderer | `fly.caf-renderer.toml`, `services/media-gateway/Dockerfile` | `https://caf-renderer.fly.dev` |
 
-> The review UI (`apps/review`) ships to **Vercel** (see `apps/review/vercel.json`); there is no Fly deployment for it.
+**Operator UI (canonical):** The **Review Console** and **Admin workbench** (`apps/review`) are **embedded in the Core Docker image** (`CAF_REVIEW_ENABLED=1`, built in `Dockerfile`) and served from **`caf-core.fly.dev`**. After any change under `apps/review/`, deploy Core:
+
+```bash
+fly deploy -a caf-core
+```
+
+> **Do not** treat Vercel (`apps/review/vercel.json`, projects like `caf-core-review`) as production for editorial work — that is a separate/legacy host. Operators use **https://caf-core.fly.dev/admin/workbench**.
 
 **Auth:** set `CAF_CORE_REQUIRE_AUTH=1` and `CAF_CORE_API_TOKEN` on Core; clients send `x-caf-core-token` or `Authorization: Bearer …` on protected routes (see `src/server.ts` for public exceptions such as `GET /health` and public template paths).
 

@@ -106,7 +106,7 @@ Next.js 14 in `apps/review` — uses `CAF_CORE_URL` and optional `CAF_CORE_TOKEN
 
 ### Deploy hints
 
-Fly (`fly.toml`, `Dockerfile`), Review on Vercel (`apps/review/vercel.json`). Full env list: `ENV_AND_SECRETS_INVENTORY.md`.
+Fly (`fly.toml`, `Dockerfile`) — Core API **and** embedded Review admin at **https://caf-core.fly.dev/admin/workbench** (`fly deploy -a caf-core` after `apps/review/` changes). Vercel (`apps/review/vercel.json`) is not the canonical operator UI. Full env list: `ENV_AND_SECRETS_INVENTORY.md`.
 
 ---
 

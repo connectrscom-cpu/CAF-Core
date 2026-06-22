@@ -2,6 +2,8 @@
 
 Reduce time-to-complete and eliminate common Fly.io failure modes (timeouts, cold starts, wrong base URLs, renderer/video-assembly hangs) for **CAF Core** + **CAF Renderer/Media Gateway** deployments.
 
+**Operator Review / Admin UI:** **https://caf-core.fly.dev/admin/workbench** (embedded `apps/review` in the Core image). Deploy with **`fly deploy -a caf-core`** from repo root — not Vercel.
+
 ## Biggest latency contributors (where to look)
 
 - **LLM generation (OpenAI chat)**: `src/services/openai-chat.ts`, `src/services/llm-generator.ts`

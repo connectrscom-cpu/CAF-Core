@@ -58,8 +58,8 @@ Core **calls** these over HTTP; it does not embed Puppeteer/ffmpeg for carousel/
 
 ## Deployment hints (from repo)
 
-- **Fly.io:** **`fly.toml`**, **`Dockerfile`** at root for Core; **`services/media-gateway/`** has its own Fly config.
-- **Review:** **`apps/review/vercel.json`** — Vercel-oriented.
+- **Fly.io:** **`fly.toml`**, **`Dockerfile`** at root for Core (embeds Review Next.js standalone → **https://caf-core.fly.dev/admin/workbench**); **`services/media-gateway/`** has its own Fly config.
+- **Review (production):** ship with **`fly deploy -a caf-core`** — same image as the API. **`apps/review/vercel.json`** is optional/legacy Vercel only; not the operator workbench host.
 
 ## Why this stack fits
 
