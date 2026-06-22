@@ -6,6 +6,7 @@ import {
 } from "@caf-core-carousel/carousel-render-pack";
 import {
   applyMimicDocAiLayerPositionOverrides,
+  isCustomAddedMimicDocAiLayerKey,
   mimicDocAiLayerPositionKey,
   pickMimicDocAiLayerPositionsForSlide,
   coerceTemplateBgInspectOverrides,
@@ -115,10 +116,20 @@ export function enrichSlideRenderContextWithMimicDocAi(
     }
   }
 
-  const docaiTextLayers = docAiLayers.map((layer) => ({
-    ...layer,
-    layer_key: mimicDocAiLayerPositionKey(layer),
-  })) as Array<Record<string, unknown> & { layer_key: string }>;
+  const customOverrides = (layerPosOverrides ?? []).filter(
+    (o) => isCustomAddedMimicDocAiLayerKey(o.layer_key) && !o.hidden
+  );
+  const customLayerStart = docAiLayers.length - customOverrides.length;
+  const docaiTextLayers = docAiLayers.map((layer, index) => {
+    const customOverride =
+      index >= customLayerStart && customOverrides.length > 0
+        ? customOverrides[index - customLayerStart]
+        : undefined;
+    return {
+      ...layer,
+      layer_key: customOverride?.layer_key ?? mimicDocAiLayerPositionKey(layer),
+    };
+  }) as Array<Record<string, unknown> & { layer_key: string }>;
 
   const useDocAiLayers =
     docAiLayers.length > 0 &&

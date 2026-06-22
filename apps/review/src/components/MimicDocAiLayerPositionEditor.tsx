@@ -723,6 +723,7 @@ export function MimicDocAiLayerPositionEditor({
     const nextCustom: DocAiLayerBox[] = [];
     const next: Record<string, DocAiLayerOverride> = {};
     for (const layer of layers) {
+      if (isCustomLayerKey(layer.layer_key)) continue;
       const key = layer.layer_key;
       const savedRow = resolveSaved(key);
       const text = templateBgMode
@@ -758,6 +759,7 @@ export function MimicDocAiLayerPositionEditor({
     }
     for (const savedRow of initialOverrides ?? []) {
       if (!isCustomLayerKey(savedRow.layer_key) || savedRow.hidden) continue;
+      if (nextCustom.some((box) => box.layer_key === savedRow.layer_key)) continue;
       const box = customBoxFromOverride(savedRow, projectHandle);
       nextCustom.push(box);
       next[savedRow.layer_key] = {
@@ -782,8 +784,14 @@ export function MimicDocAiLayerPositionEditor({
     }
     setCustomLayers((prevCustom) => {
       const mergedKeys = new Set(nextCustom.map((b) => b.layer_key));
+      const keysInLayers = new Set(
+        layers.filter((l) => isCustomLayerKey(l.layer_key)).map((l) => l.layer_key)
+      );
       const unsavedLocal = prevCustom.filter(
-        (b) => isCustomLayerKey(b.layer_key) && !mergedKeys.has(b.layer_key)
+        (b) =>
+          isCustomLayerKey(b.layer_key) &&
+          !mergedKeys.has(b.layer_key) &&
+          !keysInLayers.has(b.layer_key)
       );
       return unsavedLocal.length > 0 ? [...nextCustom, ...unsavedLocal] : nextCustom;
     });
@@ -988,7 +996,22 @@ export function MimicDocAiLayerPositionEditor({
   }, [moveDrag, resizeDrag, updateOverride, overrides, pushUndoSnapshot]);
 
   const selected = selectedKey ? overrides[selectedKey] : null;
-  const displayLayers = useMemo(() => [...layers, ...customLayers], [layers, customLayers]);
+  const displayLayers = useMemo(() => {
+    const byKey = new Map<string, DocAiLayerBox>();
+    const order: string[] = [];
+    const add = (layer: DocAiLayerBox) => {
+      if (!byKey.has(layer.layer_key)) order.push(layer.layer_key);
+      byKey.set(layer.layer_key, layer);
+    };
+    for (const layer of layers) {
+      if (!isCustomLayerKey(layer.layer_key)) add(layer);
+    }
+    for (const layer of layers) {
+      if (isCustomLayerKey(layer.layer_key)) add(layer);
+    }
+    for (const layer of customLayers) add(layer);
+    return order.map((key) => byKey.get(key)!);
+  }, [layers, customLayers]);
   const selectedLayer = selectedKey ? displayLayers.find((l) => l.layer_key === selectedKey) : null;
   const selectedLayerForPanel: DocAiLayerBox | null =
     selected && selectedKey
@@ -1139,6 +1162,15 @@ export function MimicDocAiLayerPositionEditor({
   }, [templateBgMode, projectHandle, pushUndo]);
 
   const addTextBox = useCallback(() => {
+    const existingPlaceholder = customLayersRef.current.find((box) => {
+      const row = overridesRef.current[box.layer_key];
+      const text = (row?.text ?? box.text ?? "").trim();
+      return !text || text === "New text";
+    });
+    if (existingPlaceholder) {
+      selectLayer(existingPlaceholder.layer_key);
+      return;
+    }
     pushUndo();
     const key = newCustomLayerKey();
     const text = "New text";
@@ -1175,7 +1207,7 @@ export function MimicDocAiLayerPositionEditor({
     lastActiveBlockIndexRef.current = newBlockIndex;
     selfSelectAtRef.current = Date.now();
     onActiveBlockIndexChange?.(newBlockIndex);
-  }, [layers.length, customLayers.length, onActiveBlockIndexChange, pushUndo]);
+  }, [layers.length, customLayers.length, onActiveBlockIndexChange, pushUndo, selectLayer]);
 
   const deleteSelectedLayer = useCallback(() => {
     if (!selectedKey) return;

@@ -98,9 +98,34 @@ function inferDocAiLayerRole(
 }
 
 function isPlaceholderCustomLayer(layer: DocAiLayerBox, row: DocAiLayerOverride | undefined): boolean {
-  if (!layer.layer_key?.startsWith("custom_")) return false;
+  if (!layer.layer_key?.startsWith("custom@")) return false;
   const text = (row?.text ?? layer.text ?? "").trim();
   return !text || text === "New text";
+}
+
+/** Drop empty reviewer-added boxes — they must not persist, inspect, or duplicate OCR slots. */
+function dropPlaceholderCustomOverrides(rows: DocAiLayerOverride[]): DocAiLayerOverride[] {
+  return rows.filter((row) => {
+    if (!row.layer_key.startsWith("custom@")) return true;
+    if (row.hidden) return true;
+    const text = row.text?.trim();
+    return Boolean(text && text !== "New text");
+  });
+}
+
+/** Legacy inspect echoed custom copy under body@x,y:text keys — skip when a custom@ draft matches. */
+function isLegacyInspectEchoOfCustomDraft(
+  inspectLayer: DocAiLayerBox,
+  draftRow: DocAiLayerOverride
+): boolean {
+  if (inspectLayer.layer_key.startsWith("custom@")) return false;
+  const inspectText = (inspectLayer.text ?? "").trim();
+  const draftText = (draftRow.text ?? "").trim();
+  if (!inspectText || !draftText || inspectText !== draftText) return false;
+  return (
+    Math.abs(inspectLayer.x_px - draftRow.x_px) <= 32 &&
+    Math.abs(inspectLayer.y_px - draftRow.y_px) <= 32
+  );
 }
 
 function asRec(v: unknown): Record<string, unknown> | null {
@@ -159,15 +184,16 @@ function stripTemplateBgHiddenOverrides(rows: DocAiLayerOverride[]): DocAiLayerO
 }
 
 function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
-  return rows.map((r) => {
+  return dropPlaceholderCustomOverrides(rows).map((r) => {
     if (r.hidden) return r;
     if (r.layer_key.startsWith("custom@")) {
+      const text = r.text?.trim();
       return {
         ...r,
         box_locked: true,
         w_px: r.w_px ?? 280,
         h_px: r.h_px ?? 72,
-        text: r.text?.trim() || "New text",
+        ...(text ? { text } : {}),
       };
     }
     if (templateBgMode) {
@@ -184,7 +210,7 @@ function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false)
 
 /** Inspect must always return full OCR slots — hidden is reprint-only for template_bg. */
 function overridesForInspect(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
-  const persisted = overridesForPersist(rows, templateBgMode);
+  const persisted = dropPlaceholderCustomOverrides(overridesForPersist(rows, templateBgMode));
   if (!templateBgMode) return persisted;
   return persisted.filter((row) => !row.hidden);
 }
@@ -1355,9 +1381,28 @@ export function MimicCarouselLayerEditorPanel({
       });
     }
     const draftByKey = new Map(layerPosDraft.map((row) => [row.layer_key, row]));
+    const customDraftRows = layerPosDraft.filter(
+      (row) => row.layer_key.startsWith("custom@") && !row.hidden && !isPlaceholderCustomLayer(
+        {
+          layer_key: row.layer_key,
+          text: row.text ?? "",
+          role: roleFromLayerKey(row.layer_key),
+          x_px: row.x_px,
+          y_px: row.y_px,
+          w_px: row.w_px ?? 120,
+          h_px: row.h_px ?? 48,
+        },
+        row
+      )
+    );
     const filtered = boxes.filter((layer) => {
       if (isDraftHiddenForLayer(layer.layer_key, draftByKey)) return false;
       if (isPlaceholderCustomLayer(layer, draftByKey.get(layer.layer_key))) return false;
+      if (
+        customDraftRows.some((draftRow) => isLegacyInspectEchoOfCustomDraft(layer, draftRow))
+      ) {
+        return false;
+      }
       return true;
     });
     const seenKeys = new Set(filtered.map((l) => l.layer_key));
