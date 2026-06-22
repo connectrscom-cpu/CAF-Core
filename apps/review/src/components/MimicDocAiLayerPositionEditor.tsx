@@ -555,8 +555,82 @@ export function MimicDocAiLayerPositionEditor({
   const textInputRef = useRef<HTMLTextAreaElement>(null);
   const lastActiveBlockIndexRef = useRef<number | null>(null);
 
+  // Undo/redo history. Each entry is a full snapshot of the editable state
+  // (overrides + custom boxes + selection). We snapshot at discrete commit
+  // boundaries (add/delete/fit/typography clicks, the start of a drag, the start
+  // of a text edit) rather than on every keystroke, so a single Ctrl+Z reverts a
+  // whole logical action. Restoring a snapshot re-emits the override list, which
+  // flows back to the parent as a normal user edit (auto-save + reprint).
+  type EditorSnapshot = {
+    overrides: Record<string, DocAiLayerOverride>;
+    customLayers: DocAiLayerBox[];
+    selectedKey: string | null;
+  };
+  const [undoStack, setUndoStack] = useState<EditorSnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<EditorSnapshot[]>([]);
+  const overridesRef = useRef(overrides);
+  const selectedKeyRef = useRef(selectedKey);
+  overridesRef.current = overrides;
+  selectedKeyRef.current = selectedKey;
+  const dragSnapshotRef = useRef<EditorSnapshot | null>(null);
+  const dragMovedRef = useRef(false);
+  // Layer key whose copy is mid-edit — lets consecutive keystrokes collapse into
+  // one undo entry (we snapshot on the first keystroke of an editing session).
+  const textEditKeyRef = useRef<string | null>(null);
+  // Timestamp of the last selection the editor made itself. The parent echoes the
+  // selection back via `activeBlockIndex`, but in cluster/full-bleed mode it can be
+  // normalized to a *different* box in the same group — which would otherwise yank
+  // the selection away from the box the user just clicked. We ignore that echo for
+  // a short window so editor clicks win.
+  const selfSelectAtRef = useRef(0);
+
+  const captureSnapshot = useCallback(
+    (): EditorSnapshot => ({
+      overrides: overridesRef.current,
+      customLayers: customLayersRef.current,
+      selectedKey: selectedKeyRef.current,
+    }),
+    []
+  );
+
+  const pushUndoSnapshot = useCallback((snap: EditorSnapshot) => {
+    setUndoStack((stack) => [...stack.slice(-49), snap]);
+    setRedoStack([]);
+  }, []);
+
+  const pushUndo = useCallback(() => {
+    pushUndoSnapshot(captureSnapshot());
+  }, [pushUndoSnapshot, captureSnapshot]);
+
+  const applySnapshot = useCallback((snap: EditorSnapshot) => {
+    setOverrides(snap.overrides);
+    setCustomLayers(snap.customLayers);
+    setSelectedKey(snap.selectedKey);
+  }, []);
+
+  const undo = useCallback(() => {
+    setUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const prev = stack[stack.length - 1];
+      setRedoStack((r) => [...r.slice(-49), captureSnapshot()]);
+      applySnapshot(prev);
+      return stack.slice(0, -1);
+    });
+  }, [captureSnapshot, applySnapshot]);
+
+  const redo = useCallback(() => {
+    setRedoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const next = stack[stack.length - 1];
+      setUndoStack((u) => [...u.slice(-49), captureSnapshot()]);
+      applySnapshot(next);
+      return stack.slice(0, -1);
+    });
+  }, [captureSnapshot, applySnapshot]);
+
   useEffect(() => {
     setFontSizeDraft(null);
+    textEditKeyRef.current = null;
     if (selectedKey) {
       window.requestAnimationFrame(() => textInputRef.current?.focus());
     }
@@ -874,10 +948,12 @@ export function MimicDocAiLayerPositionEditor({
           dx,
           dy
         );
+        dragMovedRef.current = true;
         updateOverride(resizeDrag.key, box);
         return;
       }
       if (!moveDrag) return;
+      dragMovedRef.current = true;
       const dx = (e.clientX - moveDrag.startX) / scale;
       const dy = (e.clientY - moveDrag.startY) / scale;
       const row = overrides[moveDrag.key];
@@ -900,9 +976,16 @@ export function MimicDocAiLayerPositionEditor({
         ...(row?.h_px != null ? { h_px: row.h_px } : {}),
       });
     }
+    // Only record a history entry when a drag actually moved/resized a box —
+    // a plain click (select) must not pollute the undo stack.
+    if ((moveDrag || resizeDrag) && dragMovedRef.current && dragSnapshotRef.current) {
+      pushUndoSnapshot(dragSnapshotRef.current);
+    }
+    dragSnapshotRef.current = null;
+    dragMovedRef.current = false;
     setMoveDrag(null);
     setResizeDrag(null);
-  }, [moveDrag, resizeDrag, updateOverride, overrides]);
+  }, [moveDrag, resizeDrag, updateOverride, overrides, pushUndoSnapshot]);
 
   const selected = selectedKey ? overrides[selectedKey] : null;
   const displayLayers = useMemo(() => [...layers, ...customLayers], [layers, customLayers]);
@@ -937,6 +1020,8 @@ export function MimicDocAiLayerPositionEditor({
   useEffect(() => {
     lastActiveBlockIndexRef.current = null;
     setSelectedKey(null);
+    setUndoStack([]);
+    setRedoStack([]);
   }, [slideIndex]);
 
   useEffect(() => {
@@ -945,6 +1030,13 @@ export function MimicDocAiLayerPositionEditor({
       return;
     }
     if (lastActiveBlockIndexRef.current === activeBlockIndex) return;
+    // The parent is echoing back a selection the editor just initiated (possibly
+    // normalized to another box in the same cluster). Record the new index but keep
+    // the user's actual click — don't re-select.
+    if (Date.now() - selfSelectAtRef.current < 250) {
+      lastActiveBlockIndexRef.current = activeBlockIndex;
+      return;
+    }
     lastActiveBlockIndexRef.current = activeBlockIndex;
     const match =
       visibleLayers.find((l) => l.block_index === activeBlockIndex) ?? visibleLayers[activeBlockIndex];
@@ -999,6 +1091,7 @@ export function MimicDocAiLayerPositionEditor({
       const idx = layer?.block_index ?? visibleLayers.findIndex((l) => l.layer_key === key);
       if (idx >= 0) {
         lastActiveBlockIndexRef.current = idx;
+        selfSelectAtRef.current = Date.now();
         onActiveBlockIndexChange?.(idx);
       }
     },
@@ -1009,6 +1102,7 @@ export function MimicDocAiLayerPositionEditor({
   const baseImageUrl = backgroundUrl?.trim() || "";
 
   const fitBoxToText = useCallback((key: string, row: DocAiLayerOverride) => {
+    pushUndo();
     const layer =
       layersRef.current.find((l) => l.layer_key === key) ??
       customLayersRef.current.find((l) => l.layer_key === key);
@@ -1020,9 +1114,10 @@ export function MimicDocAiLayerPositionEditor({
       row.y_px
     );
     updateOverride(key, { text: copyText || row.text, w_px: open.w_px, h_px: open.h_px, box_locked: true });
-  }, [updateOverride, templateBgMode, projectHandle]);
+  }, [updateOverride, templateBgMode, projectHandle, pushUndo]);
 
   const fitAllBoxesToText = useCallback(() => {
+    pushUndo();
     setOverrides((prev) => {
       const next: Record<string, DocAiLayerOverride> = { ...prev };
       for (const [key, row] of Object.entries(next)) {
@@ -1041,9 +1136,10 @@ export function MimicDocAiLayerPositionEditor({
       }
       return next;
     });
-  }, [templateBgMode, projectHandle]);
+  }, [templateBgMode, projectHandle, pushUndo]);
 
   const addTextBox = useCallback(() => {
+    pushUndo();
     const key = newCustomLayerKey();
     const text = "New text";
     const font_size_px = DEFAULT_FONT_PX;
@@ -1077,13 +1173,15 @@ export function MimicDocAiLayerPositionEditor({
     }));
     setSelectedKey(key);
     lastActiveBlockIndexRef.current = newBlockIndex;
+    selfSelectAtRef.current = Date.now();
     onActiveBlockIndexChange?.(newBlockIndex);
-  }, [layers.length, customLayers.length, onActiveBlockIndexChange]);
+  }, [layers.length, customLayers.length, onActiveBlockIndexChange, pushUndo]);
 
   const deleteSelectedLayer = useCallback(() => {
     if (!selectedKey) return;
     const row = overrides[selectedKey];
     if (!row) return;
+    pushUndo();
     if (isCustomLayerKey(selectedKey)) {
       setCustomLayers((prev) => prev.filter((box) => box.layer_key !== selectedKey));
       setOverrides((prev) => {
@@ -1114,9 +1212,29 @@ export function MimicDocAiLayerPositionEditor({
     setSelectedKey(null);
     lastActiveBlockIndexRef.current = null;
     onActiveBlockIndexChange?.(null);
-  }, [selectedKey, overrides, displayLayers, onActiveBlockIndexChange]);
+  }, [selectedKey, overrides, displayLayers, onActiveBlockIndexChange, pushUndo]);
+
+  // Escape hatch for the "boxes piled up and won't go away" case: drop every
+  // manually-added box in one click (undoable). OCR/seeded boxes are untouched.
+  const clearAddedBoxes = useCallback(() => {
+    if (customLayersRef.current.length === 0) return;
+    pushUndo();
+    setCustomLayers([]);
+    setOverrides((prev) => {
+      const next: Record<string, DocAiLayerOverride> = {};
+      for (const [key, row] of Object.entries(prev)) {
+        if (isCustomLayerKey(key)) continue;
+        next[key] = row;
+      }
+      return next;
+    });
+    setSelectedKey((prev) => (prev && isCustomLayerKey(prev) ? null : prev));
+    lastActiveBlockIndexRef.current = null;
+    onActiveBlockIndexChange?.(null);
+  }, [pushUndo, onActiveBlockIndexChange]);
 
   const restoreHiddenLayers = useCallback(() => {
+    pushUndo();
     setOverrides((prev) => {
       const next: Record<string, DocAiLayerOverride> = {};
       for (const [key, row] of Object.entries(prev)) {
@@ -1128,13 +1246,29 @@ export function MimicDocAiLayerPositionEditor({
     setSelectedKey(null);
     lastActiveBlockIndexRef.current = null;
     onActiveBlockIndexChange?.(null);
-  }, [onActiveBlockIndexChange]);
+  }, [onActiveBlockIndexChange, pushUndo]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!selectedKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      const inField = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+      const mod = e.ctrlKey || e.metaKey;
+      // Ctrl/Cmd+Z = undo, Ctrl/Cmd+Shift+Z or Ctrl+Y = redo. When focused in a
+      // text field, defer to the browser's native field-level undo instead.
+      if (mod && (e.key === "z" || e.key === "Z")) {
+        if (inField) return;
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (mod && (e.key === "y" || e.key === "Y")) {
+        if (inField) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (!selectedKey || inField) return;
       if (e.key === "Delete" || e.key === "Backspace") {
         e.preventDefault();
         deleteSelectedLayer();
@@ -1142,7 +1276,7 @@ export function MimicDocAiLayerPositionEditor({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selectedKey, deleteSelectedLayer]);
+  }, [selectedKey, deleteSelectedLayer, undo, redo]);
 
   if (layers.length === 0 && customLayers.length === 0) {
     return (
@@ -1161,6 +1295,24 @@ export function MimicDocAiLayerPositionEditor({
     <div className="mimic-docai-editor">
       <div className="mimic-docai-editor__toolbar">
         <div className="mimic-docai-editor__toolbar-actions">
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={undo}
+            disabled={undoStack.length === 0}
+            title="Undo last change (Ctrl/Cmd+Z)"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={redo}
+            disabled={redoStack.length === 0}
+            title="Redo (Ctrl/Cmd+Shift+Z)"
+          >
+            Redo
+          </button>
           <button type="button" className="btn-secondary btn-sm" onClick={fitAllBoxesToText}>
             Fit boxes to text
           </button>
@@ -1170,6 +1322,16 @@ export function MimicDocAiLayerPositionEditor({
           {selectedKey ? (
             <button type="button" className="btn-danger-ghost btn-sm" onClick={deleteSelectedLayer}>
               Delete box
+            </button>
+          ) : null}
+          {customLayers.length > 0 ? (
+            <button
+              type="button"
+              className="btn-danger-ghost btn-sm"
+              onClick={clearAddedBoxes}
+              title="Remove every box you added on this slide"
+            >
+              Clear added boxes ({customLayers.length})
             </button>
           ) : null}
           {hiddenCount > 0 ? (
@@ -1292,6 +1454,8 @@ export function MimicDocAiLayerPositionEditor({
                       if ((e.target as HTMLElement).dataset.resizeCorner) return;
                       e.currentTarget.setPointerCapture(e.pointerId);
                       selectLayer(key);
+                      dragSnapshotRef.current = captureSnapshot();
+                      dragMovedRef.current = false;
                       setMoveDrag({
                         key,
                         startX: e.clientX,
@@ -1341,6 +1505,8 @@ export function MimicDocAiLayerPositionEditor({
                               e.stopPropagation();
                               e.currentTarget.setPointerCapture(e.pointerId);
                               selectLayer(key);
+                              dragSnapshotRef.current = captureSnapshot();
+                              dragMovedRef.current = false;
                               setResizeDrag({
                                 key,
                                 corner,
@@ -1421,6 +1587,10 @@ export function MimicDocAiLayerPositionEditor({
                 readOnly={templateBgMode}
                 onChange={(e) => {
                   if (templateBgMode) return;
+                  if (textEditKeyRef.current !== selected.layer_key) {
+                    pushUndo();
+                    textEditKeyRef.current = selected.layer_key;
+                  }
                   updateOverride(selected.layer_key, { text: e.target.value });
                 }}
                 className="mimic-docai-editor__text-input"
@@ -1448,6 +1618,7 @@ export function MimicDocAiLayerPositionEditor({
                         className="btn-secondary mimic-docai-editor__font-step"
                         onClick={() => {
                           setFontSizeDraft(null);
+                          pushUndo();
                           updateOverride(selected.layer_key, {
                             font_size_px: Math.max(MIN_FONT_PX, activeFontPx - 2),
                           });
@@ -1468,6 +1639,8 @@ export function MimicDocAiLayerPositionEditor({
                           if (!raw) return;
                           const n = Number(raw);
                           if (!Number.isFinite(n)) return;
+                          if (Math.round(n) === activeFontPx) return;
+                          pushUndo();
                           updateOverride(selected.layer_key, {
                             font_size_px: Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(n))),
                           });
@@ -1481,6 +1654,7 @@ export function MimicDocAiLayerPositionEditor({
                         className="btn-secondary mimic-docai-editor__font-step"
                         onClick={() => {
                           setFontSizeDraft(null);
+                          pushUndo();
                           updateOverride(selected.layer_key, {
                             font_size_px: Math.min(MAX_FONT_PX, activeFontPx + 2),
                           });
@@ -1494,11 +1668,12 @@ export function MimicDocAiLayerPositionEditor({
                         <input
                           type="checkbox"
                           checked={style.font_weight >= 700}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            pushUndo();
                             updateOverride(selected.layer_key, {
                               font_weight: e.target.checked ? 700 : 400,
-                            })
-                          }
+                            });
+                          }}
                         />
                         Bold
                       </label>
@@ -1506,9 +1681,10 @@ export function MimicDocAiLayerPositionEditor({
                         <input
                           type="checkbox"
                           checked={style.font_style_italic}
-                          onChange={(e) =>
-                            updateOverride(selected.layer_key, { font_style_italic: e.target.checked })
-                          }
+                          onChange={(e) => {
+                            pushUndo();
+                            updateOverride(selected.layer_key, { font_style_italic: e.target.checked });
+                          }}
                         />
                         Italic
                       </label>
@@ -1518,6 +1694,7 @@ export function MimicDocAiLayerPositionEditor({
                       <input
                         type="color"
                         value={style.color_hex}
+                        onFocus={() => pushUndo()}
                         onChange={(e) => updateOverride(selected.layer_key, { color_hex: e.target.value })}
                         className="mimic-docai-editor__color-input"
                       />
@@ -1531,7 +1708,10 @@ export function MimicDocAiLayerPositionEditor({
                               style={{ background: hex }}
                               title={hex}
                               aria-label={`Use ${hex}`}
-                              onClick={() => updateOverride(selected.layer_key, { color_hex: hex })}
+                              onClick={() => {
+                                pushUndo();
+                                updateOverride(selected.layer_key, { color_hex: hex });
+                              }}
                             />
                           ))}
                         </div>
@@ -1541,7 +1721,10 @@ export function MimicDocAiLayerPositionEditor({
                       <span className="mimic-docai-editor__font-label">Font</span>
                       <select
                         value={style.font_family}
-                        onChange={(e) => updateOverride(selected.layer_key, { font_family: e.target.value })}
+                        onChange={(e) => {
+                          pushUndo();
+                          updateOverride(selected.layer_key, { font_family: e.target.value });
+                        }}
                         className="mimic-docai-editor__family-select"
                       >
                         {FONT_FAMILY_OPTIONS.map((opt) => (
