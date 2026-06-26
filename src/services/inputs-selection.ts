@@ -46,6 +46,8 @@ export interface SelectionSnapshotPreLlmMeta {
   by_kind_sent: Record<string, number>;
   /** Effective per-kind profiles (weights + min_score) after merge with defaults. */
   profiles_used: Record<string, { min_score: number; weights: Record<string, number> }>;
+  /** When true, social rows with follower counts used page-relative engagement features. */
+  relative_page_performance?: boolean;
 }
 
 export interface SelectionSnapshot {

@@ -46,7 +46,7 @@ export default function ApprovedPage() {
       </div>
 
       <div style={{ padding: "20px 28px 28px" }}>
-        <Link href={navHref("/")} className="detail-back" style={{ padding: 0, marginBottom: 16, display: "inline-block" }}>← Review Console</Link>
+        <Link href={navHref("/review")} className="detail-back" style={{ padding: 0, marginBottom: 16, display: "inline-block" }}>← Review Console</Link>
         {error && <div style={{ color: "var(--red)", marginBottom: 16, fontSize: 13 }}>{error}</div>}
         {loading && !data && <div style={{ color: "var(--muted)" }}>Loading…</div>}
         {data && !loading && (

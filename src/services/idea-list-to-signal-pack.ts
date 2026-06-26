@@ -9,6 +9,8 @@ import { getInputsIdeaListById, listInputsIdeasForList } from "../repositories/i
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
+import { MARKET_INTELLIGENCE_V1_KEY } from "../domain/market-intelligence-synthesis.js";
+import { buildMarketIntelligenceForImport } from "./market-intelligence-pack.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 
 export type IdeaFormatLimitBucket = "carousel" | "video" | "post" | "thread" | "other";
@@ -105,6 +107,24 @@ export async function buildSignalPackFromIdeaList(
     max_insights_scan: 2000,
     max_entries: 48,
   });
+  const derivedWithTpk = mergeTopPerformerKnowledgeIntoDerivedGlobals({
+    from_inputs_idea_list_id: ideaListId,
+    from_inputs_import_id: list.inputs_import_id,
+    ideas_count: ideasJson.length,
+    ideas_count_before_format_limits: before,
+    hashtag_leaderboard_v1: hashtagStats.leaderboard,
+    hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
+    visual_guidelines_pack_v1: visualGuidelinesPack,
+    format_limits: opts?.format_limits && Object.keys(opts.format_limits).length > 0 ? opts.format_limits : undefined,
+    created_at: new Date().toISOString(),
+  });
+  const marketIntelligenceV1 = await buildMarketIntelligenceForImport(
+    db,
+    project.id,
+    projectSlug,
+    list.inputs_import_id,
+    { derived_globals: derivedWithTpk }
+  );
   const pack = await insertSignalPack(db, {
     run_id: runId,
     project_id: project.id,
@@ -113,17 +133,10 @@ export async function buildSignalPackFromIdeaList(
     ideas_json: ideasJson,
     selected_idea_ids_json: [],
     source_inputs_idea_list_id: ideaListId,
-    derived_globals_json: mergeTopPerformerKnowledgeIntoDerivedGlobals({
-      from_inputs_idea_list_id: ideaListId,
-      from_inputs_import_id: list.inputs_import_id,
-      ideas_count: ideasJson.length,
-      ideas_count_before_format_limits: before,
-      hashtag_leaderboard_v1: hashtagStats.leaderboard,
-      hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
-      visual_guidelines_pack_v1: visualGuidelinesPack,
-      format_limits: opts?.format_limits && Object.keys(opts.format_limits).length > 0 ? opts.format_limits : undefined,
-      created_at: new Date().toISOString(),
-    }),
+    derived_globals_json: {
+      ...derivedWithTpk,
+      [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
+    },
     notes: opts?.notes ?? `Built from inputs idea list ${ideaListId}`,
     upload_filename: `from_idea_list:${ideaListId}`,
     source_inputs_import_id: list.inputs_import_id,

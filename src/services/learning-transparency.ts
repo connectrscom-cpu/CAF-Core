@@ -8,9 +8,10 @@ import { qOne } from "../db/queries.js";
 export const LEARNING_TRANSPARENCY_STATIC = {
   schema_version: "1",
   summary:
-    "Learning is not fully automatic. Editorial/market analyzers use SQL + heuristics (no LLM). " +
-    "Optional LLM post-approval review scores content that humans already approved (vision + text) and stores results; Core also upserts pending GENERATION_GUIDANCE rules when scores cross configured thresholds (no separate mint step). " +
-    "Pending rules must be applied by an operator. Generation injects active learning context into the main content LLM.",
+    "Learning is not fully automatic. Editorial/performance analyzers use SQL + heuristics (no LLM in the analyzer itself). " +
+    "Post-approval review uses Nemotron VL on rendered assets + intended copy (TP-parity output_insights_json). " +
+    "Pending rules must be applied by an operator. Global observatory rows on caf-global are read-only aggregates. " +
+    "Generation injects active learning context into the main content LLM.",
   loops: [
     {
       id: "B",
@@ -35,20 +36,23 @@ export const LEARNING_TRANSPARENCY_STATIC = {
     },
     {
       id: "C",
-      name: "Market / performance learning",
-      evidence_source: "performance_metrics (JSON ingest or CSV upload)",
-      analyzer: "market-learning.ts (deterministic SQL + heuristics)",
+      name: "Performance learning",
+      evidence_source: "performance_metrics (JSON ingest or CSV upload) + job_outcomes publish anchor",
+      analyzer: "performance-learning.ts + performance-learning-runner.ts (deterministic SQL + heuristics)",
       llm_involved: false,
       llm_role: null,
       automation: "manual_trigger",
       triggers: [
         "POST /v1/learning/:slug/performance/ingest",
         "POST /v1/learning/:slug/performance/csv",
-        "POST /v1/learning/:slug/market-analysis",
-        "Review app → upload CSV / Run Market Analysis",
+        "POST /v1/learning/:slug/performance-analysis",
+        "POST /v1/learning/:slug/market-analysis (alias)",
+        "Review app → upload CSV / Run performance analysis",
       ],
-      outputs: "Pending learning_rules (SCORE_BOOST / SCORE_PENALTY by flow vs avg saves)",
-      requires_human: "Ingest metrics then run market analysis; apply pending rules",
+      outputs:
+        "caf-global learning_observations (performance_outcome_global); optional pending learning_rules when auto_create_rules=true",
+      requires_human:
+        "Ingest metrics then run performance analysis; apply pending rules only when rule suggestions were opted in",
     },
     {
       id: "generation_context",
@@ -69,20 +73,39 @@ export const LEARNING_TRANSPARENCY_STATIC = {
       name: "LLM review (approved content only)",
       evidence_source:
         "content_jobs where latest editorial_reviews.decision = APPROVED; generation_payload + image public_urls from assets",
-      analyzer: "approved-content-llm-review.ts + openai-chat-multimodal.ts (gpt-4o-class vision when images exist)",
+      analyzer:
+        "approved-content-llm-review.ts + generated-output-nemotron-analysis.ts (Nemotron VL vision when images exist)",
       llm_involved: true,
       llm_role:
-        "A separate model call scores hook/caption/slides/video-plan text and up to N carousel images. " +
-        "It does not replace human approval; it produces training signal (scores, bullets) and learning_observations.",
+        "Nemotron VL scores rendered carousel/video frames and compares against intended copy. " +
+        "Produces TP-parity output_insights_json (slide_arc, slides[], format_pattern, why_it_worked, mimic_evaluation). " +
+        "Does not replace human approval; writes llm_approval_reviews + global observatory observations.",
       automation: "manual_trigger",
       triggers: [
         "POST /v1/learning/:slug/llm-review-approved",
         "Review app → Run LLM review (approved)",
       ],
       outputs:
-        "caf_core.llm_approval_reviews rows; learning_observations (source_type llm_review); pending GENERATION_GUIDANCE rules from low scores (improvements) and/or high scores (strengths) when thresholds match; carousel primary LLM also samples recent rows + job copy as an anti-repetition lane-memory block (env LLM_APPROVAL_ANTI_REPETITION_*)",
+        "caf_core.llm_approval_reviews (output_insights_json); learning_observations (llm_review_global); pending GENERATION_GUIDANCE when thresholds match",
       requires_human:
-        "Operator runs the job; OPENAI_API_KEY required; apply pending rules in the Learning UI; default skips tasks reviewed in the last 7 days unless forced",
+        "Operator runs the job; NVIDIA_NIM_API_KEY required; apply pending rules in the Learning UI; default skips tasks reviewed in the last 7 days unless forced",
+    },
+    {
+      id: "global_observatory",
+      name: "CAF global observatory",
+      evidence_source:
+        "caf-global learning_observations from editorial, Nemotron output, performance runs, and manual digest builds",
+      analyzer: "global-learning-observe.ts + global-learning-digest.ts (no planning/generation facade calls)",
+      llm_involved: false,
+      llm_role: null,
+      automation: "manual_trigger",
+      triggers: [
+        "POST /v1/learning/caf-global/digest",
+        "GET /v1/learning/caf-global/digest/latest",
+        "Side effects from editorial / performance / LLM review batch runs",
+      ],
+      outputs: "Read-only aggregates for operators and future LLM digests",
+      requires_human: "Review observatory rows; never auto-applies project rules",
     },
     {
       id: "ranking",
@@ -98,9 +121,10 @@ export const LEARNING_TRANSPARENCY_STATIC = {
     },
   ],
   not_implemented_yet: [
-    "Scheduled cron for editorial/market/LLM review",
+    "Scheduled cron for editorial/performance/LLM review",
     "LLM review automatically on every human approval (webhook) without an explicit trigger",
     "Auto-apply of learning rules without human gate",
+    "Event-driven performance analysis on every CSV row (onPerformanceMetricsIngested is stubbed)",
   ],
 } as const;
 

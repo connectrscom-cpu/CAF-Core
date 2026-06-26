@@ -88,4 +88,31 @@ describe("mimic-flux-image-prompts", () => {
     expect(resolved.usesReferenceImage).toBe(false);
     expect(resolved.prompt.toLowerCase()).toContain("zero readable text");
   });
+
+  it("resolveMimicSlideImagePrompt falls back to reference_edit when Nemotron analysis is thin", () => {
+    const mimic = minimalMimic({
+      visual_guideline: {
+        slides: [
+          {
+            slide_index: 1,
+            slide_purpose: "content",
+            layout_template: "N/A",
+            visual_description: "N/A",
+          },
+        ],
+      },
+      flux_image_prompts: {
+        "1": {
+          slide_index: 1,
+          flux_image_prompt: "Generic weak prompt from thin analysis.",
+          image_input_mode: "analysis_t2i",
+        },
+      },
+    });
+    const resolved = resolveMimicSlideImagePrompt(mimic, 1, "edit from reference", "analysis_t2i");
+    expect(resolved.usesReferenceImage).toBe(true);
+    expect(resolved.imageInputMode).toBe("reference_edit");
+    expect(resolved.analysisFallbackReason).toBe("insufficient_slide_analysis");
+    expect(resolved.prompt).toBe("edit from reference");
+  });
 });

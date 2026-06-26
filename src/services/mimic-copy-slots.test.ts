@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   assignLlmCopyUsingCopySlots,
+  collapseTextBlocksToCopySlots,
+  copySlotsShouldDriveMapping,
+  copySlotsForSlideRecord,
   extractLlmTextPerCopySlot,
   inferMimicReferenceCopySlots,
   inferMimicReferenceCopySlotsOnePerBlock,
@@ -216,6 +219,126 @@ describe("mimic-copy-slots", () => {
     expect(assigned[1]).toBe("Taurus' Steady Admiration");
   });
 
+  it("collapses many OCR fragments in quadrant trait memes to a handful of copy slots", () => {
+    const b = (text: string, x: number, y: number, role = "body") => ({
+      text,
+      role,
+      x,
+      y,
+      w: 0.14,
+      h: 0.022,
+    });
+    const blocks = [
+      b("Virgo", 0.12, 0.04, "headline"),
+      b("Online", 0.58, 0.12),
+      b("shopping", 0.58, 0.14),
+      b("carts,", 0.58, 0.16),
+      b("always full", 0.58, 0.18),
+      b("Hosts", 0.1, 0.12),
+      b("virtual", 0.1, 0.14),
+      b("hangouts", 0.1, 0.16),
+      b("with friends", 0.1, 0.18),
+      b("Announces", 0.58, 0.52),
+      b("a home", 0.58, 0.54),
+      b("workout,", 0.58, 0.56),
+      b("surrenders", 0.58, 0.58),
+      b("after warmup", 0.58, 0.6),
+      b("Up for", 0.1, 0.52),
+      b("every", 0.1, 0.54),
+      b("Pinterest", 0.1, 0.56),
+      b("DIY", 0.1, 0.58),
+      b("@signandsound", 0.4, 0.88, "handle"),
+    ];
+    const slots = inferMimicReferenceCopySlots(blocks);
+    const editable = slots.filter((s) => s.llm_field !== "handle");
+    expect(editable.length).toBeLessThanOrEqual(6);
+    expect(editable.length).toBeGreaterThanOrEqual(3);
+    expect(slots.filter((s) => s.llm_field === "body").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("copySlotsForSlideRecord re-infers when persisted slots are over-fragmented", () => {
+    const b = (text: string, x: number, y: number, role = "body") => ({
+      text,
+      role,
+      x,
+      y,
+      w: 0.14,
+      h: 0.022,
+    });
+    const text_blocks = [
+      b("Virgo", 0.12, 0.04, "headline"),
+      b("Online", 0.58, 0.12),
+      b("shopping", 0.58, 0.14),
+      b("carts,", 0.58, 0.16),
+      b("always full", 0.58, 0.18),
+      b("Hosts", 0.1, 0.12),
+      b("virtual", 0.1, 0.14),
+      b("hangouts", 0.1, 0.16),
+      b("with friends", 0.1, 0.18),
+      b("Announces", 0.58, 0.52),
+      b("a home", 0.58, 0.54),
+      b("workout,", 0.58, 0.56),
+      b("surrenders", 0.58, 0.58),
+      b("after warmup", 0.58, 0.6),
+      b("Up for", 0.1, 0.52),
+      b("every", 0.1, 0.54),
+      b("Pinterest", 0.1, 0.56),
+      b("DIY", 0.1, 0.58),
+      b("@signandsound", 0.4, 0.88, "handle"),
+    ];
+    const overFragmented = text_blocks.map((block, i) => ({
+      slot_index: i,
+      llm_field: block.role === "headline" ? "headline" : block.role === "handle" ? "handle" : "body",
+      split: "single_block" as const,
+      block_indices: [i],
+      block_texts: [block.text],
+      reference_text: block.text,
+    }));
+    const slide = { text_blocks, copy_slots_v1: overFragmented };
+    const resolved = copySlotsForSlideRecord(slide);
+    expect(resolved.filter((s) => s.llm_field !== "handle").length).toBeLessThanOrEqual(6);
+    expect(resolved.filter((s) => s.llm_field !== "handle").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("copySlotsShouldDriveMapping prefers slots for multi-quadrant memes", () => {
+    const blocks = [
+      { text: "Aries", role: "headline", x: 0.35, y: 0.05, w: 0.3, h: 0.06 },
+      { text: "mad about", role: "body", x: 0.7, y: 0.21, w: 0.22, h: 0.04 },
+      { text: "the canceled", role: "body", x: 0.7, y: 0.26, w: 0.22, h: 0.04 },
+      { text: "starts to flirt", role: "body", x: 0.06, y: 0.33, w: 0.25, h: 0.04 },
+      { text: "out of boredom", role: "body", x: 0.06, y: 0.38, w: 0.25, h: 0.04 },
+    ];
+    const slots = inferMimicReferenceCopySlots(blocks);
+    expect(copySlotsShouldDriveMapping(slots, 2)).toBe(true);
+    expect(slots.filter((s) => s.llm_field === "body").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("collapseTextBlocksToCopySlots splits one LLM body across multiple body slots", () => {
+    const blocks = [
+      { text: "Aries", role: "headline" },
+      {
+        role: "body",
+        text: "Flirting with anyone just to break the boredom Still not over that birthday trip getting axed",
+      },
+    ];
+    const ocrBlocks = [
+      { text: "Aries", role: "headline", x: 0.35, y: 0.05, w: 0.3, h: 0.06 },
+      { text: "mad about", role: "body", x: 0.7, y: 0.21, w: 0.22, h: 0.04 },
+      { text: "the canceled", role: "body", x: 0.7, y: 0.26, w: 0.22, h: 0.04 },
+      { text: "starts to flirt", role: "body", x: 0.06, y: 0.33, w: 0.25, h: 0.04 },
+      { text: "out of boredom", role: "body", x: 0.06, y: 0.38, w: 0.25, h: 0.04 },
+      { text: "already did", role: "body", x: 0.06, y: 0.58, w: 0.25, h: 0.04 },
+      { text: "plans on getting", role: "body", x: 0.58, y: 0.58, w: 0.32, h: 0.04 },
+    ];
+    const slots = inferMimicReferenceCopySlots(ocrBlocks);
+    const collapsed = collapseTextBlocksToCopySlots(blocks, slots);
+    expect(collapsed[0]).toBe("Aries");
+    const bodyParts = collapsed.filter((_, i) => slots[i]?.llm_field === "body");
+    expect(bodyParts.filter((t) => t.trim()).length).toBeGreaterThanOrEqual(2);
+    expect(bodyParts.join(" ")).toContain("Flirting");
+    expect(bodyParts.join(" ")).toContain("birthday trip");
+  });
+
   it("routes headline remainder to matching body stack when decor title is preserved", () => {
     const blocks = [
       { text: "Aries", role: "headline", x: 0.35, y: 0.06, w: 0.3, h: 0.05 },
@@ -308,6 +431,39 @@ describe("mimic-copy-slots", () => {
     expect(tbs).toHaveLength(1);
     expect(tbs[0]?.role).toBe("headline");
     expect(tbs[0]?.text).toMatch(/Texting a Gemini friend/i);
+  });
+
+  it("extractLlmTextPerCopySlot reads plain-string text_blocks", () => {
+    const slots = [
+      {
+        slot_index: 0,
+        llm_field: "headline" as const,
+        split: "single_block" as const,
+        block_texts: ["THE MOTHERS OF THE ZODIAC"],
+        reference_text: "THE MOTHERS OF THE ZODIAC",
+        reference_chars: 24,
+        reference_chars_per_line: [24],
+        line_count: 1,
+      },
+      {
+        slot_index: 1,
+        llm_field: "handle" as const,
+        split: "single_block" as const,
+        block_texts: ["@sistersvillage"],
+        reference_text: "@sistersvillage",
+        reference_chars: 15,
+        reference_chars_per_line: [15],
+        line_count: 1,
+      },
+    ];
+    const perSlot = extractLlmTextPerCopySlot(
+      {
+        text_blocks: ["THE MOTHERS OF THE ZODIAC", "@sistersvillage"],
+      },
+      slots
+    );
+    expect(perSlot.get(0)).toMatch(/MOTHERS/);
+    expect(perSlot.get(1)).toBe("@sistersvillage");
   });
 
   it("extractLlmTextPerCopySlot prefers slot-aligned text_blocks", () => {

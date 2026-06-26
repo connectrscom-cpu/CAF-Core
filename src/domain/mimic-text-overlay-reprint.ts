@@ -22,6 +22,14 @@ export function isTextOverlayReprintInProgress(renderState: unknown): boolean {
   return phase === MIMIC_TEXT_OVERLAY_REPRINT_PHASE && status === "pending";
 }
 
+function looksLikeTextOverlayReprintRenderState(rs: Record<string, unknown>): boolean {
+  const phase = String(rs.phase ?? "").trim();
+  if (phase === MIMIC_TEXT_OVERLAY_REPRINT_PHASE) return true;
+  const requestedAt = typeof rs.requested_at === "string" ? rs.requested_at.trim() : "";
+  const failedAt = typeof rs.failed_at === "string" ? rs.failed_at.trim() : "";
+  return Boolean(requestedAt || failedAt);
+}
+
 export function textOverlayReprintSummary(renderState: unknown): {
   active: boolean;
   failed: boolean;
@@ -31,7 +39,7 @@ export function textOverlayReprintSummary(renderState: unknown): {
   slide_indices: string | null;
 } {
   const rs = pickRenderStateRecord(renderState);
-  if (!rs || String(rs.phase ?? "").trim() !== MIMIC_TEXT_OVERLAY_REPRINT_PHASE) {
+  if (!rs || !looksLikeTextOverlayReprintRenderState(rs)) {
     return {
       active: false,
       failed: false,

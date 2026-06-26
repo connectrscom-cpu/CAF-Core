@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyMimicDocAiLayerPositionOverrides,
   coerceTemplateBgInspectOverrides,
+  llmSlideCopyPatchFromDocAiOverrides,
   mimicDocAiLayerPositionKey,
   mimicDocAiLayerRefKey,
   parseMimicDocAiLayerPositionsBySlide,
@@ -112,6 +113,31 @@ describe("mimic-docai-layer-positions", () => {
     ]);
     expect(out).toHaveLength(1);
     expect(out[0]!.text).toBe(layer.text);
+  });
+
+  it("llmSlideCopyPatchFromDocAiOverrides builds text_blocks from saved layout copy", () => {
+    const patch = llmSlideCopyPatchFromDocAiOverrides([
+      { layer_key: "body@0.1,0.2:old", x_px: 10, y_px: 20, text: "test 4" },
+      { layer_key: "body@0.1,0.5:old2", x_px: 10, y_px: 80, text: "line two" },
+    ]);
+    expect(patch).toMatchObject({
+      text_blocks: [
+        { role: "body", text: "test 4" },
+        { role: "body", text: "line two" },
+      ],
+      body: "test 4\nline two",
+    });
+  });
+
+  it("applyMimicDocAiLayerPositionOverrides applies saved copy without box_locked on full-bleed reprint", () => {
+    const layer = sampleLayer();
+    const key = mimicDocAiLayerPositionKey(layer);
+    const out = applyMimicDocAiLayerPositionOverrides(
+      [layer],
+      [{ layer_key: key, x_px: 12, y_px: 34, text: "test 4" }],
+      { applySavedTextOnBaseLayers: true }
+    );
+    expect(out[0]?.text).toBe("test 4");
   });
 
   it("applyMimicDocAiLayerPositionOverrides does not lock box on position-only nudge", () => {

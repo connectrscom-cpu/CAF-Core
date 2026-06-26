@@ -133,3 +133,126 @@ export function resolveTemplateBgCtaOnScreenCopy(raw: {
     listicle_style: false,
   };
 }
+
+export type TemplateBgSlot = "cover" | "body" | "cta";
+
+/** Cover / listicle body / deck CTA slot for a 1-based output slide index. */
+export function templateBgSlotForSlideIndex(
+  slideIndex1Based: number,
+  totalSlides: number
+): TemplateBgSlot {
+  if (totalSlides <= 1) return "body";
+  if (slideIndex1Based <= 1) return "cover";
+  if (slideIndex1Based >= totalSlides) return "cta";
+  return "body";
+}
+
+/**
+ * Reference archive slide index for template_bg OCR geometry (cover / body / CTA).
+ * Lightweight mirror of mimic-template-library slot mapping — avoids import cycles.
+ */
+export function templateBgReferenceSlideIndex(
+  slot: TemplateBgSlot,
+  referenceSlideCount: number
+): number {
+  const n = Math.max(1, Math.floor(referenceSlideCount) || 1);
+  if (slot === "cover") return 1;
+  if (slot === "cta") return n;
+  return n >= 3 ? Math.ceil(n / 2) : Math.min(2, n);
+}
+
+/**
+ * Collapse LLM slide rows to one headline + body (+ handle on CTA) for template_bg DocAI mapping.
+ * Prevents per-sentence `text_blocks[]` from spawning one OCR box per line.
+ */
+export function templateBgLlmSlideForDocAi(
+  slideIndex1Based: number,
+  totalSlides: number,
+  rawLlmSlide: Record<string, unknown>
+): Record<string, unknown> {
+  const slot = templateBgSlotForSlideIndex(slideIndex1Based, totalSlides);
+  const headline = String(rawLlmSlide.headline ?? rawLlmSlide.title ?? "").trim();
+  const body = String(rawLlmSlide.body ?? "").trim();
+  const subtitle = String(
+    rawLlmSlide.subtitle ?? rawLlmSlide.cover_subtitle ?? rawLlmSlide.kicker ?? ""
+  ).trim();
+  const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
+
+  if (slot === "cover") {
+    const coverBody = subtitle || body;
+    const text_blocks = [
+      ...(headline ? [{ role: "headline", text: headline }] : []),
+      ...(coverBody ? [{ role: "body", text: coverBody }] : []),
+    ];
+    return {
+      ...rawLlmSlide,
+      headline,
+      title: headline,
+      body: coverBody,
+      cover_subtitle: subtitle || body,
+      subtitle: subtitle || body,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
+    };
+  }
+  if (slot === "cta") {
+    const ctaText = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline,
+      body,
+      cta: ctaText,
+      handle,
+      kicker: String(rawLlmSlide.kicker ?? "").trim(),
+      slide_title: String(rawLlmSlide.slide_title ?? "").trim(),
+    });
+    const ctaHeadline = ctaText || headline;
+    if (mapped.listicle_style) {
+      const text_blocks = [
+        ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
+        ...(mapped.body ? [{ role: "body", text: mapped.body }] : []),
+        ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
+      ];
+      return {
+        ...rawLlmSlide,
+        headline: mapped.headline,
+        body: mapped.body,
+        cta: ctaHeadline,
+        cta_text: ctaHeadline,
+        handle: mapped.handle,
+        cta_handle: mapped.handle,
+        ...(text_blocks.length > 0 ? { text_blocks } : {}),
+      };
+    }
+    const text_blocks = [
+      ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
+      ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
+    ];
+    return {
+      ...rawLlmSlide,
+      headline: mapped.headline,
+      body: mapped.handle,
+      cta: mapped.headline,
+      cta_text: mapped.headline,
+      handle: mapped.handle,
+      cta_handle: mapped.handle,
+      ...(text_blocks.length > 0 ? { text_blocks } : {}),
+    };
+  }
+  const kicker = String(rawLlmSlide.kicker ?? "").trim();
+  const slideTitle = String(rawLlmSlide.slide_title ?? "").trim();
+  const onScreen = resolveTemplateBgBodyOnScreenCopy({
+    headline,
+    body,
+    kicker: kicker || subtitle,
+    slide_title: slideTitle,
+  });
+  const text_blocks = [
+    ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
+    ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
+  ];
+  return {
+    ...rawLlmSlide,
+    headline: onScreen.headline,
+    body: onScreen.body,
+    ...(text_blocks.length > 0 ? { text_blocks } : {}),
+  };
+}

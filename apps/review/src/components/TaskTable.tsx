@@ -7,7 +7,7 @@ import { isVideoUrl } from "@/lib/media-url";
 import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
-import { displayFlowLabel } from "@/lib/display-flow-label";
+import { displayFlowLabel, displayFlowDetail } from "@/lib/display-flow-label";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
 
@@ -32,6 +32,8 @@ export interface TaskTableProps {
   selectedRowKey?: string;
   /** “Waiting for Approval” tab: row-level Approve without opening the task. */
   showQuickApprove?: boolean;
+  /** Marketer content review — title-first, hide raw task_id. */
+  marketerMode?: boolean;
   /** Called after a successful quick Approve (e.g. refresh queue). */
   onAfterDecision?: () => void;
 }
@@ -63,6 +65,7 @@ function TaskRow({
   showQuickApprove = false,
   approvingTaskId = null,
   onQuickApprove,
+  marketerMode = false,
 }: {
   row: ReviewQueueRow;
   contentSlug?: "t" | "content";
@@ -74,6 +77,7 @@ function TaskRow({
   showQuickApprove?: boolean;
   approvingTaskId?: string | null;
   onQuickApprove?: (row: ReviewQueueRow) => void;
+  marketerMode?: boolean;
 }) {
   const { navHref } = useReviewProject();
   const taskId = getVal(row, "task_id");
@@ -81,12 +85,15 @@ function TaskRow({
   const platform = getVal(row, "platform");
   const flowType = getVal(row, "flow_type");
   const flowLabel = displayFlowLabel(row);
+  const flowDetail = displayFlowDetail(row);
   const reviewStatus = getVal(row, "review_status");
   const decision = getVal(row, "decision");
-  const title = getVal(row, "generated_title") || taskId;
+  const generatedTitle = getVal(row, "generated_title");
+  const hook = getVal(row, "hook") || getVal(row, "generated_hook");
+  const title = generatedTitle || hook || taskId;
   const thumb = getVal(row, "preview_url");
   const taskHref = navHref(
-    taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined)
+    taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined, { marketer: marketerMode })
   );
 
   return (
@@ -129,18 +136,29 @@ function TaskRow({
         )}
       </td>
       <td className="job-id-cell">
-        <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
-          {taskId}
-        </Link>
+        {marketerMode ? (
+          <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()} className="marketer-task-title-link">
+            {title}
+          </Link>
+        ) : (
+          <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
+            {taskId}
+          </Link>
+        )}
       </td>
       {showProjectColumn && <td>{project || "—"}</td>}
-      {!hideTitleColumn && (
+      {!hideTitleColumn && !marketerMode && (
         <td className="hook-cell" title={title}>
           {title}
         </td>
       )}
       <td>{platform || "—"}</td>
-      <td title={flowType || undefined}>{flowLabel || "—"}</td>
+      <td title={[flowType, flowLabel, flowDetail].filter(Boolean).join(" · ") || undefined}>
+        <div className="task-flow-cell">
+          <span>{flowLabel || "—"}</span>
+          {flowDetail ? <span className="task-flow-cell__detail">{flowDetail}</span> : null}
+        </div>
+      </td>
       <td>{statusBadge(reviewStatus)}</td>
       <td>{decision ? statusBadge(decision) : "—"}</td>
       <td>{getVal(row, "recommended_route") || "—"}</td>
@@ -181,6 +199,7 @@ function TableBody({
   showQuickApprove = false,
   approvingTaskId = null,
   onQuickApprove,
+  marketerMode = false,
 }: {
   items: ReviewQueueRow[];
   groupBy: GroupBy;
@@ -193,9 +212,12 @@ function TableBody({
   showQuickApprove?: boolean;
   approvingTaskId?: string | null;
   onQuickApprove?: (row: ReviewQueueRow) => void;
+  marketerMode?: boolean;
 }) {
   const colSpan =
-    (showProjectColumn ? 10 : 9) - (hideTitleColumn ? 1 : 0) - (hideOpenColumn ? 1 : 0);
+    (showProjectColumn ? 10 : 9) -
+    (hideTitleColumn || marketerMode ? 1 : 0) -
+    (hideOpenColumn ? 1 : 0);
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
@@ -218,6 +240,7 @@ function TableBody({
             showQuickApprove={showQuickApprove}
             approvingTaskId={approvingTaskId}
             onQuickApprove={onQuickApprove}
+            marketerMode={marketerMode}
           />
         ))}
       </tbody>
@@ -248,6 +271,7 @@ function TableBody({
               showQuickApprove={showQuickApprove}
               approvingTaskId={approvingTaskId}
               onQuickApprove={onQuickApprove}
+              marketerMode={marketerMode}
             />
           ))}
         </React.Fragment>
@@ -272,6 +296,7 @@ export function TaskTable({
   selectedRowKey,
   showQuickApprove = false,
   onAfterDecision,
+  marketerMode = false,
 }: TaskTableProps) {
   const [approvingTaskId, setApprovingTaskId] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -327,9 +352,9 @@ export function TaskTable({
         <thead>
           <tr>
             <th style={{ width: 72 }}>Preview</th>
-            <th>Job ID</th>
+            <th>{marketerMode ? "Title" : "Job ID"}</th>
             {showProjectColumn && <th>Project</th>}
-            {!hideTitleColumn && <th>Title / Hook</th>}
+            {!hideTitleColumn && !marketerMode && <th>Title / Hook</th>}
             <th>Platform</th>
             <th>Flow type</th>
             <th>Status</th>
@@ -350,6 +375,7 @@ export function TaskTable({
           showQuickApprove={showQuickApprove}
           approvingTaskId={approvingTaskId}
           onQuickApprove={showQuickApprove ? handleQuickApprove : undefined}
+          marketerMode={marketerMode}
         />
       </table>
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}

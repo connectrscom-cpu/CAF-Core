@@ -23,6 +23,7 @@ export async function GET() {
         platform: j.platform ?? "",
         flow_type: j.flow_type ?? "",
         flow_label: j.flow_label ?? j.flow_type ?? "",
+        flow_detail: j.flow_detail ?? "",
         is_mimic_replication: j.is_mimic_replication ? "true" : "false",
         review_status: j.status ?? "",
         decision: j.latest_decision ?? "",

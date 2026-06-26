@@ -3,6 +3,7 @@ import {
   assertMimicCarouselCopySlideCount,
   assertMimicSlideBackgroundPresent,
   buildSlideIntentInstruction,
+  countRenderableMimicCarouselSlides,
   effectiveMimicSlideRenderMode,
   expectedMimicCarouselOutputSlideCount,
   filterPromotionalSlidesFromMimicPayload,
@@ -595,6 +596,21 @@ describe("mimic carousel copy slide count", () => {
       ],
     };
     expect(() => assertMimicCarouselCopySlideCount(payload, parsed)).toThrow(MimicCarouselCopySlideCountError);
+  });
+
+  it("countRenderableMimicCarouselSlides accepts string text_blocks mimic LLM output", () => {
+    const body =
+      "Full of spirit and energy, the Aries mother is always eager to explore new adventures with her children.";
+    const parsed = {
+      slides: Array.from({ length: 12 }, (_, i) =>
+        i === 0
+          ? { text_blocks: ["THE MOTHERS\nOF THE ZODIAC"] }
+          : { text_blocks: [body, "@sistersvillage"] }
+      ),
+    };
+    const payload = { mimic_render_context: { target_slide_count: 12 } };
+    expect(countRenderableMimicCarouselSlides(parsed, { preferred_slide_count: 12 })).toBe(12);
+    expect(() => assertMimicCarouselCopySlideCount(payload, parsed)).not.toThrow();
   });
 });
 

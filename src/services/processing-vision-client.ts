@@ -63,16 +63,18 @@ export function clampMultimodalImagesForProvider(
 
 export function resolveProcessingVisionCall(
   config: AppConfig,
-  profileModel: string
+  profileModel: string,
+  opts?: { provider?: ProcessingVisionProvider; defaultNvidiaModel?: string }
 ): ProcessingVisionCallConfig {
-  const provider = config.PROCESSING_VISION_PROVIDER;
+  const provider = opts?.provider ?? config.PROCESSING_VISION_PROVIDER;
   const trimmedProfileModel = profileModel.trim();
+  const defaultNvidia = opts?.defaultNvidiaModel?.trim() || config.PROCESSING_VISION_NVIDIA_MODEL;
 
   if (provider === "nvidia") {
     const model =
       trimmedProfileModel && isNvidiaModelId(trimmedProfileModel)
         ? trimmedProfileModel
-        : config.PROCESSING_VISION_NVIDIA_MODEL;
+        : defaultNvidia;
     return {
       provider: "nvidia",
       apiKey: config.NVIDIA_NIM_API_KEY?.trim() ?? "",
@@ -86,9 +88,31 @@ export function resolveProcessingVisionCall(
     provider: "openai",
     apiKey: config.OPENAI_API_KEY?.trim() ?? "",
     endpoint: chatCompletionsUrl(config.OPENAI_API_BASE),
-    model: trimmedProfileModel || "gpt-4o-mini",
+    model: trimmedProfileModel || config.OPENAI_APPROVAL_REVIEW_MODEL || "gpt-4o-mini",
     maxImagesPerRequest: null,
   };
+}
+
+/** Vision client for post-approval generated-output analysis (Nemotron by default). */
+export function resolveApprovalReviewVisionCall(config: AppConfig): ProcessingVisionCallConfig {
+  const model =
+    config.APPROVAL_REVIEW_NVIDIA_MODEL?.trim() ||
+    config.PROCESSING_VISION_NVIDIA_MODEL;
+  return resolveProcessingVisionCall(config, model, {
+    provider: config.APPROVAL_REVIEW_VISION_PROVIDER,
+    defaultNvidiaModel: model,
+  });
+}
+
+export function assertApprovalReviewVisionConfigured(config: AppConfig): ProcessingVisionCallConfig {
+  const call = resolveApprovalReviewVisionCall(config);
+  if (!call.apiKey) {
+    if (call.provider === "nvidia") {
+      throw new Error("NVIDIA_NIM_API_KEY is required when APPROVAL_REVIEW_VISION_PROVIDER=nvidia");
+    }
+    throw new Error("OPENAI_API_KEY is required when APPROVAL_REVIEW_VISION_PROVIDER=openai");
+  }
+  return call;
 }
 
 export function assertProcessingVisionConfigured(config: AppConfig, profileModel: string): ProcessingVisionCallConfig {
@@ -112,9 +136,22 @@ export async function processingVisionChatMultimodal(
     response_format?: "json_object" | "text";
     deckSlideCount?: number;
   },
-  audit?: OpenAiAuditContext | null
+  audit?: OpenAiAuditContext | null,
+  opts?: { provider?: ProcessingVisionProvider; defaultNvidiaModel?: string }
 ): Promise<{ content: string; model: string; total_tokens: number; provider: ProcessingVisionProvider }> {
-  const call = assertProcessingVisionConfigured(config, profileModel);
+  const call = opts?.provider
+    ? (() => {
+        const c = resolveProcessingVisionCall(config, profileModel, opts);
+        if (!c.apiKey) {
+          throw new Error(
+            c.provider === "nvidia"
+              ? "NVIDIA_NIM_API_KEY is required for Nemotron vision"
+              : "OPENAI_API_KEY is required for OpenAI vision"
+          );
+        }
+        return c;
+      })()
+    : assertProcessingVisionConfigured(config, profileModel);
   const user_content = clampMultimodalImagesForProvider(params.user_content, call.maxImagesPerRequest, {
     deckSlideCount: params.deckSlideCount,
   });

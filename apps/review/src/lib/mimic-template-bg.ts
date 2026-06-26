@@ -4,6 +4,8 @@ import {
   isListicleBodyInvertedLlmCopy,
   resolveTemplateBgBodyOnScreenCopy,
   resolveTemplateBgCtaOnScreenCopy,
+  templateBgLlmSlideForDocAi,
+  templateBgSlotForSlideIndex,
 } from "@caf-core-carousel/mimic-template-bg-copy";
 
 export type MimicTemplateBgSlot = "cover" | "body" | "cta";
@@ -14,10 +16,7 @@ export function isMimicTemplateBgMode(mimicV1: Record<string, unknown> | null | 
 
 /** Cover / listicle body / deck CTA slot for a 1-based output slide index. */
 export function templateBgSlotForSlide(slideIndex1Based: number, totalSlides: number): MimicTemplateBgSlot {
-  if (totalSlides <= 1) return "body";
-  if (slideIndex1Based <= 1) return "cover";
-  if (slideIndex1Based >= totalSlides) return "cta";
-  return "body";
+  return templateBgSlotForSlideIndex(slideIndex1Based, totalSlides);
 }
 
 /** All output slide indices (1-based) for a template_bg slot — middle slides share one background plate. */
@@ -216,94 +215,4 @@ export function normalizeMimicTemplateBgSlides(slides: NormalizedSlide[]): Norma
 }
 
 /** LLM slide row scoped to cover / body / CTA slot for template_bg DocAI text mapping (matches Core pipeline). */
-export function templateBgLlmSlideForDocAi(
-  slideIndex1Based: number,
-  totalSlides: number,
-  rawLlmSlide: Record<string, unknown>
-): Record<string, unknown> {
-  const slot = templateBgSlotForSlide(slideIndex1Based, totalSlides);
-  const headline = String(rawLlmSlide.headline ?? rawLlmSlide.title ?? "").trim();
-  const body = String(rawLlmSlide.body ?? "").trim();
-  const subtitle = String(
-    rawLlmSlide.subtitle ?? rawLlmSlide.cover_subtitle ?? rawLlmSlide.kicker ?? ""
-  ).trim();
-  const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
-
-  if (slot === "cover") {
-    const coverBody = subtitle || (body && headline ? "" : body);
-    const text_blocks = [
-      ...(headline ? [{ role: "headline", text: headline }] : []),
-      ...(coverBody ? [{ role: "body", text: coverBody }] : []),
-    ];
-    return {
-      ...rawLlmSlide,
-      headline,
-      title: headline,
-      body: coverBody,
-      cover_subtitle: subtitle || body,
-      subtitle: subtitle || body,
-      ...(text_blocks.length > 0 ? { text_blocks } : {}),
-    };
-  }
-  if (slot === "cta") {
-    const ctaText = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
-    const mapped = resolveTemplateBgCtaOnScreenCopy({
-      headline,
-      body,
-      cta: ctaText,
-      handle,
-      kicker: String(rawLlmSlide.kicker ?? "").trim(),
-      slide_title: String(rawLlmSlide.slide_title ?? "").trim(),
-    });
-    const ctaHeadline = ctaText || headline;
-    if (mapped.listicle_style) {
-      const text_blocks = [
-        ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
-        ...(mapped.body ? [{ role: "body", text: mapped.body }] : []),
-        ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
-      ];
-      return {
-        ...rawLlmSlide,
-        headline: mapped.headline,
-        body: mapped.body,
-        cta: ctaHeadline,
-        cta_text: ctaHeadline,
-        handle: mapped.handle,
-        cta_handle: mapped.handle,
-        ...(text_blocks.length > 0 ? { text_blocks } : {}),
-      };
-    }
-    const text_blocks = [
-      ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
-      ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
-    ];
-    return {
-      ...rawLlmSlide,
-      headline: mapped.headline,
-      body: mapped.handle,
-      cta: mapped.headline,
-      cta_text: mapped.headline,
-      handle: mapped.handle,
-      cta_handle: mapped.handle,
-      ...(text_blocks.length > 0 ? { text_blocks } : {}),
-    };
-  }
-  const kickerField = String(rawLlmSlide.kicker ?? "").trim();
-  const slideTitle = String(rawLlmSlide.slide_title ?? "").trim();
-  const onScreen = resolveTemplateBgBodyOnScreenCopy({
-    headline,
-    body,
-    kicker: kickerField || subtitle,
-    slide_title: slideTitle,
-  });
-  const text_blocks = [
-    ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
-    ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
-  ];
-  return {
-    ...rawLlmSlide,
-    headline: onScreen.headline,
-    body: onScreen.body,
-    ...(text_blocks.length > 0 ? { text_blocks } : {}),
-  };
-}
+export { templateBgLlmSlideForDocAi } from "@caf-core-carousel/mimic-template-bg-copy";

@@ -9,8 +9,9 @@ import {
   referenceIndexForTemplateSlot,
   templateBgSlotForIndex,
 } from "../domain/mimic-template-library.js";
-import { resolveTemplateBgBodyOnScreenCopy, resolveTemplateBgCtaOnScreenCopy } from "../domain/mimic-template-bg-copy.js";
-import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
+import { templateBgLlmSlideForDocAi } from "../domain/mimic-template-bg-copy.js";import { deckUsesUnifiedBackgroundPlate } from "../domain/mimic-text-heavy.js";
+
+export { templateBgLlmSlideForDocAi } from "../domain/mimic-template-bg-copy.js";
 
 function mimicGuidelineEntry(mimic: Pick<MimicPayloadV1, "visual_guideline">): Record<string, unknown> {
   const vg = mimic.visual_guideline ?? {};
@@ -39,99 +40,4 @@ export function templateBgGuidelineSlideIndex(
     slot,
     Math.max(mimic.reference_items?.length ?? 0, totalSlides, 1)
   );
-}
-
-/**
- * LLM slide row scoped to cover / body / CTA slot for template_bg DocAI text mapping.
- */
-export function templateBgLlmSlideForDocAi(
-  slideIndex1Based: number,
-  totalSlides: number,
-  rawLlmSlide: Record<string, unknown>
-): Record<string, unknown> {
-  const slot = templateBgSlotForIndex(slideIndex1Based, totalSlides);
-  const headline = String(rawLlmSlide.headline ?? rawLlmSlide.title ?? "").trim();
-  const body = String(rawLlmSlide.body ?? "").trim();
-  const subtitle = String(
-    rawLlmSlide.subtitle ?? rawLlmSlide.cover_subtitle ?? rawLlmSlide.kicker ?? ""
-  ).trim();
-  const handle = String(rawLlmSlide.handle ?? rawLlmSlide.cta_handle ?? "").trim();
-
-  if (slot === "cover") {
-    const coverBody = subtitle || (body && headline ? "" : body);
-    const text_blocks = [
-      ...(headline ? [{ role: "headline", text: headline }] : []),
-      ...(coverBody ? [{ role: "body", text: coverBody }] : []),
-    ];
-    return {
-      ...rawLlmSlide,
-      headline,
-      title: headline,
-      body: coverBody,
-      cover_subtitle: subtitle || body,
-      subtitle: subtitle || body,
-      ...(text_blocks.length > 0 ? { text_blocks } : {}),
-    };
-  }
-  if (slot === "cta") {
-    const ctaText = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
-    const mapped = resolveTemplateBgCtaOnScreenCopy({
-      headline,
-      body,
-      cta: ctaText,
-      handle,
-      kicker: String(rawLlmSlide.kicker ?? "").trim(),
-      slide_title: String(rawLlmSlide.slide_title ?? "").trim(),
-    });
-    const ctaHeadline = ctaText || headline;
-    if (mapped.listicle_style) {
-      const text_blocks = [
-        ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
-        ...(mapped.body ? [{ role: "body", text: mapped.body }] : []),
-        ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
-      ];
-      return {
-        ...rawLlmSlide,
-        headline: mapped.headline,
-        body: mapped.body,
-        cta: ctaHeadline,
-        cta_text: ctaHeadline,
-        handle: mapped.handle,
-        cta_handle: mapped.handle,
-        ...(text_blocks.length > 0 ? { text_blocks } : {}),
-      };
-    }
-    const text_blocks = [
-      ...(mapped.headline ? [{ role: "headline", text: mapped.headline }] : []),
-      ...(mapped.handle ? [{ role: "handle", text: mapped.handle }] : []),
-    ];
-    return {
-      ...rawLlmSlide,
-      headline: mapped.headline,
-      body: mapped.handle,
-      cta: mapped.headline,
-      cta_text: mapped.headline,
-      handle: mapped.handle,
-      cta_handle: mapped.handle,
-      ...(text_blocks.length > 0 ? { text_blocks } : {}),
-    };
-  }
-  const kicker = String(rawLlmSlide.kicker ?? "").trim();
-  const slideTitle = String(rawLlmSlide.slide_title ?? "").trim();
-  const onScreen = resolveTemplateBgBodyOnScreenCopy({
-    headline,
-    body,
-    kicker: kicker || subtitle,
-    slide_title: slideTitle,
-  });
-  const text_blocks = [
-    ...(onScreen.headline ? [{ role: "headline", text: onScreen.headline }] : []),
-    ...(onScreen.body ? [{ role: "body", text: onScreen.body }] : []),
-  ];
-  return {
-    ...rawLlmSlide,
-    headline: onScreen.headline,
-    body: onScreen.body,
-    ...(text_blocks.length > 0 ? { text_blocks } : {}),
-  };
 }

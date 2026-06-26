@@ -206,6 +206,10 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
           .optional()
           .transform((v) => v === "1" || v === "true"),
         sort: z.enum(["score_desc", "score_asc"]).optional(),
+        relative_page_performance: z
+          .enum(["1", "0", "true", "false"])
+          .optional()
+          .transform((v) => v === "1" || v === "true"),
         limit: z.coerce.number().int().min(1).max(500).default(50),
         offset: z.coerce.number().int().min(0).default(0),
       })
@@ -220,7 +224,18 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     if (!profile) {
       profile = await upsertInputsProcessingProfile(db, project.id, { criteria_json: defaultCriteriaJson() });
     }
-    const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+    let criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+    if (query.data.relative_page_performance !== undefined) {
+      const preIn = criteria.pre_llm;
+      const pre =
+        preIn && typeof preIn === "object" && !Array.isArray(preIn)
+          ? { ...(preIn as Record<string, unknown>) }
+          : {};
+      criteria = {
+        ...criteria,
+        pre_llm: { ...pre, relative_page_performance: query.data.relative_page_performance },
+      };
+    }
     const preview = await getPreLlmEvidencePreview(
       db,
       project.id,

@@ -23,6 +23,8 @@ function runOptionLabel(runId: string, names?: Record<string, string>): string {
 export interface WorkbenchFiltersProps {
   className?: string;
   basePath?: string;
+  hideProjectFilter?: boolean;
+  marketerMode?: boolean;
   projectValues?: string[];
   runIdValues?: string[];
   /** `run_id` → `runs.metadata_json.display_name` (from Core review facets). */
@@ -35,6 +37,8 @@ export interface WorkbenchFiltersProps {
 
 export function WorkbenchFilters({
   basePath = "/",
+  hideProjectFilter = false,
+  marketerMode = false,
   projectValues = [],
   runIdValues = [],
   runDisplayNames,
@@ -92,22 +96,24 @@ export function WorkbenchFilters({
         <input
           type="text"
           className="filter-input"
-          placeholder="job_id, title, caption..."
+          placeholder={marketerMode ? "Search title, caption…" : "job_id, title, caption..."}
           value={params.search ?? ""}
           onChange={(e) => setParam("search", e.target.value)}
         />
       </div>
 
+      {!hideProjectFilter && (
       <div className="filter-group">
-        <label className="filter-label">Project</label>
+        <label className="filter-label">{marketerMode ? "Brand" : "Project"}</label>
         <select className="filter-select" value={params.project ?? ""} onChange={(e) => setParam("project", e.target.value)}>
           <option value="">All</option>
           {projectValues.map((v) => (<option key={v} value={v}>{v}</option>))}
         </select>
       </div>
+      )}
 
       <div className="filter-group">
-        <label className="filter-label">Run</label>
+        <label className="filter-label">{marketerMode ? "Content cycle" : "Run"}</label>
         <select className="filter-select" value={params.run_id ?? ""} onChange={(e) => setParam("run_id", e.target.value)}>
           <option value="">All</option>
           {runIdValues.map((v) => (
@@ -188,11 +194,11 @@ export function WorkbenchFilters({
 
       <div className="filter-group">
         <label className="filter-label">Sort</label>
-        <select className="filter-select" value={params.sort ?? "task_id"} onChange={(e) => setParam("sort", e.target.value)}>
-          <option value="task_id">Job ID</option>
-          <option value="-submitted_at">Submitted (newest)</option>
-          <option value="submitted_at">Submitted (oldest)</option>
-          <option value="-review_status">Review status</option>
+        <select className="filter-select" value={params.sort ?? (marketerMode ? "-submitted_at" : "task_id")} onChange={(e) => setParam("sort", e.target.value)}>
+          {!marketerMode && <option value="task_id">Job ID</option>}
+          <option value="-submitted_at">{marketerMode ? "Newest first" : "Submitted (newest)"}</option>
+          <option value="submitted_at">{marketerMode ? "Oldest first" : "Submitted (oldest)"}</option>
+          {!marketerMode && <option value="-review_status">Review status</option>}
         </select>
       </div>
     </>

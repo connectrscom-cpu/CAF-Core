@@ -10,6 +10,8 @@ import { q, qOne } from "../db/queries.js";
 import { getProjectBySlug } from "../repositories/core.js";
 import {
   applyLearningRule,
+  dismissLearningRule,
+  dismissPendingLearningRulesForProject,
   eraseLearningRule,
   eraseLearningRulesForProject,
   insertLearningRule,
@@ -31,9 +33,12 @@ import {
 import { analyzeEditorialPatterns } from "../services/editorial-learning.js";
 import {
   ingestPerformanceMetrics,
-  analyzePerformanceAnalysis,
   type PerformanceIngestionInput,
 } from "../services/performance-learning.js";
+import { runPerformanceLearning } from "../services/performance-learning-runner.js";
+import { buildGlobalLearningDigest, getLatestGlobalLearningDigest } from "../services/global-learning-digest.js";
+import { buildJobDossier } from "../services/build-job-dossier.js";
+import { assertApprovalReviewVisionReady } from "../services/generated-output-nemotron-analysis.js";
 import { getLearningContextForGeneration } from "../services/learning-rule-selection.js";
 import { LEARNING_TRANSPARENCY_STATIC, learningTransparencySnapshot } from "../services/learning-transparency.js";
 import { parseCsvToRecords } from "../services/parse-csv-simple.js";
@@ -113,6 +118,29 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
       const ok = await retireLearningRule(db, project.id, req.params.rule_id);
       if (!ok) return reply.code(404).send({ ok: false, error: "rule not found or not active" });
       return { ok: true, rule_id: req.params.rule_id, status: "expired" };
+    }
+  );
+
+  app.post<{ Params: { project_slug: string; rule_id: string } }>(
+    "/v1/learning/:project_slug/rules/:rule_id/dismiss",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const result = await dismissLearningRule(db, project.id, req.params.rule_id);
+      if (!result.ok) {
+        return reply.code(404).send({ ok: false, error: "rule not found or not dismissible" });
+      }
+      return { ok: true, rule_id: req.params.rule_id, status: result.status };
+    }
+  );
+
+  app.post<{ Params: { project_slug: string } }>(
+    "/v1/learning/:project_slug/rules/dismiss-pending",
+    async (req, reply) => {
+      const project = await getProjectBySlug(db, req.params.project_slug);
+      if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
+      const dismissed = await dismissPendingLearningRulesForProject(db, project.id);
+      return { ok: true, dismissed, status: "rejected" };
     }
   );
 
@@ -508,8 +536,11 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
-      if (!config.OPENAI_API_KEY?.trim()) {
-        return reply.code(400).send({ ok: false, error: "OPENAI_API_KEY not configured" });
+      try {
+        assertApprovalReviewVisionReady(config);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(400).send({ ok: false, error: msg });
       }
       const parsed = llmApprovalReviewBody.safeParse(req.body ?? {});
       if (!parsed.success) {
@@ -740,19 +771,70 @@ export function registerLearningRoutes(app: FastifyInstance, { db, config }: Dep
     }
   );
 
+  async function handlePerformanceAnalysis(
+    projectSlug: string,
+    body: Record<string, unknown>
+  ) {
+    const project = await getProjectBySlug(db, projectSlug);
+    if (!project) return { notFound: true as const };
+
+    const windowDays = (body.window_days as number) ?? 60;
+    const autoCreate = body.auto_create_rules === true;
+    const emitGlobal = body.emit_global_observation !== false;
+
+    const result = await runPerformanceLearning(db, project.id, project.slug, {
+      trigger: "manual",
+      window_days: windowDays,
+      auto_create_rules: autoCreate,
+      emit_global_observation: emitGlobal,
+    });
+    return { ok: true as const, ...result };
+  }
+
   // ── Performance analysis (Loop C) ────────────────────────────────────
-  app.post<{ Params: { project_slug: string }; Body: { window_days?: number; auto_create_rules?: boolean } }>(
+  app.post<{ Params: { project_slug: string }; Body: Record<string, unknown> }>(
     "/v1/learning/:project_slug/performance-analysis",
+    async (req, reply) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const out = await handlePerformanceAnalysis(req.params.project_slug, body);
+      if ("notFound" in out) return reply.code(404).send({ ok: false, error: "project not found" });
+      return out;
+    }
+  );
+
+  app.post<{ Params: { project_slug: string }; Body: Record<string, unknown> }>(
+    "/v1/learning/:project_slug/market-analysis",
+    async (req, reply) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const out = await handlePerformanceAnalysis(req.params.project_slug, body);
+      if ("notFound" in out) return reply.code(404).send({ ok: false, error: "project not found" });
+      return out;
+    }
+  );
+
+  // ── Job dossier (full journey) ─────────────────────────────────────────
+  app.get<{ Params: { project_slug: string; task_id: string } }>(
+    "/v1/jobs/:project_slug/:task_id/dossier",
     async (req, reply) => {
       const project = await getProjectBySlug(db, req.params.project_slug);
       if (!project) return reply.code(404).send({ ok: false, error: "project not found" });
-
-      const body = (req.body ?? {}) as Record<string, unknown>;
-      const windowDays = (body.window_days as number) ?? 60;
-      const autoCreate = body.auto_create_rules !== false;
-
-      const result = await analyzePerformanceAnalysis(db, project.id, project.slug, windowDays, autoCreate);
-      return { ok: true, ...result };
+      const dossier = await buildJobDossier(db, project.id, req.params.task_id);
+      if (!dossier) return reply.code(404).send({ ok: false, error: "not_found" });
+      return { ok: true, dossier };
     }
   );
+
+  // ── CAF Global digest (observatory) ───────────────────────────────────
+  app.post<{ Body: { window_days?: number } }>("/v1/learning/caf-global/digest", async (req, reply) => {
+    const windowDays = (req.body as { window_days?: number })?.window_days ?? 30;
+    const digest = await buildGlobalLearningDigest(db, windowDays);
+    if (!digest) return reply.code(503).send({ ok: false, error: "caf-global project not configured" });
+    return { ok: true, digest };
+  });
+
+  app.get("/v1/learning/caf-global/digest/latest", async (_req, reply) => {
+    const digest = await getLatestGlobalLearningDigest(db);
+    if (!digest) return reply.code(404).send({ ok: false, error: "no_digest" });
+    return { ok: true, digest };
+  });
 }

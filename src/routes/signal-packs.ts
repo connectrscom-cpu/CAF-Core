@@ -12,6 +12,7 @@ import {
   updateSignalPackSelectedIdeaIds,
   setSignalPackMimicModeOverride,
   getMimicModeOverridesFromPack,
+  updateSignalPackNotes,
 } from "../repositories/signal-packs.js";
 import { createRun } from "../repositories/runs.js";
 import { parseSignalPackExcel } from "../services/signal-pack-parser.js";
@@ -360,6 +361,26 @@ export function registerSignalPackRoutes(app: FastifyInstance, deps: { db: Pool;
         query.data.include_legacy === "1" || query.data.include_legacy === "true"
       ),
     };
+  });
+
+  app.patch("/v1/signal-packs/:project_slug/:id", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z.object({ notes: z.string().nullable().optional() }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    const pack = await getSignalPackById(db, params.data.id);
+    if (!pack) return reply.code(404).send({ ok: false, error: "not_found" });
+    if (pack.project_id !== project.id) return reply.code(404).send({ ok: false, error: "not_found" });
+
+    if (body.data.notes !== undefined) {
+      const n = await updateSignalPackNotes(db, params.data.id, body.data.notes);
+      if (!n) return reply.code(404).send({ ok: false, error: "not_found" });
+    }
+
+    const updated = await getSignalPackById(db, params.data.id);
+    return { ok: true, signal_pack: updated };
   });
 
   /**

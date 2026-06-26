@@ -47,7 +47,8 @@ export function isCarouselFlow(flowType: string): boolean {
   if (
     flowType === "FLOW_CAROUSEL" ||
     flowType === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" ||
-    flowType === "FLOW_VISUAL_FIRST_CAROUSEL"
+    flowType === "FLOW_VISUAL_FIRST_CAROUSEL" ||
+    flowType === "FLOW_WHY_MIMIC_CAROUSEL"
   ) {
     return true;
   }
@@ -57,12 +58,17 @@ export function isCarouselFlow(flowType: string): boolean {
 /** TP-grounded carousel render on Core (manual mimic + visual-first ideas). */
 export function isTpGroundedCarouselRenderFlow(flowType: string | null | undefined): boolean {
   const ft = (flowType ?? "").trim();
-  return ft === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" || ft === "FLOW_VISUAL_FIRST_CAROUSEL";
+  return ft === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" || ft === "FLOW_VISUAL_FIRST_CAROUSEL" || ft === "FLOW_WHY_MIMIC_CAROUSEL";
 }
 
 /** Review workbench for TP-grounded carousels (layer editor, slide regen, reprint overlay). */
 export function isTpGroundedCarouselReviewFlow(flowType: string | null | undefined): boolean {
   return isTpGroundedCarouselRenderFlow(flowType);
+}
+
+/** Why Mimic carousel — strategic lane; no original-vs-generated compare. */
+export function isWhyMimicCarouselFlow(flowType: string | null | undefined): boolean {
+  return (flowType ?? "").trim() === "FLOW_WHY_MIMIC_CAROUSEL";
 }
 
 /** Ideas-from-insights visual-first lane. */

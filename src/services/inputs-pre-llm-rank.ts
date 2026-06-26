@@ -3,6 +3,11 @@
  * Config lives under `criteria_json.pre_llm` on `inputs_processing_profiles`.
  */
 import type { Pool } from "pg";
+import {
+  augmentPreLlmFeaturesWithRelative,
+  buildRegistryFollowerLookup,
+  enrichPayloadFollowerBaseline,
+} from "../domain/evidence-relative-performance.js";
 import { listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
 import type { SelectionSnapshot } from "./inputs-selection.js";
 import { DEFAULT_SELECTION_CAPS } from "./inputs-selection.js";
@@ -19,6 +24,11 @@ export interface PreLlmKindProfile {
 
 export interface PreLlmConfig {
   enabled?: boolean;
+  /**
+   * When true, IG/FB/TT rows with follower counts score on engagement relative to page size.
+   * Rows without follower data fall back to raw volume features for that row only.
+   */
+  relative_page_performance?: boolean;
   /** For post-like rows: require at least this many chars in title/body/caption/main_text. */
   min_primary_text_chars?: number;
   kinds?: Record<string, PreLlmKindProfile>;
@@ -67,11 +77,7 @@ function normLinear(value: number, max: number): number {
   return clamp(value / max, 0, 1);
 }
 
-/** Normalized features in 0–1 used only for pre-LLM scoring. */
-export function extractPreLlmFeatures(
-  evidenceKind: string,
-  payload: Record<string, unknown>
-): Record<string, number> {
+function extractRawPreLlmFeatures(evidenceKind: string, payload: Record<string, unknown>): Record<string, number> {
   const tl = textLen(payload);
   const text_signal = normLinear(tl, 2000);
 
@@ -152,7 +158,33 @@ export function extractPreLlmFeatures(
   }
 }
 
-function defaultKindProfile(kind: string): PreLlmKindProfile {
+export type PreLlmFeatureOptions = {
+  registryFollowerLookup?: ReadonlyMap<string, number>;
+};
+
+/** Build handle → followers map from `source_registry` rows in the same import. */
+export function buildRegistryFollowerLookupFromEvidenceRows(
+  rows: Array<{ evidence_kind: string; payload_json?: Record<string, unknown> }>
+): Map<string, number> {
+  return buildRegistryFollowerLookup(
+    rows
+      .filter((r) => r.evidence_kind === "source_registry")
+      .map((r) => (r.payload_json ?? {}) as Record<string, unknown>)
+  );
+}
+
+/** Normalized features in 0–1 used only for pre-LLM scoring (includes relative signals when follower data exists). */
+export function extractPreLlmFeatures(
+  evidenceKind: string,
+  payload: Record<string, unknown>,
+  options?: PreLlmFeatureOptions
+): Record<string, number> {
+  const enriched = enrichPayloadFollowerBaseline(evidenceKind, payload, options?.registryFollowerLookup);
+  const base = extractRawPreLlmFeatures(evidenceKind, enriched);
+  return augmentPreLlmFeaturesWithRelative(evidenceKind, enriched, base);
+}
+
+function defaultRawKindProfile(kind: string): PreLlmKindProfile {
   switch (kind) {
     case "reddit_post":
       return {
@@ -195,6 +227,36 @@ function defaultKindProfile(kind: string): PreLlmKindProfile {
   }
 }
 
+function defaultRelativeKindProfile(kind: string): PreLlmKindProfile {
+  switch (kind) {
+    case "instagram_post":
+      return {
+        min_score: 0.08,
+        weights: { page_relative_engagement: 0.55, page_relative_comments: 0.2, text_signal: 0.25 },
+      };
+    case "tiktok_video":
+      return {
+        min_score: 0.1,
+        weights: { page_relative_engagement: 0.35, page_relative_reach: 0.35, text_signal: 0.3 },
+      };
+    case "facebook_post":
+      return {
+        min_score: 0.06,
+        weights: { page_relative_engagement: 0.45, page_relative_shares: 0.2, text_signal: 0.35 },
+      };
+    default:
+      return defaultRawKindProfile(kind);
+  }
+}
+
+function defaultKindProfile(kind: string, relativePagePerformance: boolean): PreLlmKindProfile {
+  return relativePagePerformance ? defaultRelativeKindProfile(kind) : defaultRawKindProfile(kind);
+}
+
+function rowHasFollowerBaseline(features: Record<string, number>): boolean {
+  return (features.has_follower_baseline ?? 0) >= 0.5;
+}
+
 export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConfig {
   const raw = criteria.pre_llm;
   const base: PreLlmConfig = {
@@ -205,12 +267,13 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
   };
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
   const p = raw as Record<string, unknown>;
+  const relativePagePerformance = Boolean(p.relative_page_performance);
   const kindsIn = p.kinds && typeof p.kinds === "object" && !Array.isArray(p.kinds) ? (p.kinds as Record<string, unknown>) : {};
   const mergedKinds: Record<string, PreLlmKindProfile> = {};
   for (const [k, v] of Object.entries(kindsIn)) {
     if (!v || typeof v !== "object" || Array.isArray(v)) continue;
     const o = v as Record<string, unknown>;
-    const def = defaultKindProfile(k);
+    const def = defaultKindProfile(k, relativePagePerformance);
     const w = o.weights && typeof o.weights === "object" && !Array.isArray(o.weights) ? (o.weights as Record<string, unknown>) : {};
     const weights: Record<string, number> = { ...def.weights };
     for (const [wk, wv] of Object.entries(w)) {
@@ -232,7 +295,7 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
     "source_registry",
   ];
   for (const k of knownKinds) {
-    if (!mergedKinds[k]) mergedKinds[k] = defaultKindProfile(k);
+    if (!mergedKinds[k]) mergedKinds[k] = defaultKindProfile(k, relativePagePerformance);
   }
   let defaultKind = base.default_kind!;
   if (p.default_kind && typeof p.default_kind === "object" && !Array.isArray(p.default_kind)) {
@@ -251,6 +314,7 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
   }
   return {
     enabled: Boolean(p.enabled),
+    relative_page_performance: relativePagePerformance,
     min_primary_text_chars:
       typeof p.min_primary_text_chars === "number" && p.min_primary_text_chars >= 0
         ? Math.floor(p.min_primary_text_chars)
@@ -260,8 +324,30 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
   };
 }
 
-function profileForKind(cfg: PreLlmConfig, kind: string): PreLlmKindProfile {
-  return cfg.kinds?.[kind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
+function profileForKind(cfg: PreLlmConfig, kind: string, useRelativeWeights?: boolean): PreLlmKindProfile {
+  const custom = cfg.kinds?.[kind] ?? cfg.default_kind;
+  if (custom) return custom;
+  const relative = useRelativeWeights ?? Boolean(cfg.relative_page_performance);
+  return defaultKindProfile(kind, relative);
+}
+
+/** Pick weights for one row — relative mode uses raw fallback when follower count is missing. */
+export function resolvePreLlmProfileForRow(
+  cfg: PreLlmConfig,
+  kind: string,
+  features: Record<string, number>
+): PreLlmKindProfile {
+  if (!cfg.relative_page_performance) return profileForKind(cfg, kind, false);
+  if (rowHasFollowerBaseline(features)) return profileForKind(cfg, kind, true);
+  const custom = cfg.kinds?.[kind];
+  const raw = defaultRawKindProfile(kind);
+  if (custom?.weights && Object.keys(custom.weights).length > 0) {
+    const hasRelativeKeys = Object.keys(custom.weights).some((k) => k.startsWith("page_relative_"));
+    if (!hasRelativeKeys) {
+      return { min_score: custom.min_score, weights: { ...custom.weights } };
+    }
+  }
+  return { min_score: custom?.min_score ?? raw.min_score, weights: { ...raw.weights } };
 }
 
 function weightedFeatureScore(features: Record<string, number>, weights: Record<string, number>): number {
@@ -290,7 +376,8 @@ const POST_KINDS_TEXT_GATE = new Set([
 export function evaluatePreLlmRow(
   evidenceKind: string,
   payload: Record<string, unknown>,
-  criteria: Record<string, unknown>
+  criteria: Record<string, unknown>,
+  options?: PreLlmFeatureOptions
 ): {
   pre_llm_score: number;
   pre_llm_breakdown: Record<string, number>;
@@ -300,8 +387,8 @@ export function evaluatePreLlmRow(
 } {
   const cfg = mergePreLlmConfig(criteria);
   const minText = cfg.min_primary_text_chars ?? 12;
-  const prof = profileForKind(cfg, evidenceKind);
-  const features = extractPreLlmFeatures(evidenceKind, payload);
+  const features = extractPreLlmFeatures(evidenceKind, payload, options);
+  const prof = resolvePreLlmProfileForRow(cfg, evidenceKind, features);
   if (POST_KINDS_TEXT_GATE.has(evidenceKind) && textLen(payload) < minText) {
     return {
       pre_llm_score: 0,
@@ -356,6 +443,8 @@ export async function rankImportRowsForLlm(
   const minText = cfg.min_primary_text_chars ?? 12;
   const cap = Math.min(20_000, Math.max(maxRowsForLlm * 50, 5000));
   const dbRows = await listEvidenceRowsForPreLlmScoring(db, projectId, importId, cap);
+  const registryFollowerLookup = buildRegistryFollowerLookupFromEvidenceRows(dbRows);
+  const featureOpts: PreLlmFeatureOptions = { registryFollowerLookup };
 
   const ranked: PreLlmRankedRow[] = [];
   let droppedSparse = 0;
@@ -364,8 +453,8 @@ export async function rankImportRowsForLlm(
   for (const r of dbRows) {
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
     const kind = r.evidence_kind || "unknown";
-    const prof = profileForKind(cfg, kind);
-    const features = extractPreLlmFeatures(kind, payload);
+    const features = extractPreLlmFeatures(kind, payload, featureOpts);
+    const prof = resolvePreLlmProfileForRow(cfg, kind, features);
     if (POST_KINDS_TEXT_GATE.has(kind) && textLen(payload) < minText) {
       droppedSparse++;
       ranked.push({
@@ -414,7 +503,7 @@ export async function rankImportRowsForLlm(
 
   const profiles_used: Record<string, { min_score: number; weights: Record<string, number> }> = {};
   for (const k of new Set(dbRows.map((r) => r.evidence_kind))) {
-    const pr = profileForKind(cfg, k);
+    const pr = profileForKind(cfg, k, Boolean(cfg.relative_page_performance));
     profiles_used[k] = { min_score: pr.min_score, weights: { ...pr.weights } };
   }
 
@@ -429,6 +518,7 @@ export async function rankImportRowsForLlm(
     },
     pre_llm: {
       enabled: true,
+      relative_page_performance: Boolean(cfg.relative_page_performance),
       min_primary_text_chars: minText,
       total_rows_scored: dbRows.length,
       rows_after_filter: kept.length,

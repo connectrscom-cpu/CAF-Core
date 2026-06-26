@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
@@ -12,8 +12,12 @@ import {
   buildSlidesJson,
   createSyntheticSlides,
   mergeCarouselTypographyIntoPayload,
+  mimicSlideFieldsFromTextBlocks,
   parseSlidesFromJson,
+  resolveMimicTextBlocksForSlide,
   enrichMimicSlidesFromVisualGuideline,
+  fullBleedSlotTextsFromSlide,
+  slideRecordForCopySlots,
   readCarouselTypographyFromFullJob,
   type CarouselSlidesPayload,
 } from "@/lib/carousel-slides";
@@ -31,13 +35,15 @@ import { isCarouselFlow, isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { MimicCarouselInspectPanel } from "@/components/MimicCarouselInspectPanel";
 import { JobInfoBar } from "@/components/JobInfoBar";
+import { JobJourneyPanel } from "@/components/JobJourneyPanel";
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isMimicCarouselFlow, isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
-import { displayFlowLabel } from "@/lib/display-flow-label";
+import { displayFlowLabel, displayFlowDetail } from "@/lib/display-flow-label";
 import {
+  jobRenderFailureBanner,
+  resolveTextOverlayReprintUiState,
   textOverlayReprintBannerMessage,
-  textOverlayReprintUiState,
 } from "@/lib/text-overlay-reprint-status";
 import {
   registerReviewBackgroundJob,
@@ -84,6 +90,8 @@ export interface TaskReviewClientProps {
 export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClientProps) {
   const { navHref } = useReviewProject();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const marketerMode = searchParams.get("marketer") === "1";
   const task_id = useMemo(() => decodeTaskIdParam(taskIdParam), [taskIdParam]);
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
@@ -320,29 +328,32 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
-  const textOverlayReprint = useMemo(() => {
-    if (fullJob?.render_state != null) {
-      return textOverlayReprintUiState(fullJob.render_state);
-    }
-    const active = data?.text_overlay_reprint_active === "true";
-    const failed = data?.text_overlay_reprint_active === "failed";
-    if (!active && !failed && !data?.text_overlay_reprint_completed_at && !data?.text_overlay_reprint_requested_at) {
-      return textOverlayReprintUiState(null);
-    }
-    return {
-      active,
-      failed,
-      error: data?.text_overlay_reprint_error ?? null,
-      requested_at: data?.text_overlay_reprint_requested_at ?? null,
-      completed_at: data?.text_overlay_reprint_completed_at ?? null,
-      slide_indices: data?.text_overlay_reprint_slides ?? null,
-    };
-  }, [fullJob, data]);
+  const textOverlayReprint = useMemo(
+    () => resolveTextOverlayReprintUiState(fullJob?.render_state, data),
+    [fullJob, data]
+  );
 
   const textOverlayReprintBanner = useMemo(
     () => textOverlayReprintBannerMessage(textOverlayReprint),
     [textOverlayReprint]
   );
+
+  const jobFailureBanner = useMemo(() => {
+    if (textOverlayReprintBanner) return null;
+    return jobRenderFailureBanner(
+      data?.review_status,
+      fullJob?.render_state ?? null
+    );
+  }, [textOverlayReprintBanner, data?.review_status, fullJob?.render_state]);
+
+  const prevTextReprintActiveRef = useRef(false);
+  useEffect(() => {
+    const wasActive = prevTextReprintActiveRef.current;
+    prevTextReprintActiveRef.current = textOverlayReprint.active;
+    if (wasActive && !textOverlayReprint.active) {
+      void refreshTaskAssets();
+    }
+  }, [textOverlayReprint.active, refreshTaskAssets]);
 
   useEffect(() => {
     if (!textOverlayReprint.active) return;
@@ -533,6 +544,34 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     if (!slide) return [];
     return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.text);
   }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
+
+  const fullBleedSlotTexts = useMemo(() => {
+    if (mimicTemplateBg || editedSlides.length < 1) return [];
+    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
+    if (!slide) return [];
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    const mimicV1 =
+      gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+        ? (gp.mimic_v1 as Record<string, unknown>)
+        : null;
+    const vg =
+      mimicV1?.visual_guideline && typeof mimicV1.visual_guideline === "object"
+        ? (mimicV1.visual_guideline as Record<string, unknown>)
+        : null;
+    const grounding =
+      gp?.mimic_job_grounding && typeof gp.mimic_job_grounding === "object"
+        ? (gp.mimic_job_grounding as Record<string, unknown>)
+        : null;
+    const slideCopyLayout = Array.isArray(grounding?.slide_copy_layout)
+      ? (grounding.slide_copy_layout as Record<string, unknown>[])
+      : null;
+    const rec = slideRecordForCopySlots(vg, slideCopyLayout, viewerSlideIndex);
+    const fromSlots = fullBleedSlotTextsFromSlide(slide, rec);
+    if (fromSlots.some((t) => t.trim())) return fromSlots;
+    return resolveMimicTextBlocksForSlide(slide)
+      .filter((b) => b.role !== "handle" && !/^@[\w.]{2,}$/i.test(b.text.trim()))
+      .map((b) => b.text.trim());
+  }, [mimicTemplateBg, editedSlides, viewerSlideIndex, fullJob]);
 
   useEffect(() => {
     if (!tpGroundedCarouselReview || !fullJob || editedSlides.length === 0) return;
@@ -728,16 +767,20 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
         ? (gp.mimic_v1 as Record<string, unknown>)
         : null;
-    const fromMimic = mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length);
-    if (fromMimic) return fromMimic;
     const tpRef = fullJob.top_performer_reference as
       | { reference_frame_urls?: string[] }
       | null
       | undefined;
-    const frames = Array.isArray(tpRef?.reference_frame_urls) ? tpRef!.reference_frame_urls : [];
-    if (frames.length === 0) return undefined;
+    const referenceFrameUrls = Array.isArray(tpRef?.reference_frame_urls)
+      ? tpRef!.reference_frame_urls
+      : [];
+    const fromMimic = mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length, {
+      referenceFrameUrls,
+    });
+    if (fromMimic) return fromMimic;
+    if (referenceFrameUrls.length === 0) return undefined;
     const idx = Math.max(0, viewerSlideIndex - 1);
-    return frames[idx] ?? frames[Math.min(idx, frames.length - 1)];
+    return referenceFrameUrls[idx] ?? referenceFrameUrls[Math.min(idx, referenceFrameUrls.length - 1)];
   }, [mimicCarouselFlow, tpGroundedCarouselReview, fullJob, viewerSlideIndex, editedSlides.length]);
 
   const referenceVideoUrl = useMemo(() => {
@@ -815,6 +858,41 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     },
     [data?.project, projectFromUrl, execTaskId, refreshTaskAssets, mimicRegenNote]
   );
+
+  const handleRegenerateAllMimicSlides = useCallback(async () => {
+    const project = (data?.project ?? projectFromUrl).trim();
+    if (!execTaskId.trim() || !project || editedSlides.length < 1) return;
+    const slideIndices = Array.from({ length: editedSlides.length }, (_, i) => i + 1);
+    setRegenerateSlideBusy(true);
+    try {
+      const res = await fetch("/api/task/regenerate-carousel-slides", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task_id: execTaskId,
+          project,
+          slide_indices: slideIndices,
+          ...(mimicRegenNote.trim() ? { regeneration_note: mimicRegenNote.trim().slice(0, 400) } : {}),
+        }),
+      });
+      const json = (await res.json()) as { ok?: boolean; error?: string; message?: string };
+      if ((!res.ok && res.status !== 202) || !json.ok) {
+        throw new Error(json.error ?? json.message ?? `Regenerate failed (${res.status})`);
+      }
+      void registerReviewBackgroundJob({
+        kind: "image_regenerate",
+        taskId: execTaskId,
+        project,
+        slideIndices,
+        startedMessage: "Image regenerate queued — you can leave this page.",
+      });
+      void refreshTaskAssets();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Regenerate failed");
+    } finally {
+      setRegenerateSlideBusy(false);
+    }
+  }, [data?.project, projectFromUrl, execTaskId, editedSlides.length, refreshTaskAssets, mimicRegenNote]);
 
   const decorateCarouselSlidesPayload = useCallback(
     (slidesPayload: CarouselSlidesPayload) => {
@@ -1072,25 +1150,34 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   return (
     <>
       <div className="detail-back">
-        <Link href={navHref("/")}>← Back to Workbench</Link>
-        {runId && (
+        <Link href={navHref(marketerMode ? `/brand/${encodeURIComponent(projectFromUrl || data?.project || "")}/content` : "/review")}>
+          ← Back to {marketerMode ? "content" : "Workbench"}
+        </Link>
+        {!marketerMode && runId && (
           <> · <Link href={navHref(`/r/${encodeURIComponent(runId)}`)}>Run: {runId}</Link></>
         )}
       </div>
-      <h1 className="detail-title">{data?.generated_title || task_id}</h1>
+      <h1 className="detail-title">{data?.generated_title || data?.generated_hook || task_id}</h1>
       {data && !loading ? (
         <div className="detail-header-row">
           <p className="detail-subtitle">
             {data.platform && <>{data.platform} · </>}
-            {displayFlowLabel(data)} · {task_id}
+            {displayFlowLabel(data)}
+            {displayFlowDetail(data) ? (
+              <span className="detail-subtitle-detail">{displayFlowDetail(data)}</span>
+            ) : null}
+            {!marketerMode && <> · {task_id}</>}
           </p>
-          <CopyTaskDebugBundleButton {...debugBundleProps} />
+          {!marketerMode && <CopyTaskDebugBundleButton {...debugBundleProps} />}
         </div>
       ) : (
         <p className="detail-subtitle">
           {data?.platform && <>{data.platform} · </>}
-          {data ? <>{displayFlowLabel(data)} · </> : null}
-          {task_id}
+          {data ? <>{displayFlowLabel(data)}</> : null}
+          {data && displayFlowDetail(data) ? (
+            <span className="detail-subtitle-detail">{displayFlowDetail(data)}</span>
+          ) : null}
+          {!marketerMode && data ? <> · {task_id}</> : !data ? task_id : null}
         </p>
       )}
 
@@ -1105,6 +1192,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           role="status"
         >
           {textOverlayReprintBanner}
+        </div>
+      ) : jobFailureBanner ? (
+        <div className="task-reprint-banner task-reprint-banner--failed" role="status">
+          {jobFailureBanner}
         </div>
       ) : null}
       {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
@@ -1121,7 +1212,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               spokenScript={heygenWorkbench ? editedScript : undefined}
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
               carouselLivePreview={carouselLivePreview}
-              previewToolbar={<CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />}
+              previewToolbar={
+                marketerMode ? undefined : (
+                  <CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />
+                )
+              }
               onCarouselSlideChange={setViewerSlideIndex}
               carouselActiveSlideIndex={tpGroundedCarouselReview ? viewerSlideIndex : undefined}
               referenceSlideUrl={
@@ -1151,6 +1246,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               onDeleteSlide={tpGroundedCarouselReview ? handleDeleteMimicSlide : undefined}
               onRegenerateSlide={tpGroundedCarouselReview ? handleRegenerateMimicSlide : undefined}
+              onRegenerateAllSlides={
+                tpGroundedCarouselReview && editedSlides.length > 1
+                  ? handleRegenerateAllMimicSlides
+                  : undefined
+              }
               regenerateSlideBusy={tpGroundedCarouselReview ? regenerateSlideBusy : undefined}
               mimicRegenerationNote={tpGroundedCarouselReview ? mimicRegenNote : undefined}
               onMimicRegenerationNoteChange={tpGroundedCarouselReview ? setMimicRegenNote : undefined}
@@ -1184,6 +1284,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     templateBgMode={mimicTemplateBg}
                     templateBgFieldRoles={templateBgFieldRoles}
                     templateBgFieldTexts={templateBgFieldTexts}
+                    fullBleedSlotTexts={fullBleedSlotTexts}
                     brandPalette={brandPalette}
                     brandLogoUrl={brandLogoUrl}
                     onTemplateBgFieldTextChange={(slideIndex, fieldRole, text) => {
@@ -1204,17 +1305,54 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     registerTextBlockUpdater={(fn) => {
                       mimicTextBlockUpdaterRef.current = fn;
                     }}
+                    onLayoutTextBlocksChange={
+                      !mimicTemplateBg
+                        ? (slideIndex, blocks) => {
+                            const text_blocks = blocks
+                              .filter((b) => b.role !== "handle")
+                              .map((b) => ({
+                                role:
+                                  b.role === "headline" || b.role === "title" || b.role === "cta"
+                                    ? "headline"
+                                    : "body",
+                                text: b.text.trim(),
+                              }))
+                              .filter((b) => b.text && !/^@[\w.]{2,}$/i.test(b.text));
+                            if (text_blocks.length === 0) return;
+                            setEditedSlides((prev) => {
+                              const idx = slideIndex - 1;
+                              const slide = prev[idx];
+                              if (!slide) return prev;
+                              const fields = mimicSlideFieldsFromTextBlocks(text_blocks);
+                              return prev.map((s, i) =>
+                                i === idx
+                                  ? {
+                                      ...s,
+                                      text_blocks,
+                                      on_slide_lines: fields.on_slide_lines,
+                                      headline: fields.headline,
+                                      body: fields.body,
+                                    }
+                                  : s
+                              );
+                            });
+                          }
+                        : undefined
+                    }
                   />
                 ) : undefined
               }
             />
 
+            {!marketerMode && (
             <div className="mt-4">
               <JobInfoBar
                 jobId={execTaskId}
                 projectSlug={(data.project ?? "").trim()}
                 platform={data.platform || undefined}
                 flowType={data.flow_type || undefined}
+                flowLabel={displayFlowLabel(data)}
+                flowDetail={displayFlowDetail(data) ?? undefined}
                 route={data.recommended_route || undefined}
                 runId={runId || undefined}
                 risk={data.risk_score || undefined}
@@ -1245,7 +1383,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                   ) : undefined
                 }
               />
+              <JobJourneyPanel
+                projectSlug={(data.project ?? projectFromUrl).trim()}
+                taskId={execTaskId}
+              />
             </div>
+            )}
           </div>
 
           <div className={tpGroundedCarouselReview ? "mimic-decision-bar" : undefined} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1328,7 +1471,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             <DecisionPanel
               taskId={execTaskId}
               projectSlug={(data.project ?? projectFromUrl).trim() || undefined}
-              onSuccess={() => router.push(navHref("/"))}
+              onSuccess={() => router.push(navHref("/review"))}
               existingDecision={decision}
               existingNotes={notes}
               existingRewriteCopy={data.rewrite_copy !== "false"}

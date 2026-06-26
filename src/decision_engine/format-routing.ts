@@ -13,6 +13,7 @@ import {
   isTopPerformerMimicImageFlow,
   isTopPerformerMimicRenderableFlow,
   isVisualFirstCarouselFlow,
+  isWhyMimicCarouselFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { ScoredCandidate } from "./types.js";
 
@@ -21,6 +22,7 @@ export function isStandardTemplatedCarouselFlow(flowType: string): boolean {
   if (
     isTopPerformerMimicCarouselFlow(flowType) ||
     isVisualFirstCarouselFlow(flowType) ||
+    isWhyMimicCarouselFlow(flowType) ||
     isTopPerformerMimicImageFlow(flowType)
   ) {
     return false;
@@ -104,6 +106,7 @@ const STRICT_FORMAT_BUCKETS = new Set<IdeaFormatBucket>(["carousel", "video"]);
  */
 export function planningLaneForFlowType(flowType: string): string {
   if (isVisualFirstCarouselFlow(flowType)) return "visual_first_carousel";
+  if (isWhyMimicCarouselFlow(flowType)) return "why_mimic_carousel";
   if (isTopPerformerMimicCarouselFlow(flowType)) return "mimic_carousel";
   if (isTopPerformerMimicImageFlow(flowType)) return "mimic_image";
   if (isCarouselFlow(flowType)) return "carousel";

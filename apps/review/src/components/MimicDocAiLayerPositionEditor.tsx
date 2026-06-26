@@ -316,12 +316,33 @@ type MimicDocAiLayerPositionEditorProps = {
   /** Total slides in the deck — enables apply-typography-to-all actions. */
   slideCount?: number;
   /** Apply current box typography to all headline or body boxes in the carousel. */
-  onApplyTypographyToRole?: (role: "headline" | "body", style: DocAiLayerTypographyStyle) => void;
+  onApplyTypographyToRole?: (
+    role: "headline" | "body",
+    style: DocAiLayerTypographyStyle
+  ) => Promise<MimicDeckApplyResult | void>;
   /** Apply current box placement to all headline or body boxes in the carousel. */
-  onApplyPlacementToRole?: (role: "headline" | "body", placement: DocAiLayerPlacementStyle) => void;
+  onApplyPlacementToRole?: (
+    role: "headline" | "body",
+    placement: DocAiLayerPlacementStyle
+  ) => Promise<MimicDeckApplyResult | void>;
+  /** True while a deck-wide typography/placement apply is saving. */
+  deckApplyBusy?: boolean;
+  /** Save layout + reprint every slide with current highlight on/off and colour. */
+  onApplyHighlightToAllSlides?: () => void;
+  /** Save layout + reprint every slide with current brand logo stamp on/off. */
+  onApplyLogoStampToAllSlides?: () => void;
+  overlayApplyBusy?: boolean;
   /** Parent bumped after cross-slide apply — merge into local overrides without full reseed. */
   draftSyncRevision?: number;
 };
+
+export type MimicDeckApplyResult = { ok: boolean; message: string };
+
+type DeckApplyActionId =
+  | "typography-headline"
+  | "typography-body"
+  | "placement-headline"
+  | "placement-body";
 
 type MoveDrag = {
   key: string;
@@ -535,6 +556,10 @@ export function MimicDocAiLayerPositionEditor({
   slideCount = 1,
   onApplyTypographyToRole,
   onApplyPlacementToRole,
+  onApplyHighlightToAllSlides,
+  onApplyLogoStampToAllSlides,
+  deckApplyBusy = false,
+  overlayApplyBusy = false,
   draftSyncRevision = 0,
 }: MimicDocAiLayerPositionEditorProps) {
   const canvasColRef = useRef<HTMLDivElement>(null);
@@ -549,6 +574,64 @@ export function MimicDocAiLayerPositionEditor({
   layersRef.current = layers;
   customLayersRef.current = customLayers;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [deckApplyFeedback, setDeckApplyFeedback] = useState<{
+    id: DeckApplyActionId;
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [deckApplyingId, setDeckApplyingId] = useState<DeckApplyActionId | null>(null);
+  const deckApplyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runDeckApply = useCallback(
+    async (id: DeckApplyActionId, run: () => Promise<MimicDeckApplyResult | void>) => {
+      if (deckApplyFeedbackTimerRef.current) {
+        clearTimeout(deckApplyFeedbackTimerRef.current);
+        deckApplyFeedbackTimerRef.current = null;
+      }
+      setDeckApplyingId(id);
+      setDeckApplyFeedback(null);
+      try {
+        const result = await run();
+        if (result) {
+          setDeckApplyFeedback({ id, ok: result.ok, message: result.message });
+          if (result.ok) {
+            deckApplyFeedbackTimerRef.current = setTimeout(() => {
+              setDeckApplyFeedback((prev) => (prev?.id === id ? null : prev));
+            }, 4000);
+          }
+        }
+      } finally {
+        setDeckApplyingId(null);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (deckApplyFeedbackTimerRef.current) clearTimeout(deckApplyFeedbackTimerRef.current);
+    };
+  }, []);
+
+  const deckApplyButtonClass = useCallback(
+    (id: DeckApplyActionId) => {
+      const base = "btn-secondary btn-sm mimic-docai-editor__apply-typography-btn";
+      if (deckApplyFeedback?.id !== id) return base;
+      return deckApplyFeedback.ok
+        ? `${base} mimic-docai-editor__apply-btn--done`
+        : `${base} mimic-docai-editor__apply-btn--error`;
+    },
+    [deckApplyFeedback]
+  );
+
+  const deckApplyButtonLabel = useCallback(
+    (id: DeckApplyActionId, label: string) => {
+      if (deckApplyingId === id) return "Applying…";
+      if (deckApplyFeedback?.id === id && deckApplyFeedback.ok) return `✓ ${label}`;
+      return label;
+    },
+    [deckApplyingId, deckApplyFeedback]
+  );
   const [moveDrag, setMoveDrag] = useState<MoveDrag | null>(null);
   const [resizeDrag, setResizeDrag] = useState<ResizeDrag | null>(null);
   const [fontSizeDraft, setFontSizeDraft] = useState<string | null>(null);
@@ -1631,7 +1714,7 @@ export function MimicDocAiLayerPositionEditor({
                     pushUndo();
                     textEditKeyRef.current = selected.layer_key;
                   }
-                  updateOverride(selected.layer_key, { text: e.target.value });
+                  updateOverride(selected.layer_key, { text: e.target.value, box_locked: true });
                 }}
                 className="mimic-docai-editor__text-input"
                 placeholder={templateBgMode ? "Edit copy in Slide copy (left column)…" : "Type on-slide copy…"}
@@ -1796,6 +1879,18 @@ export function MimicDocAiLayerPositionEditor({
           {slideCount >= 1 && (onApplyTypographyToRole || onApplyPlacementToRole) ? (
             <div className="mimic-docai-editor__deck-actions">
               <p className="mimic-docai-editor__deck-actions-title">Apply to all slides</p>
+              {deckApplyFeedback ? (
+                <p
+                  className={`mimic-docai-editor__deck-actions-toast${
+                    deckApplyFeedback.ok
+                      ? " mimic-docai-editor__deck-actions-toast--ok"
+                      : " mimic-docai-editor__deck-actions-toast--err"
+                  }`}
+                  role="status"
+                >
+                  {deckApplyFeedback.ok ? "✓" : "✕"} {deckApplyFeedback.message}
+                </p>
+              ) : null}
               {!selected ? (
                 <p className="mimic-docai-editor__deck-actions-hint">
                   Select a box first — its settings become the source.
@@ -1805,39 +1900,43 @@ export function MimicDocAiLayerPositionEditor({
                 <>
                   <button
                     type="button"
-                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
-                    disabled={!selected}
+                    className={deckApplyButtonClass("typography-headline")}
+                    disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
                       const style = layerStyleFromRow(selectedLayerForPanel, selected);
-                      onApplyTypographyToRole("headline", {
-                        font_size_px: style.font_size_px,
-                        font_weight: style.font_weight,
-                        color_hex: style.color_hex,
-                        font_family: style.font_family || undefined,
-                        font_style_italic: style.font_style_italic,
-                      });
+                      void runDeckApply("typography-headline", () =>
+                        onApplyTypographyToRole("headline", {
+                          font_size_px: style.font_size_px,
+                          font_weight: style.font_weight,
+                          color_hex: style.color_hex,
+                          font_family: style.font_family || undefined,
+                          font_style_italic: style.font_style_italic,
+                        })
+                      );
                     }}
                   >
-                    Typography → all Headline boxes
+                    {deckApplyButtonLabel("typography-headline", "Typography → all Headline boxes")}
                   </button>
                   <button
                     type="button"
-                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
-                    disabled={!selected}
+                    className={deckApplyButtonClass("typography-body")}
+                    disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
                       const style = layerStyleFromRow(selectedLayerForPanel, selected);
-                      onApplyTypographyToRole("body", {
-                        font_size_px: style.font_size_px,
-                        font_weight: style.font_weight,
-                        color_hex: style.color_hex,
-                        font_family: style.font_family || undefined,
-                        font_style_italic: style.font_style_italic,
-                      });
+                      void runDeckApply("typography-body", () =>
+                        onApplyTypographyToRole("body", {
+                          font_size_px: style.font_size_px,
+                          font_weight: style.font_weight,
+                          color_hex: style.color_hex,
+                          font_family: style.font_family || undefined,
+                          font_style_italic: style.font_style_italic,
+                        })
+                      );
                     }}
                   >
-                    Typography → all Body boxes
+                    {deckApplyButtonLabel("typography-body", "Typography → all Body boxes")}
                   </button>
                 </>
               ) : null}
@@ -1845,37 +1944,41 @@ export function MimicDocAiLayerPositionEditor({
                 <>
                   <button
                     type="button"
-                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
-                    disabled={!selected}
+                    className={deckApplyButtonClass("placement-headline")}
+                    disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
-                      onApplyPlacementToRole("headline", {
-                        x_px: selected.x_px,
-                        y_px: selected.y_px,
-                        w_px: selected.w_px ?? selectedLayerForPanel.w_px,
-                        h_px: selected.h_px ?? selectedLayerForPanel.h_px,
-                        box_locked: true,
-                      });
+                      void runDeckApply("placement-headline", () =>
+                        onApplyPlacementToRole("headline", {
+                          x_px: selected.x_px,
+                          y_px: selected.y_px,
+                          w_px: selected.w_px ?? selectedLayerForPanel.w_px,
+                          h_px: selected.h_px ?? selectedLayerForPanel.h_px,
+                          box_locked: true,
+                        })
+                      );
                     }}
                   >
-                    Box placement → all Headline boxes
+                    {deckApplyButtonLabel("placement-headline", "Box placement → all Headline boxes")}
                   </button>
                   <button
                     type="button"
-                    className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
-                    disabled={!selected}
+                    className={deckApplyButtonClass("placement-body")}
+                    disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
-                      onApplyPlacementToRole("body", {
-                        x_px: selected.x_px,
-                        y_px: selected.y_px,
-                        w_px: selected.w_px ?? selectedLayerForPanel.w_px,
-                        h_px: selected.h_px ?? selectedLayerForPanel.h_px,
-                        box_locked: true,
-                      });
+                      void runDeckApply("placement-body", () =>
+                        onApplyPlacementToRole("body", {
+                          x_px: selected.x_px,
+                          y_px: selected.y_px,
+                          w_px: selected.w_px ?? selectedLayerForPanel.w_px,
+                          h_px: selected.h_px ?? selectedLayerForPanel.h_px,
+                          box_locked: true,
+                        })
+                      );
                     }}
                   >
-                    Box placement → all Body boxes
+                    {deckApplyButtonLabel("placement-body", "Box placement → all Body boxes")}
                   </button>
                 </>
               ) : null}
@@ -1930,6 +2033,33 @@ export function MimicDocAiLayerPositionEditor({
               {logoStampEnabled && brandLogoPreviewUrl.trim() ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={brandLogoPreviewUrl} alt="Brand logo" className="brand-logo-chip" />
+              ) : null}
+              {slideCount > 1 && (onApplyHighlightToAllSlides || onApplyLogoStampToAllSlides) ? (
+                <div className="mimic-docai-editor__deck-actions mimic-docai-editor__deck-actions--overlay">
+                  {onApplyHighlightToAllSlides ? (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                      disabled={overlayApplyBusy}
+                      onClick={() => onApplyHighlightToAllSlides()}
+                    >
+                      Highlight → all slides
+                    </button>
+                  ) : null}
+                  {onApplyLogoStampToAllSlides ? (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                      disabled={overlayApplyBusy || !brandLogoPreviewUrl.trim()}
+                      onClick={() => onApplyLogoStampToAllSlides()}
+                    >
+                      Brand logo → all slides
+                    </button>
+                  ) : null}
+                  <p className="mimic-docai-editor__deck-actions-hint">
+                    Saves layout and reprints every slide using the highlight / logo settings above.
+                  </p>
+                </div>
               ) : null}
             </div>
           ) : null}

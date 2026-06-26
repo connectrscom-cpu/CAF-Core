@@ -67,6 +67,8 @@ export const ADMIN_CAF_GLOSSARY: Record<string, string> = {
   funnelFinal: "Rows that proceed to insights and idea steps (same as cutoff pass).",
   scoreFormula:
     "Weighted blend of normalized features (0–1) per platform. Score = Σ(feature × weight) / Σ(weights). Saved in the processing profile.",
+  relativePagePerformance:
+    "When on, Instagram/Facebook/TikTok scores use engagement relative to account size (followers) instead of raw likes/plays. Rows without follower data fall back to raw volume weights.",
   profileMinScore: "Hard floor (0–1) before blending — weaker rows drop out of the funnel.",
   minPrimaryTextChars: "Drop rows whose primary caption/body is shorter than this (sparse text).",
   featureWeight: "How much a normalized feature contributes to the blended score.",
@@ -159,6 +161,8 @@ span.caf-pipeline-stage{cursor:default}
 .prellm-formula-card .prellm-formula-table{font-size:13px}
 .prellm-formula-card .prellm-formula-table th,.prellm-formula-card .prellm-formula-table td{padding:10px 12px;font-size:13px}
 .prellm-formula-card .prellm-wt{font-size:14px!important;width:84px;padding:6px 8px}
+.prellm-relative-toggle{display:flex;align-items:center;gap:8px;flex-wrap:nowrap;cursor:pointer;font-size:13px;color:var(--fg2)}
+.prellm-relative-toggle input{margin:0;accent-color:var(--accent);width:16px;height:16px;flex-shrink:0;cursor:pointer}
 .prellm-cutoff-wrap{display:flex;align-items:center;gap:8px;flex:1;min-width:200px}
 .prellm-cutoff-range{flex:1;min-width:140px;max-width:100%;accent-color:var(--accent)}
 .prellm-cutoff-endpoint{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;flex-shrink:0;min-width:1ch}
@@ -353,6 +357,10 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 .caf-manual-pick-table .pick-title{font-weight:600;font-size:14px;line-height:1.35;color:var(--fg)}
 .caf-manual-pick-table .pick-detail{font-size:13px;color:var(--fg2);line-height:1.45;max-width:420px}
 .caf-manual-pick-table .pick-id{font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)}
+.caf-manual-pick-table .pick-post-link{font-size:12px;font-weight:500;color:var(--accent);text-decoration:none;white-space:nowrap}
+.caf-manual-pick-table .pick-post-link:hover{text-decoration:underline}
+.caf-manual-pick-table .pick-post-link{display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--accent)}
+.caf-manual-pick-table .pick-post-link:hover{text-decoration:underline}
 .caf-manual-pick-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;padding:14px 16px;border-top:1px solid var(--border);flex-shrink:0;background:var(--surface-2)}
 .caf-manual-pick-foot-left,.caf-manual-pick-foot-right{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .caf-manual-pick-msg{font-size:12px;color:var(--muted);flex:1;min-width:140px}
@@ -593,10 +601,11 @@ export function adminManualIdeaPickScript(): string {
   return `
 (function(){
   var FORMAT_ORDER=['video','carousel_visual','carousel','post','thread','blog','slides','script','memo','other'];
-  var MIMIC_TAB_ORDER=['mimic_image','mimic_carousel','mimic_video'];
+  var MIMIC_TAB_ORDER=['mimic_image','mimic_carousel','mimic_why_carousel','mimic_video'];
   function mimicTabLabel(tab){
     if(tab==='mimic_image')return 'Mimic · Image';
     if(tab==='mimic_carousel')return 'Mimic · Carousel';
+    if(tab==='mimic_why_carousel')return 'Mimic · Why Carousel';
     if(tab==='mimic_video')return 'Mimic · Video';
     return tab;
   }
@@ -604,7 +613,28 @@ export function adminManualIdeaPickScript(): string {
   function mimicKindForTab(tab){
     if(tab==='mimic_image')return 'image';
     if(tab==='mimic_carousel')return 'carousel';
+    if(tab==='mimic_why_carousel')return 'why_carousel';
     return 'video';
+  }
+  /** Legacy picker keys used pick_id (e.g. ins_xxx__why_mimic); API expects bare insights_id. */
+  function normalizeMimicInsightsId(rawId, kind){
+    var id=String(rawId||'').trim();
+    if(!id)return '';
+    if(id.slice(-11)==='__why_mimic'){
+      return {id:id.slice(0,-11),kind:'why_carousel'};
+    }
+    return {id:id,kind:kind};
+  }
+  function formatPickApiError(d,fallback){
+    if(d&&d.message)return String(d.message);
+    if(d&&d.details){
+      try{
+        var flat=d.details.body&&d.details.body.fieldErrors?d.details.body.fieldErrors:null;
+        if(flat&&flat.mimic_picks)return 'Invalid mimic picks: '+flat.mimic_picks.join(' ');
+        return 'Invalid request: '+JSON.stringify(d.details);
+      }catch(e){}
+    }
+    return String((d&&d.error)||fallback||'Request failed');
   }
   function mpEsc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function mpEscAttr(s){return mpEsc(s).replace(/"/g,'&quot;');}
@@ -732,12 +762,13 @@ export function adminManualIdeaPickScript(): string {
     var h='<div class="caf-manual-pick-table-wrap"><table class="caf-manual-pick-table"><thead><tr>';
     h+='<th style="width:36px"><input type="checkbox" id="caf-manual-pick-head-cb" title="Toggle all in tab"/></th>';
     h+='<th>'+(mimic?'Reference':'Title')+'</th><th>Platform</th>';
+    if(mimic)h+='<th>Original post</th>';
     if(showStyle)h+='<th>Style</th>';
     if(mimic)h+='<th>Render</th>';
     h+='<th>Summary</th><th>'+(mimic?'Insights ID':'Idea ID')+'</th></tr></thead><tbody>';
     for(var i=0;i<rows.length;i++){
       var it=rows[i];
-      var id=String(mimic?(it.pick_id||it.insights_id||''):(it.idea_id||''));
+      var id=String(mimic?(it.insights_id||it.pick_id||''):(it.idea_id||''));
       var on=!!(draft[id]||saved[id]);
       h+='<tr class="'+(on?'is-selected':'')+'">';
       h+='<td><input type="checkbox" class="caf-manual-pick-cb" value="'+mpEscAttr(id)+'"'+(on?' checked':'')+'/></td>';
@@ -751,6 +782,16 @@ export function adminManualIdeaPickScript(): string {
       }
       h+='</div></td>';
       h+='<td><span class="badge badge-b">'+mpEsc(it.platform||'—')+'</span></td>';
+      if(mimic){
+        var postUrl=String(it.evidence_post_url||'').trim();
+        h+='<td>';
+        if(postUrl){
+          h+='<a href="'+mpEscAttr(postUrl)+'" target="_blank" rel="noopener noreferrer" class="pick-post-link" title="'+mpEscAttr(postUrl)+'">Open post</a>';
+        }else{
+          h+='<span class="mono" style="font-size:11px;color:var(--muted)">—</span>';
+        }
+        h+='</td>';
+      }
       if(showStyle){
         var lane=String(it.carousel_lane_label||carouselStyle(it)||it.video_style||'—');
         if(lane!=='—'&&lane.indexOf('_')>=0)lane=lane.replace(/_/g,' ');
@@ -770,7 +811,8 @@ export function adminManualIdeaPickScript(): string {
         if(it.mimic_kind==='carousel'&&st.signalPackId&&typeof window.cafMimicModeOverrideButtonsHtml==='function'){
           var mo=it.mode_override;
           if(mo!=='carousel_visual'&&mo!=='template_bg')mo=null;
-          h+='<div style="margin-top:6px">'+window.cafMimicModeOverrideButtonsHtml(st.signalPackId,id,mo)+'</div>';
+          var insightsId=String(it.insights_id||'').trim();
+          h+='<div style="margin-top:6px">'+window.cafMimicModeOverrideButtonsHtml(st.signalPackId,insightsId,mo)+'</div>';
         }
         h+='</td>';
       }
@@ -805,7 +847,7 @@ export function adminManualIdeaPickScript(): string {
     for(var ri=0;ri<(refs||[]).length;ri++){
       var row=refs[ri]||{};
       var kind=String(row.mimic_kind||'');
-      var tab=kind==='image'?'mimic_image':kind==='carousel'?'mimic_carousel':kind==='video'?'mimic_video':null;
+      var tab=kind==='image'?'mimic_image':kind==='carousel'?'mimic_carousel':kind==='why_carousel'?'mimic_why_carousel':kind==='video'?'mimic_video':null;
       if(!tab)continue;
       if(!st.byTab[tab])st.byTab[tab]=[];
       st.byTab[tab].push(row);
@@ -833,8 +875,16 @@ export function adminManualIdeaPickScript(): string {
       var kind=mimicKindForTab(tab);
       var seen={};
       function addFrom(set){
-        Object.keys(set).forEach(function(insightsId){
-          if(set[insightsId]&&!seen[insightsId]){seen[insightsId]=1;picks.push({insights_id:insightsId,mimic_kind:kind});}
+        Object.keys(set).forEach(function(rawKey){
+          if(!set[rawKey])return;
+          var norm=normalizeMimicInsightsId(rawKey,kind);
+          var normId=norm.id;
+          var pickKind=norm.kind;
+          if(!normId)return;
+          var dedupeKey=pickKind+':'+normId;
+          if(seen[dedupeKey])return;
+          seen[dedupeKey]=1;
+          picks.push({insights_id:normId,mimic_kind:pickKind});
         });
       }
       addFrom(saved);
@@ -945,7 +995,7 @@ export function adminManualIdeaPickScript(): string {
       });
       var d=await r.json();
       if(!r.ok||!d.ok){
-        var errMsg=(d&&d.message)||(d&&d.error)||('HTTP '+r.status);
+        var errMsg=formatPickApiError(d,'HTTP '+r.status);
         if(String(errMsg).toLowerCase().indexOf('created')>=0){
           throw new Error('Run already started — manual pick only works before Start. Create a new run with Manual picking.');
         }

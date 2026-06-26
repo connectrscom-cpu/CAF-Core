@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 const webpack = require("webpack");
 
 const coreServices = path.join(__dirname, "..", "..", "src", "services");
@@ -26,6 +27,14 @@ const nextConfig = {
       coreDomain,
       "slide-copy-lines.ts"
     );
+    config.resolve.alias["@caf-core-carousel/slide-intelligence"] = path.join(
+      coreDomain,
+      "slide-intelligence.ts"
+    );
+    config.resolve.alias["@caf-core-carousel/mimic-slide-analysis-quality"] = path.join(
+      coreDomain,
+      "mimic-slide-analysis-quality.ts"
+    );
     config.plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^\.\/supabase-storage\.js$/, path.join(coreServices, "supabase-storage.ts")),
       new webpack.NormalModuleReplacementPlugin(
@@ -48,9 +57,28 @@ const nextConfig = {
         /^\.\/slide-copy-lines\.js$/,
         path.join(coreDomain, "slide-copy-lines.ts")
       ),
+      new webpack.NormalModuleReplacementPlugin(
+        /^\.\/mimic-slide-analysis-quality\.js$/,
+        path.join(coreDomain, "mimic-slide-analysis-quality.ts")
+      ),
+      new webpack.NormalModuleReplacementPlugin(
+        /^\.\/why-mimic-execution\.js$/,
+        path.join(coreDomain, "why-mimic-execution.ts")
+      ),
+      new webpack.NormalModuleReplacementPlugin(
+        /^\.\/brand-translation\.js$/,
+        path.join(coreDomain, "brand-translation.ts")
+      ),
       new webpack.NormalModuleReplacementPlugin(/^\.\.\/domain\/(.+)\.js$/, (resource) => {
         const base = resource.request.match(/^\.\.\/domain\/(.+)\.js$/)?.[1];
         if (base) resource.request = path.join(coreDomain, `${base}.ts`);
+      }),
+      new webpack.NormalModuleReplacementPlugin(/^\.\/([^/]+)\.js$/, (resource) => {
+        if (!resource.context?.startsWith(coreDomain)) return;
+        const base = resource.request.match(/^\.\/([^/]+)\.js$/)?.[1];
+        if (!base) return;
+        const tsPath = path.join(coreDomain, `${base}.ts`);
+        if (fs.existsSync(tsPath)) resource.request = tsPath;
       })
     );
     return config;

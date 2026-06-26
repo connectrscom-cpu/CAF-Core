@@ -6,6 +6,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
+  FLOW_WHY_MIMIC_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 import {
   heygenLaneLabelForIntent,
@@ -14,17 +15,18 @@ import {
 import { classifyMimicMode } from "./mimic-mode-classifier.js";
 import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
 
-export type MimicPickKind = "image" | "carousel" | "video";
+export type MimicPickKind = "image" | "carousel" | "video" | "why_carousel";
 
-export const MIMIC_PICK_KINDS: readonly MimicPickKind[] = ["image", "carousel", "video"] as const;
+export const MIMIC_PICK_KINDS: readonly MimicPickKind[] = ["image", "carousel", "why_carousel", "video"] as const;
 
-export const MIMIC_PICK_TAB_ORDER = ["mimic_image", "mimic_carousel", "mimic_video"] as const;
+export const MIMIC_PICK_TAB_ORDER = ["mimic_image", "mimic_carousel", "mimic_why_carousel", "mimic_video"] as const;
 
 export type MimicPickTabId = (typeof MIMIC_PICK_TAB_ORDER)[number];
 
 const TIER_FOR_KIND: Record<MimicPickKind, string> = {
   image: "top_performer_deep",
   carousel: "top_performer_carousel",
+  why_carousel: "top_performer_carousel",
   video: "top_performer_video",
 };
 
@@ -40,9 +42,27 @@ export function mimicKindToFlowType(kind: MimicPickKind): string {
       return FLOW_TOP_PERFORMER_MIMIC_IMAGE;
     case "carousel":
       return FLOW_TOP_PERFORMER_MIMIC_CAROUSEL;
+    case "why_carousel":
+      return FLOW_WHY_MIMIC_CAROUSEL;
     case "video":
       return FLOW_TOP_PERFORMER_MIMIC_VIDEO;
   }
+}
+
+/** Legacy manual picker checkbox values used `pick_id` = `{insights_id}__why_mimic`. */
+export const WHY_MIMIC_PICK_ID_SUFFIX = "__why_mimic";
+
+export function normalizeMimicPickRef(
+  rawInsightsId: string,
+  mimicKind: MimicPickKind
+): { insights_id: string; mimic_kind: MimicPickKind } {
+  let insights_id = String(rawInsightsId ?? "").trim();
+  let kind = mimicKind;
+  if (insights_id.endsWith(WHY_MIMIC_PICK_ID_SUFFIX)) {
+    insights_id = insights_id.slice(0, -WHY_MIMIC_PICK_ID_SUFFIX.length);
+    kind = "why_carousel";
+  }
+  return { insights_id, mimic_kind: kind };
 }
 
 /** Resolve planner target_flow_type for a video top-performer reference (HeyGen lane). */
@@ -56,6 +76,8 @@ export function mimicPickTabLabel(tab: MimicPickTabId): string {
       return "Mimic · Image";
     case "mimic_carousel":
       return "Mimic · Carousel";
+    case "mimic_why_carousel":
+      return "Mimic · Why Carousel";
     case "mimic_video":
       return "Mimic · Video";
   }
@@ -67,6 +89,8 @@ export function mimicPickTabToKind(tab: MimicPickTabId): MimicPickKind {
       return "image";
     case "mimic_carousel":
       return "carousel";
+    case "mimic_why_carousel":
+      return "why_carousel";
     case "mimic_video":
       return "video";
   }
@@ -96,6 +120,8 @@ export interface SignalPackMimicReferenceUiRow {
   predicted_render_detail: string;
   /** Manual override on signal pack (`derived_globals_json.mimic_mode_overrides`). */
   mode_override: MimicMode | null;
+  /** Canonical permalink to the source top-performer post (when known). */
+  evidence_post_url: string | null;
 }
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -212,6 +238,7 @@ export function buildSignalPackMimicReferencesForUi(
       `${formatPattern || tier} · row ${rowId || "?"}`;
     const detail = [why, formatPattern ? `Format: ${formatPattern}` : ""].filter(Boolean).join(" — ");
     const platform = platformFromEvidenceKind(stringish(entry.evidence_kind, 80) || "instagram_post");
+    const evidencePostUrl = stringish(entry.evidence_post_url, 500) || null;
     const modeOverride = modeOverrides[insightsId] as MimicMode | null | undefined;
     const predicted = predictedRenderForEntry(mimicKind, entry, modeOverride ?? null);
 
@@ -230,7 +257,29 @@ export function buildSignalPackMimicReferencesForUi(
       predicted_mimic_mode: predicted.mode,
       predicted_render_detail: predicted.detail,
       mode_override: modeOverride ?? null,
+      evidence_post_url: evidencePostUrl,
     });
+
+    if (mimicKind === "carousel") {
+      const whyPredicted = predictedRenderForEntry("why_carousel", entry, modeOverride ?? null);
+      out.push({
+        pick_id: `${insightsId}__why_mimic`,
+        insights_id: insightsId,
+        mimic_kind: "why_carousel",
+        title: title ? `${title} (Why Mimic)` : "Why Mimic carousel",
+        detail: detail ? `${detail} — strategic SIL-driven lane` : "Why Mimic — SIL-driven copy + image prompts",
+        platform,
+        analysis_tier: tier,
+        source_evidence_row_id: rowId,
+        has_inspection_media: hasInspectionMedia(entry),
+        format_pattern: formatPattern,
+        predicted_render_label: whyPredicted.label,
+        predicted_mimic_mode: whyPredicted.mode,
+        predicted_render_detail: whyPredicted.detail,
+        mode_override: modeOverride ?? null,
+        evidence_post_url: evidencePostUrl,
+      });
+    }
   }
 
   out.sort((a, b) => {
@@ -252,9 +301,11 @@ export function groupMimicReferencesByTab(
     const tab: MimicPickTabId =
       row.mimic_kind === "image"
         ? "mimic_image"
-        : row.mimic_kind === "carousel"
-          ? "mimic_carousel"
-          : "mimic_video";
+        : row.mimic_kind === "why_carousel"
+          ? "mimic_why_carousel"
+          : row.mimic_kind === "carousel"
+            ? "mimic_carousel"
+            : "mimic_video";
     map.get(tab)!.push(row);
   }
   return map;

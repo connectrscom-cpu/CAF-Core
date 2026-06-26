@@ -24,11 +24,20 @@ export interface CarouselDeckVisionResult {
   parsed: Record<string, unknown> | null;
 }
 
+export interface CarouselVisionProviderOpts {
+  provider?: ProcessingVisionProvider;
+  defaultNvidiaModel?: string;
+}
+
 /** Nemotron VL is sensitive to multi-image payloads — keep carousel chunks small. */
 const NVIDIA_CAROUSEL_MAX_IMAGES_PER_CHUNK = 2;
 
-export function resolveCarouselVisionChunkSize(config: AppConfig, profileModel: string): number | null {
-  const call = resolveProcessingVisionCall(config, profileModel);
+export function resolveCarouselVisionChunkSize(
+  config: AppConfig,
+  profileModel: string,
+  visionOpts?: CarouselVisionProviderOpts
+): number | null {
+  const call = resolveProcessingVisionCall(config, profileModel, visionOpts);
   if (call.provider !== "nvidia") return null;
   const providerCap = call.maxImagesPerRequest ?? 4;
   return Math.min(Math.max(1, providerCap), NVIDIA_CAROUSEL_MAX_IMAGES_PER_CHUNK);
@@ -311,6 +320,9 @@ export async function runCarouselDeckVisionAnalysis(args: {
   audit: Omit<OpenAiAuditContext, "step">;
   auditStep: string;
   maxTokens?: number;
+  visionProviderOpts?: CarouselVisionProviderOpts;
+  /** Deck-wide summary prompt when chunking (defaults to top-performer deck prompt). */
+  deckSummaryPrompt?: string;
 }): Promise<CarouselDeckVisionResult> {
   const {
     config,
@@ -323,10 +335,13 @@ export async function runCarouselDeckVisionAnalysis(args: {
     audit,
     auditStep,
     maxTokens: maxTokensOverride,
+    visionProviderOpts,
   } = args;
 
-  const call = resolveProcessingVisionCall(config, profileModel);
-  const chunkSize = resolveCarouselVisionChunkSize(config, profileModel) ?? 4;
+  const deckSummaryBase = args.deckSummaryPrompt ?? TOP_PERFORMER_CAROUSEL_DECK_SUMMARY_PROMPT;
+
+  const call = resolveProcessingVisionCall(config, profileModel, visionProviderOpts);
+  const chunkSize = resolveCarouselVisionChunkSize(config, profileModel, visionProviderOpts) ?? 4;
   const maxTokens = maxTokensOverride ?? defaultCarouselVisionMaxTokens(call.provider);
   const useChunking =
     call.provider === "nvidia" && chunkSize != null && visionSlideUrls.length > chunkSize;
@@ -397,8 +412,8 @@ export async function runCarouselDeckVisionAnalysis(args: {
 
   const deckSummarySystem =
     call.provider === "nvidia"
-      ? `${TOP_PERFORMER_CAROUSEL_DECK_SUMMARY_PROMPT}${TOP_PERFORMER_CAROUSEL_NVIDIA_JSON_APPENDIX}`
-      : TOP_PERFORMER_CAROUSEL_DECK_SUMMARY_PROMPT;
+      ? `${deckSummaryBase}${TOP_PERFORMER_CAROUSEL_NVIDIA_JSON_APPENDIX}`
+      : deckSummaryBase;
 
   const deckOut = await callCarouselVision({
     config,

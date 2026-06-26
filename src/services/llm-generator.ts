@@ -29,6 +29,7 @@ import {
 import {
   isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
+  isWhyMimicCarouselFlow,
   TOP_PERFORMER_MIMIC_FLOW_NOT_READY_MESSAGE,
 } from "../domain/top-performer-mimic-flow-types.js";
 import { loadConfig } from "../config.js";
@@ -56,6 +57,7 @@ import {
   MimicCarouselCopySlideCountError,
   targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
+import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -148,6 +150,7 @@ function shrinkLlmPromptsIfOverContextBudget(opts: {
   candidateData: Record<string, unknown>;
   mimicGroundingBlocks?: Parameters<typeof appendMimicGroundedReferenceToUserPrompt>[1];
   maxGroundingJsonChars?: number;
+  whyMimicCopyEnabled?: boolean;
   appCfg: ReturnType<typeof loadConfig>;
   taskId: string;
   runId: string;
@@ -209,6 +212,7 @@ function shrinkLlmPromptsIfOverContextBudget(opts: {
     );
     userPrompt = appendMimicGroundedReferenceToUserPrompt(userPrompt, opts.mimicGroundingBlocks, {
       maxGroundingJsonChars: groundingCap,
+      why_mimic_copy_enabled: opts.whyMimicCopyEnabled,
     });
   }
 
@@ -661,6 +665,12 @@ export async function generateForJob(
         ? buildSlideCopyLayoutForLlmFromPayload(payload)
         : [];
 
+  const whyMimicCopyEnabled = isWhyMimicCarouselFlow(job.flow_type)
+    ? true
+    : isTpGroundedCarouselRenderFlow(job.flow_type)
+      ? (await loadProjectMimicRenderSettings(db, job.project_id, appCfg)).whyMimicCopyEnabled
+      : false;
+
   if (isTpGroundedCarouselRenderFlow(job.flow_type)) {
     userPrompt = appendMimicGroundedReferenceToUserPrompt(
       userPrompt,
@@ -668,8 +678,13 @@ export async function generateForJob(
         mimic_render_context: templateContext.mimic_render_context,
         hook_text_preview: mimicHookPreview,
         slide_copy_layout: mimicSlideCopyLayout,
+        slide_intelligence: asRecord(payload.mimic_v1)?.slide_intelligence,
+        brand_execution_brief: asRecord(payload.mimic_v1)?.brand_execution_brief,
       },
-      { maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS }
+      {
+        maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS,
+        why_mimic_copy_enabled: whyMimicCopyEnabled,
+      }
     );
     const mimicCopyBranchForLength =
       mimicForCopy != null
@@ -769,14 +784,15 @@ export async function generateForJob(
     }
   }
 
-  const mimicGroundingBlocks =
-    isTpGroundedCarouselRenderFlow(job.flow_type) && mimicForCopy != null
-      ? {
-          mimic_render_context: templateContext.mimic_render_context,
-          hook_text_preview: mimicHookPreview,
-          slide_copy_layout: mimicSlideCopyLayout,
-        }
-      : undefined;
+  const mimicGroundingBlocks = isTpGroundedCarouselRenderFlow(job.flow_type)
+    ? {
+        mimic_render_context: templateContext.mimic_render_context,
+        hook_text_preview: mimicHookPreview,
+        slide_copy_layout: mimicSlideCopyLayout,
+        slide_intelligence: asRecord(payload.mimic_v1)?.slide_intelligence,
+        brand_execution_brief: asRecord(payload.mimic_v1)?.brand_execution_brief,
+      }
+    : undefined;
 
   if (systemPrompt.length + userPrompt.length > OPENAI_128K_MESSAGE_CHAR_BUDGET) {
     const shrunk = shrinkLlmPromptsIfOverContextBudget({
@@ -788,6 +804,7 @@ export async function generateForJob(
       candidateData,
       mimicGroundingBlocks,
       maxGroundingJsonChars: appCfg.LLM_MIMIC_GROUNDING_JSON_MAX_CHARS,
+      whyMimicCopyEnabled,
       appCfg,
       taskId: job.task_id,
       runId: job.run_id,

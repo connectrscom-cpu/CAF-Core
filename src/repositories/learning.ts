@@ -126,6 +126,37 @@ export async function retireLearningRule(db: Pool, projectId: string, ruleId: st
   return (res.rowCount ?? 0) > 0;
 }
 
+/** Soft-dismiss: pending → rejected; active → expired (same as retire). */
+export async function dismissLearningRule(
+  db: Pool,
+  projectId: string,
+  ruleId: string
+): Promise<{ ok: boolean; status?: "rejected" | "expired" }> {
+  const pending = await db.query(
+    `UPDATE caf_core.learning_rules
+     SET status = 'rejected', expires_at = COALESCE(expires_at, now())
+     WHERE project_id = $1 AND rule_id = $2 AND status = 'pending'
+     RETURNING id`,
+    [projectId, ruleId]
+  );
+  if ((pending.rowCount ?? 0) > 0) {
+    return { ok: true, status: "rejected" };
+  }
+  const retired = await retireLearningRule(db, projectId, ruleId);
+  if (retired) return { ok: true, status: "expired" };
+  return { ok: false };
+}
+
+export async function dismissPendingLearningRulesForProject(db: Pool, projectId: string): Promise<number> {
+  const res = await db.query(
+    `UPDATE caf_core.learning_rules
+     SET status = 'rejected', expires_at = COALESCE(expires_at, now())
+     WHERE project_id = $1 AND status = 'pending'`,
+    [projectId]
+  );
+  return res.rowCount ?? 0;
+}
+
 export async function eraseLearningRule(db: Pool, projectId: string, ruleId: string): Promise<number> {
   const res = await db.query(
     `DELETE FROM caf_core.learning_rules

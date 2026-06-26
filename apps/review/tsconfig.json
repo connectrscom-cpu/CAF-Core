@@ -32,6 +32,12 @@
       "@caf-core-carousel/mimic-template-bg-copy": [
         "../../src/domain/mimic-template-bg-copy.ts"
       ],
+      "@caf-core-carousel/slide-intelligence": [
+        "../../src/domain/slide-intelligence.ts"
+      ],
+      "@caf-core-carousel/mimic-slide-analysis-quality": [
+        "../../src/domain/mimic-slide-analysis-quality.ts"
+      ],
       "@caf-core-carousel/*": [
         "../../src/services/*"
       ]

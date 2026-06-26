@@ -3,6 +3,7 @@ import { coerceSlideBodyCopyText } from "../../../../src/domain/slide-copy-lines
 import {
   collapseTextBlocksToCopySlots,
   copySlotsForSlideRecord,
+  extractLlmTextPerCopySlot,
   isLikelyListBulletTexts,
   isOrphanPlatformSuffixTail,
   type MimicReferenceCopySlot,
@@ -528,6 +529,36 @@ function normalizeMimicEditorTextBlocks(
   return merged;
 }
 
+/** Map slide LLM copy → one string per copy slot (preferred over OCR/reference collapse). */
+export function mimicCopyTextPerSlot(
+  slide: NormalizedSlide,
+  slots: MimicReferenceCopySlot[]
+): string[] {
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  if (sorted.length === 0) return [];
+  const existingBlocks = resolveMimicTextBlocksForSlide(slide);
+  const llmSlide: Record<string, unknown> = {
+    headline: slide.headline,
+    body: slide.body,
+    text_blocks: existingBlocks.map((b) => ({ role: b.role, text: b.text })),
+  };
+  const perSlot = extractLlmTextPerCopySlot(llmSlide, sorted);
+  return sorted.map((slot) => perSlot.get(slot.slot_index)?.trim() ?? "");
+}
+
+/** Left-column phrase list for full-bleed mimic (one row per editable copy slot). */
+export function fullBleedSlotTextsFromSlide(
+  slide: NormalizedSlide,
+  slideRecord: Record<string, unknown> | null | undefined
+): string[] {
+  const slots = copySlotsForSlideRecord(slideRecord);
+  const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
+  const perSlot = mimicCopyTextPerSlot(slide, slots);
+  return sorted
+    .filter((s) => s.llm_field !== "handle")
+    .map((slot) => perSlot[sorted.indexOf(slot)]?.trim() ?? "");
+}
+
 /** Collapse per-OCR `text_blocks[]` into one row per copy slot cluster. */
 export function enrichMimicSlideToCopyClusters(
   slide: NormalizedSlide,
@@ -545,7 +576,13 @@ export function enrichMimicSlideToCopyClusters(
     return slide;
   }
 
-  const collapsed = collapseTextBlocksToCopySlots(existingBlocks, slots);
+  const fromLlm = mimicCopyTextPerSlot(slide, slots);
+  const hasEditableLlm = fromLlm.some(
+    (t, i) => Boolean(t.trim()) && slots[i]?.llm_field !== "handle"
+  );
+  const collapsed = hasEditableLlm
+    ? fromLlm
+    : collapseTextBlocksToCopySlots(existingBlocks, slots);
   const text_blocks: MimicTextBlock[] = slots.map((slot, i) => ({
     role: slot.llm_field,
     text: collapsed[i]?.trim() ?? "",

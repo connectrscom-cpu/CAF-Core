@@ -4,6 +4,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 import type { JobLineageResult } from "../repositories/job-lineage.js";
 import { enrichGuidelineEntryFromLineageInsight } from "../domain/mimic-job-grounding.js";
@@ -40,7 +41,7 @@ const MIMIC_TIER_FALLBACKS: Record<string, readonly string[]> = {
 
 function expectedTier(flowType: string): string {
   if (flowType === FLOW_TOP_PERFORMER_MIMIC_IMAGE) return "top_performer_deep";
-  if (flowType === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || flowType === FLOW_VISUAL_FIRST_CAROUSEL) {
+  if (flowType === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || flowType === FLOW_VISUAL_FIRST_CAROUSEL || flowType === FLOW_WHY_MIMIC_CAROUSEL) {
     return "top_performer_carousel";
   }
   return "";

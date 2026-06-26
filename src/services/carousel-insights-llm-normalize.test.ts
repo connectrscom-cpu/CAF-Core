@@ -46,6 +46,29 @@ describe("normalizeCarouselInsightsLlmJson", () => {
     expect(out?.cta_clarity).toBe("Comment your sign");
   });
 
+  it("normalizes per-slide why_it_works and aliases onto slides[]", () => {
+    const out = normalizeCarouselInsightsLlmJson({
+      format_pattern: "story",
+      slides: [
+        {
+          slide_index: 1,
+          on_screen_text_transcript: "Libra",
+          why_this_slide_works:
+            "Cover hook names the sign and sets meme expectation for the carousel series. The opening frame signals humor immediately so the right audience self-selects and commits to swiping.",
+        },
+        {
+          slide_index: 2,
+          on_screen_text_transcript: "Scorpio",
+          why_it_worked:
+            "Deepens the series with a darker humor beat that rewards swipers who stayed after the hook. It escalates the joke without breaking the astrological frame established on slide one.",
+        },
+      ],
+    });
+    const slides = out?.slides as Record<string, unknown>[];
+    expect(slides[0]?.why_it_works).toContain("Cover hook");
+    expect(slides[1]?.why_it_works).toContain("darker humor");
+  });
+
   it("strips garbage keys from deck_visual_system", () => {
     const out = normalizeCarouselInsightsLlmJson({
       format_pattern: "mixed",

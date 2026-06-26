@@ -34,6 +34,8 @@ export interface EvidenceRowInsightRow {
   stored_inspection_media_json: unknown | null;
   /** Denormalized `inputs_evidence_rows` rating snapshot for top_performer_* tiers (null for broad_llm). */
   evidence_performance_review_json: unknown | null;
+  /** slide_intelligence_v1 bundle (Why Mimic). Null until computed; derivable on-read from aesthetic_analysis_json. */
+  slide_intelligence_json: unknown | null;
   created_at: string;
   updated_at: string;
 }
@@ -76,6 +78,11 @@ export interface UpsertEvidenceInsightInput {
    * On conflict, null preserves any existing value; non-null overwrites.
    */
   evidence_performance_review_json?: Record<string, unknown> | null;
+  /**
+   * slide_intelligence_v1 bundle (Why Mimic). On conflict, null preserves any
+   * existing value; non-null overwrites. Omit to leave existing untouched.
+   */
+  slide_intelligence_json?: Record<string, unknown> | null;
 }
 
 export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsightInput): Promise<{ id: string }> {
@@ -88,7 +95,8 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        custom_label_1, custom_label_2, custom_label_3,
        cta_type, hashtags, caption_style, hook_text,
        risk_flags_json, aesthetic_analysis_json, raw_llm_json,
-       stored_inspection_media_json, evidence_performance_review_json
+       stored_inspection_media_json, evidence_performance_review_json,
+       slide_intelligence_json
      ) VALUES (
        $1,$2,$3::bigint,$4,$5,
        $6,$7,
@@ -96,7 +104,8 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        $12,$13,$14,
        $15,$16,$17,$18,
        $19::jsonb,$20::jsonb,$21::jsonb,
-       $22::jsonb, $23::jsonb
+       $22::jsonb, $23::jsonb,
+       $24::jsonb
      )
      ON CONFLICT (inputs_import_id, source_evidence_row_id, analysis_tier)
      DO UPDATE SET
@@ -121,6 +130,10 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
        evidence_performance_review_json = COALESCE(
          EXCLUDED.evidence_performance_review_json,
          caf_core.inputs_evidence_row_insights.evidence_performance_review_json
+       ),
+       slide_intelligence_json = COALESCE(
+         EXCLUDED.slide_intelligence_json,
+         caf_core.inputs_evidence_row_insights.slide_intelligence_json
        ),
        updated_at = now()
      RETURNING id`,
@@ -155,6 +168,11 @@ export async function upsertEvidenceRowInsight(db: Pool, row: UpsertEvidenceInsi
         ? row.evidence_performance_review_json === null
           ? null
           : JSON.stringify(row.evidence_performance_review_json)
+        : null,
+      row.slide_intelligence_json !== undefined
+        ? row.slide_intelligence_json === null
+          ? null
+          : JSON.stringify(row.slide_intelligence_json)
         : null,
     ]
   );
@@ -244,7 +262,7 @@ export async function listEvidenceRowInsights(
               custom_label_1, custom_label_2, custom_label_3,
               cta_type, hashtags, caption_style, hook_text,
               risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
-              evidence_performance_review_json,
+              evidence_performance_review_json, slide_intelligence_json,
               created_at::text, updated_at::text
          FROM caf_core.inputs_evidence_row_insights
         WHERE project_id = $1 AND inputs_import_id = $2 AND analysis_tier = $3
@@ -261,7 +279,7 @@ export async function listEvidenceRowInsights(
             custom_label_1, custom_label_2, custom_label_3,
             cta_type, hashtags, caption_style, hook_text,
             risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
-            evidence_performance_review_json,
+            evidence_performance_review_json, slide_intelligence_json,
             created_at::text, updated_at::text
        FROM caf_core.inputs_evidence_row_insights
       WHERE project_id = $1 AND inputs_import_id = $2
@@ -349,7 +367,7 @@ const INSIGHT_SELECT_ENRICHED_CORE = `SELECT i.id::text, i.project_id::text, i.i
        i.custom_label_1, i.custom_label_2, i.custom_label_3,
        i.cta_type, i.hashtags, i.caption_style, i.hook_text,
        i.risk_flags_json, i.aesthetic_analysis_json, i.raw_llm_json, i.stored_inspection_media_json,
-       i.evidence_performance_review_json,
+       i.evidence_performance_review_json, i.slide_intelligence_json,
        i.created_at::text, i.updated_at::text,
        r.evidence_kind,
        r.rating_score::text AS evidence_rating_score`;
@@ -620,7 +638,7 @@ export async function getEvidenceRowInsightByInsightsId(
             custom_label_1, custom_label_2, custom_label_3,
             cta_type, hashtags, caption_style, hook_text,
             risk_flags_json, aesthetic_analysis_json, raw_llm_json, stored_inspection_media_json,
-            evidence_performance_review_json,
+            evidence_performance_review_json, slide_intelligence_json,
             created_at::text, updated_at::text
        FROM caf_core.inputs_evidence_row_insights
       WHERE project_id = $1 AND insights_id = $2

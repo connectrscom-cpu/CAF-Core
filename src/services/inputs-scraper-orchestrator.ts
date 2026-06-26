@@ -24,6 +24,7 @@ import {
 import { SCRAPER_OUTPUT_SHEETS } from "./inputs-source-sync.js";
 import {
   apifyWaitSec,
+  applyPostMaxAgeToConfig,
   buildFacebookApifyInput,
   buildInstagramApifyInput,
   buildRedditApifyInputFromConfig,
@@ -79,6 +80,10 @@ export interface RunInputsScraperOptions {
   maxSources?: number | null;
   /** When set, run checks registry for operator abort (API async path). */
   abortContext?: ScraperAbortContext;
+  /** Run only these platforms (overrides `scraper: all` expansion). */
+  platforms?: Array<Exclude<ScraperKey, "all">>;
+  /** Only include posts newer than this many days (per-platform Apify filters). */
+  postMaxAgeDays?: number;
 }
 
 function apifyAbortHooks(ctx?: ScraperAbortContext): {
@@ -116,7 +121,7 @@ interface ScrapePayloadResult {
   apifyRunIds: string[];
 }
 
-export { defaultScraperConfig, mergeScraperConfig, type ScraperProjectConfig };
+export { defaultScraperConfig, mergeScraperConfig, applyPostMaxAgeToConfig, type ScraperProjectConfig };
 
 async function loadEnabledSources(
   db: Pool,
@@ -453,8 +458,11 @@ async function executeInputsScraperRunCore(
   await updateScraperRun(db, runId, projectId, { status: "running", started_at: true });
   checkScraperAbort(abortContext);
 
-  const keys: Array<Exclude<ScraperKey, "all">> =
-    scraperKey === "all" ? ["instagram", "tiktok", "html", "facebook", "reddit"] : [scraperKey];
+  const keys: Array<Exclude<ScraperKey, "all">> = runOpts?.platforms?.length
+    ? runOpts.platforms
+    : scraperKey === "all"
+      ? ["instagram", "tiktok", "html", "facebook", "reddit"]
+      : [scraperKey];
 
   const allRows: ParsedInputsEvidenceRow[] = [];
   const rowsByScraper: Record<string, number> = {};
@@ -464,7 +472,8 @@ async function executeInputsScraperRunCore(
   for (const key of keys) {
     checkScraperAbort(abortContext);
     const cfg = projectConfig.scrapers?.[key];
-    if (cfg?.enabled === false) continue;
+    const forced = runOpts?.platforms?.includes(key);
+    if (cfg?.enabled === false && !forced) continue;
     try {
       const result = await runOneScraper(db, config, projectId, key, projectConfig, optsWithAbort);
       allRows.push(...result.rows);
@@ -546,7 +555,10 @@ export async function executeInputsScraperRun(
 
   registerScraperRun(projectId, runId);
   const stored = await getScraperConfig(db, projectId);
-  const projectConfig = mergeScraperConfig(stored?.config_json);
+  let projectConfig = mergeScraperConfig(stored?.config_json);
+  if (runOpts?.postMaxAgeDays != null && runOpts.postMaxAgeDays > 0) {
+    projectConfig = applyPostMaxAgeToConfig(projectConfig, runOpts.postMaxAgeDays, runOpts.platforms);
+  }
   const maxSources =
     runOpts?.maxSources != null && runOpts.maxSources > 0 ? Math.floor(runOpts.maxSources) : null;
 
@@ -609,7 +621,12 @@ export async function startInputsScraperRun(
     scraper_key: scraperKey,
     config_snapshot_json: {
       ...(projectConfig as unknown as Record<string, unknown>),
-      run_options: { max_sources: maxSources },
+      run_options: {
+        max_sources: maxSources,
+        platforms: runOpts?.platforms,
+        post_max_age_days: runOpts?.postMaxAgeDays,
+        started_at: new Date().toISOString(),
+      },
     },
   });
 
@@ -676,7 +693,12 @@ export async function runInputsScraper(
     scraper_key: scraperKey,
     config_snapshot_json: {
       ...(projectConfig as unknown as Record<string, unknown>),
-      run_options: { max_sources: maxSources },
+      run_options: {
+        max_sources: maxSources,
+        platforms: runOpts?.platforms,
+        post_max_age_days: runOpts?.postMaxAgeDays,
+        started_at: new Date().toISOString(),
+      },
     },
   });
 

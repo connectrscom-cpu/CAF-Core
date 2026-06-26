@@ -5,7 +5,12 @@ import type { Pool } from "pg";
 import { listEvidenceRowsByImportAndKind } from "../repositories/inputs-evidence.js";
 import { extractEvidenceDisplayFields } from "./inputs-evidence-display.js";
 import { deriveEvidenceDisplayKind } from "./inputs-evidence-post-format.js";
-import { evaluatePreLlmRow, mergePreLlmConfig } from "./inputs-pre-llm-rank.js";
+import {
+  buildRegistryFollowerLookupFromEvidenceRows,
+  evaluatePreLlmRow,
+  mergePreLlmConfig,
+  resolvePreLlmProfileForRow,
+} from "./inputs-pre-llm-rank.js";
 
 export interface PreLlmEvidencePreviewRow {
   id: string;
@@ -78,22 +83,28 @@ export async function getPreLlmEvidencePreview(
   }
 ): Promise<PreLlmEvidencePreviewResult> {
   const cfg = mergePreLlmConfig(criteria);
-  const prof = cfg.kinds?.[evidenceKind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
-  const profileMinScore = prof.min_score;
-  const activeWeights = { ...prof.weights };
+  const kindProf = cfg.kinds?.[evidenceKind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
+  const profileMinScore = kindProf.min_score;
+  const activeWeights = { ...kindProf.weights };
 
-  const dbRows = await listEvidenceRowsByImportAndKind(db, projectId, importId, evidenceKind, 15_000);
+  const [dbRows, registryRows] = await Promise.all([
+    listEvidenceRowsByImportAndKind(db, projectId, importId, evidenceKind, 15_000),
+    listEvidenceRowsByImportAndKind(db, projectId, importId, "source_registry", 5_000),
+  ]);
+  const registryFollowerLookup = buildRegistryFollowerLookupFromEvidenceRows(registryRows);
+  const featureOpts = { registryFollowerLookup };
 
   let sparseTextDropped = 0;
   let belowProfileMinDropped = 0;
 
   const evaluated = dbRows.map((r) => {
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
-    const ev = evaluatePreLlmRow(evidenceKind, payload, criteria);
+    const ev = evaluatePreLlmRow(evidenceKind, payload, criteria, featureOpts);
     if (ev.dropped_reason === "sparse_primary_text") sparseTextDropped++;
     else if (ev.dropped_reason === "below_min_pre_llm_score") belowProfileMinDropped++;
     const disp = extractEvidenceDisplayFields(evidenceKind, payload);
-    const contrib = contributionBreakdown(ev.pre_llm_breakdown, prof.weights);
+    const rowProf = resolvePreLlmProfileForRow(cfg, evidenceKind, ev.pre_llm_breakdown);
+    const contrib = contributionBreakdown(ev.pre_llm_breakdown, rowProf.weights);
     return {
       id: r.id,
       evidence_kind: r.evidence_kind,

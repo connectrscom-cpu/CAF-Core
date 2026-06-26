@@ -904,7 +904,7 @@ function PublishPageContent() {
         style={{ padding: "12px 28px 32px", zoom: publishFontZoom }}
       >
         <div className="publish-left">
-          <Link href={navHref("/")} className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
+          <Link href={navHref("/review")} className="detail-back" style={{ padding: 0, marginBottom: 12, display: "inline-block" }}>
             ← Review Console
           </Link>
           <Link href={navHref("/approved")} className="detail-back" style={{ padding: 0, marginBottom: 16, marginLeft: 16, display: "inline-block" }}>

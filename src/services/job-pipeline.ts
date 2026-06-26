@@ -44,6 +44,7 @@ import {
   pickSlideByCarouselIndex,
   slideHeadlineBodyForRender,
   applySlideCopyToRenderContext,
+  applySingleSlideBinaryRenderContext,
   slideHasRenderableContent,
   alignSlidesToMimicOutputCount,
   stripNonRenderableDeckFields,
@@ -135,6 +136,7 @@ import {
 } from "../domain/mimic-text-overlay-reprint.js";
 import {
   applyMimicDocAiLayerPositionOverrides,
+  mimicV1HasReviewerDocAiLayerPositions,
   pickMimicDocAiLayerPositionsForSlide,
   sanitizeTemplateBgDocAiOverridesForInspect,
 } from "../domain/mimic-docai-layer-positions.js";
@@ -1474,7 +1476,7 @@ async function readResponseBodyWithTimeout(
 
 /** Puppeteer/Chromium on small Fly machines often throws these on cold tabs or memory pressure. */
 const TRANSIENT_CAROUSEL_RENDERER_ERR =
-  /Target closed|createTarget|Failed to open a new tab|Protocol error|Browser disconnected|Session closed|ECONNRESET|socket hang up|Navigation failed/i;
+  /Target closed|createTarget|Failed to open a new tab|Protocol error|Browser disconnected|Session closed|ECONNRESET|socket hang up|Navigation failed|setContent timed out|timed out after \d+ms/i;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -1958,8 +1960,15 @@ async function processCarouselJob(
     isMimicCarouselRender && mimicPayload && mimicPayloadHasDocAiTextLayout(mimicPayload)
   );
   const mimicTemplateBgJob = Boolean(isMimicCarouselRender && mimicPayload?.mode === "template_bg");
+  const mimicV1ForLayout =
+    job.generation_payload &&
+    typeof job.generation_payload === "object" &&
+    !Array.isArray(job.generation_payload)
+      ? (job.generation_payload as Record<string, unknown>).mimic_v1
+      : null;
+  const hasReviewerSavedLayout = mimicV1HasReviewerDocAiLayerPositions(mimicV1ForLayout);
   const mimicUsesDocAiTextForRender = Boolean(
-    mimicPayload && (mimicUsesDocAiTextLayout || mimicTemplateBgJob)
+    mimicPayload && (mimicUsesDocAiTextLayout || mimicTemplateBgJob || hasReviewerSavedLayout)
   );
   if (isMimicCarouselRender && mimicPayload) {
     if (mimicTemplateBgJob) {
@@ -2293,18 +2302,44 @@ async function processCarouselJob(
             mimicTemplateBgJob ||
             mimicDocAiLayersCoverLlmCopy(docAiLayers, llmSlideForDocAi));
         if (useDocAiLayers) {
-          ctx = {
-            ...ctx,
-            mimic_render_text_layers: docAiLayers,
-            mimic_use_docai_layers: true,
-            ...(useTextBacking
-              ? {
-                  mimic_text_backing: true,
-                  mimic_text_backing_color: resolvedTextBackingColor,
-                  ...(hasReviewerLayout ? {} : { mimic_avoid_center_subject: true }),
-                }
-              : {}),
-          };
+          const renderedWithCopy = docAiLayers.filter((layer) => String(layer.text ?? "").trim().length > 0);
+          if (textOverlayOnly && renderedWithCopy.length === 0 && slideHasRenderableContent(llmSlideForDocAi)) {
+            const copy = slideHeadlineBodyForRender(llmSlideForDocAi);
+            logPipelineEvent(
+              "info",
+              "render",
+              "DocAI layers empty on text reprint — falling back to slide headline/body",
+              {
+                task_id: job.task_id,
+                data: { slide_index: i, headline_chars: copy.headline.length, body_chars: copy.body.length },
+              }
+            );
+            ctx = applySlideCopyToRenderContext(ctx, i, copy);
+          } else if (textOverlayOnly && renderedWithCopy.length === 0) {
+            throw new Error(
+              `Text overlay reprint produced empty on-slide copy for ${job.task_id} slide ${i} — save layout text before reprinting.`
+            );
+          } else {
+            ctx = {
+              ...ctx,
+              mimic_render_text_layers: docAiLayers,
+              mimic_use_docai_layers: true,
+              ...(useTextBacking
+                ? {
+                    mimic_text_backing: true,
+                    mimic_text_backing_color: resolvedTextBackingColor,
+                    ...(hasReviewerLayout
+                      ? {}
+                      : {
+                          mimic_avoid_center_subject: true,
+                          // Constrain trait copy to side columns only for art-only
+                          // full-bleed plates — template_bg keeps full-width text.
+                          ...(slideUsesFullBleed ? { mimic_full_bleed_layout: true } : {}),
+                        }),
+                  }
+                : {}),
+            };
+          }
         } else if (slideHasRenderableContent(llmSlideForDocAi)) {
           const copy = slideHeadlineBodyForRender(llmSlideForDocAi);
           logPipelineEvent(
@@ -2340,6 +2375,8 @@ async function processCarouselJob(
           },
         };
       }
+
+      ctx = applySingleSlideBinaryRenderContext(ctx, i, n);
 
       const body = {
         task_id: job.task_id,
@@ -2528,7 +2565,7 @@ async function processCarouselJob(
       });
       throw new RenderNotReadyError(msg);
     } else {
-      if (textOverlayOnly && keepInReview) {
+      if (textOverlayOnly) {
         await recordCarouselTextOverlayReprintFailure(
           db,
           {

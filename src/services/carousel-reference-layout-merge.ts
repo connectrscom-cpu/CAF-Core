@@ -135,5 +135,7 @@ Document AI provides exact on-screen text and typography separately. For each sl
 - Do NOT include on_screen_text_transcript, text_blocks[].text, font_size_px, color_hex, or bbox coordinates.
 - DO include text_block_roles[]: { "block_index": 1, "role": "headline|subheadline|body|cta|logo|watermark|other" } matching reading order of visible text regions (block_index starts at 1).
 - When two adjacent lines form one title sentence (e.g. headline + subheadline), label the second line **subheadline** — not body.
-- DO include all visual / semantic fields: visual_description, layout_template, composition_blueprint (descriptions and element types only — no literal text in text_blocks), typography qualitative guesses (headline_guess, text_placement, relative_scale words only — no pixel sizes), slide_purpose, brand_specificity, color_tokens as color names not OCR.
+- DO include all visual / semantic fields: visual_description, layout_template, composition_blueprint (descriptions and element types only — no literal text in text_blocks), typography qualitative guesses (headline_guess, text_placement, relative_scale words only — no pixel sizes), slide_purpose, why_it_works, brand_specificity, color_tokens as color names not OCR.
+- why_it_works (per slide): 3–4 sentences (~120+ chars) on why THIS slide works in the deck arc — distinct from visual_description and deck-level why_it_worked; never copy the deck thesis onto every slide.
+- visual_description (per slide): 2–3 sentences (~80+ chars) on composition, subjects, palette, and mood.
 - Describe ONLY pixels visible in each attached image.`;

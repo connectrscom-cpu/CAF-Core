@@ -8,7 +8,7 @@ const NAV_ITEMS = [
   {
     section: "Workbench",
     items: [
-      { href: "/", label: "Review Console", icon: ReviewIcon },
+      { href: "/review", label: "Review Console", icon: ReviewIcon },
       { href: "/runs", label: "Runs", icon: RunsIcon },
       { href: "/pipeline?tab=packs", label: "Signal packs", icon: PipelineIcon },
       { href: "/publish", label: "Publish", icon: PublishIcon },
@@ -78,8 +78,8 @@ export function Sidebar() {
             <div className="sidebar-section-title">{section.section}</div>
             {section.items.map((item) => {
               const isActive =
-                item.href === "/"
-                  ? pathname === "/" ||
+                item.href === "/review"
+                  ? pathname === "/review" ||
                     pathname.startsWith("/t/") ||
                     pathname.startsWith("/approved") ||
                     pathname.startsWith("/content/")

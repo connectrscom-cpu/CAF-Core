@@ -16,7 +16,8 @@ import {
 } from "../repositories/runs.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import { replanRun, startRun } from "../services/run-orchestrator.js";
-import { materializeRunCandidates } from "../services/run-candidates-materialize.js";
+import { materializeRunCandidates, runCandidatesMaterializeBodySchema } from "../services/run-candidates-materialize.js";
+import { normalizeMimicPickRef, type MimicPickKind } from "../services/signal-pack-mimic-ui.js";
 import {
   generateRunDraftPackages,
   processJobByTaskId,
@@ -345,27 +346,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     return { ok: true, run: updated };
   });
 
-  const materializeCandidatesSchema = z.union([
-    z
-      .object({
-        mode: z.literal("manual"),
-        idea_ids: z.array(z.string()).optional(),
-        mimic_picks: z
-          .array(
-            z.object({
-              insights_id: z.string().min(1),
-              mimic_kind: z.enum(["image", "carousel", "video"]),
-            })
-          )
-          .optional(),
-      })
-      .refine((b) => (b.idea_ids?.length ?? 0) > 0 || (b.mimic_picks?.length ?? 0) > 0, {
-        message: "idea_ids or mimic_picks required for manual mode",
-      }),
-    z.object({ mode: z.literal("llm"), max_ideas: z.number().int().min(1).max(100).optional() }),
-    z.object({ mode: z.literal("from_pack_ideas_all") }),
-    z.object({ mode: z.literal("from_pack_overall") }),
-  ]);
+  const materializeCandidatesSchema = runCandidatesMaterializeBodySchema;
 
   /**
    * Materialize `runs.planned_jobs_json` from the run's signal pack (`jobs_json` / legacy `ideas_json`).
@@ -376,16 +357,26 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
     reply: { code: (n: number) => { send: (b: unknown) => unknown } }
   ) {
     const params = z.object({ project_slug: z.string(), run_id: z.string() }).safeParse(request.params);
-    const body = materializeCandidatesSchema.safeParse(request.body);
-    if (!params.success || !body.success) {
+    const parsed = materializeCandidatesSchema.safeParse(request.body);
+    if (!params.success || !parsed.success) {
       return reply.code(400).send({
         ok: false,
         error: "invalid_request",
         details: {
           ...(params.success ? {} : { params: params.error.flatten() }),
-          ...(body.success ? {} : { body: body.error.flatten() }),
+          ...(parsed.success ? {} : { body: parsed.error.flatten() }),
         },
       });
+    }
+    let materializeBody = parsed.data;
+    if (materializeBody.mode === "manual" && materializeBody.mimic_picks?.length) {
+      materializeBody = {
+        ...materializeBody,
+        mimic_picks: materializeBody.mimic_picks.map((p) => {
+          const n = normalizeMimicPickRef(p.insights_id, p.mimic_kind as MimicPickKind);
+          return { insights_id: n.insights_id, mimic_kind: n.mimic_kind };
+        }),
+      };
     }
     const project = await ensureProject(db, params.data.project_slug);
     let run = await getRunByRunId(db, project.id, params.data.run_id);
@@ -408,7 +399,7 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
       return reply.code(400).send({ ok: false, error: "bad_request", message: "Signal pack not found for this run." });
     }
     try {
-      const out = await materializeRunCandidates(db, config, project.id, run, pack, body.data);
+      const out = await materializeRunCandidates(db, config, project.id, run, pack, materializeBody);
       const fresh = await getRunById(db, run.id);
       return {
         ok: true,

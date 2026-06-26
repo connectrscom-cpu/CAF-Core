@@ -7,12 +7,19 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
   isTopPerformerMimicImageFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 
 export function isCarouselFlow(flowType: string): boolean {
   const raw = flowType ?? "";
-  if (raw === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || raw === FLOW_VISUAL_FIRST_CAROUSEL) return true;
+  if (
+    raw === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL ||
+    raw === FLOW_VISUAL_FIRST_CAROUSEL ||
+    raw === FLOW_WHY_MIMIC_CAROUSEL
+  ) {
+    return true;
+  }
   const ft = resolveCanonicalFlowType(flowType);
   if (ft === CANONICAL_FLOW_TYPES.CAROUSEL) return true;
   // Legacy heuristic fallback (defensive for unmigrated DBs / ad-hoc flows)

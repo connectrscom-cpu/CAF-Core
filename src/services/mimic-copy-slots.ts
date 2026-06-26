@@ -19,7 +19,8 @@ import {
   looksLikeInstagramHandleText,
 } from "../domain/instagram-handle.js";
 import { isLikelyOcrGarbageText } from "../domain/mimic-ocr-garbage.js";
-import { sanitizeMimicOverlayCopyText } from "../domain/mimic-overlay-copy.js";
+import { sanitizeMimicOverlayCopyText, coerceMimicTextBlockRow } from "../domain/mimic-overlay-copy.js";
+import { semanticBodyCopyForStacks } from "./mimic-semantic-copy-units.js";
 
 export const MIMIC_COPY_SLOTS_SCHEMA = "copy_slots_v1" as const;
 
@@ -75,6 +76,13 @@ function pickBBoxNorm(rec: Record<string, unknown>): { x: number; y: number; w: 
     const w = (x2 - x1) / 100;
     const h = (y2 - y1) / 100;
     if (w > 0 && h > 0) return { x, y, w, h };
+  }
+  const x = pickNum(rec.x);
+  const y = pickNum(rec.y);
+  const w = pickNum(rec.w);
+  const h = pickNum(rec.h);
+  if (x != null && y != null && w != null && h != null && w > 0 && h > 0) {
+    return { x, y, w, h };
   }
   return null;
 }
@@ -303,7 +311,49 @@ function isLikelyListBulletStack(
   return isLikelyListBulletTexts(stack.map((b) => b.text));
 }
 
+function stackAnchorCenter(stack: Array<MimicReferenceCopyBlock & { index: number }>): {
+  x: number;
+  y: number;
+} {
+  const b = stack[0]!;
+  return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+}
+
+/** True when trait stacks sit in left vs right columns (quadrant memes). */
+function bodyStacksAreMultiColumn(
+  stacks: Array<Array<MimicReferenceCopyBlock & { index: number }>>
+): boolean {
+  if (stacks.length < 2) return false;
+  const xs = stacks.map((s) => stackAnchorCenter(s).x);
+  return Math.max(...xs) - Math.min(...xs) > 0.22;
+}
+
+function quadrantIndexForCenter(cx: number, cy: number): number {
+  const top = cy < 0.42;
+  const left = cx < 0.5;
+  if (top && left) return 0;
+  if (top && !left) return 1;
+  if (!top && left) return 2;
+  return 3;
+}
+
+/** Collapse over-fragmented OCR stacks into corner quadrants (one trait cluster per corner). */
+function mergeBodyStacksToQuadrants(
+  stacks: Array<Array<MimicReferenceCopyBlock & { index: number }>>
+): Array<Array<MimicReferenceCopyBlock & { index: number }>> {
+  const buckets: Array<Array<MimicReferenceCopyBlock & { index: number }>> = [[], [], [], []];
+  for (const stack of stacks) {
+    const { x, y } = stackAnchorCenter(stack);
+    buckets[quadrantIndexForCenter(x, y)]!.push(...stack);
+  }
+  return buckets
+    .filter((b) => b.length > 0)
+    .map((b) => b.sort((a, b) => a.y - b.y || a.x - b.x));
+}
+
 function expandListBodySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
+  const bodyCount = slots.filter((s) => s.llm_field === "body").length;
+  if (bodyCount >= 3) return slots;
   const sorted = [...slots].sort((a, b) => a.slot_index - b.slot_index);
   const out: MimicReferenceCopySlot[] = [];
   for (const slot of sorted) {
@@ -511,13 +561,32 @@ export function extractLlmTextPerCopySlot(
 
   const tb = Array.isArray(slide.text_blocks) ? slide.text_blocks : [];
   const tbRows = tb
-    .map((item) => asRecord(item))
-    .filter(Boolean)
-    .map((rec) => ({
-      role: String(rec!.role ?? "").trim().toLowerCase(),
-      text: scrub(rec!.text),
+    .map((item) => coerceMimicTextBlockRow(item))
+    .filter((r): r is NonNullable<ReturnType<typeof coerceMimicTextBlockRow>> => Boolean(r))
+    .map((row) => ({
+      role: row.role,
+      text: scrub(row.text),
     }))
     .filter((r) => r.text);
+
+  if (tbRows.length === sorted.length) {
+    let positionAligned = true;
+    for (let i = 0; i < sorted.length; i++) {
+      const slot = sorted[i]!;
+      const row = tbRows[i]!;
+      if (slot.llm_field === "handle") {
+        if (!looksLikeInstagramHandleText(row.text)) positionAligned = false;
+      } else if (looksLikeInstagramHandleText(row.text)) {
+        positionAligned = false;
+      }
+    }
+    if (positionAligned) {
+      for (let i = 0; i < sorted.length; i++) {
+        out.set(sorted[i]!.slot_index, tbRows[i]!.text);
+      }
+      return out;
+    }
+  }
 
   if (tbRows.length === sorted.length && tbRows.every((r, i) => slotRoleCompatible(r.role, sorted[i]!.llm_field))) {
     for (let i = 0; i < sorted.length; i++) {
@@ -722,8 +791,14 @@ export function inferMimicReferenceCopySlots(
   }
 
   const bodyStacks = sortStacksForReadingOrder(groupBlocksIntoVerticalStacks(body));
-  for (const stack of bodyStacks) {
-    if (stack.length >= 2 && isLikelyListBulletStack(stack)) {
+  const multiColumnLayout = bodyStacksAreMultiColumn(bodyStacks);
+  let stacksForSlots = bodyStacks;
+  if (multiColumnLayout && (bodyStacks.length > 6 || body.length > 8)) {
+    stacksForSlots = mergeBodyStacksToQuadrants(bodyStacks);
+  }
+  const multiColumn = bodyStacksAreMultiColumn(stacksForSlots);
+  for (const stack of stacksForSlots) {
+    if (stack.length >= 2 && isLikelyListBulletStack(stack) && !multiColumn) {
       for (const block of stack) {
         slots.push(makeSlot(slotIndex++, "body", "single_block", [block.index], [block.text]));
       }
@@ -750,6 +825,41 @@ export function inferMimicReferenceCopySlots(
   }
 
   return normalizeInferredCopySlots(slots);
+}
+
+/** True when reference slots include body or CTA — not headline+handle-only decks (e.g. zodiac crush). */
+export function copySlotsIncludeBodyField(slots: MimicReferenceCopySlot[]): boolean {
+  return slots.some((s) => s.llm_field === "body" || s.llm_field === "cta");
+}
+
+/** Prefer copy-slot / stack mapping over 1:1 text_blocks→OCR direct index when clusters diverge. */
+export function copySlotsShouldDriveMapping(
+  slots: MimicReferenceCopySlot[],
+  directLineCount: number
+): boolean {
+  if (slots.length === 0) return false;
+  if (!copySlotsIncludeBodyField(slots)) return true;
+  const bodySlots = slots.filter((s) => s.llm_field === "body").length;
+  if (bodySlots >= 2) return true;
+  if (directLineCount > 0 && slots.length > directLineCount) return true;
+  return false;
+}
+
+function splitMergedBodyAcrossBodySlots(out: string[], sorted: MimicReferenceCopySlot[]): void {
+  const bodySlotIdxs = sorted
+    .map((s, idx) => (s.llm_field === "body" ? idx : -1))
+    .filter((idx) => idx >= 0);
+  if (bodySlotIdxs.length < 2) return;
+  const mergedBody = bodySlotIdxs
+    .map((i) => out[i]?.trim() ?? "")
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  if (!mergedBody) return;
+  const splits = semanticBodyCopyForStacks([mergedBody], bodySlotIdxs.length);
+  bodySlotIdxs.forEach((slotIdx, i) => {
+    out[slotIdx] = splits[i]?.trim() ?? "";
+  });
 }
 
 export function parseCopySlotsFromSlide(slide: Record<string, unknown> | null | undefined): MimicReferenceCopySlot[] {
@@ -794,12 +904,19 @@ export function attachCopySlotsToSlideRecord(slide: Record<string, unknown>): Re
 
 export function copySlotsForSlideRecord(slide: Record<string, unknown> | null | undefined): MimicReferenceCopySlot[] {
   if (!slide) return [];
-  const persisted = parseCopySlotsFromSlide(slide);
-  if (persisted.length > 0) return normalizeInferredCopySlots(persisted);
   const blocks = copyBlocksFromSlideRecord(slide);
-  if (blocks.length === 0) return [];
   const transcript = String(slide.on_screen_text_transcript ?? "").trim();
-  return inferMimicReferenceCopySlots(blocks, transcript);
+  const inferred =
+    blocks.length > 0 ? inferMimicReferenceCopySlots(blocks, transcript) : [];
+  const persisted = parseCopySlotsFromSlide(slide);
+  if (persisted.length === 0) return inferred;
+
+  const editablePersisted = persisted.filter((s) => s.llm_field !== "handle").length;
+  const editableInferred = inferred.filter((s) => s.llm_field !== "handle").length;
+  if (editableInferred >= 2 && editablePersisted > Math.max(8, editableInferred + 3)) {
+    return inferred;
+  }
+  return normalizeInferredCopySlots(persisted);
 }
 
 /** Collapse per-OCR text_blocks rows into one string per copy slot cluster. */
@@ -829,13 +946,23 @@ export function collapseTextBlocksToCopySlots(
   }
 
   if (bi < blocks.length && out.length > 0) {
+    const bodySlotIdxs = sorted
+      .map((s, idx) => (s.llm_field === "body" ? idx : -1))
+      .filter((idx) => idx >= 0);
     const tail = blocks
       .slice(bi)
       .map((b) => b.text.trim())
       .filter(Boolean)
       .join(" ");
-    out[out.length - 1] = `${out[out.length - 1]!} ${tail}`.trim();
+    if (bodySlotIdxs.length >= 2) {
+      const firstBodyIdx = bodySlotIdxs[0]!;
+      out[firstBodyIdx] = `${out[firstBodyIdx] ?? ""} ${tail}`.trim();
+    } else {
+      out[out.length - 1] = `${out[out.length - 1]!} ${tail}`.trim();
+    }
   }
+
+  splitMergedBodyAcrossBodySlots(out, sorted);
 
   while (out.length < sorted.length) out.push("");
   return out.slice(0, sorted.length);

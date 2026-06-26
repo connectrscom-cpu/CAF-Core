@@ -89,6 +89,7 @@ export interface CarouselSliderProps {
   onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
   onDeleteSlide?: () => void;
   onRegenerateSlide?: () => void;
+  onRegenerateAllSlides?: () => void;
   regenerateSlideBusy?: boolean;
   /** Optional note appended to the mimic image prompt on slide regenerate. */
   mimicRegenerationNote?: string;
@@ -124,6 +125,7 @@ export function CarouselSlider({
   onActiveTextBlockIndexChange,
   onDeleteSlide,
   onRegenerateSlide,
+  onRegenerateAllSlides,
   regenerateSlideBusy = false,
   mimicRegenerationNote = "",
   onMimicRegenerationNoteChange,
@@ -457,6 +459,17 @@ export function CarouselSlider({
               >
                 {regenerateSlideBusy ? "Regenerating…" : "Regenerate"}
               </button>
+              {total > 1 && onRegenerateAllSlides ? (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm"
+                  disabled={regenerateSlideBusy}
+                  onClick={onRegenerateAllSlides}
+                  title={`Regenerate all ${total} slides (billed)`}
+                >
+                  All slides
+                </button>
+              ) : null}
             </>
           ) : null}
           {mimicCopyEditor && onDeleteSlide && total > 1 && !copySidePanel ? (
@@ -545,7 +558,7 @@ export function CarouselSlider({
               />
             ) : (
               <img
-                key={`gen-${currentIndex}`}
+                key={`gen-${currentIndex}-${mediaUrl}`}
                 src={mediaUrl}
                 alt={`Slide ${currentIndex + 1}`}
                 style={{
@@ -662,7 +675,7 @@ export function CarouselSlider({
               <label className="filter-label">Text phrases ({mimicTextBlocks.length})</label>
               {mimicFullBleed ? (
                 <p className="mimic-text-blocks__hint">
-                  One field per on-slide phrase. Box numbers in the layout editor follow OCR slots — they may not match these field numbers when the reference had fewer text regions than your copy.
+                  Edits update the layout preview on the right. Use <strong>Reprint text</strong> in the layout panel to bake copy into carousel images.
                 </p>
               ) : null}
               <div className="mimic-text-blocks__list">

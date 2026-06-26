@@ -10,13 +10,22 @@ import {
   patchMimicDocAiLayerPositions,
 } from "../repositories/jobs.js";
 import {
+  llmSlideCopyPatchFromDocAiOverrides,
   mergeMimicDocAiLayerPositionOverrides,
   parseMimicDocAiLayerPositionsBySlide,
   pickMimicDocAiLayerPositionsFromMimicV1,
   type MimicDocAiLayerPositionOverride,
 } from "../domain/mimic-docai-layer-positions.js";
 import { insertLearningRule, applyLearningRule, listLearningRules } from "../repositories/learning.js";
+import { insertObservation } from "../repositories/learning-evidence.js";
 import { insertJobStateTransition } from "../repositories/transitions.js";
+import { randomUUID } from "node:crypto";
+import {
+  getActiveBrandProfile,
+  insertBrandProfileVersion,
+  listBrandProfileVersions,
+} from "../repositories/brand-profiles.js";
+import { parseBrandProfile } from "../domain/brand-profile.js";
 import {
   insertDiagnosticAudit,
   insertEditorialReview,
@@ -442,6 +451,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   ): Promise<
     T & {
       flow_label: string;
+      flow_detail: string | null;
       is_mimic_replication: boolean;
       top_performer_reference: TopPerformerReviewReference | null;
     }
@@ -1334,6 +1344,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const jobId = String(job.id ?? "");
     if (!jobId) return { ok: false, error: "job_missing_id" };
 
+    let slideCopyOverrides: Array<{ slide_index: number; llm_slide: Record<string, unknown> }> = [];
     if (docaiLayerPositions && Object.keys(docaiLayerPositions).length > 0) {
       const parsed = parseMimicDocAiLayerPositionsBySlide(docaiLayerPositions);
       if (!parsed) {
@@ -1350,11 +1361,23 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       if (!patched) {
         return { ok: false, error: "job_not_found_or_no_mimic_payload" };
       }
+      const targets =
+        slideIndices && slideIndices.length > 0
+          ? new Set(slideIndices.map((n) => Math.floor(n)))
+          : null;
+      for (const [slideKey, rows] of Object.entries(merged)) {
+        const slideIndex = Math.floor(Number(slideKey));
+        if (!Number.isFinite(slideIndex) || slideIndex < 1) continue;
+        if (targets && !targets.has(slideIndex)) continue;
+        const patch = llmSlideCopyPatchFromDocAiOverrides(rows);
+        if (patch) slideCopyOverrides.push({ slide_index: slideIndex, llm_slide: patch });
+      }
     }
 
     await markCarouselTextOverlayReprintStarted(db, jobId, { slideIndices });
 
     void rerenderCarouselTextOverlay(db, config, jobId, slideIndices, {
+      ...(slideCopyOverrides.length > 0 ? { slideCopyOverrides } : {}),
       ...(renderTypography && Object.keys(renderTypography).length > 0
         ? { renderTypographyPatch: renderTypography }
         : {}),
@@ -1689,6 +1712,106 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const updated = await patchMimicModeOverride(db, project.id, body.data.task_id, body.data.mode_override);
     if (!updated) return reply.code(404).send({ ok: false, error: "job_not_found_or_no_mimic_payload" });
     return { ok: true, mode_override: body.data.mode_override };
+  });
+
+  /**
+   * Why Mimic — operator correction of a slide-intelligence field.
+   * Does NOT mutate the job's `mimic_v1.slide_intelligence` (that is derived
+   * intelligence). It records a `learning_observation` so low-confidence SIL can
+   * be improved over time, mirroring the upstream-recommendations loop.
+   * Body: { task_id, slide_index, field, corrected_value, original_value? }
+   */
+  app.post("/v1/review-queue/:project_slug/slide-intelligence-correction", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z
+      .object({
+        task_id: z.string().min(1),
+        slide_index: z.number().int().positive(),
+        field: z.string().min(1).max(60),
+        corrected_value: z.string().min(1).max(2000),
+        original_value: z.string().max(2000).optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const job = await getContentJobByTaskId(db, project.id, body.data.task_id.trim());
+    if (!job) return reply.code(404).send({ ok: false, error: "job_not_found" });
+    const flowType = String(job.flow_type ?? "");
+    if (!isTpGroundedCarouselRenderFlow(flowType)) {
+      return reply.code(400).send({ ok: false, error: "slide_intelligence_requires_mimic_carousel_job" });
+    }
+    const jobRec = job as unknown as Record<string, unknown>;
+    const platform =
+      typeof jobRec.platform === "string"
+        ? (jobRec.platform as string)
+        : typeof jobRec.target_platform === "string"
+          ? (jobRec.target_platform as string)
+          : null;
+    const observationId = `obs_sil_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+    await insertObservation(db, {
+      observation_id: observationId,
+      scope_type: "project",
+      project_id: project.id,
+      source_type: "review_slide_intelligence_correction",
+      flow_type: flowType,
+      platform,
+      observation_type: "slide_intelligence_correction",
+      entity_ref: `${body.data.task_id.trim()}#slide_${body.data.slide_index}#${body.data.field}`,
+      payload_json: {
+        task_id: body.data.task_id.trim(),
+        slide_index: body.data.slide_index,
+        field: body.data.field,
+        corrected_value: body.data.corrected_value,
+        original_value: body.data.original_value ?? null,
+      },
+      confidence: null,
+      observed_at: new Date().toISOString(),
+    });
+    return { ok: true, observation_id: observationId };
+  });
+
+  /**
+   * Brand-Aware Why Mimic — read the active brand profile (+ version list) for a project.
+   */
+  app.get("/v1/projects/:project_slug/brand-profile", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const active = await getActiveBrandProfile(db, project.id);
+    const versions = await listBrandProfileVersions(db, project.id);
+    return {
+      ok: true,
+      active: active
+        ? { version: active.version, label: active.label, profile_json: active.profile_json, created_at: active.created_at }
+        : null,
+      parsed: active ? parseBrandProfile(active.profile_json) : null,
+      versions: versions.map((v) => ({ version: v.version, label: v.label, is_active: v.is_active, created_at: v.created_at })),
+    };
+  });
+
+  /**
+   * Brand-Aware Why Mimic — create a new active brand profile version.
+   * Body: { profile_json, label? }. Validated through `parseBrandProfile`.
+   */
+  app.post("/v1/projects/:project_slug/brand-profile", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z
+      .object({ profile_json: z.record(z.unknown()), label: z.string().max(200).optional() })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const parsed = parseBrandProfile(body.data.profile_json);
+    if (!parsed) {
+      return reply.code(400).send({ ok: false, error: "brand_profile_has_no_usable_fields" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const inserted = await insertBrandProfileVersion(db, project.id, body.data.profile_json, body.data.label ?? null);
+    return { ok: true, version: inserted.version, parsed };
   });
 
   /** Prefer this over path-segment `task_id` so very long ids (video / legacy) do not hit proxy URL limits. */

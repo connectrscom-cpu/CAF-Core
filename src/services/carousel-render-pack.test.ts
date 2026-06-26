@@ -4,6 +4,8 @@ import path from "node:path";
 import {
   buildSlideRenderContext,
   applySlideCopyToRenderContext,
+  applySingleSlideBinaryRenderContext,
+  carouselSingleSlideDomRole,
   alignSlidesToMimicOutputCount,
   carouselSlideCount,
   DEFAULT_CAROUSEL_CTA_COPY,
@@ -333,6 +335,36 @@ describe("slidesFromGeneratedOutput", () => {
         },
       })
     ).toBe(true);
+  });
+
+  it("slideHasRenderableContent accepts plain-string text_blocks (LLM mimic drift)", () => {
+    expect(
+      slideHasRenderableContent({
+        text_blocks: ["THE MOTHERS\nOF THE ZODIAC"],
+      })
+    ).toBe(true);
+    expect(
+      slideHasRenderableContent({
+        text_blocks: [
+          "Full of spirit and energy, the Aries mother is always eager to explore new adventures.",
+          "@sistersvillage",
+        ],
+      })
+    ).toBe(true);
+  });
+
+  it("counts 12 mimic slides when LLM emits string text_blocks only", () => {
+    const body =
+      "Full of spirit and energy, the Aries mother is always eager to explore new adventures with her children.";
+    const slides = Array.from({ length: 12 }, (_, i) =>
+      i === 0
+        ? { text_blocks: ["THE MOTHERS\nOF THE ZODIAC"] }
+        : { text_blocks: [body, "@sistersvillage"] }
+    );
+    const gen = { slides };
+    const flat = slidesFromGeneratedOutput(gen, { preferred_slide_count: 12 });
+    expect(flat).toHaveLength(12);
+    expect(flat.filter((s) => slideHasRenderableContent(s as Record<string, unknown>))).toHaveLength(12);
   });
 
   it("merges emoji-only paragraph lines into adjacent text", () => {
@@ -1105,5 +1137,31 @@ describe("slideHeadlineBodyForRender + applySlideCopyToRenderContext", () => {
     const patched = applySlideCopyToRenderContext(ctx, 2, copy);
     expect(patched.headline).toBe("Aries Mother");
     expect((patched.body_slides as Record<string, unknown>[])?.[0]?.headline).toBe("Aries Mother");
+  });
+});
+
+describe("applySingleSlideBinaryRenderContext", () => {
+  it("maps slide index to cover / body / cta DOM role", () => {
+    expect(carouselSingleSlideDomRole(1, 12)).toBe("cover");
+    expect(carouselSingleSlideDomRole(5, 12)).toBe("body");
+    expect(carouselSingleSlideDomRole(12, 12)).toBe("cta");
+    expect(carouselSingleSlideDomRole(1, 1)).toBe("cover");
+  });
+
+  it("shrinks template shape to one slide for binary render", () => {
+    const slides = [
+      { headline: "Cover", body: "Hook" },
+      { headline: "Mid", body: "Body copy" },
+      { headline: "CTA", body: "Follow" },
+    ];
+    const ctx = buildSlideRenderContext({ slides }, slides, 2);
+    const narrowed = applySingleSlideBinaryRenderContext(ctx, 2, 3);
+    expect(narrowed.single_slide_render).toBe(true);
+    expect(narrowed.render_dom_body_only).toBe(true);
+    expect(narrowed.render_dom_cover_only).toBe(false);
+    expect((narrowed.body_slides as unknown[]).length).toBe(1);
+    expect((narrowed.body_slides as Array<{ headline?: string }>)[0]?.headline).toBe("Mid");
+    expect(narrowed.cover_slide).toEqual({});
+    expect(narrowed.cta_slide).toEqual({});
   });
 });

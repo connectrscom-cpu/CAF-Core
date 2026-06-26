@@ -1,9 +1,15 @@
 /** Reference slide image URLs from mimic_v1 (original Instagram frames). */
 
+import { guidelineSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-slide-typography";
 import {
   templateBgSlideIndicesForSlot,
   templateBgSlotForSlide,
 } from "@/lib/mimic-template-bg";
+
+export type MimicReferenceSlideLookupOptions = {
+  /** Full top-performer carousel frame list from evidence inspection (when mimic archive is sparse). */
+  referenceFrameUrls?: string[];
+};
 
 function asRec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -21,8 +27,17 @@ function referenceItemsFromMimicV1(mimicV1: Record<string, unknown> | null): Rec
   if (!mimicV1) return [];
   const primary = Array.isArray(mimicV1.reference_items) ? mimicV1.reference_items : [];
   const archive = Array.isArray(mimicV1.archive_reference_items) ? mimicV1.archive_reference_items : [];
-  const items = primary.length > 0 ? primary : archive;
-  return items.map((raw) => asRec(raw)).filter(Boolean) as Record<string, unknown>[];
+  const seen = new Set<string>();
+  const out: Record<string, unknown>[] = [];
+  for (const raw of [...primary, ...archive]) {
+    const item = asRec(raw);
+    if (!item) continue;
+    const key = `${String(item.index ?? "")}:${String(item.source_slide_index ?? "")}:${pickUrl(item)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+  }
+  return out;
 }
 
 function sourceSlideIndex(item: Record<string, unknown>, fallback1Based: number): number {
@@ -56,6 +71,20 @@ function referenceUrlForArchiveIndex(
   return undefined;
 }
 
+function referenceUrlFromFrameList(
+  frames: string[],
+  sourceIdx1Based: number,
+  outputSlideIndex1Based: number
+): string | undefined {
+  const trimmed = frames.map((u) => u.trim()).filter(Boolean);
+  if (trimmed.length === 0) return undefined;
+  const sourceIdx = Math.max(0, sourceIdx1Based - 1);
+  if (sourceIdx < trimmed.length) return trimmed[sourceIdx];
+  const outputIdx = Math.max(0, outputSlideIndex1Based - 1);
+  if (outputIdx < trimmed.length) return trimmed[outputIdx];
+  return undefined;
+}
+
 /** template_bg: compare against the archived frame used for OCR on this slot (middle slides share one). */
 function templateBgReferenceIndexForSlide(
   mimicV1: Record<string, unknown>,
@@ -76,46 +105,88 @@ function templateBgReferenceIndexForSlide(
 export function mimicReferenceUrlForSlide(
   mimicV1: Record<string, unknown> | null | undefined,
   slideIndex1Based: number,
-  totalSlides?: number
+  totalSlides?: number,
+  opts?: MimicReferenceSlideLookupOptions
 ): string | undefined {
+  if (slideIndex1Based < 1) return undefined;
+
   const items = referenceItemsFromMimicV1(mimicV1 ?? null);
-  if (items.length === 0 || slideIndex1Based < 1) return undefined;
+  const slidePlans = Array.isArray(mimicV1?.slide_plans) ? mimicV1!.slide_plans : [];
+  const plan = slidePlans.map((p) => asRec(p)).find((p) => p && Number(p.slide_index) === slideIndex1Based);
+  const sourceIdx = guidelineSlideIndexForMimicOutput(mimicV1 ?? {}, slideIndex1Based);
 
   const mode = String(mimicV1?.mode ?? "").trim();
-  if (mode === "template_bg" && totalSlides != null && totalSlides > 0) {
-    const refIdx = templateBgReferenceIndexForSlide(mimicV1!, slideIndex1Based, totalSlides);
-    const slotUrl = referenceUrlForArchiveIndex(mimicV1!, refIdx);
+  if (mode === "template_bg" && totalSlides != null && totalSlides > 0 && mimicV1) {
+    const refIdx = templateBgReferenceIndexForSlide(mimicV1, slideIndex1Based, totalSlides);
+    const slotUrl = referenceUrlForArchiveIndex(mimicV1, refIdx);
     if (slotUrl) return slotUrl;
   }
 
-  const byOutputIndex = items[slideIndex1Based - 1];
-  if (byOutputIndex) {
-    const url = pickUrl(byOutputIndex);
+  if (mimicV1) {
+    const refIndexFromPlan = plan ? Number(plan.reference_index) : NaN;
+    if (Number.isFinite(refIndexFromPlan) && refIndexFromPlan > 0) {
+      const fromPlanRef = referenceUrlForArchiveIndex(mimicV1, refIndexFromPlan);
+      if (fromPlanRef) return fromPlanRef;
+    }
+
+    if (items.length > 0) {
+      const bySource = items.find((item) => sourceSlideIndex(item, 0) === sourceIdx);
+      if (bySource) {
+        const url = pickUrl(bySource);
+        if (url) return url;
+      }
+
+      const byIndex = items.find((item) => Number(item.index) === sourceIdx);
+      if (byIndex) {
+        const url = pickUrl(byIndex);
+        if (url) return url;
+      }
+
+      const fromArchiveIdx = referenceUrlForArchiveIndex(mimicV1, sourceIdx);
+      if (fromArchiveIdx) return fromArchiveIdx;
+    }
+  }
+
+  const frameUrl = referenceUrlFromFrameList(
+    opts?.referenceFrameUrls ?? [],
+    sourceIdx,
+    slideIndex1Based
+  );
+  if (frameUrl) return frameUrl;
+
+  // 1:1 output deck when archive length matches slide count (each output maps to same-index frame).
+  if (
+    items.length > 0 &&
+    totalSlides != null &&
+    totalSlides > 0 &&
+    items.length >= totalSlides &&
+    slideIndex1Based <= items.length
+  ) {
+    const byOutput = items[slideIndex1Based - 1];
+    const url = byOutput ? pickUrl(byOutput) : "";
     if (url) return url;
   }
 
-  const slidePlans = Array.isArray(mimicV1?.slide_plans) ? mimicV1!.slide_plans : [];
-  const plan = slidePlans
-    .map((p) => asRec(p))
-    .find((p) => p && Number(p.slide_index) === slideIndex1Based);
-  const sourceIdx = plan ? Number(plan.source_slide_index) : slideIndex1Based;
-
-  const bySource = items.find((item) => sourceSlideIndex(item, 0) === sourceIdx);
-  if (bySource) {
-    const url = pickUrl(bySource);
-    if (url) return url;
+  // Multi-frame archive without full TP frame list — cycle only when more than one distinct frame exists.
+  if (items.length > 1) {
+    const cycled = items[(slideIndex1Based - 1) % items.length];
+    return cycled ? pickUrl(cycled) || undefined : undefined;
   }
 
-  const cycled = items[(slideIndex1Based - 1) % items.length];
-  return cycled ? pickUrl(cycled) || undefined : undefined;
+  if (items.length === 1) {
+    return pickUrl(items[0]!) || undefined;
+  }
+
+  return undefined;
 }
 
 /** All reference URLs aligned to output slide positions (1 per slide). */
 export function mimicReferenceUrlsBySlide(
   mimicV1: Record<string, unknown> | null | undefined,
-  slideCount: number
+  slideCount: number,
+  opts?: MimicReferenceSlideLookupOptions
 ): (string | undefined)[] {
   return Array.from({ length: Math.max(0, slideCount) }, (_, i) =>
-    mimicReferenceUrlForSlide(mimicV1 ?? null, i + 1, slideCount)
+    mimicReferenceUrlForSlide(mimicV1 ?? null, i + 1, slideCount, opts)
   );
 }

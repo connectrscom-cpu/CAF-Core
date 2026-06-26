@@ -15,10 +15,14 @@ import {
   markLlmApprovalReviewMinted,
   markLlmApprovalReviewPositiveMinted,
 } from "../repositories/llm-approval-reviews.js";
-import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
-import { openaiChatMultimodal, type ChatContentPart } from "./openai-chat-multimodal.js";
 import { buildApprovedContentTextBundle } from "./approved-content-text-bundle.js";
 import { createSignedUrlForObjectKey, tryParseSupabasePublicObjectUrl } from "./supabase-storage.js";
+import {
+  analyzeGeneratedOutputForApprovedJob,
+  assertApprovalReviewVisionReady,
+  resolveApprovalReviewProfileModel,
+} from "./generated-output-nemotron-analysis.js";
+import { emitGlobalLearningObservation } from "./global-learning-observe.js";
 import {
   parseUpstreamRecommendations,
   UPSTREAM_RECOMMENDATIONS_PROMPT_ADDENDUM,
@@ -322,17 +326,18 @@ export async function runLlmApprovalReviewsForProject(
   projectSlug: string,
   params: RunLlmApprovalReviewParams
 ): Promise<{ results: LlmApprovalReviewJobResult[]; model: string }> {
-  const apiKey = config.OPENAI_API_KEY?.trim();
-  if (!apiKey) {
+  try {
+    assertApprovalReviewVisionReady(config);
+  } catch {
     return {
       results: [],
-      model: config.OPENAI_APPROVAL_REVIEW_MODEL,
+      model: resolveApprovalReviewProfileModel(config),
     };
   }
 
   const limit = params.limit ?? 5;
   const skipDays = params.force_rereview ? 0 : (params.skip_if_reviewed_within_days ?? 7);
-  const model = config.OPENAI_APPROVAL_REVIEW_MODEL;
+  const model = resolveApprovalReviewProfileModel(config);
   const maxImages = config.LLM_APPROVAL_REVIEW_MAX_IMAGES;
   const maxText = config.LLM_APPROVAL_REVIEW_MAX_TEXT_CHARS;
   const improveBelow =
@@ -367,93 +372,41 @@ export async function runLlmApprovalReviewsForProject(
     const imageUrls = await filterReachableImageUrls(img.urls, maxImages);
     const imagesAvailable = img.total_available;
 
-    const userParts: ChatContentPart[] = [
-      {
-        type: "text",
-        text: [
-          `task_id: ${job.task_id}`,
-          `project: ${projectSlug}`,
-          `flow_type: ${job.flow_type ?? "unknown"}`,
-          `platform: ${job.platform ?? "unknown"}`,
-          `images_available: ${imagesAvailable}`,
-          `images_sent: ${imageUrls.length} (cap=${maxImages})`,
-          "",
-          "--- Approved content bundle ---",
-          textBundle,
-        ].join("\n"),
-      },
-    ];
-    for (const url of imageUrls) {
-      userParts.push({
-        type: "image_url",
-        image_url: { url, detail: "low" },
-      });
-    }
-
     try {
-      const call = async (content: ChatContentPart[]) =>
-        openaiChatMultimodal(
-          apiKey,
-          {
-            model,
-            system_prompt: APPROVED_CONTENT_LLM_REVIEW_SYSTEM_PROMPT,
-            user_content: content,
-            max_tokens: 2500,
-            response_format: "json_object",
-          },
-          {
-            db,
-            projectId,
-            runId: job.run_id,
-            taskId: job.task_id,
-            signalPackId: null,
-            step: "llm_post_approval_review",
-          }
-        );
-
-      let llm;
-      try {
-        llm = await call(userParts);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        // If OpenAI rejects any image URL, fall back to text-only so the review still completes.
-        if (imageUrls.length > 0 && /invalid_image_url/i.test(msg)) {
-          const textOnly = userParts.filter((p) => p.type !== "image_url");
-          llm = await call(textOnly);
-        } else {
-          throw e;
+      const analysis = await analyzeGeneratedOutputForApprovedJob(
+        db,
+        config,
+        projectId,
+        projectSlug,
+        job,
+        {
+          imageUrls,
+          imagesAvailable,
+          textBundle,
+          maxTextChars: maxText,
         }
-      }
+      );
 
-      const parsed = parseJsonObjectFromLlmText(llm.content);
-      if (!parsed) {
+      if (!analysis.ok) {
         results.push({
           task_id: job.task_id,
           ok: false,
-          error: "model returned non-JSON",
+          error: analysis.error ?? "generated_output_analysis_failed",
           review_id: reviewId,
         });
         continue;
       }
 
-      const overall = clamp01(parsed.overall_score) ?? 0.5;
-      const strengths = asStrArray(parsed.strengths);
-      const weaknesses = asStrArray(parsed.weaknesses);
-      const improvementBullets = asStrArray(parsed.improvement_bullets);
-      const riskFlags = asStrArray(parsed.risk_flags);
-      const summary = typeof parsed.summary === "string" ? parsed.summary : null;
-      const upstreamRecs = parseUpstreamRecommendations(parsed.upstream_recommendations);
-
-      const scoresJson: Record<string, unknown> = {
-        alignment_score: clamp01(parsed.alignment_score),
-        visual_execution_score: clamp01(parsed.visual_execution_score),
-        copy_structure_score: clamp01(parsed.copy_structure_score),
-        video_plan_score: clamp01(parsed.video_plan_score),
-        // New: inferred viewer-experience score for video flows (derived from plan + script + scenes
-        // + captions + CTA when the rendered file cannot be watched by the LLM). Null for pure
-        // carousel/image content.
-        video_execution_score: clamp01(parsed.video_execution_score),
-      };
+      const {
+        overall_score: overall,
+        strengths,
+        weaknesses,
+        improvement_bullets: improvementBullets,
+        risk_flags: riskFlags,
+        summary,
+        upstream_recommendations: upstreamRecs,
+        scores_json: scoresJson,
+      } = analysis.derived;
 
       const eligible = overall < improveBelow && improvementBullets.length > 0;
       const positiveEligible = overall >= positiveAtOrAbove && strengths.length > 0;
@@ -529,7 +482,7 @@ export async function runLlmApprovalReviewsForProject(
         run_id: job.run_id,
         flow_type: job.flow_type,
         platform: job.platform,
-        model: llm.model,
+        model: analysis.model,
         overall_score: overall,
         scores_json: scoresJson,
         strengths,
@@ -537,12 +490,14 @@ export async function runLlmApprovalReviewsForProject(
         improvement_bullets: improvementBullets,
         risk_flags: riskFlags,
         summary,
-        raw_assistant_text: llm.content.slice(0, 24_000),
+        raw_assistant_text: analysis.raw_content.slice(0, 24_000),
         vision_image_urls: imageUrls,
         text_bundle_chars: textBundle.length,
         minted_pending_rule: minted,
         minted_pending_positive_rule: mintedPositive,
         upstream_recommendations: upstreamRecs,
+        output_insights_json: analysis.output_insights_json,
+        raw_insights_llm_json: analysis.raw_llm_json,
       });
 
       await insertObservation(db, {
@@ -563,13 +518,15 @@ export async function runLlmApprovalReviewsForProject(
           improvement_bullets: improvementBullets,
           risk_flags: riskFlags,
           summary,
-          model: llm.model,
+          model: analysis.model,
           images_available: imagesAvailable,
           images_used: imageUrls.length,
           minted_pending_rule: minted,
           minted_pending_positive_rule: mintedPositive,
           positive_hint_eligible: positiveEligible,
           upstream_recommendations_count: upstreamRecs.length,
+          output_insights_json: analysis.output_insights_json,
+          format_pattern: analysis.derived.insight_fields.format_pattern ?? null,
         },
         confidence: overall,
         observed_at: new Date().toISOString(),
@@ -598,7 +555,7 @@ export async function runLlmApprovalReviewsForProject(
               change: rec.change,
               rationale: rec.rationale ?? "",
               field_or_check_id: rec.field_or_check_id ?? null,
-              source_model: llm.model,
+              source_model: analysis.model,
               source_overall_score: overall,
             },
             confidence: overall,
@@ -624,7 +581,7 @@ export async function runLlmApprovalReviewsForProject(
         ok: true,
         review_id: reviewId,
         overall_score: overall,
-        model: llm.model,
+        model: analysis.model,
         minted_pending_rule: minted,
         minted_pending_positive_rule: mintedPositive,
         hint_eligible: eligible,
@@ -642,6 +599,24 @@ export async function runLlmApprovalReviewsForProject(
       const msg = e instanceof Error ? e.message : String(e);
       results.push({ task_id: job.task_id, ok: false, error: msg, review_id: reviewId });
     }
+  }
+
+  const completed = results.filter((r) => r.ok && !r.skipped);
+  if (completed.length > 0) {
+    await emitGlobalLearningObservation(db, {
+      source_type: "llm_review_global",
+      observation_type: "llm_review_batch",
+      entity_ref: projectSlug,
+      payload_json: {
+        project_slug: projectSlug,
+        jobs_reviewed: completed.length,
+        avg_overall_score:
+          completed.reduce((s, r) => s + (r.overall_score ?? 0), 0) / completed.length,
+        model,
+        task_ids: completed.map((r) => r.task_id),
+      },
+      confidence: 0.75,
+    }).catch(() => {});
   }
 
   return { results, model };

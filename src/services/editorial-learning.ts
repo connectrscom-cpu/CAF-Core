@@ -26,6 +26,7 @@ import {
   type EditorialNotesLlmResult,
   type EditorialNotesLlmSynthesis,
 } from "./editorial-notes-llm-synthesis.js";
+import { emitGlobalLearningObservation } from "./global-learning-observe.js";
 import {
   compactValidationOutputForEditorialSynthesis,
   validationCompactHasStructuredSignal,
@@ -773,6 +774,26 @@ export async function analyzeEditorialPatterns(
     );
     editorial_reviews_marked_consumed = upd.rowCount ?? ids.length;
   }
+
+  void emitGlobalLearningObservation(db, {
+    source_type: "editorial_pattern_global",
+    observation_type: "editorial_analysis_run",
+    entity_ref: projectSlug,
+    payload_json: {
+      project_slug: projectSlug,
+      window_days: windowDays,
+      total_reviews: total,
+      approval_rate: approvalRateWindow,
+      rejection_rate: total > 0 ? rejected / total : 0,
+      needs_edit_rate: total > 0 ? needsEdit / total : 0,
+      top_rejection_tags: topTags,
+      rules_created: rulesCreated,
+      insights_count: insights.length,
+      engineering_triggers_fired: engBrief.triggers_fired,
+      sample_task_ids: mergedSampleIds.slice(0, 12),
+    },
+    confidence: total > 0 ? 0.75 : 0.3,
+  }).catch(() => {});
 
   return {
     project_slug: projectSlug,

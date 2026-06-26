@@ -307,6 +307,12 @@ export function transformInstagramApifyPost(
     source_scraper: "apify/instagram-scraper",
     owner_username: accountHandle,
     owner_id: accountId,
+    followers_count:
+      (p.owner as Record<string, unknown> | undefined)?.followersCount ??
+      (p.owner as Record<string, unknown> | undefined)?.followers_count ??
+      p.followersCount ??
+      p.ownerFollowersCount ??
+      null,
     raw_json: safeJson(p, "{}"),
   };
 }

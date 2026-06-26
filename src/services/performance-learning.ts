@@ -11,6 +11,7 @@
  * Produces LearningRules that influence future candidate scoring and generation.
  */
 import type { Pool } from "pg";
+import { markJobOutcomeMetricsPresent } from "../repositories/job-outcomes.js";
 import { q } from "../db/queries.js";
 import { insertLearningRule } from "../repositories/learning.js";
 import { insertPerformanceMetric } from "../repositories/ops.js";
@@ -89,6 +90,13 @@ export async function ingestPerformanceMetrics(
         `${m.task_id ?? m.candidate_id ?? "unknown"}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
+  }
+
+  const taskIds = [
+    ...new Set(metrics.map((m) => m.task_id?.trim()).filter((t): t is string => Boolean(t))),
+  ];
+  if (taskIds.length > 0) {
+    await markJobOutcomeMetricsPresent(db, projectId, taskIds).catch(() => {});
   }
 
   return { ingested, errors };

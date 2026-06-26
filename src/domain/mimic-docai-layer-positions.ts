@@ -282,6 +282,38 @@ export function patchMimicDocAiLayerSize<T extends MimicDocAiLayerPositionLayer>
   };
 }
 
+/** Build generation_payload slide copy from saved layout boxes (reprint / template_bg fallback). */
+export function llmSlideCopyPatchFromDocAiOverrides(
+  overrides: MimicDocAiLayerPositionOverride[]
+): Record<string, unknown> | null {
+  const blocks: Array<{ role: string; text: string }> = [];
+  for (const o of overrides) {
+    if (o.hidden) continue;
+    const text = o.text?.trim() ?? "";
+    if (!text || looksLikeInstagramHandleText(text)) continue;
+    const roleHead = o.layer_key.split("@")[0]?.trim().toLowerCase() || "body";
+    const role =
+      roleHead === "headline" || roleHead === "title" || roleHead === "cta"
+        ? roleHead === "title"
+          ? "headline"
+          : roleHead
+        : "body";
+    blocks.push({ role, text });
+  }
+  if (blocks.length === 0) return null;
+  const headline = blocks.find((b) => b.role === "headline")?.text ?? "";
+  const body = blocks
+    .filter((b) => b.role === "body")
+    .map((b) => b.text)
+    .join("\n");
+  return {
+    text_blocks: blocks,
+    on_slide_lines: blocks.map((b) => b.text),
+    ...(headline ? { headline } : {}),
+    ...(body ? { body } : {}),
+  };
+}
+
 export function parseMimicDocAiLayerPositionsBySlide(raw: unknown): MimicDocAiLayerPositionsBySlide | null {
   const rec = asRecord(raw);
   if (!rec) return null;
@@ -347,6 +379,13 @@ export function pickMimicDocAiLayerPositionsForSlide(
   if (!all) return null;
   const rows = all[String(slideIndex1Based)];
   return rows?.length ? rows : null;
+}
+
+/** True when reviewers saved any per-slide layout boxes on mimic_v1. */
+export function mimicV1HasReviewerDocAiLayerPositions(mimicV1: unknown): boolean {
+  const all = pickMimicDocAiLayerPositionsFromMimicV1(mimicV1);
+  if (!all) return false;
+  return Object.values(all).some((rows) => Array.isArray(rows) && rows.length > 0);
 }
 
 /** Drop junk custom layers and stale OCR copy text before template_bg inspect/reprint. */
@@ -424,13 +463,14 @@ export function applyMimicDocAiLayerPositionOverrides<T extends MimicDocAiLayerP
       } else if (o.font_style_italic === false) {
         next = patchMimicDocAiLayerFontStyle(next, false);
       }
+      const explicitText = o.text?.trim() ?? "";
       if (
-        o.text != null &&
-        o.text.trim() &&
-        (isCustomAddedMimicDocAiLayerKey(o.layer_key) ||
-          (applySavedTextOnBaseLayers && o.box_locked))
+        explicitText &&
+        (isCustomAddedMimicDocAiLayerKey(o.layer_key) || applySavedTextOnBaseLayers)
       ) {
-        next = patchMimicDocAiLayerText(next, o.text);
+        // Saved reviewer copy always wins on reprint for full-bleed / carousel_visual.
+        // template_bg passes applySavedTextOnBaseLayers: false — copy stays on slide fields.
+        next = patchMimicDocAiLayerText(next, explicitText);
       }
       const boxW = o.w_px ?? layer.w_px;
       const boxH = o.h_px ?? layer.h_px;

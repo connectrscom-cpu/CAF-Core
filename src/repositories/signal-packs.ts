@@ -245,6 +245,19 @@ export function getMimicModeOverridesFromPack(
   return overrides as Record<string, string | null>;
 }
 
+export async function updateSignalPackNotes(
+  db: Pool,
+  signalPackId: string,
+  notes: string | null
+): Promise<number> {
+  const row = await qOne<{ n: string }>(
+    db,
+    `UPDATE caf_core.signal_packs SET notes = $2 WHERE id = $1::uuid RETURNING 1::text AS n`,
+    [signalPackId, notes]
+  );
+  return row ? 1 : 0;
+}
+
 function j(v: unknown): string | null {
   if (v == null) return null;
   return typeof v === "string" ? v : JSON.stringify(v);

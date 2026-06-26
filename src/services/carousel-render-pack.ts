@@ -14,6 +14,7 @@ import {
   coerceSlideBodyCopyText,
   joinBodyLineArray,
 } from "../domain/slide-copy-lines.js";
+import { coerceMimicTextBlockRow } from "../domain/mimic-overlay-copy.js";
 
 export { formatInstagramHandleForCta } from "../domain/instagram-handle.js";
 
@@ -199,11 +200,10 @@ function textFromTextBlocksArray(blocks: unknown): { headline: string; body: str
   let headline = "";
   const bodyParts: string[] = [];
   for (const block of blocks) {
-    if (!block || typeof block !== "object") continue;
-    const rec = block as Record<string, unknown>;
-    const role = String(rec.role ?? "").trim().toLowerCase();
-    const text = String(rec.text ?? "").trim();
-    if (!text) continue;
+    const row = coerceMimicTextBlockRow(block);
+    if (!row) continue;
+    const role = row.role;
+    const text = row.text;
     if (role === "title" || role === "headline" || role === "kicker") {
       if (!headline) headline = text;
     } else if (role === "subtitle" || role === "body" || role === "sub") {
@@ -610,10 +610,16 @@ function legacyCoverBodyCtaSlides(gen: Record<string, unknown>): Record<string, 
   const slides: Record<string, unknown>[] = [];
 
   const coverSlide = (gen.cover_slide ?? {}) as Record<string, unknown>;
-  const coverHeadline =
-    String(gen.cover ?? gen.intro_title ?? coverSlide.headline ?? coverSlide.title ?? coverSlide.heading ?? "").trim();
-  const coverBody =
-    String(gen.cover_subtitle ?? coverSlide.body ?? coverSlide.text ?? coverSlide.content ?? "").trim();
+  const coverObj =
+    gen.cover && typeof gen.cover === "object" && !Array.isArray(gen.cover)
+      ? (gen.cover as Record<string, unknown>)
+      : null;
+  const coverHeadline = coverObj
+    ? String(coverObj.headline ?? coverObj.title ?? coverObj.heading ?? "").trim()
+    : String(gen.cover ?? gen.intro_title ?? coverSlide.headline ?? coverSlide.title ?? coverSlide.heading ?? "").trim();
+  const coverBody = coverObj
+    ? String(coverObj.cover_subtitle ?? coverObj.subtitle ?? coverObj.body ?? coverObj.sub ?? "").trim()
+    : String(gen.cover_subtitle ?? coverSlide.body ?? coverSlide.text ?? coverSlide.content ?? "").trim();
   slides.push({ headline: coverHeadline, body: coverBody, slide_role: "cover" });
 
   const bodySlides = gen.body_slides;
@@ -640,17 +646,18 @@ function slideHasUnreliableMimicTextBlocks(s: Record<string, unknown>): boolean 
   if (!Array.isArray(blocks) || blocks.length === 0) return false;
   const body = String(s.body ?? "").trim();
   for (const item of blocks) {
-    const rec = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
-    const t = String(rec?.text ?? "");
+    const row = coerceMimicTextBlockRow(item);
+    if (!row) continue;
+    const t = row.text;
     if (t.includes("…") || t.includes("...")) return true;
   }
   if (body.length > 40) {
     let blockBodyLen = 0;
     for (const item of blocks) {
-      const rec = item && typeof item === "object" && !Array.isArray(item) ? (item as Record<string, unknown>) : null;
-      if (!rec) continue;
-      const role = String(rec.role ?? "").toLowerCase();
-      const text = String(rec.text ?? "").trim();
+      const row = coerceMimicTextBlockRow(item);
+      if (!row) continue;
+      const role = row.role;
+      const text = row.text;
       if (/headline|title|hook|cover|kicker/.test(role)) continue;
       if (/^@[\w.]{2,}$/.test(text)) continue;
       blockBodyLen += text.length;
@@ -1749,6 +1756,60 @@ export function applySlideCopyToRenderContext(
       next.body_slides = bodySlides;
     }
   }
+  return next;
+}
+
+export type CarouselSingleSlideDomRole = "cover" | "body" | "cta";
+
+/** Which `.slide` role to emit when `single_slide_render` is set (POST /render-binary). */
+export function carouselSingleSlideDomRole(
+  slideIndex1Based: number,
+  totalSlides: number
+): CarouselSingleSlideDomRole {
+  const want = Math.max(1, Math.floor(slideIndex1Based));
+  const total = Math.max(1, Math.floor(totalSlides));
+  if (want <= 1) return "cover";
+  if (total > 1 && want >= total) return "cta";
+  return "body";
+}
+
+/**
+ * Per-slide POST /render-binary must not compile the full deck when a large `data:` background
+ * plate is inlined — carousel_mimic_bg repeats `background_image_url` on every `.slide` div.
+ */
+export function applySingleSlideBinaryRenderContext(
+  ctx: Record<string, unknown>,
+  slideIndex1Based: number,
+  totalSlides: number
+): Record<string, unknown> {
+  const want = Math.max(1, Math.floor(slideIndex1Based));
+  const total = Math.max(1, Math.floor(totalSlides));
+  const role = carouselSingleSlideDomRole(want, total);
+
+  const next: Record<string, unknown> = {
+    ...ctx,
+    single_slide_render: true,
+    slide_index: want,
+    slide_total: total,
+    render_dom_cover_only: role === "cover",
+    render_dom_body_only: role === "body",
+    render_dom_cta_only: role === "cta",
+  };
+
+  if (role === "cover") {
+    next.body_slides = [];
+    next.cta_slide = {};
+  } else if (role === "cta") {
+    next.body_slides = [];
+    next.cover_slide = {};
+  } else {
+    const current = ctx.current_slide;
+    next.body_slides =
+      current && typeof current === "object" && !Array.isArray(current) ? [current] : [];
+    next.cover_slide = {};
+    next.cta_slide = {};
+  }
+
   return next;
 }
 

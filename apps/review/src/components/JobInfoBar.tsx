@@ -22,6 +22,8 @@ export interface JobInfoBarProps {
   projectSlug?: string;
   platform?: string;
   flowType?: string;
+  flowLabel?: string;
+  flowDetail?: string | null;
   route?: string;
   runId?: string;
   risk?: string;
@@ -121,6 +123,8 @@ export function JobInfoBar({
   projectSlug,
   platform,
   flowType,
+  flowLabel,
+  flowDetail,
   route,
   runId,
   risk,
@@ -139,7 +143,8 @@ export function JobInfoBar({
     { label: "Job ID", value: jobId, mono: true },
     ...(projectSlug ? [{ label: "Project", value: projectSlug }] : []),
     { label: "Platform", value: platform || "—" },
-    { label: "Flow", value: flowType || "—" },
+    { label: "Flow", value: flowLabel || flowType || "—" },
+    ...(flowDetail ? [{ label: "Render", value: flowDetail }] : []),
     { label: "Route", value: route || "—" },
     ...(runId ? [{ label: "Run", value: runId, mono: true }] : []),
     { label: "Risk", value: risk || "—" },

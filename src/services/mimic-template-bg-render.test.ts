@@ -10,6 +10,22 @@ describe("templateBgLlmSlideForDocAi", () => {
     });
     expect(scoped.headline).toBe("Cover hook");
     expect(scoped.body).toBe("Kicker line");
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "Cover hook" },
+      { role: "body", text: "Kicker line" },
+    ]);
+  });
+
+  it("keeps cover subtitle when headline and body fields are both set", () => {
+    const scoped = templateBgLlmSlideForDocAi(1, 12, {
+      headline: "Aries: The Passionate Pursuer",
+      body: "Subtitle paragraph for the cover slide.",
+    });
+    expect(scoped.body).toBe("Subtitle paragraph for the cover slide.");
+    expect(scoped.text_blocks).toEqual([
+      { role: "headline", text: "Aries: The Passionate Pursuer" },
+      { role: "body", text: "Subtitle paragraph for the cover slide." },
+    ]);
   });
 
   it("scopes CTA slide to cta + handle", () => {

@@ -1,6 +1,7 @@
 /**
  * Phase 2 broad pass: text-only LLM analysis per evidence row (no images/video).
  */
+import { hookTypeForStorage } from "../domain/hook-type-normalize.js";
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
 import { ensureProject } from "../repositories/core.js";
@@ -151,7 +152,13 @@ function stripLegacyRowsJsonBlock(text: string): string {
 function defaultBroadSystemPrompt(): string {
   const formats = EVIDENCE_POST_FORMATS.join(" | ");
   return `You analyze social/scraper evidence for a marketing content pipeline.
-Each input row includes **post_format_hint** (${formats}) — structural format (video vs carousel vs single image vs text-native vs article), derived from the scraper payload. Treat it as ground truth for how the post is consumed; tailor **why_it_worked**, **caption_style**, and **hook_type** to that format (e.g. carousel = slide arc / cover slide; video = hook in first seconds; text_native = title/body tension).
+Each input row includes **post_format_hint** (${formats}) — structural format (video vs carousel vs single image vs text-native vs article), derived from the scraper payload. Treat it as ground truth for how the post is consumed; tailor **why_it_worked** and **caption_style** to that format.
+
+**hook_type** must be a specific hook *category*, NOT a format description. Use one of:
+question | bold_claim | list_promise | personal_story | controversy | pattern_interrupt | social_proof | before_after | myth_bust | direct_address | curiosity_gap | other
+Never output placeholder phrases like "hook in first seconds", "slide arc", or "cover slide" as hook_type — those describe format, not hook strategy.
+
+**risk_flags** — only include genuine risks (brand safety, saturation, weak hook, misleading claim). Use [] when none; do not flag strong performers.
 Return ONLY valid JSON with shape:
 {"insights":[
   {
@@ -436,6 +443,8 @@ export async function runBroadInsightsForImport(
       if (llmFormat && llmFormat !== derivedFormat) {
         aesthetic.post_format_llm = llmFormat;
       }
+      const hookText = typeof item.hook_text === "string" ? item.hook_text : null;
+      const hookTypeRaw = typeof item.hook_type === "string" ? item.hook_type : null;
       await upsertEvidenceRowInsight(db, {
         project_id: project.id,
         inputs_import_id: importId,
@@ -447,14 +456,14 @@ export async function runBroadInsightsForImport(
         why_it_worked: typeof item.why_it_worked === "string" ? item.why_it_worked : null,
         primary_emotion: typeof item.primary_emotion === "string" ? item.primary_emotion : null,
         secondary_emotion: typeof item.secondary_emotion === "string" ? item.secondary_emotion : null,
-        hook_type: typeof item.hook_type === "string" ? item.hook_type : null,
+        hook_type: hookTypeForStorage(hookTypeRaw, hookText),
         custom_label_1: typeof item.custom_label_1 === "string" ? item.custom_label_1 : null,
         custom_label_2: typeof item.custom_label_2 === "string" ? item.custom_label_2 : null,
         custom_label_3: typeof item.custom_label_3 === "string" ? item.custom_label_3 : null,
         cta_type: typeof item.cta_type === "string" ? item.cta_type : null,
         hashtags: typeof item.hashtags === "string" ? item.hashtags : null,
         caption_style: typeof item.caption_style === "string" ? item.caption_style : null,
-        hook_text: typeof item.hook_text === "string" ? item.hook_text : null,
+        hook_text: hookText,
         risk_flags_json: risks,
         aesthetic_analysis_json: aesthetic,
         raw_llm_json: item as Record<string, unknown>,

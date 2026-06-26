@@ -23,9 +23,12 @@ import {
   referenceTextMatchesLlmHeadline,
   shouldRenderDocAiLayerSingleLine,
   splitHeadlineWithPreservedDecorTitle,
+  zodiacSignTokensInText,
 } from "./mimic-docai-overlay-layout.js";
 import {
   assignLlmCopyUsingCopySlots,
+  copySlotsIncludeBodyField,
+  copySlotsShouldDriveMapping,
   parseCopySlotsFromSlide,
   isChatMockTitlePairBlocks,
   isTemplateInstructionText,
@@ -38,7 +41,14 @@ import {
   repairDanglingStackTexts,
   semanticBodyCopyForStacks,
 } from "./mimic-semantic-copy-units.js";
-import { listicleDecorTitleFromParagraph } from "../domain/mimic-template-bg-copy.js";
+import {
+  listicleDecorTitleFromParagraph,
+  resolveTemplateBgBodyOnScreenCopy,
+  resolveTemplateBgCtaOnScreenCopy,
+  templateBgLlmSlideForDocAi,
+  templateBgReferenceSlideIndex,
+  templateBgSlotForSlideIndex,
+} from "../domain/mimic-template-bg-copy.js";
 
 export { joinOrphanWordBodyLines } from "./mimic-semantic-copy-units.js";
 
@@ -358,6 +368,43 @@ export function nudgeBBoxAwayFromFullBleedSubjectZone(bbox: {
   return { x, y, w, h };
 }
 
+/**
+ * Confine a full-bleed trait box to the side column beside the subject zone so copy
+ * wraps in the margin (and the font shrinks) instead of stretching across the art.
+ * Applies by horizontal side (left/right of subject) regardless of the box's vertical
+ * band: nudged corner boxes widen back across the subject once copy is expanded, so the
+ * width must stay column-bound. Only reached for movable, non-skip full-bleed layers.
+ */
+export function constrainBBoxToFullBleedSideColumn(bbox: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}): { x: number; y: number; w: number; h: number } {
+  const z = MIMIC_FULL_BLEED_SUBJECT_ZONE;
+  const gap = 0.012;
+  const marginX = MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX / CAROUSEL_RENDER_WIDTH_PX;
+  const minColW = 0.09;
+  let { x, w } = bbox;
+  const { y, h } = bbox;
+
+  if (x < z.x) {
+    const colW = z.x - gap - Math.max(marginX, x);
+    if (colW > minColW) {
+      x = Math.max(marginX, x);
+      w = Math.min(w, colW);
+    }
+  } else {
+    const colLeft = Math.max(x, z.x + z.w + gap);
+    const colW = 1 - marginX - colLeft;
+    if (colW > minColW) {
+      x = colLeft;
+      w = Math.min(w, colW);
+    }
+  }
+  return { x, y, w, h: Math.min(h, 0.32) };
+}
+
 const CANVAS_HEIGHT = CAROUSEL_RENDER_HEIGHT_PX;
 
 const HEADLINE_TIER_PX: Record<string, number> = {
@@ -424,11 +471,24 @@ function visualGuidelineSlideList(
 
 /** Resolve reference OCR geometry when output index and archive source index diverge. */
 function resolveRefSlideWithLayoutBlocksForMimic(
-  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans">,
+  mimic: Pick<MimicPayloadV1, "visual_guideline" | "reference_items" | "slide_plans"> &
+    Partial<Pick<MimicPayloadV1, "mode">>,
   slideIndex1Based: number,
-  _opts?: { totalSlides?: number }
+  opts?: { totalSlides?: number }
 ): { refSlide: Record<string, unknown>; layoutBlocks: DocAiLayoutBlock[] } | null {
   const vg = mimic.visual_guideline ?? {};
+  const totalSlides = opts?.totalSlides ?? 0;
+  if (String(mimic.mode ?? "").trim() === "template_bg" && totalSlides > 0) {
+    const slot = templateBgSlotForSlideIndex(slideIndex1Based, totalSlides);
+    const refSlides = visualGuidelineSlideList(vg);
+    const refIdx = templateBgReferenceSlideIndex(slot, refSlides.length);
+    const slotSlide = slideGuidelineRecord(vg, slideIndex1Based, refIdx);
+    if (slotSlide) {
+      const layoutBlocks = layoutBlocksForMimicSlideRender(slotSlide);
+      if (layoutBlocks.length > 0) return { refSlide: slotSlide, layoutBlocks };
+    }
+  }
+
   const lookupIdx = guidelineSlideIndexForMimicOutput(mimic, slideIndex1Based);
   let refSlide = slideGuidelineRecord(vg, slideIndex1Based, lookupIdx);
   if (refSlide) {
@@ -1413,46 +1473,174 @@ function listicleDecorTitleFromLlmSlide(
   return "";
 }
 
-function isListicleMotherTemplateBgLayout(orderedRef: DocAiLayoutBlock[]): boolean {
-  const hasDecor = orderedRef.some((r) => isListicleMotherDecorText(r.ref_text));
+
+function pickTemplateBgBodyRef(
+  orderedRef: DocAiLayoutBlock[],
+  headlineRef: DocAiLayoutBlock | null
+): DocAiLayoutBlock | null {
+  const bodyRefs = orderedRef.filter(
+    (r) => docAiRefAcceptsDirectCopyLine(r) && r !== headlineRef
+  );
+  if (bodyRefs.length === 0) return null;
+  return [...bodyRefs].sort((a, b) => b.w * b.h - a.w * a.h || a.y - b.y)[0]!;
+}
+
+function templateBgSyntheticBodyRef(anchor: DocAiLayoutBlock): DocAiLayoutBlock {
+  return {
+    ...anchor,
+    role: "body",
+    ref_text: "",
+    text: "",
+    x: anchor.x,
+    y: clamp01(anchor.y + anchor.h + 0.03),
+    w: Math.max(anchor.w, 0.72),
+    h: Math.max(anchor.h * 2.5, 0.32),
+    align: anchor.align ?? "left",
+  };
+}
+
+function pickTemplateBgHeadlineRef(
+  orderedRef: DocAiLayoutBlock[],
+  bodyRef: DocAiLayoutBlock | null
+): DocAiLayoutBlock | null {
+  const decor = orderedRef.find(
+    (r) =>
+      isListicleMotherDecorText(r.ref_text) ||
+      isPreserveReferenceDecorText(r.ref_text, r)
+  );
+  if (decor) return decor;
+  const headlineRole = orderedRef.filter(
+    (r) => roleBucket(r.role) === "headline" && !isOcrHandleLayoutRef(r)
+  );
+  if (headlineRole.length > 0) {
+    return [...headlineRole].sort((a, b) => a.y - b.y || b.w * b.h - a.w * a.h)[0]!;
+  }
+  const zodiac = orderedRef.find((r) => isZodiacSignName(r.ref_text));
+  if (zodiac) return zodiac;
+  const top = orderedRef.filter(
+    (r) =>
+      !isOcrHandleLayoutRef(r) &&
+      docAiRefAcceptsDirectCopyLine(r) &&
+      r.y < 0.28 &&
+      r !== bodyRef
+  );
+  if (top.length > 0) {
+    return [...top].sort((a, b) => a.y - b.y || b.w * b.h - a.w * a.h)[0]!;
+  }
   return (
-    hasDecor &&
-    orderedRef.some(
-      (r) => isHandleTextBlock(r.role, r.ref_text) || looksLikeInstagramHandleText(r.ref_text)
-    ) &&
-    orderedRef.some((r) => docAiRefAcceptsDirectCopyLine(r))
+    orderedRef.find((r) => r !== bodyRef && docAiRefAcceptsDirectCopyLine(r)) ?? null
   );
 }
 
-function bodyCopyForListicleMotherSlide(
+function templateBgOnScreenCopyForSlot(
+  slot: TemplateBgSlot,
   llmSlide: Record<string, unknown>,
   llmLines: LlmSlideCopyLines,
   directLines: string[]
-): string {
-  if (Array.isArray(llmSlide.text_blocks)) {
-    for (const item of llmSlide.text_blocks) {
-      const rec = asRecord(item);
-      if (!rec) continue;
-      if (roleBucket(mimicTextBlockSemanticRole(rec)) !== "body") continue;
-      const text = sanitizeMimicOverlayCopyText(rec.text);
-      if (text && !looksLikeInstagramHandleText(text)) return text;
-    }
+): { headline: string; body: string; handle: string } {
+  const direct = orderedLlmTextBlockLines(llmSlide);
+  if (slot === "cover") {
+    const headline = String(llmSlide.headline ?? llmSlide.title ?? direct[0] ?? "").trim();
+    const body = String(
+      llmSlide.body ?? llmSlide.subtitle ?? llmSlide.cover_subtitle ?? direct[1] ?? ""
+    ).trim();
+    return { headline, body, handle: "" };
   }
-  const fromBodyLines = llmLines.bodyLines
-    .filter((line) => line.trim() && !looksLikeInstagramHandleText(line))
-    .join("\n")
-    .trim();
-  if (fromBodyLines) return fromBodyLines;
-  for (const line of directLines) {
-    const text = line.trim();
-    if (!text || isListicleMotherDecorText(text) || looksLikeInstagramHandleText(text)) continue;
-    return text;
+  if (slot === "cta") {
+    const mapped = resolveTemplateBgCtaOnScreenCopy({
+      headline: String(llmSlide.headline ?? llmSlide.title ?? "").trim(),
+      body: String(llmSlide.body ?? "").trim(),
+      cta: String(llmSlide.cta ?? llmSlide.cta_text ?? "").trim(),
+      handle: String(llmSlide.handle ?? llmSlide.cta_handle ?? "").trim(),
+      kicker: String(llmSlide.kicker ?? "").trim(),
+      slide_title: String(llmSlide.slide_title ?? "").trim(),
+    });
+    return {
+      headline: mapped.headline,
+      body: mapped.body,
+      handle: mapped.handle,
+    };
   }
-  return "";
+  const onScreen = resolveTemplateBgBodyOnScreenCopy({
+    headline: String(llmSlide.headline ?? llmSlide.title ?? "").trim(),
+    body: String(llmSlide.body ?? "").trim(),
+    kicker: String(llmSlide.kicker ?? "").trim(),
+    slide_title: String(llmSlide.slide_title ?? "").trim(),
+  });
+  const body =
+    onScreen.body ||
+    direct[1] ||
+    llmLines.bodyLines
+      .filter((line) => line.trim() && !looksLikeInstagramHandleText(line))
+      .join("\n")
+      .trim() ||
+    "";
+  // Headline slot is a short decor title only. Never fall back to body copy:
+  // for inverted listicle slides `direct[0]`/`onScreen.body` is the paragraph, and
+  // pulling it here printed the same paragraph in both the headline and body boxes.
+  const decorTitle = perSlideDecorHeadlineFromLlm(llmSlide, llmLines, directLines);
+  let headline = decorTitle || onScreen.headline || "";
+  if (
+    headline &&
+    body &&
+    normalizeCopyChunkForLayerMatch(headline) === normalizeCopyChunkForLayerMatch(body)
+  ) {
+    headline = "";
+  }
+  return { headline, body, handle: "" };
 }
 
-function buildListicleMotherTemplateBgLayers(
+/**
+ * Reuse the reference decor wording but swap its zodiac token for the content's sign,
+ * e.g. ("THE VIRGO MOTHER", "taurus") → "THE TAURUS MOTHER". Returns "" when the
+ * reference holds no zodiac token to substitute.
+ */
+function substituteZodiacInReferenceDecor(refDecorText: string, contentSign: string): string {
+  const sign = contentSign.trim().toLowerCase();
+  if (!isZodiacSignName(sign)) return "";
+  let replaced = false;
+  const out = String(refDecorText ?? "")
+    .split(/\s+/)
+    .map((tok) => {
+      const clean = tok.toLowerCase().replace(/[^a-z]/g, "");
+      if (clean && isZodiacSignName(clean)) {
+        replaced = true;
+        return tok.replace(/[A-Za-z]+/, sign.toUpperCase());
+      }
+      return tok;
+    });
+  return replaced ? out.join(" ").trim() : "";
+}
+
+/**
+ * Decide the headline copy for a template_bg decor box. When the mapped copy is empty
+ * or accidentally duplicates the body paragraph, rebuild a short decor title from the
+ * reference decor wording + the content sign so the headline slot still prints.
+ */
+function templateBgHeadlineCopyForDecorRef(
+  headlineRef: DocAiLayoutBlock,
+  copy: { headline: string; body: string }
+): string {
+  const mapped = copy.headline.trim();
+  const bodyKey = normalizeCopyChunkForLayerMatch(copy.body);
+  const dupBody = mapped.length > 0 && normalizeCopyChunkForLayerMatch(mapped) === bodyKey;
+  const refIsZodiacDecor =
+    zodiacSignTokensInText(headlineRef.ref_text).length > 0 ||
+    isListicleMotherDecorText(headlineRef.ref_text);
+  if (!refIsZodiacDecor) return dupBody ? "" : mapped;
+  if (mapped && !dupBody) return mapped;
+  const contentSign =
+    zodiacSignTokensInText(copy.body)[0] ?? zodiacSignTokensInText(copy.headline)[0] ?? "";
+  const derived = contentSign
+    ? substituteZodiacInReferenceDecor(headlineRef.ref_text, contentSign)
+    : "";
+  if (derived) return derived;
+  return dupBody ? "" : mapped;
+}
+
+function buildTemplateBgDocAiRenderLayers(
   orderedRef: DocAiLayoutBlock[],
+  slot: TemplateBgSlot,
   llmSlide: Record<string, unknown>,
   llmLines: LlmSlideCopyLines,
   directLines: string[],
@@ -1465,56 +1653,59 @@ function buildListicleMotherTemplateBgLayers(
     omitHandleLayer?: boolean;
   }
 ): MimicDocAiRenderTextLayer[] {
-  const decorTitle = perSlideDecorHeadlineFromLlm(llmSlide, llmLines, directLines);
-  const bodyText = bodyCopyForListicleMotherSlide(llmSlide, llmLines, directLines);
+  const copy = templateBgOnScreenCopyForSlot(slot, llmSlide, llmLines, directLines);
   const projectHandle = opts.projectHandle ? formatInstagramHandleForCta(opts.projectHandle) : null;
-  const bodyRefs = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r));
-  const bodyRef =
-    bodyRefs.length > 0
-      ? [...bodyRefs].sort((a, b) => b.w * b.h - a.w * a.h || a.y - b.y)[0]!
-      : orderedRef.find((r) => docAiRefAcceptsDirectCopyLine(r)) ?? null;
+  const bodyRef = pickTemplateBgBodyRef(orderedRef, null);
+  const headlineRef = pickTemplateBgHeadlineRef(orderedRef, bodyRef);
+  const bodyRefFinal = pickTemplateBgBodyRef(orderedRef, headlineRef);
+  const handleRef = orderedRef.find((r) => isOcrHandleLayoutRef(r)) ?? null;
   const layers: MimicDocAiRenderTextLayer[] = [];
-  let bodyAssigned = false;
+  const pushOpts = {
+    textBacking: opts.textBacking,
+    textBackingColor: opts.textBackingColor,
+    theme,
+    avoidCenterSubject: opts.avoidCenterSubject,
+    // template_bg keeps full-width text on the background plate — only art-only
+    // full-bleed plates constrain copy to the side columns.
+    constrainSideColumns: false,
+    projectHandle,
+  };
 
-  for (const ref of orderedRef) {
-    if (isListicleMotherDecorText(ref.ref_text)) {
-      const text =
-        decorTitle ||
-        sanitizeMimicOverlayCopyText(
-          String(llmSlide.headline ?? llmSlide.cta ?? llmSlide.cta_text ?? "").trim()
-        );
-      if (!text.trim()) continue;
-      pushDocAiRenderLayer(layers, ref, text, ref, {
-        textBacking: opts.textBacking,
-        textBackingColor: opts.textBackingColor,
-        theme,
-        avoidCenterSubject: opts.avoidCenterSubject,
-        projectHandle,
-      });
-      continue;
-    }
-    if (isOcrHandleLayoutRef(ref)) {
-      if (opts.omitHandleLayer || !projectHandle) continue;
-      pushDocAiRenderLayer(layers, ref, projectHandle, ref, {
-        textBacking: opts.textBacking,
-        textBackingColor: opts.textBackingColor,
-        theme,
-        avoidCenterSubject: opts.avoidCenterSubject,
-        projectHandle,
-      });
-      continue;
-    }
-    if (!bodyAssigned && bodyRef && bodyText.trim()) {
-      if (ref !== bodyRef) continue;
-      bodyAssigned = true;
-      pushDocAiRenderLayer(layers, ref, bodyText, ref, {
-        textBacking: opts.textBacking,
-        textBackingColor: opts.textBackingColor,
-        theme,
-        avoidCenterSubject: opts.avoidCenterSubject,
-        projectHandle,
+  const headlineCopy = headlineRef
+    ? templateBgHeadlineCopyForDecorRef(headlineRef, copy)
+    : copy.headline.trim();
+  if (headlineRef && headlineCopy) {
+    pushDocAiRenderLayer(layers, headlineRef, headlineCopy, headlineRef, pushOpts);
+  }
+  const distinctBodyRef =
+    bodyRefFinal && bodyRefFinal !== headlineRef ? bodyRefFinal : null;
+  if (distinctBodyRef && copy.body.trim()) {
+    pushDocAiRenderLayer(layers, distinctBodyRef, copy.body, distinctBodyRef, {
+      ...pushOpts,
+      forceMultiLine: true,
+    });
+  } else if (copy.body.trim()) {
+    const anchor =
+      headlineRef ??
+      distinctBodyRef ??
+      orderedRef.find((r) => docAiRefAcceptsDirectCopyLine(r)) ??
+      null;
+    if (anchor) {
+      const syntheticBody = templateBgSyntheticBodyRef(anchor);
+      pushDocAiRenderLayer(layers, syntheticBody, copy.body, syntheticBody, {
+        ...pushOpts,
+        forceMultiLine: true,
       });
     }
+  }
+  if (!opts.omitHandleLayer && handleRef && (projectHandle || copy.handle.trim())) {
+    pushDocAiRenderLayer(
+      layers,
+      handleRef,
+      projectHandle || copy.handle.trim(),
+      handleRef,
+      pushOpts
+    );
   }
 
   layers.sort((a, b) => a.y_px - b.y_px || a.x_px - b.x_px);
@@ -1666,11 +1857,14 @@ function textBlocksPreferDirectMapping(
   llmLines: LlmSlideCopyLines
 ): boolean {
   if (directLines.length === 0) return false;
-  if (!orderedRefHasChatMockTitlePair(orderedRef)) return true;
-  const headline = (llmLines.headline ?? directLines[0] ?? "").trim();
-  if (/^Texting\s+(?:a|an|your)\s+/i.test(headline)) return false;
-  if (directLines.length >= 2 && llmLines.bodyLines.length >= 1) return true;
-  return directLines.length >= 3;
+  const copyableCount = orderedRef.filter((r) => docAiRefAcceptsDirectCopyLine(r)).length;
+  if (copyableCount > 0 && directLines.length < copyableCount) return false;
+  if (orderedRefHasChatMockTitlePair(orderedRef)) {
+    const headline = (llmLines.headline ?? directLines[0] ?? "").trim();
+    if (/^Texting\s+(?:a|an|your)\s+/i.test(headline)) return false;
+    if (directLines.length >= 2 && llmLines.bodyLines.length >= 1) return true;
+  }
+  return copyableCount > 0 && directLines.length >= copyableCount;
 }
 
 function orderedRefHasChatMockTitlePair(orderedRef: DocAiLayoutBlock[]): boolean {
@@ -1797,7 +1991,25 @@ export function estimateDocAiFitFontSizePx(opts: {
       opts.refFontPx != null && opts.refFontPx > 0
         ? clampDocAiTextBackFontSizePx(opts.refFontPx)
         : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
-    return clampDocAiTextBackFontSizePx(Math.round(base * MIMIC_DOCAI_TEXT_BACK_FONT_SCALE));
+    const ideal = clampDocAiTextBackFontSizePx(Math.round(base * MIMIC_DOCAI_TEXT_BACK_FONT_SCALE));
+    // Shrink the ideal so long copy in a narrow side column fits the box
+    // (mirrors the renderer's shrink-to-fit; no-op for wide template_bg slots).
+    let size = ideal;
+    if (opts.boxWPx > 0 && opts.boxHPx > 0) {
+      if (opts.singleLine) {
+        const approxWidth = newLen * size * DOC_AI_CHAR_WIDTH_RATIO;
+        if (approxWidth > opts.boxWPx) {
+          size = Math.floor(opts.boxWPx / Math.max(1, newLen * DOC_AI_CHAR_WIDTH_RATIO));
+        }
+      } else {
+        const approxCharW = Math.max(1, size * DOC_AI_CHAR_WIDTH_RATIO);
+        const charsPerLine = Math.max(1, Math.floor(opts.boxWPx / approxCharW));
+        const wrappedLines = Math.max(lineCount, Math.ceil(newLen / charsPerLine));
+        const maxByWrap = Math.floor(opts.boxHPx / (wrappedLines * 1.2));
+        if (maxByWrap > 0) size = Math.min(size, maxByWrap);
+      }
+    }
+    return clampDocAiTextBackFontSizePx(Math.min(size, ideal));
   }
 
   const fontScale =
@@ -2127,7 +2339,8 @@ function expandDocAiBoxForTextContent(
   bbox: { x: number; y: number; w: number; h: number },
   text: string,
   fontSizePx: number,
-  singleLine: boolean
+  singleLine: boolean,
+  opts?: { maxWNorm?: number }
 ): { x: number; y: number; w: number; h: number } {
   const margin = 28;
   const padX = 32;
@@ -2143,7 +2356,10 @@ function expandDocAiBoxForTextContent(
     : lineParts.reduce((a, b) => (b.length > a.length ? b : a), lineParts[0] ?? "");
   const xPx = bbox.x * CAROUSEL_RENDER_WIDTH_PX;
   const yPx = bbox.y * CAROUSEL_RENDER_HEIGHT_PX;
-  const maxWNorm = (CAROUSEL_RENDER_WIDTH_PX - margin - xPx) / CAROUSEL_RENDER_WIDTH_PX;
+  let maxWNorm = (CAROUSEL_RENDER_WIDTH_PX - margin - xPx) / CAROUSEL_RENDER_WIDTH_PX;
+  if (opts?.maxWNorm != null && Number.isFinite(opts.maxWNorm) && opts.maxWNorm > 0) {
+    maxWNorm = Math.min(maxWNorm, opts.maxWNorm);
+  }
   const maxHNorm = (CAROUSEL_RENDER_HEIGHT_PX - margin - yPx) / CAROUSEL_RENDER_HEIGHT_PX;
   const needWNorm = (longestLine.length * charW + padX) / CAROUSEL_RENDER_WIDTH_PX;
   const needHNorm = (lines * lineH + padY) / CAROUSEL_RENDER_HEIGHT_PX;
@@ -2165,6 +2381,8 @@ function pushDocAiRenderLayer(
     forceMultiLine?: boolean;
     refFontPxOverride?: number | null;
     avoidCenterSubject?: boolean;
+    /** Full-bleed only — keep copy in the side column beside the subject. Defaults to avoidCenterSubject. */
+    constrainSideColumns?: boolean;
     projectHandle?: string | null;
   }
 ): void {
@@ -2173,6 +2391,10 @@ function pushDocAiRenderLayer(
 
   const bucket = roleBucket(ref.role);
   const skipCenterAvoid = docAiLayerSkipsCenterAvoid(ref, bucket);
+  const constrainSideColumns =
+    (opts.constrainSideColumns ?? opts.avoidCenterSubject) === true &&
+    Boolean(opts.avoidCenterSubject) &&
+    !skipCenterAvoid;
   let renderBBox = bbox;
   if (opts.avoidCenterSubject && !skipCenterAvoid) {
     renderBBox = nudgeBBoxAwayFromFullBleedSubjectZone(bbox);
@@ -2205,7 +2427,15 @@ function pushDocAiRenderLayer(
       ref.font_size_px && ref.font_size_px > 0
         ? clampDocAiTextBackFontSizePx(ref.font_size_px)
         : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
-    renderBBox = expandDocAiBoxForTextContent(renderBBox, trimmed, estFont, singleLinePreview);
+    if (constrainSideColumns) {
+      renderBBox = constrainBBoxToFullBleedSideColumn(renderBBox);
+      renderBBox = expandDocAiBoxForTextContent(renderBBox, trimmed, estFont, singleLinePreview, {
+        maxWNorm: renderBBox.w,
+      });
+      renderBBox = { ...renderBBox, h: Math.min(renderBBox.h, 0.32) };
+    } else {
+      renderBBox = expandDocAiBoxForTextContent(renderBBox, trimmed, estFont, singleLinePreview);
+    }
   }
   const px = docAiBBoxToRenderPx(renderBBox.x, renderBBox.y, renderBBox.w, renderBBox.h);
   const singleLine = singleLinePreview;
@@ -3040,13 +3270,18 @@ export function buildMimicDocAiRenderTextLayers(
   const textBacking = Boolean(opts?.textBacking);
   const textBackingColor = opts?.textBackingColor;
   const avoidCenterSubject = Boolean(opts?.avoidCenterSubject);
-  const templateBgSlot = templateBgSlotForOutputSlide(mimic.mode, slideIndex1Based, opts?.totalSlides);
+  const totalSlides = opts?.totalSlides ?? 0;
+  const templateBgSlot = templateBgSlotForOutputSlide(mimic.mode, slideIndex1Based, totalSlides);
   const omitHandleLayer = templateBgOmitsHandleLayer(templateBgSlot);
+  const llmSlideForMapping =
+    templateBgSlot != null && totalSlides > 0
+      ? templateBgLlmSlideForDocAi(slideIndex1Based, totalSlides, llmSlide)
+      : llmSlide;
   const resolved = resolveRefSlideWithLayoutBlocksForMimic(mimic, slideIndex1Based, {
     totalSlides: opts?.totalSlides,
   });
   if (!resolved || resolved.layoutBlocks.length === 0) {
-    return buildSyntheticDocAiLayersFromLlmCopy(llmSlide, theme, {
+    return buildSyntheticDocAiLayersFromLlmCopy(llmSlideForMapping, theme, {
       projectHandle: opts?.projectHandle ?? null,
       textBacking,
       textBackingColor,
@@ -3069,19 +3304,29 @@ export function buildMimicDocAiRenderTextLayers(
     refHandles.add(h);
   }
   for (const key of ["headline", "title", "body", "subtitle", "kicker"] as const) {
-    for (const h of collectInstagramHandlesFromText(String(llmSlide[key] ?? ""))) refHandles.add(h);
+    for (const h of collectInstagramHandlesFromText(String(llmSlideForMapping[key] ?? ""))) refHandles.add(h);
   }
   const refHandlesArr = [...refHandles];
-  const llmLines = expandLlmLinesForDocAiMapping(llmSlide, {
+  const llmLines = expandLlmLinesForDocAiMapping(llmSlideForMapping, {
     referenceHandles: refHandlesArr,
     projectHandle: opts?.projectHandle ?? null,
     layoutHasHandleBlock:
       !omitHandleLayer && orderedRef.some((r) => isHandleTextBlock(r.role, r.ref_text)),
   });
-  const directLines = orderedLlmTextBlockLines(llmSlide);
+  const directLines = orderedLlmTextBlockLines(llmSlideForMapping);
   const transcript = String(refSlide.on_screen_text_transcript ?? "").trim();
+  const persistedSlots = parseCopySlotsFromSlide(refSlide);
+  const headlineOnlyCopySlots =
+    persistedSlots.length > 0 && !copySlotsIncludeBodyField(persistedSlots);
+  const slotDrivenMapping = copySlotsShouldDriveMapping(persistedSlots, directLines.length);
+  const bodySlotCount = persistedSlots.filter((s) => s.llm_field === "body").length;
+  const llmLinesForMapping = headlineOnlyCopySlots
+    ? { ...llmLines, bodyLines: [] as string[] }
+    : llmLines;
   let directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
   let useDirectMapping =
+    !headlineOnlyCopySlots &&
+    !slotDrivenMapping &&
     directCopy.useDirect &&
     textBlocksPreferDirectMapping(orderedRef, directLines, llmLines) &&
     !directMappingSkewsListicleBodySlots(orderedRef, directLines);
@@ -3092,16 +3337,19 @@ export function buildMimicDocAiRenderTextLayers(
       orderedRef = orderDocAiBlocksForLlmCopyMapping(shrunk);
       directCopy = buildDirectCopyAssignmentsByIndex(orderedRef, directLines);
       useDirectMapping =
+        !headlineOnlyCopySlots &&
+        !slotDrivenMapping &&
         directCopy.useDirect &&
         textBlocksPreferDirectMapping(orderedRef, directLines, llmLines) &&
         !directMappingSkewsListicleBodySlots(orderedRef, directLines);
     }
   }
 
-  if (isListicleMotherTemplateBgLayout(orderedRef)) {
-    const listicleLayers = buildListicleMotherTemplateBgLayers(
+  if (templateBgSlot != null) {
+    const templateBgLayers = buildTemplateBgDocAiRenderLayers(
       orderedRef,
-      llmSlide,
+      templateBgSlot,
+      llmSlideForMapping,
       llmLines,
       directLines,
       theme,
@@ -3113,15 +3361,23 @@ export function buildMimicDocAiRenderTextLayers(
         omitHandleLayer,
       }
     );
-    if (listicleLayers.length > 0) {
-      return dedupeDocAiRenderLayersByNormalizedText(listicleLayers);
+    if (templateBgLayers.length > 0) {
+      return dedupeDocAiRenderLayersByNormalizedText(templateBgLayers);
+    }
+    const synthetic = buildSyntheticDocAiLayersFromLlmCopy(llmSlideForMapping, theme, {
+      projectHandle: opts?.projectHandle ?? null,
+      textBacking,
+      textBackingColor,
+      avoidCenterSubject,
+    });
+    if (synthetic.length > 0) {
+      return dedupeDocAiRenderLayersByNormalizedText(synthetic);
     }
   }
 
-  const persistedSlots = parseCopySlotsFromSlide(refSlide);
   const copySlots = useDirectMapping ? [] : persistedSlots;
 
-  if (copySlots.length === 0 && !useDirectMapping && directLines.length === 0) {
+  {
     const bodyOnly = orderedRef.filter(
       (r) =>
         !isPreserveReferenceDecorText(r.ref_text, r) &&
@@ -3132,12 +3388,14 @@ export function buildMimicDocAiRenderTextLayers(
     const bodyStacksPreview = groupDocAiBlocksIntoVerticalStacks(bodyOnly);
     const totalBodyRefs = bodyOnly.length;
     const useStackRender =
+      !useDirectMapping &&
       !orderedRefHasChatMockTitlePair(orderedRef) &&
-      (bodyStacksPreview.length >= 2 || totalBodyRefs >= 4);
+      (bodySlotCount >= 2 || bodyStacksPreview.length >= 2 || totalBodyRefs >= 4) &&
+      (copySlots.length === 0 || bodySlotCount >= 2 || directLines.length <= 2);
 
     if (useStackRender) {
       return dedupeDocAiRenderLayersByNormalizedText(
-        buildMimicDocAiStackRenderLayers(orderedRef, llmLines, transcript, theme, {
+        buildMimicDocAiStackRenderLayers(orderedRef, llmLinesForMapping, transcript, theme, {
           projectHandle: opts?.projectHandle ?? null,
           textBacking,
           textBackingColor,
@@ -3149,7 +3407,9 @@ export function buildMimicDocAiRenderTextLayers(
   }
   const preassignedFromSlots =
     copySlots.length > 0 && !useDirectMapping
-      ? assignLlmCopyUsingCopySlots(orderedRef, copySlots, llmLines, directLines, { transcript })
+      ? assignLlmCopyUsingCopySlots(orderedRef, copySlots, llmLinesForMapping, directLines, {
+          transcript,
+        })
       : null;
   const hasChatMockTitlePair = !preassignedFromSlots && !useDirectMapping && orderedRefHasChatMockTitlePair(orderedRef);
   const preassigned =
@@ -3291,7 +3551,15 @@ export function buildMimicDocAiRenderTextLayers(
         ref.font_size_px != null && ref.font_size_px > 0
           ? clampDocAiTextBackFontSizePx(ref.font_size_px)
           : MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX;
-      renderBBox = expandDocAiBoxForTextContent(renderBBox, text, estFont, singleLinePreview);
+      if (avoidCenterSubject && !skipCenterAvoid) {
+        renderBBox = constrainBBoxToFullBleedSideColumn(renderBBox);
+        renderBBox = expandDocAiBoxForTextContent(renderBBox, text, estFont, singleLinePreview, {
+          maxWNorm: renderBBox.w,
+        });
+        renderBBox = { ...renderBBox, h: Math.min(renderBBox.h, 0.32) };
+      } else {
+        renderBBox = expandDocAiBoxForTextContent(renderBBox, text, estFont, singleLinePreview);
+      }
     }
     const px = docAiBBoxToRenderPx(renderBBox.x, renderBBox.y, renderBBox.w, renderBBox.h);
     const singleLine = singleLinePreview;
@@ -3371,6 +3639,7 @@ export function buildMimicDocAiRenderTextLayers(
     }
   }
   const shouldAppendLeftovers =
+    !headlineOnlyCopySlots &&
     leftoverLines.length > 0 &&
     (directLines.length > 0
       ? layers.length < directLines.length || !mimicDocAiLayersCoverLlmCopy(layers, llmSlide)

@@ -3,6 +3,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
 } from "./top-performer-mimic-flow-types.js";
 
 /**
@@ -86,6 +87,7 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
     return CANONICAL_FLOW_TYPES.CAROUSEL;
   }
   if (c === FLOW_VISUAL_FIRST_CAROUSEL) return FLOW_VISUAL_FIRST_CAROUSEL;
+  if (c === FLOW_WHY_MIMIC_CAROUSEL) return FLOW_WHY_MIMIC_CAROUSEL;
   return c;
 }
 

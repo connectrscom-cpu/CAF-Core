@@ -2,9 +2,11 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
   isTopPerformerMimicCarouselFlow,
   isTopPerformerMimicImageFlow,
   isVisualFirstCarouselFlow,
+  isWhyMimicCarouselFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import { mimicCarouselReferenceEligible, mimicImageReferenceEligible } from "./mimic-reference-resolver.js";
 
@@ -62,6 +64,20 @@ export function shouldExpandMimicCarouselPickForRow(
   return false;
 }
 
+/** Manual Why Mimic carousel picks (Mimic · Why Carousel tab). */
+export function shouldExpandWhyMimicCarouselForRow(
+  row: Record<string, unknown>,
+  derivedGlobals: Record<string, unknown> | null | undefined
+): boolean {
+  if (row.manual_mimic_pick === true && String(row.mimic_kind ?? "").trim() === "why_carousel") {
+    return carouselReferenceEligible(row, derivedGlobals);
+  }
+  if (String(row.target_flow_type ?? "").trim() === FLOW_WHY_MIMIC_CAROUSEL) {
+    return carouselReferenceEligible(row, derivedGlobals);
+  }
+  return false;
+}
+
 /**
  * Visual-first / mixed carousel ideas from ideas_json — separate lane from mimic picks.
  */
@@ -103,6 +119,9 @@ export function shouldSkipMimicFlowExpansion(
   }
   if (isVisualFirstCarouselFlow(flowType)) {
     return !shouldExpandVisualFirstCarouselForRow(row, derivedGlobals);
+  }
+  if (isWhyMimicCarouselFlow(flowType)) {
+    return !shouldExpandWhyMimicCarouselForRow(row, derivedGlobals);
   }
   return false;
 }

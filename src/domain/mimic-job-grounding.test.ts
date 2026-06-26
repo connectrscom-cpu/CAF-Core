@@ -8,6 +8,7 @@ import {
   findVisualGuidelinePackEntry,
   groundingInsightIdsFromCandidate,
 } from "./mimic-job-grounding.js";
+import { buildWhyMimicPromptBlock, deriveSlideIntelligenceFromAnalysis } from "./slide-intelligence.js";
 
 describe("mimic-job-grounding", () => {
   it("resolves grounding ids from candidate_data", () => {
@@ -285,5 +286,27 @@ describe("mimic-job-grounding", () => {
     expect(out).toContain("Semantic fidelity");
     expect(out).toContain("per-slide meaning");
     expect(out).toContain("taurus as food");
+  });
+
+  it("appendMimicGroundedReferenceToUserPrompt omits Why Mimic blocks when why_mimic_copy_enabled is false", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({
+      aesthetic: { why_it_worked: "information gap hook", slides: [{ slide_index: 1, slide_purpose: "cover" }] },
+    });
+    const whyBlock = buildWhyMimicPromptBlock(bundle);
+    expect(whyBlock).not.toBeNull();
+    const off = appendMimicGroundedReferenceToUserPrompt(
+      "Base",
+      { slide_intelligence: bundle, slide_copy_layout: [{ slide_index: 1, reference_on_screen_text: "x" }] },
+      { why_mimic_copy_enabled: false }
+    );
+    expect(off).not.toContain("Why this reference works");
+    const on = appendMimicGroundedReferenceToUserPrompt(
+      "Base",
+      { slide_intelligence: bundle, slide_copy_layout: [{ slide_index: 1, reference_on_screen_text: "x" }] },
+      { why_mimic_copy_enabled: true }
+    );
+    expect(on).toContain("Why this reference works");
+    expect(on).toContain("Why Mimic strategic copy");
+    expect(on).not.toContain("Semantic fidelity (mimic copy");
   });
 });

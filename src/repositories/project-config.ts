@@ -12,6 +12,7 @@ import {
   TOP_PERFORMER_MIMIC_FLOW_TYPES,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
   isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import {
@@ -550,6 +551,25 @@ export async function ensureMissingAllowedFlowRowsForPlanning(db: Pool, projectI
       priority_weight: 3,
       notes:
         "Visual-first carousel ideas (carousel_style visual_first/mixed) grounded to top_performer_carousel — same render engine as mimic carousel, separate planning lane.",
+      heygen_mode: null,
+    });
+    inserted++;
+  }
+
+  if (!existing.has(FLOW_WHY_MIMIC_CAROUSEL)) {
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: FLOW_WHY_MIMIC_CAROUSEL,
+      enabled: false,
+      default_variation_count: 1,
+      requires_signal_pack: true,
+      requires_learning_context: false,
+      allowed_platforms: null,
+      output_schema_version: null,
+      qc_checklist_version: null,
+      prompt_template_id: null,
+      priority_weight: 2,
+      notes:
+        "Why Mimic carousel — SIL-driven strategic copy + paired image prompts; separate test lane from fidelity mimic.",
       heygen_mode: null,
     });
     inserted++;

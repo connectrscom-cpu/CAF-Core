@@ -30,4 +30,15 @@ describe("mimic-text-overlay-reprint", () => {
       })
     ).toMatchObject({ active: true, failed: false, slide_indices: "1, 2" });
   });
+
+  it("detects failed text overlay reprint when phase was overwritten but requested_at remains", () => {
+    expect(
+      textOverlayReprintSummary({
+        phase: "validate_slides",
+        status: "failed",
+        requested_at: "2026-06-15T10:00:00.000Z",
+        error: "no_renderable_slides",
+      })
+    ).toMatchObject({ active: false, failed: true, error: "no_renderable_slides" });
+  });
 });

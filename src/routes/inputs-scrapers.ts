@@ -205,6 +205,12 @@ export function registerInputsScraperRoutes(
       .object({
         scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "all"]),
         max_sources: z.number().int().min(1).max(500).optional(),
+        platforms: z
+          .array(z.enum(["instagram", "tiktok", "html", "facebook", "reddit"]))
+          .min(1)
+          .max(5)
+          .optional(),
+        post_max_age_days: z.number().int().min(1).max(365).optional(),
       })
       .safeParse(request.body ?? {});
     if (!body.success) return reply.code(400).send({ ok: false, error: "bad_body" });
@@ -213,6 +219,8 @@ export function registerInputsScraperRoutes(
     try {
       const result = await startInputsScraperRun(db, config, project.id, body.data.scraper, {
         maxSources: body.data.max_sources ?? null,
+        platforms: body.data.platforms,
+        postMaxAgeDays: body.data.post_max_age_days,
       });
       return { ok: true, ...result };
     } catch (e) {

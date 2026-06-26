@@ -58,6 +58,8 @@ export function enrichSlideRenderContextWithMimicDocAi(
     textBacking?: boolean;
     textBackingColor?: string | null;
     layerPosOverrides?: MimicDocAiLayerPositionOverride[] | null;
+    /** Review inspect — map copy from slide fields, not saved layer text (avoids cross-slide bleed). */
+    forInspect?: boolean;
   }
 ): MimicDocAiEnrichedSlide {
   const usesDocAi = mimicPayloadHasDocAiTextLayout(
@@ -109,7 +111,7 @@ export function enrichSlideRenderContextWithMimicDocAi(
       : rawLayerPosOverrides;
   if (layerPosOverrides?.length) {
     docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides, {
-      applySavedTextOnBaseLayers: !isTemplateBg,
+      applySavedTextOnBaseLayers: !isTemplateBg && !opts?.forInspect,
     });
     if (textBacking) {
       docAiLayers = docAiLayers.map((layer) => ({ ...layer, text_backing: true }));
@@ -145,7 +147,13 @@ export function enrichSlideRenderContextWithMimicDocAi(
         ? {
             mimic_text_backing: true,
             mimic_text_backing_color: textBackingColor,
-            ...(hasReviewerLayout ? {} : { mimic_avoid_center_subject: true }),
+            ...(hasReviewerLayout
+              ? {}
+              : {
+                  mimic_avoid_center_subject: true,
+                  // Side-column constraint applies to art-only full-bleed plates only.
+                  ...(isTemplateBg ? {} : { mimic_full_bleed_layout: true }),
+                }),
           }
         : {}),
     };

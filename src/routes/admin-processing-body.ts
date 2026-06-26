@@ -231,6 +231,10 @@ export function adminProcessingBody(currentSlug: string): string {
                   <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px">
                     <label style="font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">${T("profileMinScore", "Profile min score")} <input id="prellm-profile-min" type="number" min="0" max="1" step="0.01" style="width:96px;font-size:14px;padding:6px 8px" /></label>
                     <label style="font-size:13px;display:flex;flex-wrap:wrap;align-items:center;gap:8px">${T("minPrimaryTextChars", "Min primary text chars")} <input id="prellm-min-text" type="number" min="0" max="5000" step="1" style="width:96px;font-size:14px;padding:6px 8px" /></label>
+                    <label class="prellm-relative-toggle" data-caf-term="relativePagePerformance">
+                      <input type="checkbox" id="prellm-relative-page" />
+                      <span>Relative page performance</span>
+                    </label>
                   </div>
                   <div id="prellm-weights-wrap" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)"></div>
                   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -987,6 +991,25 @@ var PRELLM_SUGGESTED={
   source_registry:{min_score:0.02,weights:{registry_has_link:0.35,registry_topic:0.35,registry_followers:0.3}},
   _default:{min_score:0,weights:{text_signal:1}}
 };
+var PRELLM_SUGGESTED_RELATIVE={
+  reddit_post:PRELLM_SUGGESTED.reddit_post,
+  tiktok_video:{min_score:0.1,weights:{page_relative_engagement:0.35,page_relative_reach:0.35,text_signal:0.3}},
+  instagram_post:{min_score:0.08,weights:{page_relative_engagement:0.55,page_relative_comments:0.2,text_signal:0.25}},
+  facebook_post:{min_score:0.06,weights:{page_relative_engagement:0.45,page_relative_shares:0.2,text_signal:0.35}},
+  scraped_page:PRELLM_SUGGESTED.scraped_page,
+  source_registry:PRELLM_SUGGESTED.source_registry,
+  _default:PRELLM_SUGGESTED._default
+};
+
+function prellmSuggestedForKind(kind,relativeOn){
+  var table=relativeOn?PRELLM_SUGGESTED_RELATIVE:PRELLM_SUGGESTED;
+  return table[kind]||table._default;
+}
+
+function isPrellmRelativeOn(){
+  var el=document.getElementById('prellm-relative-page');
+  return !!(el&&el.checked);
+}
 
 function kindLabel(kind,mode){
   var base=String(kind||'').trim();
@@ -2151,7 +2174,7 @@ async function ensurePrellmMinByKindDefaults(kinds){
       if(!k)continue;
       if(typeof prellmMinByKind[k]==='number')continue;
       var prof=(ck[k]&&typeof ck[k]==='object')?ck[k]:null;
-      var suggested=PRELLM_SUGGESTED[k]||PRELLM_SUGGESTED._default;
+      var suggested=prellmSuggestedForKind(k,isPrellmRelativeOn());
       var v=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
       if(v==null||!Number.isFinite(v))v=(suggested&&suggested.min_score);
       // Final fallback: 0.35 is a pragmatic default for "top performer" exploration.
@@ -2170,7 +2193,7 @@ function syncPrellmSliderFromKind(){
   if(!minEl||!prellmKind)return;
   var v=prellmMinByKind[prellmKind];
   if(typeof v!=='number'){
-    var s=PRELLM_SUGGESTED[prellmKind]||PRELLM_SUGGESTED._default;
+    var s=prellmSuggestedForKind(prellmKind,isPrellmRelativeOn());
     v=(s&&s.min_score);
     if(v==null||!Number.isFinite(v))v=0.35;
     prellmMinByKind[prellmKind]=v;
@@ -2426,6 +2449,7 @@ async function loadPrellmPreview(){
   try{
     var q='evidence_kind='+encodeURIComponent(prellmKind)+'&min_score='+encodeURIComponent(String(minScore))+
       '&include_below_cutoff='+(showBelow&&showBelow.checked?'1':'0')+
+      '&relative_page_performance='+(isPrellmRelativeOn()?'1':'0')+
       '&sort='+encodeURIComponent(sortEl.value||'score_desc')+
       '&limit=120&offset=0';
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/pre-llm-evidence?'+q);
@@ -2506,6 +2530,9 @@ bind('prellm-min-score','input',function(){
   scheduleSavePrellmCutoff();
 });
 bind('prellm-show-below','change',schedulePrellmPreview);
+bind('prellm-relative-page','change',function(){
+  renderPrellmFormulaEditor({ preserveRelativeToggle: true }).then(function(){ schedulePrellmPreview(); });
+});
 bind('prellm-sort','change',schedulePrellmPreview);
 bind('prellm-filter-search','input',schedulePrellmFilterRerender);
 bind('prellm-filter-kind','change',rerenderPrellmTableFromCache);
@@ -2711,20 +2738,26 @@ function renderWeightsTable(weights){
   bindCafTerms(wrap);
 }
 
-async function renderPrellmFormulaEditor(){
+async function renderPrellmFormulaEditor(opts){
+  opts=opts||{};
   if(!SLUG||!prellmKind)return;
   var hint=document.getElementById('prellm-formula-hint');
   var minEl=document.getElementById('prellm-profile-min');
   var minTextEl=document.getElementById('prellm-min-text');
+  var relativeEl=document.getElementById('prellm-relative-page');
   var saveMsg=document.getElementById('prellm-save-msg');
   if(!minEl||!minTextEl)return;
+  var relativeBefore=relativeEl?!!relativeEl.checked:false;
   var pc=await loadProfileForPrellm();
   var criteria=(pc&&pc.criteria)||{};
   var pre=(criteria.pre_llm&&typeof criteria.pre_llm==='object')?criteria.pre_llm:{};
+  if(relativeEl){
+    relativeEl.checked=opts.preserveRelativeToggle?relativeBefore:!!pre.relative_page_performance;
+  }
   var kinds=(pre.kinds&&typeof pre.kinds==='object')?pre.kinds:{};
   var prof=(kinds[prellmKind]&&typeof kinds[prellmKind]==='object')?kinds[prellmKind]:null;
   var hasCustom=!!(prof&&prof.weights&&typeof prof.weights==='object'&&Object.keys(prof.weights||{}).length);
-  var suggested=PRELLM_SUGGESTED[prellmKind]||PRELLM_SUGGESTED._default;
+  var suggested=prellmSuggestedForKind(prellmKind,isPrellmRelativeOn());
   var weights=(prof&&prof.weights&&typeof prof.weights==='object')?prof.weights:{};
   if(!hasCustom)weights=(suggested&&suggested.weights)||{};
   var minScore=(prof&&typeof prof.min_score==='number')?prof.min_score:undefined;
@@ -2732,12 +2765,13 @@ async function renderPrellmFormulaEditor(){
   minEl.value=String(Math.max(0,Math.min(1,minScore)));
   var mt=(typeof pre.min_primary_text_chars==='number')?pre.min_primary_text_chars:12;
   minTextEl.value=String(mt);
-  if(hint)hint.textContent='Score = sum(feature_i x weight_i) / sum(weights). Features are normalized 0-1 in code. Platform: '+prellmKind+'.';
+  if(hint)hint.textContent='Score = sum(feature_i x weight_i) / sum(weights). Features are normalized 0-1 in code. Platform: '+prellmKind+(isPrellmRelativeOn()?'. Relative page performance ON — social rows use engagement vs followers when available.':'')+'.';
   if(saveMsg){
     saveMsg.textContent=hasCustom?'':'Suggested defaults loaded (not saved yet).';
     saveMsg.style.color=hasCustom?'var(--muted)':'var(--muted)';
   }
   renderWeightsTable(weights);
+  bindCafTerms(document.getElementById('prellm-root'));
 }
 
 function readWeightsFromEditor(){
@@ -2793,6 +2827,7 @@ bind('prellm-save-formula','click',async function(){
     if(!Number.isFinite(mt)||mt<0)mt=12;
     criteria.pre_llm.min_primary_text_chars=mt;
     criteria.pre_llm.enabled=true;
+    criteria.pre_llm.relative_page_performance=isPrellmRelativeOn();
     criteria.pre_llm.kinds[prellmKind]={min_score:minScore,weights:readWeightsFromEditor()};
     var body={criteria_json:criteria};
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});

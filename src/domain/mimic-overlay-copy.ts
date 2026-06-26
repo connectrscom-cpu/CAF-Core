@@ -1,7 +1,27 @@
+import { looksLikeInstagramHandleText } from "./instagram-handle.js";
 import { coerceSlideBodyCopyText } from "./slide-copy-lines.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+}
+
+export type MimicTextBlockRow = { role: string; text: string };
+
+/** Normalize LLM `text_blocks[]` rows — models often emit plain strings instead of `{ role, text }`. */
+export function coerceMimicTextBlockRow(item: unknown): MimicTextBlockRow | null {
+  if (item == null) return null;
+  if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+    const text = sanitizeMimicOverlayCopyText(item);
+    if (!text) return null;
+    const role = looksLikeInstagramHandleText(text) ? "handle" : "";
+    return { role, text };
+  }
+  const rec = asRecord(item);
+  if (!rec) return null;
+  const text = sanitizeMimicOverlayCopyText(rec.text ?? rec.content ?? rec.value ?? rec.copy);
+  if (!text) return null;
+  const role = String(rec.role ?? rec.llm_field ?? rec.semantic_role ?? "").trim().toLowerCase();
+  return { role, text };
 }
 
 const OBJECT_STRING = "[object Object]";
@@ -80,10 +100,8 @@ export function mimicSlideEditableCopyDiffersFromTextBlocks(
   if (!Array.isArray(blocks) || blocks.length === 0) return true;
   const blockTexts: string[] = [];
   for (const item of blocks) {
-    const rec = asRecord(item);
-    if (!rec) continue;
-    const t = sanitizeMimicOverlayCopyText(rec.text);
-    if (t) blockTexts.push(t);
+    const row = coerceMimicTextBlockRow(item);
+    if (row?.text) blockTexts.push(row.text);
   }
   if (lines.length !== blockTexts.length) return true;
   for (let i = 0; i < lines.length; i++) {

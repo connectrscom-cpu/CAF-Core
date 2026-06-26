@@ -46,6 +46,16 @@ export function effectiveMimicCarouselTextViaFlux(
   return envDefault;
 }
 
+/** Alias — same tri-state boolean pattern as mimic_carousel_text_via_flux. */
+export const parseProjectWhyMimicCopyEnabled = parseProjectMimicCarouselTextViaFlux;
+
+export function effectiveWhyMimicCopyEnabled(
+  projectValue: boolean | null | undefined,
+  envDefault: boolean
+): boolean {
+  return effectiveMimicCarouselTextViaFlux(projectValue, envDefault);
+}
+
 export type MimicImageInputMode = "reference_edit" | "analysis_t2i";
 
 const VALID_MIMIC_IMAGE_INPUT_MODES = new Set<MimicImageInputMode>([
@@ -77,6 +87,17 @@ export function effectiveMimicImageInputMode(
 /** Bold variants: new visual plate only — copy is never baked by Flux. */
 export const MIMIC_BOLD_VARIANT_SAME_COPY_INSTRUCTION =
   "Generate a new art-only visual plate for this slide; editorial copy is added later via HTML/CSS overlay, never in the image.";
+
+/** Snapshot of project/env mimic render knobs at job prep time (on `generation_payload`). */
+export interface MimicRenderSettingsSnapshot {
+  schema_version: 1;
+  image_provider: string;
+  bfl_model: string;
+  visual_similarity_pct: number;
+  image_input_mode: MimicImageInputMode;
+  carousel_text_via_flux: boolean;
+  why_mimic_copy_enabled: boolean;
+}
 
 export function buildVisualVariantSimilarityInstruction(pct: number): string {
   const n = clampMimicVisualSimilarityPct(pct);

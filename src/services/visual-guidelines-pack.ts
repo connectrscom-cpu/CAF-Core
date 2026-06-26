@@ -20,6 +20,10 @@ import {
 } from "./visual-guidelines-media.js";
 import { compactCueList } from "./visual-guidelines-cues.js";
 import { normalizeMimicEvaluation } from "./carousel-insights-llm-normalize.js";
+import {
+  pickOrDeriveSlideIntelligence,
+  type SlideIntelligenceMediaKind,
+} from "../domain/slide-intelligence.js";
 
 const MAX_CUES_PER_FORMAT = 10;
 
@@ -236,6 +240,25 @@ export function buildVisualGuidelineEntriesFromInsights(
     const mimicEvaluation = aes ? normalizeMimicEvaluation(aes.mimic_evaluation) : null;
     const aestheticSlice = aes ? compactAestheticAnalysisForPackEntry(aes) : null;
 
+    const silMediaKind: SlideIntelligenceMediaKind =
+      r.analysis_tier === "top_performer_deep"
+        ? "image"
+        : r.analysis_tier === "top_performer_video"
+          ? "video"
+          : "carousel";
+    const slideIntelligence = pickOrDeriveSlideIntelligence(r.slide_intelligence_json, {
+      aesthetic: aes,
+      insights_id: r.insights_id,
+      analysis_tier: r.analysis_tier,
+      mediaKind: silMediaKind,
+      rowLevel: {
+        why_it_worked: r.why_it_worked,
+        primary_emotion: r.primary_emotion,
+        secondary_emotion: r.secondary_emotion,
+        hook_type: r.hook_type,
+      },
+    });
+
     const entry: Record<string, unknown> = {
       insights_id: r.insights_id,
       analysis_tier: r.analysis_tier,
@@ -265,6 +288,7 @@ export function buildVisualGuidelineEntriesFromInsights(
       ...(aestheticSlice && Object.keys(aestheticSlice).length > 0
         ? { aesthetic_analysis_json: aestheticSlice }
         : {}),
+      ...(slideIntelligence ? { slide_intelligence_v1: slideIntelligence } : {}),
     };
     entries.push(entry);
   }

@@ -7,6 +7,16 @@ import {
 import { assertMimicCopyDiffersFromReference } from "../domain/mimic-copy-guard.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
+import { pickOrDeriveSlideIntelligence } from "../domain/slide-intelligence.js";
+import {
+  buildWhyMimicSlidePlansFromSil,
+  isWhyMimicExecution,
+  MIMIC_EXECUTION_MODE_WHY,
+} from "../domain/why-mimic-execution.js";
+import { isWhyMimicCarouselFlow } from "../domain/why-mimic-carousel-flow-types.js";
+import { parseBrandProfile, type BrandProfileV1 } from "../domain/brand-profile.js";
+import { buildBrandExecutionBrief } from "../domain/brand-translation.js";
+import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
@@ -25,6 +35,7 @@ import {
   isTopPerformerMimicCarouselFlow,
   isTopPerformerMimicImageFlow,
   isTopPerformerMimicRenderableFlow,
+  isTpGroundedCarouselRenderFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 import { getJobLineageByTaskId } from "../repositories/job-lineage.js";
 import type { MimicMode } from "../domain/mimic-payload.js";
@@ -38,8 +49,9 @@ import { getMimicModeOverridesFromPack } from "../repositories/signal-packs.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
-import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
+import { loadProjectMimicRenderSettings, buildMimicRenderSettingsSnapshot } from "./mimic-project-config.js";
 import { generateMimicFluxImagePromptsForJob } from "./mimic-flux-image-prompts.js";
+import { generateWhyMimicFluxImagePromptsForJob } from "./why-mimic-flux-image-prompts.js";
 import {
   mimicDeckUsesSlotDeduplication,
   requireMimicSlideBackgroundPlate,
@@ -97,9 +109,10 @@ function buildMimicPayloadFromResolved(
   flowType: string,
   resolved: ResolvedMimicReference,
   modeOverride?: MimicMode | null,
-  evidencePayload?: Record<string, unknown> | null
+  evidencePayload?: Record<string, unknown> | null,
+  brandProfile?: BrandProfileV1 | null,
+  whyMimicCopyEnabled?: boolean
 ): { mimic: MimicPayloadV1; visualGuideline: ReturnType<typeof slimVisualGuidelineFromEntry> } {
-  const { mode, slide_plans } = classifyMimicMode(flowType, resolved.guideline_entry, modeOverride);
   let visualGuideline = slimVisualGuidelineFromEntry(resolved.guideline_entry);
   const fromPayload = evidencePayload ? carouselVideoSlideIndicesFromPayload(evidencePayload) : [];
   if (fromPayload.length > 0 && !(visualGuideline.video_slide_indices?.length)) {
@@ -107,8 +120,39 @@ function buildMimicPayloadFromResolved(
   }
   const folder = inspectionFolderFromEntry(resolved.guideline_entry);
 
+  // Why Mimic: project the reference's slide intelligence onto the job (read-only;
+  // never gates render). Prefer the pack entry's stored bundle, derive on-read otherwise.
+  const entryRec = asRecord(resolved.guideline_entry) ?? {};
+  const slideIntelligence = pickOrDeriveSlideIntelligence(entryRec.slide_intelligence_v1, {
+    aesthetic: asRecord(entryRec.aesthetic_analysis_json),
+    insights_id: resolved.source_insights_id,
+    analysis_tier: resolved.analysis_tier,
+    mediaKind: "carousel",
+  });
+
+  const whyExecution = isWhyMimicCarouselFlow(flowType);
+
+  // Brand-Aware Why Mimic: always when why lane; classic lane only when project toggle on.
+  const brandBrief =
+    whyExecution || whyMimicCopyEnabled
+      ? brandProfile && slideIntelligence
+        ? buildBrandExecutionBrief(slideIntelligence, brandProfile)
+        : null
+      : null;
+
+  const { mode, slide_plans: classifiedPlans } = classifyMimicMode(flowType, resolved.guideline_entry, modeOverride);
+  const slide_plans =
+    whyExecution && slideIntelligence
+      ? buildWhyMimicSlidePlansFromSil(
+          slideIntelligence,
+          mode,
+          normalizeMimicReferenceItems(resolved.reference_items).length
+        )
+      : classifiedPlans;
+
   const mimic: MimicPayloadV1 = {
     schema_version: 1,
+    ...(whyExecution ? { execution_mode: MIMIC_EXECUTION_MODE_WHY } : {}),
     mode,
     mode_override: modeOverride ?? null,
     classified_at: new Date().toISOString(),
@@ -123,10 +167,17 @@ function buildMimicPayloadFromResolved(
     visual_guideline: visualGuideline as unknown as Record<string, unknown>,
     twist_brief: {
       visual_only: true,
-      legal_note:
-        "Recreate the visual pattern only; do not copy logos, faces, or copyrighted imagery verbatim.",
+      legal_note: whyExecution
+        ? "Preserve the reference persuasion strategy only; invent fresh visuals and copy — do not copy logos, faces, or copyrighted imagery verbatim."
+        : "Recreate the visual pattern only; do not copy logos, faces, or copyrighted imagery verbatim.",
     },
     slide_plans,
+    ...(slideIntelligence
+      ? { slide_intelligence: slideIntelligence as unknown as Record<string, unknown> }
+      : {}),
+    ...(brandBrief
+      ? { brand_execution_brief: brandBrief as unknown as Record<string, unknown> }
+      : {}),
   };
 
   return { mimic, visualGuideline };
@@ -134,6 +185,7 @@ function buildMimicPayloadFromResolved(
 
 async function resolveMimicPayloadForJob(
   db: Pool,
+  config: AppConfig,
   job: { task_id: string; project_id: string; flow_type: string; generation_payload: Record<string, unknown> },
   runId: string | null
 ): Promise<{ mimic: MimicPayloadV1; resolved: ResolvedMimicReference; visualGuideline: ReturnType<typeof slimVisualGuidelineFromEntry> }> {
@@ -168,11 +220,16 @@ async function resolveMimicPayloadForJob(
   const overrides = getMimicModeOverridesFromPack(lineage.signal_pack);
   const packOverride = overrides[resolved.source_insights_id] as MimicMode | null | undefined;
   const evidencePayload = evidencePayloadForResolved(lineage, resolved);
+  const brandProfileRow = await getActiveBrandProfile(db, job.project_id);
+  const brandProfile = brandProfileRow ? parseBrandProfile(brandProfileRow.profile_json) : null;
+  const mimicSettings = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const built = buildMimicPayloadFromResolved(
     job.flow_type,
     resolved,
     packOverride ?? null,
-    evidencePayload
+    evidencePayload,
+    brandProfile,
+    mimicSettings.whyMimicCopyEnabled
   );
 
   if (resolved.reference_tier_fallback) {
@@ -302,13 +359,14 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     const mergedBase = {
       ...mergeMimicPayloadSlice(gp, filtered),
       mimic_render_context: renderContext,
+      mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     };
     const merged = refreshMimicJobGroundingSlideLayout(mergedBase, vg, filtered);
     await persistGenerationPayload(db, job.id, merged);
     return filtered;
   }
 
-  const { mimic: resolvedMimic, resolved } = await resolveMimicPayloadForJob(db, job, runId);
+  const { mimic: resolvedMimic, resolved } = await resolveMimicPayloadForJob(db, config, job, runId);
   const { mimic, removed_slide_indices } = filterPromotionalSlidesFromMimicPayload(resolvedMimic);
   const renderContext = {
     ...buildMimicRenderContextForLlm(mimic, resolved.guideline_entry, renderContextOpts),
@@ -326,6 +384,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
   const mergedBase = {
     ...mergeMimicPayloadSlice(gp, mimic),
     mimic_render_context: renderContext,
+    mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     template_storage_decision: templateStorage,
   };
   const merged = refreshMimicJobGroundingSlideLayout(
@@ -370,7 +429,7 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
   },
   runId: string | null
 ): Promise<{ prepared: boolean; skipped?: boolean }> {
-  if (!config.MIMIC_IMAGE_ENABLED || !isTopPerformerMimicCarouselFlow(job.flow_type)) {
+  if (!config.MIMIC_IMAGE_ENABLED || !isTpGroundedCarouselRenderFlow(job.flow_type)) {
     return { prepared: false };
   }
 
@@ -449,7 +508,7 @@ export async function prepareMimicDraftPackage(
   let resolvedGuideline: Record<string, unknown> | null = null;
 
   if (!mimic?.reference_items?.length) {
-    const resolved = await resolveMimicPayloadForJob(db, job, runId);
+    const resolved = await resolveMimicPayloadForJob(db, config, job, runId);
     const filtered = filterPromotionalSlidesFromMimicPayload(resolved.mimic);
     mimic = filtered.mimic;
     resolvedGuideline = resolved.resolved.guideline_entry;
@@ -467,6 +526,7 @@ export async function prepareMimicDraftPackage(
     await persistGenerationPayload(db, job.id, {
       ...mergeMimicPayloadSlice(gp, mimic),
       mimic_render_context: renderContext,
+      mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     });
   }
 
@@ -493,7 +553,7 @@ export async function prepareMimicDraftPackage(
     }
   }
 
-  if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic && pickGeneratedOutput(merged)) {
+  if (isTpGroundedCarouselRenderFlow(job.flow_type) && mimic && pickGeneratedOutput(merged)) {
     const visualGuideline = slimVisualGuidelineFromEntry(resolvedGuideline ?? {});
     const composed = composeMimicCarouselDraftPackage(merged, mimic, {
       reference_tier_fallback: mimic.reference_tier_fallback,
@@ -513,12 +573,13 @@ export async function prepareMimicDraftPackage(
 
   if (
     resolvedGuideline &&
-    (isTopPerformerMimicImageFlow(job.flow_type) || isTopPerformerMimicCarouselFlow(job.flow_type))
+    !isWhyMimicExecution(job.flow_type, mimic) &&
+    (isTopPerformerMimicImageFlow(job.flow_type) || isTpGroundedCarouselRenderFlow(job.flow_type))
   ) {
     assertMimicCopyDiffersFromReference(merged, resolvedGuideline);
   }
 
-  if (isTopPerformerMimicCarouselFlow(job.flow_type) && mimic) {
+  if (isTpGroundedCarouselRenderFlow(job.flow_type) && mimic) {
     const gen = pickGeneratedOutputOrEmpty(merged);
     const mimicTarget = targetMimicCarouselCopySlideCount(merged, mimic);
     const slideOpts = mimicTarget != null ? { preferred_slide_count: mimicTarget } : undefined;
@@ -557,32 +618,47 @@ export async function prepareMimicDraftPackage(
       }
     }
 
-    const imageInputMode = mimicRender.imageInputMode;
+    const whyFlux = isWhyMimicExecution(job.flow_type, mimic);
+    const imageInputMode = whyFlux ? "analysis_t2i" : mimicRender.imageInputMode;
     if (imageInputMode === "analysis_t2i" && !mimic.flux_image_prompts) {
       const layout = buildSlideCopyLayoutForLlmFromPayload(merged);
       if (layout.length > 0) {
-        const { bySlide, meta } = await generateMimicFluxImagePromptsForJob(
-          config,
-          config.OPENAI_API_KEY ?? "",
-          db,
-          { task_id: job.task_id, project_id: job.project_id, run_id: runId },
-          mimic,
-          gen,
-          layout,
-          { imageInputMode, useLlm: config.MIMIC_FLUX_PROMPT_LLM }
-        );
+        const fluxOpts = { imageInputMode, useLlm: config.MIMIC_FLUX_PROMPT_LLM } as const;
+        const { bySlide, meta } = whyFlux
+          ? await generateWhyMimicFluxImagePromptsForJob(
+              config,
+              config.OPENAI_API_KEY ?? "",
+              db,
+              { task_id: job.task_id, project_id: job.project_id, run_id: runId },
+              mimic,
+              gen,
+              layout,
+              fluxOpts
+            )
+          : await generateMimicFluxImagePromptsForJob(
+              config,
+              config.OPENAI_API_KEY ?? "",
+              db,
+              { task_id: job.task_id, project_id: job.project_id, run_id: runId },
+              mimic,
+              gen,
+              layout,
+              fluxOpts
+            );
         if (Object.keys(bySlide).length > 0) {
           mimic = { ...mimic, flux_image_prompts: bySlide };
           merged = mergeMimicPayloadSlice(merged, mimic);
           await persistGenerationPayload(db, job.id, merged);
-          logPipelineEvent("info", "generate", "mimic_flux_image_prompts_stored", {
+          logPipelineEvent("info", "generate", whyFlux ? "why_mimic_flux_image_prompts_stored" : "mimic_flux_image_prompts_stored", {
             run_id: runId ?? undefined,
             task_id: job.task_id,
             data: {
               slides_written: meta.slides_written,
               slides_requested: meta.slides_requested,
+              slides_reference_fallback: meta.slides_reference_fallback,
               model: meta.model,
               used_llm: meta.used_llm,
+              execution_mode: whyFlux ? MIMIC_EXECUTION_MODE_WHY : undefined,
             },
           });
         }

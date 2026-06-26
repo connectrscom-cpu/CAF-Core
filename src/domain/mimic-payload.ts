@@ -44,8 +44,15 @@ export interface MimicSlidePlan {
   source_slide_index?: number | null;
 }
 
+export type MimicExecutionMode = "classic" | "why_mimic";
+
 export interface MimicPayloadV1 {
   schema_version: 1;
+  /**
+   * `why_mimic` — strategic copy + SIL-grounded image prompts (FLOW_WHY_MIMIC_CAROUSEL).
+   * Omitted or `classic` — fidelity mimic (rephrase reference + aesthetic-driven visuals).
+   */
+  execution_mode?: MimicExecutionMode;
   mode: MimicMode;
   /** Manual override set by a reviewer — takes precedence over the automatic classifier. */
   mode_override?: MimicMode | null;
@@ -75,6 +82,21 @@ export interface MimicPayloadV1 {
   docai_layer_positions?: Record<string, unknown>;
   /** Per-slide Flux text-to-image prompts (analysis_t2i mode). Keyed by output slide index string. */
   flux_image_prompts?: MimicFluxImagePromptsBySlide;
+  /**
+   * Why Mimic — projected `slide_intelligence_v1` bundle for this reference
+   * (per-slide role/mechanism/why + deck `why_analysis`). Read-only intelligence
+   * consumed by generation, Review, and Brand Translation; never gates render.
+   * See `src/domain/slide-intelligence.ts`.
+   */
+  slide_intelligence?: Record<string, unknown>;
+  /**
+   * Brand-Aware Why Mimic — projected `brand_execution_brief_v1`: the reference's
+   * intent remapped onto this project's active brand profile (symbol_map, palette,
+   * tone) with the strategic thesis held constant. Present only when the project
+   * has an active brand profile. Read-only; never gates render.
+   * See `src/domain/brand-translation.ts`.
+   */
+  brand_execution_brief?: Record<string, unknown>;
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";
@@ -172,8 +194,14 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       ? rec.mode_override
       : null;
 
+  const execution_mode =
+    rec.execution_mode === "why_mimic" || rec.execution_mode === "classic"
+      ? rec.execution_mode
+      : undefined;
+
   return {
     schema_version: 1,
+    ...(execution_mode ? { execution_mode } : {}),
     mode,
     mode_override,
     classified_at: String(rec.classified_at ?? ""),
@@ -206,6 +234,12 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       : {}),
     ...(parseFluxImagePrompts(rec.flux_image_prompts)
       ? { flux_image_prompts: parseFluxImagePrompts(rec.flux_image_prompts)! }
+      : {}),
+    ...(asRecord(rec.slide_intelligence)
+      ? { slide_intelligence: rec.slide_intelligence as Record<string, unknown> }
+      : {}),
+    ...(asRecord(rec.brand_execution_brief)
+      ? { brand_execution_brief: rec.brand_execution_brief as Record<string, unknown> }
       : {}),
   };
 }

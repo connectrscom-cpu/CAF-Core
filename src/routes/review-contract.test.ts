@@ -47,7 +47,10 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/projects/:project_slug/project-risk-rules",
   "/v1/projects/:project_slug/risk-qc-status",
   "/v1/learning/:project_slug/rules",
+  "/v1/learning/:project_slug/rules/:rule_id/dismiss",
+  "/v1/learning/:project_slug/rules/dismiss-pending",
   "/v1/learning/:project_slug/context-preview",
+  "/v1/jobs/:project_slug/:task_id/dossier",
   "/v1/publications/:project_slug",
 ];
 

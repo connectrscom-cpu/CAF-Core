@@ -13,7 +13,7 @@ import { taskApiQuery } from "@/lib/task-links";
 import { InspectValidationJson } from "@/components/InspectValidationJson";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
 import { isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
-import { displayFlowLabel } from "@/lib/display-flow-label";
+import { displayFlowLabel, displayFlowDetail } from "@/lib/display-flow-label";
 
 interface ContentResponse {
   data: ReviewQueueRow;
@@ -109,7 +109,7 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
   return (
     <>
       <div className="detail-back">
-        <Link href={navHref("/")}>← Back to Workbench</Link>
+        <Link href={navHref("/review")}>← Back to Workbench</Link>
       </div>
       <h1 className="detail-title">Content: {task_id}</h1>
       {data && !loading ? (
@@ -117,6 +117,9 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
           <p className="detail-subtitle">
             {data.platform && <>{data.platform} · </>}
             {displayFlowLabel(data)}
+            {displayFlowDetail(data) ? (
+              <span className="detail-subtitle-detail">{displayFlowDetail(data)}</span>
+            ) : null}
           </p>
           <CopyTaskDebugBundleButton
             taskId={task_id}
@@ -132,6 +135,9 @@ export function ContentReviewClient({ taskIdParam, projectFromUrl }: ContentRevi
         <p className="detail-subtitle">
           {data?.platform && <>{data.platform} · </>}
           {data ? displayFlowLabel(data) : null}
+          {data && displayFlowDetail(data) ? (
+            <span className="detail-subtitle-detail">{displayFlowDetail(data)}</span>
+          ) : null}
         </p>
       )}
 

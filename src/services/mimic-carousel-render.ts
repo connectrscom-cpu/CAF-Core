@@ -519,6 +519,13 @@ export async function extractMimicSlideBackground(
   if (styleHints) bgPrompt = finalizeMimicImageModelPrompt(bgPrompt);
 
   const resolvedPrompt = resolveMimicSlideImagePrompt(mimic, slideIndex, bgPrompt, imageInputMode);
+  if (resolvedPrompt.analysisFallbackReason) {
+    logPipelineEvent("info", "render", "mimic slide image: analysis_t2i → reference_edit (thin Nemotron analysis)", {
+      task_id: job.task_id,
+      run_id: job.run_id,
+      data: { slide_index: slideIndex, reason: resolvedPrompt.analysisFallbackReason },
+    });
+  }
   let referenceUrl: string | undefined;
   if (resolvedPrompt.usesReferenceImage) {
     if (!item) return null;
@@ -1639,6 +1646,13 @@ export async function renderMimicCarouselSlideFullBleed(
   );
 
   const resolvedPrompt = resolveMimicSlideImagePrompt(mimic, slideIndex, basePrompt, imageInputMode);
+  if (resolvedPrompt.analysisFallbackReason) {
+    logPipelineEvent("info", "render", "mimic slide image: analysis_t2i → reference_edit (thin Nemotron analysis)", {
+      task_id: job.task_id,
+      run_id: job.run_id,
+      data: { slide_index: slideIndex, reason: resolvedPrompt.analysisFallbackReason },
+    });
+  }
   let referenceUrl: string | undefined;
   if (resolvedPrompt.usesReferenceImage) {
     if (!item) throw new Error(`No reference URL for mimic slide ${slideIndex}`);

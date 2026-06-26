@@ -23,6 +23,7 @@ import {
   type MimicPickKind,
   findVisualGuidelineEntry,
   TIER_FOR_KIND,
+  normalizeMimicPickRef,
 } from "./signal-pack-mimic-ui.js";
 import { platformFromEvidenceKind } from "./signal-pack-compile-ideas.js";
 import {
@@ -31,11 +32,37 @@ import {
 } from "../domain/top-performer-video-heygen-routing.js";
 import { findVisualGuidelineEntryForGrounding } from "../domain/top-performer-grounding.js";
 import { VISUAL_FIRST_CAROUSEL_PROVENANCE } from "../domain/visual-first-carousel-flow-types.js";
+import { z } from "zod";
 
 export type RunCandidatesMimicPick = {
   insights_id: string;
   mimic_kind: MimicPickKind;
 };
+
+/** POST /v1/runs/.../jobs and /candidates body validation. */
+export const runCandidatesMaterializeBodySchema = z.union([
+  z
+    .object({
+      mode: z.literal("manual"),
+      idea_ids: z.array(z.string()).optional(),
+      mimic_picks: z
+        .array(
+          z.object({
+            insights_id: z.string().min(1),
+            mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]),
+          })
+        )
+        .optional(),
+    })
+    .refine((b) => (b.idea_ids?.length ?? 0) > 0 || (b.mimic_picks?.length ?? 0) > 0, {
+      message: "idea_ids or mimic_picks required for manual mode",
+    }),
+  z.object({ mode: z.literal("llm"), max_ideas: z.number().int().min(1).max(100).optional() }),
+  z.object({ mode: z.literal("from_pack_ideas_all") }),
+  z.object({ mode: z.literal("from_pack_overall") }),
+]);
+
+export type RunCandidatesMaterializeBodyParsed = z.infer<typeof runCandidatesMaterializeBodySchema>;
 
 export const STEP_RUN_CANDIDATES_FROM_IDEAS_LLM = "inputs_run_candidates_from_ideas_llm";
 
@@ -285,9 +312,11 @@ export function plannerRowsFromMimicPicks(
   const seen = new Set<string>();
 
   for (const pick of picks) {
-    const insightsId = String(pick.insights_id ?? "").trim();
+    const normalized = normalizeMimicPickRef(pick.insights_id, pick.mimic_kind);
+    const insightsId = normalized.insights_id;
+    const mimicKind = normalized.mimic_kind;
     if (!insightsId) continue;
-    const dedupeKey = `${pick.mimic_kind}:${insightsId}`;
+    const dedupeKey = `${mimicKind}:${insightsId}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
@@ -296,7 +325,7 @@ export function plannerRowsFromMimicPicks(
       throw new Error(`No visual guideline entry for insights_id ${insightsId} — rebuild the signal pack.`);
     }
     const tier = stringField(entry.analysis_tier, 80);
-    const expectedTier = TIER_FOR_KIND[pick.mimic_kind];
+    const expectedTier = TIER_FOR_KIND[mimicKind];
     if (tier && expectedTier && tier !== expectedTier) {
       throw new Error(
         `insights_id ${insightsId} is tier ${tier}, not ${expectedTier} — pick it under the matching mimic tab.`
@@ -304,21 +333,24 @@ export function plannerRowsFromMimicPicks(
     }
 
     const flowType =
-      pick.mimic_kind === "video"
+      mimicKind === "video"
         ? resolveTopPerformerVideoHeygenRoute(entry).flow_type
-        : mimicKindToFlowType(pick.mimic_kind);
+        : mimicKindToFlowType(mimicKind);
     const rowId = stringField(entry.source_evidence_row_id, 40);
     const hook = stringField(entry.hook_text_preview, 400);
     const why = stringField(entry.why_it_worked, 600);
     const formatPattern = stringField(entry.format_pattern, 120);
     const platform = platformFromEvidenceKind(stringField(entry.evidence_kind, 80) || "instagram_post");
     const ideaId = `mimic_${insightsId}`;
-    const contentIdea = hook || why.slice(0, 400) || `Mimic ${pick.mimic_kind} · ${insightsId}`;
+    const contentIdea = hook || why.slice(0, 400) || `Mimic ${mimicKind} · ${insightsId}`;
     const format =
-      pick.mimic_kind === "carousel" ? "carousel" : pick.mimic_kind === "video" ? "video" : "post";
+      mimicKind === "carousel" || mimicKind === "why_carousel"
+        ? "carousel"
+        : mimicKind === "video"
+          ? "video"
+          : "post";
 
-    const videoRoute =
-      pick.mimic_kind === "video" ? resolveTopPerformerVideoHeygenRoute(entry) : null;
+    const videoRoute = mimicKind === "video" ? resolveTopPerformerVideoHeygenRoute(entry) : null;
 
     rows.push({
       idea_id: ideaId,
@@ -343,7 +375,7 @@ export function plannerRowsFromMimicPicks(
       video_style: videoRoute?.intent,
       top_performer_video_route_reason: videoRoute?.reason,
       manual_mimic_pick: true,
-      mimic_kind: pick.mimic_kind,
+      mimic_kind: mimicKind,
       provenance: "signal_pack.visual_guidelines_pack_v1",
     });
   }

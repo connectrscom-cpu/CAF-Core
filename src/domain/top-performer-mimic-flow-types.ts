@@ -2,19 +2,22 @@
  * Top-performer mimic flow_type keys (image + carousel wired when MIMIC_IMAGE_ENABLED).
  * Video mimic picks route to HeyGen FLOW_VID_* flows; FLOW_TOP_PERFORMER_MIMIC_VIDEO is a planning-cap alias only.
  *
- * Carousel visual execution splits into two **planning** lanes (same **render** engine):
+ * Carousel lanes (same **render** engine via `isTpGroundedCarouselRenderFlow`):
+ * - FLOW_TOP_PERFORMER_MIMIC_CAROUSEL — manual fidelity mimic picks
  * - FLOW_VISUAL_FIRST_CAROUSEL — ideas-from-insights visual_first bucket
- * - FLOW_TOP_PERFORMER_MIMIC_CAROUSEL — manual top-performer mimic picks
- *
- * Both use `isTpGroundedCarouselRenderFlow`: template_bg OR carousel_visual per deck,
- * art-only image-model plates, copy via HTML/HBS/DocAI overlay only.
+ * - FLOW_WHY_MIMIC_CAROUSEL — manual Why Mimic picks (SIL-driven copy + image prompts)
  */
 import {
   FLOW_VISUAL_FIRST_CAROUSEL,
   isVisualFirstCarouselFlow,
 } from "./visual-first-carousel-flow-types.js";
+import {
+  FLOW_WHY_MIMIC_CAROUSEL,
+  isWhyMimicCarouselFlow,
+} from "./why-mimic-carousel-flow-types.js";
 
 export { FLOW_VISUAL_FIRST_CAROUSEL, isVisualFirstCarouselFlow } from "./visual-first-carousel-flow-types.js";
+export { FLOW_WHY_MIMIC_CAROUSEL, isWhyMimicCarouselFlow } from "./why-mimic-carousel-flow-types.js";
 export const FLOW_TOP_PERFORMER_MIMIC_VIDEO = "FLOW_TOP_PERFORMER_MIMIC_VIDEO";
 export const FLOW_TOP_PERFORMER_MIMIC_CAROUSEL = "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL";
 export const FLOW_TOP_PERFORMER_MIMIC_IMAGE = "FLOW_TOP_PERFORMER_MIMIC_IMAGE";
@@ -40,9 +43,13 @@ export function isTopPerformerMimicCarouselFlow(flowType: string): boolean {
   return (flowType ?? "").trim() === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL;
 }
 
-/** Manual mimic carousel OR visual-first carousel — same TP-grounded render engine. */
+/** Manual mimic carousel, visual-first, or Why Mimic — same TP-grounded render engine. */
 export function isTpGroundedCarouselRenderFlow(flowType: string): boolean {
-  return isTopPerformerMimicCarouselFlow(flowType) || isVisualFirstCarouselFlow(flowType);
+  return (
+    isTopPerformerMimicCarouselFlow(flowType) ||
+    isVisualFirstCarouselFlow(flowType) ||
+    isWhyMimicCarouselFlow(flowType)
+  );
 }
 
 /** Image + TP-grounded carousel flows wired to MIMIC_IMAGE_PROVIDER (BFL, DashScope, NVIDIA, or OpenAI). */

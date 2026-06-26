@@ -199,6 +199,8 @@ export interface ReviewQueueJob {
   preview_thumb_url?: string | null;
   /** Human label — includes Mimic · … for top-performer replication jobs. */
   flow_label?: string | null;
+  /** Model, similarity %, image input, overlay mode (mimic jobs). */
+  flow_detail?: string | null;
   is_mimic_replication?: boolean;
   render_state?: Record<string, unknown> | null;
   top_performer_reference?: TopPerformerReviewReference | null;
@@ -796,6 +798,15 @@ export async function getProjectProfile(projectSlug: string) {
   );
 }
 
+export async function getBrandProfile(projectSlug: string) {
+  return coreGet<{
+    ok: boolean;
+    active: { version: number; label: string | null; profile_json: Record<string, unknown>; created_at: string } | null;
+    parsed: Record<string, unknown> | null;
+    versions: Array<{ version: number; label: string | null; is_active: boolean; created_at: string }>;
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/brand-profile`);
+}
+
 export type ProjectAdminRow = {
   id: string;
   slug: string;
@@ -1088,6 +1099,51 @@ export async function getLearningRules(projectSlug: string) {
   );
 }
 
+export async function getLearningInsights(projectSlug: string) {
+  return coreGet<{ ok: boolean; insights: Record<string, unknown>[] }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/insights`
+  );
+}
+
+export async function getMarketIntelligenceForPack(projectSlug: string, packId: string, opts?: { refresh?: boolean }) {
+  const refresh = opts?.refresh ? "1" : "0";
+  return coreGet<{
+    ok: boolean;
+    market_intelligence_v1: Record<string, unknown>;
+    inputs_import_id: string;
+    signal_pack_id: string;
+  }>(
+    `/v1/market-intelligence/${encodeURIComponent(projectSlug)}/signal-pack/${encodeURIComponent(packId)}?refresh=${refresh}`
+  );
+}
+
+export async function getSignalPackInsights(
+  projectSlug: string,
+  packId: string,
+  opts?: { limit?: number }
+) {
+  const limit = opts?.limit ?? 200;
+  return coreGet<{
+    ok: boolean;
+    items: Record<string, unknown>[];
+    signal_pack_id: string | null;
+    inputs_import_id: string;
+  }>(
+    `/v1/insights/${encodeURIComponent(projectSlug)}/signal-pack/${encodeURIComponent(packId)}?limit=${limit}`
+  );
+}
+
+export async function saveBrandProfile(
+  projectSlug: string,
+  profileJson: Record<string, unknown>,
+  label?: string | null
+) {
+  return corePost<{ ok: boolean; version: number; parsed: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-profile`,
+    { profile_json: profileJson, label: label ?? undefined }
+  );
+}
+
 export async function triggerEditorialAnalysis(
   projectSlug: string,
   windowDays?: number,
@@ -1102,10 +1158,38 @@ export async function triggerEditorialAnalysis(
   );
 }
 
-export async function triggerMarketAnalysis(projectSlug: string, windowDays?: number) {
+export async function triggerPerformanceAnalysis(
+  projectSlug: string,
+  opts?: { window_days?: number; auto_create_rules?: boolean; emit_global_observation?: boolean }
+) {
   return corePost<Record<string, unknown>>(
-    `/v1/learning/${encodeURIComponent(projectSlug)}/market-analysis`,
-    { window_days: windowDays ?? 60 }
+    `/v1/learning/${encodeURIComponent(projectSlug)}/performance-analysis`,
+    {
+      window_days: opts?.window_days ?? 60,
+      auto_create_rules: opts?.auto_create_rules === true,
+      emit_global_observation: opts?.emit_global_observation !== false,
+    }
+  );
+}
+
+/** @deprecated Use triggerPerformanceAnalysis — alias kept for older Review builds. */
+export async function triggerMarketAnalysis(projectSlug: string, windowDays?: number) {
+  return triggerPerformanceAnalysis(projectSlug, { window_days: windowDays });
+}
+
+export async function buildGlobalLearningDigest(windowDays?: number) {
+  return corePost<Record<string, unknown>>("/v1/learning/caf-global/digest", {
+    window_days: windowDays ?? 30,
+  });
+}
+
+export async function getLatestGlobalLearningDigest() {
+  return coreGet<Record<string, unknown>>("/v1/learning/caf-global/digest/latest");
+}
+
+export async function getJobDossier(projectSlug: string, taskId: string) {
+  return coreGet<Record<string, unknown>>(
+    `/v1/jobs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(taskId)}/dossier`
   );
 }
 
@@ -1134,6 +1218,20 @@ export async function applyLearningRule(projectSlug: string, ruleId: string) {
 export async function retireLearningRule(projectSlug: string, ruleId: string) {
   return corePost<{ ok: boolean }>(
     `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}/retire`,
+    {}
+  );
+}
+
+export async function dismissLearningRule(projectSlug: string, ruleId: string) {
+  return corePost<{ ok: boolean; status?: string; rule_id?: string }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/${encodeURIComponent(ruleId)}/dismiss`,
+    {}
+  );
+}
+
+export async function dismissPendingLearningRules(projectSlug: string) {
+  return corePost<{ ok: boolean; dismissed?: number; status?: string }>(
+    `/v1/learning/${encodeURIComponent(projectSlug)}/rules/dismiss-pending`,
     {}
   );
 }
@@ -1441,6 +1539,125 @@ export async function getSignalPackForProject(
   );
 }
 
+export async function patchSignalPackNotes(
+  projectSlug: string,
+  packId: string,
+  notes: string
+) {
+  return corePatchRequired<{ ok: boolean; signal_pack: Record<string, unknown> }>(
+    `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}`,
+    { notes }
+  );
+}
+
+// ── Inputs sources (scrapers) ─────────────────────────────────────────────
+
+export type InputsSourceRow = {
+  id: string;
+  source_tab: string;
+  row_index: number;
+  enabled: boolean;
+  payload_json: Record<string, unknown>;
+};
+
+export async function listInputsSourceRows(projectSlug: string, tab?: string) {
+  const qs = tab ? `?tab=${encodeURIComponent(tab)}` : "";
+  return coreGet<{ ok: boolean; rows: InputsSourceRow[]; count: number }>(
+    `/v1/inputs-sources/${encodeURIComponent(projectSlug)}/rows${qs}`
+  );
+}
+
+export async function replaceInputsSourceTabRows(
+  projectSlug: string,
+  tab: string,
+  rows: Array<{ row_index: number; enabled: boolean; payload_json: Record<string, unknown> }>
+) {
+  return corePut<{ ok: boolean; row_count: number }>(
+    `/v1/inputs-sources/${encodeURIComponent(projectSlug)}/rows/${encodeURIComponent(tab)}`,
+    { rows }
+  );
+}
+
+export async function runInputsScraper(
+  projectSlug: string,
+  opts: {
+    scraper?: "instagram" | "tiktok" | "html" | "facebook" | "reddit" | "all";
+    platforms?: Array<"instagram" | "tiktok" | "html" | "facebook" | "reddit">;
+    postMaxAgeDays?: number;
+    maxSources?: number;
+  } = {}
+) {
+  return corePost<{ ok: boolean; scraper_run_id?: string; status?: string }>(
+    `/v1/inputs-sources/${encodeURIComponent(projectSlug)}/run-scraper`,
+    {
+      scraper: opts.scraper ?? "all",
+      platforms: opts.platforms,
+      post_max_age_days: opts.postMaxAgeDays,
+      max_sources: opts.maxSources,
+    }
+  );
+}
+
+export async function listInputsScraperRuns(projectSlug: string, limit = 10) {
+  return coreGet<{
+    ok: boolean;
+    runs: Array<{
+      id: string;
+      scraper_key: string;
+      status: string;
+      started_at: string | null;
+      finished_at: string | null;
+      error_message: string | null;
+      evidence_import_id?: string | null;
+      config_snapshot_json?: Record<string, unknown>;
+    }>;
+  }>(`/v1/inputs-sources/${encodeURIComponent(projectSlug)}/scraper-runs?limit=${limit}`);
+}
+
+export async function buildIdeasFromImport(
+  projectSlug: string,
+  importId: string,
+  body?: {
+    title?: string;
+    target_idea_count?: number;
+    idea_quotas?: Record<string, unknown>;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    idea_list_id?: string;
+    ideas_count?: number;
+    error?: string;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/build-ideas-list`,
+    body ?? {}
+  );
+}
+
+export async function buildSignalPackFromImport(
+  projectSlug: string,
+  importId: string,
+  body?: {
+    idea_list_id?: string;
+    run_name?: string;
+    notes?: string;
+    format_limits?: Record<string, number>;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    signal_pack_id?: string;
+    run_id?: string;
+    ideas_count?: number;
+    idea_list_id?: string;
+    error?: string;
+    message?: string;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/build-signal-pack`,
+    body ?? {}
+  );
+}
+
 // ── Publication placements (Review → n8n) ─────────────────────────────────
 
 export type PublicationPlacementStatus =
@@ -1614,5 +1831,28 @@ export async function setMimicModeOverride(
   return corePostRequired<{ ok: boolean; mode_override: MimicModeOverrideValue }>(
     `/v1/review-queue/${encodeURIComponent(projectSlug)}/mimic-mode-override`,
     { task_id: taskId, mode_override: modeOverride }
+  );
+}
+
+/** Why Mimic — record an operator correction of a slide-intelligence field as a learning observation. */
+export async function submitSlideIntelligenceCorrection(
+  projectSlug: string,
+  input: {
+    taskId: string;
+    slideIndex: number;
+    field: string;
+    correctedValue: string;
+    originalValue?: string | null;
+  }
+): Promise<{ ok: boolean; observation_id?: string }> {
+  return corePostRequired<{ ok: boolean; observation_id?: string }>(
+    `/v1/review-queue/${encodeURIComponent(projectSlug)}/slide-intelligence-correction`,
+    {
+      task_id: input.taskId,
+      slide_index: input.slideIndex,
+      field: input.field,
+      corrected_value: input.correctedValue,
+      ...(input.originalValue != null ? { original_value: input.originalValue } : {}),
+    }
   );
 }

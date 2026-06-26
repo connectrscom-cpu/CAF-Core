@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { inferMimicReferenceCopySlots } from "./mimic-copy-slots.js";
 import { templateBgLlmSlideForDocAi } from "./mimic-template-bg-render.js";
 import {
   bboxIntersectsFullBleedSubjectZone,
   buildMimicDocAiRenderTextLayers,
+  constrainBBoxToFullBleedSideColumn,
   nudgeBBoxAwayFromFullBleedSubjectZone,
   CAROUSEL_RENDER_WIDTH_PX,
   consolidateDocAiRenderLayersInVerticalStacks,
@@ -356,6 +358,65 @@ describe("mimic-slide-typography", () => {
     expect(rightStacks[0]?.text).toContain("Right column copy");
   });
 
+  it("buildMimicDocAiRenderTextLayers splits one LLM body paragraph across quadrant stacks (Aries meme)", () => {
+    const ocrBlocks = [
+      { text: "Aries", role: "headline", x: 0.35, y: 0.05, w: 0.3, h: 0.06 },
+      { text: "mad about", role: "body", x: 0.7, y: 0.21, w: 0.22, h: 0.04 },
+      { text: "the canceled", role: "body", x: 0.7, y: 0.26, w: 0.22, h: 0.04 },
+      { text: "birthday trip", role: "body", x: 0.7, y: 0.31, w: 0.22, h: 0.04 },
+      { text: "starts to flirt", role: "body", x: 0.06, y: 0.33, w: 0.25, h: 0.04 },
+      { text: "out of boredom", role: "body", x: 0.06, y: 0.38, w: 0.25, h: 0.04 },
+      { text: "already did", role: "body", x: 0.06, y: 0.58, w: 0.25, h: 0.04 },
+      { text: "the 5th photo shoot in a row", role: "body", x: 0.06, y: 0.64, w: 0.36, h: 0.05 },
+      { text: "plans on getting", role: "body", x: 0.58, y: 0.58, w: 0.32, h: 0.04 },
+      { text: "3 birthday cakes to compensate", role: "body", x: 0.58, y: 0.64, w: 0.32, h: 0.05 },
+    ];
+    const slots = inferMimicReferenceCopySlots(ocrBlocks);
+    const mimic = {
+      visual_guideline: {
+        slides: [
+          {
+            slide_index: 1,
+            text_blocks: ocrBlocks.map((b) => ({
+              text: b.text,
+              role: b.role,
+              source: "document_ai",
+              bbox_norm: { x: b.x, y: b.y, w: b.w, h: b.h },
+            })),
+            copy_slots_v1: slots,
+          },
+        ],
+      },
+      reference_items: [],
+      slide_plans: [],
+    };
+    const body =
+      "Flirting with anyone just to break the boredom. Still not over that birthday trip getting axed. " +
+      "Is now a professional at staging home photoshoots. Brainstorming ways to celebrate with as much drama as possible.";
+    const layers = buildMimicDocAiRenderTextLayers(
+      mimic,
+      1,
+      {
+        headline: "Aries",
+        body,
+        text_blocks: [
+          { role: "headline", text: "Aries" },
+          { role: "body", text: body },
+        ],
+      },
+      undefined,
+      { textBacking: true }
+    );
+    const bodyLayers = layers.filter((l) => l.text !== "Aries" && l.y_px > 150);
+    expect(bodyLayers.length).toBeGreaterThanOrEqual(2);
+    expect(bodyLayers.length).toBeLessThanOrEqual(5);
+    const left = bodyLayers.filter((l) => l.x_px < 400);
+    const right = bodyLayers.filter((l) => l.x_px > 500);
+    expect(left.length).toBeGreaterThan(0);
+    expect(right.length).toBeGreaterThan(0);
+    expect(bodyLayers.every((l) => !l.text.includes(body.slice(0, 40)) || l.text.length < body.length)).toBe(true);
+  });
+
   it("docAiBBoxToRenderPx clamps boxes inside canvas safe margins", () => {
     const px = docAiBBoxToRenderPx(0.92, 0.02, 0.12, 0.05);
     expect(px.x + px.w).toBeLessThanOrEqual(CAROUSEL_RENDER_WIDTH_PX - 28);
@@ -586,6 +647,71 @@ describe("mimic-slide-typography", () => {
     expect(texts.some((t) => t.includes("@astro_moods"))).toBe(true);
     expect(texts.every((t) => !t.includes("@glossy_zodiac"))).toBe(true);
     expect(texts.some((t) => t.includes("ignored merged body"))).toBe(false);
+  });
+
+  it("buildMimicDocAiRenderTextLayers renders one headline on zodiac crush slides (no body spillover)", () => {
+    const mimic = {
+      visual_guideline: {
+        slides: [
+          {
+            slide_index: 1,
+            text_blocks: [
+              {
+                text: "astrhology",
+                role: "headline",
+                source: "document_ai",
+                bbox_norm: { x: 0.596, y: 0.047, w: 0.083, h: 0.016 },
+              },
+              {
+                text: "aries with a crush",
+                role: "cta",
+                source: "document_ai",
+                bbox_norm: { x: 0.149, y: 0.477, w: 0.696, h: 0.049 },
+              },
+            ],
+            copy_slots_v1: [
+              {
+                schema_version: "copy_slots_v1",
+                slot_index: 0,
+                llm_field: "headline",
+                split: "single_block",
+                block_indices: [1],
+                block_texts: ["aries with a crush"],
+                reference_text: "aries with a crush",
+              },
+              {
+                schema_version: "copy_slots_v1",
+                slot_index: 1,
+                llm_field: "handle",
+                split: "single_block",
+                block_indices: [0],
+                block_texts: ["astrhology"],
+                reference_text: "astrhology",
+              },
+            ],
+          },
+        ],
+      },
+      reference_items: [],
+      slide_plans: [],
+    };
+    const llmSlide = {
+      headline: "Aries in Love Mode",
+      body: "When Aries has a crush, the sparks are immediate and bold.",
+      text_blocks: [
+        { role: "headline", text: "Aries in Love Mode" },
+        { role: "body", text: "When Aries has a crush, the sparks are immediate and bold." },
+      ],
+    };
+    const layers = buildMimicDocAiRenderTextLayers(mimic, 1, llmSlide, undefined, {
+      projectHandle: "@astro",
+      textBacking: true,
+    });
+    expect(layers).toHaveLength(1);
+    expect(layers[0]?.text).toBe("Aries in Love Mode");
+    expect(layers[0]?.y_px).toBeGreaterThan(600);
+    expect(layers[0]?.y_px).toBeLessThan(700);
+    expect(layers.map((l) => l.text).join(" ")).not.toContain("sparks are immediate");
   });
 
   it("buildMimicDocAiRenderTextLayers maps text_blocks by index when fewer OCR boxes than copy lines", () => {
@@ -1091,6 +1217,50 @@ describe("mimic-slide-typography", () => {
     expect(byRole.get("handle")).toBe("@signandsound");
   });
 
+  it("buildMimicDocAiRenderTextLayers derives decor title from reference when LLM gives no title (no duplicate paragraph)", () => {
+    const ocrSlide = {
+      slide_index: 3,
+      text_blocks: [
+        {
+          text: "THE VIRGO MOTHER",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@sistersvillage",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        {
+          text: "Body placeholder from reference",
+          role: "body",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.55, w: 0.8, h: 0.2 },
+        },
+      ],
+    };
+    // Inverted LLM copy: the paragraph lands in `headline` and there is no kicker /
+    // slide_title to derive a decor title from — this is the case that regressed and
+    // printed the paragraph in both the headline and body boxes.
+    const paragraph =
+      "Steady and nurturing, Taurus mothers pour their hearts into family life. They give everything to create a loving home, offering endless support and comfort.";
+    const scoped = templateBgLlmSlideForDocAi(3, 12, { headline: paragraph, body: "" });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      3,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const byRole = new Map(layers.map((l) => [l.role, l.text]));
+    expect(byRole.get("headline")).toBe("THE TAURUS MOTHER");
+    expect(byRole.get("body")).toBe(paragraph);
+    // The headline must never duplicate the body paragraph.
+    expect(byRole.get("headline")).not.toBe(byRole.get("body"));
+  });
+
   it("buildMimicDocAiRenderTextLayers uses per-slide zodiac headline over shared OCR decor", () => {
     const ocrSlide = {
       slide_index: 4,
@@ -1136,6 +1306,112 @@ describe("mimic-slide-typography", () => {
     );
     expect(layers.map((l) => l.text).join(" ")).toContain("First impressions");
     expect(layers.map((l) => l.text)).not.toContain("Cancer");
+  });
+
+  it("template_bg body slide collapses fragmented OCR body boxes to one body layer", () => {
+    const bodyFragments = Array.from({ length: 12 }, (_, i) => ({
+      text: `Reference body line ${i + 1}`,
+      role: "body",
+      source: "document_ai",
+      bbox_norm: { x: 0.1, y: 0.25 + i * 0.05, w: 0.8, h: 0.04 },
+    }));
+    const ocrSlide = {
+      slide_index: 4,
+      text_blocks: [
+        {
+          text: "Cancer",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+        {
+          text: "@signandsound",
+          role: "handle",
+          source: "document_ai",
+          bbox_norm: { x: 0.35, y: 0.18, w: 0.3, h: 0.04 },
+        },
+        ...bodyFragments,
+      ],
+    };
+    const body =
+      "Cancer's love is nurturing, intuitive, and deeply emotional. They create safe spaces and remember every small detail.";
+    const scoped = templateBgLlmSlideForDocAi(4, 12, {
+      headline: "Cancer: The Heartfelt Romantic",
+      body,
+    });
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      4,
+      scoped,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const bodySentence = "Cancer's love is nurturing, intuitive, and deeply emotional.";
+    const rawManyBlocks = {
+      headline: "Cancer: The Heartfelt Romantic",
+      body: bodySentence.repeat(12),
+      text_blocks: [
+        { role: "headline", text: "Cancer: The Heartfelt Romantic" },
+        ...Array.from({ length: 12 }, () => ({ role: "body", text: bodySentence })),
+      ],
+    };
+    const layersManyBlocks = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      4,
+      rawManyBlocks,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const uniqueBodyLines = Array.from({ length: 12 }, (_, i) => `Body sentence ${i + 1} about Cancer love.`);
+    const rawUniqueBlocks = {
+      headline: "Cancer: The Heartfelt Romantic",
+      body: uniqueBodyLines.join(" "),
+      text_blocks: [
+        { role: "headline", text: "Cancer: The Heartfelt Romantic" },
+        ...uniqueBodyLines.map((text) => ({ role: "body", text })),
+      ],
+    };
+    const layersUnique = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      4,
+      rawUniqueBlocks,
+      undefined,
+      { projectHandle: "@signandsound", textBacking: true, totalSlides: 12 }
+    );
+    const bodyLayers = layers.filter((l) => l.role === "body");
+    expect(bodyLayers.length).toBe(1);
+    expect(bodyLayers[0]?.text).toContain("nurturing");
+    expect(layers.map((l) => l.text)).not.toContain("@signandsound");
+    expect(layers.some((l) => l.role === "headline" && l.text.includes("Heartfelt"))).toBe(true);
+    expect(layersManyBlocks.filter((l) => l.role === "body").length).toBe(1);
+    expect(layersUnique.filter((l) => l.role === "body").length).toBe(1);
+  });
+
+  it("template_bg body slide synthesizes body layer when OCR only has headline geometry", () => {
+    const ocrSlide = {
+      slide_index: 1,
+      text_blocks: [
+        {
+          text: "GEMINI",
+          role: "headline",
+          source: "document_ai",
+          bbox_norm: { x: 0.1, y: 0.08, w: 0.8, h: 0.08 },
+        },
+      ],
+    };
+    const layers = buildMimicDocAiRenderTextLayers(
+      { mode: "template_bg", visual_guideline: { slides: [ocrSlide] } },
+      3,
+      {
+        headline: "Gemini: The Curious Flirt",
+        body: "For Gemini, love is conversation, curiosity, and mental connection.",
+      },
+      undefined,
+      { totalSlides: 12 }
+    );
+    expect(layers.filter((l) => l.role === "body").length).toBe(1);
+    expect(layers.some((l) => l.text.includes("conversation"))).toBe(true);
+    expect(layers.some((l) => l.role === "headline" && l.text.includes("Curious"))).toBe(true);
   });
 
   it("docAiBlocksShareVerticalStack detects same column", () => {
@@ -1271,6 +1547,82 @@ describe("mimic-slide-typography", () => {
   it("clampDocAiTextBackFontSizePx enforces readable text-back floor", () => {
     expect(clampDocAiTextBackFontSizePx(12)).toBe(MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX);
     expect(clampDocAiTextBackFontSizePx(44)).toBe(44);
+  });
+
+  it("constrainBBoxToFullBleedSideColumn keeps a left-side box out of the subject zone", () => {
+    const out = constrainBBoxToFullBleedSideColumn({ x: 0.05, y: 0.4, w: 0.7, h: 0.4 });
+    // Stays in the left column: right edge must not cross the subject zone (x=0.22).
+    expect(out.x + out.w).toBeLessThanOrEqual(0.22);
+    expect(out.w).toBeLessThan(0.7);
+    expect(out.h).toBeLessThanOrEqual(0.32);
+  });
+
+  it("constrainBBoxToFullBleedSideColumn pins a right-side box past the subject zone", () => {
+    const out = constrainBBoxToFullBleedSideColumn({ x: 0.6, y: 0.4, w: 0.35, h: 0.1 });
+    // Right column starts at/after the subject zone right edge (x=0.78).
+    expect(out.x).toBeGreaterThanOrEqual(0.78);
+  });
+
+  it("constrainBBoxToFullBleedSideColumn keeps copy in a column regardless of vertical band", () => {
+    // A nudged corner box widens into the subject zone after expansion, so the
+    // constraint applies by horizontal side even when the (pre-expansion) box
+    // sits above or below the subject band.
+    const above = constrainBBoxToFullBleedSideColumn({ x: 0.05, y: 0.02, w: 0.9, h: 0.08 });
+    expect(above.x + above.w).toBeLessThanOrEqual(0.22);
+    const below = constrainBBoxToFullBleedSideColumn({ x: 0.6, y: 0.9, w: 0.35, h: 0.06 });
+    expect(below.x).toBeGreaterThanOrEqual(0.78);
+  });
+
+  it("full-bleed trait copy stays in the side column instead of crossing the subject", () => {
+    const layers = buildMimicDocAiRenderTextLayers(
+      {
+        mode: "carousel_visual",
+        visual_guideline: {
+          slides: [
+            {
+              slide_index: 1,
+              text_blocks: [
+                {
+                  text: "TAURUS",
+                  role: "headline",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.1, y: 0.06, w: 0.8, h: 0.08 },
+                  font_size_px: 80,
+                },
+                {
+                  text: "stays in bed all day",
+                  role: "body",
+                  source: "document_ai",
+                  bbox_norm: { x: 0.08, y: 0.42, w: 0.5, h: 0.18 },
+                  font_size_px: 40,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      1,
+      {
+        headline: "Taurus",
+        body: "Living for sleepovers with their devoted fur baby every single weekend",
+        text_blocks: [
+          { role: "headline", text: "Taurus" },
+          {
+            role: "body",
+            text: "Living for sleepovers with their devoted fur baby every single weekend",
+          },
+        ],
+      },
+      { ink: "#000000", body: "#222222" },
+      { textBacking: true, avoidCenterSubject: true }
+    );
+    const bodyLayer = layers.find((l) => /sleepovers/i.test(l.text));
+    expect(bodyLayer).toBeTruthy();
+    // Box must not stretch across the center subject zone (left edge ~238px).
+    expect((bodyLayer?.x_px ?? 0) + (bodyLayer?.w_px ?? 0)).toBeLessThanOrEqual(250);
+    // Font shrinks to fit the narrow column rather than ballooning to the ideal.
+    expect(bodyLayer?.font_size_px ?? 0).toBeGreaterThanOrEqual(MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX);
+    expect(bodyLayer?.font_size_px ?? 0).toBeLessThanOrEqual(60);
   });
 
   it("prefers document_ai_ocr_v1 text_layers geometry over text_blocks", () => {

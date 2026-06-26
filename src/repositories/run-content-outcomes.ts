@@ -2,7 +2,9 @@ import type { Pool } from "pg";
 import { isCarouselFlow, isImageFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
 import { pickStoredQcResult } from "../domain/generation-payload-qc.js";
 import { pickRenderState } from "../domain/content-job-render-state.js";
-import { resolveJobFlowDisplayLabel } from "../domain/job-flow-display-label.js";
+import { resolveJobFlowDisplayLabel, carouselRenderStyleFromMimicPayload } from "../domain/job-flow-display-label.js";
+import { buildWhyMimicContentLogSummary } from "../domain/why-mimic-execution.js";
+import { loadConfig } from "../config.js";
 import { buildJobContentPreview } from "../services/content-transparency-preview.js";
 import { q } from "../db/queries.js";
 
@@ -418,12 +420,21 @@ export async function buildEnrichedRunContentLogRows(
     const errorMessage = resolveJobErrorMessage(job, persisted, trail);
     const activeDraft = activeDraftFromGenerationPayload(gp);
     const mimic = gp.mimic_v1 && typeof gp.mimic_v1 === "object" ? gp.mimic_v1 : null;
+    const carouselRenderStyle = carouselRenderStyleFromMimicPayload(gp);
+    const cfg = loadConfig();
+    const whyMimicIntelligence = buildWhyMimicContentLogSummary(job.flow_type, gp, {
+      whyMinChars: cfg.SIL_WHY_IT_WORKS_MIN_CHARS,
+      thesisMinChars: cfg.SIL_STRATEGIC_THESIS_MIN_CHARS,
+      visualMinChars: cfg.SIL_VISUAL_DESCRIPTION_MIN_CHARS,
+    });
 
     const summary: Record<string, unknown> = {
       source: "jobs_enriched",
       flow_label: flowDisplay.flow_label,
       is_mimic_replication: flowDisplay.is_mimic_replication,
       mimic_kind: flowDisplay.mimic_kind,
+      carousel_render_style: carouselRenderStyle,
+      ...(whyMimicIntelligence ? { why_mimic_intelligence: whyMimicIntelligence } : {}),
       ...jobSummaryFromPayload(job),
       qc_status: job.qc_status,
       recommended_route: job.recommended_route ?? qc?.recommended_route ?? null,

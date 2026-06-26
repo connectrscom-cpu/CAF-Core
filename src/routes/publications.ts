@@ -17,6 +17,7 @@ import {
   type PublicationContentFormat,
   type PublicationStatus,
 } from "../repositories/publications.js";
+import { upsertJobOutcomeOnPublish } from "../repositories/job-outcomes.js";
 import { buildPublicationN8nPayload } from "../services/publication-n8n-payload.js";
 import { dryRunPublishPlacement } from "../services/publish-executors/dry-run.js";
 import { publishPlacementToMeta } from "../services/meta-graph-publish.js";
@@ -25,6 +26,35 @@ import type { AppConfig } from "../config.js";
 interface Deps {
   db: Pool;
   config: AppConfig;
+}
+
+async function recordPublishOnJob(
+  db: Pool,
+  projectId: string,
+  placement: {
+    id: string;
+    task_id: string;
+    platform: string;
+    posted_url: string | null;
+    platform_post_id: string | null;
+    published_at: string | null;
+  }
+): Promise<void> {
+  const publishedAt = placement.published_at ?? new Date().toISOString();
+  await appendPublicationResultToJob(db, projectId, placement.task_id, {
+    placement_id: placement.id,
+    platform: placement.platform,
+    posted_url: placement.posted_url,
+    platform_post_id: placement.platform_post_id,
+    published_at: publishedAt,
+  }).catch(() => {});
+  await upsertJobOutcomeOnPublish(db, projectId, placement.task_id, {
+    placement_id: placement.id,
+    platform: placement.platform,
+    posted_url: placement.posted_url,
+    platform_post_id: placement.platform_post_id,
+    published_at: publishedAt,
+  }).catch(() => {});
 }
 
 const contentFormatSchema = z.enum(["carousel", "video", "unknown"]);
@@ -204,13 +234,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
         external_ref: "caf_core_dry_run",
       });
       if (completed) {
-        await appendPublicationResultToJob(db, project.id, completed.task_id, {
-          placement_id: completed.id,
-          platform: completed.platform,
-          posted_url: completed.posted_url,
-          platform_post_id: completed.platform_post_id,
-          published_at: completed.published_at ?? new Date().toISOString(),
-        }).catch(() => {});
+        await recordPublishOnJob(db, project.id, completed);
       }
       return {
         ok: true,
@@ -250,13 +274,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
         external_ref: "caf_core_meta",
       });
       if (completed) {
-        await appendPublicationResultToJob(db, project.id, completed.task_id, {
-          placement_id: completed.id,
-          platform: completed.platform,
-          posted_url: completed.posted_url,
-          platform_post_id: completed.platform_post_id,
-          published_at: completed.published_at ?? new Date().toISOString(),
-        }).catch(() => {});
+        await recordPublishOnJob(db, project.id, completed);
       }
       return {
         ok: true,
@@ -290,13 +308,7 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
 
       const row = await completePublicationPlacement(db, project.id, req.params.id, parsed.data);
       if (parsed.data.post_success === true && row) {
-        await appendPublicationResultToJob(db, project.id, row.task_id, {
-          placement_id: row.id,
-          platform: row.platform,
-          posted_url: row.posted_url,
-          platform_post_id: row.platform_post_id,
-          published_at: row.published_at ?? new Date().toISOString(),
-        }).catch(() => {});
+        await recordPublishOnJob(db, project.id, row);
       }
 
       return { ok: true, placement: rowToJson(row) };

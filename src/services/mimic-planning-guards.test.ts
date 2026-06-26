@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   shouldExpandMimicCarouselPickForRow,
   shouldExpandVisualFirstCarouselForRow,
+  shouldExpandWhyMimicCarouselForRow,
   shouldSkipMimicFlowExpansion,
 } from "./mimic-planning-guards.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "../domain/signal-pack-top-performer-knowledge.js";
 
@@ -64,5 +66,17 @@ describe("mimic-planning-guards carousel lanes", () => {
     };
     expect(shouldExpandVisualFirstCarouselForRow(row, carouselDerived)).toBe(false);
     expect(shouldExpandMimicCarouselPickForRow(row, carouselDerived)).toBe(false);
+  });
+
+  it("allows manual why_carousel picks only on FLOW_WHY_MIMIC_CAROUSEL", () => {
+    const row = {
+      manual_mimic_pick: true,
+      mimic_kind: "why_carousel",
+      grounding_insight_ids: ["ins_car_2f"],
+    };
+    expect(shouldExpandWhyMimicCarouselForRow(row, carouselDerived)).toBe(true);
+    expect(shouldExpandMimicCarouselPickForRow(row, carouselDerived)).toBe(false);
+    expect(shouldSkipMimicFlowExpansion(FLOW_WHY_MIMIC_CAROUSEL, row, carouselDerived)).toBe(false);
+    expect(shouldSkipMimicFlowExpansion(FLOW_TOP_PERFORMER_MIMIC_CAROUSEL, row, carouselDerived)).toBe(true);
   });
 });

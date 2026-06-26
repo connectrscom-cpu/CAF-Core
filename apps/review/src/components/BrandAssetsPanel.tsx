@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
 import { useReviewProject } from "./ReviewProjectContext";
 
 type BrandAssetKind = "logo" | "reference_image" | "palette" | "font" | "other";
@@ -42,6 +43,23 @@ function projectApiSuffix(multiProject: boolean, activeProjectSlug: string): str
   return "";
 }
 
+function resolveApiSuffix(
+  projectSlug: string | undefined,
+  multiProject: boolean,
+  activeProjectSlug: string
+): string {
+  const slug = (projectSlug ?? activeProjectSlug).trim();
+  if (projectSlug) return `?project=${encodeURIComponent(projectSlug)}`;
+  return projectApiSuffix(multiProject, slug);
+}
+
+export type BrandAssetsPanelProps = {
+  /** When set (e.g. on `/brand/[slug]/profile`), scopes API calls to this project. */
+  projectSlug?: string;
+  /** Marketer profile uses simplified UI; admin settings keeps full table + HeyGen controls. */
+  variant?: "admin" | "marketer";
+};
+
 function parseHex(raw: string): string | null {
   const t = raw.trim();
   if (!t) return null;
@@ -72,9 +90,15 @@ function inferFontMode(meta: Record<string, unknown> | undefined): FontFormMode 
   return "url";
 }
 
-export function BrandAssetsPanel() {
+function kindLabel(k: BrandAssetKind): string {
+  return ({ logo: "Logo", reference_image: "Reference image", palette: "Color palette", font: "Typography", other: "Other" }[k]);
+}
+
+export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssetsPanelProps) {
   const { multiProject, activeProjectSlug } = useReviewProject();
-  const qs = projectApiSuffix(multiProject, activeProjectSlug);
+  const resolvedSlug = (projectSlug ?? activeProjectSlug).trim();
+  const qs = resolveApiSuffix(projectSlug, multiProject, activeProjectSlug);
+  const isMarketer = variant === "marketer";
 
   const [assets, setAssets] = useState<BrandAsset[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,8 +138,14 @@ export function BrandAssetsPanel() {
   };
 
   const startNew = () => {
+    startNewWithKind("reference_image");
+  };
+
+  const startNewWithKind = (kind: BrandAssetKind) => {
     resetAuxState();
-    setEditing({ kind: "reference_image", label: "", public_url: "", sort_order: assets?.length ?? 0 });
+    setEditing({ kind, label: "", public_url: "", sort_order: assets?.length ?? 0 });
+    if (kind === "palette") setPaletteHex(["", "", "", "", ""]);
+    if (kind === "font") setFontMode("google");
     setMessage(null);
   };
 
@@ -331,25 +361,110 @@ export function BrandAssetsPanel() {
     return list.filter((a) => a.kind === overviewFilter);
   }, [assets, overviewFilter]);
 
-  const kindLabel = (k: BrandAssetKind) =>
-    ({ logo: "Logo", reference_image: "Reference", palette: "Palette", font: "Font", other: "Other" }[k]);
+  const paletteRow = (i: number) => {
+    const h = paletteHex[i] ?? "";
+    const swatch = parseHex(h) ?? "#000000";
+    return (
+      <div key={i} className="brand-kit-palette-row">
+        {isMarketer && (
+          <input
+            type="color"
+            className="brand-kit-color-picker"
+            value={swatch}
+            aria-label={`Color ${i + 1}`}
+            onChange={(e) => {
+              const next = [...paletteHex] as [string, string, string, string, string];
+              next[i] = e.target.value.toLowerCase();
+              setPaletteHex(next);
+            }}
+          />
+        )}
+        <input
+          type="text"
+          className={isMarketer ? "profile-field-input" : "filter-input"}
+          value={h}
+          onChange={(e) => {
+            const next = [...paletteHex] as [string, string, string, string, string];
+            next[i] = e.target.value;
+            setPaletteHex(next);
+          }}
+          placeholder="#RRGGBB"
+        />
+        {!isMarketer && (
+          <span
+            aria-hidden
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 6,
+              border: "1px solid var(--border)",
+              background: parseHex(h) ?? "transparent",
+            }}
+          />
+        )}
+        {isMarketer && (
+          <span className="brand-kit-palette-swatch" style={{ background: parseHex(h) ?? "transparent" }} aria-hidden />
+        )}
+      </div>
+    );
+  };
+
+  const formFieldClass = isMarketer ? "profile-field" : "filter-group";
+  const formInputClass = isMarketer ? "brand-kit-input" : "filter-input";
 
   return (
-    <div style={{ marginTop: 28 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+    <div className={isMarketer ? "brand-kit-panel" : undefined} style={isMarketer ? undefined : { marginTop: 28 }}>
+      <div
+        className={isMarketer ? "brand-kit-header" : undefined}
+        style={
+          isMarketer
+            ? undefined
+            : { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }
+        }
+      >
         <div>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Brand Assets</h3>
-          <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
-            Logos, reference images, palettes, fonts. HeyGen Video Agent flows use entries with a public file URL and{" "}
-            <code>heygen_asset_id</code> after sync.
-          </div>
+          {isMarketer ? (
+            <>
+              <h3 className="profile-section-title">Brand kit</h3>
+              <p className="brand-kit-lead">
+                Logos, reference images, color palettes, and typography. CAF uses these when generating and rendering
+                content for this brand.
+              </p>
+            </>
+          ) : (
+            <>
+              <h3 style={{ margin: 0, fontSize: 16 }}>Brand Assets</h3>
+              <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                Logos, reference images, palettes, fonts. HeyGen Video Agent flows use entries with a public file URL and{" "}
+                <code>heygen_asset_id</code> after sync.
+              </div>
+            </>
+          )}
         </div>
-        {!editing && (
+        {!editing && !isMarketer && (
           <button type="button" className="btn-primary" onClick={startNew}>
             + Add brand asset
           </button>
         )}
       </div>
+
+      {isMarketer && !editing && (
+        <div className="brand-kit-quick-add">
+          <span className="brand-kit-quick-label">Add</span>
+          {(
+            [
+              { kind: "logo" as const, label: "Logo" },
+              { kind: "reference_image" as const, label: "Reference image" },
+              { kind: "palette" as const, label: "Color palette" },
+              { kind: "font" as const, label: "Typography" },
+            ] as const
+          ).map(({ kind, label }) => (
+            <button key={kind} type="button" className="profile-chip" onClick={() => startNewWithKind(kind)}>
+              + {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {message && (
         <div
@@ -369,13 +484,16 @@ export function BrandAssetsPanel() {
       {loading && <p style={{ color: "var(--muted)" }}>Loading brand assets…</p>}
 
       {editing && (
-        <div className="card" style={{ marginBottom: 16 }}>
-          <div className="card-header">{editing.id ? "Edit brand asset" : "Add brand asset"}</div>
+        <div className={isMarketer ? "brand-kit-form" : "card"} style={isMarketer ? undefined : { marginBottom: 16 }}>
+          <div className={isMarketer ? "brand-kit-form-title" : "card-header"}>
+            {editing.id ? `Edit ${kindLabel(editing.kind ?? "other").toLowerCase()}` : `Add ${kindLabel(editing.kind ?? "other").toLowerCase()}`}
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div className="filter-group">
-              <label className="filter-label">Kind</label>
+            {!isMarketer && (
+            <div className={formFieldClass}>
+              <label className={isMarketer ? "profile-field-label" : "filter-label"}>Kind</label>
               <select
-                className="filter-input"
+                className={formInputClass}
                 value={editing.kind ?? "other"}
                 onChange={(e) => {
                   const k = e.target.value as BrandAssetKind;
@@ -392,186 +510,189 @@ export function BrandAssetsPanel() {
                 ))}
               </select>
             </div>
+            )}
 
             {(editing.kind === "logo" || editing.kind === "reference_image") && (
               <>
-                <div className="filter-group">
-                  <label className="filter-label">Label (optional prefix for multiple files)</label>
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                    {isMarketer ? "Name (optional)" : "Label (optional prefix for multiple files)"}
+                  </label>
                   <input
                     type="text"
-                    className="filter-input"
+                    className={formInputClass}
                     value={editing.label ?? ""}
                     onChange={(e) => setEditing((p) => (p ? { ...p, label: e.target.value } : p))}
-                    placeholder={editing.kind === "logo" ? "e.g. Primary · light" : "e.g. Moodboard"}
+                    placeholder={editing.kind === "logo" ? "e.g. Primary logo" : "e.g. Moodboard reference"}
                   />
                 </div>
                 {!editing.id && (
-                  <div className="filter-group">
-                    <label className="filter-label">Upload images (one or many)</label>
-                    <input
-                      type="file"
-                      className="filter-input"
-                      accept="image/*,.svg"
-                      multiple
-                      onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []))}
-                    />
+                  <div className={formFieldClass}>
+                    <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                      {isMarketer ? "Upload image" : "Upload images (one or many)"}
+                    </label>
+                    <div className={isMarketer ? "brand-kit-dropzone" : undefined}>
+                      <input
+                        type="file"
+                        className={isMarketer ? "brand-kit-file-input" : formInputClass}
+                        accept="image/*,.svg"
+                        multiple
+                        onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []))}
+                      />
+                      {isMarketer && (
+                        <span className="brand-kit-dropzone-hint">
+                          PNG, JPG, SVG — you can upload multiple logos or references at once
+                        </span>
+                      )}
+                    </div>
                     {pendingFiles.length > 0 && (
-                      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                      <div className="brand-kit-file-count">
                         {pendingFiles.length} file{pendingFiles.length === 1 ? "" : "s"} selected
                       </div>
                     )}
                   </div>
                 )}
                 {editing.id && (
-                  <div className="filter-group">
-                    <label className="filter-label">Replace file (optional)</label>
+                  <div className={formFieldClass}>
+                    <label className={isMarketer ? "profile-field-label" : "filter-label"}>Replace file (optional)</label>
                     <input
                       type="file"
-                      className="filter-input"
+                      className={formInputClass}
                       accept="image/*,.svg"
                       onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []).slice(0, 1))}
                     />
                   </div>
                 )}
-                <div className="filter-group">
-                  <label className="filter-label">Or public URL</label>
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                    {isMarketer ? "Or paste image URL" : "Or public URL"}
+                  </label>
                   <input
                     type="text"
-                    className="filter-input"
+                    className={formInputClass}
                     value={editing.public_url ?? ""}
                     onChange={(e) => setEditing((p) => (p ? { ...p, public_url: e.target.value } : p))}
                     placeholder="https://…"
                   />
                 </div>
-                <div className="filter-group">
-                  <label className="filter-label">Sort order</label>
-                  <input
-                    type="number"
-                    className="filter-input"
-                    value={editing.sort_order ?? 0}
-                    onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
-                  />
-                </div>
+                {!isMarketer && (
+                  <div className={formFieldClass}>
+                    <label className="filter-label">Sort order</label>
+                    <input
+                      type="number"
+                      className={formInputClass}
+                      value={editing.sort_order ?? 0}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
+                    />
+                  </div>
+                )}
               </>
             )}
 
             {editing.kind === "palette" && (
               <>
-                <div className="filter-group">
-                  <label className="filter-label">Label</label>
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>Palette name</label>
                   <input
                     type="text"
-                    className="filter-input"
+                    className={formInputClass}
                     value={editing.label ?? ""}
                     onChange={(e) => setEditing((p) => (p ? { ...p, label: e.target.value } : p))}
-                    placeholder="e.g. Primary palette"
+                    placeholder="e.g. Primary brand colors"
                   />
                 </div>
-                <div className="filter-group">
-                  <label className="filter-label">Colors (hex, up to 5)</label>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {paletteHex.map((h, i) => (
-                      <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <input
-                          type="text"
-                          className="filter-input"
-                          value={h}
-                          onChange={(e) => {
-                            const next = [...paletteHex] as [string, string, string, string, string];
-                            next[i] = e.target.value;
-                            setPaletteHex(next);
-                          }}
-                          placeholder="#RRGGBB"
-                          style={{ flex: 1 }}
-                        />
-                        <span
-                          aria-hidden
-                          style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: 6,
-                            border: "1px solid var(--border)",
-                            background: parseHex(h) ?? "transparent",
-                          }}
-                        />
-                      </div>
-                    ))}
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                    {isMarketer ? "Pick up to 5 colors" : "Colors (hex, up to 5)"}
+                  </label>
+                  {isMarketer && (
+                    <span className="profile-field-hint">Use the color picker or type a hex code like #ff5500</span>
+                  )}
+                  <div className="brand-kit-palette-list">{paletteHex.map((_, i) => paletteRow(i))}</div>
+                </div>
+                {!isMarketer && (
+                  <div className={formFieldClass}>
+                    <label className="filter-label">Sort order</label>
+                    <input
+                      type="number"
+                      className={formInputClass}
+                      value={editing.sort_order ?? 0}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
+                    />
                   </div>
-                </div>
-                <div className="filter-group">
-                  <label className="filter-label">Sort order</label>
-                  <input
-                    type="number"
-                    className="filter-input"
-                    value={editing.sort_order ?? 0}
-                    onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
-                  />
-                </div>
+                )}
               </>
             )}
 
             {editing.kind === "font" && (
               <>
-                <div className="filter-group">
-                  <label className="filter-label">Label</label>
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>Label</label>
                   <input
                     type="text"
-                    className="filter-input"
+                    className={formInputClass}
                     value={editing.label ?? ""}
                     onChange={(e) => setEditing((p) => (p ? { ...p, label: e.target.value } : p))}
-                    placeholder="e.g. Body · brand"
+                    placeholder={isMarketer ? "e.g. Headings · body text" : "e.g. Body · brand"}
                   />
                 </div>
-                <div className="filter-group">
-                  <label className="filter-label">Source</label>
+                <div className={formFieldClass}>
+                  <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                    {isMarketer ? "How do you want to add this font?" : "Source"}
+                  </label>
                   <select
-                    className="filter-input"
+                    className={formInputClass}
                     value={fontMode}
                     onChange={(e) => setFontMode(e.target.value as FontFormMode)}
                   >
-                    <option value="google">Choose a Google Font (name + optional file URL)</option>
-                    <option value="url">Font file URL</option>
-                    <option value="upload">Upload font file</option>
+                    <option value="google">{isMarketer ? "Google Font" : "Choose a Google Font (name + optional file URL)"}</option>
+                    <option value="url">{isMarketer ? "Link to a font file" : "Font file URL"}</option>
+                    <option value="upload">{isMarketer ? "Upload a font file" : "Upload font file"}</option>
                   </select>
                 </div>
                 {fontMode === "google" && (
                   <>
-                    <div className="filter-group">
-                      <label className="filter-label">Font family</label>
+                    <div className={formFieldClass}>
+                      <label className={isMarketer ? "profile-field-label" : "filter-label"}>Font family</label>
                       <select
-                        className="filter-input"
+                        className={formInputClass}
                         value={googleFamily}
                         onChange={(e) => setGoogleFamily(e.target.value)}
+                        style={isMarketer ? { fontFamily: googleFamily } : undefined}
                       >
                         {PRESET_GOOGLE_FONTS.map((f) => (
-                          <option key={f} value={f}>
+                          <option key={f} value={f} style={{ fontFamily: f }}>
                             {f}
                           </option>
                         ))}
                       </select>
                     </div>
-                    <div className="filter-group">
-                      <label className="filter-label">Direct font file URL (for HeyGen sync)</label>
-                      <input
-                        type="text"
-                        className="filter-input"
-                        value={editing.public_url ?? ""}
-                        onChange={(e) => setEditing((p) => (p ? { ...p, public_url: e.target.value } : p))}
-                        placeholder="https://…/font.woff2"
-                      />
-                      <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
-                        HeyGen needs a direct link to a font file. Use Google Fonts helper sites to copy a{" "}
-                        <code>.woff2</code> URL, or switch to Upload.
+                    {!isMarketer && (
+                      <div className={formFieldClass}>
+                        <label className="filter-label">Direct font file URL (for HeyGen sync)</label>
+                        <input
+                          type="text"
+                          className={formInputClass}
+                          value={editing.public_url ?? ""}
+                          onChange={(e) => setEditing((p) => (p ? { ...p, public_url: e.target.value } : p))}
+                          placeholder="https://…/font.woff2"
+                        />
+                        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+                          HeyGen needs a direct link to a font file. Use Google Fonts helper sites to copy a{" "}
+                          <code>.woff2</code> URL, or switch to Upload.
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </>
                 )}
                 {fontMode === "url" && (
-                  <div className="filter-group">
-                    <label className="filter-label">Public URL (.woff2, .ttf, …)</label>
+                  <div className={formFieldClass}>
+                    <label className={isMarketer ? "profile-field-label" : "filter-label"}>
+                      {isMarketer ? "Font file URL" : "Public URL (.woff2, .ttf, …)"}
+                    </label>
                     <input
                       type="text"
-                      className="filter-input"
+                      className={formInputClass}
                       value={editing.public_url ?? ""}
                       onChange={(e) => setEditing((p) => (p ? { ...p, public_url: e.target.value } : p))}
                       placeholder="https://…"
@@ -579,25 +700,30 @@ export function BrandAssetsPanel() {
                   </div>
                 )}
                 {fontMode === "upload" && (
-                  <div className="filter-group">
-                    <label className="filter-label">Font file</label>
+                  <div className={formFieldClass}>
+                    <label className={isMarketer ? "profile-field-label" : "filter-label"}>Font file</label>
                     <input
                       type="file"
-                      className="filter-input"
+                      className={formInputClass}
                       accept=".woff2,.woff,.ttf,.otf,font/*"
                       onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []).slice(0, 1))}
                     />
+                    {isMarketer && (
+                      <span className="profile-field-hint">Supported: .woff2, .woff, .ttf, .otf</span>
+                    )}
                   </div>
                 )}
-                <div className="filter-group">
-                  <label className="filter-label">Sort order</label>
-                  <input
-                    type="number"
-                    className="filter-input"
-                    value={editing.sort_order ?? 0}
-                    onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
-                  />
-                </div>
+                {!isMarketer && (
+                  <div className={formFieldClass}>
+                    <label className="filter-label">Sort order</label>
+                    <input
+                      type="number"
+                      className={formInputClass}
+                      value={editing.sort_order ?? 0}
+                      onChange={(e) => setEditing((p) => (p ? { ...p, sort_order: Number(e.target.value) } : p))}
+                    />
+                  </div>
+                )}
               </>
             )}
 
@@ -654,16 +780,31 @@ export function BrandAssetsPanel() {
       )}
 
       {!loading && (assets?.length ?? 0) > 0 && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Overview</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div className={isMarketer ? "brand-kit-grid-wrap" : undefined} style={isMarketer ? undefined : { marginBottom: 20 }}>
+          <div
+            className={isMarketer ? "brand-kit-grid-header" : undefined}
+            style={
+              isMarketer
+                ? undefined
+                : { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }
+            }
+          >
+            <div style={isMarketer ? undefined : { fontSize: 13, fontWeight: 600 }}>
+              {isMarketer ? "Your brand kit" : "Overview"}
+            </div>
+            <div className={isMarketer ? "profile-chip-row" : undefined} style={isMarketer ? undefined : { display: "flex", gap: 6, flexWrap: "wrap" }}>
               {(["all", ...BRAND_ASSET_KINDS] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
-                  className={overviewFilter === f ? "btn-primary" : "btn-ghost"}
-                  style={{ fontSize: 12, padding: "4px 10px" }}
+                  className={
+                    isMarketer
+                      ? `profile-chip ${overviewFilter === f ? "active" : ""}`
+                      : overviewFilter === f
+                        ? "btn-primary"
+                        : "btn-ghost"
+                  }
+                  style={isMarketer ? undefined : { fontSize: 12, padding: "4px 10px" }}
                   onClick={() => setOverviewFilter(f)}
                 >
                   {f === "all" ? "All" : kindLabel(f)}
@@ -671,17 +812,13 @@ export function BrandAssetsPanel() {
               ))}
             </div>
           </div>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-              gap: 12,
-            }}
-          >
+          <div className={isMarketer ? "brand-kit-grid" : undefined} style={isMarketer ? undefined : { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
             {filteredOverview.map((a) => (
               <OverviewCard
                 key={a.id}
                 asset={a}
+                projectSlug={resolvedSlug}
+                isMarketer={isMarketer}
                 onEdit={() => startEdit(a)}
                 onDelete={() => remove(a.id)}
                 onSyncHeygen={() => syncHeygen(a.id)}
@@ -693,12 +830,17 @@ export function BrandAssetsPanel() {
       )}
 
       {!loading && (assets?.length ?? 0) === 0 && !editing && (
-        <div className="card" style={{ textAlign: "center", color: "var(--muted)", padding: 32, marginBottom: 16 }}>
-          No brand assets yet. Add logos, reference images, a palette, or fonts for HeyGen and LLM flows.
+        <div
+          className={isMarketer ? "brand-kit-empty" : "card"}
+          style={isMarketer ? undefined : { textAlign: "center", color: "var(--muted)", padding: 32, marginBottom: 16 }}
+        >
+          {isMarketer
+            ? "No brand assets yet. Use the buttons above to add your logo, reference images, color palette, or typography."
+            : "No brand assets yet. Add logos, reference images, a palette, or fonts for HeyGen and LLM flows."}
         </div>
       )}
 
-      {!loading && (assets?.length ?? 0) > 0 && (
+      {!isMarketer && !loading && (assets?.length ?? 0) > 0 && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>All assets (table)</div>
           <div style={{ overflowX: "auto" }}>
@@ -799,12 +941,16 @@ export function BrandAssetsPanel() {
 
 function OverviewCard({
   asset: a,
+  projectSlug,
+  isMarketer,
   onEdit,
   onDelete,
   onSyncHeygen,
   busy,
 }: {
   asset: BrandAsset;
+  projectSlug: string;
+  isMarketer: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onSyncHeygen: () => void;
@@ -812,27 +958,36 @@ function OverviewCard({
 }) {
   const hasUrl = typeof a.public_url === "string" && a.public_url.trim().length > 0;
   const synced = typeof a.heygen_asset_id === "string" && a.heygen_asset_id.length > 0;
-  const isImg =
-    a.kind === "logo" || a.kind === "reference_image" || a.kind === "other"
-      ? hasUrl && !/\.(woff2?|ttf|otf)$/i.test(a.public_url ?? "")
-      : false;
+  const isImg = a.kind === "logo" || a.kind === "reference_image" || a.kind === "other";
+  const imgSrc =
+    isImg && a.id && projectSlug
+      ? brandAssetProxyUrl(projectSlug, a) || a.public_url || ""
+      : a.public_url ?? "";
 
   return (
     <div
-      className="card"
-      style={{
-        padding: 12,
-        display: "flex",
-        flexDirection: "column",
-        gap: 8,
-        minHeight: 120,
-      }}
+      className={isMarketer ? "brand-kit-card" : "card"}
+      style={
+        isMarketer
+          ? undefined
+          : { padding: 12, display: "flex", flexDirection: "column", gap: 8, minHeight: 120 }
+      }
     >
-      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}>{a.kind}</div>
-      <div style={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}>{a.label ?? "—"}</div>
+      <div
+        className={isMarketer ? "brand-kit-card-kind" : undefined}
+        style={isMarketer ? undefined : { fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--muted)" }}
+      >
+        {kindLabel(a.kind)}
+      </div>
+      <div
+        className={isMarketer ? "brand-kit-card-title" : undefined}
+        style={isMarketer ? undefined : { fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}
+      >
+        {a.label ?? "—"}
+      </div>
 
       {a.kind === "palette" && Array.isArray(a.metadata_json?.colors) ? (
-        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div className={isMarketer ? "brand-kit-palette-preview" : undefined} style={isMarketer ? undefined : { display: "flex", gap: 4, flexWrap: "wrap" }}>
           {(a.metadata_json!.colors as unknown[])
             .filter((c) => typeof c === "string")
             .slice(0, 5)
@@ -840,28 +995,34 @@ function OverviewCard({
               <span
                 key={i}
                 title={String(c)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 6,
-                  background: String(c),
-                  border: "1px solid var(--border)",
-                }}
+                className={isMarketer ? "brand-kit-palette-swatch brand-kit-palette-swatch--lg" : undefined}
+                style={
+                  isMarketer
+                    ? { background: String(c) }
+                    : { width: 28, height: 28, borderRadius: 6, background: String(c), border: "1px solid var(--border)" }
+                }
               />
             ))}
         </div>
-      ) : isImg ? (
+      ) : isImg && imgSrc ? (
         <img
-          src={a.public_url ?? ""}
+          src={imgSrc}
           alt=""
-          style={{ width: "100%", maxHeight: 100, objectFit: "contain", borderRadius: 6, background: "var(--panel)" }}
+          className={isMarketer ? "brand-kit-card-img" : undefined}
+          style={
+            isMarketer
+              ? undefined
+              : { width: "100%", maxHeight: 100, objectFit: "contain", borderRadius: 6, background: "var(--panel)" }
+          }
         />
       ) : a.kind === "font" ? (
         <div style={{ fontSize: 12, color: "var(--muted)" }}>
           {typeof a.metadata_json?.font_family === "string" ? (
-            <span>
+            <span style={isMarketer ? { fontFamily: String(a.metadata_json.font_family), fontSize: 18 } : undefined}>
               {String(a.metadata_json.font_family)}
-              {typeof a.metadata_json.font_source === "string" ? ` · ${String(a.metadata_json.font_source)}` : ""}
+              {!isMarketer && typeof a.metadata_json.font_source === "string"
+                ? ` · ${String(a.metadata_json.font_source)}`
+                : ""}
             </span>
           ) : hasUrl ? (
             <a href={a.public_url ?? "#"} target="_blank" rel="noreferrer">
@@ -877,18 +1038,23 @@ function OverviewCard({
         </div>
       )}
 
-      <div style={{ marginTop: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div
+        className={isMarketer ? "brand-kit-card-actions" : undefined}
+        style={isMarketer ? undefined : { marginTop: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}
+      >
         <button type="button" className="btn-open-row" onClick={onEdit}>
           Edit
         </button>
-        <button
-          type="button"
-          className="btn-open-row"
-          disabled={!hasUrl || busy || a.kind === "palette"}
-          onClick={onSyncHeygen}
-        >
-          {busy ? "…" : synced ? "HeyGen" : "Sync"}
-        </button>
+        {!isMarketer && (
+          <button
+            type="button"
+            className="btn-open-row"
+            disabled={!hasUrl || busy || a.kind === "palette"}
+            onClick={onSyncHeygen}
+          >
+            {busy ? "…" : synced ? "HeyGen" : "Sync"}
+          </button>
+        )}
         <button type="button" className="btn-open-row" disabled={busy} onClick={onDelete}>
           Delete
         </button>

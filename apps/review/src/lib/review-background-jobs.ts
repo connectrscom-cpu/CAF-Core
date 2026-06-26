@@ -121,7 +121,7 @@ export async function registerReviewBackgroundJob(input: {
       : `Image regenerate · ${slideIndicesLabel(input.slideIndices)}`;
 
   const baselineAssetUrls =
-    input.kind === "image_regenerate"
+    input.kind === "image_regenerate" || input.kind === "text_reprint"
       ? await snapshotCarouselAssetUrls(input.taskId, input.project, input.slideIndices)
       : undefined;
 
@@ -165,12 +165,40 @@ function finishJob(id: string, status: ReviewBackgroundJobStatus, message: strin
 }
 
 function parseTaskReprintState(data: Record<string, string | undefined>) {
+  const status = (data.text_overlay_reprint_status ?? "").trim().toLowerCase() || null;
   return {
     active: data.text_overlay_reprint_active === "true",
-    failed: data.text_overlay_reprint_active === "failed",
+    failed: data.text_overlay_reprint_active === "failed" || status === "failed",
+    status,
     error: data.text_overlay_reprint_error ?? null,
+    requested_at: data.text_overlay_reprint_requested_at ?? null,
     completed_at: data.text_overlay_reprint_completed_at ?? null,
   };
+}
+
+function reprintRequestedAfterJobStart(requestedAt: string | null, startedMs: number): boolean {
+  if (!requestedAt) return false;
+  const reqMs = Date.parse(requestedAt);
+  return Number.isFinite(reqMs) && reqMs >= startedMs - 5000;
+}
+
+function textReprintLooksComplete(
+  job: ReviewBackgroundJob,
+  state: ReturnType<typeof parseTaskReprintState>,
+  startedMs: number
+): boolean {
+  if (state.failed) return false;
+  if (state.status === "completed") {
+    if (reprintRequestedAfterJobStart(state.requested_at, startedMs)) return true;
+    if (state.completed_at) {
+      const completedMs = Date.parse(state.completed_at);
+      if (Number.isFinite(completedMs) && completedMs >= startedMs - 5000) return true;
+    }
+  }
+  if (!state.active && state.completed_at && reprintRequestedAfterJobStart(state.requested_at, startedMs)) {
+    return true;
+  }
+  return false;
 }
 
 function assetUrlsForSlides(
@@ -246,14 +274,7 @@ async function pollReviewBackgroundJob(job: ReviewBackgroundJob): Promise<void> 
       finishJob(job.id, "failed", state.error ?? "Text reprint failed.");
       return;
     }
-    if (state.completed_at) {
-      const completedMs = Date.parse(state.completed_at);
-      if (Number.isFinite(completedMs) && completedMs >= startedMs - 5000) {
-        finishJob(job.id, "done", `${job.label} finished — refresh the preview to see updates.`);
-        return;
-      }
-    }
-    if (!state.active && state.completed_at) {
+    if (textReprintLooksComplete(job, state, startedMs)) {
       finishJob(job.id, "done", `${job.label} finished — refresh the preview to see updates.`);
     }
     return;
@@ -283,5 +304,5 @@ export function ensureReviewBackgroundJobPoller(): void {
     }
   };
   void tick();
-  pollTimer = setInterval(tick, 12_000);
+  pollTimer = setInterval(tick, 5_000);
 }

@@ -475,3 +475,64 @@ export const SCRAPER_CONFIG_FIELDS = {
     { key: "maxMainTextChars", label: "Max main_text chars", type: "number" as const, min: 1000, max: 100000 },
   ],
 } as const;
+
+export type ScraperPlatformKey = "instagram" | "tiktok" | "html" | "facebook" | "reddit";
+
+/** Human-facing post age → Apify `oldestPostDateUnified` / `onlyPostsNewerThan` label. */
+export function daysToOldestPostDateLabel(days: number): string {
+  const d = Math.max(1, Math.floor(days));
+  if (d === 1) return "1 day";
+  if (d < 30) return `${d} days`;
+  if (d <= 45) return "1 month";
+  if (d <= 75) return "2 months";
+  if (d <= 105) return "3 months";
+  if (d <= 200) return "6 months";
+  return "1 year";
+}
+
+/** Reddit listing window from marketer post-age days. */
+export function daysToRedditSortTime(days: number): RedditScraperConfig["sortTime"] {
+  const d = Math.max(1, Math.floor(days));
+  if (d <= 1) return "day";
+  if (d <= 7) return "week";
+  if (d <= 30) return "month";
+  if (d <= 365) return "year";
+  return "all";
+}
+
+/** Apply per-run post age limits without persisting project scraper config. */
+export function applyPostMaxAgeToConfig(
+  cfg: ScraperProjectConfig,
+  days: number,
+  platforms?: ScraperPlatformKey[]
+): ScraperProjectConfig {
+  const out: ScraperProjectConfig = JSON.parse(JSON.stringify(cfg)) as ScraperProjectConfig;
+  const ageLabel = daysToOldestPostDateLabel(days);
+  const platformSet = platforms?.length ? new Set(platforms) : null;
+
+  const forPlatform = (key: ScraperPlatformKey): boolean => !platformSet || platformSet.has(key);
+
+  if (forPlatform("tiktok")) {
+    out.scrapers = out.scrapers ?? {};
+    out.scrapers.tiktok = { ...out.scrapers.tiktok, oldestPostDateUnified: ageLabel };
+  }
+  if (forPlatform("reddit")) {
+    out.scrapers = out.scrapers ?? {};
+    out.scrapers.reddit = { ...out.scrapers.reddit, sortTime: daysToRedditSortTime(days) };
+  }
+  if (forPlatform("instagram")) {
+    out.actorInputExtras = out.actorInputExtras ?? {};
+    out.actorInputExtras.instagram = {
+      ...(out.actorInputExtras.instagram ?? {}),
+      onlyPostsNewerThan: ageLabel,
+    };
+  }
+  if (forPlatform("facebook")) {
+    out.actorInputExtras = out.actorInputExtras ?? {};
+    out.actorInputExtras.facebook = {
+      ...(out.actorInputExtras.facebook ?? {}),
+      onlyPostsNewerThan: ageLabel,
+    };
+  }
+  return out;
+}

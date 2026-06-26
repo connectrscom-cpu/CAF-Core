@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   applyLearningRule,
+  dismissLearningRule,
+  dismissPendingLearningRules,
   eraseLearningRule,
   eraseLearningRulesAll,
   getEditorialNotes,
@@ -14,7 +16,9 @@ import {
   retireLearningRule,
   triggerEditorialAnalysis,
   triggerLlmApprovalReview,
-  triggerMarketAnalysis,
+  triggerPerformanceAnalysis,
+  buildGlobalLearningDigest,
+  getLatestGlobalLearningDigest,
   uploadPerformanceCsv,
 } from "@/lib/caf-core-client";
 
@@ -68,6 +72,12 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(data);
   }
 
+  if (section === "global_digest_latest") {
+    const data = await getLatestGlobalLearningDigest();
+    if (!data) return NextResponse.json({ error: "Failed to fetch global digest" }, { status: 502 });
+    return NextResponse.json(data);
+  }
+
   const data = await getLearningRules(projectSlug);
   if (!data) return NextResponse.json({ error: "Failed to fetch learning rules" }, { status: 502 });
   return NextResponse.json(data);
@@ -95,12 +105,28 @@ export async function POST(req: NextRequest) {
     });
     return NextResponse.json(result ?? { error: "Failed" });
   }
-  if (action === "market") {
-    const result = await triggerMarketAnalysis(projectSlug, body.window_days);
+  if (action === "market" || action === "performance") {
+    const result = await triggerPerformanceAnalysis(projectSlug, {
+      window_days: body.window_days,
+      auto_create_rules: body.auto_create_rules === true,
+      emit_global_observation: body.emit_global_observation !== false,
+    });
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+  if (action === "global_digest") {
+    const result = await buildGlobalLearningDigest(body.window_days);
     return NextResponse.json(result ?? { error: "Failed" });
   }
   if (action === "apply_rule" && body.rule_id && body.storage_project) {
     const result = await applyLearningRule(body.storage_project, body.rule_id);
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+  if (action === "dismiss_rule" && body.rule_id && body.storage_project) {
+    const result = await dismissLearningRule(body.storage_project, body.rule_id);
+    return NextResponse.json(result ?? { error: "Failed" });
+  }
+  if (action === "dismiss_pending" && body.storage_project) {
+    const result = await dismissPendingLearningRules(body.storage_project);
     return NextResponse.json(result ?? { error: "Failed" });
   }
   if (action === "retire_rule" && body.rule_id && body.storage_project) {

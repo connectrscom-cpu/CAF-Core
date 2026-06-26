@@ -30,6 +30,8 @@ export async function insertLlmApprovalReview(
      * See `src/domain/upstream-recommendations.ts`.
      */
     upstream_recommendations?: UpstreamRecommendation[];
+    output_insights_json?: Record<string, unknown>;
+    raw_insights_llm_json?: Record<string, unknown> | null;
   }
 ): Promise<void> {
   const mintedPos = row.minted_pending_positive_rule ?? false;
@@ -39,8 +41,9 @@ export async function insertLlmApprovalReview(
        review_id, project_id, task_id, run_id, flow_type, platform, model,
        overall_score, scores_json, strengths, weaknesses, improvement_bullets,
        risk_flags, summary, raw_assistant_text, vision_image_urls, text_bundle_chars,
-       minted_pending_rule, minted_pending_positive_rule, upstream_recommendations
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb)
+       minted_pending_rule, minted_pending_positive_rule, upstream_recommendations,
+       output_insights_json, raw_insights_llm_json
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,$15,$16::jsonb,$17,$18,$19,$20::jsonb,$21::jsonb,$22::jsonb)
      ON CONFLICT (project_id, review_id) DO UPDATE SET
        model = EXCLUDED.model,
        overall_score = EXCLUDED.overall_score,
@@ -55,7 +58,9 @@ export async function insertLlmApprovalReview(
        text_bundle_chars = EXCLUDED.text_bundle_chars,
        minted_pending_rule = EXCLUDED.minted_pending_rule,
        minted_pending_positive_rule = EXCLUDED.minted_pending_positive_rule,
-       upstream_recommendations = EXCLUDED.upstream_recommendations`,
+       upstream_recommendations = EXCLUDED.upstream_recommendations,
+       output_insights_json = EXCLUDED.output_insights_json,
+       raw_insights_llm_json = EXCLUDED.raw_insights_llm_json`,
     [
       row.review_id,
       row.project_id,
@@ -77,6 +82,8 @@ export async function insertLlmApprovalReview(
       row.minted_pending_rule,
       mintedPos,
       JSON.stringify(upstream),
+      JSON.stringify(row.output_insights_json ?? {}),
+      row.raw_insights_llm_json != null ? JSON.stringify(row.raw_insights_llm_json) : null,
     ]
   );
 }

@@ -187,6 +187,7 @@ export async function POST(request: NextRequest) {
           textBacking,
           textBackingColor: textBackingColor || undefined,
           layerPosOverrides: draftOverrides,
+          forInspect: true,
         }
       );
       renderContext = enriched.renderContext;

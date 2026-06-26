@@ -12,6 +12,17 @@ import type {
 import type { MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-package.js";
 import {
+  isMimicFluxAnalysisSufficientForT2i,
+  isWhyMimicFluxInputSufficientForT2i,
+  mimicSlideHasUsableReference,
+} from "../domain/mimic-slide-analysis-quality.js";
+import {
+  buildWhyMimicFluxSlideInput,
+  MIMIC_EXECUTION_MODE_WHY,
+  parseWhyMimicSlideIntelligenceFromMimic,
+} from "../domain/why-mimic-execution.js";
+import { parseBrandExecutionBrief } from "../domain/brand-translation.js";
+import {
   finalizeMimicImageModelPrompt,
   sanitizeLayoutTemplateForImagePrompt,
   sanitizeVisualDescriptionForImagePrompt,
@@ -40,9 +51,18 @@ export type MimicFluxSlideAnalysisInput = {
 export type MimicFluxPromptGenerationMeta = {
   slides_requested: number;
   slides_written: number;
+  slides_reference_fallback: number;
   model: string;
   tokens: number;
   used_llm: boolean;
+};
+
+export type MimicSlideImagePromptResolution = {
+  prompt: string;
+  imageInputMode: MimicImageInputMode;
+  usesReferenceImage: boolean;
+  /** analysis_t2i was requested but reference_edit was chosen due to thin Nemotron/SIL analysis. */
+  analysisFallbackReason?: "insufficient_slide_analysis" | null;
 };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -316,8 +336,19 @@ export async function generateMimicFluxImagePromptsForJob(
 
   const bySlide: MimicFluxImagePromptsBySlide = {};
   const generatedAt = new Date().toISOString();
+  let slidesReferenceFallback = 0;
 
   for (const input of inputs) {
+    const hasReference = mimicSlideHasUsableReference(mimic, input.slide_index);
+    if (
+      imageInputMode === "analysis_t2i" &&
+      hasReference &&
+      !isMimicFluxAnalysisSufficientForT2i(input)
+    ) {
+      slidesReferenceFallback++;
+      continue;
+    }
+
     const flux_image_prompt =
       llmPrompts.get(input.slide_index) ?? buildDeterministicFluxImagePrompt(input);
     bySlide[String(input.slide_index)] = {
@@ -335,6 +366,7 @@ export async function generateMimicFluxImagePromptsForJob(
     meta: {
       slides_requested: inputs.length,
       slides_written: Object.keys(bySlide).length,
+      slides_reference_fallback: slidesReferenceFallback,
       model,
       tokens,
       used_llm: useLlm && llmPrompts.size > 0,
@@ -342,17 +374,44 @@ export async function generateMimicFluxImagePromptsForJob(
   };
 }
 
+function shouldFallbackAnalysisT2iToReference(
+  mimic: MimicPayloadV1,
+  slideIndex1Based: number
+): boolean {
+  if (!mimicSlideHasUsableReference(mimic, slideIndex1Based)) return false;
+
+  if (mimic.execution_mode === MIMIC_EXECUTION_MODE_WHY) {
+    const bundle = parseWhyMimicSlideIntelligenceFromMimic(mimic);
+    if (!bundle) return true;
+    const brandBrief = parseBrandExecutionBrief(mimic.brand_execution_brief);
+    const whyInput = buildWhyMimicFluxSlideInput(bundle, slideIndex1Based, { brandBrief });
+    return !isWhyMimicFluxInputSufficientForT2i(whyInput);
+  }
+
+  const analysisInput = buildMimicFluxSlideAnalysisInput(mimic, slideIndex1Based);
+  return !analysisInput || !isMimicFluxAnalysisSufficientForT2i(analysisInput);
+}
+
 export function resolveMimicSlideImagePrompt(
   mimic: MimicPayloadV1,
   slideIndex1Based: number,
   referenceEditPrompt: string,
   imageInputMode: MimicImageInputMode
-): { prompt: string; imageInputMode: MimicImageInputMode; usesReferenceImage: boolean } {
+): MimicSlideImagePromptResolution {
   if (imageInputMode !== "analysis_t2i") {
     return {
       prompt: referenceEditPrompt,
       imageInputMode: "reference_edit",
       usesReferenceImage: true,
+    };
+  }
+
+  if (shouldFallbackAnalysisT2iToReference(mimic, slideIndex1Based)) {
+    return {
+      prompt: referenceEditPrompt,
+      imageInputMode: "reference_edit",
+      usesReferenceImage: true,
+      analysisFallbackReason: "insufficient_slide_analysis",
     };
   }
 
@@ -373,6 +432,23 @@ export function resolveMimicSlideImagePrompt(
   }
 
   const fallbackInput = buildMimicFluxSlideAnalysisInput(mimic, slideIndex1Based);
+  if (fallbackInput && isMimicFluxAnalysisSufficientForT2i(fallbackInput)) {
+    return {
+      prompt: buildDeterministicFluxImagePrompt(fallbackInput),
+      imageInputMode: "analysis_t2i",
+      usesReferenceImage: false,
+    };
+  }
+
+  if (mimicSlideHasUsableReference(mimic, slideIndex1Based)) {
+    return {
+      prompt: referenceEditPrompt,
+      imageInputMode: "reference_edit",
+      usesReferenceImage: true,
+      analysisFallbackReason: "insufficient_slide_analysis",
+    };
+  }
+
   if (fallbackInput) {
     return {
       prompt: buildDeterministicFluxImagePrompt(fallbackInput),

@@ -216,6 +216,20 @@ const envSchema = z.object({
    * (BFL FLUX / configured provider) instead of Puppeteer HBS overlay or separate bg-extract + compose passes.
    */
   MIMIC_CAROUSEL_TEXT_VIA_FLUX: z.coerce.boolean().default(false),
+  /**
+   * When true, TP-grounded carousel copy prompts include Why Mimic strategic-function blocks
+   * (and brand translation when a brand profile exists). Default false = legacy semantic-fidelity copy only.
+   */
+  MIMIC_WHY_COPY_ENABLED: z.coerce.boolean().default(false),
+  /**
+   * Why Mimic / slide_intelligence: minimum chars for per-slide `why_it_works`
+   * (~3 substantive sentences). Shorter values are dropped at normalize / enriched on derive.
+   */
+  SIL_WHY_IT_WORKS_MIN_CHARS: z.coerce.number().int().min(0).max(800).default(144),
+  /** Minimum chars for deck-level `why_analysis.strategic_thesis` (~2–3 sentences). */
+  SIL_STRATEGIC_THESIS_MIN_CHARS: z.coerce.number().int().min(0).max(1200).default(240),
+  /** Minimum chars for per-slide `visual_description` in SIL (imagery the LLM must reinterpret). */
+  SIL_VISUAL_DESCRIPTION_MIN_CHARS: z.coerce.number().int().min(0).max(800).default(96),
   /** When true, project brand_assets palette overrides carousel paper/ink in HBS text overlay. */
   MIMIC_USE_PROJECT_BRAND_PALETTE: z.coerce.boolean().default(false),
   /** When true, Nemotron layout/visual/deck hints are appended to art-only image-model prompts. */
@@ -351,6 +365,10 @@ const envSchema = z.object({
   OPENAI_MODEL: z.string().default("gpt-4o"),
   /** Vision-capable model for post-approval content review (images + text). */
   OPENAI_APPROVAL_REVIEW_MODEL: z.string().default("gpt-4o"),
+  /** Post-approval generated-output analysis: nvidia (Nemotron VL, default) or openai fallback. */
+  APPROVAL_REVIEW_VISION_PROVIDER: z.enum(["nvidia", "openai"]).default("nvidia"),
+  /** Nemotron model for approval review when APPROVAL_REVIEW_VISION_PROVIDER=nvidia. */
+  APPROVAL_REVIEW_NVIDIA_MODEL: z.string().optional(),
   /** Max carousel / image assets to attach per approved job (OpenAI vision). */
   LLM_APPROVAL_REVIEW_MAX_IMAGES: z.coerce.number().int().min(0).max(16).default(14),
   /** Serialized copy bundle (hook, caption, video plan, scenes) max size before truncation. */

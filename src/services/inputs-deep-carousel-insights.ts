@@ -28,6 +28,7 @@ import {
   buildCarouselAestheticAnalysisJson,
   finalizeCarouselInsightJson,
 } from "./carousel-insights-llm-normalize.js";
+import { deriveSlideIntelligenceFromAnalysis } from "../domain/slide-intelligence.js";
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { documentAiEnabled } from "./document-ai-auth.js";
 import { resolveProcessingVisionCall } from "./processing-vision-client.js";
@@ -267,6 +268,7 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
       "image_or_photo_role": "full-bleed photo | inset card | collage | flat illustration | screenshot-like | none — and dominant subject",
       "text_density": "low | medium | high",
       "slide_purpose": "hook | content | listicle_item | storytelling | cta | self_promo | product_pitch | testimonial | filler",
+      "why_it_works": "3–4 sentences (~120+ chars): why THIS slide works in the deck arc (its psychological/emotional job, curiosity hook, proof function, or swipe motivation). Slide-specific — do not repeat visual_description or deck why_it_worked verbatim.",
       "brand_specificity": "none | low | high — how tied the slide is to the creator's own brand/product (high = names a specific guide, course, app, quiz, download, or branded offering that would not apply to another account)"
     }
   ]
@@ -274,6 +276,7 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
 
 **Rules**
 - slides.length MUST equal the number of slide image attachments you received; slide_index runs 1..N in that order.
+- Each slides[] entry MUST include why_it_works — per-slide strategic why, distinct from deck-level why_it_worked.
 - Transcripts must be **faithful** to visible type; do not invent platform UI that is not visible.
 - Fonts: you rarely know exact family names—give **closest recognizable class** (geometric sans, grotesk, serif editorial, rounded comic, etc.) plus weight/case/tracking notes so a human can pick an equivalent.
 - Aim for **replication detail** (sizes/proportions as guesses, colors when visible); say "unknown" or null when not inferable — do not guess hex if unclear.
@@ -1043,6 +1046,20 @@ ${textBundle}`;
 
       const risks = parseRiskFlags(parsed?.risk_flags);
 
+      const carouselInsightsId = makeCarouselInsightsId(importId, c.id);
+      const slideIntelligence = deriveSlideIntelligenceFromAnalysis({
+        aesthetic,
+        insights_id: carouselInsightsId,
+        analysis_tier: "top_performer_carousel",
+        mediaKind: "carousel",
+        rowLevel: {
+          why_it_worked: typeof parsed?.why_it_worked === "string" ? parsed.why_it_worked : null,
+          primary_emotion: mechanism.primary_emotion,
+          secondary_emotion: mechanism.secondary_emotion,
+          hook_type: typeof parsed?.format_pattern === "string" ? parsed.format_pattern : null,
+        },
+      });
+
       if (mediaArchiveRequested && !mediaSupabaseConfigured) {
         storedInspection = {
           archived_at: new Date().toISOString(),
@@ -1058,7 +1075,7 @@ ${textBundle}`;
         project_id: project.id,
         inputs_import_id: importId,
         source_evidence_row_id: c.id,
-        insights_id: makeCarouselInsightsId(importId, c.id),
+        insights_id: carouselInsightsId,
         analysis_tier: "top_performer_carousel",
         pre_llm_score: c.pre_llm_score,
         llm_model: visionOut.model || model,
@@ -1077,6 +1094,9 @@ ${textBundle}`;
         aesthetic_analysis_json: aesthetic,
         raw_llm_json: parsed,
         evidence_performance_review_json: ratingSnapByRow.get(c.id) ?? null,
+        slide_intelligence_json: slideIntelligence
+          ? (slideIntelligence as unknown as Record<string, unknown>)
+          : null,
         ...(storedInspection !== undefined ? { stored_inspection_media_json: storedInspection } : {}),
       });
       analyzed++;

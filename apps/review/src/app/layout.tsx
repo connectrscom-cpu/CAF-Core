@@ -3,8 +3,8 @@ import "./globals.css";
 import { ReviewAppShell } from "@/components/ReviewAppShell";
 
 export const metadata: Metadata = {
-  title: "CAF Review",
-  description: "Review Console for CAF-generated content",
+  title: "CAF — Content workspace",
+  description: "Manage brands, review content, and publish with CAF",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

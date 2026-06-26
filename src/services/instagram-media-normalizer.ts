@@ -5,6 +5,10 @@
  */
 
 import {
+  extractFollowerCount,
+  extractSocialAccountHandle,
+} from "../domain/evidence-relative-performance.js";
+import {
   finalizeHttpsImageUrlForOpenAiVision,
   sanitizeOneHttpsImageUrl,
   tryLenientSingleHttpsImageUrlFromSocialCdn,
@@ -527,5 +531,17 @@ export function enrichInstagramApifyPayloadInPlace(payload: Record<string, unkno
     if (v == null) continue;
     const p = tryParseJson(v);
     if (p != null) (payload as Record<string, unknown>)[to] = p as unknown;
+  }
+  // Hoist nested Apify owner fields when workbook columns omit them (relative scoring + registry join).
+  if (payload.followers_count == null || payload.followers_count === "") {
+    const fc = extractFollowerCount("instagram_post", payload);
+    if (fc) payload.followers_count = fc;
+  }
+  if (!payload.owner_username && !payload.account_handle) {
+    const handle = extractSocialAccountHandle("instagram_post", payload);
+    if (handle) {
+      payload.owner_username = handle;
+      payload.account_handle = handle;
+    }
   }
 }

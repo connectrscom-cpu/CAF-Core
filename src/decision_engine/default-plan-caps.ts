@@ -15,6 +15,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
   FLOW_VISUAL_FIRST_CAROUSEL,
+  FLOW_WHY_MIMIC_CAROUSEL,
 } from "../domain/top-performer-mimic-flow-types.js";
 
 /**
@@ -253,6 +254,13 @@ export const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
     keys: [FLOW_TOP_PERFORMER_MIMIC_CAROUSEL],
   },
   {
+    id: "why_mimic_carousel",
+    label: "Why Mimic — carousel (SIL-driven)",
+    category: "top_performer_mimic",
+    uiChannel: "mimic",
+    keys: [FLOW_WHY_MIMIC_CAROUSEL],
+  },
+  {
     id: "tp_mimic_image",
     label: "Top performer mimic — static image",
     category: "top_performer_mimic",
@@ -285,6 +293,7 @@ export function defaultMaxJobsPerFlowType(): Record<string, number> {
     }
   }
   out[FLOW_VISUAL_FIRST_CAROUSEL] = CAROUSEL_CAP;
+  out[FLOW_WHY_MIMIC_CAROUSEL] = TOP_PERFORMER_MIMIC_CAP;
   out[PLAN_LANE_NICHE_CAROUSEL] = CAROUSEL_CAP;
   out[PLAN_LANE_PRODUCT_CAROUSEL] = Math.max(1, Math.floor(CAROUSEL_CAP / 3));
   for (const group of DEFAULT_TOP_PERFORMER_MIMIC_FLOW_GROUPS) {

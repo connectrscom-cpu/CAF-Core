@@ -60,6 +60,8 @@ export interface JobListRow {
   last_error: string | null;
   /** From generation_payload.mimic_v1.mode when present. */
   mimic_mode: string | null;
+  /** Slim slice for resolveJobFlowDisplayLabel — not returned to admin clients. */
+  flow_display_payload?: Record<string, unknown> | null;
 }
 
 export interface JobListFilters {
@@ -262,6 +264,13 @@ export async function listJobs(
               ELSE ''
             END AS pipeline_phase,
             NULLIF(btrim(c.generation_payload->'mimic_v1'->>'mode'), '') AS mimic_mode,
+            jsonb_strip_nulls(jsonb_build_object(
+              'mimic_v1', c.generation_payload->'mimic_v1',
+              'mimic_render_context', c.generation_payload->'mimic_render_context',
+              'mimic_render_settings', c.generation_payload->'mimic_render_settings',
+              'candidate_data', c.generation_payload->'candidate_data',
+              'mimic_job_grounding', c.generation_payload->'mimic_job_grounding'
+            )) AS flow_display_payload,
             COALESCE(
               NULLIF(trim(c.render_state->>'error'), ''),
               (SELECT NULLIF(trim(jt.metadata_json->>'error'), '')

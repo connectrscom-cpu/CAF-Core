@@ -273,3 +273,23 @@ export async function getScraperRun(
     [runId, projectId]
   );
 }
+
+/** Latest scraper run that produced this evidence import (for marketer research metadata). */
+export async function getScraperRunForEvidenceImport(
+  db: Pool,
+  projectId: string,
+  evidenceImportId: string
+): Promise<ScraperRunRow | null> {
+  return qOne(
+    db,
+    `SELECT id::text, project_id::text, scraper_key, status,
+            started_at::text, finished_at::text,
+            config_snapshot_json, stats_json, error_message,
+            evidence_import_id::text, created_at::text
+       FROM caf_core.inputs_scraper_runs
+      WHERE project_id = $1 AND evidence_import_id = $2::uuid
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [projectId, evidenceImportId]
+  );
+}

@@ -61,6 +61,8 @@ export interface ReviewQueueJob {
   preview_thumb_url?: string | null;
   /** Human label — includes Mimic · … for top-performer replication jobs. */
   flow_label?: string | null;
+  /** Model, similarity %, image input, overlay (mimic jobs). */
+  flow_detail?: string | null;
   is_mimic_replication?: boolean;
 }
 
@@ -439,7 +441,7 @@ export async function getReviewJobDetail(
     `SELECT id, asset_type, public_url, bucket, object_path, position
      FROM caf_core.assets
      WHERE project_id = $1 AND task_id = $2
-     ORDER BY position ASC`,
+     ORDER BY position ASC, created_at ASC`,
     [projectId, canonicalTid]
   );
 

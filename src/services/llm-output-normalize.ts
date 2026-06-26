@@ -7,6 +7,7 @@
  */
 import { slidesFromGeneratedOutput, slideHasRenderableContent } from "./carousel-render-pack.js";
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
+import { coerceMimicTextBlockRow } from "../domain/mimic-overlay-copy.js";
 
 function normalizeCaptionField(c: unknown): string {
   if (typeof c === "string") return c;
@@ -182,6 +183,38 @@ function wrapSlidesAsCarouselInsightOutput(
   return out;
 }
 
+function coerceCarouselSlideTextBlocks(slide: Record<string, unknown>): Record<string, unknown> {
+  const blocks = slide.text_blocks;
+  if (!Array.isArray(blocks) || blocks.length === 0) return slide;
+  const coerced = blocks
+    .map((item) => coerceMimicTextBlockRow(item))
+    .filter((row): row is NonNullable<ReturnType<typeof coerceMimicTextBlockRow>> => Boolean(row))
+    .map((row) => ({
+      role: row.role || "body",
+      text: row.text,
+    }));
+  if (coerced.length === 0) return slide;
+  return { ...slide, text_blocks: coerced };
+}
+
+function coerceCarouselDeckTextBlocks(parsed: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...parsed };
+  const mapSlides = (arr: unknown): unknown => {
+    if (!Array.isArray(arr)) return arr;
+    return arr
+      .filter((s) => s && typeof s === "object" && !Array.isArray(s))
+      .map((s) => coerceCarouselSlideTextBlocks(s as Record<string, unknown>));
+  };
+  if (Array.isArray(out.slides)) out.slides = mapSlides(out.slides) as unknown[];
+  const carousel = out.carousel;
+  if (carousel && typeof carousel === "object" && !Array.isArray(carousel)) {
+    const c = { ...(carousel as Record<string, unknown>) };
+    if (Array.isArray(c.slides)) c.slides = mapSlides(c.slides) as unknown[];
+    out.carousel = c;
+  }
+  return out;
+}
+
 export function normalizeLlmParsedForSchemaValidation(
   flowType: string,
   parsed: Record<string, unknown>
@@ -190,6 +223,9 @@ export function normalizeLlmParsedForSchemaValidation(
   const ft = resolveCanonicalFlowType(flowType);
   const carouselish = ft === CANONICAL_FLOW_TYPES.CAROUSEL || /carousel/i.test(flowType) || flowType === "Flow_Carousel_Copy";
   if (!carouselish) return out;
+
+  const withTextBlocks = coerceCarouselDeckTextBlocks(out);
+  Object.assign(out, withTextBlocks);
 
   hoistOutputSchemaSchemaJsonCopyFields(out);
 

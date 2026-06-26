@@ -17,6 +17,7 @@ import {
   type EvidenceRowWithRating,
 } from "../repositories/inputs-evidence.js";
 import { getInputsProcessingProfile, upsertInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
+import { getScraperRunForEvidenceImport } from "../repositories/inputs-sources.js";
 import { computeInputHealth, flagSparseEvidenceRows, persistImportHealth } from "./input-health.js";
 import { buildSelectionSnapshotForImport, persistSelectionSnapshot } from "./inputs-selection.js";
 import { mergePreLlmConfig, rankImportRowsForLlm } from "./inputs-pre-llm-rank.js";
@@ -31,7 +32,9 @@ import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds, backfillTopPerformerInsightPerformanceReviews } from "../repositories/inputs-evidence-insights.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
+import { MARKET_INTELLIGENCE_V1_KEY } from "../domain/market-intelligence-synthesis.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
+import { buildMarketIntelligenceForImport } from "./market-intelligence-pack.js";
 
 const STEP_RATING = "inputs_rating_batch";
 const STEP_SYNTH = "inputs_signal_pack_synthesize";
@@ -353,7 +356,27 @@ export async function buildSignalPackFromEvidenceImport(
     max_insights_scan: 2000,
     max_entries: 48,
   });
-  const derived_globals_json = mergeTopPerformerKnowledgeIntoDerivedGlobals({
+
+  const scraperRun = await getScraperRunForEvidenceImport(db, project.id, importId);
+  const runOpts = scraperRun?.config_snapshot_json?.run_options;
+  const runOptsRec =
+    runOpts != null && typeof runOpts === "object" && !Array.isArray(runOpts)
+      ? (runOpts as Record<string, unknown>)
+      : null;
+  const marketerResearchMeta =
+    runOptsRec &&
+    (runOptsRec.platforms != null || runOptsRec.post_max_age_days != null || runOptsRec.started_at != null)
+      ? {
+          platforms: Array.isArray(runOptsRec.platforms)
+            ? runOptsRec.platforms.map((p) => String(p)).filter(Boolean)
+            : undefined,
+          postMaxAgeDays:
+            typeof runOptsRec.post_max_age_days === "number" ? runOptsRec.post_max_age_days : undefined,
+          startedAt: typeof runOptsRec.started_at === "string" ? runOptsRec.started_at : undefined,
+        }
+      : null;
+
+  const derivedWithTpk = mergeTopPerformerKnowledgeIntoDerivedGlobals({
     from_inputs_evidence_import_id: importId,
     inputs_stats: stats,
     total_candidates: normalized.length,
@@ -361,6 +384,7 @@ export async function buildSignalPackFromEvidenceImport(
     hashtag_leaderboard_v1: hashtagStats.leaderboard,
     hashtag_leaderboard_rows_scanned: hashtagStats.rows_scanned,
     visual_guidelines_pack_v1: visualGuidelinesPack,
+    ...(marketerResearchMeta ? { marketer_research_meta: marketerResearchMeta } : {}),
     ideas_from_insights_llm: {
       context_insights_used: ideasLlm.context_insights_used,
       top_performer_rows_in_context: ideasLlm.top_performer_rows_in_context,
@@ -373,6 +397,15 @@ export async function buildSignalPackFromEvidenceImport(
     signs_found: [...new Set(normalized.map((c) => c.sign).filter(Boolean))],
     synthesized_at: new Date().toISOString(),
   });
+
+  const marketIntelligenceV1 = await buildMarketIntelligenceForImport(db, project.id, projectSlug, importId, {
+    derived_globals: derivedWithTpk,
+  });
+
+  const derived_globals_json = {
+    ...derivedWithTpk,
+    [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
+  };
 
   const pack = await insertSignalPack(db, {
     run_id: packRunId,
@@ -460,7 +493,7 @@ export async function buildSignalPackFromEvidenceImport(
       stats,
       overall_candidates_count: normalized.length,
       ideas_count: ideasJson.length,
-      ideas_from_insights_llm: derived_globals_json.ideas_from_insights_llm,
+      ideas_from_insights_llm: (derivedWithTpk as Record<string, unknown>).ideas_from_insights_llm,
     },
     evidence_refs_json: [
       {

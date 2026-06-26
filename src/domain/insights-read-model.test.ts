@@ -17,7 +17,7 @@ describe("insights-read-model", () => {
     ).toBe("top_performer");
   });
 
-  it("prefers risk when flags present", () => {
+  it("prefers risk when flags present on broad tier", () => {
     expect(
       deriveInsightReadType({
         analysis_tier: "broad_llm",
@@ -30,6 +30,54 @@ describe("insights-read-model", () => {
         cta_type: null,
       })
     ).toBe("risk_or_warning");
+  });
+
+  it("keeps top_performer tier even when risk flags present", () => {
+    expect(
+      deriveInsightReadType({
+        analysis_tier: "top_performer_video",
+        hook_type: null,
+        hook_text: null,
+        primary_emotion: null,
+        aesthetic_analysis_json: null,
+        risk_flags_json: ["minor_issue"],
+        hashtags: null,
+        cta_type: null,
+      })
+    ).toBe("top_performer");
+  });
+
+  it("risk summary uses risk flags not why_it_worked", () => {
+    const item = buildInsightReadModelItem({
+      project_slug: "sns",
+      inputs_import_id: "imp",
+      signal_pack_id: null,
+      run_id: null,
+      evidence_post_format: "video",
+      id: "2",
+      insights_id: "ins_r",
+      analysis_tier: "broad_llm",
+      source_evidence_row_id: "99",
+      evidence_kind: "instagram_post",
+      pre_llm_score: "0.5",
+      why_it_worked: "Great engagement and visuals.",
+      primary_emotion: "joy",
+      secondary_emotion: null,
+      hook_type: "question",
+      hook_text: "Why?",
+      hashtags: null,
+      caption_style: null,
+      cta_type: null,
+      custom_label_1: null,
+      custom_label_2: null,
+      custom_label_3: null,
+      aesthetic_analysis_json: null,
+      risk_flags_json: ["oversaturated topic"],
+      created_at: "2026-01-02T00:00:00Z",
+    });
+    expect(item.type).toBe("risk_or_warning");
+    expect(item.summary).toContain("oversaturated");
+    expect(item.summary).not.toContain("Great engagement");
   });
 
   it("builds strategic object from broad row", () => {

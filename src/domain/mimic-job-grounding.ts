@@ -10,6 +10,8 @@ import {
   type MimicSlideCopyLayoutForLlm,
 } from "./mimic-carousel-package.js";
 import { buildMimicCopyJobBriefForLlm } from "./mimic-render-context.js";
+import { buildWhyMimicPromptBlock, parseSlideIntelligenceBundle } from "./slide-intelligence.js";
+import { buildBrandTranslationPromptBlock, parseBrandExecutionBrief } from "./brand-translation.js";
 import { resolveEffectiveContentSlideIndices, shouldExpandThemeSkippedArchiveDeck, pickMimicEvaluationFromGuidelineEntry } from "./mimic-content-slide-indices.js";
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
@@ -20,6 +22,12 @@ export const MIMIC_SEMANTIC_FIDELITY_COPY_RULES = `Semantic fidelity (mimic copy
 - **Per slide:** For slide index N, on-slide fields must express the **same idea, subject, and list item** as \`slide_copy_layout[N].reference_on_screen_text\` and \`visual_description\`. Rephrase only — do not swap zodiac signs, products, people, stats, or slide-specific entities.
 - **Deck pattern:** Keep the reference format (e.g. "each sign as a food type") across the deck; change surface wording, not the underlying premise per slide.
 - **~80% rule:** Applies to phrasing and structure, **not** permission to change what each slide is about. Wrong: reference "taurus as food" → output about Aries or generic "feisty flavors". Right: a fresh line still clearly about Taurus-as-food.`;
+
+/** Why Mimic lane — preserve strategic function, not literal reference subjects. */
+export const MIMIC_WHY_STRATEGIC_COPY_RULES = `Why Mimic strategic copy (required):
+- **Per slide:** Preserve the slide's **role, mechanism, and narrative function** from the Why Mimic brief — not the reference's literal subject or on-screen wording.
+- **Deck arc:** Keep the persuasion spine (hook → proof/context → CTA) and dominant mechanism; invent fresh examples, metaphors, and subjects aligned to the planned idea and brand.
+- **Pairing:** Write copy that will composite on art-only plates generated from the same strategic brief — avoid describing text that must appear inside the image.`;
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -267,8 +275,12 @@ export function appendMimicGroundedReferenceToUserPrompt(
     mimic_render_context?: unknown;
     slide_copy_layout?: MimicSlideCopyLayoutForLlm[];
     hook_text_preview?: string | null;
+    /** Why Mimic: projected `slide_intelligence_v1` bundle (from `mimic_v1.slide_intelligence`). */
+    slide_intelligence?: unknown;
+    /** Brand-Aware Why Mimic: projected `brand_execution_brief_v1` (from `mimic_v1.brand_execution_brief`). */
+    brand_execution_brief?: unknown;
   },
-  opts?: { maxGroundingJsonChars?: number }
+  opts?: { maxGroundingJsonChars?: number; why_mimic_copy_enabled?: boolean }
 ): string {
   const maxGroundingJsonChars = opts?.maxGroundingJsonChars ?? 24_000;
   const vgRaw = blocks.mimic_visual_guideline_for_copy;
@@ -304,10 +316,23 @@ export function appendMimicGroundedReferenceToUserPrompt(
       parts.push("", `reference_hook_preview: ${hookOnly.length > 200 ? `${hookOnly.slice(0, 200)}…` : hookOnly}`);
     }
   }
-  parts.push("", MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
+  const whyCopyOn = opts?.why_mimic_copy_enabled === true;
+  parts.push("", whyCopyOn ? MIMIC_WHY_STRATEGIC_COPY_RULES : MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
+  if (whyCopyOn) {
+    const whyBlock = buildWhyMimicPromptBlock(parseSlideIntelligenceBundle(blocks.slide_intelligence));
+    if (whyBlock) {
+      parts.push("", whyBlock);
+    }
+    const brandBlock = buildBrandTranslationPromptBlock(parseBrandExecutionBrief(blocks.brand_execution_brief));
+    if (brandBlock) {
+      parts.push("", brandBlock);
+    }
+  }
   parts.push(
     "",
-    "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.",
+    whyCopyOn
+      ? "Write new copy that matches slide_copy_layout slide count and placement. Preserve each slide's strategic FUNCTION from the Why Mimic brief; invent fresh subjects and wording. Never copy reference_on_screen_text verbatim."
+      : "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.",
     "When copy_slots_v1 is present on a slide, output text_blocks[] with **one entry per copy slot cluster** (not per OCR line). The renderer composites each cluster across its Document AI boxes."
   );
   return parts.join("\n").trim();

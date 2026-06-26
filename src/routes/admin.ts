@@ -85,7 +85,14 @@ import {
   runSceneAssemblyMergeClipsFromStorage,
   runSceneAssemblyResumePipelineFromJobPayload,
 } from "../services/scene-merge-from-storage.js";
-import { processJobByTaskId, reprocessJobFromScratch } from "../services/job-pipeline.js";
+import {
+  markCarouselTextOverlayReprintStarted,
+  processJobByTaskId,
+  recordCarouselTextOverlayReprintFailure,
+  reprocessJobFromScratch,
+  rerenderCarouselTextOverlay,
+} from "../services/job-pipeline.js";
+import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { buildRenderingHealthSnapshot } from "../services/rendering-health-snapshot.js";
 import { pauseRendering, resumeRendering } from "../services/render-control.js";
 import { executeRework } from "../services/rework-orchestrator.js";
@@ -171,6 +178,7 @@ import { parseProjectMimicBflModel } from "../domain/mimic-bfl-model.js";
 import {
   parseMimicImageInputMode,
   parseProjectMimicCarouselTextViaFlux,
+  parseProjectWhyMimicCopyEnabled,
   parseProjectMimicVisualSimilarityPct,
 } from "../domain/mimic-render-settings.js";
 import { parseProjectOpenAiGenerationMode } from "../services/openai-generation-placeholder.js";
@@ -496,7 +504,7 @@ ${adminCafUiCss()}
 `;
 }
 
-/** Review workbench pages embedded in the admin shell (iframe → same Next app as /). */
+/** Review workbench pages embedded in the admin shell (iframe → operator routes in the Next app). */
 const ADMIN_WORKBENCH_PAGES: {
   route: string;
   embedPath: string;
@@ -516,7 +524,7 @@ const ADMIN_WORKBENCH_PAGES: {
   },
   { route: "/admin/workbench/publish", embedPath: "/publish", title: "Publish", sidebarKey: "workbench-publish", pipelineStage: "publish" },
   { route: "/admin/workbench/playground", embedPath: "/playground", title: "Template playground", sidebarKey: "workbench-playground", pipelineStage: null },
-  { route: "/admin/workbench", embedPath: "/", title: "Review Console", sidebarKey: "workbench-review", pipelineStage: "validation" },
+  { route: "/admin/workbench", embedPath: "/review", title: "Review Console", sidebarKey: "workbench-review", pipelineStage: "validation" },
   { route: "/admin/learning", embedPath: "/learning", title: "Learning", sidebarKey: "learning", pipelineStage: "learning" },
 ];
 
@@ -768,6 +776,7 @@ function renderMimicRenderSettingsHtml(opts: {
   serverVisualSimilarityPct: number;
   serverCarouselTextViaFlux: boolean;
   serverImageInputMode: string;
+  serverWhyMimicCopyEnabled: boolean;
 }): string {
   const fluxDefaultLabel = opts.serverCarouselTextViaFlux
     ? "image model bakes copy"
@@ -800,6 +809,14 @@ function renderMimicRenderSettingsHtml(opts: {
           <option value="0">Generate copy + HTML/CSS overlay (precise bbox)</option>
           <option value="1">Image model bakes copy (Flux / provider)</option>
         </select>
+      </div>
+      <div class="plan-cap-row plan-cap-row--select">
+        <label for="plan-cap-mimic-why-copy" title="When off (default), mimic copy uses semantic fidelity only — rephrase the same idea/subject per slide. When on, the generator also receives Why Mimic strategic-function guidance (and brand translation when a brand profile exists).">Why Mimic copy</label>
+        <select id="plan-cap-mimic-why-copy">
+          <option value="">Server default (${opts.serverWhyMimicCopyEnabled ? "strategic function on" : "exact subject rephrase"})</option>
+          <option value="0">Off — semantic fidelity only (legacy)</option>
+          <option value="1">On — preserve strategic function + brand brief</option>
+        </select>
       </div>`;
 }
 
@@ -808,6 +825,7 @@ function renderPlanCapColumnsHtml(opts: {
   serverVisualSimilarityPct: number;
   serverCarouselTextViaFlux: boolean;
   serverImageInputMode: string;
+  serverWhyMimicCopyEnabled: boolean;
 }): string {
   return PLAN_CAP_UI_CATEGORIES.map((cat) => {
     const groups = ALL_PLAN_CAP_UI_GROUPS.filter((g) => g.category === cat.id);
@@ -816,10 +834,15 @@ function renderPlanCapColumnsHtml(opts: {
       cat.id === "top_performer_mimic" ? renderMimicRenderSettingsHtml(opts) : "";
     return `
     <div class="plan-cap-col" data-plan-cap-cat="${esc(cat.id)}">
-      <div class="plan-cap-col-title">${esc(cat.label)}</div>
-      <p class="plan-cap-col-hint">${esc(cat.hint)}</p>
-      ${rows}
-      ${mimicModelPicker}
+      <button type="button" class="plan-cap-col-toggle" onclick="togglePlanCapCat('${esc(cat.id)}')" aria-expanded="true">
+        <span class="plan-cap-col-chevron" aria-hidden="true">▼</span>
+        <span class="plan-cap-col-title">${esc(cat.label)}</span>
+      </button>
+      <div class="plan-cap-col-body">
+        <p class="plan-cap-col-hint">${esc(cat.hint)}</p>
+        ${rows}
+        ${mimicModelPicker}
+      </div>
     </div>`;
   }).join("");
 }
@@ -1049,11 +1072,21 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       search: query.search || undefined,
     }, limit, offset);
     const rows = result.rows.map((row) => {
-      const display = resolveJobFlowDisplayLabel(row.flow_type, {});
+      const gp = (row.flow_display_payload ?? {}) as Record<string, unknown>;
+      const display = resolveJobFlowDisplayLabel(row.flow_type, gp);
+      const status = String(row.status ?? "")
+        .trim()
+        .toUpperCase();
+      const supports_text_reprint =
+        isTpGroundedCarouselRenderFlow(String(row.flow_type ?? "")) &&
+        !["PLANNED", "GENERATING", "CANCELLED"].includes(status);
+      const { flow_display_payload: _omit, ...rest } = row;
       return {
-        ...row,
+        ...rest,
         flow_label: display.flow_label,
+        flow_detail: display.flow_detail,
         is_mimic_replication: display.is_mimic_replication,
+        supports_text_reprint,
       };
     });
     return { ok: true, rows, total: result.total, page: pg, limit };
@@ -1248,6 +1281,73 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       task_id: taskId,
       message:
         "Resume started in the background. Refresh the Jobs table to watch status (job should remain RENDERING until clips/mux complete).",
+    });
+  });
+
+  /**
+   * POST /v1/admin/jobs/reprint-text-overlay
+   * Recomposite mimic carousel copy on stored art-only plates (no LLM, no Flux).
+   * Uses saved `mimic_v1.docai_layer_positions` and generation_payload copy.
+   */
+  app.post("/v1/admin/jobs/reprint-text-overlay", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      task_id: z.string().min(1),
+      slide_indices: z.array(z.number().int().positive()).optional(),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const taskId = parsed.data.task_id.trim();
+    const existing = await getContentJobByTaskId(db, project.id, taskId);
+    if (!existing) return reply.code(404).send({ ok: false, error: "job_not_found" });
+    const flowType = String(existing.flow_type ?? "");
+    if (!isTpGroundedCarouselRenderFlow(flowType)) {
+      return reply.code(400).send({
+        ok: false,
+        error: "reprint_text_overlay_requires_tp_grounded_carousel_job",
+        message: "Text reprint is only available for TP-grounded mimic carousel jobs.",
+      });
+    }
+    const jobId = String(existing.id ?? "");
+    if (!jobId) return reply.code(400).send({ ok: false, error: "job_missing_id" });
+
+    const slideIndices = parsed.data.slide_indices;
+    await markCarouselTextOverlayReprintStarted(db, jobId, { slideIndices });
+
+    void rerenderCarouselTextOverlay(db, config, jobId, slideIndices)
+      .then(() => {
+        request.log.info({ task_id: taskId, slide_indices: slideIndices ?? "all" }, "admin text overlay reprint completed");
+      })
+      .catch(async (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        request.log.error({ err, taskId, projectId: project.id }, "admin text overlay reprint failed");
+        try {
+          await recordCarouselTextOverlayReprintFailure(
+            db,
+            {
+              id: jobId,
+              task_id: taskId,
+              project_id: project.id,
+              status: String(existing.status ?? "IN_REVIEW"),
+            },
+            msg
+          );
+        } catch (markErr) {
+          request.log.error({ err: markErr, taskId }, "failed to mark text overlay reprint as FAILED");
+        }
+      });
+
+    const slideHint =
+      slideIndices && slideIndices.length > 0 ? `slide(s) ${slideIndices.join(", ")}` : "all slides";
+    return reply.code(202).send({
+      ok: true,
+      accepted: true,
+      task_id: taskId,
+      message: `Text overlay reprint started for ${slideHint}. Job stays in review; refresh in 1–2 minutes.`,
     });
   });
 
@@ -1953,6 +2053,18 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
           return { ok: false, error: "invalid openai_generation_mode (use live, placeholder, or empty for server default)" };
         }
         patch.openai_generation_mode = parsed;
+      }
+    }
+    if ("why_mimic_copy_enabled" in body) {
+      const raw = body.why_mimic_copy_enabled;
+      if (raw === "" || raw === null || raw === undefined) {
+        patch.why_mimic_copy_enabled = null;
+      } else {
+        const parsed = parseProjectWhyMimicCopyEnabled(raw);
+        if (parsed == null) {
+          return { ok: false, error: "invalid why_mimic_copy_enabled (use true/false or empty for server default)" };
+        }
+        patch.why_mimic_copy_enabled = parsed;
       }
     }
     await upsertConstraints(db, project.id, mergeConstraintUpdate(existing, patch));
@@ -3912,6 +4024,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
       serverBflModel: config.MIMIC_IMAGE_BFL_MODEL.trim() || "flux-2-klein-4b",
       serverVisualSimilarityPct: config.MIMIC_VISUAL_SIMILARITY_PCT,
       serverCarouselTextViaFlux: config.MIMIC_CAROUSEL_TEXT_VIA_FLUX,
+      serverWhyMimicCopyEnabled: config.MIMIC_WHY_COPY_ENABLED,
       serverImageInputMode: config.MIMIC_IMAGE_INPUT_MODE,
     });
     const llmRunPickTitle = adminLlmPromptTitleAttr("RUN__Candidates_From_Ideas_LLM_v1", "Processing");
@@ -3949,8 +4062,14 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
 .plan-cap-col[data-plan-cap-cat="niche_core_video"]{border-color:rgba(59,130,246,.28);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-col[data-plan-cap-cat="product_video"]{border-color:rgba(34,197,94,.28);background:linear-gradient(135deg,rgba(34,197,94,.1) 0%,var(--surface-2) 100%)}
 .plan-cap-col[data-plan-cap-cat="top_performer_mimic"]{border-color:rgba(168,85,247,.28);background:linear-gradient(135deg,rgba(168,85,247,.1) 0%,var(--surface-2) 100%)}
-.plan-cap-toolbar--mimic{border-top:1px dashed var(--border);padding-top:10px;margin-top:2px}
-.plan-cap-col-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
+.plan-cap-header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.plan-cap-toolbar--global{margin-bottom:0}
+.plan-cap-col-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.plan-cap-col-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:0;margin:0 0 4px;border:none;background:transparent;cursor:pointer;text-align:left}
+.plan-cap-col-toggle:hover .plan-cap-col-title{color:var(--text)}
+.plan-cap-col-chevron{font-size:10px;color:var(--muted);transition:transform .15s ease;flex-shrink:0;line-height:1}
+.plan-cap-col.is-collapsed .plan-cap-col-chevron{transform:rotate(-90deg)}
+.plan-cap-col.is-collapsed .plan-cap-col-body{display:none}
 .plan-cap-col-hint{font-size:11px;color:var(--muted);margin:0 0 10px;line-height:1.4}
 .plan-cap-row{display:grid;grid-template-columns:minmax(0,1fr) 72px;gap:8px;align-items:center;margin-top:8px}
 .plan-cap-row label{font-size:12px;line-height:1.35;color:var(--text);cursor:pointer}
@@ -3973,8 +4092,11 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
       <p class="runs-ops-hint"><strong>Pick signal pack</strong> attaches a pack built in <strong>Processing</strong> (<code>ideas_json</code>). Choose automated rules, LLM picking, or manual format tabs before <strong>Start</strong>. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps planned jobs). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
     <div class="runs-ops-row plan-cap-section" style="align-items:stretch;flex-direction:column;gap:10px">
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)">Planning caps</div>
-      <div class="plan-cap-toolbar">
+      <div class="plan-cap-header">
+        <div class="runs-ops-title" style="margin:0">Planning caps</div>
+        <button type="button" class="btn" id="plan-cap-save-all" onclick="saveAllPlanningCaps()">Save all</button>
+      </div>
+      <div class="plan-cap-toolbar plan-cap-toolbar--global">
         <div class="plan-cap-toolbar-block">
           <label for="plan-cap-openai-gen-mode" style="font-size:13px;white-space:nowrap">Copy generation</label>
           <select id="plan-cap-openai-gen-mode" style="min-width:200px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Placeholder = deterministic stub copy (no OpenAI spend). Live = real LLM. Empty uses server OPENAI_GENERATION_MODE.">
@@ -3982,34 +4104,22 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
             <option value="placeholder">Placeholder (no OpenAI)</option>
             <option value="live">Live (OpenAI)</option>
           </select>
-          <button type="button" class="btn-ghost" id="plan-cap-openai-gen-save" onclick="saveOpenAiGenerationMode()" style="border:1px solid var(--border)">Save copy mode</button>
         </div>
-        <p id="plan-cap-openai-gen-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-      </div>
-      <div class="plan-cap-toolbar">
         <div class="plan-cap-toolbar-block">
           <label for="plan-cap-carousel" style="font-size:13px;white-space:nowrap">Max regular carousel jobs / run</label>
           <input type="number" id="plan-cap-carousel" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap for FLOW_CAROUSEL only — top-performer mimic carousels are capped separately."/>
-          <button type="button" class="btn-ghost" id="plan-cap-carousel-save" onclick="saveCarouselCap()" style="border:1px solid var(--border)">Save carousel caps</button>
         </div>
-        <p id="plan-cap-carousel-hint" class="runs-ops-hint">Loading…</p>
-      </div>
-      <div class="plan-cap-toolbar">
         <div class="plan-cap-toolbar-block">
           <label for="plan-cap-video-agg" style="font-size:13px;white-space:nowrap">Max video jobs / run (all types)</label>
           <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
-          <button type="button" class="btn-ghost" id="plan-cap-video-save" onclick="saveVideoPlanningCaps()" style="border:1px solid var(--border)">Save video caps</button>
         </div>
-        <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45;flex:1;min-width:240px">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per video family, <strong>${DEFAULT_CAROUSEL_FLOW_PLAN_CAP}</strong> per regular carousel family, <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong> per mimic family.</p>
       </div>
+      <p id="plan-cap-openai-gen-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      <p id="plan-cap-carousel-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
+      <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per video family, <strong>${DEFAULT_CAROUSEL_FLOW_PLAN_CAP}</strong> per regular carousel family, <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong> per mimic family.</p>
       <div class="plan-cap-grid">${planCapColumnsHtml}</div>
       <p id="plan-cap-video-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-      <div class="plan-cap-toolbar plan-cap-toolbar--mimic">
-        <div class="plan-cap-toolbar-block">
-          <button type="button" class="btn-ghost" id="plan-cap-mimic-save" onclick="saveMimicPlanningCaps()" style="border:1px solid var(--border)">Save mimic caps</button>
-        </div>
-        <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
-      </div>
+      <p id="plan-cap-mimic-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
     </div>
   </div>
   <div id="toast-area"></div>
@@ -4131,6 +4241,7 @@ const TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS=${JSON.stringify(TOP_PERFORMER_MIMIC_P
 const DEFAULT_MAX_MIMIC_PER_FLOW=${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP};
 const SERVER_MIMIC_VISUAL_SIM=${config.MIMIC_VISUAL_SIMILARITY_PCT};
 const SERVER_MIMIC_TEXT_FLUX=${config.MIMIC_CAROUSEL_TEXT_VIA_FLUX ? "1" : "0"};
+const SERVER_MIMIC_WHY_COPY=${config.MIMIC_WHY_COPY_ENABLED ? "1" : "0"};
 const SERVER_MIMIC_IMAGE_INPUT_MODE=${JSON.stringify(config.MIMIC_IMAGE_INPUT_MODE)};
 function mimicImageInputModeClientLabel(mode){
   return mode==='analysis_t2i'?'analysis text-to-image':'reference edit';
@@ -4630,19 +4741,17 @@ function normalizePerFlowCapsClient(raw){
 async function loadPlanningCaps(){
   const cinp=document.getElementById('plan-cap-carousel');
   const chint=document.getElementById('plan-cap-carousel-hint');
-  const cbtn=document.getElementById('plan-cap-carousel-save');
+  const saveBtn=document.getElementById('plan-cap-save-all');
   const aggInp=document.getElementById('plan-cap-video-agg');
   const vHint=document.getElementById('plan-cap-video-hint');
   const mHint=document.getElementById('plan-cap-mimic-hint');
-  const vBtn=document.getElementById('plan-cap-video-save');
-  const mBtn=document.getElementById('plan-cap-mimic-save');
   const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
   const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
   const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const mWhyCopySel=document.getElementById('plan-cap-mimic-why-copy');
   const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
   const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
   const genModeHint=document.getElementById('plan-cap-openai-gen-hint');
-  const genModeBtn=document.getElementById('plan-cap-openai-gen-save');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
@@ -4659,35 +4768,35 @@ async function loadPlanningCaps(){
     if(el)el.placeholder=String(DEFAULT_MAX_MIMIC_PER_FLOW);
   });
   if(!SLUG){
-    if(cinp){cinp.disabled=true;if(cbtn)cbtn.disabled=true;if(chint)chint.textContent='Pick a project in the sidebar (or ?project=slug) to edit planning caps.';}
-    if(aggInp){aggInp.disabled=true;if(vBtn)vBtn.disabled=true;}
-    if(mBtn)mBtn.disabled=true;
+    if(cinp){cinp.disabled=true;if(chint)chint.textContent='Pick a project in the sidebar (or ?project=slug) to edit planning caps.';}
+    if(aggInp)aggInp.disabled=true;
+    if(saveBtn)saveBtn.disabled=true;
     CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=true;});
     VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=true;});
     TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=true;});
     if(mModelSel)mModelSel.disabled=true;
     if(mSimInp)mSimInp.disabled=true;
     if(mFluxSel)mFluxSel.disabled=true;
+    if(mWhyCopySel)mWhyCopySel.disabled=true;
     if(mInputModeSel)mInputModeSel.disabled=true;
     if(genModeSel)genModeSel.disabled=true;
-    if(genModeBtn)genModeBtn.disabled=true;
     if(genModeHint)genModeHint.textContent='Pick a project to set copy generation mode.';
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
     if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
     return;
   }
-  if(cinp){cinp.disabled=false;if(cbtn)cbtn.disabled=false;}
-  if(aggInp){aggInp.disabled=false;if(vBtn)vBtn.disabled=false;}
-  if(mBtn)mBtn.disabled=false;
+  if(cinp)cinp.disabled=false;
+  if(aggInp)aggInp.disabled=false;
+  if(saveBtn)saveBtn.disabled=false;
   CAROUSEL_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-carousel-'+g.id);if(el)el.disabled=false;});
   VIDEO_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-video-'+g.id);if(el)el.disabled=false;});
   TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){var el=document.getElementById('plan-cap-mimic-'+g.id);if(el)el.disabled=false;});
   if(mModelSel)mModelSel.disabled=false;
   if(mSimInp){mSimInp.disabled=false;mSimInp.placeholder=String(SERVER_MIMIC_VISUAL_SIM);}
   if(mFluxSel)mFluxSel.disabled=false;
+  if(mWhyCopySel)mWhyCopySel.disabled=false;
   if(mInputModeSel)mInputModeSel.disabled=false;
   if(genModeSel)genModeSel.disabled=false;
-  if(genModeBtn)genModeBtn.disabled=false;
   if(genModeHint)genModeHint.textContent='Loading…';
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
@@ -4750,7 +4859,7 @@ async function loadPlanningCaps(){
         var eff=set?val:DEFAULT_MAX_VIDEO_PER_FLOW;
         parts.push(g.label.split('(')[0].trim()+': '+eff);
       });
-      if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved in System limits':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and Save video caps to use defaults for that family.';
+      if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved in System limits':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and save to use defaults for that family.';
       var mParts=[];
       TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
         var mel=document.getElementById('plan-cap-mimic-'+g.id);
@@ -4769,11 +4878,15 @@ async function loadPlanningCaps(){
       var fluxHas=fluxSaved===true||fluxSaved===false;
       var fluxEff=fluxHas?(fluxSaved===true):SERVER_MIMIC_TEXT_FLUX==='1';
       var fluxLabel=fluxEff?'image model bakes copy':'HTML/CSS overlay (HBS)';
+      var whyCopySaved=d.constraints&&d.constraints.why_mimic_copy_enabled;
+      var whyCopyHas=whyCopySaved===true||whyCopySaved===false;
+      var whyCopyEff=whyCopyHas?(whyCopySaved===true):SERVER_MIMIC_WHY_COPY==='1';
+      var whyCopyLabel=whyCopyEff?'strategic function':'semantic fidelity only';
       var inputModeSaved=d.constraints&&d.constraints.mimic_image_input_mode;
       var inputModeHas=inputModeSaved==='reference_edit'||inputModeSaved==='analysis_t2i';
       var inputModeEff=inputModeHas?String(inputModeSaved):SERVER_MIMIC_IMAGE_INPUT_MODE;
       var inputModeLabel=mimicImageInputModeClientLabel(inputModeEff);
-      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Render: ~'+simEff+'% visual variant; plates via '+inputModeLabel+(inputModeHas?' (saved)':(' (server default)'))+'; on-image text via '+fluxLabel+(fluxHas?' (saved)':(' (server default)'))+'. Requires MIMIC_IMAGE_ENABLED.';
+      if(mHint)mHint.textContent='Top performer mimic (separate from regular carousel): '+mParts.join(' · ')+'. Default '+DEFAULT_MAX_MIMIC_PER_FLOW+' per family. Render: ~'+simEff+'% visual variant; plates via '+inputModeLabel+(inputModeHas?' (saved)':(' (server default)'))+'; on-image text via '+fluxLabel+(fluxHas?' (saved)':(' (server default)'))+'; copy mode: '+whyCopyLabel+(whyCopyHas?' (saved)':(' (server default)'))+'. Requires MIMIC_IMAGE_ENABLED.';
     }
     if(mModelSel){
       const savedModel=d.constraints&&d.constraints.mimic_image_bfl_model;
@@ -4787,6 +4900,10 @@ async function loadPlanningCaps(){
     if(mFluxSel){
       const fluxRaw=d.constraints&&d.constraints.mimic_carousel_text_via_flux;
       mFluxSel.value=(fluxRaw===true)?'1':(fluxRaw===false)?'0':'';
+    }
+    if(mWhyCopySel){
+      const whyRaw=d.constraints&&d.constraints.why_mimic_copy_enabled;
+      mWhyCopySel.value=(whyRaw===true)?'1':(whyRaw===false)?'0':'';
     }
     if(mInputModeSel){
       const modeRaw=String((d.constraints&&d.constraints.mimic_image_input_mode)||'').trim();
@@ -4805,28 +4922,46 @@ async function loadPlanningCaps(){
   }
 }
 
-async function saveOpenAiGenerationMode(){
-  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
-  const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
-  const genModeBtn=document.getElementById('plan-cap-openai-gen-save');
-  const pick=(genModeSel&&genModeSel.value||'').trim();
-  if(pick!==''&&pick!=='live'&&pick!=='placeholder'){showToast('Copy mode: live, placeholder, or empty for server default.',false);return;}
-  if(genModeBtn)genModeBtn.disabled=true;
-  try{
-    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({_project:SLUG,openai_generation_mode:pick})});
-    var rawText=await r.text();
-    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
-    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
-    showToast('Copy generation mode saved.',true);
-    await loadPlanningCaps();
-  }catch(err){showToast(err.message,false);}
-  finally{if(genModeBtn)genModeBtn.disabled=false;}
+function mergePlanCapGroupInputs(merged,groups,prefix){
+  for(var gj=0;gj<groups.length;gj++){
+    var grp=groups[gj];
+    var inpg=document.getElementById(prefix+grp.id);
+    var rawg=(inpg&&inpg.value||'').trim();
+    for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
+    if(rawg!==''){
+      var ng=parseInt(rawg,10);
+      for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
+    }
+  }
 }
 
-async function saveVideoPlanningCaps(){
+async function saveAllPlanningCaps(){
   if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
+  const saveBtn=document.getElementById('plan-cap-save-all');
+  const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
+  const cinp=document.getElementById('plan-cap-carousel');
   const aggInp=document.getElementById('plan-cap-video-agg');
-  const vBtn=document.getElementById('plan-cap-video-save');
+  const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
+  const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
+  const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
+  const mWhyCopySel=document.getElementById('plan-cap-mimic-why-copy');
+  const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
+  const pick=(genModeSel&&genModeSel.value||'').trim();
+  if(pick!==''&&pick!=='live'&&pick!=='placeholder'){showToast('Copy mode: live, placeholder, or empty for server default.',false);return;}
+  const cRaw=(cinp&&cinp.value||'').trim();
+  if(cRaw!==''){
+    var cn=parseInt(cRaw,10);
+    if(!Number.isFinite(cn)||cn<0){showToast('Carousel aggregate: non-negative integer or empty.',false);return;}
+  }
+  for(var ci=0;ci<CAROUSEL_PLAN_CAP_GROUPS.length;ci++){
+    var cg=CAROUSEL_PLAN_CAP_GROUPS[ci];
+    var cinpg=document.getElementById('plan-cap-carousel-'+cg.id);
+    var ctr=(cinpg&&cinpg.value||'').trim();
+    if(ctr!==''){
+      var cpn=parseInt(ctr,10);
+      if(!Number.isFinite(cpn)||cpn<0){showToast('Regular carousel per-family: non-negative integer or empty.',false);return;}
+    }
+  }
   const aggRaw=(aggInp&&aggInp.value||'').trim();
   if(aggRaw!==''){
     var an=parseInt(aggRaw,10);
@@ -4841,44 +4976,6 @@ async function saveVideoPlanningCaps(){
       if(!Number.isFinite(tn)||tn<0){showToast('Each video type: non-negative integer or empty.',false);return;}
     }
   }
-  if(vBtn)vBtn.disabled=true;
-  try{
-    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
-    var d0=await r0.json();
-    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
-    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
-    function mergePlanCapGroup(groups,prefix){
-      for(var gj=0;gj<groups.length;gj++){
-        var grp=groups[gj];
-        var inpg=document.getElementById(prefix+grp.id);
-        var rawg=(inpg&&inpg.value||'').trim();
-        for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
-        if(rawg!==''){
-          var ng=parseInt(rawg,10);
-          for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
-        }
-      }
-    }
-    mergePlanCapGroup(VIDEO_PLAN_CAP_GROUPS,'plan-cap-video-');
-    var body={_project:SLUG,max_jobs_per_flow_type:merged};
-    if(aggRaw==='')body.max_video_jobs_per_run='';
-    else body.max_video_jobs_per_run=parseInt(aggRaw,10);
-    var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    var rawText=await r.text();
-    var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
-    if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
-    showToast('Video planning caps saved.',true);
-    await loadPlanningCaps();
-  }catch(err){showToast(err.message,false);}
-  finally{if(vBtn)vBtn.disabled=false;}
-}
-async function saveMimicPlanningCaps(){
-  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
-  const mBtn=document.getElementById('plan-cap-mimic-save');
-  const mModelSel=document.getElementById('plan-cap-mimic-bfl-model');
-  const mSimInp=document.getElementById('plan-cap-mimic-visual-sim');
-  const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
-  const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
   const simRaw=(mSimInp&&mSimInp.value||'').trim();
   const inputModePick=(mInputModeSel&&mInputModeSel.value||'').trim();
   if(inputModePick!==''&&inputModePick!=='reference_edit'&&inputModePick!=='analysis_t2i'){
@@ -4898,96 +4995,72 @@ async function saveMimicPlanningCaps(){
       if(!Number.isFinite(mn)||mn<0){showToast('Each mimic flow: non-negative integer or empty.',false);return;}
     }
   }
-  if(mBtn)mBtn.disabled=true;
+  if(saveBtn)saveBtn.disabled=true;
   try{
     var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
     var d0=await r0.json();
     if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
     var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
-    for(var gj=0;gj<TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.length;gj++){
-      var grp=TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS[gj];
-      var inpg=document.getElementById('plan-cap-mimic-'+grp.id);
-      var rawg=(inpg&&inpg.value||'').trim();
-      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
-      if(rawg!==''){
-        var ng=parseInt(rawg,10);
-        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
-      }
-    }
-    var body={_project:SLUG,max_jobs_per_flow_type:merged};
-    if(mModelSel){
-      body.mimic_image_bfl_model=(mModelSel.value||'').trim();
-    }
-    if(mSimInp){
-      body.mimic_visual_similarity_pct=simRaw===''?'':parseInt(simRaw,10);
-    }
+    mergePlanCapGroupInputs(merged,CAROUSEL_PLAN_CAP_GROUPS,'plan-cap-carousel-');
+    mergePlanCapGroupInputs(merged,VIDEO_PLAN_CAP_GROUPS,'plan-cap-video-');
+    mergePlanCapGroupInputs(merged,TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS,'plan-cap-mimic-');
+    var body={_project:SLUG,max_jobs_per_flow_type:merged,openai_generation_mode:pick};
+    body.max_carousel_jobs_per_run=cRaw===''?'':parseInt(cRaw,10);
+    body.max_video_jobs_per_run=aggRaw===''?'':parseInt(aggRaw,10);
+    if(mModelSel)body.mimic_image_bfl_model=(mModelSel.value||'').trim();
+    if(mSimInp)body.mimic_visual_similarity_pct=simRaw===''?'':parseInt(simRaw,10);
     if(mFluxSel){
       const fluxPick=(mFluxSel.value||'').trim();
       body.mimic_carousel_text_via_flux=fluxPick===''?'':fluxPick==='1';
     }
-    if(mInputModeSel){
-      body.mimic_image_input_mode=inputModePick===''?'':inputModePick;
+    if(mWhyCopySel){
+      const whyPick=(mWhyCopySel.value||'').trim();
+      body.why_mimic_copy_enabled=whyPick===''?'':whyPick==='1';
     }
+    if(mInputModeSel)body.mimic_image_input_mode=inputModePick===''?'':inputModePick;
     var r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var rawText=await r.text();
     var dj;try{dj=JSON.parse(rawText);}catch(e2){throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
     if(!r.ok||!dj.ok)throw new Error(apiErr(dj,'Save failed'));
-    showToast('Mimic planning caps and render settings saved.',true);
+    showToast('Planning caps saved.',true);
     await loadPlanningCaps();
   }catch(err){showToast(err.message,false);}
-  finally{if(mBtn)mBtn.disabled=false;}
-}
-async function saveCarouselCap(){
-  if(!SLUG){showToast('Select a project in the sidebar first.',false);return;}
-  const inp=document.getElementById('plan-cap-carousel');
-  const btn=document.getElementById('plan-cap-carousel-save');
-  const raw=(inp&&inp.value||'').trim();
-  for(var ci=0;ci<CAROUSEL_PLAN_CAP_GROUPS.length;ci++){
-    var cg=CAROUSEL_PLAN_CAP_GROUPS[ci];
-    var cinpg=document.getElementById('plan-cap-carousel-'+cg.id);
-    var ctr=(cinpg&&cinpg.value||'').trim();
-    if(ctr!==''){
-      var cn=parseInt(ctr,10);
-      if(!Number.isFinite(cn)||cn<0){showToast('Regular carousel per-family: non-negative integer or empty.',false);return;}
-    }
-  }
-  const body={_project:SLUG};
-  if(raw==='')body.max_carousel_jobs_per_run='';
-  else{
-    const n=parseInt(raw,10);
-    if(!Number.isFinite(n)||n<0){showToast('Enter a non-negative integer, or leave empty for the server default.',false);return;}
-    body.max_carousel_jobs_per_run=n;
-  }
-  if(btn)btn.disabled=true;
-  try{
-    var r0=await cafFetch('/v1/admin/config?project='+encodeURIComponent(SLUG));
-    var d0=await r0.json();
-    if(!d0.ok)throw new Error(apiErr(d0,'Could not load constraints'));
-    var merged=normalizePerFlowCapsClient(d0.constraints&&d0.constraints.max_jobs_per_flow_type);
-    for(var gi=0;gi<CAROUSEL_PLAN_CAP_GROUPS.length;gi++){
-      var grp=CAROUSEL_PLAN_CAP_GROUPS[gi];
-      var inpg=document.getElementById('plan-cap-carousel-'+grp.id);
-      var rawg=(inpg&&inpg.value||'').trim();
-      for(var ki=0;ki<grp.keys.length;ki++)delete merged[grp.keys[ki]];
-      if(rawg!==''){
-        var ng=parseInt(rawg,10);
-        for(var kj=0;kj<grp.keys.length;kj++)merged[grp.keys[kj]]=ng;
-      }
-    }
-    body.max_jobs_per_flow_type=merged;
-    const r=await cafFetch('/v1/admin/config/constraints',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const rawText=await r.text();
-    let d;try{d=JSON.parse(rawText);}catch{throw new Error(r.ok?'Invalid response':'HTTP '+r.status);}
-    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Save failed'));
-    showToast('Regular carousel caps saved.',true);
-    await loadPlanningCaps();
-  }catch(err){showToast(err.message,false);}
-  finally{if(btn)btn.disabled=false;}
+  finally{if(saveBtn)saveBtn.disabled=false;}
 }
 
 loadRuns(1);
 loadPlanningCaps();
-window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadRuns(runsPage);loadPlanningCaps();},0);});
+window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadRuns(runsPage);loadPlanningCaps();applyPlanCapCollapsed();},0);});
+
+const PLAN_CAP_COLLAPSE_KEY='caf_plan_cap_collapsed';
+function loadPlanCapCollapsed(){
+  try{var raw=localStorage.getItem(PLAN_CAP_COLLAPSE_KEY);return raw?JSON.parse(raw):{};}catch(e){return {};}
+}
+function savePlanCapCollapsed(state){
+  try{localStorage.setItem(PLAN_CAP_COLLAPSE_KEY,JSON.stringify(state));}catch(e){}
+}
+function applyPlanCapCollapsed(){
+  var state=loadPlanCapCollapsed();
+  document.querySelectorAll('.plan-cap-col[data-plan-cap-cat]').forEach(function(col){
+    var cat=col.getAttribute('data-plan-cap-cat');
+    var collapsed=!!(cat&&state[cat]);
+    col.classList.toggle('is-collapsed',collapsed);
+    var btn=col.querySelector('.plan-cap-col-toggle');
+    if(btn)btn.setAttribute('aria-expanded',collapsed?'false':'true');
+  });
+}
+function togglePlanCapCat(cat){
+  var col=document.querySelector('.plan-cap-col[data-plan-cap-cat="'+cat+'"]');
+  if(!col)return;
+  var collapsed=!col.classList.contains('is-collapsed');
+  col.classList.toggle('is-collapsed',collapsed);
+  var btn=col.querySelector('.plan-cap-col-toggle');
+  if(btn)btn.setAttribute('aria-expanded',collapsed?'false':'true');
+  var state=loadPlanCapCollapsed();
+  if(collapsed)state[cat]=true;else delete state[cat];
+  savePlanCapCollapsed(state);
+}
+applyPlanCapCollapsed();
 
 document.getElementById('create-form')?.addEventListener('submit',async(e)=>{
   e.preventDefault();
@@ -5756,7 +5829,7 @@ ${initialRunId ? adminRunHubTabsHtml("jobs", currentSlug, initialRunId) : ""}
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer"><input type="checkbox" id="jobs-live" checked> Auto-refresh every 4s (only when this tab is visible)</label>
     <span id="jobs-live-status" style="font-size:12px;color:var(--muted)"></span>
   </div>
-  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows pipeline position (LLM → QC → render → review). <strong>NEEDS_EDIT</strong> keeps the same <code>task_id</code>; rework regenerates in place and archives prior output in <code>generation_payload.rework_history</code> and <code>job_drafts</code>. The <strong>Render</strong> column for NEEDS_EDIT shows whether the last render was a prior pass (reference) vs still waiting. Use <strong>Re-run</strong> to reset and run the full pipeline, or <strong>Rework pending NEEDS_EDIT</strong> for batch rework. Expand a row for human review timeline, drafts, and API audit.</p>
+  <p style="font-size:12px;color:var(--muted);line-height:1.45;margin:0 0 12px;max-width:920px"><strong>Phase</strong> shows pipeline position (LLM → QC → render → review). <strong>NEEDS_EDIT</strong> keeps the same <code>task_id</code>; rework regenerates in place and archives prior output in <code>generation_payload.rework_history</code> and <code>job_drafts</code>. The <strong>Render</strong> column for NEEDS_EDIT shows whether the last render was a prior pass (reference) vs still waiting. Mimic carousel jobs: use <strong>Reprint text</strong> to re-composite copy on stored plates (no LLM). Use <strong>Re-run</strong> to reset and run the full pipeline, or <strong>Rework pending NEEDS_EDIT</strong> for batch rework. Expand a row for human review timeline, drafts, and API audit.</p>
   <div id="jobs-table"><div class="empty">Loading...</div></div>
   <div class="page-btns" id="jobs-pager"></div>
 </div>
@@ -5904,6 +5977,43 @@ async function resumeJob(ev,tid){
     showToast('Resume requested — status: '+(d.status||'—'),true);
     loadFacets().then(function(){return loadJobs(jobsPage,true);});
   }catch(err){showToast(err.message||String(err),false,22000);}
+}
+function jobSupportsTextReprint(j){
+  if(!j)return false;
+  if(j.supports_text_reprint===true)return true;
+  if(j.supports_text_reprint===false)return false;
+  var ft=String(j.flow_type||'').trim();
+  if(ft!=='FLOW_TOP_PERFORMER_MIMIC_CAROUSEL'&&ft!=='FLOW_VISUAL_FIRST_CAROUSEL'&&ft!=='FLOW_WHY_MIMIC_CAROUSEL')return false;
+  var st=String(j.status||'').toUpperCase();
+  return st!=='PLANNED'&&st!=='GENERATING'&&st!=='CANCELLED';
+}
+async function reprintTextOverlayJob(ev,tid){
+  if(ev)ev.stopPropagation();
+  if(typeof window.cafFetch!=='function'){alert('cafFetch is missing. Hard-refresh this page (Ctrl+Shift+R).');return;}
+  if(!JOB_SLUG){showToast('Pick a project in the sidebar, then open Jobs again.',false);return;}
+  tid=String(tid||'').trim();
+  if(!tid){showToast('Missing task id for this row. Click Filter to reload the table.',false);return;}
+  if(!confirm('Reprint text overlay for this job?\\n\\nRe-composites copy on stored art-only plates (no LLM, no Flux). Uses saved layout positions and slide copy.\\n\\n'+tid))return;
+  showToast('Sending text reprint request…',true,4000);
+  try{
+    var r=await cafFetch('/v1/admin/jobs/reprint-text-overlay',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
+    var d=await r.json().catch(function(){return{};});
+    if(r.status===202&&d.ok){
+      showToast(d.message||('Text reprint started for '+tid+'. Refresh the table in 1–2 minutes.'),true,28000);
+      loadFacets().then(function(){return loadJobs(jobsPage,true);});
+      return;
+    }
+    if(!r.ok||!d.ok){
+      var detail=(d&&d.details)?JSON.stringify(d.details):'';
+      throw new Error((d&&d.message)||(d&&d.error)||detail||('HTTP '+r.status));
+    }
+    showToast('Text reprint requested — status: '+(d.status||'—'),true);
+    loadFacets().then(function(){return loadJobs(jobsPage,true);});
+  }catch(err){showToast(err.message||String(err),false,22000);}
+}
+function reprintTextOverlayOneJob(ev,ix){
+  if(ev)ev.stopPropagation();
+  reprintTextOverlayJob(ev,jobRowTaskIds[ix]);
 }
 function reprocessOneJobEntirely(ev,ix){
   if(ev)ev.stopPropagation();
@@ -6062,12 +6172,24 @@ function renderJobDetailHtml(d){
   if(canResume){
     lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();resumeJob(event,'+JSON.stringify(j.task_id||'')+')" title="Resume pipeline without clearing payload (mimic reprint re-runs text overlay on stored plates)">Resume</button>');
   }
+  if(jobSupportsTextReprint(j)){
+    lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprintTextOverlayJob(event,'+JSON.stringify(j.task_id||'')+')" title="Re-composite carousel copy on stored art-only plates (no LLM, no Flux)">Reprint text</button>');
+  }
   lines.push('<button type="button" class="btn-ghost btn-sm" style="border:1px solid var(--border)" onclick="event.stopPropagation();reprocessJobEntirely(event,'+JSON.stringify(j.task_id||'')+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run entire pipeline</button>');
   lines.push('<button type="button" class="btn-ghost btn-sm" style="color:var(--red);border:1px solid var(--border)" onclick="event.stopPropagation();eraseJobByTaskId('+JSON.stringify(j.task_id||'')+')">Erase job</button>');
   lines.push('<span style="font-size:11px;color:var(--muted)">Same task_id for the job’s life; rework adds drafts + archived snapshots below</span>');
   lines.push('</div>');
   lines.push('<div class="job-h">Summary</div>');
-  var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,flow_label:(d.flow_display&&d.flow_display.flow_label)||null,mimic_mode:d.mimic_mode||null,mimic_mode_override:d.mimic_mode_override||null,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
+  if(d.flow_display&&(d.flow_display.flow_label||d.flow_display.flow_detail)){
+    lines.push('<div style="margin:0 0 10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card2)">');
+    lines.push('<div style="font-size:11px;color:var(--muted);margin-bottom:4px">Flow path</div>');
+    lines.push('<div style="font-size:13px;font-weight:600;line-height:1.4">'+esc(d.flow_display.flow_label||j.flow_type||'—')+'</div>');
+    if(d.flow_display.flow_detail){
+      lines.push('<div style="font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45">'+esc(d.flow_display.flow_detail)+'</div>');
+    }
+    lines.push('</div>');
+  }
+  var sum={task_id:j.task_id,run_id:j.run_id,status:j.status,flow_type:j.flow_type,flow_label:(d.flow_display&&d.flow_display.flow_label)||null,flow_detail:(d.flow_display&&d.flow_display.flow_detail)||null,mimic_mode:d.mimic_mode||null,mimic_mode_override:d.mimic_mode_override||null,platform:j.platform,candidate_id:j.candidate_id,variation_name:j.variation_name,render_provider:j.render_provider,render_status:j.render_status,asset_id:j.asset_id,recommended_route:j.recommended_route,qc_status:j.qc_status,qc_block_reason:(d.qc_detail&&d.qc_detail.reason_short)||null,created_at:j.created_at,updated_at:j.updated_at};
   lines.push('<pre class="job-detail-pre">'+esc(prettyJson(sum))+'</pre>');
   if(d.qc_detail&&(d.qc_detail.passed===false||(d.qc_detail.blocking_count|0)>0||j.status==='BLOCKED'||String(j.qc_status||'').toUpperCase()==='FAIL')){
     lines.push('<div class="job-h">QC — why this job failed or was blocked</div>');
@@ -6207,7 +6329,13 @@ async function loadJobs(p,silent){
     h+='<td class="mono" style="font-size:11px" title="'+escAttr(j.run_id||"")+'"><div class="job-cell-inner">'+esc(j.run_id||'—')+'</div></td>';
     var pkg=String(j.package_type||'').trim();
     if(pkg==='render_copy')pkg='carousel_package';
-    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px" title="'+escAttr(j.flow_type||'')+'">'+esc(j.flow_label||j.flow_type||'—')+(j.mimic_mode?' <span style="font-size:10px;color:var(--muted)">('+esc(j.mimic_mode)+')</span>':'')+'</td><td style="font-size:11px;color:var(--fg2)">'+esc(pkg||'—')+'</td>';
+    var flowTitle=escAttr([j.flow_type,j.flow_label,j.flow_detail].filter(Boolean).join(' · '));
+    var flowCell='<div class="job-flow-cell"><div>'+esc(j.flow_label||j.flow_type||'—')+'</div>';
+    if(j.flow_detail){
+      flowCell+='<div style="font-size:10px;color:var(--muted);line-height:1.35;margin-top:3px;max-width:220px">'+esc(j.flow_detail)+'</div>';
+    }
+    flowCell+='</div>';
+    h+='<td>'+esc(j.platform||'—')+'</td><td style="font-size:12px;vertical-align:top" title="'+flowTitle+'">'+flowCell+'</td><td style="font-size:11px;color:var(--fg2)">'+esc(pkg||'—')+'</td>';
     h+='<td>'+badge(badgeStatus)+(isRendering&&renderPhase==='failed'?' <span style="font-size:10px;color:var(--muted)" title="Row still had status RENDERING in DB; render_state reports failed — re-run or erase">(render failed)</span>':'')+'</td>';
     h+='<td style="font-size:11px;line-height:1.35;color:var(--fg2);max-width:220px" title="'+escAttr(j.pipeline_phase||'')+'">'+esc(trunc(j.pipeline_phase||'—',120))+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+esc(rph||'—')+'</td>';
@@ -6223,6 +6351,9 @@ async function loadJobs(p,silent){
     h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">';
     if(showResume){
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — mimic reprint re-composites text on stored plates">Resume</button>';
+    }
+    if(jobSupportsTextReprint(j)){
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprintTextOverlayOneJob(event,'+i+')" title="Re-composite carousel copy on stored plates (no LLM, no Flux)">Reprint text</button>';
     }
     h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="reprocessOneJobEntirely(event,'+i+')" title="'+escAttr(LLM_JOB_GEN_TITLE)+'">Re-run</button><button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;color:var(--red);border:1px solid var(--border)" onclick="eraseOneJob(event,'+i+')" title="Remove this job and related drafts, audits, assets">Erase</button></div></td></tr>';
     h+='<tr class="job-detail-row" id="job-detail-'+i+'" style="display:none" onclick="event.stopPropagation()"><td colspan="14"><div id="job-detail-body-'+i+'" class="job-detail-body" data-loaded="0" onclick="event.stopPropagation()"></div></td></tr>';
@@ -6260,6 +6391,8 @@ window.reprocessJobEntirely=reprocessJobEntirely;
 window.reprocessOneJobEntirely=reprocessOneJobEntirely;
 window.resumeJob=resumeJob;
 window.resumeOneJob=resumeOneJob;
+window.reprintTextOverlayJob=reprintTextOverlayJob;
+window.reprintTextOverlayOneJob=reprintTextOverlayOneJob;
 loadFacets().then(function(){return loadJobs(1);});
 window.addEventListener('pageshow',function(ev){if(ev.persisted)setTimeout(function(){loadFacets().then(function(){return loadJobs(jobsPage);});},0);});
 </script>`;

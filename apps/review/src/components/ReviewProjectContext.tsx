@@ -14,6 +14,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { mergePreservedNavQuery } from "@/lib/preserved-nav-query";
 
 const STORAGE_KEY = "caf-review-active-project";
+const BRAND_ROUTE_RE = /^\/brand\/([^/]+)/;
 
 export interface ReviewScopePayload {
   multiProject: boolean;
@@ -24,14 +25,19 @@ export interface ReviewScopePayload {
 export interface ReviewProjectContextValue {
   ready: boolean;
   multiProject: boolean;
-  /** Tenant fixed by env when not multi-project. */
   lockedSlug: string;
-  /** Empty string = all projects (multi mode only). */
+  /** Slug from `?project=` (legacy) or `/brand/[slug]` path. */
   activeProjectSlug: string;
+  /** Same as activeProjectSlug when on a brand route. */
+  activeBrandSlug: string;
   projectOptions: string[];
+  /** True when pathname is under `/brand/[slug]`. */
+  inBrandContext: boolean;
   setActiveProjectSlug: (slug: string) => void;
-  /** Append `project` query when a tenant is pinned (for nav links). */
+  /** Navigate to a brand-scoped path, preserving sub-route where possible. */
+  switchBrand: (slug: string) => void;
   navHref: (path: string) => string;
+  brandHref: (slug: string, subpath?: string) => string;
 }
 
 const ReviewProjectContext = createContext<ReviewProjectContextValue | null>(null);
@@ -41,9 +47,23 @@ function normalizePath(path: string): string {
   return path.replace(/\/+$/, "") || "/";
 }
 
+function slugFromBrandPath(pathname: string): string {
+  const m = pathname.match(BRAND_ROUTE_RE);
+  return m?.[1] ? decodeURIComponent(m[1]) : "";
+}
+
+function brandSubpath(pathname: string, slug: string): string {
+  const prefix = `/brand/${encodeURIComponent(slug)}`;
+  if (!pathname.startsWith(prefix)) return "";
+  const rest = pathname.slice(prefix.length);
+  return rest || "";
+}
+
 /** Paths where we restore `project` from localStorage if the URL has none. */
 function shouldOfferRestore(pathname: string): boolean {
-  if (pathname === "/") return true;
+  if (pathname === "/" || pathname === "/review") return true;
+  if (pathname === "/workspace") return false;
+  if (pathname.startsWith("/brand/")) return false;
   if (pathname === "/publish" || pathname.startsWith("/publish/")) return true;
   if (pathname === "/approved" || pathname.startsWith("/approved/")) return true;
   if (pathname === "/pipeline" || pathname.startsWith("/pipeline/")) return true;
@@ -66,6 +86,7 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
   const [lockedSlug, setLockedSlug] = useState("");
   const [projectOptions, setProjectOptions] = useState<string[]>([]);
 
+  const brandSlugFromPath = slugFromBrandPath(pathname);
   const projectFromUrl = searchParams.get("project")?.trim() ?? "";
   const restoreAttempted = useRef(false);
 
@@ -94,9 +115,47 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const activeBrandSlug = brandSlugFromPath;
+  const inBrandContext = !!activeBrandSlug;
+  const activeProjectSlug = activeBrandSlug || (multiProject ? projectFromUrl : lockedSlug);
+
+  const brandHref = useCallback((slug: string, subpath = "") => {
+    const trimmed = subpath.trim();
+    const path = trimmed
+      ? `/brand/${encodeURIComponent(slug)}${trimmed.startsWith("/") ? trimmed : `/${trimmed}`}`
+      : `/brand/${encodeURIComponent(slug)}`;
+    return path;
+  }, []);
+
+  const switchBrand = useCallback(
+    (slug: string) => {
+      const trimmed = slug.trim();
+      if (!trimmed) {
+        router.push("/workspace");
+        return;
+      }
+      try {
+        localStorage.setItem(STORAGE_KEY, trimmed);
+      } catch {
+        /* ignore */
+      }
+      if (inBrandContext && activeBrandSlug) {
+        const sub = brandSubpath(pathname, activeBrandSlug) || "";
+        router.push(brandHref(trimmed, sub));
+      } else {
+        router.push(brandHref(trimmed));
+      }
+    },
+    [router, inBrandContext, activeBrandSlug, pathname, brandHref]
+  );
+
   const setActiveProjectSlug = useCallback(
     (slug: string) => {
       const trimmed = slug.trim();
+      if (inBrandContext) {
+        switchBrand(trimmed);
+        return;
+      }
       const next = new URLSearchParams(searchParams.toString());
       if (!trimmed) next.delete("project");
       else next.set("project", trimmed);
@@ -110,12 +169,12 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       const qs = next.toString();
       router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [pathname, router, searchParams]
+    [inBrandContext, switchBrand, pathname, router, searchParams]
   );
 
   useEffect(() => {
     if (!ready || !multiProject || restoreAttempted.current) return;
-    if (projectFromUrl) {
+    if (projectFromUrl || inBrandContext) {
       restoreAttempted.current = true;
       return;
     }
@@ -136,9 +195,7 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       /* ignore */
     }
     restoreAttempted.current = true;
-  }, [ready, multiProject, projectFromUrl, pathname, router, searchParams]);
-
-  const activeProjectSlug = multiProject ? projectFromUrl : "";
+  }, [ready, multiProject, projectFromUrl, inBrandContext, pathname, router, searchParams]);
 
   const navHref = useCallback(
     (path: string) => {
@@ -146,13 +203,18 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       const [p, existingQs] = raw.split("?");
       const base = normalizePath(p);
       const merged = new URLSearchParams(existingQs ?? "");
-      if (multiProject && activeProjectSlug) merged.set("project", activeProjectSlug);
-      else merged.delete("project");
+      if (inBrandContext && activeBrandSlug) {
+        merged.delete("project");
+      } else if (multiProject && activeProjectSlug) {
+        merged.set("project", activeProjectSlug);
+      } else {
+        merged.delete("project");
+      }
       mergePreservedNavQuery(merged, searchParams);
       const qs = merged.toString();
       return qs ? `${base}?${qs}` : base;
     },
-    [multiProject, activeProjectSlug, searchParams]
+    [inBrandContext, activeBrandSlug, multiProject, activeProjectSlug, searchParams]
   );
 
   const value = useMemo<ReviewProjectContextValue>(
@@ -161,11 +223,27 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       multiProject,
       lockedSlug,
       activeProjectSlug,
+      activeBrandSlug,
       projectOptions,
+      inBrandContext,
       setActiveProjectSlug,
+      switchBrand,
       navHref,
+      brandHref,
     }),
-    [ready, multiProject, lockedSlug, activeProjectSlug, projectOptions, setActiveProjectSlug, navHref]
+    [
+      ready,
+      multiProject,
+      lockedSlug,
+      activeProjectSlug,
+      activeBrandSlug,
+      projectOptions,
+      inBrandContext,
+      setActiveProjectSlug,
+      switchBrand,
+      navHref,
+      brandHref,
+    ]
   );
 
   return <ReviewProjectContext.Provider value={value}>{children}</ReviewProjectContext.Provider>;

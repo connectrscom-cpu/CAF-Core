@@ -53,6 +53,53 @@ export default function GlobalLearningPage() {
 
   const [previewProjectSlug, setPreviewProjectSlug] = useState("SNS");
   const [contextPreview, setContextPreview] = useState<Record<string, unknown> | null>(null);
+  const [digestBusy, setDigestBusy] = useState(false);
+  const [digestResult, setDigestResult] = useState<Record<string, unknown> | null>(null);
+  const [digestLatest, setDigestLatest] = useState<Record<string, unknown> | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  async function postLearningAction(body: Record<string, unknown>) {
+    const res = await fetch("/api/learning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(String((json as { error?: string }).error ?? `HTTP ${res.status}`));
+    return json;
+  }
+
+  const applyGlobalRule = async (ruleId: string) => {
+    try {
+      await postLearningAction({ action: "apply_rule", storage_project: globalSlug, rule_id: ruleId });
+      setActionMsg(`Applied ${ruleId}`);
+      fetchAll();
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const dropGlobalRule = async (ruleId: string) => {
+    try {
+      await postLearningAction({ action: "dismiss_rule", storage_project: globalSlug, rule_id: ruleId });
+      setActionMsg(`Dropped ${ruleId}`);
+      fetchAll();
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const dropAllGlobalPending = async () => {
+    if (pendingGlobalRules.length === 0) return;
+    if (!window.confirm(`Drop all ${pendingGlobalRules.length} pending global rules?`)) return;
+    try {
+      const j = await postLearningAction({ action: "dismiss_pending", storage_project: globalSlug });
+      setActionMsg(`Dropped ${String((j as { dismissed?: number }).dismissed ?? pendingGlobalRules.length)} rules`);
+      fetchAll();
+    } catch (e) {
+      setActionMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -98,13 +145,44 @@ export default function GlobalLearningPage() {
     if (res.ok) setContextPreview(await res.json());
   };
 
+  const loadLatestDigest = async () => {
+    const res = await fetch(`/api/learning?section=global_digest_latest`);
+    if (res.ok) setDigestLatest(await res.json());
+  };
+
+  const buildDigest = async () => {
+    setDigestBusy(true);
+    setDigestResult(null);
+    try {
+      const res = await fetch("/api/learning", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "global_digest", window_days: 30 }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setDigestResult(json);
+        loadLatestDigest().catch(() => {});
+      } else {
+        setDigestResult({ error: json.error ?? `HTTP ${res.status}` });
+      }
+    } finally {
+      setDigestBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLatestDigest().catch(() => {});
+  }, []);
+
   return (
     <div>
       <div className="page-header">
         <h2>Global Learning</h2>
         <p>
-          CAF-wide rules and evidence stored in <code>caf-global</code>. Use this to set defaults that all projects
-          inherit (and to preview the merged generation context for a project).
+          CAF-wide observatory on <code>caf-global</code> — read-only digests and evidence. Pending global rules
+          can be <strong>Applied</strong> or <strong>Dropped</strong> here. Per-project learning:{" "}
+          <a href="/learning">Overview</a>.
         </p>
       </div>
 
@@ -136,6 +214,59 @@ export default function GlobalLearningPage() {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="card" style={{ padding: 14, flex: "1 1 420px" }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Global digest (observatory)</div>
+          <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--fg-secondary)" }}>
+            Manual rollup of editorial, Nemotron, performance, and LLM-review global observations. Read-only — never
+            changes project rules.
+          </p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" className="btn-primary" onClick={buildDigest} disabled={digestBusy}>
+              {digestBusy ? "Building…" : "Build global digest"}
+            </button>
+            <button type="button" className="btn-ghost" onClick={() => void loadLatestDigest()}>
+              Refresh latest
+            </button>
+          </div>
+          {digestResult ? (
+            <pre
+              style={{
+                marginTop: 10,
+                fontSize: 11,
+                maxHeight: 240,
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                background: "var(--bg)",
+                padding: 10,
+                borderRadius: 8,
+                border: "1px solid var(--border)",
+              }}
+            >
+              {JSON.stringify(digestResult, null, 2)}
+            </pre>
+          ) : null}
+          {digestLatest?.digest ? (
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ cursor: "pointer", fontSize: 12 }}>Latest stored digest</summary>
+              <pre
+                style={{
+                  marginTop: 8,
+                  fontSize: 11,
+                  maxHeight: 240,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  background: "var(--bg)",
+                  padding: 10,
+                  borderRadius: 8,
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {JSON.stringify(digestLatest.digest, null, 2)}
+              </pre>
+            </details>
+          ) : null}
         </div>
 
         <div className="card" style={{ padding: 14, flex: "1 1 420px" }}>
@@ -214,6 +345,7 @@ export default function GlobalLearningPage() {
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>action</th>
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>scope</th>
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>evidence</th>
+                  <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }} />
                 </tr>
               </thead>
               <tbody>
@@ -229,6 +361,11 @@ export default function GlobalLearningPage() {
                     <td style={{ padding: 6, borderBottom: "1px solid var(--border)", color: "var(--muted)" }}>
                       {Array.isArray(r.evidence_refs) ? r.evidence_refs.length : 0}
                     </td>
+                    <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
+                      <button type="button" className="btn-ghost" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => void dropGlobalRule(r.rule_id)}>
+                        Drop
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -237,7 +374,15 @@ export default function GlobalLearningPage() {
         </div>
 
         <div className="card">
-          <h3 style={{ marginBottom: 12 }}>Pending global rules ({pendingGlobalRules.length})</h3>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ marginBottom: 12 }}>Pending global rules ({pendingGlobalRules.length})</h3>
+            {pendingGlobalRules.length > 0 ? (
+              <button type="button" className="btn-ghost" onClick={() => void dropAllGlobalPending()}>
+                Drop all pending
+              </button>
+            ) : null}
+          </div>
+          {actionMsg ? <p className="learning-copy-hint" style={{ marginBottom: 8 }}>{actionMsg}</p> : null}
           {pendingGlobalRules.length === 0 ? (
             <p style={{ color: "var(--muted)" }}>No pending global rules.</p>
           ) : (
@@ -247,6 +392,7 @@ export default function GlobalLearningPage() {
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>rule_id</th>
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>action</th>
                   <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }}>scope</th>
+                  <th style={{ textAlign: "left", padding: 6, borderBottom: "1px solid var(--border)" }} />
                 </tr>
               </thead>
               <tbody>
@@ -258,6 +404,16 @@ export default function GlobalLearningPage() {
                     <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>{r.action_type}</td>
                     <td style={{ padding: 6, borderBottom: "1px solid var(--border)", color: "var(--fg-secondary)" }}>
                       {(r.scope_flow_type ?? "*") + " · " + (r.scope_platform ?? "*")}
+                    </td>
+                    <td style={{ padding: 6, borderBottom: "1px solid var(--border)" }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button type="button" className="btn-primary" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => void applyGlobalRule(r.rule_id)}>
+                          Apply
+                        </button>
+                        <button type="button" className="btn-ghost" style={{ fontSize: 11, padding: "4px 8px" }} onClick={() => void dropGlobalRule(r.rule_id)}>
+                          Drop
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
