@@ -77,8 +77,8 @@ export function buildBrandOnboardingSteps(input: {
     },
     {
       id: "brand_bible",
-      title: "Configure your brand bible",
-      description: "Define your visual identity and how CAF should apply it when creating content.",
+      title: "Build your brand moodboard",
+      description: "Upload style references, palette, and rules so CAF keeps your visual identity on every post.",
       href: `${base}/profile?tab=bible`,
       complete: input.hasBrandBible === true,
     },

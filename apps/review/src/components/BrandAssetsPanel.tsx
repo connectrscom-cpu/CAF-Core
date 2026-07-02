@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { imageFilesFromClipboard } from "@/lib/clipboard-image-files";
 import { resolveBrandAssetUploadUrl } from "@/lib/brand-asset-upload-url";
 import { useReviewProject } from "./ReviewProjectContext";
 
@@ -59,6 +60,20 @@ export type BrandAssetsPanelProps = {
   projectSlug?: string;
   /** Marketer profile uses simplified UI; admin settings keeps full table + HeyGen controls. */
   variant?: "admin" | "marketer";
+  /** Hide overview grid when parent renders a custom moodboard. */
+  hideOverview?: boolean;
+  /** Open edit form for this asset after load. */
+  editAssetId?: string | null;
+  /** Called after editAssetId was applied. */
+  onEditAssetConsumed?: () => void;
+  /** Called after assets load or change (upload, save, delete). */
+  onAssetsChange?: (assets: BrandAsset[]) => void;
+  /** Open add form for this kind (e.g. from moodboard). */
+  openAddKind?: BrandAssetKind | null;
+  /** Called after openAddKind was applied. */
+  onOpenAddConsumed?: () => void;
+  /** When parent requests add, scroll target id for the upload panel. */
+  panelId?: string;
 };
 
 function parseHex(raw: string): string | null {
@@ -95,7 +110,33 @@ function kindLabel(k: BrandAssetKind): string {
   return ({ logo: "Logo", reference_image: "Reference image", palette: "Color palette", font: "Typography", other: "Other" }[k]);
 }
 
-export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssetsPanelProps) {
+function PendingImagePreviews({ files }: { files: File[] }) {
+  const urls = useMemo(() => files.map((file) => URL.createObjectURL(file)), [files]);
+  useEffect(() => () => urls.forEach((url) => URL.revokeObjectURL(url)), [urls]);
+  if (files.length === 0) return null;
+  return (
+    <div className="brand-kit-paste-previews">
+      {files.map((file, i) => (
+        <div key={`${file.name}-${file.size}-${i}`} className="brand-kit-paste-preview">
+          <img src={urls[i]} alt="" />
+          <span>{file.name}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function BrandAssetsPanel({
+  projectSlug,
+  variant = "admin",
+  hideOverview = false,
+  editAssetId = null,
+  onEditAssetConsumed,
+  onAssetsChange,
+  panelId,
+  openAddKind = null,
+  onOpenAddConsumed,
+}: BrandAssetsPanelProps) {
   const { multiProject, activeProjectSlug } = useReviewProject();
   const resolvedSlug = (projectSlug ?? activeProjectSlug).trim();
   const qs = resolveApiSuffix(projectSlug, multiProject, activeProjectSlug);
@@ -113,23 +154,88 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
   const [googleFamily, setGoogleFamily] = useState<string>(PRESET_GOOGLE_FONTS[0]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [overviewFilter, setOverviewFilter] = useState<"all" | BrandAssetKind>("all");
+  const pasteZoneRef = useRef<HTMLDivElement | null>(null);
+
+  const editingImageKind =
+    editing?.kind === "logo" || editing?.kind === "reference_image" || editing?.kind === "other";
+
+  const applyPastedImages = useCallback(
+    (files: File[]) => {
+      if (files.length === 0) return;
+      const isReplace = Boolean(editing?.id);
+      setPendingFiles((prev) => {
+        if (isReplace) return files.slice(0, 1);
+        if (prev.length > 0) return [...prev, ...files];
+        return files;
+      });
+      setMessage({
+        text:
+          files.length === 1
+            ? "Image pasted from clipboard."
+            : `${files.length} images pasted from clipboard.`,
+        type: "success",
+      });
+      pasteZoneRef.current?.focus();
+    },
+    [editing?.id]
+  );
+
+  useEffect(() => {
+    if (!editing || !editingImageKind) return;
+
+    const onPaste = (e: ClipboardEvent) => {
+      const files = imageFilesFromClipboard(e.clipboardData);
+      if (files.length === 0) return;
+      e.preventDefault();
+      applyPastedImages(files);
+    };
+
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [editing, editingImageKind, applyPastedImages]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`/api/project-config/brand-assets${qs}`);
       const json = (await res.json()) as { brand_assets?: BrandAsset[] };
-      setAssets(Array.isArray(json.brand_assets) ? json.brand_assets : []);
+      const list = Array.isArray(json.brand_assets) ? json.brand_assets : [];
+      setAssets(list);
+      onAssetsChange?.(list);
     } catch {
       setMessage({ text: "Failed to load brand assets", type: "error" });
       setAssets([]);
+      onAssetsChange?.([]);
     }
     setLoading(false);
-  }, [qs]);
+  }, [qs, onAssetsChange]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!editAssetId || !assets?.length) return;
+    const row = assets.find((a) => a.id === editAssetId);
+    if (!row) return;
+    setEditing({ ...row });
+    setPaletteHex(colorsFromMeta(row.metadata_json));
+    setFontMode(inferFontMode(row.metadata_json));
+    const fam =
+      row.metadata_json && typeof row.metadata_json.font_family === "string"
+        ? row.metadata_json.font_family
+        : PRESET_GOOGLE_FONTS[0];
+    setGoogleFamily(fam);
+    setPendingFiles([]);
+    setMessage(null);
+    onEditAssetConsumed?.();
+  }, [editAssetId, assets, onEditAssetConsumed]);
+
+  useEffect(() => {
+    if (!openAddKind) return;
+    startNewWithKind(openAddKind);
+    onOpenAddConsumed?.();
+  }, [openAddKind, onOpenAddConsumed]);
 
   const resetAuxState = () => {
     setPaletteHex(["", "", "", "", ""]);
@@ -415,7 +521,7 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
   const formInputClass = isMarketer ? "brand-kit-input" : "filter-input";
 
   return (
-    <div className={isMarketer ? "brand-kit-panel" : undefined} style={isMarketer ? undefined : { marginTop: 28 }}>
+    <div className={isMarketer ? "brand-kit-panel" : undefined} id={panelId} style={isMarketer ? undefined : { marginTop: 28 }}>
       <div
         className={isMarketer ? "brand-kit-header" : undefined}
         style={
@@ -427,10 +533,10 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
         <div>
           {isMarketer ? (
             <>
-              <h3 className="profile-section-title">Brand kit</h3>
+              <h3 className="profile-section-title">Upload & manage assets</h3>
               <p className="brand-kit-lead">
-                Logos, reference images, color palettes, and typography. CAF uses these when generating and rendering
-                content for this brand.
+                Add logos, moodboard references, palettes, and fonts. They appear in the grid above and in the
+                Instagram preview.
               </p>
             </>
           ) : (
@@ -533,7 +639,21 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
                     <label className={isMarketer ? "profile-field-label" : "filter-label"}>
                       {isMarketer ? "Upload image" : "Upload images (one or many)"}
                     </label>
-                    <div className={isMarketer ? "brand-kit-dropzone" : undefined}>
+                    <div
+                      ref={pasteZoneRef}
+                      className={isMarketer ? "brand-kit-dropzone brand-kit-dropzone--paste" : undefined}
+                      tabIndex={isMarketer ? 0 : undefined}
+                      onPaste={
+                        isMarketer
+                          ? (e) => {
+                              const files = imageFilesFromClipboard(e.clipboardData);
+                              if (files.length === 0) return;
+                              e.preventDefault();
+                              applyPastedImages(files);
+                            }
+                          : undefined
+                      }
+                    >
                       <input
                         type="file"
                         className={isMarketer ? "brand-kit-file-input" : formInputClass}
@@ -542,11 +662,17 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
                         onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []))}
                       />
                       {isMarketer && (
-                        <span className="brand-kit-dropzone-hint">
-                          PNG, JPG, SVG — you can upload multiple logos or references at once
-                        </span>
+                        <>
+                          <span className="brand-kit-dropzone-hint">
+                            PNG, JPG, SVG — upload multiple references at once
+                          </span>
+                          <span className="brand-kit-paste-hint">
+                            Or paste from clipboard <kbd>Ctrl</kbd>+<kbd>V</kbd> (screenshots)
+                          </span>
+                        </>
                       )}
                     </div>
+                    {isMarketer && pendingFiles.length > 0 && <PendingImagePreviews files={pendingFiles} />}
                     {pendingFiles.length > 0 && (
                       <div className="brand-kit-file-count">
                         {pendingFiles.length} file{pendingFiles.length === 1 ? "" : "s"} selected
@@ -557,12 +683,34 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
                 {editing.id && (
                   <div className={formFieldClass}>
                     <label className={isMarketer ? "profile-field-label" : "filter-label"}>Replace file (optional)</label>
-                    <input
-                      type="file"
-                      className={formInputClass}
-                      accept="image/*,.svg"
-                      onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []).slice(0, 1))}
-                    />
+                    <div
+                      ref={pasteZoneRef}
+                      className={isMarketer ? "brand-kit-dropzone brand-kit-dropzone--paste" : undefined}
+                      tabIndex={isMarketer ? 0 : undefined}
+                      onPaste={
+                        isMarketer
+                          ? (e) => {
+                              const files = imageFilesFromClipboard(e.clipboardData);
+                              if (files.length === 0) return;
+                              e.preventDefault();
+                              applyPastedImages(files);
+                            }
+                          : undefined
+                      }
+                    >
+                      <input
+                        type="file"
+                        className={formInputClass}
+                        accept="image/*,.svg"
+                        onChange={(e) => setPendingFiles(Array.from(e.target.files ?? []).slice(0, 1))}
+                      />
+                      {isMarketer && (
+                        <span className="brand-kit-paste-hint">
+                          Or paste a screenshot <kbd>Ctrl</kbd>+<kbd>V</kbd>
+                        </span>
+                      )}
+                    </div>
+                    {isMarketer && pendingFiles.length > 0 && <PendingImagePreviews files={pendingFiles} />}
                   </div>
                 )}
                 <div className={formFieldClass}>
@@ -781,7 +929,7 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
         </div>
       )}
 
-      {!loading && (assets?.length ?? 0) > 0 && (
+      {!loading && (assets?.length ?? 0) > 0 && !hideOverview && (
         <div className={isMarketer ? "brand-kit-grid-wrap" : undefined} style={isMarketer ? undefined : { marginBottom: 20 }}>
           <div
             className={isMarketer ? "brand-kit-grid-header" : undefined}

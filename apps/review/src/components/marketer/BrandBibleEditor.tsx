@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
-import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { BrandBibleAssetInspectModal } from "@/components/marketer/BrandBibleAssetInspectModal";
+import type { MoodboardAsset } from "@/components/marketer/BrandBibleAssetInspectModal";
+import { BrandBibleInstagramPreview } from "@/components/marketer/BrandBibleInstagramPreview";
+import { BrandBibleMoodboardGrid } from "@/components/marketer/BrandBibleMoodboardGrid";
 import {
-  BRAND_BIBLE_ASSET_ROLES,
   BRAND_BIBLE_CONTENT_AIMS,
   BRAND_BIBLE_VISUAL_MODES,
   brandBibleIsConfigured,
@@ -14,14 +16,12 @@ import {
 } from "@/lib/marketer/brand-bible-adapters";
 import type { BrandBible, BrandBibleAssetRef, BrandBibleAssetRole } from "@/lib/marketer/types";
 
-interface BrandAssetRow {
-  id: string;
-  kind: string;
-  label: string | null;
-  public_url: string | null;
-}
+type BibleView = "moodboard" | "instagram" | "guide";
 
-export function BrandBibleEditor({ slug }: { slug: string }) {
+type BrandAssetRow = MoodboardAsset;
+
+export function BrandBibleEditor({ slug, displayName }: { slug: string; displayName?: string }) {
+  const brandLabel = (displayName ?? slug).trim() || slug;
   const [bible, setBible] = useState<BrandBible | null>(null);
   const [assets, setAssets] = useState<BrandAssetRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +29,10 @@ export function BrandBibleEditor({ slug }: { slug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [paletteInput, setPaletteInput] = useState("");
+  const [view, setView] = useState<BibleView>("moodboard");
+  const [inspectAsset, setInspectAsset] = useState<MoodboardAsset | null>(null);
+  const [editAssetId, setEditAssetId] = useState<string | null>(null);
+  const [openAddKind, setOpenAddKind] = useState<"reference_image" | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -50,11 +54,6 @@ export function BrandBibleEditor({ slug }: { slug: string }) {
   useEffect(() => {
     load();
   }, [load]);
-
-  const imageAssets = useMemo(
-    () => assets.filter((a) => (a.kind === "logo" || a.kind === "reference_image" || a.kind === "other") && a.public_url),
-    [assets]
-  );
 
   function patchBible(patch: Partial<BrandBible>) {
     setBible((prev) => (prev ? { ...prev, ...patch } : prev));
@@ -88,7 +87,7 @@ export function BrandBibleEditor({ slug }: { slug: string }) {
   function addAssetRef(assetId: string, role: BrandBibleAssetRole) {
     if (!bible) return;
     if (bible.assetRefs.some((r) => r.assetId === assetId && r.role === role)) return;
-    const row = imageAssets.find((a) => a.id === assetId);
+    const row = assets.find((a) => a.id === assetId);
     const ref: BrandBibleAssetRef = {
       assetId,
       role,
@@ -136,253 +135,267 @@ export function BrandBibleEditor({ slug }: { slug: string }) {
     }
   }
 
-  if (loading) return <p className="workspace-muted">Loading brand bible…</p>;
-  if (!bible) return <p className="workspace-error">{error ?? "Could not load brand bible."}</p>;
+  const configured = useMemo(() => (bible ? brandBibleIsConfigured(bible) : false), [bible]);
 
-  const configured = brandBibleIsConfigured(bible);
+  function scrollToUpload() {
+    setView("moodboard");
+    setOpenAddKind("reference_image");
+    setTimeout(() => {
+      document.getElementById("brand-bible-upload-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  if (loading) return <p className="workspace-muted">Loading brand moodboard…</p>;
+  if (!bible) return <p className="workspace-error">{error ?? "Could not load brand bible."}</p>;
 
   return (
     <div className="profile-editor brand-bible-editor" data-agent-id="brand-bible-editor">
-      <p className="brand-bible-lead">
-        Your <strong>Brand Visual System</strong> tells CAF how every piece of content should look — not just
-        logos, but illustration style, characters, palette, and how to apply them when creating or mimicking
-        content.
-      </p>
+      <header className="brand-bible-top">
+        <div>
+          <h2 className="brand-bible-title">Brand Visual System</h2>
+          <p className="brand-bible-lead">
+            Build a <strong>moodboard</strong> of references, palette, and style rules. CAF applies this when
+            &ldquo;Use Brand Visual System&rdquo; is on — keeping your look even when mimicking trends.
+          </p>
+        </div>
+        <div className="brand-bible-top-actions">
+          <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving || !configured}>
+            {saving ? "Saving…" : "Save brand bible"}
+          </button>
+          {bible.version != null && <span className="workspace-muted">v{bible.version}</span>}
+        </div>
+      </header>
 
       {message && <p className="profile-save-ok">{message}</p>}
       {error && <p className="workspace-error">{error}</p>}
 
-      <section className="profile-section">
-        <h3 className="profile-section-title">Visual identity</h3>
-        <div className="profile-editor-grid">
-          <label className="profile-field">
-            <span className="profile-field-label">Visual mode</span>
-            <select
-              value={bible.visualMode}
-              onChange={(e) => patchBible({ visualMode: e.target.value as BrandBible["visualMode"] })}
-            >
-              <option value="">— Select —</option>
-              {BRAND_BIBLE_VISUAL_MODES.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          {(bible.visualMode === "custom" || bible.visualModeCustom) && (
-            <label className="profile-field profile-field--full">
-              <span className="profile-field-label">Custom visual style label</span>
-              <input
-                value={bible.visualModeCustom}
-                onChange={(e) => patchBible({ visualModeCustom: e.target.value })}
-                placeholder="e.g. Misty botanical editorial"
-              />
-            </label>
-          )}
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">Brand palette</span>
-            <span className="profile-field-hint">Up to 5 hex colors — used on slides and overlays when BVS is on.</span>
-            <div className="brand-kit-palette-list">
-              {bible.palette.map((c, i) => (
-                <div key={`${c}-${i}`} className="brand-kit-palette-row">
-                  <span className="brand-kit-palette-swatch" style={{ background: c }} aria-hidden />
-                  <span>{c}</span>
-                  <button
-                    type="button"
-                    className="btn-ghost btn-sm"
-                    onClick={() => patchBible({ palette: bible.palette.filter((_, j) => j !== i) })}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-            {bible.palette.length < 5 && (
-              <div className="brand-kit-palette-row" style={{ marginTop: 8 }}>
-                <input
-                  type="color"
-                  className="brand-kit-color-picker"
-                  value={paletteInput.match(/^#[0-9a-fA-F]{6}$/) ? paletteInput : "#88b04b"}
-                  onChange={(e) => setPaletteInput(e.target.value)}
-                  aria-label="Pick palette color"
-                />
-                <input
-                  className="profile-field-input"
-                  value={paletteInput}
-                  onChange={(e) => setPaletteInput(e.target.value)}
-                  placeholder="#88b04b"
-                />
-                <button type="button" className="btn-ghost btn-sm" onClick={() => addPaletteColor(paletteInput)}>
-                  Add color
-                </button>
-              </div>
-            )}
-          </label>
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">Allowed visual motifs</span>
-            <textarea
-              className="profile-field-input"
-              rows={2}
-              value={bible.allowedMotifs}
-              onChange={(e) => patchBible({ allowedMotifs: e.target.value })}
-              placeholder="botanical line art; olive branches; misty gradients"
-            />
-          </label>
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">Forbidden visual motifs</span>
-            <textarea
-              className="profile-field-input"
-              rows={2}
-              value={bible.forbiddenMotifs}
-              onChange={(e) => patchBible({ forbiddenMotifs: e.target.value })}
-              placeholder="stock food photos; faces; neon colors"
-            />
-          </label>
-        </div>
-      </section>
+      <div className="brand-bible-view-toggle workbench-view-toggle">
+        <span className="workbench-view-toggle__label">View</span>
+        {(
+          [
+            { id: "moodboard" as const, label: "Moodboard" },
+            { id: "instagram" as const, label: "Instagram preview" },
+            { id: "guide" as const, label: "Rules & guide" },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={`btn-ghost btn-sm ${view === tab.id ? "active" : ""}`}
+            onClick={() => setView(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <section className="profile-section">
-        <h3 className="profile-section-title">How CAF should apply this brand</h3>
-        <p className="profile-field-hint" style={{ marginBottom: 12 }}>
-          Explain your visual goals and how CAF should use your references — especially when mimicking trending
-          formats vs creating original posts.
-        </p>
-        <div className="profile-editor-grid">
-          <div className="profile-field profile-field--full">
-            <span className="profile-field-label">Content aims</span>
-            <div className="profile-chip-row">
-              {BRAND_BIBLE_CONTENT_AIMS.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  className={`profile-chip ${bible.applicationGuide.contentAims.includes(a.id) ? "active" : ""}`}
-                  onClick={() => toggleAim(a.id)}
+      {view === "moodboard" && (
+        <>
+          <BrandBibleMoodboardGrid
+            slug={slug}
+            assets={assets}
+            assetRefs={bible.assetRefs}
+            palette={bible.palette}
+            onInspect={setInspectAsset}
+            onAddClick={scrollToUpload}
+          />
+          <section className="profile-section brand-bible-upload-section">
+            <BrandAssetsPanel
+              projectSlug={slug}
+              variant="marketer"
+              hideOverview
+              panelId="brand-bible-upload-panel"
+              editAssetId={editAssetId}
+              onEditAssetConsumed={() => setEditAssetId(null)}
+              openAddKind={openAddKind}
+              onOpenAddConsumed={() => setOpenAddKind(null)}
+              onAssetsChange={setAssets}
+            />
+          </section>
+        </>
+      )}
+
+      {view === "instagram" && (
+        <BrandBibleInstagramPreview slug={slug} displayName={brandLabel} bible={bible} assets={assets} />
+      )}
+
+      {view === "guide" && (
+        <>
+          <section className="profile-section">
+            <h3 className="profile-section-title">Visual identity</h3>
+            <div className="profile-editor-grid">
+              <label className="profile-field">
+                <span className="profile-field-label">Visual mode</span>
+                <select
+                  value={bible.visualMode}
+                  onChange={(e) => patchBible({ visualMode: e.target.value as BrandBible["visualMode"] })}
                 >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">Application guide</span>
-            <textarea
-              className="profile-field-input"
-              rows={6}
-              value={bible.applicationGuide.instructions}
-              onChange={(e) => patchGuide({ instructions: e.target.value })}
-              placeholder="Always use our botanical world — calm, premium, no faces. When mimicking a viral listicle, keep the hook structure but replace all visuals with our herb-garden aesthetic and palette…"
-            />
-          </label>
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">When mimicking top performers</span>
-            <textarea
-              className="profile-field-input"
-              rows={3}
-              value={bible.applicationGuide.mimicPolicy}
-              onChange={(e) => patchGuide({ mimicPolicy: e.target.value })}
-              placeholder="Copy structure and persuasion only — never competitor visuals. All slides must match our Brand Bible."
-            />
-          </label>
-          <label className="profile-field profile-field--full">
-            <span className="profile-field-label">When creating original content</span>
-            <textarea
-              className="profile-field-input"
-              rows={3}
-              value={bible.applicationGuide.originalPolicy}
-              onChange={(e) => patchGuide({ originalPolicy: e.target.value })}
-              placeholder="Lead with botanical motifs on every slide; keep backgrounds minimal and misty."
-            />
-          </label>
-        </div>
-      </section>
-
-      <section className="profile-section">
-        <h3 className="profile-section-title">Brand kit</h3>
-        <p className="profile-field-hint" style={{ marginBottom: 12 }}>
-          Upload logos and reference images here, then assign roles below so CAF knows how to use each asset.
-        </p>
-        <BrandAssetsPanel projectSlug={slug} variant="marketer" />
-      </section>
-
-      <section className="profile-section">
-        <h3 className="profile-section-title">Asset roles in this bible</h3>
-        {imageAssets.length === 0 ? (
-          <p className="workspace-muted">Upload reference images in the brand kit above, then assign roles.</p>
-        ) : (
-          <>
-            <div className="brand-bible-asset-pick" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
-              {imageAssets.map((a) => (
-                <div key={a.id} className="brand-kit-card" style={{ maxWidth: 140 }}>
-                  {a.public_url && (
-                    <img
-                      src={brandAssetProxyUrl(slug, { id: a.id, public_url: a.public_url }) || a.public_url}
-                      alt=""
-                      className="brand-kit-card-img"
-                    />
-                  )}
-                  <div className="brand-kit-card-title">{a.label ?? a.kind}</div>
-                  <select
-                    className="profile-field-input"
-                    defaultValue=""
-                    onChange={(e) => {
-                      const role = e.target.value as BrandBibleAssetRole;
-                      if (role) addAssetRef(a.id, role);
-                      e.target.value = "";
-                    }}
-                  >
-                    <option value="">+ Add role…</option>
-                    {BRAND_BIBLE_ASSET_ROLES.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ))}
-            </div>
-            {bible.assetRefs.length > 0 && (
-              <ul className="brand-bible-ref-list">
-                {bible.assetRefs.map((ref) => {
-                  const asset = imageAssets.find((a) => a.id === ref.assetId);
-                  return (
-                    <li key={`${ref.assetId}-${ref.role}`} className="brand-bible-ref-row">
-                      <span className="profile-chip">{BRAND_BIBLE_ASSET_ROLES.find((r) => r.id === ref.role)?.label ?? ref.role}</span>
-                      <span>{asset?.label ?? ref.assetId}</span>
-                      <input
-                        className="profile-field-input"
-                        value={ref.usageNotes}
-                        onChange={(e) => updateAssetRef(ref.assetId, ref.role, { usageNotes: e.target.value })}
-                        placeholder="Usage notes (optional)"
-                      />
+                  <option value="">— Select —</option>
+                  {BRAND_BIBLE_VISUAL_MODES.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(bible.visualMode === "custom" || bible.visualModeCustom) && (
+                <label className="profile-field profile-field--full">
+                  <span className="profile-field-label">Custom visual style label</span>
+                  <input
+                    value={bible.visualModeCustom}
+                    onChange={(e) => patchBible({ visualModeCustom: e.target.value })}
+                    placeholder="e.g. Misty botanical editorial"
+                  />
+                </label>
+              )}
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">Brand palette</span>
+                <span className="profile-field-hint">Up to 5 hex colors — used on slides when BVS is on.</span>
+                <div className="brand-kit-palette-list">
+                  {bible.palette.map((c, i) => (
+                    <div key={`${c}-${i}`} className="brand-kit-palette-row">
+                      <span className="brand-kit-palette-swatch" style={{ background: c }} aria-hidden />
+                      <span>{c}</span>
                       <button
                         type="button"
                         className="btn-ghost btn-sm"
-                        onClick={() => removeAssetRef(ref.assetId, ref.role)}
+                        onClick={() => patchBible({ palette: bible.palette.filter((_, j) => j !== i) })}
                       >
                         Remove
                       </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </>
-        )}
-      </section>
+                    </div>
+                  ))}
+                </div>
+                {bible.palette.length < 5 && (
+                  <div className="brand-kit-palette-row" style={{ marginTop: 8 }}>
+                    <input
+                      type="color"
+                      className="brand-kit-color-picker"
+                      value={paletteInput.match(/^#[0-9a-fA-F]{6}$/) ? paletteInput : "#88b04b"}
+                      onChange={(e) => setPaletteInput(e.target.value)}
+                      aria-label="Pick palette color"
+                    />
+                    <input
+                      className="profile-field-input"
+                      value={paletteInput}
+                      onChange={(e) => setPaletteInput(e.target.value)}
+                      placeholder="#88b04b"
+                    />
+                    <button type="button" className="btn-ghost btn-sm" onClick={() => addPaletteColor(paletteInput)}>
+                      Add color
+                    </button>
+                  </div>
+                )}
+              </label>
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">Allowed visual motifs</span>
+                <textarea
+                  className="profile-field-input"
+                  rows={2}
+                  value={bible.allowedMotifs}
+                  onChange={(e) => patchBible({ allowedMotifs: e.target.value })}
+                  placeholder="botanical line art; olive branches; misty gradients"
+                />
+              </label>
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">Forbidden visual motifs</span>
+                <textarea
+                  className="profile-field-input"
+                  rows={2}
+                  value={bible.forbiddenMotifs}
+                  onChange={(e) => patchBible({ forbiddenMotifs: e.target.value })}
+                  placeholder="stock food photos; faces; neon colors"
+                />
+              </label>
+            </div>
+          </section>
 
-      <div className="profile-editor-actions">
-        <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving || !configured}>
-          {saving ? "Saving…" : "Save brand bible"}
-        </button>
-        {!configured && (
-          <span className="profile-field-hint">Add at least one visual rule, color, asset role, or application note.</span>
-        )}
-        {bible.version != null && (
-          <span className="workspace-muted" style={{ marginLeft: 12 }}>
-            Version {bible.version}
-          </span>
-        )}
-      </div>
+          <section className="profile-section">
+            <h3 className="profile-section-title">How CAF should apply this brand</h3>
+            <p className="profile-field-hint" style={{ marginBottom: 12 }}>
+              Explain your visual goals and how CAF should use your moodboard references.
+            </p>
+            <div className="profile-editor-grid">
+              <div className="profile-field profile-field--full">
+                <span className="profile-field-label">Content aims</span>
+                <div className="profile-chip-row">
+                  {BRAND_BIBLE_CONTENT_AIMS.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      className={`profile-chip ${bible.applicationGuide.contentAims.includes(a.id) ? "active" : ""}`}
+                      onClick={() => toggleAim(a.id)}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">Application guide</span>
+                <textarea
+                  className="profile-field-input"
+                  rows={6}
+                  value={bible.applicationGuide.instructions}
+                  onChange={(e) => patchGuide({ instructions: e.target.value })}
+                  placeholder="Always use our botanical world — calm, premium, no faces. When mimicking a viral listicle, keep the hook structure but replace all visuals with our herb-garden aesthetic…"
+                />
+              </label>
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">When mimicking top performers</span>
+                <textarea
+                  className="profile-field-input"
+                  rows={3}
+                  value={bible.applicationGuide.mimicPolicy}
+                  onChange={(e) => patchGuide({ mimicPolicy: e.target.value })}
+                  placeholder="Copy structure and persuasion only — never competitor visuals."
+                />
+              </label>
+              <label className="profile-field profile-field--full">
+                <span className="profile-field-label">When creating original content</span>
+                <textarea
+                  className="profile-field-input"
+                  rows={3}
+                  value={bible.applicationGuide.originalPolicy}
+                  onChange={(e) => patchGuide({ originalPolicy: e.target.value })}
+                  placeholder="Lead with botanical motifs on every slide."
+                />
+              </label>
+            </div>
+          </section>
+
+          <div className="profile-editor-actions">
+            <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving || !configured}>
+              {saving ? "Saving…" : "Save brand bible"}
+            </button>
+            {!configured && (
+              <span className="profile-field-hint">
+                Add at least one visual rule, color, asset role, or application note.
+              </span>
+            )}
+          </div>
+        </>
+      )}
+
+      {inspectAsset && (
+        <BrandBibleAssetInspectModal
+          slug={slug}
+          asset={inspectAsset}
+          assetRefs={bible.assetRefs}
+          onClose={() => setInspectAsset(null)}
+          onEdit={() => {
+            setEditAssetId(inspectAsset.id);
+            setInspectAsset(null);
+            setView("moodboard");
+            setTimeout(() => {
+              document.getElementById("brand-bible-upload-panel")?.scrollIntoView({ behavior: "smooth" });
+            }, 50);
+          }}
+          onAddRole={(role) => addAssetRef(inspectAsset.id, role)}
+          onRemoveRole={(role) => removeAssetRef(inspectAsset.id, role)}
+          onUsageNotes={(role, notes) => updateAssetRef(inspectAsset.id, role, { usageNotes: notes })}
+        />
+      )}
     </div>
   );
 }

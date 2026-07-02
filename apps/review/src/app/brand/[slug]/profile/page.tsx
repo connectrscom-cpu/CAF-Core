@@ -42,7 +42,7 @@ export default function BrandProfilePage() {
         accentColor={brand?.accentColor}
         subtitle={
           tab === "bible"
-            ? "Brand Visual System — style bible, references, and how CAF applies your look"
+            ? "Build your moodboard — references, palette, and how CAF applies your visual identity"
             : "Voice, audience, visual style, brand kit, and brand rules"
         }
       />
@@ -60,11 +60,15 @@ export default function BrandProfilePage() {
           className={`tab ${tab === "bible" ? "active" : ""}`}
           data-agent-id="brand-profile-tab-bible"
         >
-          Brand bible
+          Brand moodboard
         </a>
       </div>
 
-      {tab === "bible" ? <BrandBibleEditor slug={slug} /> : <BrandProfileEditor slug={slug} />}
+      {tab === "bible" ? (
+        <BrandBibleEditor slug={slug} displayName={brand?.displayName ?? slug} />
+      ) : (
+        <BrandProfileEditor slug={slug} />
+      )}
     </div>
   );
 }
