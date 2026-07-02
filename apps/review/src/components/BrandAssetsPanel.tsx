@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { resolveBrandAssetUploadUrl } from "@/lib/brand-asset-upload-url";
 import { useReviewProject } from "./ReviewProjectContext";
 
 type BrandAssetKind = "logo" | "reference_image" | "palette" | "font" | "other";
@@ -167,7 +168,8 @@ export function BrandAssetsPanel({ projectSlug, variant = "admin" }: BrandAssets
   const uploadFile = async (file: File): Promise<{ public_url: string | null; storage_path: string | null }> => {
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch(`/api/project-config/brand-assets/upload${qs}`, { method: "POST", body: fd });
+    const uploadUrl = resolveBrandAssetUploadUrl(resolvedSlug);
+    const res = await fetch(uploadUrl, { method: "POST", body: fd });
     const text = await res.text();
     if (!res.ok) {
       throw new Error(text.slice(0, 400) || `Upload failed (${res.status})`);
