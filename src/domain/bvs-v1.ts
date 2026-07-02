@@ -7,6 +7,8 @@ import type { BrandBibleSnapshotV1 } from "./brand-bible.js";
 import {
   buildBrandBibleSnapshot,
   parseBrandBible,
+  buildBibleFromBrandAssets,
+  enrichBrandBibleFromAssets,
   type BrandBibleV1,
 } from "./brand-bible.js";
 import { getActiveBrandBible } from "../repositories/brand-bibles.js";
@@ -71,16 +73,64 @@ export function buildBvsSlice(
 export async function resolveBvsSnapshotForProject(
   db: Pool,
   projectId: string
-): Promise<{ version: number; snapshot: BrandBibleSnapshotV1 } | null> {
-  const active = await getActiveBrandBible(db, projectId);
-  if (!active) return null;
-  const parsed = parseBrandBible(active.bible_json);
-  if (!parsed) return null;
+): Promise<{ version: number | null; snapshot: BrandBibleSnapshotV1 } | null> {
   const assets = await listProjectBrandAssets(db, projectId).catch(() => []);
+  const active = await getActiveBrandBible(db, projectId);
+  let parsed = active ? parseBrandBible(active.bible_json) : null;
+  if (parsed) {
+    parsed = enrichBrandBibleFromAssets(parsed, assets);
+  } else {
+    parsed = buildBibleFromBrandAssets(assets);
+  }
+  if (!parsed) return null;
   return {
-    version: active.version,
+    version: active?.version ?? null,
     snapshot: buildBrandBibleSnapshot(parsed, assets),
   };
+}
+
+/** When BVS is on but the job was planned without a snapshot, resolve now from current project state. */
+export async function resolveBvsForEnabledJob(
+  db: Pool,
+  projectId: string,
+  payload: Record<string, unknown>
+): Promise<BvsV1 | null> {
+  const current = parseBvsFromPayload(payload);
+  if (!current?.enabled) return current;
+  if (current.bible_snapshot) return current;
+  const resolved = await resolveBvsSnapshotForProject(db, projectId);
+  if (!resolved) return current;
+  return buildBvsSlice(true, resolved.version, resolved.snapshot);
+}
+
+/** Persist a healed BVS snapshot onto an existing job (generation_payload + mimic_v1 when present). */
+export async function healAndPersistBvsOnJob(
+  db: Pool,
+  job: { id: string; project_id: string; generation_payload: Record<string, unknown> }
+): Promise<boolean> {
+  const bvs = await resolveBvsForEnabledJob(db, job.project_id, job.generation_payload);
+  if (!bvs?.enabled || !bvs.bible_snapshot) return false;
+  const prior = parseBvsFromPayload(job.generation_payload);
+  if (prior?.bible_snapshot) return false;
+
+  let merged: Record<string, unknown> = { ...job.generation_payload, bvs_v1: bvs };
+  const mimicRaw = merged.mimic_v1;
+  if (mimicRaw && typeof mimicRaw === "object" && !Array.isArray(mimicRaw)) {
+    merged = {
+      ...merged,
+      mimic_v1: {
+        ...(mimicRaw as Record<string, unknown>),
+        bvs_enabled: true,
+        bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown>,
+      },
+    };
+  }
+
+  await db.query(
+    `UPDATE caf_core.content_jobs SET generation_payload = $1::jsonb, updated_at = now() WHERE id = $2`,
+    [JSON.stringify(merged), job.id]
+  );
+  return true;
 }
 
 /** Stamp `bvs_v1` onto a planned generation_payload when the candidate requests BVS. */

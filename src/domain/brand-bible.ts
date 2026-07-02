@@ -184,6 +184,86 @@ export function emptyBrandBibleDraft(): BrandBibleV1 {
   };
 }
 
+const DEFAULT_MIMIC_BVS_POLICY =
+  "Copy the reference hook and slide structure only — replace all visuals, colors, and illustration style with this brand's moodboard and palette. Never reproduce the competitor look.";
+
+/** Pull hex swatches from brand-kit palette asset rows. */
+export function extractPaletteFromBrandAssets(brandAssets: ProjectBrandAssetRow[]): string[] {
+  const colors: string[] = [];
+  for (const row of brandAssets) {
+    if (row.kind !== "palette") continue;
+    const raw = row.metadata_json?.colors;
+    if (!Array.isArray(raw)) continue;
+    for (const c of raw) {
+      const hex = typeof c === "string" ? c.trim() : "";
+      if (!/^#[0-9a-fA-F]{6}$/i.test(hex)) continue;
+      if (!colors.includes(hex)) colors.push(hex);
+    }
+  }
+  return colors.slice(0, 5);
+}
+
+/** Auto-map uploaded moodboard files to bible asset roles when the marketer has not assigned roles yet. */
+export function defaultAssetRefsFromBrandKit(brandAssets: ProjectBrandAssetRow[]): BrandBibleAssetRef[] {
+  const out: BrandBibleAssetRef[] = [];
+  for (const row of brandAssets) {
+    if (row.kind === "logo") {
+      out.push({
+        asset_id: row.id,
+        role: "logo",
+        label: row.label,
+        usage_notes: "Brand logo from moodboard",
+      });
+    } else if (row.kind === "reference_image" || row.kind === "other") {
+      out.push({
+        asset_id: row.id,
+        role: "style_reference",
+        label: row.label,
+        usage_notes: null,
+      });
+    }
+    if (out.length >= 16) break;
+  }
+  return out;
+}
+
+/** Build a usable bible from moodboard uploads alone (no saved brand_bibles row). */
+export function buildBibleFromBrandAssets(brandAssets: ProjectBrandAssetRow[]): BrandBibleV1 | null {
+  const palette = extractPaletteFromBrandAssets(brandAssets);
+  const asset_refs = defaultAssetRefsFromBrandKit(brandAssets);
+  if (palette.length === 0 && asset_refs.length === 0) return null;
+  return (
+    parseBrandBible({
+      schema_version: BRAND_BIBLE_SCHEMA,
+      palette,
+      asset_refs,
+      application_guide: {
+        instructions: "",
+        content_aims: [],
+        mimic_policy: DEFAULT_MIMIC_BVS_POLICY,
+        original_policy: null,
+      },
+    }) ?? null
+  );
+}
+
+/** Fill gaps in a saved bible from moodboard assets (palette rows, unassigned references). */
+export function enrichBrandBibleFromAssets(bible: BrandBibleV1, brandAssets: ProjectBrandAssetRow[]): BrandBibleV1 {
+  const palette = bible.palette.length > 0 ? bible.palette : extractPaletteFromBrandAssets(brandAssets);
+  const existingIds = new Set(bible.asset_refs.map((r) => r.asset_id));
+  const refs = [...bible.asset_refs];
+  for (const ref of defaultAssetRefsFromBrandKit(brandAssets)) {
+    if (!existingIds.has(ref.asset_id)) refs.push(ref);
+  }
+  const mimic_policy = bible.application_guide.mimic_policy?.trim() || DEFAULT_MIMIC_BVS_POLICY;
+  return {
+    ...bible,
+    palette,
+    asset_refs: refs.slice(0, 40),
+    application_guide: { ...bible.application_guide, mimic_policy },
+  };
+}
+
 export function resolveBrandBibleAssets(
   bible: BrandBibleV1,
   brandAssets: ProjectBrandAssetRow[]

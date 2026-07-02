@@ -149,10 +149,17 @@ export function buildBvsInfluenceSections(
   const snap = ctx.snapshot;
   const sections: BvsInfluenceSection[] = [];
 
-  const statusLines = [
-    ctx.bible_version != null ? `Brand bible v${ctx.bible_version} was frozen onto this job at plan time.` : "BVS was enabled, but no active brand bible snapshot was found on this job.",
-    "The reference carousel still drives slide structure and persuasion; BVS steers how visuals and copy are reinterpreted in your brand’s look.",
-  ];
+  const statusLines = snap
+    ? [
+        ctx.bible_version != null
+          ? `Brand bible v${ctx.bible_version} was frozen onto this job at plan time.`
+          : "Brand bible snapshot built from your moodboard assets (palette + reference images).",
+        "The reference carousel still drives slide structure and persuasion; BVS steers how visuals and copy are reinterpreted in your brand’s look.",
+      ]
+    : [
+        "BVS was enabled, but CAF could not build a snapshot from your profile — add palette swatches or reference images to the moodboard, save the brand bible, then regenerate slides or start a new cart run.",
+        "Until a snapshot exists, generation follows the reference look (what you are seeing now).",
+      ];
   sections.push({ title: "What was applied", lines: statusLines });
 
   if (snap) {
@@ -207,10 +214,15 @@ export function buildBvsInfluenceSections(
 
   sections.push({
     title: "What you’re looking at",
-    lines: [
-      "Structure and slide beats come from the reference (“Why this works”). Look, palette, and motifs should match your brand bible when BVS is on.",
-      "If visuals still feel off-reference, edit the bible’s mimic policy or assign style-reference roles on moodboard assets, then regenerate slides.",
-    ],
+    lines: snap
+      ? [
+          "Structure and slide beats come from the reference (“Why this works”). Look, palette, and motifs should match your brand bible when BVS is on.",
+          "If visuals still feel too close to the reference, tighten mimic policy on Rules & guide, assign style-reference roles, then regenerate slides.",
+        ]
+      : [
+          "You are mostly seeing the reference carousel reinterpreted — BVS did not have a bible snapshot to apply.",
+          "Fix: save brand bible (or add moodboard palette/references), then use Regenerate on slides or queue a fresh cart run with BVS on.",
+        ],
   });
 
   return sections;

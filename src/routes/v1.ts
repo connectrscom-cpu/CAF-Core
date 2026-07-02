@@ -96,6 +96,7 @@ import {
 } from "../services/job-pipeline.js";
 import { parseCarouselRenderTypographyPatch } from "../domain/carousel-render-typography.js";
 import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { healAndPersistBvsOnJob } from "../domain/bvs-v1.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -1589,6 +1590,12 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     }
     const jobId = String(job.id ?? "");
     if (!jobId) return { ok: false, error: "job_missing_id" };
+
+    await healAndPersistBvsOnJob(db, {
+      id: jobId,
+      project_id: project.id,
+      generation_payload: (job.generation_payload ?? {}) as Record<string, unknown>,
+    }).catch(() => false);
 
     const indices = [...new Set(slideIndices.map((i) => Math.floor(i)).filter((i) => i >= 1))].sort(
       (a, b) => a - b

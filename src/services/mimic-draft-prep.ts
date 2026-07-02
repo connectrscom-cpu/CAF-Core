@@ -16,7 +16,7 @@ import {
 import { isWhyMimicCarouselFlow } from "../domain/why-mimic-carousel-flow-types.js";
 import { parseBrandProfile, type BrandProfileV1 } from "../domain/brand-profile.js";
 import { buildBrandExecutionBrief } from "../domain/brand-translation.js";
-import { parseBvsFromPayload, brandProfileFromBvsSnapshot } from "../domain/bvs-v1.js";
+import { parseBvsFromPayload, brandProfileFromBvsSnapshot, resolveBvsForEnabledJob } from "../domain/bvs-v1.js";
 import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
 import {
@@ -229,7 +229,7 @@ async function resolveMimicPayloadForJob(
   let brandProfile: BrandProfileV1 | null = brandProfileRow
     ? parseBrandProfile(brandProfileRow.profile_json)
     : null;
-  const bvs = parseBvsFromPayload(job.generation_payload);
+  const bvs = await resolveBvsForEnabledJob(db, job.project_id, job.generation_payload);
   if (bvs?.enabled && bvs.bible_snapshot) {
     const merged = brandProfileFromBvsSnapshot(bvs.bible_snapshot, null);
     brandProfile = merged ? parseBrandProfile(merged) : brandProfile;
@@ -387,8 +387,10 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
       [job.id]
     );
     const gp = row.rows[0]?.generation_payload ?? job.generation_payload;
+    const bvs = await resolveBvsForEnabledJob(db, job.project_id, gp);
     const mergedBase = {
       ...mergeMimicPayloadSlice(gp, filtered),
+      ...(bvs ? { bvs_v1: bvs } : {}),
       mimic_render_context: renderContext,
       mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     };
@@ -412,8 +414,10 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     [job.id]
   );
   const gp = row.rows[0]?.generation_payload ?? {};
+  const bvs = await resolveBvsForEnabledJob(db, job.project_id, gp);
   const mergedBase = {
     ...mergeMimicPayloadSlice(gp, mimic),
+    ...(bvs ? { bvs_v1: bvs } : {}),
     mimic_render_context: renderContext,
     mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     template_storage_decision: templateStorage,
