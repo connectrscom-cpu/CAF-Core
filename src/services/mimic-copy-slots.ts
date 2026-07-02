@@ -246,7 +246,11 @@ function inferLlmFieldForBlock(block: MimicReferenceCopyBlock): MimicCopySlotLlm
     if (tinyCorner && prominence < 0.012) return "handle";
     return "headline";
   }
-  if (/body|subtitle|caption|paragraph/.test(r)) return "body";
+  if (/body|subtitle|caption|paragraph/.test(r)) {
+    if (looksLikeInstagramHandleText(text)) return "handle";
+    return "body";
+  }
+  if (looksLikeInstagramHandleText(text)) return "handle";
   return prominence >= 0.025 ? "headline" : "body";
 }
 
@@ -381,6 +385,75 @@ function expandListBodySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCop
   return out.map((s, i) => ({ ...s, slot_index: i }));
 }
 
+function slotLooksLikeHandleOnly(slot: MimicReferenceCopySlot): boolean {
+  const texts = slot.block_texts.map((t) => t.trim()).filter(Boolean);
+  if (texts.length === 0) return looksLikeInstagramHandleText(slot.reference_text);
+  return texts.every((t) => looksLikeInstagramHandleText(t));
+}
+
+/** Body/CTA slots mis-tagged when OCR captured @handle as copy — isolate for safe corner render. */
+function reassignMisclassifiedHandleSlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
+  const hasHandle = slots.some((s) => s.llm_field === "handle");
+  const out: MimicReferenceCopySlot[] = [];
+  for (const slot of slots) {
+    if (slot.llm_field !== "body" && slot.llm_field !== "cta") {
+      out.push(slot);
+      continue;
+    }
+    if (!slotLooksLikeHandleOnly(slot)) {
+      out.push(slot);
+      continue;
+    }
+    if (hasHandle && slot.llm_field === "body") {
+      continue;
+    }
+    out.push({ ...slot, llm_field: "handle" });
+  }
+  return out.map((s, i) => ({ ...s, slot_index: i }));
+}
+
+/** Collapse runaway body slot counts (fragment-per-line) while preserving short list bullets. */
+function mergeExcessBodySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
+  const bodySlots = slots.filter((s) => s.llm_field === "body");
+  if (bodySlots.length <= 4) return slots;
+
+  const bulletTexts = bodySlots.map((s) => s.reference_text);
+  if (
+    bodySlots.length <= 6 &&
+    bodySlots.every((s) => s.block_texts.length === 1) &&
+    isLikelyListBulletTexts(bulletTexts)
+  ) {
+    return slots;
+  }
+
+  const nonBody = slots.filter((s) => s.llm_field !== "body");
+  const sortedBody = [...bodySlots].sort((a, b) => a.slot_index - b.slot_index);
+  const targetCount = 4;
+  const perGroup = Math.ceil(sortedBody.length / targetCount);
+  const mergedBody: MimicReferenceCopySlot[] = [];
+
+  for (let i = 0; i < sortedBody.length; i += perGroup) {
+    const group = sortedBody.slice(i, i + perGroup);
+    if (group.length === 1) {
+      mergedBody.push(group[0]!);
+      continue;
+    }
+    mergedBody.push(
+      makeSlot(
+        mergedBody.length,
+        "body",
+        "single_block",
+        group.flatMap((s) => s.block_indices),
+        group.flatMap((s) => s.block_texts)
+      )
+    );
+  }
+
+  return [...nonBody, ...mergedBody]
+    .sort((a, b) => a.slot_index - b.slot_index)
+    .map((s, idx) => ({ ...s, slot_index: idx }));
+}
+
 function mergeOrphanSuffixTailIntoPrecedingBodySlot(
   slots: MimicReferenceCopySlot[]
 ): MimicReferenceCopySlot[] {
@@ -423,7 +496,10 @@ function mergeOrphanSuffixTailIntoPrecedingBodySlot(
 /** Post-process inferred or persisted slots (list bullets + platform tail orphans). */
 export function normalizeInferredCopySlots(slots: MimicReferenceCopySlot[]): MimicReferenceCopySlot[] {
   if (slots.length === 0) return slots;
-  return mergeOrphanSuffixTailIntoPrecedingBodySlot(expandListBodySlots(slots));
+  const reassigned = reassignMisclassifiedHandleSlots(slots);
+  const expanded = expandListBodySlots(reassigned);
+  const mergedTail = mergeOrphanSuffixTailIntoPrecedingBodySlot(expanded);
+  return mergeExcessBodySlots(mergedTail);
 }
 
 function groupBlocksIntoVerticalStacks(
@@ -793,7 +869,7 @@ export function inferMimicReferenceCopySlots(
   const bodyStacks = sortStacksForReadingOrder(groupBlocksIntoVerticalStacks(body));
   const multiColumnLayout = bodyStacksAreMultiColumn(bodyStacks);
   let stacksForSlots = bodyStacks;
-  if (multiColumnLayout && (bodyStacks.length > 6 || body.length > 8)) {
+  if (multiColumnLayout && (bodyStacks.length > 6 || body.length > 6)) {
     stacksForSlots = mergeBodyStacksToQuadrants(bodyStacks);
   }
   const multiColumn = bodyStacksAreMultiColumn(stacksForSlots);
@@ -841,7 +917,8 @@ export function copySlotsShouldDriveMapping(
   if (!copySlotsIncludeBodyField(slots)) return true;
   const bodySlots = slots.filter((s) => s.llm_field === "body").length;
   if (bodySlots >= 2) return true;
-  if (directLineCount > 0 && slots.length > directLineCount) return true;
+  if (bodySlots >= 1 && directLineCount >= 2) return true;
+  if (directLineCount > 0 && slots.length >= directLineCount) return true;
   return false;
 }
 
@@ -913,7 +990,7 @@ export function copySlotsForSlideRecord(slide: Record<string, unknown> | null | 
 
   const editablePersisted = persisted.filter((s) => s.llm_field !== "handle").length;
   const editableInferred = inferred.filter((s) => s.llm_field !== "handle").length;
-  if (editableInferred >= 2 && editablePersisted > Math.max(8, editableInferred + 3)) {
+  if (editableInferred >= 2 && editablePersisted > Math.max(6, editableInferred + 2)) {
     return inferred;
   }
   return normalizeInferredCopySlots(persisted);

@@ -184,6 +184,21 @@ export function mimicCarouselReferenceEligible(
   return resolved != null && entryReferenceFrameCount(resolved.entry) >= 2;
 }
 
+/** Visual-guidelines pack entry for carousel mimic / Why Mimic grounding. */
+export function carouselGuidelineEntryForInsightIds(
+  derived: Record<string, unknown> | null,
+  insightIds: string[]
+): Record<string, unknown> | null {
+  if (insightIds.length === 0) return null;
+  const resolved = resolveGuidelineEntry(
+    derived,
+    insightIds,
+    "top_performer_carousel",
+    FLOW_TOP_PERFORMER_MIMIC_CAROUSEL
+  );
+  return resolved?.entry ?? null;
+}
+
 export function resolveMimicReferenceFromLineage(
   flowType: string,
   lineage: JobLineageResult,

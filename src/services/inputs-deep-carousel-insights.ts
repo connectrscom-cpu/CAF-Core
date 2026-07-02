@@ -29,6 +29,13 @@ import {
   finalizeCarouselInsightJson,
 } from "./carousel-insights-llm-normalize.js";
 import { deriveSlideIntelligenceFromAnalysis } from "../domain/slide-intelligence.js";
+import {
+  customLabelJsonSchemaLines,
+  customLabelPromptInstructions,
+  insightColumnLabelsFromCriteria,
+  sanitizeCustomLabelAnswer,
+  type InsightColumnLabels,
+} from "../domain/insight-column-labels.js";
 import { runCarouselDeckVisionAnalysis } from "./carousel-insights-vision.js";
 import { documentAiEnabled } from "./document-ai-auth.js";
 import { resolveProcessingVisionCall } from "./processing-vision-client.js";
@@ -96,6 +103,12 @@ import {
 } from "./inputs-instagram-embed-carousel-resolver.js";
 
 const STEP = "inputs_top_performer_carousel_insight";
+
+/** Default / hard cap for top-performer carousel pass (Admin + API). */
+export const TOP_PERFORMER_CAROUSEL_MAX_ROWS_DEFAULT = 30;
+export const TOP_PERFORMER_CAROUSEL_MAX_ROWS_CAP = 40;
+export const TOP_PERFORMER_CAROUSEL_MAX_SLIDES_DEFAULT = 15;
+export const TOP_PERFORMER_CAROUSEL_MAX_SLIDES_CAP = 15;
 
 /** Carousel deck vision runs only on Instagram evidence rows. */
 const CAROUSEL_VISION_EVIDENCE_KIND = "instagram_post";
@@ -167,12 +180,12 @@ Return ONLY valid JSON with **root fields for quick reads** plus **slide-level d
   "cta_clarity": "how clear the ask / next step is",
   "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
   "risk_flags": ["meaningful risk strings only; use [] when none — never placeholders like \"none\" or \"n/a\""],
-  "why_it_worked": "why this carousel may perform (short)",
+  "why_it_worked": "3–4 sentences (~200+ chars): why this carousel performs as a SET — how slides combine, pacing, emotional arc, swipe motivation, and payoff. Not a description of slide 1 alone.",
   "primary_emotion": "dominant emotional vibe (short)",
   "secondary_emotion": "secondary vibe or empty string",
   "caption_style": "how the post caption pairs with the carousel (short)",
 
-  "deck_as_whole_summary": "2–5 sentences: overall story, brand/persona vibe, pacing, what makes the deck cohesive + swipe-worthy",
+  "deck_as_whole_summary": "3–5 sentences: overall story, how slides build on each other, brand/persona vibe, pacing, what makes the deck cohesive + swipe-worthy as a combination",
   "deck_composition_system": {
     "recurring_layout_pattern": "Recurring spatial pattern across slides (short)",
     "repeated_element_positions": [
@@ -418,18 +431,19 @@ function carouselModel(profile: { synth_model: string; criteria_json: Record<str
 }
 
 function carouselMaxRows(criteria: Record<string, unknown>, override?: number): number {
-  if (override != null && Number.isFinite(override)) return clamp(override, 1, 40);
+  const cap = TOP_PERFORMER_CAROUSEL_MAX_ROWS_CAP;
+  if (override != null && Number.isFinite(override)) return clamp(override, 1, cap);
   const ins = criteria.inputs_insights;
   if (ins && typeof ins === "object" && !Array.isArray(ins)) {
     const n = parseInt(String((ins as Record<string, unknown>).deep_carousel_max ?? ""), 10);
-    if (!Number.isNaN(n)) return clamp(n, 1, 40);
+    if (!Number.isNaN(n)) return clamp(n, 1, cap);
   }
   const tp = criteria.top_performer;
   if (tp && typeof tp === "object" && !Array.isArray(tp)) {
     const n = parseInt(String((tp as Record<string, unknown>).max_carousel_rows ?? ""), 10);
-    if (!Number.isNaN(n)) return clamp(n, 1, 40);
+    if (!Number.isNaN(n)) return clamp(n, 1, cap);
   }
-  return 10;
+  return TOP_PERFORMER_CAROUSEL_MAX_ROWS_DEFAULT;
 }
 
 function carouselMinPreLlm(criteria: Record<string, unknown>, override?: number): number {
@@ -552,6 +566,18 @@ function inferCaptionStyleFromCaption(caption: string): string | null {
   return "standard_caption";
 }
 
+function carouselSystemPromptWithCustomLabels(base: string, labels: InsightColumnLabels): string {
+  const appendix = customLabelPromptInstructions(labels);
+  if (!appendix) return base;
+  const fieldLines = customLabelJsonSchemaLines(labels)
+    .map((line) => line.trim())
+    .join(",\n");
+  return `${base}
+
+Also include these **deck-root** string fields (inferred answers for operator columns on this carousel — not the column titles):
+${fieldLines}${appendix}`;
+}
+
 function resolveCarouselMechanismFields(args: {
   parsed: Record<string, unknown> | null;
   broad: {
@@ -566,8 +592,17 @@ function resolveCarouselMechanismFields(args: {
   evidenceKind: string;
   payload: Record<string, unknown>;
   caption: string;
+  labels: InsightColumnLabels;
 }) {
-  const { parsed, broad, evidenceKind, payload, caption } = args;
+  const { parsed, broad, evidenceKind, payload, caption, labels } = args;
+  const pickCustom = (slot: 1 | 2 | 3, question: string) => {
+    const key = `custom_label_${slot}` as const;
+    return (
+      sanitizeCustomLabelAnswer(pickInsightString(parsed?.[key]), question) ??
+      sanitizeCustomLabelAnswer(broad?.[key] ?? null, question) ??
+      null
+    );
+  };
   return {
     primary_emotion: pickInsightString(parsed?.primary_emotion) ?? broad?.primary_emotion ?? null,
     secondary_emotion: pickInsightString(parsed?.secondary_emotion) ?? broad?.secondary_emotion ?? null,
@@ -576,9 +611,9 @@ function resolveCarouselMechanismFields(args: {
       broad?.caption_style ??
       inferCaptionStyleFromCaption(caption),
     hashtags: broad?.hashtags ?? resolveHashtagsFromEvidence(evidenceKind, payload, caption),
-    custom_label_1: broad?.custom_label_1 ?? null,
-    custom_label_2: broad?.custom_label_2 ?? null,
-    custom_label_3: broad?.custom_label_3 ?? null,
+    custom_label_1: pickCustom(1, labels.l1),
+    custom_label_2: pickCustom(2, labels.l2),
+    custom_label_3: pickCustom(3, labels.l3),
   };
 }
 
@@ -615,6 +650,7 @@ export async function runDeepCarouselInsightsForImport(
     profile = await upsertInputsProcessingProfile(db, project.id, {});
   }
   const criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+  const insightColumnLabels = insightColumnLabelsFromCriteria(criteria);
   const model = carouselModel(profile);
   const visionCall = resolveProcessingVisionCall(config, model);
   const docAiOn = documentAiEnabled(config);
@@ -629,7 +665,11 @@ export async function runDeepCarouselInsightsForImport(
     buildTopPerformerRatingGateRequestOverrides(opts),
     opts.min_pre_llm_score
   );
-  const maxSlides = clamp(opts.max_slides ?? 12, MIN_CAROUSEL_SLIDES_FOR_DEEP, 12);
+  const maxSlides = clamp(
+    opts.max_slides ?? TOP_PERFORMER_CAROUSEL_MAX_SLIDES_DEFAULT,
+    MIN_CAROUSEL_SLIDES_FOR_DEEP,
+    TOP_PERFORMER_CAROUSEL_MAX_SLIDES_CAP
+  );
   const embedFetch = resolveInstagramEmbedCarouselFetch(config, criteria);
   const embedCarouselFetchEnabled = embedFetch.enabled;
 
@@ -881,7 +921,7 @@ export async function runDeepCarouselInsightsForImport(
       "row_start"
     );
     const textBundle = summarizePayloadForLlm(c.evidence_kind, c.payload, 2200);
-    const system = TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT;
+    const system = carouselSystemPromptWithCustomLabels(TOP_PERFORMER_CAROUSEL_SYSTEM_PROMPT, insightColumnLabels);
 
     const userText = `Evidence kind: ${c.evidence_kind}
 Pre-LLM score: ${c.pre_llm_score}
@@ -1042,6 +1082,7 @@ ${textBundle}`;
         evidenceKind: c.evidence_kind,
         payload: c.payload,
         caption: c.caption,
+        labels: insightColumnLabels,
       });
 
       const risks = parseRiskFlags(parsed?.risk_flags);

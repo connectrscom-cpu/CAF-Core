@@ -8,6 +8,7 @@ import {
   inferMimicReferenceCopySlots,
   inferMimicReferenceCopySlotsOnePerBlock,
   normalizeLlmSlideToCopySlots,
+  normalizeInferredCopySlots,
   splitHeadlineForChatMockTitlePair,
   splitLineAcrossRefBlocks,
   llmSlideFromCopySlots,
@@ -493,6 +494,40 @@ describe("mimic-copy-slots", () => {
     const slim = serializeCopySlotsForLlmPrompt(slots);
     expect(slim?.[0]).toMatchObject({ llm_field: "body", line_count: 1, reference_chars_per_line: [9] });
     expect(JSON.stringify(slim)).not.toContain('"x"');
+  });
+
+  it("reassigns body slots that are only @handle text to handle field", () => {
+    const slots = normalizeInferredCopySlots([
+      {
+        schema_version: "copy_slots_v1",
+        slot_index: 0,
+        llm_field: "headline",
+        split: "single_block",
+        block_indices: [0],
+        block_texts: ["THE ARIES MOTHER"],
+        reference_text: "THE ARIES MOTHER",
+      },
+      {
+        schema_version: "copy_slots_v1",
+        slot_index: 1,
+        llm_field: "body",
+        split: "single_block",
+        block_indices: [1],
+        block_texts: ["@signandsound"],
+        reference_text: "@signandsound",
+      },
+      {
+        schema_version: "copy_slots_v1",
+        slot_index: 2,
+        llm_field: "body",
+        split: "single_block",
+        block_indices: [2],
+        block_texts: ["Deeply rooted in family"],
+        reference_text: "Deeply rooted in family",
+      },
+    ]);
+    expect(slots.find((s) => s.llm_field === "handle")?.reference_text).toBe("@signandsound");
+    expect(slots.filter((s) => s.llm_field === "body")).toHaveLength(1);
   });
 
   it("joins multiline body into one OCR box and skips handle lines for handle slot", () => {

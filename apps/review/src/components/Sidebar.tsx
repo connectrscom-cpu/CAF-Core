@@ -1,8 +1,11 @@
 "use client";
 
-import Link from "next/link";
+import { ReviewNavLink } from "@/components/ReviewNavLink";
 import { usePathname } from "next/navigation";
+import { ChromePanelToggle } from "@/components/ChromePanelToggle";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
+import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-search-query";
 
 const NAV_ITEMS = [
   {
@@ -36,14 +39,22 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const searchParams = clientSearchParams(useClientSearchQuery());
+  const embeddedInAdmin = searchParams.get("embed") === "admin";
+  const { toggleSidebar } = useReviewChromeLayout();
   const { ready, multiProject, lockedSlug, activeProjectSlug, projectOptions, setActiveProjectSlug, navHref } =
     useReviewProject();
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">
-        <h1>CAF Review</h1>
-        <span>Output &amp; approval</span>
+      <div className="sidebar-brand sidebar-brand--row">
+        <div>
+          <h1>CAF Review</h1>
+          <span>Output &amp; approval</span>
+        </div>
+        {!embeddedInAdmin ? (
+          <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
+        ) : null}
       </div>
       <div className="sidebar-project-panel" aria-label="Active project">
         <div className="sidebar-project-label">Project</div>
@@ -89,14 +100,14 @@ export function Sidebar() {
                       ? pathname.startsWith("/pipeline")
                       : pathname.startsWith(item.href);
               return (
-                <Link
+                <ReviewNavLink
                   key={item.href}
                   href={navHref(item.href)}
                   className={`sidebar-link ${isActive ? "active" : ""}`}
                 >
                   <item.icon />
                   {item.label}
-                </Link>
+                </ReviewNavLink>
               );
             })}
           </div>

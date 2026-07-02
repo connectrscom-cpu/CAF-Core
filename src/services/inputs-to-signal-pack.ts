@@ -398,9 +398,14 @@ export async function buildSignalPackFromEvidenceImport(
     synthesized_at: new Date().toISOString(),
   });
 
-  const marketIntelligenceV1 = await buildMarketIntelligenceForImport(db, project.id, projectSlug, importId, {
+  const marketIntelligenceV1 = await buildMarketIntelligenceForImport(db, config, project.id, projectSlug, importId, {
     derived_globals: derivedWithTpk,
+    brand_display_name: project.display_name,
   });
+
+  const packNotes = marketIntelligenceV1.research_brief_title
+    ? JSON.stringify({ marketer: { marketer_title: marketIntelligenceV1.research_brief_title } })
+    : `Synthesized from inputs evidence import ${importId} (${rated} rows rated).`;
 
   const derived_globals_json = {
     ...derivedWithTpk,
@@ -420,7 +425,7 @@ export async function buildSignalPackFromEvidenceImport(
     html_summary_json: null,
     derived_globals_json,
     upload_filename: `from_inputs_import:${importId}`,
-    notes: `Synthesized from inputs evidence import ${importId} (${rated} rows rated).`,
+    notes: packNotes,
     source_inputs_import_id: importId,
   });
 

@@ -30,13 +30,24 @@ Important (current wiring):
 - Global learning rules are currently **disabled at the HTTP layer** (the learning routes reject global scope operations).
 - Treat `caf-global` as a historical/schema concept unless code explicitly reintroduces global rule compilation and application.
 
-## Post-approval LLM review — upstream recommendations
+## Post-approval LLM review — Nemotron VL + upstream recommendations
 
-- **`src/services/approved-content-llm-review.ts`** scores approved jobs (multimodal) and now emits an **`upstream_recommendations`** array alongside scores/bullets.
-- **Schema:** **`src/domain/upstream-recommendations.ts`** (`upstreamRecommendationSchema`, tolerant `parseUpstreamRecommendations`, `UPSTREAM_RECOMMENDATIONS_PROMPT_ADDENDUM` appended to the system prompt).
-- **Targets:** `prompt_template | output_schema | flow_definition | project_brand | project_strategy | learning_guidance | qc_checklist | risk_policy | other` — each item is `{ target, change, rationale, field_or_check_id? }`.
-- **Persistence:** stored as `jsonb` on **`caf_core.llm_approval_reviews.upstream_recommendations`** (migration **`025`**).
-- **Audit trail:** every parsed item is also written as its own **`learning_observation`** with `source_type = "llm_upstream_recommendation"` so the list is queryable and reportable without parsing the blob.
+- **`src/services/approved-content-llm-review.ts`** scores approved jobs via **`generated-output-nemotron-analysis.ts`** (Nemotron VL on rendered assets + intended copy).
+- **Config:** `APPROVAL_REVIEW_VISION_PROVIDER` (default `nvidia`), `APPROVAL_REVIEW_NVIDIA_MODEL`; requires `NVIDIA_NIM_API_KEY`.
+- **TP-parity output:** `llm_approval_reviews.output_insights_json` (`slide_arc`, `slides[]`, `format_pattern`, `why_it_worked`, `mimic_evaluation`, …) — migration **`076`**.
+- **Derived signals:** **`generated-output-learning-derive.ts`** maps insights → scores, bullets, `upstream_recommendations`.
+- **Global observatory:** batch runs emit `caf-global` observations (`source_type = llm_review_global`) via **`global-learning-observe.ts`** — never touches planning/generation facades.
+- **Schema:** **`src/domain/upstream-recommendations.ts`** (`parseUpstreamRecommendations`, targets list unchanged).
+- **Audit trail:** parsed upstream items still log as `learning_observations` with `source_type = llm_upstream_recommendation`.
+
+## Phase 0 — publish anchor, performance loop, dossier
+
+- **`caf_core.job_outcomes`** (migration **`075`**) — publish anchor keyed by `(project_id, task_id)` with `tracking_status`: `published` → `metrics_present` → `analyzed`.
+- **Publish hook:** **`src/routes/publications.ts`** → `upsertJobOutcomeOnPublish` after successful placement.
+- **Metrics ingest:** **`performance-learning.ts`** marks `metrics_present` when CSV/JSON ingest includes `task_id`.
+- **Manual performance analysis:** **`performance-learning-runner.ts`** via `POST /v1/learning/:slug/performance-analysis` (alias `market-analysis`). `auto_create_rules` defaults **false**; global observation emitted by default.
+- **Global digest:** `POST /v1/learning/caf-global/digest`, `GET .../digest/latest` — **`global-learning-digest.ts`**.
+- **Job dossier:** `GET /v1/jobs/:project_slug/:task_id/dossier` — **`build-job-dossier.ts`**; Review Task Review shows **Job journey** panel.
 
 ## Run-level generation context snapshot
 

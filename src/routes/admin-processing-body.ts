@@ -66,7 +66,7 @@ export function adminProcessingBody(currentSlug: string): string {
           <button type="button" class="caf-step-pill step-btn" id="step-ideas" data-step="ideas" title="${PL("IDEAS__From_Insights__Overview_v1 (+ grouped calls)", "Processing")}">
             4 Build <span data-caf-term="ideas">ideas</span> <span class="badge badge-b" id="step-badge-ideas">not started</span>
           </button>
-          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1", "Processing", "Full import also runs IDEAS__From_Insights__Overview_v1")}">
+          <button type="button" class="caf-step-pill step-btn" id="step-pack" data-step="pack" title="Build signal pack — compiles the research brief (market_intelligence_v1) from insights + top performers, then attaches curated ideas. Requires step 3 Insights.">
             5 <span data-caf-term="signalPack">Signal pack</span> <span class="badge badge-b" id="step-badge-pack">not started</span>
           </button>
           <button type="button" class="caf-step-pill step-btn" id="step-run" data-step="run" title="Proceed to Runs — jobs are created when you start a run from the signal pack.">
@@ -358,13 +358,14 @@ export function adminProcessingBody(currentSlug: string): string {
                 </div>
                 <div style="font-size:11px;color:var(--muted);margin-bottom:8px">
                   You can edit the prompts and labels below. Use <span class="mono">{{ROWS_JSON}}</span> to control where the batch payload is inserted (otherwise it’s appended).
-                  Labels can also be referenced as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
+                  <strong>Custom column headers</strong> (e.g. Zodiac, Audience) become table column titles — the LLM fills each cell with the inferred answer for that post, not the header text.
+                  Reference them in prompts as <span class="mono">{{CUSTOM_LABEL_1}}</span>, <span class="mono">{{CUSTOM_LABEL_2}}</span>, <span class="mono">{{CUSTOM_LABEL_3}}</span>.
                   <span style="display:block;margin-top:6px">If you loaded a prompt preview, don’t keep a hard-coded <span class="mono">Rows (JSON): …</span> snapshot in your override — it will go stale across batches. Prefer <span class="mono">{{ROWS_JSON}}</span> (or leave the default user prompt alone).</span>
                 </div>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-                  <label style="font-size:12px;color:var(--muted)">custom_label_1 <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Angle / Theme" /></label>
-                  <label style="font-size:12px;color:var(--muted)">custom_label_2 <input id="broad-label-2" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
-                  <label style="font-size:12px;color:var(--muted)">custom_label_3 <input id="broad-label-3" type="text" maxlength="120" style="width:220px;font-size:12px" /></label>
+                  <label style="font-size:12px;color:var(--muted)">Column 1 header <input id="broad-label-1" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Zodiac sign" title="Table column title — LLM infers the value per row" /></label>
+                  <label style="font-size:12px;color:var(--muted)">Column 2 header <input id="broad-label-2" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="e.g. Target audience" title="Table column title — LLM infers the value per row" /></label>
+                  <label style="font-size:12px;color:var(--muted)">Column 3 header <input id="broad-label-3" type="text" maxlength="120" style="width:220px;font-size:12px" placeholder="Optional" title="Table column title — LLM infers the value per row" /></label>
                   <span id="broad-prompt-msg" style="font-size:11px;color:var(--muted)"></span>
                 </div>
                 <div style="display:grid;grid-template-columns:1fr;gap:10px">
@@ -715,9 +716,19 @@ export function adminProcessingBody(currentSlug: string): string {
           <div id="idea-list-table-wrap" style="margin-top:8px;width:100%;max-height:480px;overflow-x:auto;overflow-y:auto;border:1px solid var(--border);border-radius:8px"></div>
         </div>
         <div id="panel-pack" style="display:none;padding:12px 0 0">
-          <p class="runs-ops-hint" style="margin-bottom:10px">Prefer building from an <strong>idea list</strong> from step 4 (Build ideas), then add per-format limits if needed. The signal pack stores <span class="mono">ideas_json</span> — jobs are created when you start a run.</p>
+          <div id="pack-prereq-callout" style="margin-bottom:14px;padding:12px 14px;border:1px solid rgba(234,179,8,0.35);border-radius:10px;background:rgba(234,179,8,0.08);font-size:13px;line-height:1.5">
+            <div style="font-weight:600;margin-bottom:6px">Research brief → signal pack</div>
+            <p style="margin:0 0 8px">A <strong>research brief</strong> is not a separate artifact — it is compiled into every signal pack as <span class="mono">market_intelligence_v1</span>, synthesized from <strong>step 3 Insights</strong> (all platforms) and <strong>top-performer</strong> analysis rows.</p>
+            <ol style="margin:0 0 8px;padding-left:20px">
+              <li><strong>Step 3 — Insights</strong> — run broad LLM insights on scraped posts (every platform in the import). Add top-performer deep passes when you have reference winners.</li>
+              <li><strong>Step 4 — Idea list</strong> (recommended) — generate and review ideas from those insights.</li>
+              <li><strong>Step 5 — Build signal pack</strong> — writes <span class="mono">ideas_json</span> <em>and</em> attaches the research brief. Jobs are created later when you start a run.</li>
+            </ol>
+            <p id="pack-prereq-status" style="margin:0;font-size:12px;color:var(--muted)">Checking insight status…</p>
+          </div>
           <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg);margin-bottom:12px">
-            <div style="font-size:13px;font-weight:600;margin-bottom:8px">Build from idea list</div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">5a — Build from idea list (recommended)</div>
+            <p class="runs-ops-hint" style="margin:0 0 10px">Uses the idea list from step 4. Compiles the research brief from insights + top performers when the pack is created.</p>
             <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:8px">
               <label style="font-size:12px;color:var(--muted)">Idea list
                 <select id="pack-idea-list-select" style="min-width:min(100%,400px);max-width:100%;padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text)">
@@ -735,14 +746,25 @@ export function adminProcessingBody(currentSlug: string): string {
               <label class="fl-cap" style="font-size:11px">Other <input type="number" id="fl-other" min="0" max="200" step="1" placeholder="—" style="width:64px;font-size:12px;padding:4px 6px;border-radius:6px;border:1px solid var(--border)"/></label>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-              <button type="button" class="btn btn-sm" id="btn-build-pack-from-idea-list" title="Builds a signal pack from the selected idea list (and optional per-format caps). Writes a new signal pack row in the database.">Build signal pack from idea list</button>
+              <button type="button" class="btn btn-sm" id="btn-build-pack-from-idea-list" title="Builds a signal pack from the selected idea list. Also compiles market_intelligence_v1 (research brief) from insights + top performers on this import.">Build signal pack + research brief</button>
               <span id="build-from-ideas-msg" style="font-size:12px;color:var(--muted)"></span>
             </div>
           </div>
-          <p class="runs-ops-hint" style="margin-bottom:8px"><strong>Full pipeline</strong> — rate + synthesize + idea LLM in one go (ignores idea lists). Review profile caps first.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-            <button type="button" class="btn-ghost btn-sm" id="btn-build-pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1 + IDEAS__From_Insights__Overview_v1", "Processing", "Full import pipeline — rating, synthesize, then ideas LLM")}">Build signal pack (full import)</button>
-            <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg);margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">5b — Full import pipeline (alternative)</div>
+            <p class="runs-ops-hint" style="margin:0 0 10px">Rate + synthesize + ideas LLM in one go (ignores idea lists). Still compiles the research brief from insights + top performers. Review profile caps first.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="btn-ghost btn-sm" id="btn-build-pack" title="${PL("SIGNAL_PACK__Rating_Batch_v1 + SIGNAL_PACK__Synthesize_Candidates_v1 + IDEAS__From_Insights__Overview_v1", "Processing", "Full import pipeline — rating, synthesize, ideas LLM, and research brief")}">Build signal pack (full import)</button>
+              <span id="build-msg" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+          </div>
+          <div style="border:1px dashed var(--border);border-radius:10px;padding:12px;background:var(--card);margin-bottom:12px">
+            <div style="font-size:13px;font-weight:600;margin-bottom:4px">After the pack exists — re-run AI polish</div>
+            <p class="runs-ops-hint" style="margin:0 0 10px">Pack build already writes a research brief. Use this only to <strong>re-run the AI briefing pass</strong> after you change insights, top performers, or the briefing model — select the pack below first.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button type="button" class="btn-ghost btn-sm" id="btn-refresh-research-brief" title="Re-runs the research-brief LLM on the selected signal pack. Requires OPENAI_API_KEY and step 3 insights on the import.">Re-run research briefing (AI)</button>
+              <span id="brief-refresh-msg" style="font-size:12px;color:var(--muted)"></span>
+            </div>
           </div>
           <details id="pack-settings-debug" style="margin:10px 0">
             <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Debug (config/profile JSON)</summary>
@@ -766,6 +788,10 @@ export function adminProcessingBody(currentSlug: string): string {
                 <summary style="cursor:pointer;font-size:14px;color:var(--muted)">Top performers — mimic render mode (Full bleed / Template)</summary>
                 <div id="pack-inspect-visual-mimic" style="margin-top:8px"></div>
                 <p id="pack-inspect-mimic-msg" style="margin:8px 0 0;font-size:12px;color:var(--muted)"></p>
+              </details>
+              <details id="pack-inspect-brief-details" style="display:none;margin-top:10px" open>
+                <summary style="cursor:pointer;font-size:14px;color:var(--muted)">Research brief (attached to this pack)</summary>
+                <div id="pack-inspect-brief" style="margin-top:8px;font-size:13px;max-height:480px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:12px"></div>
               </details>
               <details id="pack-inspect-ideas-details" style="display:none;margin-top:10px">
                 <summary style="cursor:pointer;font-size:14px;color:var(--muted)">ideas_json (curated ideas)</summary>
@@ -1299,6 +1325,30 @@ var BROAD_INSIGHT_TABLE_COLS=[
   {key:'custom_label_3',label:'Label 3'},
   {key:'risk_flags_json',label:'Risk flags'}
 ];
+function insightLabelsFromCriteria(criteria){
+  criteria=criteria||{};
+  var raw=criteria.insight_column_labels;
+  if(!raw||typeof raw!=='object'||Array.isArray(raw))return {l1:'',l2:'',l3:''};
+  return {
+    l1:String(raw.custom_label_1||'').trim(),
+    l2:String(raw.custom_label_2||'').trim(),
+    l3:String(raw.custom_label_3||'').trim()
+  };
+}
+function withCustomColumnHeaders(cols,criteria){
+  var labels=insightLabelsFromCriteria(criteria||(profileCache&&profileCache.criteria)||{});
+  return (cols||[]).filter(function(c){
+    if(c.key==='custom_label_1'&&!labels.l1)return false;
+    if(c.key==='custom_label_2'&&!labels.l2)return false;
+    if(c.key==='custom_label_3'&&!labels.l3)return false;
+    return true;
+  }).map(function(c){
+    if(c.key==='custom_label_1'&&labels.l1)return Object.assign({},c,{label:labels.l1});
+    if(c.key==='custom_label_2'&&labels.l2)return Object.assign({},c,{label:labels.l2});
+    if(c.key==='custom_label_3'&&labels.l3)return Object.assign({},c,{label:labels.l3});
+    return c;
+  });
+}
 var TOP_PERFORMER_INSIGHT_TABLE_COLS=[
   {key:'analysis_tier',label:'Tier'},
   {key:'evidence_kind',label:'Platform'},
@@ -1437,13 +1487,13 @@ function syncCarouselColToggleUi(){
 }
 function activeCarouselInsightCols(){
   var t=readCarouselColToggles();
-  return CAROUSEL_INSIGHT_COL_DEFS.filter(function(c){
+  return withCustomColumnHeaders(CAROUSEL_INSIGHT_COL_DEFS.filter(function(c){
     if(c.group==='base')return t.base;
     if(c.group==='nemotron')return t.nemotron;
     if(c.group==='docai')return t.docai;
     if(c.group==='raw')return t.raw;
     return true;
-  });
+  }));
 }
 function carouselColWidth(key){
   return CAROUSEL_COL_WIDTHS[key]||INSIGHT_COL_WIDTHS[key]||120;
@@ -1805,6 +1855,32 @@ function computeStepStatus(){
   return {hasImport,evidenceOk,insightsOk,ideasOk,packOk};
 }
 
+function renderPackPrereqStatus(){
+  var el=document.getElementById('pack-prereq-status');
+  if(!el)return;
+  var s=computeStepStatus();
+  if(!selectedImportId){
+    el.innerHTML='Select an import in <strong>step 1</strong> first.';
+    el.style.color='var(--muted)';
+    return;
+  }
+  if(!s.insightsOk){
+    el.innerHTML='<strong style="color:var(--yellow)">Step 3 Insights not complete.</strong> Run broad insights (all platforms) before building — otherwise the research brief will be empty. <button type="button" class="btn-ghost btn-sm" id="pack-goto-insights" style="margin-left:6px">Go to Insights</button>';
+    el.style.color='';
+    var go=document.getElementById('pack-goto-insights');
+    if(go)go.onclick=function(){setStep('insights');};
+    return;
+  }
+  var parts=['<strong style="color:var(--green)">Insights present</strong> — OK to build signal pack + research brief.'];
+  if(!s.ideasOk){
+    parts.push('No idea list yet — you can still use <strong>5b full import</strong>, or generate ideas in step 4 first.');
+  }else{
+    parts.push('Idea list ready — use <strong>5a</strong> below.');
+  }
+  el.innerHTML=parts.join(' ');
+  el.style.color='var(--muted)';
+}
+
 function renderStepper(){
   var s=computeStepStatus();
   setBadge('step-badge-select',s.hasImport?'completed':'in progress',s.hasImport?'badge-g':'badge-y');
@@ -1829,6 +1905,7 @@ function renderStepper(){
       btn.title='Complete the previous step first.';
     }
   });
+  renderPackPrereqStatus();
 }
 
 function pipelineStageForStep(step){
@@ -2047,6 +2124,15 @@ async function loadProfile(){
     document.getElementById('pf-min').value=p.min_llm_score_for_pack;
     document.getElementById('pf-criteria').value=JSON.stringify(p.criteria_json||{},null,2);
     document.getElementById('pf-extra').value=p.extra_instructions||'';
+    var colLabels=insightLabelsFromCriteria(p.criteria_json||{});
+    var bl1=document.getElementById('broad-label-1');
+    var bl2=document.getElementById('broad-label-2');
+    var bl3=document.getElementById('broad-label-3');
+    if(bl1)bl1.value=colLabels.l1||'';
+    if(bl2)bl2.value=colLabels.l2||'';
+    if(bl3)bl3.value=colLabels.l3||'';
+    if(lastBroadInsightsAllRows&&lastBroadInsightsAllRows.length)rerenderBroadTableFromCache();
+    if(lastCarouselInsightRows&&lastCarouselInsightRows.length)rerenderCarouselTableFromCache();
   }catch(e){alert(e.message||e);}
 }
 
@@ -3076,7 +3162,7 @@ bind('btn-run-deep-carousel-insights','click',async function(){
   setTpStatus('carousel','Starting carousel pass…',false,'running');
   var progressId=tpCarouselProgressId();
   startTpCarouselProgressPoll(progressId);
-  var body=Object.assign({max_rows:12,max_slides:12,rescan:chk('tp-vision-rescan'),progress_id:progressId},tpRatingGateRequestFields());
+  var body=Object.assign({max_rows:30,max_slides:15,rescan:chk('tp-vision-rescan'),progress_id:progressId},tpRatingGateRequestFields());
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-deep-carousel-insights';
   var r=null;
   var d=null;
@@ -3130,7 +3216,7 @@ bind('btn-run-carousel-document-ai','click',async function(){
   setTpStatus('carousel','Starting Document AI OCR…',false,'running');
   var progressId=tpCarouselProgressId();
   startTpCarouselProgressPoll(progressId);
-  var body={max_rows:20,max_slides:12,merge_into_insights:true,progress_id:progressId};
+  var body={max_rows:20,max_slides:15,merge_into_insights:true,progress_id:progressId};
   var endpoint='/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/import/'+encodeURIComponent(selectedImportId)+'/run-carousel-document-ai-ocr';
   var r=null;
   var d=null;
@@ -3749,7 +3835,7 @@ function rerenderBroadTableFromCache(){
     updateBroadHscrollBar();
     return;
   }
-  wrap.innerHTML=renderInsightTable(filtered,BROAD_INSIGHT_TABLE_COLS,{
+  wrap.innerHTML=renderInsightTable(filtered,withCustomColumnHeaders(BROAD_INSIGHT_TABLE_COLS),{
     minWidth:2600,
     rowEvidenceLink:true,
     emptyMsg:'No rows.'
@@ -4589,11 +4675,55 @@ function getPackInspectSelectId(){
   return sel?String(sel.value||'').trim():'';
 }
 
+function renderResearchBriefInspect(pack, targetId){
+  var el=document.getElementById(targetId||'pack-inspect-brief');
+  if(!el)return;
+  var dg=pack&&pack.derived_globals_json?pack.derived_globals_json:{};
+  var mi=dg.market_intelligence_v1;
+  if(!mi||mi.schema_version!==1){
+    el.innerHTML='<p style="color:var(--muted);margin:0">No research brief on this pack yet. Complete <strong>step 3 Insights</strong>, then build or rebuild the signal pack — or use <strong>Re-run research briefing (AI)</strong> above.</p>';
+    return;
+  }
+  var h=[];
+  if(mi.research_brief_title)h.push('<h4 style="margin:0 0 8px">'+esc(mi.research_brief_title)+'</h4>');
+  if(mi.market_overview)h.push('<p style="margin:0 0 10px;line-height:1.5">'+esc(mi.market_overview)+'</p>');
+  if(mi.what_worked)h.push('<p style="margin:0 0 10px;line-height:1.5"><strong>What worked:</strong> '+esc(mi.what_worked)+'</p>');
+  if(Array.isArray(mi.executive_summary)&&mi.executive_summary.length){
+    h.push('<p style="margin:12px 0 6px;font-weight:600">Executive summary</p><ul style="margin:0 0 10px;padding-left:18px;line-height:1.45">');
+    mi.executive_summary.forEach(function(b){h.push('<li>'+esc(String(b))+'</li>');});
+    h.push('</ul>');
+  }
+  if(mi.hooks_digest&&Array.isArray(mi.hooks_digest.hooks)&&mi.hooks_digest.hooks.length){
+    h.push('<p style="margin:12px 0 6px;font-weight:600">Hooks ('+mi.hooks_digest.hooks.length+')</p><ul style="margin:0 0 10px;padding-left:18px;columns:2;column-gap:20px;line-height:1.4">');
+    mi.hooks_digest.hooks.slice(0,14).forEach(function(hk){h.push('<li>'+esc(String(hk))+'</li>');});
+    h.push('</ul>');
+  }
+  if(Array.isArray(mi.winning_patterns)&&mi.winning_patterns.length){
+    h.push('<p style="margin:12px 0 6px;font-weight:600">Winning patterns</p>');
+    mi.winning_patterns.slice(0,6).forEach(function(p){
+      h.push('<div style="margin:0 0 8px;padding:8px;border:1px solid var(--border);border-radius:8px"><strong>'+esc(String(p.title||''))+'</strong><br><span style="color:var(--muted);font-size:12px">'+esc(String(p.summary||''))+'</span>');
+      if(Array.isArray(p.evidence_urls)&&p.evidence_urls.length){
+        h.push('<br>');
+        p.evidence_urls.slice(0,3).forEach(function(u){h.push('<a href="'+esc(u)+'" target="_blank" rel="noopener" style="font-size:11px;margin-right:8px">post</a>');});
+      }
+      h.push('</div>');
+    });
+  }
+  if(Array.isArray(mi.avoid)&&mi.avoid.length){
+    h.push('<p style="margin:12px 0 6px;font-weight:600">What to avoid</p><ul style="margin:0;padding-left:18px;line-height:1.45">');
+    mi.avoid.forEach(function(a){h.push('<li><strong>'+esc(String(a.title||''))+':</strong> '+esc(String(a.summary||''))+'</li>');});
+    h.push('</ul>');
+  }
+  h.push('<p style="margin:12px 0 0;font-size:11px;color:var(--muted)">Rows analyzed: '+esc(String(mi.rows_analyzed||0))+(mi.llm_polished?' · LLM polished':' · deterministic only')+'</p>');
+  el.innerHTML=h.join('');
+}
+
 async function loadSelectedSignalPack(){
   var sel=document.getElementById('pack-inspect-select');
   var msg=document.getElementById('pack-inspect-msg');
   var ideasD=document.getElementById('pack-inspect-ideas-details');
   var rawD=document.getElementById('pack-inspect-raw-details');
+  var briefD=document.getElementById('pack-inspect-brief-details');
   var ideasWrap=document.getElementById('pack-inspect-ideas');
   var rawPre=document.getElementById('pack-inspect-raw');
   if(!sel||!SLUG)return;
@@ -4602,6 +4732,7 @@ async function loadSelectedSignalPack(){
   if(!id){
     if(ideasD)ideasD.style.display='none';
     if(rawD)rawD.style.display='none';
+    if(briefD)briefD.style.display='none';
     if(mimicD)mimicD.style.display='none';
     if(msg){msg.textContent='';msg.style.color='';}
     return;
@@ -4618,12 +4749,14 @@ async function loadSelectedSignalPack(){
     if(msg)msg.textContent='Pack loaded — '+String(ideas.length)+' ideas in ideas_json.';
     if(ideasD)ideasD.style.display='block';
     if(rawD)rawD.style.display='block';
+    if(briefD)briefD.style.display='block';
     if(mimicD){
       mimicD.style.display='block';
       if(typeof window.cafRenderPackMimicOverridesPanel==='function'){
         window.cafRenderPackMimicOverridesPanel(pack,'pack-inspect-visual-mimic','pack-inspect-mimic-msg');
       }
     }
+    renderResearchBriefInspect(pack,'pack-inspect-brief');
     if(ideasWrap)ideasWrap.innerHTML=renderInsightTable(ideas.slice(0,120),[
       {key:'idea_id',label:'idea_id'},
       {key:'title',label:'title'},
@@ -4650,9 +4783,33 @@ async function loadSelectedSignalPack(){
     if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
     if(ideasD)ideasD.style.display='none';
     if(rawD)rawD.style.display='none';
+    if(briefD)briefD.style.display='none';
     if(mimicD)mimicD.style.display='none';
   }
 }
+
+bind('btn-refresh-research-brief','click',async function(){
+  var msg=document.getElementById('brief-refresh-msg');
+  var packId=getPackInspectSelectId()||String(stepState.pack_id||'').trim();
+  if(!SLUG||!packId){
+    if(msg){msg.textContent='Select a signal pack in Inspect, or build one first.';msg.style.color='var(--red)';}
+    return;
+  }
+  if(msg){msg.textContent='Running research briefing (AI)...';msg.style.color='';}
+  try{
+    var r=await cafFetch('/v1/market-intelligence/'+encodeURIComponent(SLUG)+'/signal-pack/'+encodeURIComponent(packId)+'?refresh=1');
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(msg){
+      var mi=d.market_intelligence_v1||{};
+      msg.textContent='Brief updated — '+String(mi.rows_analyzed||0)+' rows, '+(mi.llm_polished?'LLM polished':'deterministic')+'.';
+      msg.style.color='';
+    }
+    if(typeof loadSelectedSignalPack==='function')loadSelectedSignalPack();
+  }catch(e){
+    if(msg){msg.textContent=String(e.message||e);msg.style.color='var(--red)';}
+  }
+});
 
 (function(){
   var prevMimicSaved=window.cafOnSignalPackMimicModeSaved;
@@ -4733,7 +4890,7 @@ async function loadDeepInsightTable(elId,tier,tabKey){
     if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
     var rows=d.insights||[];
     if(tabKey)tpSetTabCount(tabKey,rows.length);
-    el.innerHTML=rows.length?renderInsightTable(rows,TOP_PERFORMER_INSIGHT_TABLE_COLS,{
+    el.innerHTML=rows.length?renderInsightTable(rows,withCustomColumnHeaders(TOP_PERFORMER_INSIGHT_TABLE_COLS),{
       minWidth:3200,
       emptyMsg:'No top-performer rows for this pass yet.'
     }):'<div class="empty" style="padding:12px">No rows yet — run the pass on the left.</div>';
@@ -4893,7 +5050,11 @@ bind('btn-build-pack-from-idea-list','click',async function(){
     if(msg)msg.textContent='Select an idea list, or create one in the Ideas tab.';
     return;
   }
-  if(msg){msg.textContent='Building pack...';msg.style.color='';}
+  if(!stepState.insights_present){
+    var proceed=confirm('Step 3 Insights are not complete on this import. The signal pack will be created but the research brief may be empty. Continue anyway?');
+    if(!proceed){if(msg)msg.textContent='Cancelled — run Insights (step 3) first.';return;}
+  }
+  if(msg){msg.textContent='Building pack + research brief...';msg.style.color='';}
   try{
     var sel=loadIdeaSelection();
     var selectedN=Object.keys(sel||{}).length;
@@ -4922,7 +5083,11 @@ bind('btn-build-pack-from-idea-list','click',async function(){
 bind('btn-build-pack','click',async function(){
   var msg=document.getElementById('build-msg');
   if(!SLUG||!selectedImportId){msg.textContent='Select an import first.';return;}
-  var ok=confirm('This runs the full pipeline (rating + synthesis + ideas LLM) and writes a new signal pack. Continue?');
+  if(!stepState.insights_present){
+    var proceed=confirm('Step 3 Insights are not complete on this import. The research brief may be empty. Continue with full import anyway?');
+    if(!proceed){msg.textContent='Cancelled — run Insights (step 3) first.';return;}
+  }
+  var ok=confirm('This runs the full pipeline (rating + synthesis + ideas LLM) and writes a new signal pack with an attached research brief. Continue?');
   if(!ok){msg.textContent='Cancelled.';return;}
   msg.textContent='Working (OpenAI)...';
   try{

@@ -1,12 +1,15 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { ReviewNavLink } from "@/components/ReviewNavLink";
+import { usePathname } from "next/navigation";
 import { BrandSwitcher } from "@/components/marketer/BrandSwitcher";
+import { ChromePanelToggle } from "@/components/ChromePanelToggle";
 import { ContentCartBadge } from "@/components/marketer/ContentCartDrawer";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
 import { isOperatorMode } from "@/lib/marketer/debug";
 import { MARKETER_LABELS, OPERATOR_LABELS } from "@/lib/marketer/language";
+import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-search-query";
 
 function brandNavItems(slug: string) {
   const base = `/brand/${encodeURIComponent(slug)}`;
@@ -34,9 +37,11 @@ const OPERATOR_NAV = [
 
 export function MarketerSidebar() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const searchParams = clientSearchParams(useClientSearchQuery());
   const { ready, activeBrandSlug, inBrandContext, navHref } = useReviewProject();
   const operator = isOperatorMode(searchParams);
+  const embeddedInAdmin = searchParams.get("embed") === "admin";
+  const { toggleSidebar } = useReviewChromeLayout();
   const operatorHref = (() => {
     const q = new URLSearchParams(searchParams.toString());
     q.set("debug", "1");
@@ -48,11 +53,14 @@ export function MarketerSidebar() {
 
   return (
     <aside className="sidebar sidebar--marketer" data-agent-id="sidebar">
-      <div className="sidebar-brand">
-        <Link href="/workspace" className="sidebar-brand-link">
+      <div className="sidebar-brand sidebar-brand--row">
+        <ReviewNavLink href="/workspace" className="sidebar-brand-link">
           <h1>CAF</h1>
           <span>Content workspace</span>
-        </Link>
+        </ReviewNavLink>
+        {!embeddedInAdmin ? (
+          <ChromePanelToggle expanded onClick={toggleSidebar} title="Hide navigation" />
+        ) : null}
       </div>
 
       <div className="sidebar-project-panel sidebar-brand-panel">
@@ -62,14 +70,14 @@ export function MarketerSidebar() {
       <nav className="sidebar-nav" data-agent-id="sidebar-nav">
         <div data-agent-id="workspace-nav">
           <div className="sidebar-section-title">Workspace</div>
-          <Link
+          <ReviewNavLink
             href={navHref("/workspace")}
             className={`sidebar-link ${pathname === "/workspace" || pathname === "/" ? "active" : ""}`}
             data-agent-id="nav-brands"
           >
             <HomeIcon />
             {MARKETER_LABELS.brands}
-          </Link>
+          </ReviewNavLink>
         </div>
 
         {inBrandContext && brandItems.length > 0 && (
@@ -81,7 +89,7 @@ export function MarketerSidebar() {
             {brandItems.map((item) => {
               const isActive = item.exact ? pathname === item.href : pathname.startsWith(item.href);
               return (
-                <Link
+                <ReviewNavLink
                   key={item.href}
                   href={navHref(item.href)}
                   className={`sidebar-link ${isActive ? "active" : ""}`}
@@ -89,7 +97,7 @@ export function MarketerSidebar() {
                 >
                   <item.icon />
                   {item.label}
-                </Link>
+                </ReviewNavLink>
               );
             })}
           </div>
@@ -101,10 +109,10 @@ export function MarketerSidebar() {
             {OPERATOR_NAV.map((item) => {
               const isActive = pathname.startsWith(item.href.split("?")[0]!);
               return (
-                <Link key={item.href} href={navHref(item.href)} className={`sidebar-link sidebar-link--operator ${isActive ? "active" : ""}`}>
+                <ReviewNavLink key={item.href} href={navHref(item.href)} className={`sidebar-link sidebar-link--operator ${isActive ? "active" : ""}`}>
                   <item.icon />
                   {item.label}
-                </Link>
+                </ReviewNavLink>
               );
             })}
           </div>
@@ -113,9 +121,9 @@ export function MarketerSidebar() {
 
       {!operator && (
         <div className="sidebar-footer">
-          <Link href={operatorHref} className="sidebar-footer-link" title="Show operator tools and technical details">
+          <ReviewNavLink href={operatorHref} className="sidebar-footer-link" title="Show operator tools and technical details">
             Operator mode
-          </Link>
+          </ReviewNavLink>
         </div>
       )}
     </aside>

@@ -30,6 +30,7 @@ import { ensureSupabaseAssetFolderPrefixes } from "./services/supabase-storage.j
 import { startEditorialAnalysisCron } from "./services/editorial-analysis-cron.js";
 import { registerReviewProxyRoutes } from "./routes/review-proxy.js";
 import { startReviewNextServer, type ReviewServerHandle } from "./services/review-next-server.js";
+import { readinessState } from "./services/readiness-state.js";
 import { isCoreHttpPath } from "./domain/core-http-paths.js";
 
 async function main() {
@@ -94,8 +95,10 @@ async function main() {
   registerCreativeIntelligenceRoutes(app, { db, config });
 
   if (config.CAF_REVIEW_ENABLED) {
+    readinessState.reviewEnabled = true;
     const logLine = (msg: string) => app.log.info(msg);
     reviewServer = await startReviewNextServer(config, logLine);
+    readinessState.reviewUpstream = reviewServer.upstream;
     await registerReviewProxyRoutes(app, { config, reviewUpstream: reviewServer.upstream });
   }
 
@@ -103,6 +106,8 @@ async function main() {
 
   app.addHook("onClose", async () => {
     stopEditorialCron?.();
+    readinessState.reviewUpstream = null;
+    readinessState.reviewEnabled = false;
     await reviewServer?.stop();
     await db.end();
   });

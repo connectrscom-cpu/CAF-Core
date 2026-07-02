@@ -22,6 +22,7 @@ import {
   parseWhyMimicSlideIntelligenceFromMimic,
 } from "../domain/why-mimic-execution.js";
 import { parseBrandExecutionBrief } from "../domain/brand-translation.js";
+import { appendBrandBibleToFluxPrompt, parseBrandBible, type BrandBibleSnapshotV1 } from "../domain/brand-bible.js";
 import {
   finalizeMimicImageModelPrompt,
   sanitizeLayoutTemplateForImagePrompt,
@@ -392,6 +393,23 @@ function shouldFallbackAnalysisT2iToReference(
   return !analysisInput || !isMimicFluxAnalysisSufficientForT2i(analysisInput);
 }
 
+function bvsSnapshotFromMimic(mimic: MimicPayloadV1): BrandBibleSnapshotV1 | null {
+  if (mimic.bvs_enabled !== true) return null;
+  const raw = mimic.bvs_bible_snapshot;
+  const parsed = parseBrandBible(raw);
+  if (!parsed) return null;
+  const rec = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  const resolved = Array.isArray(rec.resolved_assets) ? rec.resolved_assets : [];
+  return {
+    ...parsed,
+    resolved_assets: resolved as BrandBibleSnapshotV1["resolved_assets"],
+  };
+}
+
+function withBvsFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
+  return appendBrandBibleToFluxPrompt(prompt, bvsSnapshotFromMimic(mimic));
+}
+
 export function resolveMimicSlideImagePrompt(
   mimic: MimicPayloadV1,
   slideIndex1Based: number,
@@ -425,7 +443,7 @@ export function resolveMimicSlideImagePrompt(
 
   if (row?.flux_image_prompt?.trim()) {
     return {
-      prompt: row.flux_image_prompt.trim(),
+      prompt: withBvsFluxPrompt(mimic, row.flux_image_prompt.trim()),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
     };
@@ -434,7 +452,7 @@ export function resolveMimicSlideImagePrompt(
   const fallbackInput = buildMimicFluxSlideAnalysisInput(mimic, slideIndex1Based);
   if (fallbackInput && isMimicFluxAnalysisSufficientForT2i(fallbackInput)) {
     return {
-      prompt: buildDeterministicFluxImagePrompt(fallbackInput),
+      prompt: withBvsFluxPrompt(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
     };
@@ -451,7 +469,7 @@ export function resolveMimicSlideImagePrompt(
 
   if (fallbackInput) {
     return {
-      prompt: buildDeterministicFluxImagePrompt(fallbackInput),
+      prompt: withBvsFluxPrompt(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
     };

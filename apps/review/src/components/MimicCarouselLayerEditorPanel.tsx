@@ -304,7 +304,16 @@ function stripTemplateBgHiddenOverrides(rows: DocAiLayerOverride[]): DocAiLayerO
 function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false): DocAiLayerOverride[] {
   return dropPlaceholderCustomOverrides(rows).map((r) => {
     if (r.hidden) return r;
-    if (r.layer_key.startsWith("custom@")) {
+    const isPlacedBox =
+      r.layer_key.startsWith("custom@") || /^slot@\d+$/.test(r.layer_key);
+    const hasTypography =
+      r.font_size_px != null ||
+      Boolean(r.color_hex?.trim()) ||
+      r.font_weight != null ||
+      Boolean(r.font_family?.trim()) ||
+      r.font_style_italic != null;
+    const lockBox = r.box_locked || isPlacedBox || hasTypography;
+    if (r.layer_key.startsWith("custom@") || /^slot@\d+$/.test(r.layer_key)) {
       const text = r.text?.trim();
       return {
         ...r,
@@ -316,15 +325,15 @@ function overridesForPersist(rows: DocAiLayerOverride[], templateBgMode = false)
     }
     if (templateBgMode) {
       const { text: _text, ...rest } = r;
-      if (r.box_locked) return rest as DocAiLayerOverride;
+      if (lockBox) return { ...rest, box_locked: true } as DocAiLayerOverride;
       const { w_px: _w, h_px: _h, box_locked: _b, ...posOnly } = rest;
       return posOnly as DocAiLayerOverride;
     }
     const text = r.text?.trim();
     if (text) {
-      return { ...r, text, box_locked: true };
+      return { ...r, text, ...(lockBox ? { box_locked: true } : {}) };
     }
-    if (r.box_locked) return r;
+    if (lockBox) return { ...r, box_locked: true };
     const { w_px: _w, h_px: _h, box_locked: _b, text: _t, ...rest } = r;
     return rest;
   });
@@ -399,6 +408,32 @@ function layoutDraftCompareKey(rows: DocAiLayerOverride[], _templateBgMode = fal
       fw: r.font_weight,
       ff: r.font_family,
     }))
+  );
+}
+
+function mergedSlideDraftsForCompare(
+  slideDrafts: Record<number, DocAiLayerOverride[]>,
+  editorSlide: number,
+  layerPosDraft: DocAiLayerOverride[]
+): Record<number, DocAiLayerOverride[]> {
+  return {
+    ...slideDrafts,
+    ...(layerPosDraft.length > 0 ? { [editorSlide]: layerPosDraft } : {}),
+  };
+}
+
+/** Deck-wide saved-state fingerprint — switching slides must not spuriously show Unsaved. */
+function mergedLayoutDraftCompareKey(
+  slideDrafts: Record<number, DocAiLayerOverride[]>,
+  templateBgMode: boolean
+): string {
+  const slides = Object.keys(slideDrafts)
+    .map(Number)
+    .filter((n) => Number.isFinite(n) && n >= 1 && (slideDrafts[n]?.length ?? 0) > 0)
+    .sort((a, b) => a - b);
+  if (slides.length === 0) return "";
+  return JSON.stringify(
+    slides.map((slide) => [slide, layoutDraftCompareKey(slideDrafts[slide]!, templateBgMode)])
   );
 }
 
@@ -706,6 +741,9 @@ export interface MimicCarouselLayerEditorPanelProps {
   regenerationNote?: string;
   onRegenerationNoteChange?: (value: string) => void;
 
+  /** Bumped when carousel assets refetch after reprint/regen — clears stale inspect cache. */
+  assetRefreshKey?: number;
+
 }
 
 
@@ -887,6 +925,8 @@ export function MimicCarouselLayerEditorPanel({
 
   onRegenerationNoteChange,
 
+  assetRefreshKey = 0,
+
 }: MimicCarouselLayerEditorPanelProps) {
 
   const [logoEnabled, setLogoEnabled] = useState(false);
@@ -906,6 +946,22 @@ export function MimicCarouselLayerEditorPanel({
 
   const inspectRequestGenRef = useRef(0);
   const inspectCacheRef = useRef<Record<number, Record<string, unknown>>>({});
+
+  const pruneInspectSlideCache = useCallback((keepSlide: number) => {
+    const cache = inspectCacheRef.current;
+    const keys = Object.keys(cache).map(Number);
+    const max = 4;
+    if (keys.length <= max) return;
+    const ranked = keys.sort((a, b) => {
+      const da = Math.abs(a - keepSlide);
+      const db = Math.abs(b - keepSlide);
+      return da !== db ? da - db : a - b;
+    });
+    const keep = new Set(ranked.slice(0, max));
+    for (const k of keys) {
+      if (!keep.has(k)) delete cache[k];
+    }
+  }, []);
 
   useEffect(() => {
     inspectCacheRef.current = {};
@@ -1052,18 +1108,30 @@ export function MimicCarouselLayerEditorPanel({
   const fullBleedSlotTextsRef = useRef(fullBleedSlotTexts);
   fullBleedSlotTextsRef.current = fullBleedSlotTexts;
 
+  const generatedOnScreenText = useMemo(() => {
+    const parts = templateBgMode
+      ? templateBgFieldTexts.map((t) => t.trim()).filter(Boolean)
+      : fullBleedSlotTexts.map((t) => t.trim()).filter(Boolean);
+    return parts.length > 0 ? parts.join(" · ") : null;
+  }, [templateBgMode, templateBgFieldTexts, fullBleedSlotTexts]);
+
+  useEffect(() => {
+    inspectCacheRef.current = {};
+    setRenderInspect(null);
+  }, [assetRefreshKey]);
+
   const templateUsed = useMemo(() => template || pickCarouselTemplateName(gp), [template, gp]);
 
+  const mergedDraftsForDirty = useMemo(
+    () => mergedSlideDraftsForCompare(slideDrafts, editorSlide, layerPosDraft),
+    [slideDrafts, editorSlide, layerPosDraft]
+  );
+
   const layoutDirty =
-
     userTouchedLayout &&
-
-    layerPosDraft.length > 0 &&
-
-    // Treat an unset baseline ("") as dirty: a user edit performed before the editor
-    // finished its initial seed must still be eligible for auto-save.
+    Object.values(mergedDraftsForDirty).some((rows) => rows.length > 0) &&
     (layoutBaseline === "" ||
-      layoutDraftCompareKey(layerPosDraft, templateBgMode) !== layoutBaseline);
+      mergedLayoutDraftCompareKey(mergedDraftsForDirty, templateBgMode) !== layoutBaseline);
 
   useEffect(() => {
 
@@ -1206,7 +1274,8 @@ export function MimicCarouselLayerEditorPanel({
 
     const key = persistKeyFor(editorSlide, layerPosDraft);
     if (key === lastPersistedKeyRef.current) {
-      setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+      const merged = mergedSlideDraftsForCompare(slideDrafts, editorSlide, layerPosDraft);
+      setLayoutBaseline(mergedLayoutDraftCompareKey(merged, templateBgMode));
       setUserTouchedLayout(false);
       return true;
     }
@@ -1217,9 +1286,10 @@ export function MimicCarouselLayerEditorPanel({
 
       lastPersistedKeyRef.current = key;
 
-      setSlideDrafts((prev) => ({ ...prev, [editorSlide]: layerPosDraft }));
+      const nextDrafts = { ...slideDrafts, [editorSlide]: layerPosDraft };
+      setSlideDrafts(nextDrafts);
 
-      setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+      setLayoutBaseline(mergedLayoutDraftCompareKey(nextDrafts, templateBgMode));
 
       setUserTouchedLayout(false);
 
@@ -1284,15 +1354,19 @@ export function MimicCarouselLayerEditorPanel({
       void (async () => {
         const key = persistKeyFor(editorSlide, layerPosDraft);
         if (key === lastPersistedKeyRef.current) {
-          setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+          const merged = mergedSlideDraftsForCompare(slideDraftsRef.current, editorSlide, layerPosDraft);
+          setLayoutBaseline(mergedLayoutDraftCompareKey(merged, templateBgMode));
           if (!templateBgMode) setUserTouchedLayout(false);
           return;
         }
         try {
           await persistLayerPositions(editorSlide, layerPosDraft);
           lastPersistedKeyRef.current = key;
-          setSlideDrafts((prev) => ({ ...prev, [editorSlide]: layerPosDraft }));
-          setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+          setSlideDrafts((prev) => {
+            const next = { ...prev, [editorSlide]: layerPosDraft };
+            setLayoutBaseline(mergedLayoutDraftCompareKey(next, templateBgMode));
+            return next;
+          });
           if (!templateBgMode) setUserTouchedLayout(false);
           setSlidesWithSavedLayout((prev) => new Set(prev).add(editorSlide));
         } catch (e) {
@@ -1329,12 +1403,12 @@ export function MimicCarouselLayerEditorPanel({
 
     setSlideDrafts((prev) => {
       if (prev[editorSlide]?.length) return prev;
-      return { ...prev, [editorSlide]: normalized };
+      const next = { ...prev, [editorSlide]: normalized };
+      setLayoutBaseline((baseline) =>
+        baseline || mergedLayoutDraftCompareKey(next, templateBgMode)
+      );
+      return next;
     });
-
-    setLayoutBaseline((baseline) =>
-      baseline || layoutDraftCompareKey(normalized, templateBgMode)
-    );
 
     setUserTouchedLayout(false);
 
@@ -1370,6 +1444,7 @@ export function MimicCarouselLayerEditorPanel({
         const json = (await res.json()) as Record<string, unknown>;
         if (json.ok) {
           inspectCacheRef.current[slideIndex] = json;
+          pruneInspectSlideCache(slideIndex);
           if (slideIndex === editorSlide) setRenderInspect(json);
           return json;
         }
@@ -1385,6 +1460,7 @@ export function MimicCarouselLayerEditorPanel({
       reprintTextBacking,
       reprintTextBackingCss,
       editorSlide,
+      pruneInspectSlideCache,
     ]
   );
 
@@ -1545,7 +1621,7 @@ export function MimicCarouselLayerEditorPanel({
         if (current?.length) {
           setLayerPosDraft(current);
           setDraftSyncRevision((v) => v + 1);
-          setLayoutBaseline(layoutDraftCompareKey(current, templateBgMode));
+          setLayoutBaseline(mergedLayoutDraftCompareKey(nextDrafts, templateBgMode));
         }
         setUserTouchedLayout(true);
 
@@ -1784,6 +1860,7 @@ export function MimicCarouselLayerEditorPanel({
 
           if (json.ok) {
             inspectCacheRef.current[editorSlide] = json;
+            pruneInspectSlideCache(editorSlide);
             setRenderInspect(json);
           } else {
             setRenderInspect({ error: json.error ?? "inspect failed" });
@@ -2385,7 +2462,7 @@ function ensureTemplateBgFieldLayerBoxes(
       if (layerPosDraft.length > 0) {
         lastPersistedKeyRef.current = persistKeyFor(editorSlide, layerPosDraft);
       }
-      setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+      setLayoutBaseline(mergedLayoutDraftCompareKey(mergedDrafts, templateBgMode));
       setUserTouchedLayout(false);
       setSlidesWithSavedLayout(new Set(savedSlides));
       setLayerPosMsg(`Saved layouts for ${savedSlides.length} slide${savedSlides.length === 1 ? "" : "s"}.`);
@@ -2394,6 +2471,24 @@ function ensureTemplateBgFieldLayerBoxes(
     } finally {
       setLayerPosSaving(false);
     }
+  }
+
+  function dedupeCurrentSlideBoxes() {
+    if (layerPosDraft.length === 0) {
+      setLayerPosMsg(`Slide ${editorSlide}: no text boxes on this slide.`);
+      return;
+    }
+    const deduped = normalizeLayerPosDraft(layerPosDraft, templateBgMode);
+    if (deduped.length === layerPosDraft.length) {
+      setLayerPosMsg(`Slide ${editorSlide}: no duplicate boxes to remove.`);
+      return;
+    }
+    handleLayerDraftChange(deduped);
+    setLayerPosMsg(
+      `Slide ${editorSlide}: removed ${layerPosDraft.length - deduped.length} duplicate box${
+        layerPosDraft.length - deduped.length === 1 ? "" : "es"
+      } — save and reprint when ready.`
+    );
   }
 
   async function handleSaveLayerPositions() {
@@ -2412,7 +2507,9 @@ function ensureTemplateBgFieldLayerBoxes(
 
       lastPersistedKeyRef.current = persistKeyFor(editorSlide, layerPosDraft);
 
-      setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+      const nextDrafts = { ...slideDrafts, [editorSlide]: layerPosDraft };
+      setSlideDrafts(nextDrafts);
+      setLayoutBaseline(mergedLayoutDraftCompareKey(nextDrafts, templateBgMode));
 
       setUserTouchedLayout(false);
 
@@ -2486,7 +2583,14 @@ function ensureTemplateBgFieldLayerBoxes(
           return next;
         });
 
-        if (layerPosDraft.length > 0) setLayoutBaseline(layoutDraftCompareKey(layerPosDraft, templateBgMode));
+        if (layerPosDraft.length > 0) {
+          setLayoutBaseline(
+            mergedLayoutDraftCompareKey(
+              mergedSlideDraftsForCompare(allDrafts, editorSlide, layerPosDraft),
+              templateBgMode
+            )
+          );
+        }
       } catch (e) {
         setReprintError(e instanceof Error ? e.message : "Reprint failed");
         setReprintMsg(null);
@@ -2527,6 +2631,13 @@ function ensureTemplateBgFieldLayerBoxes(
     );
     await runTextOverlayReprint(true);
   }, [logoEnabled, runTextOverlayReprint]);
+
+  const handleSaveAllAndReprint = useCallback(async () => {
+    setReprintScope("all");
+    setReprintMsg("Saving all slides and reprinting…");
+    setLayerPosError(null);
+    await runTextOverlayReprint(true);
+  }, [runTextOverlayReprint]);
 
 
 
@@ -2661,17 +2772,17 @@ function ensureTemplateBgFieldLayerBoxes(
 
   return (
 
-    <div className="mimic-layer-editor-panel">
+    <div className="mimic-layer-editor-panel mimic-layer-editor-panel--three-col">
 
-      <div className="mimic-layer-editor-panel__head">
-        <p className="mimic-layer-editor-panel__title">Text layout</p>
-      </div>
+      <div className="mimic-layer-editor-panel__chrome">
 
       <MimicSlideWhyPanel
         mimicV1={mimicV1}
         slideIndex={editorSlide}
         taskId={taskId}
         projectSlug={projectSlug}
+        defaultOpen={false}
+        generatedOnScreenText={generatedOnScreenText}
       />
 
       <div className="mimic-layer-editor-panel__slide-row">
@@ -2913,9 +3024,11 @@ function ensureTemplateBgFieldLayerBoxes(
         <p className="mimic-layer-editor-panel__error">{regenerateError}</p>
       ) : null}
 
+      </div>
+
       {!showEditor && !renderInspectLoading ? (
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div className="mimic-layer-editor-panel__empty">
           <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>No text layers on this slide.</p>
           {hasHiddenDraftLayers ? (
             <button type="button" className="btn-secondary btn-sm" onClick={restoreDefaultLayout}>
@@ -2926,11 +3039,9 @@ function ensureTemplateBgFieldLayerBoxes(
 
       ) : !showEditor && renderInspectLoading ? (
 
-        <p style={{ margin: 0, fontSize: 12, color: "var(--muted)" }}>Loading layout…</p>
+        <p className="mimic-layer-editor-panel__empty mimic-layer-editor-panel__status">Loading layout…</p>
 
       ) : (
-
-        <>
 
           <MimicDocAiLayerPositionEditor
             key={`docai-layout-${editorSlide}-${layoutResetToken}`}
@@ -2983,101 +3094,109 @@ function ensureTemplateBgFieldLayerBoxes(
             onApplyLogoStampToAllSlides={() => void applyLogoStampToAllSlides()}
             overlayApplyBusy={reprintBusy || layerPosSaving}
             draftSyncRevision={draftSyncRevision}
+            threeColumnLayout
+            inspectorFooter={
+              <div className="mimic-layout-footer">
+                <div className="mimic-layer-editor-panel__actions">
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm"
+                    disabled={layerPosSaving || docAiLayerBoxes.length === 0}
+                    onClick={() => handleSaveLayerPositions()}
+                  >
+                    {layerPosSaving ? "Saving…" : `Save layout — slide ${editorSlide}`}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    disabled={layerPosSaving}
+                    onClick={() => void resetSlideLayout()}
+                    title="Remove all saved positions and manually-added boxes for this slide"
+                  >
+                    Reset slide layout
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    disabled={layerPosSaving || layerPosDraft.length === 0}
+                    onClick={() => dedupeCurrentSlideBoxes()}
+                    title="Remove duplicate custom text boxes that repeat the same copy on this slide"
+                  >
+                    Remove duplicates
+                  </button>
+                  {slideCount > 1 ? (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm"
+                      disabled={layerPosSaving}
+                      onClick={() => void handleSaveAllLayerPositions()}
+                      title="Persist layout drafts for every slide you have edited"
+                    >
+                      {layerPosSaving ? "Saving…" : "Save all slides"}
+                    </button>
+                  ) : null}
+                </div>
+                <div className="mimic-layer-editor-panel__reprint">
+                  <p className="mimic-layer-editor-panel__reprint-hint">
+                    <strong>Reprint text</strong> bakes copy and layout into the current images.
+                    <strong> Regenerate</strong> (toolbar above) runs AI again for new backgrounds — billed separately.
+                  </p>
+                  <div className="mimic-layer-editor-panel__reprint-row">
+                  <div className="mimic-layer-editor-panel__reprint-options">
+                    <label className="mimic-layer-editor-panel__option">
+                      <input
+                        type="radio"
+                        name="mimic-reprint-scope"
+                        checked={reprintScope === "all"}
+                        onChange={() => setReprintScope("all")}
+                      />
+                      <span>All slides</span>
+                    </label>
+                    <label className="mimic-layer-editor-panel__option">
+                      <input
+                        type="radio"
+                        name="mimic-reprint-scope"
+                        checked={reprintScope === "selected"}
+                        onChange={() => setReprintScope("selected")}
+                      />
+                      <span>Slide {editorSlide} only</span>
+                    </label>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary btn-sm mimic-layer-editor-panel__reprint-btn"
+                    disabled={reprintBusy || layerPosSaving}
+                    onClick={() => void handleSaveAllAndReprint()}
+                    title="Persist every edited slide, then bake copy into all slide images"
+                  >
+                    {reprintBusy ? "Reprinting…" : "Save all & reprint"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm mimic-layer-editor-panel__reprint-btn"
+                    disabled={reprintBusy}
+                    onClick={() => {
+                      setReprintMsg("Saving layout and reprinting…");
+                      void runTextOverlayReprint(false);
+                    }}
+                    title="Save and reprint using the scope selected above"
+                  >
+                    {reprintBusy ? "Reprinting…" : "Reprint text"}
+                  </button>
+                  </div>
+                </div>
+                {layerPosMsg ? <p className="mimic-layer-editor-panel__status">{layerPosMsg}</p> : null}
+                {layerPosError ? <p className="mimic-layer-editor-panel__error">{layerPosError}</p> : null}
+                {reprintMsg ? <p className="mimic-layer-editor-panel__status">{reprintMsg}</p> : null}
+                {reprintError ? <p className="mimic-layer-editor-panel__error">{reprintError}</p> : null}
+              </div>
+            }
 
           />
-
-          <div className="mimic-layer-editor-panel__actions">
-            <button
-              type="button"
-              className="btn-primary btn-block"
-              disabled={layerPosSaving || docAiLayerBoxes.length === 0}
-              onClick={() => handleSaveLayerPositions()}
-            >
-              {layerPosSaving ? "Saving…" : `Save layout — slide ${editorSlide}`}
-            </button>
-            <button
-              type="button"
-              className="btn-secondary btn-block"
-              disabled={layerPosSaving}
-              onClick={() => void resetSlideLayout()}
-              title="Remove all saved positions and manually-added boxes for this slide"
-            >
-              Reset slide layout
-            </button>
-            {slideCount > 1 ? (
-              <button
-                type="button"
-                className="btn-secondary btn-block"
-                disabled={layerPosSaving}
-                onClick={() => void handleSaveAllLayerPositions()}
-                title="Persist layout drafts for every slide you have edited"
-              >
-                {layerPosSaving ? "Saving…" : "Save all slides"}
-              </button>
-            ) : null}
-          </div>
-
-          {layerPosMsg ? <p className="mimic-layer-editor-panel__status">{layerPosMsg}</p> : null}
-
-          {layerPosError ? <p className="mimic-layer-editor-panel__error">{layerPosError}</p> : null}
-
-        </>
 
       )}
 
 
-
-      <div className="mimic-layer-editor-panel__reprint">
-
-        <div className="mimic-layer-editor-panel__reprint-options">
-
-          <label className="mimic-layer-editor-panel__option">
-
-            <input type="radio" name="mimic-reprint-scope" checked={reprintScope === "all"} onChange={() => setReprintScope("all")} />
-
-            <span>All slides</span>
-
-          </label>
-
-          <label className="mimic-layer-editor-panel__option">
-
-            <input
-
-              type="radio"
-
-              name="mimic-reprint-scope"
-
-              checked={reprintScope === "selected"}
-
-              onChange={() => setReprintScope("selected")}
-
-            />
-
-            <span>Slide {editorSlide} only</span>
-
-          </label>
-
-        </div>
-
-        <button
-          type="button"
-          className="btn-secondary btn-block mimic-layer-editor-panel__reprint-btn"
-          disabled={reprintBusy}
-          onClick={() => {
-            setReprintMsg("Saving layout and reprinting…");
-            void runTextOverlayReprint(false);
-          }}
-        >
-
-          {reprintBusy ? "Reprinting…" : "Reprint text"}
-
-        </button>
-
-        {reprintMsg ? <p className="mimic-layer-editor-panel__status">{reprintMsg}</p> : null}
-
-        {reprintError ? <p className="mimic-layer-editor-panel__error">{reprintError}</p> : null}
-
-      </div>
 
     </div>
 

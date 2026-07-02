@@ -9,6 +9,7 @@ import {
   groundingInsightIdsFromCandidate,
 } from "./mimic-job-grounding.js";
 import { buildWhyMimicPromptBlock, deriveSlideIntelligenceFromAnalysis } from "./slide-intelligence.js";
+import { buildSemanticContractFromCandidate } from "./semantic-contract.js";
 
 describe("mimic-job-grounding", () => {
   it("resolves grounding ids from candidate_data", () => {
@@ -308,5 +309,25 @@ describe("mimic-job-grounding", () => {
     expect(on).toContain("Why this reference works");
     expect(on).toContain("Why Mimic strategic copy");
     expect(on).not.toContain("Semantic fidelity (mimic copy");
+  });
+
+  it("appendMimicGroundedReferenceToUserPrompt prioritizes semantic_contract over reference fidelity", () => {
+    const contract = buildSemanticContractFromCandidate({
+      thesis: "If each role were a power tool, what would each be?",
+      key_points: ["CEO → drill", "CTO → multimeter"],
+    });
+    const out = appendMimicGroundedReferenceToUserPrompt(
+      "Base prompt",
+      {
+        semantic_contract: contract,
+        slide_copy_layout: [{ slide_index: 1, reference_on_screen_text: "Aries as food" }],
+      },
+      { why_mimic_copy_enabled: false }
+    );
+    expect(out).toContain("semantic_contract_v1");
+    expect(out).toContain("Idea-faithful mimic copy");
+    expect(out).toContain("power tool");
+    expect(out).toContain("length and layout hints only");
+    expect(out).not.toContain("Semantic fidelity (mimic copy");
   });
 });

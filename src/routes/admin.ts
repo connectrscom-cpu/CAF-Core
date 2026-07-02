@@ -62,6 +62,7 @@ import { adminProcessingBody } from "./admin-processing-body.js";
 import {
   adminCafUiCss,
   adminCafUiScript,
+  adminWorkbenchChromeTogglesHtml,
   adminLlmPromptTitle,
   adminLlmPromptTitleAttr,
   adminManualIdeaPickModalHtml,
@@ -557,7 +558,13 @@ function adminWorkbenchBody(
     return `<div class="content"><div class="empty"><p>Review workbench is disabled (<code>CAF_REVIEW_ENABLED=0</code>).</p></div></div>`;
   }
   const src = adminWorkbenchEmbedSrc(embedPath, projectSlug, embedParams);
-  const header = `<div class="wb-shell-header"><h2>${esc(title)}</h2>${adminPipelineSketchHtml(pipelineStage, projectSlug)}</div>`;
+  const header = `<div class="wb-shell-header">
+  <div class="wb-shell-header-top">
+    <h2>${esc(title)}</h2>
+    ${adminWorkbenchChromeTogglesHtml()}
+  </div>
+  ${adminPipelineSketchHtml(pipelineStage, projectSlug)}
+</div>`;
   return `<div class="wb-shell">${header}<div class="wb-embed"><iframe class="wb-embed-frame" src="${esc(src)}" title="${esc(title)}"></iframe></div></div>`;
 }
 
@@ -4089,7 +4096,7 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
     <div class="runs-ops-row">
       <button type="button" class="btn" onclick="openCreatePanel()">Pick signal pack</button>
       <button type="button" class="btn-ghost" style="border:1px solid var(--border)" onclick="loadRuns(runsPage)" title="Reload the runs table">Reload runs</button>
-      <p class="runs-ops-hint"><strong>Pick signal pack</strong> attaches a pack built in <strong>Processing</strong> (<code>ideas_json</code>). Choose automated rules, LLM picking, or manual format tabs before <strong>Start</strong>. Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps planned jobs). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
+      <p class="runs-ops-hint"><strong>Pick signal pack</strong> attaches a pack built in <strong>Processing</strong> (<code>ideas_json</code>). Choose automated rules, LLM picking, or manual format tabs before <strong>Start</strong> (plans jobs, then kicks off LLM generation and rendering in the background). Planner caps: <strong>${config.DEFAULT_MAX_CAROUSEL_JOBS_PER_RUN}</strong> carousel + <strong>${config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN}</strong> video per run, <strong>${config.DEFAULT_OTHER_FLOW_PLAN_CAP}</strong> per other flow. <strong>Re-plan</strong> wipes jobs only (keeps planned jobs). <strong>Pack</strong> = research JSON; <strong>Jobs</strong> = per-task LLM.</p>
     </div>
     <div class="runs-ops-row plan-cap-section" style="align-items:stretch;flex-direction:column;gap:10px">
       <div class="plan-cap-header">
@@ -4623,7 +4630,7 @@ async function loadRuns(p,silent){
     const meta=run.metadata_json&&typeof run.metadata_json==='object'&&!Array.isArray(run.metadata_json)?run.metadata_json:{};
     const dn=(typeof meta.display_name==='string'&&meta.display_name.trim())?meta.display_name.trim():'';
     const canStart=run.status==='CREATED';
-    /** Start leaves the run in GENERATING with jobs still PLANNED until the user clicks Process. Also allow retry after a failed start if jobs were planned. */
+    /** Start plans jobs, then chains Generate + Render in the background (same as marketer cart start). */
     const canProcess=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
       || (run.status==='FAILED' && (run.total_jobs||0) > 0);
     const canRender=['GENERATING','RENDERING','PLANNED','REVIEWING'].includes(run.status)
@@ -4645,7 +4652,7 @@ async function loadRuns(p,silent){
     h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:transparent;color:var(--fg)' onclick='openRunOutputReview("+JSON.stringify(run.run_id)+")' title='Holistic run review → editorial analysis'>Run review</button> ";
     if(run.signal_pack_id)h+='<a class="btn-ghost" style="font-size:11px;padding:4px 10px;text-decoration:none;border:1px solid var(--border);border-radius:6px" href="/admin/signal-pack?project='+encodeURIComponent(SLUG)+'&id='+encodeURIComponent(run.signal_pack_id)+'">Pack</a> ';
     if(canStart&&typeof window.cafOpenManualIdeaPicker==='function')h+="<button type='button' class='btn-ghost' style='font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:6px' onclick='cafOpenManualIdeaPicker("+JSON.stringify(run.run_id)+",{statusElId:null,onApplied:function(){loadRuns(runsPage);}})'>Pick ideas</button> ";
-    if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")'>Start</button>";
+    if(canStart)h+="<button type='button' class='btn' id='"+runBtnId(run.run_id,'start')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("start")+")' title='Plan jobs, generate packages (LLM), and start rendering'>Start</button>";
     if(canProcess)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'process')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("process")+")' title="+JSON.stringify(LLM_JOB_GEN_TITLE)+">Generate</button>";
     if(canRender)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'render')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("render")+")' title='Render GENERATED jobs for this run (manual step).'>Render</button>";
     if(canReplan)h+="<button type='button' class='btn-ghost' id='"+runBtnId(run.run_id,'replan')+"' onclick='runAction("+JSON.stringify(run.run_id)+","+JSON.stringify("replan")+")' title="+JSON.stringify("Delete all jobs and run the decision engine again")+">Re-plan</button>";
@@ -4668,6 +4675,14 @@ async function loadRuns(p,silent){
     el.innerHTML='<div class="empty" style="color:var(--red)">Could not load runs: '+esc(msg)+'</div>';
     if(pgEl)pgEl.innerHTML='';
   }
+}
+
+async function chainRunGenerationAndRender(base,doReq){
+  const proc=await doReq(base+'/process',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  if(!proc.r.ok||!proc.d.ok)throw new Error(apiErr(proc.d,'Generate failed'));
+  const render=await doReq(base+'/render',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+  if(!render.r.ok||!render.d.ok)throw new Error(apiErr(render.d,'Render failed'));
+  return {process:proc.d,render:render.d};
 }
 
 async function runAction(runId,action){
@@ -4713,7 +4728,19 @@ async function runAction(runId,action){
       }
     }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,action+' failed'));
-    const msgs={start:'Run started — '+(d.planned_jobs||0)+' jobs planned',cancel:'Run cancelled',process:'Generation triggered',render:'Render triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
+    if(action==='start'){
+      const planned=d.planned_jobs||0;
+      showToast('Run started — '+planned+' job(s) planned. Starting generation and rendering…',true,20000);
+      try{
+        await chainRunGenerationAndRender(base,doReq);
+        showToast('Run started — '+planned+' job(s). Generation and rendering are running in the background — open Jobs and refresh to watch progress (may take many minutes).',true,32000);
+      }catch(chainErr){
+        showToast('Run started with '+planned+' job(s), but generation/render failed: '+chainErr.message,false,32000);
+      }
+      loadRuns(runsPage);
+      return;
+    }
+    const msgs={cancel:'Run cancelled',process:'Generation triggered',render:'Render triggered',replan:'Re-planned — removed '+(d.deleted_jobs||0)+', '+(d.planned_jobs||0)+' jobs planned',delete:'Run deleted — '+((d.content_jobs_deleted!=null)?d.content_jobs_deleted:0)+' job row(s) removed'};
     showToast(msgs[action]||'Done',true);
     loadRuns(runsPage);
   }catch(err){showToast(err.message,false);}

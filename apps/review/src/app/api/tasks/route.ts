@@ -14,6 +14,7 @@ import {
   pickTitleFromGenerationPayload,
 } from "@/lib/generation-display-fields";
 import { roughSlidesJsonFromGenerationPayload } from "@/lib/job-generated-slides";
+import { resolveQueueRowPreview } from "@/lib/marketer/preview-resolver";
 
 export const dynamic = "force-dynamic";
 
@@ -100,6 +101,8 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const missingPreviewCount = items.filter((row) => resolveQueueRowPreview(row).status === "missing").length;
+
     return NextResponse.json({
       items,
       total,
@@ -108,7 +111,7 @@ export async function GET(request: NextRequest) {
       scope: allProjects ? "all" : "single",
       tabCounts,
       statusCounts: status_breakdown,
-      missingPreviewCount: 0,
+      missingPreviewCount,
     });
   } catch (err) {
     console.error("GET /api/tasks", err);

@@ -143,6 +143,225 @@ function clampConfidence(n: number): number {
   return Math.max(0, Math.min(1, Math.round(n * 100) / 100));
 }
 
+/** Deck-level strategic thesis from Nemotron deck-wide fields (combination of slides, not slide 1 alone). */
+export function resolveDeckStrategicThesis(input: {
+  why_it_worked?: string | null;
+  deck_as_whole_summary?: string | null;
+  slide_arc?: string | null;
+  cover_vs_body?: string | null;
+  visual_consistency?: string | null;
+}): string | null {
+  const deckWhy = str(input.why_it_worked, 900);
+  const deckSummary = str(input.deck_as_whole_summary, 900);
+  const arc = str(input.slide_arc, 400);
+  const coverVsBody = str(input.cover_vs_body, 400);
+  const visualConsistency = str(input.visual_consistency, 400);
+
+  const candidates: string[] = [];
+  if (deckWhy && isSlideIntelligenceStrategicThesisSufficient(deckWhy)) candidates.push(deckWhy);
+  if (deckSummary && isSlideIntelligenceStrategicThesisSufficient(deckSummary)) candidates.push(deckSummary);
+  if (deckWhy && deckSummary) {
+    const combined = `${deckWhy} ${deckSummary}`.replace(/\s+/g, " ").trim();
+    if (isSlideIntelligenceStrategicThesisSufficient(combined)) candidates.push(combined);
+  }
+  if (arc && deckSummary) {
+    const combined = `Arc: ${arc}. ${deckSummary}`;
+    if (isSlideIntelligenceStrategicThesisSufficient(combined)) candidates.push(combined);
+  }
+  if (arc && coverVsBody && deckWhy) {
+    const combined = `${deckWhy} Hook vs body: ${coverVsBody}. Arc: ${arc}.`;
+    if (isSlideIntelligenceStrategicThesisSufficient(combined)) candidates.push(combined);
+  }
+  if (deckSummary && visualConsistency) {
+    const combined = `${deckSummary} Visual system: ${visualConsistency}`;
+    if (isSlideIntelligenceStrategicThesisSufficient(combined)) candidates.push(combined);
+  }
+  if (deckWhy) candidates.push(deckWhy);
+  if (deckSummary) candidates.push(deckSummary);
+
+  for (const c of candidates) {
+    if (isSlideIntelligenceStrategicThesisSufficient(c)) return c;
+  }
+  return null;
+}
+
+const SIGN_AS_FOOD_ON_SCREEN = /^([a-z][a-z\s-]{1,20}?)\s+as\s+food\b/i;
+
+/** Common food nouns for detecting when a deck thesis overfits one dish. */
+const FOOD_TERM_RE =
+  /\b(pasta|penne|rigatoni|spaghetti|linguine|fettuccine|macaroni|fries|french fries|chicken|burger|pizza|taco|sushi|ramen|noodles|steak|salad|sandwich|toast|eggs|bacon|cheese|bread|soup|curry|rice|dumpling|waffle|pancake|donut|doughnut|cake|cookie|seafood|fish|shrimp|lobster|crab)\b/gi;
+
+function slideEvidenceText(slide: SlideIntelligenceV1): string {
+  return [slide.on_screen_text, slide.visual_description, slide.narrative_function]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function extractFoodTerms(text: string | null | undefined): string[] {
+  const out: string[] = [];
+  for (const m of String(text ?? "").matchAll(FOOD_TERM_RE)) {
+    const term = m[0].toLowerCase().replace(/\s+/g, " ");
+    if (!out.includes(term)) out.push(term);
+  }
+  return out;
+}
+
+/** Detect `{sign} as food` on-screen series (e.g. zodiac-as-food carousels). */
+export function detectSignAsFoodSeries(slides: SlideIntelligenceV1[]): string[] | null {
+  const signs: string[] = [];
+  for (const slide of slides) {
+    const text = slide.on_screen_text?.trim();
+    if (!text) continue;
+    const match = text.match(SIGN_AS_FOOD_ON_SCREEN);
+    if (match) {
+      const sign = match[1].trim().toLowerCase();
+      if (sign && !signs.includes(sign)) signs.push(sign);
+    }
+  }
+  return signs.length >= 2 ? signs : null;
+}
+
+function thesisClaimsFixedSlideGallery(thesis: string, slideCount: number): boolean {
+  const match = thesis.match(/\b(\d+)\s+(?:different\s+)?(?:pictures?|photos?|images?|slides?)\b/i);
+  if (!match) return false;
+  const claimed = Number(match[1]);
+  if (!Number.isFinite(claimed) || claimed < 2) return false;
+  return claimed < slideCount - 1;
+}
+
+/** True when deck-wide Nemotron thesis narrows to one subject but slides show a series or varied foods. */
+export function deckThesisContradictsSlideEvidence(
+  thesis: string | null | undefined,
+  slides: SlideIntelligenceV1[]
+): boolean {
+  const t = String(thesis ?? "").trim();
+  if (!t || slides.length < 2) return false;
+
+  const signSeries = detectSignAsFoodSeries(slides);
+  if (signSeries) {
+    const thesisFoods = extractFoodTerms(t);
+    if (thesisFoods.length > 0) return true;
+    if (/\b(?:same|each|every|all)\b.+\b(?:pasta|dish|food|picture|photo|image|red)\b/i.test(t)) return true;
+  }
+
+  if (thesisClaimsFixedSlideGallery(t, slides.length)) return true;
+
+  const thesisFoods = extractFoodTerms(t);
+  if (thesisFoods.length === 0) return false;
+
+  const slideFoodSets = slides.map((s) => extractFoodTerms(slideEvidenceText(s)));
+  const slidesMatchingThesisFood = slideFoodSets.filter((set) =>
+    thesisFoods.some((food) => set.some((s) => s.includes(food) || food.includes(s)))
+  ).length;
+
+  if (slidesMatchingThesisFood < Math.ceil(slides.length * 0.5)) return true;
+
+  const allSlideFoods = [...new Set(slideFoodSets.flat())];
+  if (allSlideFoods.length >= 3 && thesisFoods.length === 1 && slidesMatchingThesisFood <= 2) {
+    return true;
+  }
+
+  return false;
+}
+
+function titleCaseWord(word: string): string {
+  return word.length > 0 ? `${word.charAt(0).toUpperCase()}${word.slice(1)}` : word;
+}
+
+function padThesisToMinLength(thesis: string, opts?: SlideIntelligenceTextQualityOpts): string {
+  let out = thesis.trim();
+  if (isSlideIntelligenceStrategicThesisSufficient(out, opts)) return out;
+  const tail =
+    " Preserve the recurring on-screen format and persuasion arc while varying imagery per slide — do not collapse the deck into a single repeated dish or subject.";
+  out = `${out}${out.endsWith(".") ? "" : "."}${tail}`;
+  return out;
+}
+
+/** Rebuild deck thesis from per-slide transcripts and imagery when upstream deck summary overfits. */
+export function synthesizeDeckStrategicThesisFromSlides(
+  slides: SlideIntelligenceV1[],
+  context: {
+    narrative_spine?: string[];
+    arc_summary?: string | null;
+    visual_consistency?: string | null;
+  },
+  opts?: SlideIntelligenceTextQualityOpts
+): string | null {
+  if (slides.length < 2) return null;
+
+  const total = slides.length;
+  const spine =
+    context.narrative_spine?.filter(Boolean).join(" → ") ??
+    slides.map((s) => s.slide_role).filter(Boolean).join(" → ");
+  const signSeries = detectSignAsFoodSeries(slides);
+
+  if (signSeries) {
+    const examples = signSeries.slice(0, 4).map(titleCaseWord).join(", ");
+    const sentences = [
+      `A swipeable zodiac-as-food carousel: each slide pairs one astrological sign with a distinct food metaphor (e.g. ${examples}), so viewers self-select and share by sign identity.`,
+      `On-screen copy follows a consistent "{sign} as food" formula while imagery changes per slide — different dishes, compositions, and moods rather than one repeated ingredient.`,
+      `The deck wins on series recognition and humor: sign-spotting keeps swipers engaged through ${total} beats${spine ? ` (${spine})` : ""}, with visual variety across foods instead of a single-subject gallery.`,
+    ];
+    if (context.visual_consistency) {
+      sentences.push(`Visual through-line: ${context.visual_consistency}.`);
+    }
+    const thesis = padThesisToMinLength(sentences.join(" "), opts);
+    return isSlideIntelligenceStrategicThesisSufficient(thesis, opts) ? thesis : null;
+  }
+
+  const allFoods = [...new Set(slides.flatMap((s) => extractFoodTerms(slideEvidenceText(s))))];
+  if (allFoods.length >= 2) {
+    const examples = allFoods.slice(0, 5).join(", ");
+    const onScreenSamples = [
+      ...new Set(slides.map((s) => s.on_screen_text?.trim()).filter(Boolean) as string[]),
+    ].slice(0, 3);
+    const formatNote =
+      onScreenSamples.length >= 2
+        ? ` On-screen copy stays in a recurring format (e.g. "${onScreenSamples[0]}", "${onScreenSamples[1]}") while the food subject changes each swipe.`
+        : "";
+    const sentences = [
+      `A multi-beat food carousel where each slide features a different dish or food style (${examples}), linked by a recurring caption pattern rather than one repeated ingredient.${formatNote}`,
+      `Slides build retention through visual variety — viewers swipe to discover the next food beat — while holding a consistent overlay structure across ${total} frames${spine ? ` (${spine})` : ""}.`,
+      `The strategic function is serial discovery: diverse food imagery with a unifying series format, not a single-subject montage mistaken for the whole deck.`,
+    ];
+    if (context.arc_summary) sentences.push(`Arc: ${context.arc_summary}.`);
+    const thesis = padThesisToMinLength(sentences.join(" "), opts);
+    return isSlideIntelligenceStrategicThesisSufficient(thesis, opts) ? thesis : null;
+  }
+
+  return null;
+}
+
+function reconcileDeckStrategicThesisInBundle(
+  bundle: SlideIntelligenceBundleV1,
+  opts?: SlideIntelligenceTextQualityOpts
+): SlideIntelligenceBundleV1 {
+  const why = bundle.why_analysis;
+  if (!why || bundle.slides.length < 2) return bundle;
+
+  const upstreamThesis = why.strategic_thesis;
+  if (!deckThesisContradictsSlideEvidence(upstreamThesis, bundle.slides)) return bundle;
+
+  const fromSlides = synthesizeDeckStrategicThesisFromSlides(
+    bundle.slides,
+    {
+      narrative_spine: why.narrative_spine,
+      arc_summary: why.arc_summary,
+    },
+    opts
+  );
+  if (!fromSlides) return bundle;
+
+  return {
+    ...bundle,
+    why_analysis: {
+      ...why,
+      strategic_thesis: fromSlides,
+      provider: why.provider === "heuristic" ? "heuristic" : why.provider,
+    },
+  };
+}
+
 function normalizeProvider(v: unknown): SlideIntelligenceProvider {
   const s = String(v ?? "").trim().toLowerCase();
   if (s === "nemotron" || s === "openai" || s === "document_ai_derived") return s;
@@ -405,7 +624,7 @@ export function enrichSlideIntelligenceBundle(
     };
   });
 
-  return { ...bundle, slides };
+  return reconcileDeckStrategicThesisInBundle({ ...bundle, slides }, opts);
 }
 
 export interface DeriveSlideIntelligenceInput {
@@ -439,6 +658,8 @@ export function deriveSlideIntelligenceFromAnalysis(
   const deckWhy = str(aesthetic.why_it_worked, 600) ?? str(row.why_it_worked, 600);
   const deckSummary = str(aesthetic.deck_as_whole_summary, 600);
   const arc = str(aesthetic.slide_arc, 400) ?? str(aesthetic.cover_vs_body, 400);
+  const coverVsBody = str(aesthetic.cover_vs_body, 400);
+  const visualConsistency = str(aesthetic.visual_consistency, 400);
   const deckEmotion = str(row.primary_emotion, 80);
   const deckHook = str(row.hook_type, 120) ?? str(aesthetic.format_pattern, 120);
 
@@ -525,11 +746,13 @@ export function deriveSlideIntelligenceFromAnalysis(
           narrative_spine: narrativeSpine,
           dominant_mechanism: deckHook ?? deckEmotion,
           secondary_mechanisms: secondary,
-          strategic_thesis: isSlideIntelligenceStrategicThesisSufficient(deckWhy)
-            ? deckWhy
-            : isSlideIntelligenceStrategicThesisSufficient(deckSummary)
-              ? deckSummary
-              : null,
+          strategic_thesis: resolveDeckStrategicThesis({
+            why_it_worked: deckWhy,
+            deck_as_whole_summary: deckSummary,
+            slide_arc: arc,
+            cover_vs_body: coverVsBody,
+            visual_consistency: visualConsistency,
+          }),
           arc_summary: arc,
           provider: "heuristic",
           confidence: clampConfidence(slides.length ? slides.reduce((a, s) => a + s.confidence, 0) / slides.length : 0.4),
@@ -638,6 +861,27 @@ export function pickOrDeriveSlideIntelligence(
   return enrichSlideIntelligenceBundle(base, opts);
 }
 
+/** Resolve SIL row for an output slide (Nemotron rows are keyed by source-deck index after promo drops). */
+export function resolveSlideIntelligenceForOutputSlide(
+  bundle: SlideIntelligenceBundleV1,
+  outputSlideIndex1Based: number,
+  sourceSlideIndex1Based?: number | null
+): SlideIntelligenceV1 | null {
+  const sourceIdx =
+    sourceSlideIndex1Based != null && sourceSlideIndex1Based > 0
+      ? sourceSlideIndex1Based
+      : outputSlideIndex1Based;
+  return (
+    bundle.slides.find((s) => s.slide_index === sourceIdx) ??
+    (sourceIdx !== outputSlideIndex1Based
+      ? bundle.slides.find((s) => s.source_slide_index === sourceIdx)
+      : null) ??
+    bundle.slides.find((s) => s.slide_index === outputSlideIndex1Based) ??
+    bundle.slides[outputSlideIndex1Based - 1] ??
+    null
+  );
+}
+
 /** Short prompt-ready cues from a bundle (for creation pack / planner). */
 export function slideIntelligenceCues(bundle: SlideIntelligenceBundleV1 | null): string[] {
   if (!bundle) return [];
@@ -665,6 +909,7 @@ export function buildWhyMimicPromptBlock(
 
   const lines: string[] = [];
   if (why?.strategic_thesis) lines.push(`- Strategic intent (keep constant): ${why.strategic_thesis}`);
+  if (why?.arc_summary) lines.push(`- Deck arc: ${why.arc_summary}`);
   if (why?.dominant_mechanism) lines.push(`- Dominant mechanism: ${why.dominant_mechanism}`);
   if (why?.secondary_mechanisms?.length)
     lines.push(`- Supporting mechanisms: ${why.secondary_mechanisms.join(", ")}`);

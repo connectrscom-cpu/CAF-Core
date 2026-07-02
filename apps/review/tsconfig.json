@@ -38,6 +38,9 @@
       "@caf-core-carousel/mimic-slide-analysis-quality": [
         "../../src/domain/mimic-slide-analysis-quality.ts"
       ],
+      "@caf-core-carousel/mimic-output-slide-index": [
+        "../../src/domain/mimic-output-slide-index.ts"
+      ],
       "@caf-core-carousel/*": [
         "../../src/services/*"
       ]

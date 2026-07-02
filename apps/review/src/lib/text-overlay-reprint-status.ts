@@ -64,7 +64,7 @@ export function textOverlayReprintBannerMessage(state: TextOverlayReprintUiState
   }
   if (state.failed) {
     return state.error
-      ? `Text overlay reprint failed: ${state.error}`
+      ? "Text overlay reprint failed — see details below."
       : "Text overlay reprint failed — open API & LLM audit for details.";
   }
   if (state.completed_at && !state.active && !state.failed) {
@@ -76,6 +76,26 @@ export function textOverlayReprintBannerMessage(state: TextOverlayReprintUiState
     return "Text overlay reprint was requested — waiting for render worker.";
   }
   return null;
+}
+
+/** Marketer headline + raw error for expandable diagnostics panel. */
+export function textOverlayReprintFailureDetails(state: TextOverlayReprintUiState): {
+  headline: string;
+  technical: string | null;
+  failedSlide: number | null;
+} | null {
+  if (!state.failed) return null;
+  const technical = state.error;
+  const failedSlide =
+    technical?.match(/Renderer slide (\d+)/i)?.[1] != null
+      ? Number(technical.match(/Renderer slide (\d+)/i)![1])
+      : null;
+  const slideLabel = failedSlide ? `Slide ${failedSlide}` : "One or more slides";
+  return {
+    headline: `${slideLabel} could not be updated — text overlay reprint failed. Try again or regenerate the slide image.`,
+    technical,
+    failedSlide,
+  };
 }
 
 function reprintStateFromFlatFields(data: Record<string, string | undefined> | null | undefined): TextOverlayReprintUiState {

@@ -39,6 +39,12 @@ export type RunCandidatesMimicPick = {
   mimic_kind: MimicPickKind;
 };
 
+/** Per-row BVS toggle from marketer content cart (idea_id or mimic key). */
+export type RunCandidatesBvsOverride = {
+  key: string;
+  enabled: boolean;
+};
+
 /** POST /v1/runs/.../jobs and /candidates body validation. */
 export const runCandidatesMaterializeBodySchema = z.union([
   z
@@ -50,6 +56,14 @@ export const runCandidatesMaterializeBodySchema = z.union([
           z.object({
             insights_id: z.string().min(1),
             mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]),
+          })
+        )
+        .optional(),
+      bvs_overrides: z
+        .array(
+          z.object({
+            key: z.string().min(1),
+            enabled: z.boolean(),
           })
         )
         .optional(),
@@ -94,6 +108,8 @@ export interface RunCandidatesMaterializeBody {
   idea_ids?: string[];
   /** Top-performer references to plan as mimic-only jobs (manual picker mimic tabs). */
   mimic_picks?: RunCandidatesMimicPick[];
+  /** Marketer per-idea Brand Visual System toggles from content cart. */
+  bvs_overrides?: RunCandidatesBvsOverride[];
   /** When mode === llm; defaults to all ideas in the pack (same ceiling as automated rules). */
   max_ideas?: number;
 }
@@ -383,6 +399,30 @@ export function plannerRowsFromMimicPicks(
   return normalizePlannerRows(rows, runIdHint);
 }
 
+function bvsKeyForPlannerRow(row: Record<string, unknown>): string | null {
+  if (row.manual_mimic_pick === true) {
+    const kind = String(row.mimic_kind ?? "carousel").trim();
+    const ids = row.grounding_insight_ids;
+    const ins = Array.isArray(ids) ? String(ids[0] ?? "").trim() : "";
+    if (ins) return `mimic:${kind}:${ins}`;
+  }
+  const ideaId = String(row.idea_id ?? "").trim();
+  return ideaId || null;
+}
+
+export function applyBvsOverridesToPlannerRows(
+  rows: Record<string, unknown>[],
+  overrides: RunCandidatesBvsOverride[] | undefined
+): Record<string, unknown>[] {
+  if (!overrides?.length) return rows;
+  const map = new Map(overrides.map((o) => [o.key.trim(), o.enabled]));
+  return rows.map((row) => {
+    const key = bvsKeyForPlannerRow(row);
+    if (!key || !map.has(key)) return row;
+    return { ...row, use_brand_visual_system: map.get(key) === true };
+  });
+}
+
 export async function materializeRunCandidates(
   db: Pool,
   config: AppConfig,
@@ -544,6 +584,11 @@ export async function materializeRunCandidates(
     };
   } else {
     throw new Error(`Unknown mode: ${(body as RunCandidatesMaterializeBody).mode}`);
+  }
+
+  rows = applyBvsOverridesToPlannerRows(rows, body.bvs_overrides);
+  if (body.bvs_overrides?.length) {
+    provenance = { ...provenance, bvs_overrides: body.bvs_overrides };
   }
 
   await updateRunCandidatesJson(db, run.id, rows, provenance);

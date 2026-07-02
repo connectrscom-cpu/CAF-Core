@@ -1,11 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import type { Pool } from "pg";
 import { z } from "zod";
+import { loadConfig } from "../config.js";
 import { ensureProject } from "../repositories/core.js";
 import { getSignalPackById } from "../repositories/signal-packs.js";
 import {
   buildMarketIntelligenceForImport,
   ensureMarketIntelligenceOnPack,
+  marketIntelligenceNeedsRefresh,
   readStoredMarketIntelligenceV1,
 } from "../services/market-intelligence-pack.js";
 
@@ -44,25 +46,34 @@ export function registerMarketIntelligenceRoutes(app: FastifyInstance, deps: { d
 
     const derived = pack.derived_globals_json ?? {};
     const force = query.data.refresh === "1";
+    const config = loadConfig();
     let market_intelligence_v1 = readStoredMarketIntelligenceV1(derived);
 
-    if (!market_intelligence_v1 || force) {
+    if (!market_intelligence_v1 || force || marketIntelligenceNeedsRefresh(market_intelligence_v1)) {
       market_intelligence_v1 = await ensureMarketIntelligenceOnPack(
         db,
+        config,
         project.id,
         params.data.project_slug,
         importId,
         pack.id,
         derived,
-        { persist: true, force }
+        { persist: true, force: force || marketIntelligenceNeedsRefresh(market_intelligence_v1) }
       );
     } else if (!market_intelligence_v1.media_lanes?.length) {
-      market_intelligence_v1 = await buildMarketIntelligenceForImport(db, project.id, params.data.project_slug, importId, {
-        signal_pack_id: pack.id,
-        run_id: pack.run_id ?? null,
-        derived_globals: derived,
-        limit: query.data.limit ?? 500,
-      });
+      market_intelligence_v1 = await buildMarketIntelligenceForImport(
+        db,
+        config,
+        project.id,
+        params.data.project_slug,
+        importId,
+        {
+          signal_pack_id: pack.id,
+          run_id: pack.run_id ?? null,
+          derived_globals: derived,
+          limit: query.data.limit ?? 500,
+        }
+      );
     }
 
     return {

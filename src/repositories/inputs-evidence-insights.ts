@@ -45,6 +45,8 @@ export interface EvidenceRowInsightEnrichedRow extends EvidenceRowInsightRow {
   evidence_rating_score?: string | null;
   /** Set by API layer from `evidence_payload_json` (not stored on insight rows). */
   evidence_post_url?: string | null;
+  /** Browser-renderable preview (CDN / archived slide), never a social post permalink. */
+  evidence_thumbnail_url?: string | null;
   /** Set by API layer: `instagram_carousel` / `instagram_video` vs bare `instagram_post` when payload indicates. */
   evidence_display_kind?: string;
 }

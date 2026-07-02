@@ -8,8 +8,8 @@ import type { MimicSlideCopyLayoutForLlm } from "./mimic-carousel-package.js";
 import { buildSlideCopyLayoutForLlmFromPayload } from "./mimic-job-grounding.js";
 import {
   auditSlideIntelligenceWhyQuality,
-  isSlideIntelligenceVisualDescriptionSufficient,
-  isSlideIntelligenceWhyItWorksSufficient,
+  isSlideIntelligenceVisualDescriptionSubstantive,
+  isSlideIntelligenceWhyItWorksSubstantive,
   type SlideIntelligenceTextQualityOpts,
 } from "./mimic-slide-analysis-quality.js";
 import { parseBrandExecutionBrief, type BrandExecutionBriefV1, type BrandSlideBrief } from "./brand-translation.js";
@@ -267,8 +267,8 @@ function intelligenceExportFromSil(
 ): Record<string, unknown> | null {
   if (!sil) return null;
   const whyOpts = { ...qualityOpts, strategicThesis: strategicThesis ?? null };
-  const whySufficient = isSlideIntelligenceWhyItWorksSufficient(sil.why_it_works, whyOpts);
-  const visualSufficient = isSlideIntelligenceVisualDescriptionSufficient(sil.visual_description, qualityOpts);
+  const whySufficient = isSlideIntelligenceWhyItWorksSubstantive(sil.why_it_works, whyOpts);
+  const visualSufficient = isSlideIntelligenceVisualDescriptionSubstantive(sil.visual_description, qualityOpts);
   return {
     slide_index: sil.slide_index,
     source_slide_index: sil.source_slide_index,

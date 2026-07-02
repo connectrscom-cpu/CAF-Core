@@ -230,6 +230,13 @@ const envSchema = z.object({
   SIL_STRATEGIC_THESIS_MIN_CHARS: z.coerce.number().int().min(0).max(1200).default(240),
   /** Minimum chars for per-slide `visual_description` in SIL (imagery the LLM must reinterpret). */
   SIL_VISUAL_DESCRIPTION_MIN_CHARS: z.coerce.number().int().min(0).max(800).default(96),
+  /**
+   * When true, planning skips Why Mimic candidates unless SIL passes substantive quality
+   * (non-template why + visual on every slide + deck strategic thesis).
+   */
+  WHY_MIMIC_REQUIRE_SUBSTANTIVE_SIL: z.coerce.boolean().default(true),
+  /** Fraction of slides (0–1) that must have substantive why + visual for Why Mimic planning. */
+  WHY_MIMIC_MIN_SUBSTANTIVE_SLIDE_RATIO: z.coerce.number().min(0).max(1).default(1),
   /** When true, project brand_assets palette overrides carousel paper/ink in HBS text overlay. */
   MIMIC_USE_PROJECT_BRAND_PALETTE: z.coerce.boolean().default(false),
   /** When true, Nemotron layout/visual/deck hints are appended to art-only image-model prompts. */
@@ -267,6 +274,22 @@ const envSchema = z.object({
   MIMIC_PLATE_TEXT_QA_FAIL_ON_DETECT: z.coerce.boolean().default(true),
   /** Extra background-plate extraction attempts after text QA failure (default 2 → 3 total tries). */
   MIMIC_PLATE_TEXT_QA_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
+  /** Post-composite layout QA on mimic carousel slides before Review (default on). */
+  MIMIC_LAYOUT_QA_ENABLED: z.coerce.boolean().default(true),
+  /** Auto-reprint iterations after layout QA proposes box patches (default 3). */
+  MIMIC_LAYOUT_QA_MAX_REPRINT_ITERATIONS: z.coerce.number().int().min(0).max(5).default(3),
+  /** Minimum per-slide layout score — advisory only; does not block Review. */
+  MIMIC_LAYOUT_QA_MIN_PASS_SCORE: z.coerce.number().min(0).max(1).default(0.72),
+  /**
+   * When true, jobs with only soft layout warnings still go to IN_REVIEW (default).
+   * Set true to restore the old “block on any layout fail” behavior.
+   */
+  MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL: z.coerce.boolean().default(false),
+  /**
+   * Layout QA never removes jobs from the pipeline by default — it auto-reprints and flags Review.
+   * Set true only if empty on-slide copy should BLOCK (not recommended for production throughput).
+   */
+  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL: z.coerce.boolean().default(false),
   /**
    * After mimic carousel text_blocks[] are built, run OpenAI to suggest coherent copy groupings
    * and rewrite per-box lines. Set 0 to disable.

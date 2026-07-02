@@ -11,6 +11,8 @@ interface PublishingViewProps {
 
 interface PublishingResponse {
   approvedCount: number;
+  inReviewCount: number;
+  brandDisplayName?: string;
   scheduled: ScheduledPost[];
   published: ScheduledPost[];
 }
@@ -77,8 +79,18 @@ export function PublishingView({ slug }: PublishingViewProps) {
             <div className="workspace-empty">
               <h3>Nothing ready to publish yet</h3>
               <p>
-                Approved content will appear here when it is ready to schedule. Review drafts in Content first — approve
-                pieces you want to publish, then return here to pick dates and channels.
+                {data.inReviewCount > 0 ? (
+                  <>
+                    <strong>{data.inReviewCount}</strong> {data.brandDisplayName ?? slug} draft
+                    {data.inReviewCount === 1 ? " is" : "s are"} waiting for review. Approve content first, then
+                    return here to schedule.
+                  </>
+                ) : (
+                  <>
+                    Approved content will appear here when it is ready to schedule. Review drafts in Content first —
+                    approve pieces you want to publish, then return here to pick dates and channels.
+                  </>
+                )}
               </p>
               <div className="section-stub-actions">
                 <Link href={`/brand/${encodeURIComponent(slug)}/content`} className="btn-primary">

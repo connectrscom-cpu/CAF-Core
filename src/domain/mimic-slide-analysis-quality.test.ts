@@ -10,11 +10,17 @@ import {
 
   auditSlideIntelligenceWhyQuality,
 
+  evaluateWhyMimicSilPlanning,
+
   isMimicFluxAnalysisSufficientForT2i,
 
   isNaOrPlaceholderAnalysisValue,
 
   isSlideIntelligenceWhyItWorksSufficient,
+
+  isSlideIntelligenceWhyItWorksSubstantive,
+
+  isSynthesizedSilWhyItWorks,
 
   isWhyMimicFluxInputSufficientForT2i,
 
@@ -93,11 +99,51 @@ describe("mimic-slide-analysis-quality", () => {
 
     const report = auditSlideIntelligenceWhyQuality(bundle)!;
 
-    // derive + enrich replaces placeholder slide 1 with synthesized why/visual
-    expect(report.slides_with_sufficient_why).toBe(2);
-    expect(report.slides_with_sufficient_visual).toBe(2);
+    // derive + enrich replaces placeholder slide 1 with synthesized why/visual — not substantive
+    expect(report.slides_with_sufficient_why).toBe(1);
+    expect(report.slides_with_substantive_why).toBe(1);
+    expect(report.sufficient_for_reinterpretation).toBe(false);
+    expect(report.thin_slides.some((t) => t.reason === "synthesized_template")).toBe(true);
     expect(report.why_min_chars).toBe(SIL_WHY_IT_WORKS_MIN_CHARS_DEFAULT);
     expect(report.visual_min_chars).toBe(SIL_VISUAL_DESCRIPTION_MIN_CHARS_DEFAULT);
+  });
+
+  it("isSynthesizedSilWhyItWorks detects heuristic template padding", () => {
+    expect(
+      isSynthesizedSilWhyItWorks(
+        "This cover slide (slide 1 of 6) must keep its narrative job — cover slide. Reference imagery: a person near stairs. New variants should pair fresh visuals with the same persuasion function — do not copy the literal scene."
+      )
+    ).toBe(true);
+    expect(isSlideIntelligenceWhyItWorksSubstantive(LONG_WHY)).toBe(true);
+  });
+
+  it("evaluateWhyMimicSilPlanning accepts Nemotron-grade per-slide SIL", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({
+      aesthetic: {
+        why_it_worked:
+          "Strong information gap on the cover and concrete proof before the ask — builds trust before CTA. The deck sequences education with social proof so the audience feels informed before the follow prompt, using curiosity on slide one and credibility beats before the close.",
+        deck_as_whole_summary:
+          "Educational listicle that escalates from hook to proof to CTA while keeping visual consistency and meme pacing across every swipe.",
+        slides: [
+          {
+            slide_index: 1,
+            why_it_works: LONG_WHY,
+            visual_description: LONG_VISUAL,
+          },
+          {
+            slide_index: 2,
+            why_it_works:
+              "Deepens the series with a darker humor beat that rewards swipers who stayed after the hook. It escalates the joke without breaking the astrological frame established on slide one while adding visual variety.",
+            visual_description:
+              "Split layout with character caricature on the left and bold caption block on the right over a saturated flat color field with high contrast typography.",
+          },
+        ],
+      },
+      mediaKind: "carousel",
+    });
+    const evaluation = evaluateWhyMimicSilPlanning(bundle)!;
+    expect(evaluation.eligible).toBe(true);
+    expect(evaluation.report.sufficient_for_reinterpretation).toBe(true);
   });
 
   it("auditSlideIntelligenceWhyQuality flags placeholder fields on un-enriched bundles", () => {

@@ -27,6 +27,7 @@ import { taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url"
 import { decodeTaskIdParam } from "@/lib/task-id";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskApiQuery } from "@/lib/task-links";
+import { parseMimicLayoutQcFromPayload, type MimicLayoutSlideBadge } from "@/lib/mimic-layout-qc";
 import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
 import { VideoReviewEdits } from "@/components/VideoReviewEdits";
 import { ImageReviewEdits } from "@/components/ImageReviewEdits";
@@ -44,12 +45,17 @@ import {
   jobRenderFailureBanner,
   resolveTextOverlayReprintUiState,
   textOverlayReprintBannerMessage,
+  textOverlayReprintFailureDetails,
 } from "@/lib/text-overlay-reprint-status";
+import { carouselRegenerateUiState } from "@/lib/carousel-regenerate-status";
+import { resolveSlideRenderStatuses } from "@/lib/slide-render-status";
+import { RenderFailureBanner } from "@/components/RenderFailureBanner";
 import {
   registerReviewBackgroundJob,
   REVIEW_JOB_COMPLETED_EVENT,
 } from "@/lib/review-background-jobs";
 import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
+import { sourceSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-output-slide-index";
 import {
   applyMimicTemplateBgFieldEdit,
   isMimicTemplateBgMode,
@@ -91,11 +97,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const { navHref } = useReviewProject();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const embeddedInAdmin = searchParams.get("embed") === "admin";
   const marketerMode = searchParams.get("marketer") === "1";
   const task_id = useMemo(() => decodeTaskIdParam(taskIdParam), [taskIdParam]);
 
   const [data, setData] = useState<ReviewQueueRow | null>(null);
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
+  /** Bumped after asset refetch so carousel/compare images remount and bust browser cache. */
+  const [assetRefreshKey, setAssetRefreshKey] = useState(0);
   /** Qwen background plates by asset position (for live preview compositing). */
   const [mimicBackgroundByPosition, setMimicBackgroundByPosition] = useState<Record<number, string>>({});
   const [mimicPlateByPosition, setMimicPlateByPosition] = useState<Record<number, string>>({});
@@ -321,10 +330,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     }
   }, [task_id, projectFromUrl]);
 
-  const refreshTaskAssets = useCallback(
-    () => fetchTask({ quiet: true, bustAssets: true }),
-    [fetchTask]
-  );
+  const refreshTaskAssets = useCallback(async () => {
+    await fetchTask({ quiet: true, bustAssets: true });
+    setAssetRefreshKey((k) => k + 1);
+  }, [fetchTask]);
 
   useEffect(() => { fetchTask(); }, [fetchTask]);
 
@@ -338,13 +347,23 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     [textOverlayReprint]
   );
 
+  const textOverlayReprintFailure = useMemo(
+    () => textOverlayReprintFailureDetails(textOverlayReprint),
+    [textOverlayReprint]
+  );
+
+  const carouselRegenerate = useMemo(
+    () => carouselRegenerateUiState(fullJob?.render_state),
+    [fullJob?.render_state]
+  );
+
   const jobFailureBanner = useMemo(() => {
-    if (textOverlayReprintBanner) return null;
+    if (textOverlayReprintFailure || textOverlayReprintBanner) return null;
     return jobRenderFailureBanner(
       data?.review_status,
       fullJob?.render_state ?? null
     );
-  }, [textOverlayReprintBanner, data?.review_status, fullJob?.render_state]);
+  }, [textOverlayReprintFailure, textOverlayReprintBanner, data?.review_status, fullJob?.render_state]);
 
   const prevTextReprintActiveRef = useRef(false);
   useEffect(() => {
@@ -362,6 +381,23 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     }, 15_000);
     return () => window.clearInterval(id);
   }, [textOverlayReprint.active, fetchTask]);
+
+  const prevCarouselRegenActiveRef = useRef(false);
+  useEffect(() => {
+    const wasActive = prevCarouselRegenActiveRef.current;
+    prevCarouselRegenActiveRef.current = carouselRegenerate.active;
+    if (wasActive && !carouselRegenerate.active && !carouselRegenerate.failed) {
+      void refreshTaskAssets();
+    }
+  }, [carouselRegenerate.active, carouselRegenerate.failed, refreshTaskAssets]);
+
+  useEffect(() => {
+    if (!carouselRegenerate.active) return;
+    const id = window.setInterval(() => {
+      void fetchTask({ quiet: true, bustAssets: true });
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, [carouselRegenerate.active, fetchTask]);
 
   useEffect(() => {
     const onJobCompleted = (event: Event) => {
@@ -522,6 +558,28 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     [flowTypeStr]
   );
 
+  const slideRenderStatuses = useMemo(() => {
+    if (!tpGroundedCarouselReview && !isCarouselFlow(flowTypeStr)) return [];
+    const slideCount = Math.max(editedSlides.length, taskAssets.length, 1);
+    const rs = fullJob?.render_state as Record<string, unknown> | null | undefined;
+    const renderError = typeof rs?.error === "string" ? rs.error : null;
+    return resolveSlideRenderStatuses({
+      slideCount,
+      taskAssets,
+      textOverlayReprint,
+      carouselRegenerate,
+      renderError,
+    });
+  }, [
+    tpGroundedCarouselReview,
+    flowTypeStr,
+    editedSlides.length,
+    taskAssets,
+    textOverlayReprint,
+    carouselRegenerate,
+    fullJob?.render_state,
+  ]);
+
   const mimicTemplateBg = useMemo(() => {
     const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
     const mimicV1 =
@@ -529,6 +587,25 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         ? (gp.mimic_v1 as Record<string, unknown>)
         : null;
     return isMimicTemplateBgMode(mimicV1);
+  }, [fullJob]);
+
+  const layoutSlideBadges = useMemo((): Record<number, MimicLayoutSlideBadge[]> => {
+    const gp = fullJob?.generation_payload;
+    const qc = parseMimicLayoutQcFromPayload(gp);
+    if (!qc) return {};
+    const out: Record<number, MimicLayoutSlideBadge[]> = {};
+    for (const slide of qc.slides) {
+      out[slide.slide_index - 1] = slide.badges;
+    }
+    return out;
+  }, [fullJob]);
+
+  const layoutQcAttentionBanner = useMemo(() => {
+    const qc = parseMimicLayoutQcFromPayload(fullJob?.generation_payload);
+    if (!qc?.review_attention || qc.block_review) return null;
+    const flagged = qc.slides.filter((s) => !s.badges.includes("pass"));
+    if (flagged.length === 0) return null;
+    return `Layout check flagged ${flagged.length} slide${flagged.length === 1 ? "" : "s"} — see thumb badges and open the layout editor before approving.`;
   }, [fullJob]);
 
   const templateBgFieldRoles = useMemo(() => {
@@ -778,9 +855,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       referenceFrameUrls,
     });
     if (fromMimic) return fromMimic;
-    if (referenceFrameUrls.length === 0) return undefined;
-    const idx = Math.max(0, viewerSlideIndex - 1);
-    return referenceFrameUrls[idx] ?? referenceFrameUrls[Math.min(idx, referenceFrameUrls.length - 1)];
+    if (referenceFrameUrls.length === 0 || !mimicV1) return undefined;
+    const sourceIdx = sourceSlideIndexForMimicOutput(
+      mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0],
+      viewerSlideIndex
+    );
+    const frameIdx = Math.max(0, sourceIdx - 1);
+    return referenceFrameUrls[frameIdx] ?? referenceFrameUrls[Math.min(frameIdx, referenceFrameUrls.length - 1)];
   }, [mimicCarouselFlow, tpGroundedCarouselReview, fullJob, viewerSlideIndex, editedSlides.length]);
 
   const referenceVideoUrl = useMemo(() => {
@@ -789,21 +870,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     const url = String(tpRef?.source_video_url ?? "").trim();
     return url || undefined;
   }, [videoFlow, fullJob]);
-
-  const videoReferenceSlideUrl = useMemo(() => {
-    if (!videoFlow || !fullJob || referenceVideoUrl) return undefined;
-    const isMimic =
-      data?.is_mimic_replication === "true" ||
-      (fullJob as { is_mimic_replication?: boolean }).is_mimic_replication === true;
-    if (!isMimic) return undefined;
-    const tpRef = fullJob.top_performer_reference as
-      | { reference_frame_urls?: string[]; kind?: string }
-      | null
-      | undefined;
-    const frames = Array.isArray(tpRef?.reference_frame_urls) ? tpRef!.reference_frame_urls : [];
-    if (frames.length === 0) return undefined;
-    return frames[0];
-  }, [videoFlow, fullJob, referenceVideoUrl, data?.is_mimic_replication]);
 
   useEffect(() => {
     setActiveTextBlockIndex(null);
@@ -1168,7 +1234,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
             ) : null}
             {!marketerMode && <> · {task_id}</>}
           </p>
-          {!marketerMode && <CopyTaskDebugBundleButton {...debugBundleProps} />}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {!marketerMode && !embeddedInAdmin ? <CopyTaskDebugBundleButton {...debugBundleProps} /> : null}
+          </div>
         </div>
       ) : (
         <p className="detail-subtitle">
@@ -1186,7 +1254,15 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           {error}
         </div>
       )}
-      {textOverlayReprintBanner ? (
+      {textOverlayReprintFailure ? (
+        <RenderFailureBanner
+          headline={textOverlayReprintFailure.headline}
+          technical={textOverlayReprintFailure.technical}
+          failedSlide={textOverlayReprintFailure.failedSlide}
+          kind="text_reprint"
+          active={textOverlayReprint.active}
+        />
+      ) : textOverlayReprintBanner ? (
         <div
           className={`task-reprint-banner${textOverlayReprint.failed ? " task-reprint-banner--failed" : ""}${textOverlayReprint.active ? " task-reprint-banner--active" : ""}`}
           role="status"
@@ -1194,8 +1270,13 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
           {textOverlayReprintBanner}
         </div>
       ) : jobFailureBanner ? (
-        <div className="task-reprint-banner task-reprint-banner--failed" role="status">
-          {jobFailureBanner}
+        <RenderFailureBanner
+          technical={jobFailureBanner.replace(/^Job failed:\s*/i, "")}
+          kind="job"
+        />
+      ) : layoutQcAttentionBanner ? (
+        <div className="task-qc-warning-banner" role="status">
+          {layoutQcAttentionBanner}
         </div>
       ) : null}
       {loading && !data && <div style={{ padding: 28, color: "var(--muted)" }}>Loading…</div>}
@@ -1220,12 +1301,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               onCarouselSlideChange={setViewerSlideIndex}
               carouselActiveSlideIndex={tpGroundedCarouselReview ? viewerSlideIndex : undefined}
               referenceSlideUrl={
-                mimicCarouselFlow || tpGroundedCarouselReview
-                  ? mimicReferenceUrlForViewer
-                  : videoReferenceSlideUrl
+                mimicCarouselFlow || tpGroundedCarouselReview ? mimicReferenceUrlForViewer : undefined
               }
               referenceVideoUrl={referenceVideoUrl}
               projectHandle={tpGroundedCarouselReview ? instagramHandleForPreview : undefined}
+              caption={videoFlow ? editedCaption : undefined}
+              onCaptionChange={videoFlow ? setEditedCaption : undefined}
+              hashtags={videoFlow ? editedHashtags : undefined}
+              onHashtagsChange={videoFlow ? setEditedHashtags : undefined}
               activeTextBlockIndex={tpGroundedCarouselReview ? activeTextBlockIndex : undefined}
               onActiveTextBlockIndexChange={tpGroundedCarouselReview ? setActiveTextBlockIndex : undefined}
               mimicFullBleed={tpGroundedCarouselReview && !mimicTemplateBg}
@@ -1233,16 +1316,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 tpGroundedCarouselReview
                   ? (blockIndex, text) => mimicTextBlockUpdaterRef.current?.(blockIndex, text)
                   : undefined
-              }
-              carouselPreviewSidePanel={
-                tpGroundedCarouselReview ? (
-                  <MimicCarouselEdits
-                    caption={editedCaption}
-                    onCaptionChange={setEditedCaption}
-                    hashtags={editedHashtags}
-                    onHashtagsChange={setEditedHashtags}
-                  />
-                ) : undefined
               }
               onDeleteSlide={tpGroundedCarouselReview ? handleDeleteMimicSlide : undefined}
               onRegenerateSlide={tpGroundedCarouselReview ? handleRegenerateMimicSlide : undefined}
@@ -1254,6 +1327,9 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               regenerateSlideBusy={tpGroundedCarouselReview ? regenerateSlideBusy : undefined}
               mimicRegenerationNote={tpGroundedCarouselReview ? mimicRegenNote : undefined}
               onMimicRegenerationNoteChange={tpGroundedCarouselReview ? setMimicRegenNote : undefined}
+              layoutSlideBadges={tpGroundedCarouselReview ? layoutSlideBadges : undefined}
+              slideRenderStatuses={slideRenderStatuses.length > 0 ? slideRenderStatuses : undefined}
+              assetRefreshKey={assetRefreshKey}
               mimicTemplateBg={tpGroundedCarouselReview && mimicTemplateBg}
               carouselCopySidePanel={
                 tpGroundedCarouselReview && fullJob ? (
@@ -1278,6 +1354,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     onDeleteSlide={handleDeleteMimicSlide}
                     regenerationNote={mimicRegenNote}
                     onRegenerationNoteChange={setMimicRegenNote}
+                    assetRefreshKey={assetRefreshKey}
                     activeTextBlockIndex={activeTextBlockIndex}
                     onActiveTextBlockIndexChange={setActiveTextBlockIndex}
                     fullBleedMode={!mimicTemplateBg}
@@ -1344,6 +1421,19 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
             />
 
+            {tpGroundedCarouselReview ? (
+              <MimicCarouselEdits
+                variant="below-preview"
+                defaultOpen={false}
+                hook={editedHook}
+                onHookChange={setEditedHook}
+                caption={editedCaption}
+                onCaptionChange={setEditedCaption}
+                hashtags={editedHashtags}
+                onHashtagsChange={setEditedHashtags}
+              />
+            ) : null}
+
             {!marketerMode && (
             <div className="mt-4">
               <JobInfoBar
@@ -1371,6 +1461,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                       slideCount={editedSlides.length}
                       activeSlideIndex={viewerSlideIndex}
                       onInspectSlideChange={setViewerSlideIndex}
+                      skipRenderInspect
                       template={mimicCarouselInspectContext?.template ?? carouselTemplate}
                       instagramHandle={instagramHandleForPreview}
                       buildInspectPayload={

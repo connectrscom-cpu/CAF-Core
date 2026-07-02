@@ -48,6 +48,7 @@ import { runCarouselDocumentAiOcrForImport } from "../services/inputs-carousel-d
 import { getProcessingPassProgress } from "../services/processing-pass-progress.js";
 import { deriveEvidenceDisplayKind } from "../services/inputs-evidence-post-format.js";
 import { postUrlForTopPerformerPreview } from "../services/inputs-top-performer-qualifying-preview.js";
+import { evidenceThumbnailForInsightRow } from "../services/inputs-evidence-thumbnail-preview.js";
 import { getRtpSummaryForProject } from "../services/rtp-metrics.js";
 import type { EvidenceRowInsightEnrichedRow } from "../repositories/inputs-evidence-insights.js";
 import {
@@ -70,8 +71,12 @@ function enrichEvidenceInsightRowsForApi(
     const evidenceKind = String(row.evidence_kind ?? "");
     const evidence_post_url = postUrlForTopPerformerPreview(evidenceKind, payload);
     const evidence_display_kind = deriveEvidenceDisplayKind(evidenceKind, payload);
+    const evidence_thumbnail_url = evidenceThumbnailForInsightRow({
+      stored_inspection_media_json: row.stored_inspection_media_json,
+      evidence_payload_json: payload,
+    });
     const { evidence_payload_json: _omit, ...rest } = row;
-    return { ...rest, evidence_post_url, evidence_display_kind };
+    return { ...rest, evidence_post_url, evidence_display_kind, evidence_thumbnail_url };
   });
 }
 
@@ -778,7 +783,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       .object({
         max_rows: z.number().int().min(1).max(40).optional(),
         min_pre_llm_score: z.number().min(0).max(1).optional(),
-        max_slides: z.number().int().min(2).max(12).optional(),
+        max_slides: z.number().int().min(2).max(15).optional(),
         rescan: z.boolean().optional(),
         rating_top_fraction: z.number().min(0.0001).max(0.5).optional(),
         disable_rating_percentile_gate: z.boolean().optional(),
@@ -814,7 +819,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       const body = z
         .object({
           max_rows: z.number().int().min(1).max(40).optional(),
-          max_slides: z.number().int().min(2).max(12).optional(),
+          max_slides: z.number().int().min(2).max(15).optional(),
           merge_into_insights: z.boolean().optional(),
           progress_id: z.string().min(8).max(80).optional(),
           source_evidence_row_ids: z.array(z.string().min(1)).max(40).optional(),

@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import type { ReactNode } from "react";
 import { ContentCartProvider } from "@/components/marketer/ContentCartContext";
 import { ContentCartDrawer } from "@/components/marketer/ContentCartDrawer";
+import { ContentCartReviewModal } from "@/components/marketer/ContentCartReviewModal";
 
 export default function BrandLayout({ children }: { children: ReactNode }) {
   const params = useParams();
@@ -14,6 +15,7 @@ export default function BrandLayout({ children }: { children: ReactNode }) {
       <div className="brand-layout" data-brand={slug}>
         {children}
         <ContentCartDrawer />
+        <ContentCartReviewModal slug={slug} />
       </div>
     </ContentCartProvider>
   );

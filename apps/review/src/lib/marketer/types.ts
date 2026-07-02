@@ -1,5 +1,7 @@
 /** Marketer-facing product types — adapters over Core API shapes. */
 
+import type { ContentPreview } from "./preview-resolver";
+
 export type ResearchPipelineStatus = "not_started" | "in_progress" | "ready" | "stale";
 
 export type IdeaStatus = "new" | "selected" | "saved" | "rejected" | "generated";
@@ -101,6 +103,36 @@ export interface MarketInsight {
   summary: string;
   evidenceCount: number;
   confidence: number | null;
+  evidenceUrls?: string[];
+  actionable?: string | null;
+  /** Insight ids backing this card (patterns + stat buckets). */
+  sourceInsightIds?: string[];
+  /** Client-side filter when posts are loaded separately. */
+  evidenceFilter?: IntelEvidenceFilter;
+}
+
+export type IntelEvidenceFilter =
+  | { kind: "theme"; key: string }
+  | { kind: "emotion"; key: string }
+  | { kind: "format"; key: string }
+  | { kind: "hook_type"; key: string }
+  | { kind: "hashtag"; key: string }
+  | { kind: "custom_label"; slot: 1 | 2 | 3; key: string };
+
+export interface IntelEvidencePost {
+  insightsId: string;
+  title: string;
+  hookText: string | null;
+  platform: string;
+  format: string;
+  postUrl: string | null;
+  thumbnailUrl: string | null;
+  customLabel1: string | null;
+  customLabel2: string | null;
+  customLabel3: string | null;
+  primaryEmotion: string | null;
+  hookType: string | null;
+  hashtags: string | null;
 }
 
 export interface ContentIdea {
@@ -120,6 +152,8 @@ export interface ContentIdea {
   confidence: number | null;
   priority: "high" | "medium" | "low";
   status: IdeaStatus;
+  /** Resolved from grounding insights / evidence thumbnails when available. */
+  preview?: ContentPreview;
 }
 
 export interface TopPerformerRef {
@@ -133,6 +167,7 @@ export interface TopPerformerRef {
   detail: string;
   postUrl: string | null;
   thumbnailUrl: string | null;
+  preview?: ContentPreview;
 }
 
 export type ContentCartItemKind = "idea" | "top_performer";
@@ -143,8 +178,59 @@ export interface ContentCartItem {
   title: string;
   flowDestination: string;
   flowTypeRaw: string;
+  /** Idea row format (carousel, video, …). */
+  format?: string;
+  platform?: string;
+  /** Marketer generation strategy chosen on the Ideas board or in cart. */
+  generationStrategy?: GenerationStrategy;
+  /** Raw planner hint from the idea row (execution_profile / FLOW_*). */
+  ideaTargetFlowType?: string;
   mimicMode?: "replica" | "why_carousel";
   renderMode?: "full_bleed" | "template";
+  /** When true, stamp Brand Visual System (brand bible) onto this job at plan time. */
+  useBrandVisualSystem?: boolean;
+}
+
+export type BrandBibleVisualMode =
+  | "illustrated_cartoon"
+  | "minimal_editorial"
+  | "photography"
+  | "mixed"
+  | "custom";
+
+export type BrandBibleAssetRole =
+  | "style_reference"
+  | "character"
+  | "motif"
+  | "texture"
+  | "logo"
+  | "anti_reference";
+
+export interface BrandBibleApplicationGuide {
+  instructions: string;
+  contentAims: string[];
+  mimicPolicy: string;
+  originalPolicy: string;
+}
+
+export interface BrandBibleAssetRef {
+  assetId: string;
+  role: BrandBibleAssetRole;
+  label: string;
+  usageNotes: string;
+}
+
+export interface BrandBible {
+  slug: string;
+  visualMode: BrandBibleVisualMode | "";
+  visualModeCustom: string;
+  palette: string[];
+  allowedMotifs: string;
+  forbiddenMotifs: string;
+  applicationGuide: BrandBibleApplicationGuide;
+  assetRefs: BrandBibleAssetRef[];
+  hasActiveVersion: boolean;
+  version: number | null;
 }
 
 export interface ResearchBrief {

@@ -21,6 +21,12 @@ describe("normalizeInstagramProfileUrl", () => {
       "https://www.instagram.com/costarastrology/"
     );
   });
+
+  it("falls back to Name when Link is empty (Research watchlist rows)", () => {
+    expect(normalizeInstagramProfileUrl({ Name: "moon.omens", Link: "" })).toBe(
+      "https://www.instagram.com/moon.omens/"
+    );
+  });
 });
 
 describe("prepareInstagramSources", () => {
@@ -79,6 +85,12 @@ describe("tiktokProfilesFromSources", () => {
     expect(
       tiktokProfilesFromSources([{ Link: "https://www.tiktok.com/@moon.omens" }])
     ).toEqual(["moon.omens"]);
+  });
+
+  it("extracts handles from Name when Link is a profile URL", () => {
+    expect(
+      tiktokProfilesFromSources([{ Name: "creator", Link: "https://www.tiktok.com/@creator" }])
+    ).toEqual(["creator"]);
   });
 });
 

@@ -52,7 +52,18 @@ export default async function AgentMapPage() {
       )}
 
       <h2>API endpoints (when inspection is enabled)</h2>
+      <p style={{ fontSize: "0.9375rem" }}>
+        Start with <a href="/api/agent/health">/api/agent/health</a> — if it returns <code>ok: false</code>, wait and
+        retry (Fly may be restarting). Do not crawl until health is OK.
+      </p>
       <ul>
+        <li>
+          <a href="/api/agent/health">/api/agent/health</a> — connectivity + recommended workflow
+        </li>
+        <li>
+          <a href="/api/agent/queue?project=SNS&amp;tab=in_review&amp;page=1&amp;limit=25">/api/agent/queue</a> — slim
+          paginated job manifest (prefer over raw review-queue list)
+        </li>
         <li>
           <a href="/api/agent/snapshot">/api/agent/snapshot</a> — full app structure JSON
         </li>

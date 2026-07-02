@@ -22,6 +22,7 @@ services/video-assembly/workdir/
 
 # Local debug artifacts
 tmp-slide-review/
+apps/review/agent-artifacts/
 tmp-*.ts
 tmp-*.txt
 tmp-*.json

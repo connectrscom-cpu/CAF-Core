@@ -390,6 +390,45 @@ describe("referenceItemForMimicSlide", () => {
     expect(referenceItemForMimicSlide(mimic, 11)?.vision_fetch_url).toContain("slide_11");
     expect(referenceItemForMimicSlide(mimic, 12)?.vision_fetch_url).toContain("slide_12");
   });
+
+  it("uses plan source index when positional reference item points at a later frame", () => {
+    const mimic = baseMimic({});
+    mimic.slide_plans = [
+      { slide_index: 1, source_slide_index: 2, render_mode: "full_bleed" },
+      { slide_index: 2, source_slide_index: 3, render_mode: "full_bleed" },
+      { slide_index: 3, source_slide_index: 3, render_mode: "full_bleed" },
+    ];
+    mimic.reference_items = [
+      {
+        index: 2,
+        role: "carousel_slide",
+        source_slide_index: 2,
+        vision_fetch_url: "https://example.com/src2.jpg",
+      },
+      {
+        index: 3,
+        role: "carousel_slide",
+        source_slide_index: 4,
+        vision_fetch_url: "https://example.com/cancer-positional.jpg",
+      },
+    ];
+    mimic.archive_reference_items = [
+      ...mimic.reference_items,
+      {
+        index: 3,
+        role: "carousel_slide",
+        source_slide_index: 3,
+        vision_fetch_url: "https://example.com/gemini.jpg",
+      },
+      {
+        index: 4,
+        role: "carousel_slide",
+        source_slide_index: 4,
+        vision_fetch_url: "https://example.com/cancer.jpg",
+      },
+    ];
+    expect(referenceItemForMimicSlide(mimic, 3)?.vision_fetch_url).toContain("gemini");
+  });
 });
 
 describe("requireMimicSlideBackgroundPlate", () => {

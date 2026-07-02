@@ -19,14 +19,12 @@ export default function BrandResearchPage() {
 
   return (
     <div className="brand-section-page" data-agent-id="research-page">
-      {brand && (
-        <BrandPageHeader
-          displayName={brand.displayName}
-          slug={slug}
-          accentColor={brand.accentColor}
-          subtitle="Accounts, hashtags, competitors — and your research briefs"
-        />
-      )}
+      <BrandPageHeader
+        displayName={brand?.displayName ?? slug}
+        slug={slug}
+        accentColor={brand?.accentColor}
+        subtitle="Accounts, hashtags, subreddits, competitors — and your research briefs"
+      />
       <ResearchBoard slug={slug} />
     </div>
   );

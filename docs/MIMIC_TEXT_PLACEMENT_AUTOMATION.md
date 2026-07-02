@@ -1,7 +1,8 @@
 # Mimic Text Placement — Automation Path (Design)
 
-> **Status: design only.** No capture or post-render analyzer is built yet. This doc
-> describes where automation must actually live given unpredictable image generation.
+> **Status: Phase A implemented (2026-06).** Post-composite analyzer, auto-reprint loop (cap N),
+> Review gate (`BLOCKED` when layout fails), regen state on `render_state.carousel_regenerate`,
+> per-slide badges in Review. Vision QA and human suggestion pre-load remain future work.
 >
 > **For AI assistants:** Cursor rule [`.cursor/rules/mimic-text-placement-automation.mdc`](../.cursor/rules/mimic-text-placement-automation.mdc) — read when the user asks to automate mimic text placement.
 
@@ -152,6 +153,8 @@ After each reprint, compute a **placement score** from composite QA:
 | Medium | Apply QA patches, reprint once more, re-score |
 | Low | Open human layout editor with QA suggestions pre-loaded |
 
+**Implemented policy (2026-06):** auto-reprint runs on soft findings (collision, margin, subject zone). All jobs reach **`IN_REVIEW`**; `layout_qc.review_attention` + thumb badges flag slides that need layout editor polish before publish. Layout QA does **not** `BLOCK` jobs by default (`MIMIC_LAYOUT_QA_BLOCK_*` both default off).
+
 This turns the editor from “default for every slide” into “only when this generation fought us.”
 
 ## Design principle: one schema, two phases
@@ -189,7 +192,6 @@ which phase last moved a box. Persisting `source` through Core is small future p
 
 ## Not in scope yet
 
-- Post-composite analyzer service or pipeline hook.
-- Persisting `source` / `fix_reason` through Core `mimic_v1`.
-- Auto reprint loop without human-in-the-loop approval.
+- Vision-model QA for hard slides (deterministic analyzer is live).
+- Auto reprint loop without human-in-the-loop approval on low-confidence slides (auto-reprint runs in pipeline; human editor still exception path).
 - Training / finetuning on historical correction pairs.

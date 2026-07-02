@@ -216,10 +216,10 @@ export const CAROUSEL_RENDER_HEIGHT_PX = 1350;
 
 /** Default on-canvas font when OCR/ref size is missing (review + Puppeteer). */
 export const MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX = 50;
-/** Minimum shrink-to-fit floor for mimic Document AI overlays (review + Puppeteer). */
-export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 24;
+/** Minimum shrink-to-fit floor for mimic Document AI overlays (review + Puppeteer). ~11.7px at 390px phone width. */
+export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 32;
 /** Default font for project / reference Instagram handle overlays. */
-export const MIMIC_DOCAI_HANDLE_FONT_SIZE_PX = 25;
+export const MIMIC_DOCAI_HANDLE_FONT_SIZE_PX = 28;
 
 /** True when a layer carries the project handle or occupies a handle OCR slot. */
 export function isMimicDocAiHandleLayer(
@@ -239,7 +239,7 @@ export const MIMIC_DOCAI_TEXT_BACK_BODY_FONT_PX = 50;
 /** Boost applied to reference OCR font sizes for readable meme-trait overlays. */
 export const MIMIC_DOCAI_TEXT_BACK_FONT_SCALE = 1.22;
 /** Minimum readable size for full-bleed white-backed trait boxes (Puppeteer must not go below). */
-export const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 24;
+export const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 32;
 
 /** Default ink for mimic Document AI overlays (readable on light plates + white backing). */
 export const MIMIC_DOCAI_DEFAULT_TEXT_COLOR = "#000000";
@@ -306,7 +306,7 @@ export function resolveMimicDocAiLayerColor(_opts?: {
 }
 
 /** Keep glyphs inside the plate safe area (OCR boxes often touch image edges). */
-export const MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX = 32;
+export const MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX = 48;
 
 /**
  * Full-bleed subject safe zone (normalized 0–1) — keep trait copy out of the center
@@ -329,10 +329,28 @@ export function bboxIntersectsFullBleedSubjectZone(
 export function docAiLayerSkipsCenterAvoid(ref: MimicTextBlock & { ref_text: string }, bucket: string): boolean {
   if (isPreserveReferenceDecorText(ref.ref_text, ref)) return true;
   if (isHandleTextBlock(ref.role, ref.ref_text) || looksLikeInstagramHandleText(ref.ref_text)) return true;
-  if (bucket === "cta") return true;
+  if (/handle/.test(String(ref.role ?? "").toLowerCase())) return true;
+  if (bucket === "cta" || bucket === "handle") return true;
   if (bucket === "headline" && ref.y < 0.18) return true;
   if (ref.y + ref.h > 0.86) return true;
   return false;
+}
+
+/** Snap handle/watermark boxes to bottom corner — avoids landing on subject faces in center zone. */
+export function snapHandleBBoxToSafeCorner(bbox: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}): { x: number; y: number; w: number; h: number } {
+  const margin = MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX / CAROUSEL_RENDER_WIDTH_PX;
+  const marginY = MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX / CAROUSEL_RENDER_HEIGHT_PX;
+  const w = Math.min(bbox.w, 1 - margin * 2);
+  const h = Math.min(bbox.h, 0.12);
+  const preferLeft = bbox.x + bbox.w / 2 < 0.5;
+  const x = preferLeft ? margin : Math.max(margin, 1 - margin - w);
+  const y = Math.max(marginY, 1 - marginY - h - 0.02);
+  return { x: clamp01(x), y: clamp01(y), w: clamp01(w), h: clamp01(h) };
 }
 
 /** Push OCR bbox to the nearest quadrant outside the subject zone. */
@@ -425,37 +443,12 @@ function aestheticSlideRecordsFromGuideline(vg: Record<string, unknown>): Record
   return slides.map((raw) => asRecord(raw)).filter((x): x is Record<string, unknown> => x != null);
 }
 
-/** Nemotron slide index for vision rows (may differ from 1-based output index after promo/video drops). */
-export function guidelineSlideIndexForMimicOutput(
-  mimic: Partial<Pick<MimicPayloadV1, "reference_items" | "slide_plans">>,
-  outputSlideIndex1Based: number
-): number {
-  const plan = mimic.slide_plans?.find((p) => p.slide_index === outputSlideIndex1Based);
-  if (
-    plan?.source_slide_index != null &&
-    Number.isFinite(plan.source_slide_index) &&
-    plan.source_slide_index > 0
-  ) {
-    return plan.source_slide_index;
-  }
+import {
+  guidelineSlideIndexForMimicOutput,
+  sourceSlideIndexForMimicOutput,
+} from "../domain/mimic-output-slide-index.js";
 
-  const items = mimic.reference_items ?? [];
-  if (items.length === 0) return outputSlideIndex1Based;
-
-  const refIdx = plan?.reference_index ?? outputSlideIndex1Based;
-
-  let item = items[outputSlideIndex1Based - 1] ?? null;
-  if (plan?.reference_index != null) {
-    item =
-      items.find((r) => r.index === refIdx) ??
-      (refIdx >= 1 && refIdx <= items.length ? items[refIdx - 1] : undefined) ??
-      item;
-  }
-
-  const src = item?.source_slide_index;
-  if (src != null && Number.isFinite(src) && src > 0) return src;
-  return outputSlideIndex1Based;
-}
+export { guidelineSlideIndexForMimicOutput, sourceSlideIndexForMimicOutput };
 
 function visualGuidelineSlideList(
   visualGuideline: Record<string, unknown> | null | undefined
@@ -2391,12 +2384,15 @@ function pushDocAiRenderLayer(
 
   const bucket = roleBucket(ref.role);
   const skipCenterAvoid = docAiLayerSkipsCenterAvoid(ref, bucket);
+  const isHandleLayer = isMimicDocAiHandleLayer(ref.role ?? bucket, trimmed, opts.projectHandle);
   const constrainSideColumns =
     (opts.constrainSideColumns ?? opts.avoidCenterSubject) === true &&
     Boolean(opts.avoidCenterSubject) &&
     !skipCenterAvoid;
   let renderBBox = bbox;
-  if (opts.avoidCenterSubject && !skipCenterAvoid) {
+  if (isHandleLayer) {
+    renderBBox = snapHandleBBoxToSafeCorner(bbox);
+  } else if (opts.avoidCenterSubject && !skipCenterAvoid) {
     renderBBox = nudgeBBoxAwayFromFullBleedSubjectZone(bbox);
   }
   const color = resolveMimicDocAiLayerColor({
@@ -2445,8 +2441,8 @@ function pushDocAiRenderLayer(
       : ref.font_size_px != null && ref.font_size_px > 0
         ? clampDocAiFontSizePx(ref.font_size_px)
         : ref.font_size_px;
-  const isHandleLayer = isMimicDocAiHandleLayer(ref.role ?? bucket, trimmed, opts.projectHandle);
-  const layerRole = isHandleLayer ? "handle" : ref.role ?? bucket;
+  const isHandleLayerResolved = isHandleLayer;
+  const layerRole = isHandleLayerResolved ? "handle" : ref.role ?? bucket;
   const styled = buildDocAiLayerCssStyle({
     px,
     text: trimmed,
@@ -2463,7 +2459,7 @@ function pushDocAiRenderLayer(
     projectHandle: opts.projectHandle,
   });
   const maxFit = maxFontSizeForDocAiBox(px.w, px.h, lineCount, singleLine);
-  const fontSize = isHandleLayer
+  const fontSize = isHandleLayerResolved
     ? clampDocAiFontSizePx(MIMIC_DOCAI_HANDLE_FONT_SIZE_PX)
     : opts.textBacking
       ? clampDocAiTextBackFontSizePx(styled.font_size_px)

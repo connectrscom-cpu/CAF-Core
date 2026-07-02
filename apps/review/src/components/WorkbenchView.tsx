@@ -5,10 +5,15 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { WorkbenchFilters } from "@/components/WorkbenchFilters";
 import { TaskTable } from "@/components/TaskTable";
+import { ChromePanelToggle } from "@/components/ChromePanelToggle";
 import { useReviewProject } from "@/components/ReviewProjectContext";
+import { useReviewChromeLayout } from "@/lib/review-chrome-layout";
+import { useMobileLayout } from "@/lib/use-mobile-layout";
+import { taskReviewHref } from "@/lib/task-links";
 import { MARKETER_LABELS } from "@/lib/marketer/language";
 import type { ReviewQueueRow } from "@/lib/types";
 import type { GroupBy } from "@/components/TaskTable";
+import { useRouter } from "next/navigation";
 
 interface TasksResponse {
   items: ReviewQueueRow[];
@@ -40,8 +45,13 @@ export interface WorkbenchViewProps {
 
 function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" }: WorkbenchViewProps) {
   const marketer = mode === "marketer";
-  const { multiProject, activeProjectSlug, lockedSlug } = useReviewProject();
+  const router = useRouter();
+  const { multiProject, activeProjectSlug, lockedSlug, navHref } = useReviewProject();
+  const { layout, ready: chromeReady, toggleWorkbenchFilters } = useReviewChromeLayout();
+  const isMobile = useMobileLayout();
+  const hideFilters = chromeReady && layout.hideWorkbenchFilters;
   const searchParams = useSearchParams();
+  const embeddedInAdmin = searchParams.get("embed") === "admin";
   const [data, setData] = useState<TasksResponse | null>(null);
   const [facets, setFacets] = useState<FacetsResponse>({});
   const [loading, setLoading] = useState(true);
@@ -94,12 +104,51 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
 
   const groupBy = (searchParams.get("group") ?? "") as GroupBy;
 
+  const openTaskRow = useCallback(
+    (row: ReviewQueueRow) => {
+      const taskId = String(row.task_id ?? "").trim();
+      if (!taskId) return;
+      const project = String(row.project ?? brandSlug ?? "").trim();
+      const href = navHref(
+        taskReviewHref(validStatus === "in_review" ? "t" : "content", taskId, project || undefined, {
+          marketer,
+        })
+      );
+      router.push(href);
+    },
+    [brandSlug, marketer, navHref, router, validStatus]
+  );
+
   const projectSlugForRework =
     brandSlug || (searchParams.get("project") ?? "").trim() || activeProjectSlug || lockedSlug || "";
   const runFilter = (searchParams.get("run_id") ?? "").trim();
   const needsEditCount = data?.tabCounts?.needs_edit ?? 0;
   const [reworkBusy, setReworkBusy] = useState(false);
   const [reworkMsg, setReworkMsg] = useState<string | null>(null);
+  const contentViewKey = brandSlug ? `caf-review-content-view-${brandSlug}` : "caf-review-content-view";
+  const [contentViewMode, setContentViewMode] = useState<"list" | "grid">("list");
+
+  useEffect(() => {
+    if (!marketer || typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem(contentViewKey);
+      if (stored === "grid" || stored === "list") setContentViewMode(stored);
+    } catch {
+      /* ignore */
+    }
+  }, [contentViewKey, marketer]);
+
+  function toggleContentViewMode() {
+    setContentViewMode((prev) => {
+      const next = prev === "list" ? "grid" : "list";
+      try {
+        localStorage.setItem(contentViewKey, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }
 
   async function triggerPendingRework() {
     if (!projectSlugForRework) {
@@ -208,22 +257,50 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
         })}
       </div>
 
-      <div className="workbench">
-        <div className="workbench-filters">
-          <WorkbenchFilters
-            basePath={tabBasePath}
-            hideProjectFilter={!!brandSlug}
-            marketerMode={marketer}
-            projectValues={facets.project ?? []}
-            runIdValues={facets.run_id ?? []}
-            runDisplayNames={facets.run_display_names}
-            platformValues={facets.platform ?? []}
-            flowTypeValues={facets.flow_type ?? []}
-            recommendedRouteValues={facets.recommended_route ?? []}
-            reviewStatusValues={data?.statusCounts ? Object.keys(data.statusCounts) : undefined}
+      <div className={`workbench${hideFilters ? " workbench--filters-hidden" : ""}${isMobile && !hideFilters ? " workbench--filters-drawer-open" : ""}`}>
+        {hideFilters && !embeddedInAdmin && !isMobile ? (
+          <ChromePanelToggle
+            expanded={false}
+            onClick={toggleWorkbenchFilters}
+            title="Show filters"
+            variant="strip"
+            className="chrome-panel-expand--filters"
           />
-        </div>
+        ) : null}
+        {isMobile && !hideFilters && !embeddedInAdmin ? (
+          <button
+            type="button"
+            className="workbench-filters-overlay"
+            aria-label="Close filters"
+            onClick={toggleWorkbenchFilters}
+          />
+        ) : null}
+        {!hideFilters ? (
+          <div className="workbench-filters">
+            <WorkbenchFilters
+              basePath={tabBasePath}
+              hideProjectFilter={!!brandSlug}
+              marketerMode={marketer}
+              projectValues={facets.project ?? []}
+              runIdValues={facets.run_id ?? []}
+              runDisplayNames={facets.run_display_names}
+              platformValues={facets.platform ?? []}
+              flowTypeValues={facets.flow_type ?? []}
+              recommendedRouteValues={facets.recommended_route ?? []}
+              reviewStatusValues={data?.statusCounts ? Object.keys(data.statusCounts) : undefined}
+              showCollapseToggle={!embeddedInAdmin}
+              onCollapseFilters={toggleWorkbenchFilters}
+            />
+          </div>
+        ) : null}
         <div className="workbench-table">
+          {isMobile && hideFilters && !embeddedInAdmin ? (
+            <div className="workbench-mobile-toolbar">
+              <button type="button" className="btn-ghost btn-sm" onClick={toggleWorkbenchFilters}>
+                Filters
+              </button>
+            </div>
+          ) : null}
           <div className="workbench-table-inner">
             {validStatus === "needs_edit" && !marketer && (
               <div className="caf-toolbar surface-warn" style={{ marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
@@ -270,21 +347,44 @@ function WorkbenchInner({ mode = "operator", brandSlug, tabBasePath = "/review" 
               </div>
             )}
             {data && !loading && data.items.length > 0 && (
-              <TaskTable
-                items={data.items}
-                groupBy={groupBy}
-                page={data.page}
-                limit={data.limit}
-                total={data.total}
-                missingPreviewCount={data.missingPreviewCount}
-                statusCounts={data.statusCounts}
-                showProjectColumn={!brandSlug && data.scope === "all"}
-                contentSlug={validStatus === "in_review" ? "t" : "content"}
-                showQuickApprove={validStatus === "in_review"}
-                marketerMode={marketer}
-                hideTitleColumn={marketer}
-                onAfterDecision={fetchTasks}
-              />
+              <>
+                {marketer && (
+                  <div className="workbench-view-toggle">
+                    <span className="workbench-view-toggle__label">View</span>
+                    <button
+                      type="button"
+                      className={`btn-ghost btn-sm${contentViewMode === "list" ? " active" : ""}`}
+                      onClick={() => contentViewMode !== "list" && toggleContentViewMode()}
+                    >
+                      List
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn-ghost btn-sm${contentViewMode === "grid" ? " active" : ""}`}
+                      onClick={() => contentViewMode !== "grid" && toggleContentViewMode()}
+                    >
+                      Grid
+                    </button>
+                  </div>
+                )}
+                <TaskTable
+                  items={data.items}
+                  groupBy={groupBy}
+                  page={data.page}
+                  limit={data.limit}
+                  total={data.total}
+                  missingPreviewCount={data.missingPreviewCount}
+                  statusCounts={data.statusCounts}
+                  showProjectColumn={!brandSlug && data.scope === "all"}
+                  contentSlug={validStatus === "in_review" ? "t" : "content"}
+                  showQuickApprove={validStatus === "in_review"}
+                  marketerMode={marketer}
+                  viewMode={marketer ? contentViewMode : "list"}
+                  hideTitleColumn={marketer}
+                  onRowSelect={openTaskRow}
+                  onAfterDecision={fetchTasks}
+                />
+              </>
             )}
           </div>
         </div>

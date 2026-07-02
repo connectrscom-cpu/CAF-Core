@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMimicDocAiLayerPositionOverrides,
+  clampMimicDocAiInitialEditorFontPx,
   coerceTemplateBgInspectOverrides,
   llmSlideCopyPatchFromDocAiOverrides,
   mimicDocAiLayerPositionKey,
   mimicDocAiLayerRefKey,
+  MIMIC_DOCAI_EDITOR_INITIAL_FONT_MAX_PX,
+  MIMIC_DOCAI_MIN_FONT_SIZE_PX,
   parseMimicDocAiLayerPositionsBySlide,
   patchMimicDocAiLayerFontSize,
   patchMimicDocAiLayerPxPosition,
@@ -150,6 +153,30 @@ describe("mimic-docai-layer-positions", () => {
     expect(out[0]!.skip_center_avoid).toBe(true);
   });
 
+  it("applyMimicDocAiLayerPositionOverrides appends copy-slot editor keys on reprint", () => {
+    const layer = sampleLayer();
+    const out = applyMimicDocAiLayerPositionOverrides([layer], [
+      {
+        layer_key: "slot@1",
+        x_px: 120,
+        y_px: 340,
+        w_px: 520,
+        h_px: 120,
+        text: "gemini moon reset checklist",
+        font_size_px: 70,
+        color_hex: "#ffffff",
+        font_weight: 700,
+        box_locked: true,
+      },
+    ]);
+    expect(out).toHaveLength(2);
+    const slot = out.find((l) => l.text === "gemini moon reset checklist");
+    expect(slot?.x_px).toBe(120);
+    expect(slot?.y_px).toBe(340);
+    expect(slot?.font_size_px).toBe(70);
+    expect(slot?.color_hex).toBe("#ffffff");
+  });
+
   it("applyMimicDocAiLayerPositionOverrides appends custom reviewer-added text boxes", () => {
     const layer = sampleLayer();
     const out = applyMimicDocAiLayerPositionOverrides([layer], [
@@ -168,6 +195,33 @@ describe("mimic-docai-layer-positions", () => {
     expect(out[1]?.text).toBe("Extra line");
     expect(out[1]?.x_px).toBe(220);
     expect(out[1]?.w_px).toBe(300);
+  });
+
+  it("parseMimicDocAiLayerPositionsBySlide round-trips reviewer typography", () => {
+    const parsed = parseMimicDocAiLayerPositionsBySlide({
+      "5": [
+        {
+          layer_key: "slot@1",
+          x_px: 100,
+          y_px: 200,
+          font_size_px: 66,
+          color_hex: "#ffee00",
+          font_weight: 700,
+          w_px: 400,
+          h_px: 96,
+          box_locked: true,
+          text: "Headline line",
+        },
+      ],
+    });
+    expect(parsed?.["5"]?.[0]).toMatchObject({
+      font_size_px: 66,
+      color_hex: "#ffee00",
+      font_weight: 700,
+      w_px: 400,
+      h_px: 96,
+      box_locked: true,
+    });
   });
 
   it("parseMimicDocAiLayerPositionsBySlide preserves hidden reviewer deletions", () => {
@@ -224,5 +278,13 @@ describe("mimic-docai-layer-positions", () => {
     expect(out).toHaveLength(2);
     expect(out[0]?.text).toBeUndefined();
     expect(out[1]?.text).toBe("Real custom");
+  });
+});
+
+describe("clampMimicDocAiInitialEditorFontPx", () => {
+  it("clamps oversized inspect fonts into 32–60px", () => {
+    expect(clampMimicDocAiInitialEditorFontPx(104)).toBe(MIMIC_DOCAI_EDITOR_INITIAL_FONT_MAX_PX);
+    expect(clampMimicDocAiInitialEditorFontPx(48)).toBe(48);
+    expect(clampMimicDocAiInitialEditorFontPx(12)).toBe(MIMIC_DOCAI_MIN_FONT_SIZE_PX);
   });
 });

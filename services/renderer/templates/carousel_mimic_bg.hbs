@@ -260,6 +260,108 @@
 </head>
 
 <body>
+  {{#if single_slide_render}}
+  {{#if render_dom_cover_only}}
+  <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+      {{#if mimic_render_text_layers}}
+        {{#each mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline main-headline">
+        {{#if cover}}
+          {{joinEmojiOrphans cover}}
+        {{else}}
+          {{#if cover_slide}}
+            {{joinEmojiOrphans cover_slide.headline}}
+          {{else}}
+            {{joinEmojiOrphans intro_title}}
+          {{/if}}
+        {{/if}}
+      </div>
+      {{#if cover_subtitle}}
+        <div class="body main-body">{{joinEmojiOrphans cover_subtitle}}</div>
+      {{else}}
+        {{#if cover_slide.body}}
+          <div class="body main-body">{{joinEmojiOrphans cover_slide.body}}</div>
+        {{/if}}
+      {{/if}}
+      </div>
+      {{/if}}
+    </div>
+  </div>
+  {{/if}}
+  {{#if render_dom_body_only}}
+  <div class="slide body-slide{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+      {{#if mimic_render_text_layers}}
+        {{#each mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline main-headline">{{joinEmojiOrphans headline}}</div>
+      <div class="body main-body">{{joinEmojiOrphans body}}</div>
+      </div>
+      {{/if}}
+    </div>
+  </div>
+  {{/if}}
+  {{#if render_dom_cta_only}}
+  <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
+    {{#if background_image_url}}
+    <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+      {{#if mimic_render_text_layers}}
+        {{#each mimic_render_text_layers}}
+        <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
+        {{/each}}
+      {{else}}
+      <div class="mimic-text-stack">
+      <div class="headline cta-text">
+        {{#if cta_text}}
+          {{joinEmojiOrphans cta_text}}
+        {{else}}
+          {{#if cta_slide}}
+            {{joinEmojiOrphans cta_slide.body}}
+          {{/if}}
+        {{/if}}
+      </div>
+      {{#if cta_slide.sub}}
+        <div class="sub main-body">{{joinEmojiOrphans cta_slide.sub}}</div>
+      {{else}}
+        {{#if cta_handle}}
+          <div class="handle main-body">{{cta_handle}}</div>
+        {{else}}
+          {{#if cta_slide.handle}}
+            <div class="handle main-body">{{cta_slide.handle}}</div>
+          {{/if}}
+        {{/if}}
+      {{/if}}
+      </div>
+      {{/if}}
+    </div>
+  </div>
+  {{/if}}
+  {{else}}
   <!-- Cover -->
   <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
@@ -268,7 +370,7 @@
     {{#if logo_overlay.url}}
     <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
-    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
         <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
@@ -307,7 +409,7 @@
     {{#if ../logo_overlay.url}}
     <img class="mimic-brand-logo{{#if ../logo_overlay.position}} mimic-brand-logo--{{../logo_overlay.position}}{{/if}}" src="{{{../logo_overlay.url}}}" alt="" />
     {{/if}}
-    <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if ../mimic_text_backing_color}} style="--mimic-text-back-bg:{{../mimic_text_backing_color}}"{{/if}}">
+    <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if ../mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if ../mimic_text_backing_color}} style="--mimic-text-back-bg:{{../mimic_text_backing_color}}"{{/if}}">
       {{#if ../mimic_render_text_layers}}
         {{#each ../mimic_render_text_layers}}
         <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
@@ -330,7 +432,7 @@
     {{#if logo_overlay.url}}
     <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
-    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
+    <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
         {{#each mimic_render_text_layers}}
         <div class="mimic-docai-layer mimic-docai-layer--{{role}} {{layout_class}}{{#if ../mimic_text_backing}} mimic-docai-layer--text-back{{/if}}{{#if text_backing}} mimic-docai-layer--text-back{{/if}}" style="{{css_style}}"{{#if ref_font_size_px}} data-ref-font-size="{{ref_font_size_px}}"{{/if}}{{#if skip_center_avoid}} data-skip-center-avoid="1"{{/if}}{{#if reviewer_box_locked}} data-preserve-box-size="1"{{/if}}>{{joinEmojiOrphans text}}</div>
@@ -362,5 +464,6 @@
       {{/if}}
     </div>
   </div>
+  {{/if}}
 </body>
 </html>

@@ -12,8 +12,9 @@ import {
 import { CafPageHeader } from "@/components/CafOptionsMenu";
 import { CafTerm } from "@/components/CafTerm";
 import { JsonTreeViewer } from "@/components/JsonTreeViewer";
+import { ResearchBriefPanel } from "@/components/ResearchBriefPanel";
 
-type PackView = "ideas" | "hashtags" | "visual" | "raw";
+type PackView = "ideas" | "brief" | "hashtags" | "visual" | "raw";
 
 type HashtagLeaderboardEntry = {
   hashtag: string;
@@ -200,6 +201,11 @@ export default function SignalPackDetailPage() {
     });
   }, [filtered]);
 
+  const miPresent = useMemo(() => {
+    const mi = asRecord(derived?.market_intelligence_v1);
+    return Boolean(mi && mi.schema_version === 1);
+  }, [derived]);
+
   const ideasFromInsightsMeta = useMemo(() => asRecord(derived?.ideas_from_insights_llm), [derived]);
 
   const cueCount = visualPack?.visual_guideline_cues?.length ?? 0;
@@ -218,6 +224,7 @@ export default function SignalPackDetailPage() {
           <>
             <span>{(pack?.upload_filename as string) || packId.slice(0, 8)}</span>
             <span>{ideasJson.length} ideas</span>
+            {miPresent ? <span>research brief</span> : null}
             {hashtagLeaderboard.length > 0 ? <span>{hashtagLeaderboard.length} hashtags</span> : null}
             {entryCount > 0 ? <span>{entryCount} visual entries</span> : null}
           </>
@@ -233,6 +240,8 @@ export default function SignalPackDetailPage() {
         {view === "ideas" && (
           <IdeasPanel filter={filter} setFilter={setFilter} rows={rows} filtered={filtered} columns={columns} />
         )}
+
+        {view === "brief" && <ResearchBriefPanel pack={pack} />}
 
         {view === "hashtags" && (
           <HashtagsPanel
@@ -276,6 +285,7 @@ export default function SignalPackDetailPage() {
 function ViewTabs({ view, setView }: { view: PackView; setView: (v: PackView) => void }) {
   const tabs: { id: PackView; label: string }[] = [
     { id: "ideas", label: "Ideas" },
+    { id: "brief", label: "Research brief" },
     { id: "hashtags", label: "Hashtags" },
     { id: "visual", label: "Visual guidelines" },
     { id: "raw", label: "Raw data" },

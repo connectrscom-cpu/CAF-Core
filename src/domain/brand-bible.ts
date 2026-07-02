@@ -1,0 +1,282 @@
+/**
+ * Brand Bible (`brand_bible_v1`) — Brand Visual System (BVS) source of truth per project.
+ *
+ * Marketers edit voice/strategy in brand profile; the bible holds visual identity,
+ * reference asset roles, and an application guide explaining how CAF should apply
+ * the system when generating or reinterpreting content.
+ */
+import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
+
+export const BRAND_BIBLE_SCHEMA = "brand_bible_v1" as const;
+
+export const BRAND_BIBLE_ASSET_ROLES = [
+  "style_reference",
+  "character",
+  "motif",
+  "texture",
+  "logo",
+  "anti_reference",
+] as const;
+
+export type BrandBibleAssetRole = (typeof BRAND_BIBLE_ASSET_ROLES)[number];
+
+export const BRAND_BIBLE_VISUAL_MODES = [
+  "illustrated_cartoon",
+  "minimal_editorial",
+  "photography",
+  "mixed",
+  "custom",
+] as const;
+
+export type BrandBibleVisualMode = (typeof BRAND_BIBLE_VISUAL_MODES)[number];
+
+export interface BrandBibleApplicationGuide {
+  /** Free-text instructions: how to use assets, what the brand aims to achieve. */
+  instructions: string;
+  content_aims: string[];
+  mimic_policy: string | null;
+  original_policy: string | null;
+}
+
+export interface BrandBibleAssetRef {
+  asset_id: string;
+  role: BrandBibleAssetRole;
+  label: string | null;
+  usage_notes: string | null;
+}
+
+export interface BrandBibleResolvedAsset {
+  asset_id: string;
+  role: BrandBibleAssetRole;
+  label: string | null;
+  usage_notes: string | null;
+  public_url: string | null;
+  kind: string | null;
+}
+
+export interface BrandBibleV1 {
+  schema_version: typeof BRAND_BIBLE_SCHEMA;
+  visual_mode: BrandBibleVisualMode | null;
+  visual_mode_custom: string | null;
+  palette: string[];
+  allowed_motifs: string[];
+  forbidden_motifs: string[];
+  application_guide: BrandBibleApplicationGuide;
+  asset_refs: BrandBibleAssetRef[];
+}
+
+export interface BrandBibleSnapshotV1 extends BrandBibleV1 {
+  resolved_assets: BrandBibleResolvedAsset[];
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
+
+function asArray(v: unknown): unknown[] {
+  return Array.isArray(v) ? v : [];
+}
+
+function str(v: unknown, max = 4000): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  if (!s) return null;
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
+function strList(v: unknown, max: number, cap = 120): string[] {
+  const out: string[] = [];
+  for (const x of asArray(v)) {
+    const s = str(x, cap);
+    if (s && !out.includes(s)) out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function parseVisualMode(raw: unknown): BrandBibleVisualMode | null {
+  const s = str(raw, 40);
+  if (!s) return null;
+  return (BRAND_BIBLE_VISUAL_MODES as readonly string[]).includes(s) ? (s as BrandBibleVisualMode) : "custom";
+}
+
+function parseAssetRole(raw: unknown): BrandBibleAssetRole {
+  const s = str(raw, 40);
+  if (s && (BRAND_BIBLE_ASSET_ROLES as readonly string[]).includes(s)) return s as BrandBibleAssetRole;
+  return "style_reference";
+}
+
+function parseApplicationGuide(raw: unknown): BrandBibleApplicationGuide {
+  const rec = asRecord(raw);
+  return {
+    instructions: str(rec?.instructions, 8000) ?? "",
+    content_aims: strList(rec?.content_aims, 12, 60),
+    mimic_policy: str(rec?.mimic_policy, 2000),
+    original_policy: str(rec?.original_policy, 2000),
+  };
+}
+
+function parseAssetRefs(raw: unknown): BrandBibleAssetRef[] {
+  const out: BrandBibleAssetRef[] = [];
+  for (const item of asArray(raw)) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const assetId = str(rec.asset_id ?? rec.id, 80);
+    if (!assetId) continue;
+    out.push({
+      asset_id: assetId,
+      role: parseAssetRole(rec.role),
+      label: str(rec.label, 120),
+      usage_notes: str(rec.usage_notes ?? rec.notes, 400),
+    });
+    if (out.length >= 40) break;
+  }
+  return out;
+}
+
+/** Tolerant parser. Returns null when there is no usable bible signal. */
+export function parseBrandBible(raw: unknown): BrandBibleV1 | null {
+  const rec = asRecord(raw);
+  if (!rec) return null;
+
+  const bible: BrandBibleV1 = {
+    schema_version: BRAND_BIBLE_SCHEMA,
+    visual_mode: parseVisualMode(rec.visual_mode),
+    visual_mode_custom: str(rec.visual_mode_custom ?? rec.visual_mode_label, 200),
+    palette: strList(rec.palette ?? rec.colors, 16, 40),
+    allowed_motifs: strList(rec.allowed_motifs ?? rec.allowed, 24, 80),
+    forbidden_motifs: strList(rec.forbidden_motifs ?? rec.forbidden, 24, 80),
+    application_guide: parseApplicationGuide(rec.application_guide),
+    asset_refs: parseAssetRefs(rec.asset_refs ?? rec.assets),
+  };
+
+  const guide = bible.application_guide;
+  const hasSignal =
+    bible.visual_mode ||
+    bible.palette.length > 0 ||
+    bible.allowed_motifs.length > 0 ||
+    bible.forbidden_motifs.length > 0 ||
+    bible.asset_refs.length > 0 ||
+    guide.instructions.length > 0 ||
+    guide.mimic_policy ||
+    guide.original_policy ||
+    guide.content_aims.length > 0;
+
+  return hasSignal ? bible : null;
+}
+
+export function emptyBrandBibleDraft(): BrandBibleV1 {
+  return {
+    schema_version: BRAND_BIBLE_SCHEMA,
+    visual_mode: null,
+    visual_mode_custom: null,
+    palette: [],
+    allowed_motifs: [],
+    forbidden_motifs: [],
+    application_guide: {
+      instructions: "",
+      content_aims: [],
+      mimic_policy: null,
+      original_policy: null,
+    },
+    asset_refs: [],
+  };
+}
+
+export function resolveBrandBibleAssets(
+  bible: BrandBibleV1,
+  brandAssets: ProjectBrandAssetRow[]
+): BrandBibleResolvedAsset[] {
+  const byId = new Map(brandAssets.map((a) => [a.id, a]));
+  const out: BrandBibleResolvedAsset[] = [];
+  for (const ref of bible.asset_refs) {
+    const row = byId.get(ref.asset_id);
+    out.push({
+      asset_id: ref.asset_id,
+      role: ref.role,
+      label: ref.label ?? row?.label ?? null,
+      usage_notes: ref.usage_notes,
+      public_url: row?.public_url ?? null,
+      kind: row?.kind ?? null,
+    });
+  }
+  return out;
+}
+
+export function buildBrandBibleSnapshot(
+  bible: BrandBibleV1,
+  brandAssets: ProjectBrandAssetRow[]
+): BrandBibleSnapshotV1 {
+  return {
+    ...bible,
+    resolved_assets: resolveBrandBibleAssets(bible, brandAssets),
+  };
+}
+
+export function visualModeLabel(bible: Pick<BrandBibleV1, "visual_mode" | "visual_mode_custom">): string | null {
+  if (bible.visual_mode === "custom") return bible.visual_mode_custom;
+  if (!bible.visual_mode) return bible.visual_mode_custom;
+  return bible.visual_mode.replace(/_/g, " ");
+}
+
+/** Prompt block for LLM copy / Flux when BVS is enabled. */
+export function buildBrandBiblePromptBlock(
+  snapshot: BrandBibleSnapshotV1 | null | undefined,
+  opts?: { forMimic?: boolean }
+): string | null {
+  if (!snapshot) return null;
+
+  const lines: string[] = [
+    "Brand Visual System (BVS) — enforce this brand's visual identity on all generated visuals:",
+  ];
+
+  const mode = visualModeLabel(snapshot);
+  if (mode) lines.push(`- Visual mode: ${mode}`);
+  if (snapshot.palette.length) lines.push(`- Palette (use consistently): ${snapshot.palette.join(", ")}`);
+  if (snapshot.allowed_motifs.length) lines.push(`- Allowed motifs: ${snapshot.allowed_motifs.join("; ")}`);
+  if (snapshot.forbidden_motifs.length) lines.push(`- Forbidden motifs: ${snapshot.forbidden_motifs.join("; ")}`);
+
+  const guide = snapshot.application_guide;
+  if (guide.content_aims.length) lines.push(`- Content aims: ${guide.content_aims.join(", ")}`);
+  if (opts?.forMimic && guide.mimic_policy) {
+    lines.push(`- When mimicking references: ${guide.mimic_policy}`);
+  } else if (!opts?.forMimic && guide.original_policy) {
+    lines.push(`- Original content policy: ${guide.original_policy}`);
+  }
+  if (guide.instructions) {
+    lines.push("- Marketer application guide:");
+    lines.push(guide.instructions);
+  }
+
+  const styleRefs = snapshot.resolved_assets.filter((a) => a.role === "style_reference" && a.public_url);
+  const characters = snapshot.resolved_assets.filter((a) => a.role === "character" && a.public_url);
+  if (styleRefs.length) {
+    lines.push(
+      `- Style references (${styleRefs.length}): match illustration/photo style — not competitor pixels.`
+    );
+  }
+  if (characters.length) {
+    lines.push(`- Brand characters (${characters.length}): use consistently across slides when relevant.`);
+  }
+
+  if (opts?.forMimic) {
+    lines.push(
+      "- INVARIANT: copy the reference deck's structure and persuasion; execute ALL visuals in this brand's style — never reproduce the competitor's look."
+    );
+  }
+
+  if (lines.length <= 1) return null;
+  return lines.join("\n").trim();
+}
+
+export function appendBrandBibleToFluxPrompt(basePrompt: string, snapshot: BrandBibleSnapshotV1 | null | undefined): string {
+  const block = buildBrandBiblePromptBlock(snapshot, { forMimic: true });
+  if (!block) return basePrompt;
+  return `${basePrompt.trim()}\n\n${block}`;
+}
+
+export function paletteFromBrandBibleSnapshot(snapshot: BrandBibleSnapshotV1 | null | undefined): string[] {
+  if (!snapshot?.palette?.length) return [];
+  return snapshot.palette.filter((c) => typeof c === "string" && c.trim().length > 0);
+}

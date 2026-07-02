@@ -25,7 +25,14 @@ import {
   insertBrandProfileVersion,
   listBrandProfileVersions,
 } from "../repositories/brand-profiles.js";
+import {
+  getActiveBrandBible,
+  insertBrandBibleVersion,
+  listBrandBibleVersions,
+} from "../repositories/brand-bibles.js";
 import { parseBrandProfile } from "../domain/brand-profile.js";
+import { buildBrandBibleSnapshot, parseBrandBible } from "../domain/brand-bible.js";
+import { listProjectBrandAssets } from "../repositories/project-config.js";
 import {
   insertDiagnosticAudit,
   insertEditorialReview,
@@ -37,10 +44,12 @@ import {
 import { getLatestHeygenSubmitAuditForTask, listMimicImageAuditsForTask } from "../repositories/api-call-audit.js";
 import {
   listReviewQueue,
+  listReviewQueueSlim,
   countReviewQueue,
   countReviewQueueFiltered,
   reviewQueueStatusBreakdown,
   listReviewQueueAllProjects,
+  listReviewQueueAllProjectsSlim,
   countReviewQueueAllProjects,
   countReviewQueueAllProjectsWithFilters,
   countReviewQueueAllProjectsFiltered,
@@ -52,6 +61,8 @@ import {
   type ReviewQueueFilters,
 } from "../repositories/review-queue.js";
 import { enrichJobFlowDisplay } from "../services/review-queue-display.js";
+import { readinessState } from "../services/readiness-state.js";
+import { probeReviewSidecar } from "../services/review-next-server.js";
 import {
   resolveTopPerformerReviewReference,
   type TopPerformerReviewReference,
@@ -518,7 +529,6 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   app.get("/readyz", async (_req, reply) => {
     try {
       await db.query("SELECT 1");
-      return { ok: true, service: "caf-core", engine_version: config.DECISION_ENGINE_VERSION, db: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       return reply.code(503).send({
@@ -526,9 +536,42 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         service: "caf-core",
         engine_version: config.DECISION_ENGINE_VERSION,
         db: false,
+        review: readinessState.reviewEnabled ? { ok: false, skipped: true } : undefined,
         error: msg.slice(0, 4000),
       });
     }
+
+    if (readinessState.reviewEnabled) {
+      const upstream = readinessState.reviewUpstream;
+      if (!upstream) {
+        return reply.code(503).send({
+          ok: false,
+          service: "caf-core",
+          engine_version: config.DECISION_ENGINE_VERSION,
+          db: true,
+          review: { ok: false, error: "review sidecar not started" },
+        });
+      }
+      const reviewProbe = await probeReviewSidecar(upstream);
+      if (!reviewProbe.ok) {
+        return reply.code(503).send({
+          ok: false,
+          service: "caf-core",
+          engine_version: config.DECISION_ENGINE_VERSION,
+          db: true,
+          review: reviewProbe,
+        });
+      }
+      return {
+        ok: true,
+        service: "caf-core",
+        engine_version: config.DECISION_ENGINE_VERSION,
+        db: true,
+        review: reviewProbe,
+      };
+    }
+
+    return { ok: true, service: "caf-core", engine_version: config.DECISION_ENGINE_VERSION, db: true };
   });
 
   /** Shows RENDERER_BASE_URL / VIDEO_ASSEMBLY_BASE_URL for this process and probes each upstream GET /health. */
@@ -1023,6 +1066,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   const filterQuerySchema = z.object({
     limit: z.coerce.number().int().min(1).max(500).optional(),
     offset: z.coerce.number().int().min(0).optional(),
+    /** Workbench-style pagination alias — converted to offset before query. */
+    page: z.coerce.number().int().min(1).optional(),
+    /** When true, omit heavy generation_payload / review_snapshot from list rows (agent mode). */
+    slim: z.enum(["1", "true", "0", "false"]).optional(),
     search: z.string().optional(),
     platform: z.string().optional(),
     flow_type: z.string().optional(),
@@ -1059,6 +1106,36 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     };
   }
 
+  function reviewListPaging(query: z.infer<typeof filterQuerySchema> | undefined): {
+    limit: number;
+    offset: number;
+    slim: boolean;
+  } {
+    const slim = query?.slim === "1" || query?.slim === "true";
+    const limit = query?.limit ?? (slim ? 25 : 100);
+    const offset =
+      query?.offset ??
+      (query?.page != null ? Math.max(0, (query.page - 1) * limit) : 0);
+    return { limit, offset, slim };
+  }
+
+  async function signEnrichedQueueJobs<T extends { preview_thumb_url?: string | null }>(
+    jobs: T[],
+    enrich: (j: T) => T & { flow_label: string; flow_detail: string | null; is_mimic_replication: boolean }
+  ) {
+    return Promise.all(
+      jobs.map(async (j) => {
+        const enriched = enrich(j);
+        return {
+          ...enriched,
+          preview_thumb_url: await maybeSignPublicAssetUrl(
+            (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
+          ),
+        };
+      })
+    );
+  }
+
   /** All active projects — same tabs/filters as per-project queue, plus optional `project_slug` query. */
   app.get("/v1/review-queue-all/counts", async (request) => {
     const query = filterQuerySchema.safeParse(request.query);
@@ -1076,30 +1153,24 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const params = z.object({ tab: reviewTabSchema }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const query = filterQuerySchema.safeParse(request.query);
-    const limit = query.data?.limit ?? 100;
-    const offset = query.data?.offset ?? 0;
+    const { limit, offset, slim } = reviewListPaging(query.data);
     const filters = reviewFiltersFromQuery(query.data ?? {}, { includeProjectSlugFilter: true });
     const [jobs, total, status_breakdown] = await Promise.all([
-      listReviewQueueAllProjects(db, params.data.tab, limit, offset, filters),
+      slim
+        ? listReviewQueueAllProjectsSlim(db, params.data.tab, limit, offset, filters)
+        : listReviewQueueAllProjects(db, params.data.tab, limit, offset, filters),
       countReviewQueueAllProjectsFiltered(db, params.data.tab, filters),
       reviewQueueStatusBreakdownAllProjects(db, params.data.tab, filters),
     ]);
-    const signedJobs = await Promise.all(
-      (jobs ?? []).map(async (j) => {
-        const enriched = enrichJobFlowDisplay(j);
-        return {
-          ...enriched,
-          preview_thumb_url: await maybeSignPublicAssetUrl(
-            (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
-          ),
-        };
-      })
-    );
+    const signedJobs = await signEnrichedQueueJobs(jobs ?? [], enrichJobFlowDisplay);
     return {
       ok: true,
       tab: params.data.tab,
       total,
       count: jobs.length,
+      limit,
+      offset,
+      slim,
       status_breakdown,
       jobs: signedJobs,
     };
@@ -1172,31 +1243,25 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const params = z.object({ project_slug: z.string(), tab: reviewTabSchema }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const query = filterQuerySchema.safeParse(request.query);
-    const limit = query.data?.limit ?? 100;
-    const offset = query.data?.offset ?? 0;
+    const { limit, offset, slim } = reviewListPaging(query.data);
     const filters = reviewFiltersFromQuery(query.data ?? {}, { includeProjectSlugFilter: false });
     const project = await ensureProject(db, params.data.project_slug);
     const [jobs, total, status_breakdown] = await Promise.all([
-      listReviewQueue(db, project.id, params.data.tab, limit, offset, filters),
+      slim
+        ? listReviewQueueSlim(db, project.id, params.data.tab, limit, offset, filters)
+        : listReviewQueue(db, project.id, params.data.tab, limit, offset, filters),
       countReviewQueueFiltered(db, project.id, params.data.tab, filters),
       reviewQueueStatusBreakdown(db, project.id, params.data.tab, filters),
     ]);
-    const signedJobs = await Promise.all(
-      (jobs ?? []).map(async (j) => {
-        const enriched = enrichJobFlowDisplay(j);
-        return {
-          ...enriched,
-          preview_thumb_url: await maybeSignPublicAssetUrl(
-            (j as { preview_thumb_url?: string | null }).preview_thumb_url ?? null
-          ),
-        };
-      })
-    );
+    const signedJobs = await signEnrichedQueueJobs(jobs ?? [], enrichJobFlowDisplay);
     return {
       ok: true,
       tab: params.data.tab,
       total,
       count: jobs.length,
+      limit,
+      offset,
+      slim,
       status_breakdown,
       jobs: signedJobs,
     };
@@ -1289,6 +1354,25 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return { ok: true, audits };
   });
 
+  const mimicDocAiLayerPositionOverrideRowSchema = z.object({
+    layer_key: z.string().min(1),
+    x_px: z.number(),
+    y_px: z.number(),
+    font_size_px: z.number().int().positive().optional(),
+    w_px: z.number().int().positive().optional(),
+    h_px: z.number().int().positive().optional(),
+    text: z.string().min(1).optional(),
+    box_locked: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    font_weight: z.number().int().min(100).max(900).optional(),
+    color_hex: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{3,8}$/)
+      .optional(),
+    font_family: z.string().min(1).max(200).optional(),
+    font_style_italic: z.boolean().optional(),
+  });
+
   const reprintTextOverlayBodySchema = z.object({
     slide_indices: z.array(z.number().int().positive()).optional(),
     render_typography: z.record(z.union([z.number(), z.string()])).optional(),
@@ -1301,22 +1385,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       })
       .optional(),
     docai_layer_positions: z
-      .record(
-        z.string(),
-        z.array(
-          z.object({
-            layer_key: z.string().min(1),
-            x_px: z.number(),
-            y_px: z.number(),
-            font_size_px: z.number().int().positive().optional(),
-            w_px: z.number().int().positive().optional(),
-            h_px: z.number().int().positive().optional(),
-            box_locked: z.boolean().optional(),
-            hidden: z.boolean().optional(),
-            text: z.string().min(1).optional(),
-          })
-        )
-      )
+      .record(z.string(), z.array(mimicDocAiLayerPositionOverrideRowSchema))
       .optional(),
   });
 
@@ -1615,19 +1684,7 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
   const mimicDocAiLayerPositionsBodySchema = z.object({
     task_id: z.string().min(1),
     slide_index: z.number().int().positive(),
-    positions: z.array(
-      z.object({
-        layer_key: z.string().min(1),
-        x_px: z.number(),
-        y_px: z.number(),
-        font_size_px: z.number().int().positive().optional(),
-        w_px: z.number().int().positive().optional(),
-        h_px: z.number().int().positive().optional(),
-        text: z.string().min(1).optional(),
-        box_locked: z.boolean().optional(),
-        hidden: z.boolean().optional(),
-      })
-    ),
+    positions: z.array(mimicDocAiLayerPositionOverrideRowSchema),
   });
 
   async function saveMimicDocAiLayerPositions(
@@ -1812,6 +1869,53 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const inserted = await insertBrandProfileVersion(db, project.id, body.data.profile_json, body.data.label ?? null);
     return { ok: true, version: inserted.version, parsed };
+  });
+
+  /** Brand Visual System — read active brand bible (+ version list) for a project. */
+  app.get("/v1/projects/:project_slug/brand-bible", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const active = await getActiveBrandBible(db, project.id);
+    const versions = await listBrandBibleVersions(db, project.id);
+    const assets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const parsed = active ? parseBrandBible(active.bible_json) : null;
+    const snapshot = parsed ? buildBrandBibleSnapshot(parsed, assets) : null;
+    return {
+      ok: true,
+      active: active
+        ? { version: active.version, label: active.label, bible_json: active.bible_json, created_at: active.created_at }
+        : null,
+      parsed,
+      snapshot,
+      brand_assets: assets,
+      versions: versions.map((v) => ({ version: v.version, label: v.label, is_active: v.is_active, created_at: v.created_at })),
+    };
+  });
+
+  /** Brand Visual System — create a new active brand bible version. */
+  app.post("/v1/projects/:project_slug/brand-bible", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z
+      .object({ bible_json: z.record(z.unknown()), label: z.string().max(200).optional() })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const parsed = parseBrandBible(body.data.bible_json);
+    if (!parsed) {
+      return reply.code(400).send({ ok: false, error: "brand_bible_has_no_usable_fields" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const inserted = await insertBrandBibleVersion(db, project.id, body.data.bible_json, body.data.label ?? null);
+    const assets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    return {
+      ok: true,
+      version: inserted.version,
+      parsed,
+      snapshot: buildBrandBibleSnapshot(parsed, assets),
+    };
   });
 
   /** Prefer this over path-segment `task_id` so very long ids (video / legacy) do not hit proxy URL limits. */

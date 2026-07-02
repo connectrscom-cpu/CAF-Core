@@ -843,11 +843,11 @@ Return ONLY flat JSON (no "deck" wrapper, no slides array):
   "cta_clarity": "...",
   "format_pattern": "educational | listicle | story | before_after | promo | mixed | unknown",
   "risk_flags": [],
-  "why_it_worked": "...",
+  "why_it_worked": "3–4 sentences (~200+ chars): why this carousel performs as a SET — slide combination, pacing, emotional arc, swipe motivation",
   "primary_emotion": "dominant emotional vibe (short)",
   "secondary_emotion": "secondary vibe or empty string",
   "caption_style": "how the post caption pairs with the carousel (short)",
-  "deck_as_whole_summary": "...",
+  "deck_as_whole_summary": "3–5 sentences: how slides combine into a cohesive swipe-worthy arc (not slide 1 alone)",
   "deck_composition_system": {
     "recurring_layout_pattern": "Recurring spatial pattern across slides (short)",
     "repeated_element_positions": ["Logo consistently top-right", "Headline usually top 15–25%"],

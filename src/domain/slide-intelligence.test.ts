@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWhyMimicPromptBlock,
+  deckThesisContradictsSlideEvidence,
   deriveSlideIntelligenceFromAnalysis,
+  detectSignAsFoodSeries,
   parseSlideIntelligenceBundle,
   pickOrDeriveSlideIntelligence,
+  resolveDeckStrategicThesis,
+  resolveSlideIntelligenceForOutputSlide,
   slideIntelligenceCues,
   SLIDE_INTELLIGENCE_SCHEMA,
+  synthesizeDeckStrategicThesisFromSlides,
   WHY_ANALYSIS_SCHEMA,
 } from "./slide-intelligence.js";
 
@@ -51,6 +56,89 @@ const carouselAesthetic = {
     },
   ],
 };
+
+const zodiacFoodAesthetic = {
+  slide_arc: "cover → body → cta",
+  format_pattern: "education | story",
+  why_it_worked:
+    "The carousel uses education and story beats to keep food lovers swiping through sign-themed dishes.",
+  deck_as_whole_summary:
+    "Shown are five different pictures of pasta with cheese that appear to be made in a classical Italian style from what can be seen from one of the pictures provided. The carousel of food images shows pictures of pasta during the day taken in different places. The aesthetic and color consistency is evident because the pasta is red in each of the four pictures provided.",
+  slides: [
+    {
+      slide_index: 1,
+      slide_purpose: "Cover hook",
+      on_screen_text_transcript: "taurus as food",
+      visual_description:
+        "Collage of pasta dishes in tomato-based sauces on decorative plates with warm daylight tones and overlay-safe negative space.",
+    },
+    {
+      slide_index: 2,
+      slide_purpose: "Body content",
+      on_screen_text_transcript: "aries as food",
+      visual_description:
+        "Fried chicken tenders, a slider, and golden french fries arranged on a warm red-toned surface with generous negative space for overlay text.",
+    },
+    {
+      slide_index: 7,
+      slide_purpose: "Body content",
+      on_screen_text_transcript: "libra as food",
+      visual_description:
+        "Four-panel collage of crispy french fries with herbs, dipping sauce, and parchment-lined baskets in bright warm lighting.",
+    },
+  ],
+};
+
+describe("resolveDeckStrategicThesis", () => {
+  it("combines deck-wide Nemotron fields into a long strategic thesis", () => {
+    const thesis = resolveDeckStrategicThesis({
+      why_it_worked:
+        "The carousel wins by pairing a curiosity hook on slide one with escalating proof slides before a soft CTA — each swipe reveals a new beat in the same visual language.",
+      deck_as_whole_summary:
+        "A cohesive educational meme arc: hook, relatable body beats, credibility proof, then follow CTA. Slides build on each other rather than repeating the same message.",
+      slide_arc: "hook → list items → proof → cta",
+      cover_vs_body: "cover is bold claim; body explains with humor",
+    });
+    expect(thesis).not.toBeNull();
+    expect(String(thesis).length).toBeGreaterThanOrEqual(240);
+  });
+});
+
+describe("deck strategic thesis reconciliation", () => {
+  it("detects zodiac-as-food on-screen series", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacFoodAesthetic });
+    expect(detectSignAsFoodSeries(bundle!.slides)).toEqual(["taurus", "aries", "libra"]);
+  });
+
+  it("flags upstream pasta-only deck summary when slides show varied foods", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacFoodAesthetic });
+    const upstream = resolveDeckStrategicThesis({
+      why_it_worked: zodiacFoodAesthetic.why_it_worked,
+      deck_as_whole_summary: zodiacFoodAesthetic.deck_as_whole_summary,
+      slide_arc: zodiacFoodAesthetic.slide_arc,
+    });
+    expect(deckThesisContradictsSlideEvidence(upstream, bundle!.slides)).toBe(true);
+  });
+
+  it("replaces overfit deck thesis with a zodiac-as-food series thesis", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacFoodAesthetic });
+    const thesis = bundle!.why_analysis!.strategic_thesis ?? "";
+    expect(thesis.toLowerCase()).toContain("zodiac-as-food");
+    expect(thesis.toLowerCase()).not.toContain("red in each of the four pictures");
+    expect(thesis.toLowerCase()).not.toMatch(/\bfive different pictures of pasta\b/);
+  });
+
+  it("synthesizes a zodiac-as-food thesis from per-slide transcripts", () => {
+    const slides = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacFoodAesthetic })!.slides;
+    const thesis = synthesizeDeckStrategicThesisFromSlides(slides, {
+      narrative_spine: ["cover", "body", "body"],
+    });
+    expect(thesis).not.toBeNull();
+    expect(thesis!.toLowerCase()).toContain("zodiac-as-food");
+    expect(thesis!.toLowerCase()).toContain("taurus");
+    expect(thesis!.toLowerCase()).toContain("different dishes");
+  });
+});
 
 describe("deriveSlideIntelligenceFromAnalysis", () => {
   it("derives per-slide roles, a why_analysis spine, and honest confidence", () => {
@@ -193,5 +281,16 @@ describe("buildWhyMimicPromptBlock", () => {
 
   it("returns null for an empty bundle", () => {
     expect(buildWhyMimicPromptBlock(null)).toBeNull();
+  });
+});
+
+describe("resolveSlideIntelligenceForOutputSlide", () => {
+  it("finds Nemotron row by source deck index when output slide differs", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: carouselAesthetic });
+    const gemini = bundle.slides.find((s) => s.slide_index === 3);
+    expect(gemini).toBeTruthy();
+    const resolved = resolveSlideIntelligenceForOutputSlide(bundle, 3, 3);
+    expect(resolved?.slide_index).toBe(3);
+    expect(resolved?.on_screen_text_transcript).toBe(gemini?.on_screen_text_transcript);
   });
 });

@@ -3,11 +3,20 @@
 import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import type { ReviewQueueRow } from "@/lib/types";
-import { isVideoUrl } from "@/lib/media-url";
 import { formatDecisionHttpError } from "@/lib/format-decision-http-error";
 import { useReviewProject } from "@/components/ReviewProjectContext";
 import { taskReviewHref } from "@/lib/task-links";
 import { displayFlowLabel, displayFlowDetail } from "@/lib/display-flow-label";
+import {
+  displayRecommendedRoute,
+  displayReviewStatus,
+  displayTaskTitle,
+  humanizePlatform,
+  marketerFormatLabel,
+} from "@/lib/review-queue-display";
+import { resolveQueueRowPreview } from "@/lib/marketer/preview-resolver";
+import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
+import { TaskContentGrid } from "@/components/TaskContentGrid";
 
 export type GroupBy = "" | "project" | "platform" | "flow_type" | "recommended_route";
 
@@ -34,6 +43,8 @@ export interface TaskTableProps {
   showQuickApprove?: boolean;
   /** Marketer content review — title-first, hide raw task_id. */
   marketerMode?: boolean;
+  /** list (default) or grid cards for marketer content. */
+  viewMode?: "list" | "grid";
   /** Called after a successful quick Approve (e.g. refresh queue). */
   onAfterDecision?: () => void;
 }
@@ -42,16 +53,21 @@ function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
 }
 
-function statusBadge(status: string) {
+function statusBadge(status: string, marketerMode = false) {
+  const label = displayReviewStatus(status, marketerMode);
   const s = status.toUpperCase().replace(/\s+/g, "_");
   let cls = "badge ";
   if (s === "APPROVED") cls += "badge-approved";
   else if (s === "REJECTED") cls += "badge-rejected";
   else if (s === "NEEDS_EDIT") cls += "badge-needs-edit";
   else if (s === "IN_REVIEW" || s === "IN REVIEW") cls += "badge-review";
-  else if (s === "QC" || s === "READY") cls += "badge-qc";
+  else if (s === "QC" || s === "READY" || s === "GENERATED") cls += "badge-qc";
   else cls += "badge-review";
-  return <span className={cls}>{status || "—"}</span>;
+  return <span className={cls}>{label}</span>;
+}
+
+function decisionBadge(decision: string, marketerMode = false) {
+  return statusBadge(decision, marketerMode);
 }
 
 function TaskRow({
@@ -82,16 +98,17 @@ function TaskRow({
   const { navHref } = useReviewProject();
   const taskId = getVal(row, "task_id");
   const project = getVal(row, "project");
-  const platform = getVal(row, "platform");
   const flowType = getVal(row, "flow_type");
-  const flowLabel = displayFlowLabel(row);
-  const flowDetail = displayFlowDetail(row);
+  const flowLabel = marketerMode ? marketerFormatLabel(row) : displayFlowLabel(row);
+  const flowDetail = marketerMode ? null : displayFlowDetail(row);
   const reviewStatus = getVal(row, "review_status");
   const decision = getVal(row, "decision");
   const generatedTitle = getVal(row, "generated_title");
   const hook = getVal(row, "hook") || getVal(row, "generated_hook");
-  const title = generatedTitle || hook || taskId;
-  const thumb = getVal(row, "preview_url");
+  const title = marketerMode ? displayTaskTitle(row) : generatedTitle || hook || taskId;
+  const platform = marketerMode ? humanizePlatform(getVal(row, "platform")) : getVal(row, "platform");
+  const route = displayRecommendedRoute(getVal(row, "recommended_route"), marketerMode);
+  const preview = resolveQueueRowPreview(row);
   const taskHref = navHref(
     taskReviewHref(contentSlug, taskId, showProjectColumn ? project : undefined, { marketer: marketerMode })
   );
@@ -104,36 +121,15 @@ function TaskRow({
         background: selected ? "rgba(99, 102, 241, 0.08)" : undefined,
       }}
     >
-      <td className="task-thumb-cell" style={{ width: 72, verticalAlign: "middle" }}>
-        {thumb ? (
-          isVideoUrl(thumb) ? (
-            <video
-              src={thumb}
-              muted
-              playsInline
-              preload="metadata"
-              style={{
-                width: 56,
-                height: 56,
-                borderRadius: 8,
-                objectFit: "cover",
-                background: "#111",
-                display: "block",
-              }}
-            />
-          ) : (
-            <img
-              src={thumb}
-              alt=""
-              width={56}
-              height={56}
-              style={{ borderRadius: 8, objectFit: "cover", display: "block", background: "#111" }}
-              referrerPolicy="no-referrer"
-            />
-          )
-        ) : (
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span>
-        )}
+      <td className="task-thumb-cell" style={{ width: marketerMode ? 96 : 72, verticalAlign: "middle" }}>
+        <Link
+          href={taskHref}
+          className="task-thumb-link"
+          onClick={(e) => onRowSelect && e.stopPropagation()}
+          title={taskId}
+        >
+          <PreviewMediaCard preview={preview} alt={title} variant="compact" showBadge={marketerMode} />
+        </Link>
       </td>
       <td className="job-id-cell">
         {marketerMode ? (
@@ -141,7 +137,7 @@ function TaskRow({
             {title}
           </Link>
         ) : (
-          <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
+          <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()} title={taskId}>
             {taskId}
           </Link>
         )}
@@ -149,7 +145,9 @@ function TaskRow({
       {showProjectColumn && <td>{project || "—"}</td>}
       {!hideTitleColumn && !marketerMode && (
         <td className="hook-cell" title={title}>
-          {title}
+          <Link href={taskHref} onClick={(e) => onRowSelect && e.stopPropagation()}>
+            {title}
+          </Link>
         </td>
       )}
       <td>{platform || "—"}</td>
@@ -159,9 +157,9 @@ function TaskRow({
           {flowDetail ? <span className="task-flow-cell__detail">{flowDetail}</span> : null}
         </div>
       </td>
-      <td>{statusBadge(reviewStatus)}</td>
-      <td>{decision ? statusBadge(decision) : "—"}</td>
-      <td>{getVal(row, "recommended_route") || "—"}</td>
+      <td>{statusBadge(reviewStatus, marketerMode)}</td>
+      <td>{decision ? decisionBadge(decision, marketerMode) : "—"}</td>
+      {!marketerMode && <td>{route}</td>}
       {!hideOpenColumn && (
         <td style={{ whiteSpace: "nowrap" }}>
           {showQuickApprove && (
@@ -217,7 +215,8 @@ function TableBody({
   const colSpan =
     (showProjectColumn ? 10 : 9) -
     (hideTitleColumn || marketerMode ? 1 : 0) -
-    (hideOpenColumn ? 1 : 0);
+    (hideOpenColumn ? 1 : 0) -
+    (marketerMode ? 1 : 0);
   const rowKey = (row: ReviewQueueRow) =>
     `${getVal(row, "project")}::${getVal(row, "task_id")}`;
 
@@ -297,6 +296,7 @@ export function TaskTable({
   showQuickApprove = false,
   onAfterDecision,
   marketerMode = false,
+  viewMode = "list",
 }: TaskTableProps) {
   const [approvingTaskId, setApprovingTaskId] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
@@ -341,25 +341,40 @@ export function TaskTable({
           {approveError}
         </div>
       )}
-      <div className="flex items-center justify-between mb-3" style={{ fontSize: 13, color: "var(--muted)" }}>
+      <div className="flex items-center justify-between mb-3 workbench-table-toolbar" style={{ fontSize: 13, color: "var(--muted)" }}>
         <span>{rangeLabel}</span>
-        <div className="flex gap-2">
-          {Object.entries(statusCounts).map(([k, v]) => (<span key={k}>{k}: {v}</span>))}
-          {missingPreviewCount > 0 && <span style={{ color: "var(--yellow)" }}>Missing preview: {missingPreviewCount}</span>}
+        <div className="flex gap-2 workbench-table-toolbar__stats">
+          {Object.entries(statusCounts).map(([k, v]) => (
+            <span key={k}>
+              {marketerMode ? displayReviewStatus(k, true) : k}: {v}
+            </span>
+          ))}
+          {missingPreviewCount > 0 && (
+            <span className="workbench-missing-preview">No preview: {missingPreviewCount}</span>
+          )}
         </div>
       </div>
+      {viewMode === "grid" && marketerMode ? (
+        <TaskContentGrid
+          items={items}
+          contentSlug={contentSlug}
+          showProjectColumn={showProjectColumn}
+          onRowSelect={onRowSelect}
+          marketerMode={marketerMode}
+        />
+      ) : (
       <table>
         <thead>
           <tr>
-            <th style={{ width: 72 }}>Preview</th>
+            <th style={{ width: marketerMode ? 96 : 72 }}>Preview</th>
             <th>{marketerMode ? "Title" : "Job ID"}</th>
             {showProjectColumn && <th>Project</th>}
             {!hideTitleColumn && !marketerMode && <th>Title / Hook</th>}
             <th>Platform</th>
-            <th>Flow type</th>
+            <th>{marketerMode ? "Format" : "Flow type"}</th>
             <th>Status</th>
             <th>Decision</th>
-            <th>Route</th>
+            {!marketerMode && <th>Route</th>}
             {!hideOpenColumn && <th>{showQuickApprove ? "Actions" : ""}</th>}
           </tr>
         </thead>
@@ -378,6 +393,7 @@ export function TaskTable({
           marketerMode={marketerMode}
         />
       </table>
+      )}
       {items.length === 0 && <div className="table-empty">No tasks match the current filters</div>}
     </div>
   );

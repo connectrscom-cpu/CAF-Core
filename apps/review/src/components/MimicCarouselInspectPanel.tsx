@@ -51,6 +51,8 @@ export interface MimicCarouselInspectPanelProps {
   instagramHandle?: string;
   getBackgroundUrl?: (slideIndex1Based: number) => string | undefined;
   onInspectSlideChange?: (slideIndex1Based: number) => void;
+  /** Layer editor already fetches inspect — skip duplicate POST (saves memory). */
+  skipRenderInspect?: boolean;
 }
 
 export function MimicCarouselInspectPanel({
@@ -64,6 +66,7 @@ export function MimicCarouselInspectPanel({
   instagramHandle = "",
   getBackgroundUrl,
   onInspectSlideChange,
+  skipRenderInspect = false,
 }: MimicCarouselInspectPanelProps) {
   const [expanded, setExpanded] = useState(true);
   const [audits, setAudits] = useState<MimicImageAudit[]>([]);
@@ -180,6 +183,11 @@ export function MimicCarouselInspectPanel({
   }, [fetchAudits]);
 
   useEffect(() => {
+    if (skipRenderInspect) {
+      setRenderInspect(null);
+      setRenderInspectLoading(false);
+      return;
+    }
     if (!buildInspectPayload || !templateUsed || slideCount < 1) {
       setRenderInspect(null);
       return;
@@ -214,7 +222,7 @@ export function MimicCarouselInspectPanel({
     return () => {
       cancelled = true;
     };
-  }, [buildInspectPayload, templateUsed, activeSlideIndex, slideCount, instagramHandle, getBackgroundUrl]);
+  }, [buildInspectPayload, templateUsed, activeSlideIndex, slideCount, instagramHandle, getBackgroundUrl, skipRenderInspect]);
 
   const selectedAudit = useMemo(() => auditForSlide(audits, activeSlideIndex), [audits, activeSlideIndex]);
 

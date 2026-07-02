@@ -1,0 +1,123 @@
+/**
+ * Brand Visual System slice on `content_jobs.generation_payload.bvs_v1`.
+ * Stamped at job plan time when the marketer enables BVS for an idea.
+ */
+import type { Pool } from "pg";
+import type { BrandBibleSnapshotV1 } from "./brand-bible.js";
+import {
+  buildBrandBibleSnapshot,
+  parseBrandBible,
+  type BrandBibleV1,
+} from "./brand-bible.js";
+import { getActiveBrandBible } from "../repositories/brand-bibles.js";
+import { listProjectBrandAssets } from "../repositories/project-config.js";
+
+export const BVS_V1_SCHEMA = "bvs_v1" as const;
+
+export interface BvsV1 {
+  schema_version: typeof BVS_V1_SCHEMA;
+  enabled: boolean;
+  bible_version: number | null;
+  bible_snapshot: BrandBibleSnapshotV1 | null;
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  return null;
+}
+
+export function parseBvsV1(raw: unknown): BvsV1 | null {
+  const rec = asRecord(raw);
+  if (!rec || rec.schema_version !== BVS_V1_SCHEMA) return null;
+  const enabled = rec.enabled === true;
+  const snapRaw = rec.bible_snapshot;
+  const snapRec = asRecord(snapRaw);
+  const bible = snapRec ? parseBrandBible(snapRec) : null;
+  const versionRaw = rec.bible_version;
+  const bible_version =
+    typeof versionRaw === "number" && Number.isFinite(versionRaw) ? Math.trunc(versionRaw) : null;
+  return {
+    schema_version: BVS_V1_SCHEMA,
+    enabled,
+    bible_version,
+    bible_snapshot: bible ? (snapRec as unknown as BrandBibleSnapshotV1) : null,
+  };
+}
+
+export function parseBvsFromPayload(payload: Record<string, unknown> | null | undefined): BvsV1 | null {
+  if (!payload) return null;
+  return parseBvsV1(payload.bvs_v1);
+}
+
+export function isBvsEnabledForCandidate(candidateData: Record<string, unknown> | null | undefined): boolean {
+  if (!candidateData) return false;
+  return candidateData.use_brand_visual_system === true;
+}
+
+export function buildBvsSlice(
+  enabled: boolean,
+  bibleVersion: number | null,
+  snapshot: BrandBibleSnapshotV1 | null
+): BvsV1 {
+  return {
+    schema_version: BVS_V1_SCHEMA,
+    enabled,
+    bible_version: bibleVersion,
+    bible_snapshot: enabled ? snapshot : null,
+  };
+}
+
+/** Resolve active bible + brand assets into a frozen snapshot for a job. */
+export async function resolveBvsSnapshotForProject(
+  db: Pool,
+  projectId: string
+): Promise<{ version: number; snapshot: BrandBibleSnapshotV1 } | null> {
+  const active = await getActiveBrandBible(db, projectId);
+  if (!active) return null;
+  const parsed = parseBrandBible(active.bible_json);
+  if (!parsed) return null;
+  const assets = await listProjectBrandAssets(db, projectId).catch(() => []);
+  return {
+    version: active.version,
+    snapshot: buildBrandBibleSnapshot(parsed, assets),
+  };
+}
+
+/** Stamp `bvs_v1` onto a planned generation_payload when the candidate requests BVS. */
+export async function attachBvsToPlannedPayload(
+  db: Pool,
+  projectId: string,
+  payload: Record<string, unknown>,
+  candidateData: Record<string, unknown>
+): Promise<void> {
+  if (!isBvsEnabledForCandidate(candidateData)) {
+    payload.bvs_v1 = buildBvsSlice(false, null, null);
+    return;
+  }
+  const resolved = await resolveBvsSnapshotForProject(db, projectId);
+  if (!resolved) {
+    payload.bvs_v1 = buildBvsSlice(true, null, null);
+    return;
+  }
+  payload.bvs_v1 = buildBvsSlice(true, resolved.version, resolved.snapshot);
+}
+
+/** Merge bible palette/motifs into brand profile for brand translation when BVS is on. */
+export function brandProfileFromBvsSnapshot(
+  snapshot: BrandBibleSnapshotV1 | null | undefined,
+  baseProfile: BrandBibleV1 | null
+): Record<string, unknown> | null {
+  if (!snapshot) return null;
+  const guide = snapshot.application_guide;
+  return {
+    schema_version: "brand_profile_v1",
+    brand_name: null,
+    palette: snapshot.palette,
+    visual_style: snapshot.visual_mode_custom ?? snapshot.visual_mode?.replace(/_/g, " ") ?? null,
+    tone: guide.instructions.slice(0, 300) || null,
+    domain_metaphors: snapshot.allowed_motifs.slice(0, 16),
+    allowed_motifs: snapshot.allowed_motifs,
+    forbidden_motifs: snapshot.forbidden_motifs,
+    symbol_map: baseProfile ? [] : [],
+  };
+}

@@ -9,20 +9,20 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { humanizeFlowType } from "@/lib/marketer/language";
+import { normalizeCartItemFlow } from "@/lib/marketer/cart-flow-resolve";
+import {
+  readActiveBriefPackId,
+  readBriefCart,
+  writeActiveBriefPackId,
+  writeBriefCart,
+} from "@/lib/marketer/cart-storage";
 import type { ContentCartItem } from "@/lib/marketer/types";
-
-const cartKey = (slug: string) => `caf-review-content-cart-${slug}`;
-
-interface FlowTypeOption {
-  id: string;
-  label: string;
-}
 
 interface ContentCartContextValue {
   items: ContentCartItem[];
   count: number;
-  flowTypes: FlowTypeOption[];
+  briefPackId: string | null;
+  setBriefPackId: (packId: string | null) => void;
   addIdea: (item: Omit<ContentCartItem, "kind">) => void;
   addTopPerformer: (item: Omit<ContentCartItem, "kind"> & { mimicMode?: ContentCartItem["mimicMode"]; renderMode?: ContentCartItem["renderMode"] }) => void;
   removeItem: (id: string) => void;
@@ -30,86 +30,71 @@ interface ContentCartContextValue {
   clear: () => void;
   drawerOpen: boolean;
   setDrawerOpen: (open: boolean) => void;
+  reviewOpen: boolean;
+  setReviewOpen: (open: boolean) => void;
 }
 
 const ContentCartContext = createContext<ContentCartContextValue | null>(null);
 
-function readCart(slug: string): ContentCartItem[] {
-  if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem(cartKey(slug)) ?? "[]") as ContentCartItem[];
-  } catch {
-    return [];
-  }
-}
-
-function writeCart(slug: string, items: ContentCartItem[]) {
-  try {
-    localStorage.setItem(cartKey(slug), JSON.stringify(items));
-  } catch {
-    /* ignore */
-  }
-}
-
 export function ContentCartProvider({ slug, children }: { slug: string; children: ReactNode }) {
+  const [briefPackId, setBriefPackIdState] = useState<string | null>(null);
   const [items, setItems] = useState<ContentCartItem[]>([]);
-  const [flowTypes, setFlowTypes] = useState<FlowTypeOption[]>([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   useEffect(() => {
-    setItems(readCart(slug));
+    const storedPack = readActiveBriefPackId(slug);
+    if (storedPack) {
+      setBriefPackIdState(storedPack);
+      setItems(readBriefCart(slug, storedPack).map(normalizeCartItemFlow));
+    }
   }, [slug]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/project-config/flow-types?project=${encodeURIComponent(slug)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (cancelled || !j?.flow_types) return;
-        const opts = (j.flow_types as Array<Record<string, unknown>>)
-          .map((row) => {
-            const id = String(row.flow_type ?? row.id ?? "").trim();
-            if (!id) return null;
-            const label = String(row.display_name ?? row.label ?? humanizeFlowType(id)).trim();
-            return { id, label };
-          })
-          .filter((x): x is FlowTypeOption => x != null);
-        setFlowTypes(opts);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [slug]);
-
-  const persist = useCallback(
-    (next: ContentCartItem[]) => {
-      setItems(next);
-      writeCart(slug, next);
+  const setBriefPackId = useCallback(
+    (packId: string | null) => {
+      const next = packId && packId !== "all" ? packId : null;
+      setBriefPackIdState(next);
+      if (next) {
+        writeActiveBriefPackId(slug, next);
+        setItems(readBriefCart(slug, next).map(normalizeCartItemFlow));
+      } else {
+        setItems([]);
+      }
     },
     [slug]
   );
 
+  const persist = useCallback(
+    (next: ContentCartItem[], packId = briefPackId) => {
+      const normalized = next.map(normalizeCartItemFlow);
+      setItems(normalized);
+      if (packId) writeBriefCart(slug, packId, normalized);
+    },
+    [slug, briefPackId]
+  );
+
   const addIdea = useCallback(
     (item: Omit<ContentCartItem, "kind">) => {
-      persist([
-        ...items.filter((x) => x.id !== item.id),
-        { ...item, kind: "idea" },
-      ]);
+      if (!briefPackId) return;
+      persist(
+        [...items.filter((x) => x.id !== item.id), { ...item, kind: "idea" }],
+        briefPackId
+      );
       setDrawerOpen(true);
     },
-    [items, persist]
+    [items, persist, briefPackId]
   );
 
   const addTopPerformer = useCallback(
     (item: Omit<ContentCartItem, "kind"> & { mimicMode?: ContentCartItem["mimicMode"]; renderMode?: ContentCartItem["renderMode"] }) => {
-      persist([
-        ...items.filter((x) => x.id !== item.id),
-        { ...item, kind: "top_performer" },
-      ]);
+      if (!briefPackId) return;
+      persist(
+        [...items.filter((x) => x.id !== item.id), { ...item, kind: "top_performer" }],
+        briefPackId
+      );
       setDrawerOpen(true);
     },
-    [items, persist]
+    [items, persist, briefPackId]
   );
 
   const removeItem = useCallback(
@@ -132,7 +117,8 @@ export function ContentCartProvider({ slug, children }: { slug: string; children
     () => ({
       items,
       count: items.length,
-      flowTypes,
+      briefPackId,
+      setBriefPackId,
       addIdea,
       addTopPerformer,
       removeItem,
@@ -140,8 +126,10 @@ export function ContentCartProvider({ slug, children }: { slug: string; children
       clear,
       drawerOpen,
       setDrawerOpen,
+      reviewOpen,
+      setReviewOpen,
     }),
-    [items, flowTypes, addIdea, addTopPerformer, removeItem, updateItem, clear, drawerOpen]
+    [items, briefPackId, setBriefPackId, addIdea, addTopPerformer, removeItem, updateItem, clear, drawerOpen, reviewOpen]
   );
 
   return <ContentCartContext.Provider value={value}>{children}</ContentCartContext.Provider>;
@@ -157,4 +145,13 @@ export function useContentCart(): ContentCartContextValue {
 
 export function useContentCartOptional(): ContentCartContextValue | null {
   return useContext(ContentCartContext);
+}
+
+/** Keep cart scoped to the active research brief / idea list. */
+export function useSyncCartBriefPack(packId: string | null | undefined) {
+  const cart = useContentCartOptional();
+  useEffect(() => {
+    if (!cart || !packId || packId === "all") return;
+    cart.setBriefPackId(packId);
+  }, [cart, packId]);
 }

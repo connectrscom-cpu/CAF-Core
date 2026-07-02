@@ -1,8 +1,14 @@
 import { humanizeFlowType } from "./language";
-import { formatBriefDate, parsePackNotes } from "./research-notes";
+import { applyResearchBriefDisplayNames, parsePackNotes } from "./research-notes";
 import type { ContentIdea, HashtagInsight, IdeaStatus, ResearchBrief, TopPerformerRef } from "./types";
-import { pickInspectionMediaPreviewUrl } from "./inspection-media";
-
+import { pickRenderableThumb } from "./inspection-media";
+import {
+  contentPreviewMissing,
+  contentPreviewReady,
+  enrichIdeasWithPreviews,
+  resolveEvidencePreview,
+  type ContentPreview,
+} from "./preview-resolver";
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -115,6 +121,58 @@ const TIER_TO_KIND: Record<string, TopPerformerRef["mimicKind"]> = {
   top_performer_video: "video",
 };
 
+function inspectionMediaFromEntry(entry: Record<string, unknown>) {
+  const im = asRecord(entry.inspection_media);
+  if (!im) return null;
+  return {
+    items: asArray(im.items)
+      .map((it) => {
+        const o = asRecord(it);
+        return o
+          ? {
+              role: str(o.role),
+              public_url: str(o.public_url) || null,
+              vision_fetch_url: str(o.vision_fetch_url) || null,
+            }
+          : null;
+      })
+      .filter((x): x is NonNullable<typeof x> => x != null),
+  };
+}
+
+function resolveTopPerformerEntryThumbnail(entry: Record<string, unknown>): string | null {
+  const preview = resolveEvidencePreview({
+    kind: "inspection_media",
+    media: inspectionMediaFromEntry(entry),
+    previewKind: "reference",
+  });
+  if (preview.thumbnailUrl) return preview.thumbnailUrl;
+  return pickRenderableThumb(
+    str(entry.evidence_thumbnail_url) || null,
+    str(entry.thumbnail_url) || null,
+    str(entry.cover_image_url) || null
+  );
+}
+
+function topPerformerPreview(thumbnailUrl: string | null): ContentPreview {
+  const url = pickRenderableThumb(thumbnailUrl);
+  return url ? contentPreviewReady(url, { kind: "reference" }) : contentPreviewMissing("reference");
+}
+
+export function enrichTopPerformersWithEvidence(
+  refs: TopPerformerRef[],
+  thumbByInsightsId: Map<string, string | null>
+): TopPerformerRef[] {
+  return refs.map((tp) => {
+    const thumb = pickRenderableThumb(thumbByInsightsId.get(tp.insightsId), tp.thumbnailUrl);
+    return {
+      ...tp,
+      thumbnailUrl: thumb,
+      preview: topPerformerPreview(thumb),
+    };
+  });
+}
+
 export function parseTopPerformersFromPack(
   signalPack: Record<string, unknown> | null | undefined
 ): TopPerformerRef[] {
@@ -145,23 +203,7 @@ export function parseTopPerformersFromPack(
 
     const platform = str(entry.platform) || str(entry.evidence_platform) || "Instagram";
     const postUrl = str(entry.evidence_post_url) || str(entry.post_url) || null;
-    const im = asRecord(entry.inspection_media);
-    const thumbnailUrl = pickInspectionMediaPreviewUrl(
-      im
-        ? {
-            items: asArray(im.items).map((it) => {
-              const o = asRecord(it);
-              return o
-                ? {
-                    role: str(o.role),
-                    public_url: str(o.public_url) || null,
-                    vision_fetch_url: str(o.vision_fetch_url) || null,
-                  }
-                : null;
-            }).filter((x): x is NonNullable<typeof x> => x != null),
-          }
-        : null
-    );
+    const thumbnailUrl = resolveTopPerformerEntryThumbnail(entry);
 
     out.push({
       id: insightsId,
@@ -186,9 +228,120 @@ export function parseTopPerformersFromPack(
             : str(entry.aesthetic_summary) || "High-performing reference from your research.",
       postUrl,
       thumbnailUrl,
+      preview: topPerformerPreview(thumbnailUrl),
     });
   }
 
+  return out;
+}
+
+function mimicKindFromFormat(formatRaw: string): TopPerformerRef["mimicKind"] {
+  const f = formatRaw.toLowerCase();
+  if (f.includes("video")) return "video";
+  if (f.includes("carousel")) return "replica";
+  return "image";
+}
+
+function topPerformerRenderLabel(mimicKind: TopPerformerRef["mimicKind"]): string {
+  if (mimicKind === "why_carousel") return "Why mimic";
+  if (mimicKind === "replica") return "Replica mimic";
+  if (mimicKind === "video") return "Video mimic";
+  return "Image mimic";
+}
+
+function thumbnailMapFromPack(pack: Record<string, unknown> | null): Map<string, string | null> {
+  const map = new Map<string, string | null>();
+  const derived = asRecord(pack?.derived_globals_json);
+  const vg = asRecord(derived?.visual_guidelines_pack_v1);
+  for (const raw of asArray(vg?.entries)) {
+    const entry = asRecord(raw);
+    if (!entry) continue;
+    const insightsId = str(entry.insights_id);
+    if (!insightsId || map.has(insightsId)) continue;
+    map.set(insightsId, resolveTopPerformerEntryThumbnail(entry));
+  }
+  return map;
+}
+
+function postUrlMapFromPack(pack: Record<string, unknown> | null): Map<string, string> {
+  const map = new Map<string, string>();
+  const derived = asRecord(pack?.derived_globals_json);
+  const vg = asRecord(derived?.visual_guidelines_pack_v1);
+  for (const raw of asArray(vg?.entries)) {
+    const entry = asRecord(raw);
+    if (!entry) continue;
+    const insightsId = str(entry.insights_id);
+    const url = str(entry.evidence_post_url) || str(entry.post_url);
+    if (insightsId && url.startsWith("http")) map.set(insightsId, url);
+  }
+  return map;
+}
+
+function parseTopPerformersFromV1Highlights(
+  pack: Record<string, unknown> | null,
+  v1Raw: Record<string, unknown> | null | undefined
+): TopPerformerRef[] {
+  if (!v1Raw || v1Raw.schema_version !== 1) return [];
+  const highlights = asArray(v1Raw.top_performer_highlights)
+    .map((x) => asRecord(x))
+    .filter((x): x is Record<string, unknown> => x != null);
+  if (!highlights.length) return [];
+
+  const thumbs = thumbnailMapFromPack(pack);
+  const postUrls = postUrlMapFromPack(pack);
+  const out: TopPerformerRef[] = [];
+
+  for (const h of highlights) {
+    const insightsId = str(h.insights_id);
+    const id = insightsId || str(h.id);
+    if (!id) continue;
+    const formatRaw = str(h.format);
+    const formatLabel = humanizeFormat((formatRaw.split("|")[0] ?? formatRaw) || "reference", str(h.platform) || "Instagram");
+    let mimicKind = mimicKindFromFormat(formatRaw);
+    const applyThis = str(h.apply_this);
+    if (applyThis && /why/i.test(applyThis)) mimicKind = "why_carousel";
+    const thumbnailUrl = insightsId ? thumbs.get(insightsId) ?? null : null;
+    const postUrl = insightsId ? postUrls.get(insightsId) ?? null : null;
+    out.push({
+      id,
+      insightsId: insightsId || id,
+      title: str(h.title) || "Top performer",
+      platform: str(h.platform) || "Instagram",
+      format: formatLabel,
+      mimicKind,
+      renderLabel: topPerformerRenderLabel(mimicKind),
+      detail:
+        str(h.summary) ||
+        (mimicKind === "why_carousel"
+          ? "Recreates the strategic structure and argument — not a pixel-perfect copy."
+          : mimicKind === "replica"
+            ? "Closely follows the visual layout and style of the reference post."
+            : "High-performing reference from your research."),
+      postUrl,
+      thumbnailUrl,
+      preview: topPerformerPreview(thumbnailUrl),
+    });
+  }
+
+  return out;
+}
+
+/** Pack entries plus synthesized v1 highlights (same sources as intelligence preview). */
+export function parseTopPerformersForPack(
+  pack: Record<string, unknown> | null | undefined,
+  synthesizedV1?: Record<string, unknown> | null
+): TopPerformerRef[] {
+  const fromPack = parseTopPerformersFromPack(pack);
+  const derived = asRecord(pack?.derived_globals_json);
+  const v1 = synthesizedV1 ?? asRecord(derived?.market_intelligence_v1);
+  const fromV1 = parseTopPerformersFromV1Highlights(pack ?? null, v1);
+  const seen = new Set<string>();
+  const out: TopPerformerRef[] = [];
+  for (const tp of [...fromV1, ...fromPack]) {
+    if (seen.has(tp.id)) continue;
+    seen.add(tp.id);
+    out.push(tp);
+  }
   return out;
 }
 
@@ -242,7 +395,7 @@ export function toResearchBrief(
     str(row.source_inputs_import_id) ||
     null;
   const created = str(row.created_at);
-  const { plain, marketer } = parsePackNotes(row.notes);
+  const { marketer } = parsePackNotes(row.notes);
 
   const meta = asRecord(derived?.marketer_research_meta);
   const platformsFromDerived = asArray(derived?.platforms_found)
@@ -261,25 +414,59 @@ export function toResearchBrief(
     marketer.postMaxAgeDays ??
     (typeof meta?.postMaxAgeDays === "number" ? meta.postMaxAgeDays : null);
 
-  const autoTitle =
-    str(row.upload_filename)?.replace(/\.[^.]+$/, "") ||
-    (created ? `Research ${created.slice(0, 10)}` : "Market research");
-  const userTitle = marketer.marketer_title || plain || autoTitle;
-  const brand = (brandDisplayName ?? "").trim() || "Brand";
-  const label = `${brand} · ${userTitle} · ${formatBriefDate(created || new Date().toISOString())}`;
-
-  return {
+  const base = {
     id: row.id,
     createdAt: created,
-    label,
+    label: "",
     ideasCount: row.ideas_count ?? 0,
     sourceWindow: row.source_window ?? null,
     notes: row.notes ?? null,
     importId,
-    userTitle,
+    userTitle: null as string | null,
     platforms,
     postMaxAgeDays,
   };
+
+  const { userTitle, label } = applyResearchBriefDisplayNames(
+    base,
+    brandDisplayName ?? "Brand",
+    row.upload_filename
+  );
+
+  return { ...base, userTitle, label };
 }
 
-export { humanizeFlowType };
+export function enrichResearchBriefFromScraperRun(
+  brief: ResearchBrief,
+  runs: Array<{
+    evidence_import_id?: string | null;
+    config_snapshot_json?: Record<string, unknown>;
+  }>,
+  brandDisplayName?: string
+): ResearchBrief {
+  if (brief.platforms.length && brief.postMaxAgeDays != null) return brief;
+  const run = runs.find((r) => str(r.evidence_import_id) === brief.importId);
+  if (!run?.config_snapshot_json) return brief;
+  const opts = run.config_snapshot_json.run_options;
+  const ro = opts != null && typeof opts === "object" && !Array.isArray(opts) ? (opts as Record<string, unknown>) : null;
+  if (!ro) return brief;
+  const platforms = Array.isArray(ro.platforms)
+    ? ro.platforms.map((p) => str(p)).filter(Boolean)
+    : brief.platforms;
+  const postMaxAgeDays =
+    typeof ro.post_max_age_days === "number"
+      ? ro.post_max_age_days
+      : brief.postMaxAgeDays;
+  const enriched: ResearchBrief = {
+    ...brief,
+    platforms: platforms.length ? platforms : brief.platforms,
+    postMaxAgeDays,
+  };
+  if (!brandDisplayName || (brief.platforms.length > 0 && brief.postMaxAgeDays != null)) {
+    return enriched;
+  }
+  const { userTitle, label } = applyResearchBriefDisplayNames(enriched, brandDisplayName);
+  return { ...enriched, userTitle, label };
+}
+
+export { humanizeFlowType, enrichIdeasWithPreviews };

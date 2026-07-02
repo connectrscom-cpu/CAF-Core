@@ -280,6 +280,28 @@ async function pollReviewBackgroundJob(job: ReviewBackgroundJob): Promise<void> 
     return;
   }
 
+  const taskRes = await fetch(`/api/task?${qs}`, { cache: "no-store" });
+  if (taskRes.ok) {
+    const taskJson = (await taskRes.json()) as { data?: Record<string, string | undefined> };
+    const d = taskJson.data ?? {};
+    if (d.carousel_regenerate_active === "failed") {
+      finishJob(job.id, "failed", d.carousel_regenerate_error ?? "Image regenerate failed.");
+      return;
+    }
+    if (d.carousel_regenerate_active === "true") {
+      const done = Number(d.carousel_regenerate_done ?? 0);
+      const total = Number(d.carousel_regenerate_total ?? 0);
+      if (total > 0 && done >= total) {
+        finishJob(job.id, "done", `${job.label} finished — ${done}/${total} slides updated.`);
+        return;
+      }
+    }
+    if (d.carousel_regenerate_status === "completed") {
+      finishJob(job.id, "done", `${job.label} finished — new images are ready.`);
+      return;
+    }
+  }
+
   const res = await fetch(`/api/task/assets?${qs}`, { cache: "no-store" });
   if (!res.ok) return;
   const json = (await res.json()) as {

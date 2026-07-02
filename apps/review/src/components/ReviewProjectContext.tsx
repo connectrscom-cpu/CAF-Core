@@ -10,8 +10,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { mergePreservedNavQuery } from "@/lib/preserved-nav-query";
+import { clientSearchParams, useClientSearchQuery } from "@/lib/use-client-search-query";
 
 const STORAGE_KEY = "caf-review-active-project";
 const BRAND_ROUTE_RE = /^\/brand\/([^/]+)/;
@@ -78,7 +79,8 @@ function shouldOfferRestore(pathname: string): boolean {
 
 export function ReviewProjectProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const searchQuery = useClientSearchQuery();
+  const searchParams = useMemo(() => clientSearchParams(searchQuery), [searchQuery]);
   const router = useRouter();
 
   const [ready, setReady] = useState(false);
@@ -184,18 +186,22 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
     }
     try {
       const stored = localStorage.getItem(STORAGE_KEY)?.trim();
-      if (stored) {
-        const next = new URLSearchParams(searchParams.toString());
+      if (stored && stored !== projectFromUrl) {
+        const next = new URLSearchParams(searchQuery);
         next.set("project", stored);
         next.delete("page");
         const qs = next.toString();
-        router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+        const target = qs ? `${pathname}?${qs}` : pathname;
+        const current = searchQuery ? `${pathname}?${searchQuery}` : pathname;
+        if (target !== current) {
+          router.replace(target, { scroll: false });
+        }
       }
     } catch {
       /* ignore */
     }
     restoreAttempted.current = true;
-  }, [ready, multiProject, projectFromUrl, inBrandContext, pathname, router, searchParams]);
+  }, [ready, multiProject, projectFromUrl, inBrandContext, pathname, router, searchQuery]);
 
   const navHref = useCallback(
     (path: string) => {
@@ -214,7 +220,7 @@ export function ReviewProjectProvider({ children }: { children: ReactNode }) {
       const qs = merged.toString();
       return qs ? `${base}?${qs}` : base;
     },
-    [inBrandContext, activeBrandSlug, multiProject, activeProjectSlug, searchParams]
+    [inBrandContext, activeBrandSlug, multiProject, activeProjectSlug, searchQuery]
   );
 
   const value = useMemo<ReviewProjectContextValue>(

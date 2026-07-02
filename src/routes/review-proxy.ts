@@ -23,6 +23,9 @@ export async function registerReviewProxyRoutes(
       rewriteRequestHeaders: (_req, headers) => {
         const h = { ...headers };
         h.host = `127.0.0.1:${config.CAF_REVIEW_PORT}`;
+        // Multipart uploads through reply-from fail when Expect: 100-continue is forwarded.
+        delete h.expect;
+        delete h.Expect;
         return h;
       },
     });

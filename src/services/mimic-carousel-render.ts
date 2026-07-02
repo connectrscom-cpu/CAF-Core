@@ -4,6 +4,7 @@ import type { MimicSlideCopyLayoutForLlm } from "../domain/mimic-carousel-packag
 import type { MimicPayloadV1, MimicReferenceItem, MimicSlidePlan } from "../domain/mimic-payload.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildArtOnlySafeZoneHint, parseMimicTextBlocks } from "./mimic-slide-typography.js";
+import { sourceSlideIndexForMimicOutput } from "../domain/mimic-output-slide-index.js";
 import {
   aestheticSlideRecords,
   deckUsesUnifiedBackgroundPlate,
@@ -151,11 +152,8 @@ export function referenceItemForMimicSlide(
   if (items.length === 0) return null;
 
   const plan = mimic.slide_plans?.find((s) => s.slide_index === slideIndex);
+  const expectedSource = sourceSlideIndexForMimicOutput(mimic, slideIndex);
   const contentSources = contentSourceSlideIndicesForMimic(mimic);
-  const expectedSource =
-    plan?.source_slide_index != null && plan.source_slide_index > 0
-      ? plan.source_slide_index
-      : contentSources[slideIndex - 1] ?? slideIndex;
 
   const positional = slideIndex >= 1 && slideIndex <= items.length ? items[slideIndex - 1] : null;
   if (

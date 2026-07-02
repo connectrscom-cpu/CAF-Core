@@ -1,10 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { useContentCart } from "@/components/marketer/ContentCartContext";
+import { useContentCart, useSyncCartBriefPack } from "@/components/marketer/ContentCartContext";
+import { useReviewProject } from "@/components/ReviewProjectContext";
+import { useAbortableLoad } from "@/lib/marketer/use-abortable-load";
+import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
+import { contentPreviewMissing } from "@/lib/marketer/preview-resolver";
 import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
+import { resolveCartFlowForIdea } from "@/lib/marketer/cart-flow-resolve";
 import type {
   ContentIdea,
   GenerationStrategy,
@@ -27,10 +32,16 @@ interface IdeasResponse {
 
 const LOCAL_KEY = (slug: string) => `caf-review-idea-states-${slug}`;
 
-type LocalState = Record<string, { status: IdeaStatus; strategy?: GenerationStrategy }>;
+type LocalState = Record<string, { status: IdeaStatus; strategy?: GenerationStrategy; useBvs?: boolean }>;
 
 type MainTab = "new_content" | "top_performers";
-type FormatTab = "all" | "carousel" | "video" | "product" | "niche";
+type LensTab = "niche" | "product";
+type FormatTab = "all" | "carousel" | "video";
+
+function matchesLens(idea: ContentIdea, lens: LensTab): boolean {
+  if (lens === "product") return idea.contentLens === "product";
+  return idea.contentLens === "niche" || idea.contentLens == null;
+}
 
 function readLocal(slug: string): LocalState {
   if (typeof window === "undefined") return {};
@@ -58,54 +69,61 @@ const MIMIC_EXPLAIN: Record<TopPerformerRef["mimicKind"], string> = {
   image: "Image mimic — single-frame visual reference replication.",
 };
 
+function mainTabFromParam(tab: string | null): MainTab {
+  return tab === "top_performers" ? "top_performers" : "new_content";
+}
+
 export function IdeasBoard({ slug }: IdeasBoardProps) {
   const searchParams = useSearchParams();
-  const initialPack = searchParams.get("packId");
-  const initialTab = searchParams.get("tab");
+  const { navHref } = useReviewProject();
+  const packFromUrl = searchParams.get("packId");
+  const tabFromUrl = mainTabFromParam(searchParams.get("tab"));
 
   const cart = useContentCart();
   const [ideas, setIdeas] = useState<ContentIdea[]>([]);
   const [topPerformers, setTopPerformers] = useState<TopPerformerRef[]>([]);
   const [briefs, setBriefs] = useState<ResearchBrief[]>([]);
-  const [packId, setPackId] = useState<string>(initialPack ?? "");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [packId, setPackId] = useState<string>(packFromUrl ?? "");
+  useSyncCartBriefPack(packId && packId !== "all" ? packId : null);
   const [local, setLocal] = useState<LocalState>({});
-  const [mainTab, setMainTab] = useState<MainTab>(
-    initialTab === "top_performers" ? "top_performers" : "new_content"
-  );
+  const [mainTab, setMainTab] = useState<MainTab>(tabFromUrl);
+  const [lensTab, setLensTab] = useState<LensTab>("niche");
   const [formatTab, setFormatTab] = useState<FormatTab>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [tpMimic, setTpMimic] = useState<Record<string, "replica" | "why_carousel">>({});
   const [tpRender, setTpRender] = useState<Record<string, "full_bleed" | "template">>({});
+  const packIdRef = useRef(packId);
+  packIdRef.current = packId;
 
   useEffect(() => {
     setLocal(readLocal(slug));
   }, [slug]);
 
-  const load = useCallback(async () => {
-    setError(null);
-    const qs = new URLSearchParams();
-    if (packId) qs.set("packId", packId);
-    else qs.set("packId", "all");
-    try {
-      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/ideas?${qs}`);
+  // Sync from external links (e.g. View all →) without router.replace — avoids Next.js nav deadlocks.
+  useEffect(() => {
+    if (packFromUrl != null) setPackId(packFromUrl);
+    setMainTab(tabFromUrl);
+  }, [packFromUrl, tabFromUrl]);
+
+  const load = useCallback(
+    async (signal: AbortSignal) => {
+      const qs = new URLSearchParams();
+      const pid = packIdRef.current;
+      if (pid) qs.set("packId", pid);
+      else qs.set("packId", "all");
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/ideas?${qs}`, { signal });
       if (!res.ok) throw new Error("Failed to load ideas");
       const j = (await res.json()) as IdeasResponse;
+      if (signal.aborted) return;
       setIdeas(j.ideas ?? []);
       setTopPerformers(j.topPerformers ?? []);
       setBriefs(j.briefs ?? []);
-      if (!packId && j.packId) setPackId(j.packId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setLoading(false);
-    }
-  }, [slug, packId]);
+      if (!packIdRef.current && j.packId) setPackId(j.packId);
+    },
+    [slug]
+  );
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const { loading, error } = useAbortableLoad([slug, packId], load);
 
   function statusOf(idea: ContentIdea): IdeaStatus {
     return local[idea.id]?.status ?? idea.status;
@@ -130,28 +148,42 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
     });
   }
 
+  const nicheCount = useMemo(() => ideas.filter((i) => matchesLens(i, "niche")).length, [ideas]);
+  const productCount = useMemo(() => ideas.filter((i) => matchesLens(i, "product")).length, [ideas]);
+
+  const ideasInLens = useMemo(
+    () => ideas.filter((i) => matchesLens(i, lensTab)),
+    [ideas, lensTab]
+  );
+
   const filteredIdeas = useMemo(() => {
-    let list = ideas;
-    if (formatTab === "carousel") list = list.filter((i) => i.format === "carousel");
-    else if (formatTab === "video") list = list.filter((i) => i.format === "video");
-    else if (formatTab === "product") list = list.filter((i) => i.contentLens === "product");
-    else if (formatTab === "niche") list = list.filter((i) => i.contentLens === "niche");
-    return list;
-  }, [ideas, formatTab]);
+    if (formatTab === "carousel") return ideasInLens.filter((i) => i.format === "carousel");
+    if (formatTab === "video") return ideasInLens.filter((i) => i.format === "video");
+    return ideasInLens;
+  }, [ideasInLens, formatTab]);
+
+  const formatCounts = useMemo(
+    () => ({
+      all: ideasInLens.length,
+      carousel: ideasInLens.filter((i) => i.format === "carousel").length,
+      video: ideasInLens.filter((i) => i.format === "video").length,
+    }),
+    [ideasInLens]
+  );
 
   const selectedCount = ideas.filter((i) => statusOf(i) === "selected").length;
 
   if (loading) return <p className="workspace-muted">Loading ideas…</p>;
   if (error) return <p className="workspace-error">{error}</p>;
 
-  const empty = mainTab === "new_content" ? ideas.length === 0 : topPerformers.length === 0;
+  const hasAnyContent = ideas.length > 0 || topPerformers.length > 0 || briefs.length > 0;
 
-  if (empty && !briefs.length) {
+  if (!hasAnyContent) {
     return (
       <div className="workspace-empty">
         <h3>No ideas yet</h3>
         <p>Once research is processed into a brief, CAF will recommend content ideas here.</p>
-        <Link href={`/brand/${encodeURIComponent(slug)}/research`} className="btn-primary">
+        <Link href={navHref(`/brand/${encodeURIComponent(slug)}/research`)} className="btn-primary">
           Start market research
         </Link>
       </div>
@@ -197,33 +229,60 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
             </select>
           </label>
           {cart.count > 0 && (
-            <button type="button" className="btn-primary btn-sm" onClick={() => cart.setDrawerOpen(true)}>
-              Cart ({cart.count})
-            </button>
+            <>
+              <button type="button" className="btn-primary btn-sm" onClick={() => cart.setReviewOpen(true)}>
+                Start creation ({cart.count})
+              </button>
+              <button type="button" className="btn-ghost btn-sm" onClick={() => cart.setDrawerOpen(true)}>
+                Cart ({cart.count})
+              </button>
+            </>
           )}
         </div>
 
         {mainTab === "new_content" && (
-          <div className="ideas-format-tabs">
-            {(
-              [
-                ["all", "All"],
-                ["carousel", "Carousels"],
-                ["video", "Videos"],
-                ["product", "Product"],
-                ["niche", "Niche"],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                className={`ideas-format-tab ${formatTab === key ? "active" : ""}`}
-                onClick={() => setFormatTab(key)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <>
+            <div className="ideas-lens-tabs">
+              {(
+                [
+                  ["niche", "Niche"],
+                  ["product", "Product"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`ideas-main-tab ${lensTab === key ? "active" : ""}`}
+                  onClick={() => {
+                    setLensTab(key);
+                    setFormatTab("all");
+                  }}
+                >
+                  {label}
+                  <span className="ideas-tab-count">{key === "niche" ? nicheCount : productCount}</span>
+                </button>
+              ))}
+            </div>
+            <div className="ideas-format-tabs">
+              {(
+                [
+                  ["all", "All"],
+                  ["carousel", "Carousels"],
+                  ["video", "Videos"],
+                ] as const
+              ).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`ideas-format-tab ${formatTab === key ? "active" : ""}`}
+                  onClick={() => setFormatTab(key)}
+                >
+                  {label}
+                  <span className="ideas-tab-count">{formatCounts[key]}</span>
+                </button>
+              ))}
+            </div>
+          </>
         )}
 
         {mainTab === "new_content" && (
@@ -236,8 +295,8 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
       {mainTab === "top_performers" ? (
         <div className="ideas-tp-section">
           <p className="ideas-tp-intro">
-            High-performing references from your research. Pick replica vs why mimic and carousel render mode, then add
-            to your cart.
+            High-performing references from your research. Pick replica vs why mimic and carousel render mode, then queue
+            for generation.
           </p>
           <div className="ideas-tp-grid">
             {topPerformers.map((tp) => {
@@ -246,14 +305,11 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
               const isCarousel = tp.format.toLowerCase().includes("carousel") || tp.mimicKind === "replica";
               return (
                 <article key={tp.id} className="idea-tp-card intel-card--hover">
-                  <div className="idea-tp-thumb">
-                    {tp.thumbnailUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={tp.thumbnailUrl} alt="" />
-                    ) : (
-                      <span className="intel-tp-thumb-placeholder">{tp.format.slice(0, 1)}</span>
-                    )}
-                  </div>
+                  <PreviewMediaCard
+                    preview={tp.preview ?? contentPreviewMissing("reference")}
+                    alt={tp.title}
+                    variant="card"
+                  />
                   <div className="idea-tp-body">
                     <h3>{tp.title}</h3>
                     <span className="idea-tp-meta">
@@ -306,22 +362,26 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                       <button
                         type="button"
                         className="btn-primary btn-sm"
-                        onClick={() =>
+                        onClick={() => {
+                          if (packId && packId !== "all") cart.setBriefPackId(packId);
                           cart.addTopPerformer({
                             id: `tp_${tp.id}`,
                             title: tp.title,
                             flowDestination:
-                              mimic === "why_carousel" ? "Why mimic carousel" : "Top performer mimic",
+                              mimic === "why_carousel" ? "Why mimic" : "Visual mimic",
                             flowTypeRaw:
                               mimic === "why_carousel"
                                 ? "FLOW_WHY_MIMIC_CAROUSEL"
                                 : "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
                             mimicMode: mimic,
                             renderMode: isCarousel ? render : undefined,
-                          })
-                        }
+                            platform: tp.platform,
+                            format: tp.format,
+                            useBrandVisualSystem: true,
+                          });
+                        }}
                       >
-                        Add to cart
+                        Queue for generation
                       </button>
                       {tp.postUrl && (
                         <a href={tp.postUrl} target="_blank" rel="noreferrer" className="btn-ghost btn-sm">
@@ -351,6 +411,12 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                 key={idea.id}
                 className={`idea-tile ${expanded ? "idea-tile--expanded" : ""} idea-card--${status}`}
               >
+                <PreviewMediaCard
+                  preview={idea.preview ?? contentPreviewMissing(idea.format === "video" ? "video" : idea.format === "carousel" ? "carousel" : "storyboard")}
+                  alt={idea.title}
+                  variant="card"
+                  className="idea-tile-preview"
+                />
                 <button
                   type="button"
                   className="idea-tile-head"
@@ -393,20 +459,47 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                         </select>
                       </div>
                     )}
+                    <label className="idea-bvs-toggle">
+                      <input
+                        type="checkbox"
+                        checked={local[idea.id]?.useBvs !== false}
+                        onChange={(e) => {
+                          const useBvs = e.target.checked;
+                          setLocal((prev) => ({
+                            ...prev,
+                            [idea.id]: { ...prev[idea.id], status: prev[idea.id]?.status ?? status, useBvs },
+                          }));
+                          writeLocal(slug, {
+                            ...local,
+                            [idea.id]: { ...local[idea.id], status: local[idea.id]?.status ?? status, useBvs },
+                          });
+                        }}
+                      />
+                      <span>Use Brand Visual System</span>
+                      <span className="idea-bvs-hint">Apply your brand bible to visuals for this piece</span>
+                    </label>
                     <div className="idea-actions">
                       <button
                         type="button"
                         className="btn-primary btn-sm"
-                        onClick={() =>
+                        onClick={() => {
+                          if (packId && packId !== "all") cart.setBriefPackId(packId);
+                          const ideaStrategy = local[idea.id]?.strategy ?? "caf_recommended";
+                          const resolved = resolveCartFlowForIdea(idea, ideaStrategy);
                           cart.addIdea({
                             id: `idea_${idea.id}`,
                             title: idea.title,
-                            flowDestination: idea.flowType,
-                            flowTypeRaw: idea.targetFlowType,
-                          })
-                        }
+                            flowDestination: resolved.flowDestination,
+                            flowTypeRaw: resolved.flowTypeRaw,
+                            generationStrategy: resolved.generationStrategy,
+                            format: idea.format,
+                            platform: idea.platform,
+                            ideaTargetFlowType: idea.targetFlowType,
+                            useBrandVisualSystem: local[idea.id]?.useBvs !== false,
+                          });
+                        }}
                       >
-                        Add to cart
+                        Queue for generation
                       </button>
                       {status === "selected" ? (
                         <button type="button" className="btn-ghost btn-sm" onClick={() => setStatus(idea, "new")}>
@@ -415,10 +508,10 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                       ) : (
                         <>
                           <button type="button" className="btn-ghost btn-sm" onClick={() => setStatus(idea, "selected")}>
-                            Select
+                            Shortlist
                           </button>
                           <button type="button" className="btn-ghost btn-sm" onClick={() => setStatus(idea, "rejected")}>
-                            Reject
+                            Reject idea
                           </button>
                         </>
                       )}
@@ -431,8 +524,14 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
         </div>
       )}
 
-      {mainTab === "new_content" && filteredIdeas.length === 0 && ideas.length > 0 && (
-        <p className="workspace-muted">No ideas match this tab.</p>
+      {mainTab === "new_content" && filteredIdeas.length === 0 && ideasInLens.length > 0 && (
+        <p className="workspace-muted">No {lensTab} ideas match this format.</p>
+      )}
+
+      {mainTab === "new_content" && ideasInLens.length === 0 && ideas.length > 0 && (
+        <p className="workspace-muted">
+          No {lensTab} ideas in this research brief yet. Try the other content lens tab.
+        </p>
       )}
 
       {selectedCount > 0 && mainTab === "new_content" && (

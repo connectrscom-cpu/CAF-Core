@@ -57,7 +57,12 @@ import {
 } from "./mimic-planning-guards.js";
 import { buildContentTaskId, shouldSkipCandidateForFlow } from "./task-id.js";
 import { buildMimicJobPlanningGrounding } from "../domain/mimic-job-grounding.js";
+import {
+  buildSemanticContractFromCandidate,
+  serializeSemanticContract,
+} from "../domain/semantic-contract.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
+import { attachBvsToPlannedPayload } from "../domain/bvs-v1.js";
 import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
 import {
@@ -326,6 +331,7 @@ export async function startRun(
         prompt_version_label: job.prompt_version_label,
         variation_index: job.variation_index,
       });
+      await attachBvsToPlannedPayload(db, run.project_id, plannedPayload, candidateData ?? {});
       if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
         const derived =
           pack.derived_globals_json &&
@@ -341,6 +347,10 @@ export async function startRun(
         );
         if (mimicGrounding) {
           plannedPayload.mimic_job_grounding = mimicGrounding;
+        }
+        const semanticContract = buildSemanticContractFromCandidate(candidateData ?? {});
+        if (semanticContract) {
+          plannedPayload.semantic_contract_v1 = serializeSemanticContract(semanticContract);
         }
       }
 

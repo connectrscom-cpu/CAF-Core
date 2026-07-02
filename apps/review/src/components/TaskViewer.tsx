@@ -45,6 +45,8 @@ export interface TaskViewerProps {
   projectHandle?: string;
   caption?: string;
   onCaptionChange?: (value: string) => void;
+  hashtags?: string;
+  onHashtagsChange?: (value: string) => void;
   activeTextBlockIndex?: number | null;
   onActiveTextBlockIndexChange?: (blockIndex: number | null) => void;
   onDeleteSlide?: (slideIndex1Based: number) => void;
@@ -57,6 +59,10 @@ export interface TaskViewerProps {
   mimicTemplateBg?: boolean;
   mimicFullBleed?: boolean;
   onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
+  layoutSlideBadges?: Record<number, import("@/lib/mimic-layout-qc").MimicLayoutSlideBadge[]>;
+  slideRenderStatuses?: import("@/lib/slide-render-status").SlideRenderState[];
+  /** Bumped when task assets refetch after reprint/regen — forces preview image remount. */
+  assetRefreshKey?: number;
 }
 
 export function TaskViewer({
@@ -80,6 +86,8 @@ export function TaskViewer({
   projectHandle,
   caption,
   onCaptionChange,
+  hashtags,
+  onHashtagsChange,
   activeTextBlockIndex,
   onActiveTextBlockIndexChange,
   onDeleteSlide,
@@ -91,6 +99,9 @@ export function TaskViewer({
   mimicTemplateBg,
   mimicFullBleed,
   onMimicLayoutTextBlockChange,
+  layoutSlideBadges,
+  slideRenderStatuses,
+  assetRefreshKey = 0,
 }: TaskViewerProps) {
   const previewUrl = getVal(data, "preview_url");
   const flowType = getVal(data, "flow_type");
@@ -226,6 +237,9 @@ export function TaskViewer({
           mimicTemplateBg={mimicTemplateBg}
           mimicFullBleed={mimicFullBleed}
           onMimicLayoutTextBlockChange={onMimicLayoutTextBlockChange}
+          layoutSlideBadges={layoutSlideBadges}
+          slideRenderStatuses={slideRenderStatuses}
+          assetRefreshKey={assetRefreshKey}
         />
       </div>
     );
@@ -234,9 +248,16 @@ export function TaskViewer({
   if (showFullVideo) {
     const refVideo = referenceVideoUrl?.trim() ?? "";
     const refSlide = referenceSlideUrl?.trim() ?? "";
+    const showMimicCompare = Boolean(refVideo || refSlide);
     return (
       <div className="card">
-        <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Preview</p>
+        {showMimicCompare ? (
+          <p className="filter-label mimic-compare-row__heading" style={{ marginBottom: 8 }}>
+            Original vs generated
+          </p>
+        ) : (
+          <p style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>Video preview</p>
+        )}
         {refVideo ? (
           <div
             className="mimic-compare-frame"
@@ -322,6 +343,45 @@ export function TaskViewer({
           )}
           {previewToolbar}
         </div>
+        {onCaptionChange != null || onHashtagsChange != null ? (
+          <div
+            style={{
+              marginTop: 16,
+              padding: 16,
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+            }}
+          >
+            <p style={{ fontSize: 13, fontWeight: 600, margin: "0 0 10px" }}>Post copy</p>
+            {onCaptionChange != null ? (
+              <div style={{ marginBottom: 12 }}>
+                <label className="filter-label">Caption</label>
+                <textarea
+                  value={caption ?? ""}
+                  onChange={(e) => onCaptionChange(e.target.value)}
+                  rows={5}
+                  readOnly={readOnly}
+                  placeholder="Post caption for publish"
+                  style={{ width: "100%", minHeight: 100, marginTop: 6, lineHeight: 1.45 }}
+                />
+              </div>
+            ) : null}
+            {onHashtagsChange != null ? (
+              <div>
+                <label className="filter-label">Hashtags</label>
+                <textarea
+                  value={hashtags ?? ""}
+                  onChange={(e) => onHashtagsChange(e.target.value)}
+                  rows={2}
+                  readOnly={readOnly}
+                  placeholder="#hashtags"
+                  style={{ width: "100%", minHeight: 64, marginTop: 6 }}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {heyGenVideoMode && (
           <div style={{ marginTop: 16, padding: 16, background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}>
             <label className="filter-label">Spoken script</label>

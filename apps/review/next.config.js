@@ -35,6 +35,10 @@ const nextConfig = {
       coreDomain,
       "mimic-slide-analysis-quality.ts"
     );
+    config.resolve.alias["@caf-core-carousel/mimic-output-slide-index"] = path.join(
+      coreDomain,
+      "mimic-output-slide-index.ts"
+    );
     config.plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^\.\/supabase-storage\.js$/, path.join(coreServices, "supabase-storage.ts")),
       new webpack.NormalModuleReplacementPlugin(

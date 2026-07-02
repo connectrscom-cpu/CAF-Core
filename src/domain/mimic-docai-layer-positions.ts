@@ -59,12 +59,32 @@ export type MimicDocAiLayerPositionsBySlide = Record<string, MimicDocAiLayerPosi
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
 const MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX = 50;
-const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 24;
-const MIMIC_DOCAI_HANDLE_FONT_SIZE_PX = 25;
+export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 32;
+/** Soft cap for first paint in Review layout editor — saved overrides may exceed this. */
+export const MIMIC_DOCAI_EDITOR_INITIAL_FONT_MAX_PX = 60;
+const MIMIC_DOCAI_HANDLE_FONT_SIZE_PX = 28;
 export const MIMIC_CUSTOM_DOCAI_LAYER_KEY_PREFIX = "custom@";
+
+/** Clamp inspect / inferred sizes on first editor open (reviewer saves are not passed through here). */
+export function clampMimicDocAiInitialEditorFontPx(size: number): number {
+  return Math.max(
+    MIMIC_DOCAI_MIN_FONT_SIZE_PX,
+    Math.min(MIMIC_DOCAI_EDITOR_INITIAL_FONT_MAX_PX, Math.round(size))
+  );
+}
 
 export function isCustomAddedMimicDocAiLayerKey(layerKey: string): boolean {
   return String(layerKey ?? "").trim().startsWith(MIMIC_CUSTOM_DOCAI_LAYER_KEY_PREFIX);
+}
+
+/** Review editor copy-slot keys (`slot@1`, …) — not OCR keys; composited like custom boxes. */
+export function isCopySlotEditorLayerPositionKey(layerKey: string): boolean {
+  return /^slot@\d+$/.test(String(layerKey ?? "").trim());
+}
+
+/** Layers placed by the reviewer that are not native OCR keys (custom text boxes + copy slots). */
+export function isReviewerPlacedDocAiLayerKey(layerKey: string): boolean {
+  return isCustomAddedMimicDocAiLayerKey(layerKey) || isCopySlotEditorLayerPositionKey(layerKey);
 }
 
 /** Role token from keys like `custom@body@abc123`. */
@@ -92,14 +112,26 @@ export function buildCustomMimicDocAiLayerFromOverride(
     MIMIC_DOCAI_MIN_FONT_SIZE_PX,
     Math.round(override.font_size_px ?? defaultFontPx)
   );
+  const fontWeight =
+    override.font_weight != null && Number.isFinite(override.font_weight) && override.font_weight >= 100
+      ? Math.round(override.font_weight / 100) * 100
+      : 700;
+  const colorHex =
+    typeof override.color_hex === "string" && /^#[0-9a-fA-F]{3,8}$/.test(override.color_hex.trim())
+      ? override.color_hex.trim()
+      : "#111111";
+  const fontFamily = override.font_family?.trim() || "sans-serif";
+  const fontStyle = override.font_style_italic ? "italic" : "normal";
   const css = [
     `left:${x}px`,
     `top:${y}px`,
     `width:${w}px`,
     `height:${h}px`,
     `font-size:${fontSize}px`,
-    "font-weight:700",
-    "color:#111",
+    `font-weight:${fontWeight}`,
+    `color:${colorHex}`,
+    `font-family:${fontFamily}`,
+    `font-style:${fontStyle}`,
     "text-align:left",
     "line-height:1.15",
     "position:absolute",
@@ -120,8 +152,8 @@ export function buildCustomMimicDocAiLayerFromOverride(
     layout_class: "mimic-docai-layer--single-line",
     font_size_px: fontSize,
     ref_font_size_px: fontSize,
-    font_weight: 700,
-    color_hex: "#111111",
+    font_weight: fontWeight,
+    color_hex: colorHex,
     text_align: "left",
     css_style: css,
     text_backing: true,
@@ -334,7 +366,8 @@ export function parseMimicDocAiLayerPositionsBySlide(raw: unknown): MimicDocAiLa
         const text = typeof r.text === "string" ? r.text.trim() : "";
         const box_locked = r.box_locked === true;
         const hidden = r.hidden === true;
-        const custom = isCustomAddedMimicDocAiLayerKey(layer_key);
+        const custom =
+          isCustomAddedMimicDocAiLayerKey(layer_key) || isCopySlotEditorLayerPositionKey(layer_key);
         const persistBox = box_locked || custom;
         const font_weight = Number(r.font_weight);
         const color_hex =
@@ -427,9 +460,9 @@ export function applyMimicDocAiLayerPositionOverrides<T extends MimicDocAiLayerP
 ): T[] {
   const applySavedTextOnBaseLayers = opts?.applySavedTextOnBaseLayers !== false;
   if (!overrides.length) return layers;
-  const baseOverrides = overrides.filter((o) => !isCustomAddedMimicDocAiLayerKey(o.layer_key));
+  const baseOverrides = overrides.filter((o) => !isReviewerPlacedDocAiLayerKey(o.layer_key));
   const customOverrides = overrides.filter(
-    (o) => isCustomAddedMimicDocAiLayerKey(o.layer_key) && !o.hidden
+    (o) => isReviewerPlacedDocAiLayerKey(o.layer_key) && !o.hidden
   );
   const byExactKey = new Map(baseOverrides.map((o) => [o.layer_key, o]));
   const byRefKey = new Map(baseOverrides.map((o) => [refKeyFromLayerPositionKey(o.layer_key), o]));

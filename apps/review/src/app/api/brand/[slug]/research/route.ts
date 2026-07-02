@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  createProject,
   getSignalPackForProject,
   listInputsEvidenceImports,
   listInputsScraperRuns,
@@ -9,7 +10,7 @@ import {
   replaceInputsSourceTabRows,
   runInputsScraper,
 } from "@/lib/caf-core-client";
-import { toResearchBrief } from "@/lib/marketer/idea-adapters";
+import { toResearchBrief, enrichResearchBriefFromScraperRun } from "@/lib/marketer/idea-adapters";
 import {
   DEFAULT_RESEARCH_PLATFORMS,
   DEFAULT_RESEARCH_POST_AGE_DAYS,
@@ -20,38 +21,10 @@ import {
   parseHandlesInput,
   toResearchSourceGroups,
 } from "@/lib/marketer/research-adapters";
-import type { ResearchBrief } from "@/lib/marketer/types";
 
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ slug: string }> };
-
-function str(v: unknown): string {
-  return typeof v === "string" ? v.trim() : "";
-}
-
-function enrichBriefFromScraperRun(
-  brief: ResearchBrief,
-  runs: Array<{
-    evidence_import_id?: string | null;
-    config_snapshot_json?: Record<string, unknown>;
-  }>
-): ResearchBrief {
-  if (brief.platforms.length && brief.postMaxAgeDays != null) return brief;
-  const run = runs.find((r) => str(r.evidence_import_id) === brief.importId);
-  if (!run?.config_snapshot_json) return brief;
-  const opts = run.config_snapshot_json.run_options;
-  const ro = opts != null && typeof opts === "object" && !Array.isArray(opts) ? (opts as Record<string, unknown>) : null;
-  if (!ro) return brief;
-  const platforms = Array.isArray(ro.platforms)
-    ? ro.platforms.map((p) => str(p)).filter(Boolean)
-    : brief.platforms;
-  const postMaxAgeDays =
-    typeof ro.post_max_age_days === "number"
-      ? ro.post_max_age_days
-      : brief.postMaxAgeDays;
-  return { ...brief, platforms: platforms.length ? platforms : brief.platforms, postMaxAgeDays };
-}
 
 async function resolveDisplayName(slug: string): Promise<string> {
   const catalog = await listProjects().catch(() => null);
@@ -59,11 +32,21 @@ async function resolveDisplayName(slug: string): Promise<string> {
   return (project?.display_name ?? "").trim() || slug;
 }
 
+/** Ensure a CAF project row exists for this brand slug (idempotent). */
+async function ensureBrandProject(slug: string, displayName?: string): Promise<boolean> {
+  const created = await createProject(slug, displayName?.trim() || slug).catch(() => null);
+  return created?.ok === true;
+}
+
 export async function GET(_req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
 
   const displayName = await resolveDisplayName(slug);
+  const projectReady = await ensureBrandProject(slug, displayName);
+  if (!projectReady) {
+    return NextResponse.json({ ok: false, error: "project_unavailable" }, { status: 502 });
+  }
   const tabs = RESEARCH_SOURCE_GROUPS.map((g) => g.tab);
   const [rowResults, packs, imports, runs] = await Promise.all([
     Promise.all(tabs.map((tab) => listInputsSourceRows(slug, tab).catch(() => null))),
@@ -90,7 +73,7 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
   const briefs = await Promise.all(
     (packs?.signal_packs ?? []).map(async (p) => {
       const full = await getSignalPackForProject(slug, p.id).catch(() => null);
-      return enrichBriefFromScraperRun(
+      return enrichResearchBriefFromScraperRun(
         toResearchBrief(
           {
             id: p.id,
@@ -103,7 +86,8 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
           },
           displayName
         ),
-        scraperRuns
+        scraperRuns,
+        displayName
       );
     })
   );
@@ -137,6 +121,12 @@ export async function GET(_req: NextRequest, ctx: Ctx) {
 export async function POST(req: NextRequest, ctx: Ctx) {
   const { slug } = await ctx.params;
   if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
+
+  const displayName = await resolveDisplayName(slug);
+  const projectReady = await ensureBrandProject(slug, displayName);
+  if (!projectReady) {
+    return NextResponse.json({ ok: false, error: "project_unavailable" }, { status: 502 });
+  }
 
   const body = (await req.json()) as {
     action?: string;

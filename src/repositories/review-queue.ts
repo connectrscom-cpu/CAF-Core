@@ -74,6 +74,19 @@ export interface ReviewQueueJobWithProject extends ReviewQueueJob {
   project_display_name: string | null;
 }
 
+/** List rows for agents / pagination — omits heavy JSON blobs from SELECT. */
+export interface ReviewQueueJobSlim extends ReviewQueueJob {
+  generated_title: string | null;
+  generated_hook: string | null;
+  generated_caption: string | null;
+  slide_count: number | null;
+}
+
+export interface ReviewQueueJobSlimWithProject extends ReviewQueueJobSlim {
+  project_slug: string;
+  project_display_name: string | null;
+}
+
 export interface ReviewQueueFilters {
   search?: string;
   platform?: string;
@@ -125,6 +138,41 @@ const PREVIEW_THUMB_SUBQUERY = `
     LIMIT 1
   )`;
 
+/** Minimal mimic slice for flow labels — avoids loading full generation_payload on list. */
+const GENERATION_PAYLOAD_SLIM_EXPR = `
+  CASE
+    WHEN j.generation_payload ? 'mimic_v1' THEN jsonb_build_object('mimic_v1', j.generation_payload->'mimic_v1')
+    ELSE '{}'::jsonb
+  END`;
+
+const GENERATION_DISPLAY_EXTRACTS = `
+  COALESCE(
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,title}'), ''),
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,headline}'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'title'), ''),
+    ''
+  ) AS generated_title,
+  COALESCE(
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,hook}'), ''),
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,hook_line}'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'hook'), ''),
+    ''
+  ) AS generated_hook,
+  COALESCE(
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,caption}'), ''),
+    NULLIF(TRIM(j.generation_payload #>> '{generated_output,post_caption}'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'caption'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'final_caption'), ''),
+    ''
+  ) AS generated_caption,
+  GREATEST(
+    COALESCE(jsonb_array_length(j.generation_payload #> '{generated_output,carousel_slides}'), 0),
+    COALESCE(jsonb_array_length(j.generation_payload #> '{generated_output,slides}'), 0),
+    COALESCE(jsonb_array_length(j.generation_payload #> '{mimic_carousel_package,slides}'), 0),
+    COALESCE(jsonb_array_length(j.generation_payload #> '{carousel_package,slides}'), 0),
+    0
+  )::int AS slide_count`;
+
 const REVIEW_QUEUE_ROW_SELECT = `
   SELECT
     j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
@@ -137,6 +185,24 @@ const REVIEW_QUEUE_ROW_SELECT = `
     lr.validator AS latest_validator,
     lr.submitted_at AS latest_submitted_at,
     lr.overrides_json AS latest_overrides_json,
+    ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
+  ${JOBS_FROM_WITH_LATEST_REVIEW}`;
+
+const REVIEW_QUEUE_ROW_SELECT_SLIM = `
+  SELECT
+    j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
+    j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
+    j.pre_gen_score::text,
+    ${GENERATION_PAYLOAD_SLIM_EXPR.trim()} AS generation_payload,
+    '{}'::jsonb AS review_snapshot,
+    j.created_at, j.updated_at,
+    lr.decision AS latest_decision,
+    lr.notes AS latest_notes,
+    lr.rejection_tags AS latest_rejection_tags,
+    lr.validator AS latest_validator,
+    lr.submitted_at AS latest_submitted_at,
+    lr.overrides_json AS latest_overrides_json,
+    ${GENERATION_DISPLAY_EXTRACTS.trim()},
     ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
   ${JOBS_FROM_WITH_LATEST_REVIEW}`;
 
@@ -246,6 +312,23 @@ export async function listReviewQueue(
   const orderBy = buildOrderBy(filters.sort, tab);
   const sql = `${REVIEW_QUEUE_ROW_SELECT.trim()} WHERE ${allClauses} ${orderBy} LIMIT $2 OFFSET $3`;
   return q<ReviewQueueJob>(db, sql, [projectId, limit, offset, ...filterParams]);
+}
+
+/** Agent-friendly list — skips full generation_payload / review_snapshot in SQL. */
+export async function listReviewQueueSlim(
+  db: Pool,
+  projectId: string,
+  tab: ReviewTab,
+  limit = 100,
+  offset = 0,
+  filters: ReviewQueueFilters = {}
+): Promise<ReviewQueueJobSlim[]> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 4);
+  const allClauses = [`j.project_id = $1`, tabWhere, ...clauses].join(" AND ");
+  const orderBy = buildOrderBy(filters.sort, tab);
+  const sql = `${REVIEW_QUEUE_ROW_SELECT_SLIM.trim()} WHERE ${allClauses} ${orderBy} LIMIT $2 OFFSET $3`;
+  return q<ReviewQueueJobSlim>(db, sql, [projectId, limit, offset, ...filterParams]);
 }
 
 /** Same filters as listReviewQueue; for pagination totals. */
@@ -516,6 +599,26 @@ const REVIEW_QUEUE_GLOBAL_ROW_SELECT = `
     ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
   ${JOBS_GLOBAL_FROM}`;
 
+const REVIEW_QUEUE_GLOBAL_ROW_SELECT_SLIM = `
+  SELECT
+    j.id, j.task_id, j.project_id, j.run_id, j.candidate_id,
+    j.flow_type, j.platform, j.status, j.recommended_route, j.qc_status,
+    j.pre_gen_score::text,
+    ${GENERATION_PAYLOAD_SLIM_EXPR.trim()} AS generation_payload,
+    '{}'::jsonb AS review_snapshot,
+    j.created_at, j.updated_at,
+    lr.decision AS latest_decision,
+    lr.notes AS latest_notes,
+    lr.rejection_tags AS latest_rejection_tags,
+    lr.validator AS latest_validator,
+    lr.submitted_at AS latest_submitted_at,
+    lr.overrides_json AS latest_overrides_json,
+    p.slug AS project_slug,
+    p.display_name AS project_display_name,
+    ${GENERATION_DISPLAY_EXTRACTS.trim()},
+    ${PREVIEW_THUMB_SUBQUERY.trim()} AS preview_thumb_url
+  ${JOBS_GLOBAL_FROM}`;
+
 export async function listReviewQueueAllProjects(
   db: Pool,
   tab: ReviewTab,
@@ -529,6 +632,21 @@ export async function listReviewQueueAllProjects(
   const orderBy = buildOrderBy(filters.sort, tab);
   const sql = `${REVIEW_QUEUE_GLOBAL_ROW_SELECT.trim()} WHERE ${allClauses} ${orderBy} LIMIT $1 OFFSET $2`;
   return q<ReviewQueueJobWithProject>(db, sql, [limit, offset, ...filterParams]);
+}
+
+export async function listReviewQueueAllProjectsSlim(
+  db: Pool,
+  tab: ReviewTab,
+  limit = 100,
+  offset = 0,
+  filters: ReviewQueueFilters = {}
+): Promise<ReviewQueueJobSlimWithProject[]> {
+  const tabWhere = buildTabWhere(tab);
+  const { clauses, params: filterParams } = buildFilterClauses(filters, 3, { projectSlugColumn: "p.slug" });
+  const allClauses = [tabWhere, ...clauses].join(" AND ");
+  const orderBy = buildOrderBy(filters.sort, tab);
+  const sql = `${REVIEW_QUEUE_GLOBAL_ROW_SELECT_SLIM.trim()} WHERE ${allClauses} ${orderBy} LIMIT $1 OFFSET $2`;
+  return q<ReviewQueueJobSlimWithProject>(db, sql, [limit, offset, ...filterParams]);
 }
 
 export async function countReviewQueueAllProjectsFiltered(

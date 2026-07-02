@@ -8,9 +8,9 @@
 
 
 
-const MIMIC_DOCAI_MIN_FONT_PX = 24;
+const MIMIC_DOCAI_MIN_FONT_PX = 32;
 
-const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 24;
+const MIMIC_DOCAI_TEXT_BACK_MIN_FONT_PX = 32;
 
 
 
@@ -42,7 +42,7 @@ async function fitDocAiTextLayersToBoxes(page) {
 
 function fitDocAiTextLayersToBoxesInPage(minFontPx, textBackMinFontPx) {
 
-  const tbMin = Number.isFinite(textBackMinFontPx) && textBackMinFontPx > 0 ? textBackMinFontPx : 24;
+  const tbMin = Number.isFinite(textBackMinFontPx) && textBackMinFontPx > 0 ? textBackMinFontPx : 32;
 
   const textBackDefaultPx = 50;
 
@@ -52,9 +52,9 @@ function fitDocAiTextLayersToBoxesInPage(minFontPx, textBackMinFontPx) {
 
   const canvasW = 1080;
 
-  const margin = 32;
+  const margin = 48;
 
-  const overlapGap = 12;
+  const overlapGap = 18;
 
   const subjectGap = 12;
 
@@ -98,9 +98,34 @@ function fitDocAiTextLayersToBoxesInPage(minFontPx, textBackMinFontPx) {
 
     const { slotW, origLeft, origTop, textAlign } = meta;
 
-    const cornerW = textAlign === "right" ? origLeft + slotW - margin : canvasW - margin - origLeft;
+    let cornerW = textAlign === "right" ? origLeft + slotW - margin : canvasW - margin - origLeft;
 
-    const cornerH = canvasH - margin - origTop;
+    let cornerH = canvasH - margin - origTop;
+
+    // Full-bleed: keep trait copy in the side column beside the center subject so it
+    // wraps (and the font shrinks to fit) instead of stretching across the artwork.
+
+    if (meta.fullBleed && !meta.skipCenter) {
+
+      if (origLeft < subjectZone.left) {
+
+        const leftColW = subjectZone.left - subjectGap - Math.max(margin, origLeft);
+
+        if (leftColW > 96) cornerW = Math.min(cornerW, leftColW);
+
+      } else {
+
+        const colLeft = Math.max(origLeft, subjectZone.right + subjectGap);
+
+        const rightColW = canvasW - margin - colLeft;
+
+        if (rightColW > 96) cornerW = Math.min(cornerW, rightColW);
+
+      }
+
+      cornerH = Math.min(cornerH, Math.round(canvasH * 0.32));
+
+    }
 
     const minWrapW = Math.min(cornerW, Math.max(200, Math.round((fs || tbMin) * 5.5)));
 
@@ -761,6 +786,8 @@ function fitDocAiTextLayersToBoxesInPage(minFontPx, textBackMinFontPx) {
 
     const metas = [];
 
+    const slideIsFullBleed = slide.classList.contains("mimic-docai-fullbleed");
+
     const layers = slide.querySelectorAll(".mimic-docai-layer");
 
 
@@ -804,6 +831,10 @@ function fitDocAiTextLayersToBoxesInPage(minFontPx, textBackMinFontPx) {
         isTextBack: el.classList.contains("mimic-docai-layer--text-back"),
 
         isSingleLine: el.classList.contains("mimic-docai-layer--single-line"),
+
+        fullBleed: slideIsFullBleed,
+
+        skipCenter: el.getAttribute("data-skip-center-avoid") === "1",
 
         currentFs: parseFloat(style.fontSize) || tbMin,
 

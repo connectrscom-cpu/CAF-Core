@@ -73,6 +73,8 @@ import {
 } from "../domain/top-performer-mimic-flow-types.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
+import { parseBvsFromPayload } from "../domain/bvs-v1.js";
+import { paletteFromBrandBibleSnapshot } from "../domain/brand-bible.js";
 import {
   prepareMimicDraftPackage,
   ensureMimicReferenceBeforeCopyGeneration,
@@ -136,6 +138,7 @@ import {
 } from "../domain/mimic-text-overlay-reprint.js";
 import {
   applyMimicDocAiLayerPositionOverrides,
+  isCopySlotEditorLayerPositionKey,
   mimicV1HasReviewerDocAiLayerPositions,
   pickMimicDocAiLayerPositionsForSlide,
   sanitizeTemplateBgDocAiOverridesForInspect,
@@ -145,6 +148,12 @@ import { estimateCarouselSlideFlyUsd } from "./render-cost-estimate.js";
 import { flowKindForContentLog, insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 import { HeygenPollTimeoutError } from "./heygen-renderer.js";
 import { SoraPollTimeoutError } from "./sora-scene-clips.js";
+import { runMimicPostRenderLayoutLoop } from "./mimic-post-render-layout-loop.js";
+import {
+  markCarouselRegenerateFinished,
+  markCarouselRegenerateSlideProgress,
+  markCarouselRegenerateStarted,
+} from "./mimic-carousel-regenerate-state.js";
 
 export interface PipelineConfig {
   rendererBaseUrl: string;
@@ -1598,10 +1607,29 @@ async function postCarouselRenderBinary(
   body: object,
   timeoutMs: number,
   slideIndex: number,
-  maxRetries: number
+  maxRetries: number,
+  logCtx?: {
+    taskId?: string;
+    runId?: string;
+    template?: string;
+    backgroundUrl?: string | null;
+  }
 ): Promise<Response> {
   let lastErrMsg = `Renderer slide ${slideIndex} request failed`;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    logPipelineEvent("info", "render", "Carousel render-binary attempt", {
+      task_id: logCtx?.taskId,
+      run_id: logCtx?.runId,
+      data: {
+        slide_index: slideIndex,
+        template: logCtx?.template,
+        renderer_endpoint: renderUrl,
+        retry_attempt: attempt,
+        max_retries: maxRetries,
+        background_url: logCtx?.backgroundUrl ?? undefined,
+        background_url_http: Boolean(logCtx?.backgroundUrl?.trim().startsWith("http")),
+      },
+    });
     let response: Response | null = null;
     try {
       response = await fetch(renderUrl, {
@@ -1614,10 +1642,23 @@ async function postCarouselRenderBinary(
       const msg = e instanceof Error ? e.message : String(e);
       const name = e instanceof Error ? e.name : "";
       lastErrMsg = `Renderer slide ${slideIndex} request failed: ${name ? `${name}: ` : ""}${msg}`;
+      logPipelineEvent("error", "render", lastErrMsg, {
+        task_id: logCtx?.taskId,
+        run_id: logCtx?.runId,
+        data: {
+          slide_index: slideIndex,
+          template: logCtx?.template,
+          renderer_endpoint: renderUrl,
+          retry_attempt: attempt,
+          max_retries: maxRetries,
+          background_url: logCtx?.backgroundUrl ?? undefined,
+          error_name: name || undefined,
+        },
+      });
 
       const transient =
         name === "AbortError" ||
-        /aborted|timed out|timeout/i.test(msg) ||
+        /aborted|timed out|timeout|fetch failed/i.test(msg) ||
         TRANSIENT_CAROUSEL_RENDERER_ERR.test(msg);
 
       if (transient && attempt < maxRetries) {
@@ -1627,7 +1668,20 @@ async function postCarouselRenderBinary(
       throw new Error(lastErrMsg);
     }
 
-    if (response.ok) return response;
+    if (response.ok) {
+      logPipelineEvent("info", "render", "Carousel render-binary succeeded", {
+        task_id: logCtx?.taskId,
+        run_id: logCtx?.runId,
+        data: {
+          slide_index: slideIndex,
+          template: logCtx?.template,
+          renderer_endpoint: renderUrl,
+          retry_attempt: attempt,
+          response_status: response.status,
+        },
+      });
+      return response;
+    }
 
     let errDetail = "";
     try {
@@ -1642,6 +1696,19 @@ async function postCarouselRenderBinary(
     }
 
     lastErrMsg = `Renderer slide ${slideIndex} returned ${response.status}: ${errDetail}`;
+    logPipelineEvent("error", "render", lastErrMsg, {
+      task_id: logCtx?.taskId,
+      run_id: logCtx?.runId,
+      data: {
+        slide_index: slideIndex,
+        template: logCtx?.template,
+        renderer_endpoint: renderUrl,
+        retry_attempt: attempt,
+        max_retries: maxRetries,
+        response_status: response.status,
+        background_url: logCtx?.backgroundUrl ?? undefined,
+      },
+    });
     if (response.status === 404 && errDetail.includes("render-binary")) {
       lastErrMsg +=
         " Hint: RENDERER_BASE_URL must be the Puppeteer renderer or media-gateway (POST /render-binary), not CAF Core — Fastify returns this 404 when the route does not exist.";
@@ -1686,6 +1753,8 @@ export type CarouselRenderOpts = {
   mimicImageInputModeOverride?: MimicImageInputMode;
   /** Optional reviewer note appended to mimic image prompts (slide regenerate). */
   mimicRegenerationNote?: string;
+  /** Skip post-render layout QA gate (internal reprint passes). */
+  skipLayoutQa?: boolean;
 };
 
 async function processCarouselJob(
@@ -1709,7 +1778,8 @@ async function processCarouselJob(
   const priorStatus = job.status;
   const textOverlayOnly = Boolean(renderOpts?.textOverlayOnly);
   const keepInReview =
-    textOverlayOnly && isReviewRetainStatusDuringTextOverlayReprint(priorStatus);
+    textOverlayOnly &&
+    (isReviewRetainStatusDuringTextOverlayReprint(priorStatus) || priorStatus === "RENDERING");
   await warnIfRendererBaseUrlIsCafCore(pipeConfig.rendererBaseUrl, console.warn);
   if (!keepInReview) {
     await updateJobStatus(db, job.id, "RENDERING");
@@ -2002,7 +2072,33 @@ async function processCarouselJob(
     isMimicCarouselRender && mimicPayload && config.MIMIC_USE_PROJECT_BRAND_PALETTE
       ? await listProjectBrandAssets(db, job.project_id).catch(() => [])
       : [];
-  const useProjectBrandPalette = config.MIMIC_USE_PROJECT_BRAND_PALETTE;
+  let useProjectBrandPalette = config.MIMIC_USE_PROJECT_BRAND_PALETTE;
+  let mimicThemeBrandAssets = projectBrandAssets;
+  const bvsForRender = parseBvsFromPayload(job.generation_payload as Record<string, unknown>);
+  if (bvsForRender?.enabled && isMimicCarouselRender) {
+    const bvsColors = paletteFromBrandBibleSnapshot(bvsForRender.bible_snapshot).filter((c) =>
+      /^#[0-9a-fA-F]{6}$/i.test(c)
+    );
+    if (bvsColors.length > 0) {
+      useProjectBrandPalette = true;
+      mimicThemeBrandAssets = [
+        {
+          id: "bvs-synthetic-palette",
+          project_id: job.project_id,
+          kind: "palette",
+          label: "Brand Visual System palette",
+          sort_order: 0,
+          public_url: null,
+          storage_path: null,
+          heygen_asset_id: null,
+          heygen_synced_at: null,
+          metadata_json: { colors: bvsColors },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ];
+    }
+  }
 
   // Persist chosen carousel template onto the job payload so downstream systems (review UI, editorial learning,
   // engineering prompts) can reliably resolve `carousel_template_name` by task_id. Without this, the resolver
@@ -2078,6 +2174,9 @@ async function processCarouselJob(
 
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
     for (const i of slideIndicesToRender) {
+      if (uniquePartial.length > 0 && !textOverlayOnly) {
+        await markCarouselRegenerateSlideProgress(db, job.id, i, "rendering");
+      }
       assertRenderNotPaused();
       updateRenderActivity(job.task_id, {
         kind: "carousel",
@@ -2133,7 +2232,7 @@ async function processCarouselJob(
         });
         slideRenderBase = {
           ...slideRenderBase,
-          ...mimicSlideThemePatch(mimicPayload, projectBrandAssets, { useProjectBrandPalette }),
+          ...mimicSlideThemePatch(mimicPayload, mimicThemeBrandAssets, { useProjectBrandPalette }),
           ...mimicTypo,
         };
       } else if (mimicCompositesOnStoredPlate && mimicPayload) {
@@ -2155,7 +2254,7 @@ async function processCarouselJob(
           });
           slideRenderBase = {
             ...slideRenderBase,
-            ...mimicSlideThemePatch(mimicPayload, projectBrandAssets, { useProjectBrandPalette }),
+            ...mimicSlideThemePatch(mimicPayload, mimicThemeBrandAssets, { useProjectBrandPalette }),
             ...mimicTypo,
           };
         }
@@ -2290,9 +2389,16 @@ async function processCarouselJob(
           }
         );
         if (layerPosOverrides?.length) {
-          docAiLayers = applyMimicDocAiLayerPositionOverrides(docAiLayers, layerPosOverrides, {
-            applySavedTextOnBaseLayers: !mimicTemplateBgJob,
-          });
+          const usesCopySlotEditorLayout = layerPosOverrides.some(
+            (o) => isCopySlotEditorLayerPositionKey(o.layer_key) && !o.hidden
+          );
+          docAiLayers = applyMimicDocAiLayerPositionOverrides(
+            usesCopySlotEditorLayout ? [] : docAiLayers,
+            layerPosOverrides,
+            {
+              applySavedTextOnBaseLayers: !mimicTemplateBgJob,
+            }
+          );
           docAiLayers = docAiLayers.map((layer) => ({ ...layer, text_backing: useTextBacking }));
         }
         const useDocAiLayers =
@@ -2387,13 +2493,23 @@ async function processCarouselJob(
       };
 
       const renderUrl = `${pipeConfig.rendererBaseUrl.replace(/\/$/, "")}/render-binary`;
+      const backgroundUrl =
+        typeof slideRenderBase.background_image_url === "string"
+          ? slideRenderBase.background_image_url.trim()
+          : null;
       const slideStarted = Date.now();
       const response = await postCarouselRenderBinary(
         renderUrl,
         body,
         pipeConfig.carouselRendererSlideTimeoutMs,
         i,
-        pipeConfig.carouselRendererSlideRetryAttempts
+        pipeConfig.carouselRendererSlideRetryAttempts,
+        {
+          taskId: job.task_id,
+          runId: job.run_id,
+          template,
+          backgroundUrl,
+        }
       );
       const latencyMs = Math.max(0, Date.now() - slideStarted);
       const slideCostUsd = estimateCarouselSlideFlyUsd(latencyMs, config.CAF_COST_FLY_CAROUSEL_RENDERER_USD_PER_HOUR);
@@ -2448,6 +2564,9 @@ async function processCarouselJob(
       });
 
       slideResults.push({ index: i, public_url: publicUrl, object_path: storedPath });
+      if (uniquePartial.length > 0 && !textOverlayOnly) {
+        await markCarouselRegenerateSlideProgress(db, job.id, i, "completed");
+      }
     }
 
     await mergeJobRenderState(db, job.id, {
@@ -2600,7 +2719,31 @@ async function processCarouselJob(
     }
   }
 
-  const finalStatus = keepInReview ? priorStatus : finalJobStatusAfterRender(recommendedRoute);
+  let layoutBlocked = false;
+  let layoutQcSummary: Record<string, unknown> | undefined;
+  if (
+    !keepInReview &&
+    !renderOpts?.skipLayoutQa &&
+    !textOverlayOnly &&
+    isTpGroundedCarouselRenderFlow(job.flow_type) &&
+    config.MIMIC_LAYOUT_QA_ENABLED !== false
+  ) {
+    const layoutResult = await runMimicPostRenderLayoutLoop(db, config, job.id);
+    layoutBlocked = layoutResult.blockReview;
+    layoutQcSummary = {
+      pass: layoutResult.pass,
+      overall_score: layoutResult.layoutQc.overall_score,
+      review_attention: layoutResult.layoutQc.review_attention,
+      block_review: layoutResult.blockReview,
+      iterations: layoutResult.reprintIterations,
+    };
+  }
+
+  const finalStatus = layoutBlocked
+    ? "BLOCKED"
+    : keepInReview
+      ? priorStatus
+      : finalJobStatusAfterRender(recommendedRoute);
   if (!keepInReview || job.status !== finalStatus) {
     await updateJobStatus(db, job.id, finalStatus);
   }
@@ -2611,7 +2754,10 @@ async function processCarouselJob(
       from_state: "RENDERING",
       to_state: finalStatus,
       triggered_by: "system",
-      actor: "job-pipeline",
+      actor: layoutBlocked ? "layout-qc" : "job-pipeline",
+      ...(layoutBlocked
+        ? { metadata: { reason: "layout_qc_failed", layout_qc: layoutQcSummary } }
+        : {}),
     });
   }
   } finally {
@@ -2658,6 +2804,7 @@ export async function rerenderCarouselSlidesAtIndices(
   if (indices.length === 0) throw new Error("slide_rework_indices_required");
 
   if (!renderOpts?.textOverlayOnly) {
+    await markCarouselRegenerateStarted(db, jobId, indices);
     await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, indices);
     await deleteMimicVisualPlateAssetsAtPositions(db, job.project_id, job.task_id, indices);
     const mimicPayload = pickMimicPayload(job.generation_payload);
@@ -2685,19 +2832,30 @@ export async function rerenderCarouselSlidesAtIndices(
 
   const run = await getRunByRunId(db, job.project_id, job.run_id);
   const pipeConfig = getPipelineConfig(config);
-  await processCarouselJob(db, config, pipeConfig, job, run, null, {
-    onlySlideIndices: indices,
-    textOverlayOnly: renderOpts?.textOverlayOnly,
-    ...(typeof renderOpts?.mimicVisualSimilarityPctOverride === "number"
-      ? { mimicVisualSimilarityPctOverride: renderOpts.mimicVisualSimilarityPctOverride }
-      : {}),
-    ...(renderOpts?.mimicImageInputModeOverride
-      ? { mimicImageInputModeOverride: renderOpts.mimicImageInputModeOverride }
-      : {}),
-    ...(renderOpts?.mimicRegenerationNote?.trim()
-      ? { mimicRegenerationNote: renderOpts.mimicRegenerationNote.trim() }
-      : {}),
-  });
+  try {
+    await processCarouselJob(db, config, pipeConfig, job, run, null, {
+      onlySlideIndices: indices,
+      textOverlayOnly: renderOpts?.textOverlayOnly,
+      ...(typeof renderOpts?.mimicVisualSimilarityPctOverride === "number"
+        ? { mimicVisualSimilarityPctOverride: renderOpts.mimicVisualSimilarityPctOverride }
+        : {}),
+      ...(renderOpts?.mimicImageInputModeOverride
+        ? { mimicImageInputModeOverride: renderOpts.mimicImageInputModeOverride }
+        : {}),
+      ...(renderOpts?.mimicRegenerationNote?.trim()
+        ? { mimicRegenerationNote: renderOpts.mimicRegenerationNote.trim() }
+        : {}),
+    });
+    if (!renderOpts?.textOverlayOnly) {
+      await markCarouselRegenerateFinished(db, jobId, true);
+    }
+  } catch (err) {
+    if (!renderOpts?.textOverlayOnly) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await markCarouselRegenerateFinished(db, jobId, false, msg);
+    }
+    throw err;
+  }
 }
 
 /**

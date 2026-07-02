@@ -15,6 +15,12 @@ import {
   type MimicTemplateBgEditorField,
 } from "@/lib/mimic-template-bg";
 import { isVideoUrl } from "@/lib/media-url";
+import {
+  layoutBadgeEmoji,
+  layoutBadgeLabel,
+  type MimicLayoutSlideBadge,
+} from "@/lib/mimic-layout-qc";
+import { slideRenderStatusClass, slideRenderStatusLabel, type SlideRenderState } from "@/lib/slide-render-status";
 
 const SWIPE_THRESHOLD = 50;
 
@@ -99,6 +105,12 @@ export interface CarouselSliderProps {
   /** Full-bleed mimic: layout editor highlights boxes; copy fields are per phrase (copy slot). */
   mimicFullBleed?: boolean;
   onMimicLayoutTextBlockChange?: (blockIndex: number, text: string) => void;
+  /** Per-slide layout QA badges from `generation_payload.layout_qc` (0-based index). */
+  layoutSlideBadges?: Record<number, MimicLayoutSlideBadge[]>;
+  /** Per-slide render pipeline status (0-based index via slideIndex - 1). */
+  slideRenderStatuses?: SlideRenderState[];
+  /** Bumped after asset refetch — remounts generated preview images. */
+  assetRefreshKey?: number;
 }
 
 export function CarouselSlider({
@@ -132,6 +144,9 @@ export function CarouselSlider({
   mimicTemplateBg = false,
   mimicFullBleed = false,
   onMimicLayoutTextBlockChange,
+  layoutSlideBadges,
+  slideRenderStatuses,
+  assetRefreshKey = 0,
 }: CarouselSliderProps) {
   const [slides, setSlides] = useState<NormalizedSlide[]>(initialSlides);
   // Slide index is controlled by the parent (single source of truth) whenever
@@ -182,35 +197,6 @@ export function CarouselSlider({
     setInternalIndex((i) => Math.min(i, Math.max(0, initialSlides.length - 1)));
     setSavedAt(null);
   }, [initialSlides]);
-
-  // Resizable split between the "Text blocks" column and the "Text layout" panel.
-  const SPLIT_KEY = "caf.mimicEditSplit";
-  const [splitLeft, setSplitLeft] = useState<number>(() => {
-    if (typeof window === "undefined") return 0.34;
-    const saved = Number(window.localStorage.getItem(SPLIT_KEY));
-    return Number.isFinite(saved) && saved >= 0.18 && saved <= 0.7 ? saved : 0.34;
-  });
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-  const splitDraggingRef = useRef(false);
-  const onSplitPointerDown = useCallback((e: React.PointerEvent) => {
-    splitDraggingRef.current = true;
-    e.currentTarget.setPointerCapture(e.pointerId);
-  }, []);
-  const onSplitPointerMove = useCallback((e: React.PointerEvent) => {
-    if (!splitDraggingRef.current || !splitContainerRef.current) return;
-    const rect = splitContainerRef.current.getBoundingClientRect();
-    if (rect.width <= 0) return;
-    const frac = (e.clientX - rect.left) / rect.width;
-    setSplitLeft(Math.min(0.7, Math.max(0.18, frac)));
-  }, []);
-  const onSplitPointerUp = useCallback(
-    (e: React.PointerEvent) => {
-      splitDraggingRef.current = false;
-      e.currentTarget.releasePointerCapture(e.pointerId);
-      if (typeof window !== "undefined") window.localStorage.setItem(SPLIT_KEY, String(splitLeft));
-    },
-    [splitLeft]
-  );
 
   useEffect(() => {
     if (heyGenVideoMode || readOnly || mimicTemplateBg || !livePreview?.template) {
@@ -422,6 +408,114 @@ export function CarouselSlider({
   const total = slides.length;
   const canPrev = currentIndex > 0;
   const canNext = currentIndex < total - 1;
+  const currentRenderState = slideRenderStatuses?.find((s) => s.slideIndex === currentIndex + 1);
+  const generatedPreviewPending = currentRenderState?.status === "pending";
+  const generatedPreviewFailed = currentRenderState?.status === "failed";
+
+  const renderMimicCompareRow = (placement: "above" | "below") => {
+    if (!mimicCopyEditor) return null;
+    if (placement !== "above") return null;
+    const vertical = Boolean(copySidePanel);
+    const hasReference = Boolean(referenceSlideUrl?.trim());
+    return (
+      <div className={previewSidePanel && !copySidePanel ? "mimic-preview-row" : undefined}>
+        {vertical ? (
+          <p className="filter-label mimic-compare-row__heading">Original vs generated</p>
+        ) : null}
+        <div
+          className={`flex items-center gap-2 mimic-compare-row${vertical ? " mimic-compare-row--vertical" : ""}`}
+          style={{ marginBottom: vertical ? 12 : 12, marginTop: vertical ? 0 : undefined }}
+        >
+          <button
+            type="button"
+            aria-label="Previous slide"
+            onClick={goPrev}
+            disabled={!canPrev}
+            className="mimic-compare-row__nav"
+          >
+            &#8249;
+          </button>
+          <div
+            className={
+              vertical
+                ? `mimic-compare-frame mimic-compare-frame--vertical${hasReference ? "" : " mimic-compare-frame--generated-only"}`
+                : "mimic-compare-frame"
+            }
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+          >
+            {hasReference ? (
+              <div className="mimic-compare-pane mimic-compare-pane--original">
+                <span className="mimic-compare-pane__label">Original</span>
+                <img
+                  key={`ref-${currentIndex}`}
+                  src={referenceSlideUrl}
+                  alt={`Original slide ${currentIndex + 1}`}
+                  className="mimic-compare-pane__img"
+                  draggable={false}
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+            ) : null}
+            <div
+              className={
+                hasReference ? "mimic-compare-pane mimic-compare-pane--generated" : "mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo"
+              }
+            >
+              {hasReference ? <span className="mimic-compare-pane__label">Generated</span> : null}
+              {livePngUrl ? (
+                <img
+                  key={`live-${currentIndex}-${assetRefreshKey}`}
+                  src={livePngUrl}
+                  alt={`Slide ${currentIndex + 1} live preview`}
+                  className="mimic-compare-pane__img"
+                  draggable={false}
+                />
+              ) : generatedPreviewPending ? (
+                <span className="mimic-compare-pane__empty">Regenerating image…</span>
+              ) : generatedPreviewFailed ? (
+                <span className="mimic-compare-pane__empty">
+                  {currentRenderState?.error ?? "Image regenerate failed on this slide."}
+                </span>
+              ) : mediaUrl ? (
+                mediaKind === "video" ? (
+                  <video
+                    key={`vid-${currentIndex}-${assetRefreshKey}`}
+                    src={mediaUrl}
+                    controls
+                    playsInline
+                    className="mimic-compare-pane__media"
+                  />
+                ) : (
+                  <img
+                    key={`gen-${currentIndex}-${assetRefreshKey}-${mediaUrl}`}
+                    src={mediaUrl}
+                    alt={`Slide ${currentIndex + 1}`}
+                    loading="lazy"
+                    className="mimic-compare-pane__img"
+                    draggable={false}
+                    referrerPolicy="no-referrer"
+                  />
+                )
+              ) : (
+                <span className="mimic-compare-pane__empty">No rendered asset for this slide</span>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            aria-label="Next slide"
+            onClick={goNext}
+            disabled={!canNext}
+            className="mimic-compare-row__nav"
+          >
+            &#8250;
+          </button>
+        </div>
+        {previewSidePanel && !copySidePanel ? <div className="mimic-preview-side">{previewSidePanel}</div> : null}
+      </div>
+    );
+  };
 
   if (slides.length === 0) {
     return (
@@ -472,7 +566,7 @@ export function CarouselSlider({
               ) : null}
             </>
           ) : null}
-          {mimicCopyEditor && onDeleteSlide && total > 1 && !copySidePanel ? (
+          {mimicCopyEditor && onDeleteSlide && total > 1 ? (
             <button type="button" className="btn-danger-ghost btn-sm" onClick={onDeleteSlide}>
               Delete slide
             </button>
@@ -480,120 +574,68 @@ export function CarouselSlider({
         </div>
       </div>
 
-      <div className={previewSidePanel ? "mimic-preview-row" : undefined}>
-      <div className={`flex items-center gap-2${mimicCopyEditor ? " mimic-compare-row" : ""}`} style={{ marginBottom: 12 }}>
-        <button
-          type="button"
-          aria-label="Previous slide"
-          onClick={goPrev}
-          disabled={!canPrev}
-          style={{
-            width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
-            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 20, flexShrink: 0, opacity: canPrev ? 1 : 0.4,
-          }}
-        >
-          &#8249;
-        </button>
-        <div
-          className={mimicCopyEditor ? "mimic-compare-frame" : undefined}
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: mimicCopyEditor ? 140 : 200,
-            overflow: "hidden",
-            borderRadius: 8,
-            border: "1px solid var(--border)",
-            background: "#0a0a0c",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            ...(mimicCopyEditor && referenceSlideUrl?.trim()
-              ? { display: "grid", gridTemplateColumns: "minmax(0, 0.38fr) minmax(0, 0.62fr)", gap: 1, background: "var(--border)" }
-              : {}),
-          }}
-          onTouchStart={onTouchStart}
-          onTouchEnd={onTouchEnd}
-        >
-          {mimicCopyEditor && referenceSlideUrl?.trim() ? (
-            <div className="mimic-compare-pane mimic-compare-pane--original">
-              <span className="mimic-compare-pane__label">Original</span>
-              <img
-                key={`ref-${currentIndex}`}
-                src={referenceSlideUrl}
-                alt={`Original slide ${currentIndex + 1}`}
-                className="mimic-compare-pane__img"
-                draggable={false}
-                referrerPolicy="no-referrer"
-              />
-            </div>
-          ) : null}
-          <div
-            className={
-              mimicCopyEditor && referenceSlideUrl?.trim()
-                ? "mimic-compare-pane mimic-compare-pane--generated"
-                : undefined
-            }
-            style={mimicCopyEditor && referenceSlideUrl?.trim() ? { display: "flex", flexDirection: "column", minHeight: 0 } : undefined}
-          >
-            {mimicCopyEditor && referenceSlideUrl?.trim() ? (
-              <span className="mimic-compare-pane__label">Generated</span>
-            ) : null}
-          {livePngUrl ? (
-            <img
-              key={`live-${currentIndex}`}
-              src={livePngUrl}
-              alt={`Slide ${currentIndex + 1} live preview`}
-              style={{ width: "100%", maxHeight: "50vh", objectFit: "contain", userSelect: "none" }}
-              draggable={false}
-            />
-          ) : mediaUrl ? (
-            mediaKind === "video" ? (
-              <video
-                key={`vid-${currentIndex}`}
-                src={mediaUrl}
-                controls
-                playsInline
-                style={{ width: "100%", maxHeight: "50vh", objectFit: "contain" }}
-              />
-            ) : (
-              <img
-                key={`gen-${currentIndex}-${mediaUrl}`}
-                src={mediaUrl}
-                alt={`Slide ${currentIndex + 1}`}
-                style={{
-                  width: "100%",
-                  maxHeight: mimicCopyEditor ? "28vh" : "50vh",
-                  objectFit: "contain",
-                  userSelect: "none",
-                  flex: 1,
-                }}
-                draggable={false}
-                referrerPolicy="no-referrer"
-              />
-            )
-          ) : (
-            <span style={{ fontSize: 13, color: "var(--muted)", padding: 24 }}>No rendered asset for this slide</span>
-          )}
-          </div>
+      {total > 1 && !heyGenVideoMode ? (
+        <div className="carousel-thumb-strip" role="tablist" aria-label="Slide thumbnails">
+          {slides.map((_, i) => {
+            const fromM = mediaItems?.[i];
+            const url = (fromM?.url ?? imageUrls[i] ?? "").trim();
+            const kind: "image" | "video" =
+              fromM?.kind ?? (url && isVideoUrl(url) ? "video" : "image");
+            const badges = layoutSlideBadges?.[i] ?? [];
+            const primaryBadge = badges.find((b) => b !== "pass") ?? badges[0];
+            const renderState = slideRenderStatuses?.find((s) => s.slideIndex === i + 1);
+            const renderStatus = renderState?.status;
+            return (
+              <button
+                key={i}
+                type="button"
+                role="tab"
+                aria-selected={i === currentIndex}
+                aria-label={
+                  renderStatus && renderStatus !== "ready"
+                    ? `Slide ${i + 1} — ${slideRenderStatusLabel(renderStatus)}`
+                    : primaryBadge && primaryBadge !== "pass"
+                      ? `Slide ${i + 1} — ${layoutBadgeLabel(primaryBadge)}`
+                      : `Slide ${i + 1}`
+                }
+                className={`carousel-thumb-strip__btn${i === currentIndex ? " carousel-thumb-strip__btn--active" : ""}${renderStatus && renderStatus !== "ready" ? ` carousel-thumb-strip__btn--${renderStatus}` : ""}`}
+                onClick={() => goToIndex(i)}
+                style={{ position: "relative" }}
+                title={renderState?.error ?? undefined}
+              >
+                {renderStatus && renderStatus !== "ready" ? (
+                  <span className={slideRenderStatusClass(renderStatus)} aria-hidden>
+                    {slideRenderStatusLabel(renderStatus)}
+                  </span>
+                ) : primaryBadge ? (
+                  <span
+                    className={`carousel-thumb-strip__badge${
+                      primaryBadge === "pass" ? " carousel-thumb-strip__badge--pass" : " carousel-thumb-strip__badge--warn"
+                    }`}
+                    title={badges.map(layoutBadgeLabel).join(", ")}
+                    aria-hidden
+                  >
+                    {layoutBadgeEmoji(primaryBadge)}
+                  </span>
+                ) : null}
+                {url ? (
+                  kind === "video" ? (
+                    <video src={url} muted playsInline preload="metadata" />
+                  ) : (
+                    <img src={url} alt="" loading="lazy" referrerPolicy="no-referrer" />
+                  )
+                ) : (
+                  <span style={{ fontSize: 11, color: "var(--muted)", padding: 4 }}>{i + 1}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
-        <button
-          type="button"
-          aria-label="Next slide"
-          onClick={goNext}
-          disabled={!canNext}
-          style={{
-            width: 40, height: 40, borderRadius: "50%", background: "rgba(0,0,0,0.7)",
-            color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: 20, flexShrink: 0, opacity: canNext ? 1 : 0.4,
-          }}
-        >
-          &#8250;
-        </button>
-      </div>
-        {previewSidePanel ? <div className="mimic-preview-side">{previewSidePanel}</div> : null}
-      </div>
-      {!heyGenVideoMode && !mimicTemplateBg && livePreview?.template && (
+      ) : null}
+
+      {renderMimicCompareRow("above")}
+
+      {!copySidePanel && !heyGenVideoMode && !mimicTemplateBg && livePreview?.template && (
         <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
           {liveBusy
             ? "Rendering live preview…"
@@ -607,19 +649,10 @@ export function CarouselSlider({
 
       {!readOnly && !heyGenVideoMode && (
         <div
-          ref={splitContainerRef}
-          className={copySidePanel ? "carousel-edit-split" : undefined}
-          style={{
-            marginBottom: 8,
-            ...(copySidePanel
-              ? { gridTemplateColumns: `minmax(0, ${splitLeft}fr) 10px minmax(0, ${1 - splitLeft}fr)` }
-              : {}),
-          }}
+          className={copySidePanel ? "carousel-edit-three-col" : undefined}
+          style={{ marginBottom: 8 }}
         >
-          <div
-            className="carousel-edit-copy"
-            style={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
-          >
+          <div className="carousel-edit-copy">
           {mimicCopyEditor && mimicTemplateBg ? (
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Slide copy</label>
@@ -674,8 +707,8 @@ export function CarouselSlider({
             <div className="mimic-text-blocks mimic-text-blocks--compact">
               <label className="filter-label">Text phrases ({mimicTextBlocks.length})</label>
               {mimicFullBleed ? (
-                <p className="mimic-text-blocks__hint">
-                  Edits update the layout preview on the right. Use <strong>Reprint text</strong> in the layout panel to bake copy into carousel images.
+                <p className="mimic-text-blocks__hint mimic-text-blocks__hint--inline">
+                  Edits update the layout preview. <strong>Reprint text</strong> bakes copy into images.
                 </p>
               ) : null}
               <div className="mimic-text-blocks__list">
@@ -936,22 +969,7 @@ export function CarouselSlider({
             {savedAt === currentIndex ? "Saved" : "Save slide"}
           </button>
           </div>
-          {copySidePanel ? (
-            <>
-              <div
-                className="carousel-edit-split__handle"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize text panels"
-                onPointerDown={onSplitPointerDown}
-                onPointerMove={onSplitPointerMove}
-                onPointerUp={onSplitPointerUp}
-              >
-                <span className="carousel-edit-split__grip" aria-hidden />
-              </div>
-              <div className="carousel-edit-side-panel">{copySidePanel}</div>
-            </>
-          ) : null}
+          {copySidePanel ?? null}
         </div>
       )}
 

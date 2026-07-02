@@ -59,6 +59,7 @@ export function dismissBrandChecklist(slug: string): void {
 export function buildBrandOnboardingSteps(input: {
   slug: string;
   hasProfile: boolean;
+  hasBrandBible?: boolean;
   hasResearch: boolean;
   hasIntelligence: boolean;
   hasIdeas: boolean;
@@ -75,9 +76,16 @@ export function buildBrandOnboardingSteps(input: {
       complete: input.hasProfile,
     },
     {
+      id: "brand_bible",
+      title: "Configure your brand bible",
+      description: "Define your visual identity and how CAF should apply it when creating content.",
+      href: `${base}/profile?tab=bible`,
+      complete: input.hasBrandBible === true,
+    },
+    {
       id: "research",
       title: "Add research sources",
-      description: "Import competitors, inspiration accounts, or uploads so CAF knows your market.",
+      description: "Add Instagram/TikTok accounts, hashtags, subreddits, and competitor pages for this brand.",
       href: `${base}/research`,
       complete: input.hasResearch,
     },

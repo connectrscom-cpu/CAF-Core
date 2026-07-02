@@ -97,6 +97,9 @@ export interface MimicPayloadV1 {
    * See `src/domain/brand-translation.ts`.
    */
   brand_execution_brief?: Record<string, unknown>;
+  /** Brand Visual System — snapshotted from generation_payload.bvs_v1 at mimic prep. */
+  bvs_enabled?: boolean;
+  bvs_bible_snapshot?: Record<string, unknown>;
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";

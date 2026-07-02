@@ -35,6 +35,44 @@ const PRODUCT_IMAGE_FLOW_TYPES = [
 const PRODUCT_VIDEO_SET = new Set<string>(PRODUCT_VIDEO_FLOW_TYPES);
 const PRODUCT_IMAGE_SET = new Set<string>(PRODUCT_IMAGE_FLOW_TYPES);
 
+/** Canonical HeyGen / video flows (mirrors Core `CANONICAL_FLOW_TYPES`). */
+const FLOW_VID_PROMPT = "FLOW_VID_PROMPT";
+const FLOW_VID_PROMPT_NO_AVATAR = "FLOW_VID_PROMPT_NO_AVATAR";
+const FLOW_VID_SCRIPT = "FLOW_VID_SCRIPT";
+const FLOW_VID_SCENES = "FLOW_VID_SCENES";
+const FLOW_TOP_PERFORMER_MIMIC_VIDEO = "FLOW_TOP_PERFORMER_MIMIC_VIDEO";
+
+const CANONICAL_VIDEO_FLOW_SET = new Set<string>([
+  FLOW_VID_PROMPT,
+  FLOW_VID_PROMPT_NO_AVATAR,
+  FLOW_VID_SCRIPT,
+  FLOW_VID_SCENES,
+]);
+
+/** Legacy planner aliases → canonical (subset of Core `LEGACY_FLOW_TYPE_TO_CANONICAL`). */
+const LEGACY_VIDEO_FLOW_ALIASES: Record<string, string> = {
+  Video_Prompt_Generator: FLOW_VID_PROMPT,
+  Video_Script_Generator: FLOW_VID_SCRIPT,
+  Video_Scene_Generator: FLOW_VID_SCENES,
+  FLOW_SCENE_ASSEMBLY: FLOW_VID_SCENES,
+  Flow_Scene_Assembly: FLOW_VID_SCENES,
+  VIDEO_SCENE_ASSEMBLY: FLOW_VID_SCENES,
+  Scene_Assembly: FLOW_VID_SCENES,
+  Video_Script_HeyGen_Avatar: FLOW_VID_SCRIPT,
+  Video_Prompt_HeyGen_Avatar: FLOW_VID_PROMPT,
+  Video_Prompt_HeyGen_NoAvatar: FLOW_VID_PROMPT_NO_AVATAR,
+  HeyGen_NoAvatar_Prompt: FLOW_VID_PROMPT_NO_AVATAR,
+  FLOW_HEYGEN_NO_AVATAR_PROMPT: FLOW_VID_PROMPT_NO_AVATAR,
+  HeyGen_No_Avatar_Prompt: FLOW_VID_PROMPT_NO_AVATAR,
+  Heygen_NoAvatar_Prompt: FLOW_VID_PROMPT_NO_AVATAR,
+  HEYGEN_NO_AVATAR_PROMPT: FLOW_VID_PROMPT_NO_AVATAR,
+};
+
+function resolveReviewVideoFlowType(flowType: string): string {
+  const t = (flowType ?? "").trim();
+  return LEGACY_VIDEO_FLOW_ALIASES[t] ?? t;
+}
+
 export function isProductVideoFlow(flowType: string | null | undefined): boolean {
   return PRODUCT_VIDEO_SET.has((flowType ?? "").trim());
 }
@@ -82,16 +120,29 @@ export function isMimicCarouselFlow(flowType: string | null | undefined): boolea
 }
 
 export function isVideoFlow(flowType: string): boolean {
-  const ft = flowType ?? "";
+  const raw = (flowType ?? "").trim();
+  if (raw === FLOW_TOP_PERFORMER_MIMIC_VIDEO) return true;
+  const ft = resolveReviewVideoFlowType(raw);
   if (isProductVideoFlow(ft)) return true;
-  if (isCarouselFlow(ft) && !/heygen|scene|Video_Script|Video_Prompt|Video_Scene|reel/i.test(ft)) {
+  if (CANONICAL_VIDEO_FLOW_SET.has(ft)) return true;
+  if (isCarouselFlow(raw) && !/heygen|scene|Video_Script|Video_Prompt|Video_Scene|reel/i.test(raw)) {
     return false;
   }
   return (
-    /video|reel/i.test(ft) ||
-    /Video_Script|Video_Prompt|Video_Scene|Reel_Script/i.test(ft) ||
-    /heygen|HeyGen_Render/i.test(ft) ||
-    /scene_assembly|sceneassembly|FLOW_SCENE/i.test(ft)
+    /video|reel/i.test(raw) ||
+    /Video_Script|Video_Prompt|Video_Scene|Reel_Script/i.test(raw) ||
+    /heygen|HeyGen_Render/i.test(raw) ||
+    /scene_assembly|sceneassembly|FLOW_SCENE/i.test(raw)
+  );
+}
+
+/** HeyGen single-take video flows (for workbench avatar / script controls). */
+export function isHeyGenVidCanonicalFlow(flowType: string | null | undefined): boolean {
+  const ft = resolveReviewVideoFlowType((flowType ?? "").trim());
+  return (
+    ft === FLOW_VID_PROMPT ||
+    ft === FLOW_VID_PROMPT_NO_AVATAR ||
+    ft === FLOW_VID_SCRIPT
   );
 }
 

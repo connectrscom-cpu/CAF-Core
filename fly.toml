@@ -42,11 +42,18 @@ primary_region = "ams"
   PROCESSING_VISION_PROVIDER = "nvidia"
   # Live LLM copy for jobs (placeholder echoes reference OCR verbatim — bad for mimic handles/copy).
   OPENAI_GENERATION_MODE = "live"
+  # Agent inspection for ChatGPT / browser agents (agent-map, /api/agent/*). Non-secret feature flag.
+  AGENT_INSPECTION_ENABLED = "true"
+  # Post-render layout QA: auto-reprint + Review badges; never BLOCK jobs (publish-ready funnel).
+  MIMIC_LAYOUT_QA_ENABLED = "true"
+  MIMIC_LAYOUT_QA_MAX_REPRINT_ITERATIONS = "3"
+  MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL = "0"
+  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL = "0"
 
 [http_service]
   internal_port = 3847
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   processes = ["app"]
@@ -56,14 +63,14 @@ primary_region = "ams"
     idle_timeout = 900
 
   [[http_service.checks]]
-    grace_period = "30s"
+    grace_period = "60s"
     interval = "15s"
     method = "GET"
     path = "/readyz"
-    timeout = "5s"
+    timeout = "10s"
 
 [[vm]]
   # Core API + embedded Review Next.js (standalone)
-  memory = "1024mb"
+  memory = "1536mb"
   cpu_kind = "shared"
   cpus = 1

@@ -120,11 +120,15 @@ export async function buildSignalPackFromIdeaList(
   });
   const marketIntelligenceV1 = await buildMarketIntelligenceForImport(
     db,
+    config,
     project.id,
     projectSlug,
     list.inputs_import_id,
-    { derived_globals: derivedWithTpk }
+    { derived_globals: derivedWithTpk, brand_display_name: project.display_name }
   );
+  const packNotes = marketIntelligenceV1.research_brief_title
+    ? JSON.stringify({ marketer: { marketer_title: marketIntelligenceV1.research_brief_title } })
+    : (opts?.notes ?? `Built from inputs idea list ${ideaListId}`);
   const pack = await insertSignalPack(db, {
     run_id: runId,
     project_id: project.id,
@@ -137,7 +141,7 @@ export async function buildSignalPackFromIdeaList(
       ...derivedWithTpk,
       [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
     },
-    notes: opts?.notes ?? `Built from inputs idea list ${ideaListId}`,
+    notes: packNotes,
     upload_filename: `from_idea_list:${ideaListId}`,
     source_inputs_import_id: list.inputs_import_id,
   });

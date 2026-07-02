@@ -16,6 +16,7 @@ import { mergeGenerationPayloadQc } from "../domain/generation-payload-qc.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { detectVideoScriptRuntimeMismatch } from "../domain/video-script-runtime-qc.js";
 import { CANONICAL_FLOW_TYPES } from "../domain/canonical-flow-types.js";
+import { runCopyQualityChecks } from "../domain/copy-quality-patterns.js";
 
 export interface QcCheckResult {
   check_id: string;
@@ -517,7 +518,22 @@ export async function runQcForJob(
   const brandBanned = (brand?.banned_words ?? "").split(";").map((w) => w.trim().toLowerCase()).filter(Boolean);
 
   const checkResults = checks.map((c) => runCheck(c, qcContent));
-  const blockingFailures = checkResults.filter((r) => !r.passed && r.blocking);
+  const copyQualityChecks = runCopyQualityChecks(qcContent, {
+    brandTone: brand?.tone ?? null,
+    minHashtags: 1,
+  }).map(
+    (f): QcCheckResult => ({
+      check_id: f.check_id,
+      check_name: f.check_name,
+      passed: f.passed,
+      severity: f.severity,
+      blocking: f.blocking,
+      failure_message: f.failure_message,
+      details: f.details,
+    })
+  );
+  const allCheckResults = [...checkResults, ...copyQualityChecks];
+  const blockingFailures = allCheckResults.filter((r) => !r.passed && r.blocking);
   const riskFindings = policies
     .map((p) => runRiskPolicy(p, qcContent, brandBanned))
     .filter((f): f is RiskFinding => f !== null);
@@ -527,8 +543,8 @@ export async function runQcForJob(
   const hasBlockPublish = riskFindings.some((f) => f.block_publish);
   const qcPassed = blockingFailures.length === 0 && !hasCriticalRisk;
 
-  const passedCount = checkResults.filter((r) => r.passed).length;
-  const qcScore = checks.length > 0 ? passedCount / checks.length : 1;
+  const passedCount = allCheckResults.filter((r) => r.passed).length;
+  const qcScore = allCheckResults.length > 0 ? passedCount / allCheckResults.length : 1;
 
   let riskLevel = "LOW";
   if (hasCriticalRisk) riskLevel = "CRITICAL";
@@ -560,7 +576,7 @@ export async function runQcForJob(
   let qcPayload = buildQcResultPayload({
     qcPassed,
     qcScore,
-    checkResults,
+    checkResults: allCheckResults,
     blockingFailures,
     riskFindings,
     riskLevel,
@@ -600,7 +616,7 @@ export async function runQcForJob(
     task_id: job.task_id,
     flow_type: job.flow_type,
     qc_passed: qcPassed,
-    checks: checkResults,
+    checks: allCheckResults,
     blocking_failures: blockingFailures,
     risk_findings: riskFindings,
     risk_level: riskLevel,

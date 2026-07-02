@@ -16,6 +16,12 @@ import { resolveEffectiveContentSlideIndices, shouldExpandThemeSkippedArchiveDec
 import { aestheticSlideRecords } from "./mimic-text-heavy.js";
 import { SIGNAL_PACK_DERIVED_GLOBALS_KEYS } from "./signal-pack-top-performer-knowledge.js";
 import { getEvidenceRowInsightByInsightsId } from "../repositories/inputs-evidence-insights.js";
+import {
+  buildSemanticContractPromptBlock,
+  hasUsableSemanticContract,
+  MIMIC_IDEA_FAITHFUL_COPY_RULES,
+  type SemanticContractV1,
+} from "./semantic-contract.js";
 
 /** Shared copy contract: rephrase per slide, keep the same subject/claim as the reference. */
 export const MIMIC_SEMANTIC_FIDELITY_COPY_RULES = `Semantic fidelity (mimic copy — required):
@@ -275,6 +281,8 @@ export function appendMimicGroundedReferenceToUserPrompt(
     mimic_render_context?: unknown;
     slide_copy_layout?: MimicSlideCopyLayoutForLlm[];
     hook_text_preview?: string | null;
+    /** Planned idea contract — primary semantic anchor when usable. */
+    semantic_contract?: SemanticContractV1 | null;
     /** Why Mimic: projected `slide_intelligence_v1` bundle (from `mimic_v1.slide_intelligence`). */
     slide_intelligence?: unknown;
     /** Brand-Aware Why Mimic: projected `brand_execution_brief_v1` (from `mimic_v1.brand_execution_brief`). */
@@ -293,9 +301,14 @@ export function appendMimicGroundedReferenceToUserPrompt(
   const copyBrief = buildMimicCopyJobBriefForLlm(
     blocks.mimic_render_context as Record<string, unknown> | null | undefined
   );
-  if (!copyBrief && layout.length === 0) return userPrompt;
+  const ideaFaithful = hasUsableSemanticContract(blocks.semantic_contract);
+  if (!copyBrief && layout.length === 0 && !ideaFaithful) return userPrompt;
 
-  const parts: string[] = [userPrompt.trim(), "", "Grounded top-performer reference (this job only):"];
+  const parts: string[] = [userPrompt.trim()];
+  if (ideaFaithful && blocks.semantic_contract) {
+    parts.push("", buildSemanticContractPromptBlock(blocks.semantic_contract));
+  }
+  parts.push("", "Grounded top-performer reference (this job only):");
   if (copyBrief) {
     parts.push("", "mimic_copy_job_brief:", JSON.stringify(copyBrief));
   }
@@ -305,11 +318,10 @@ export function appendMimicGroundedReferenceToUserPrompt(
   }
   const slimLayout = serializeSlideCopyLayoutMinimalForCopyGeneration(layout);
   if (slimLayout.length > 0) {
-    parts.push(
-      "",
-      `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject to rephrase; visual_description = look; copy_slots_v1 = on-screen placement units for text_blocks[]; rephrase only):`,
-      trimMimicGroundingJson(JSON.stringify(slimLayout), maxGroundingJsonChars)
-    );
+    const layoutIntro = ideaFaithful
+      ? `slide_copy_layout (${slimLayout.length} slides — match this slide count and order; copy_slots_v1 = on-screen placement units for text_blocks[]; reference_on_screen_text / visual_description are length and layout hints only when semantic_contract_v1 is present):`
+      : `slide_copy_layout (${slimLayout.length} slides — generate exactly this many slides in the same order; per slide: reference_on_screen_text = meaning/subject to rephrase; visual_description = look; copy_slots_v1 = on-screen placement units for text_blocks[]; rephrase only):`;
+    parts.push("", layoutIntro, trimMimicGroundingJson(JSON.stringify(slimLayout), maxGroundingJsonChars));
   } else if (vgRaw) {
     const hookOnly = String(asRecord(vgRaw)?.hook_text_preview ?? "").trim();
     if (hookOnly) {
@@ -317,7 +329,16 @@ export function appendMimicGroundedReferenceToUserPrompt(
     }
   }
   const whyCopyOn = opts?.why_mimic_copy_enabled === true;
-  parts.push("", whyCopyOn ? MIMIC_WHY_STRATEGIC_COPY_RULES : MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
+  if (ideaFaithful) {
+    parts.push(
+      "",
+      whyCopyOn
+        ? `${MIMIC_IDEA_FAITHFUL_COPY_RULES}\n\nWhy Mimic structure (secondary — do not override semantic_contract_v1 subjects):\n${MIMIC_WHY_STRATEGIC_COPY_RULES}`
+        : MIMIC_IDEA_FAITHFUL_COPY_RULES
+    );
+  } else {
+    parts.push("", whyCopyOn ? MIMIC_WHY_STRATEGIC_COPY_RULES : MIMIC_SEMANTIC_FIDELITY_COPY_RULES);
+  }
   if (whyCopyOn) {
     const whyBlock = buildWhyMimicPromptBlock(parseSlideIntelligenceBundle(blocks.slide_intelligence));
     if (whyBlock) {
@@ -328,11 +349,16 @@ export function appendMimicGroundedReferenceToUserPrompt(
       parts.push("", brandBlock);
     }
   }
+  const closing = ideaFaithful
+    ? whyCopyOn
+      ? "Write copy matching slide_copy_layout slide count and placement. Subjects and claims come from semantic_contract_v1; use Why Mimic brief for slide roles and persuasion shape only."
+      : "Write copy matching slide_copy_layout slide count and placement. All semantic meaning comes from semantic_contract_v1 — never drift to generic topic filler."
+    : whyCopyOn
+      ? "Write new copy that matches slide_copy_layout slide count and placement. Preserve each slide's strategic FUNCTION from the Why Mimic brief; invent fresh subjects and wording. Never copy reference_on_screen_text verbatim."
+      : "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.";
   parts.push(
     "",
-    whyCopyOn
-      ? "Write new copy that matches slide_copy_layout slide count and placement. Preserve each slide's strategic FUNCTION from the Why Mimic brief; invent fresh subjects and wording. Never copy reference_on_screen_text verbatim."
-      : "Write new copy that matches slide_copy_layout structure, placement, and **per-slide meaning** — rephrase reference_on_screen_text; never copy it verbatim and never change the subject of a slide.",
+    closing,
     "When copy_slots_v1 is present on a slide, output text_blocks[] with **one entry per copy slot cluster** (not per OCR line). The renderer composites each cluster across its Document AI boxes."
   );
   return parts.join("\n").trim();

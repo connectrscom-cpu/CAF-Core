@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCopyGroupingLlmResultToParsed,
+  applySemanticCoherenceLlmResultToParsed,
   applySlotGroupingToSlide,
   buildCopyGroupingSlideInputs,
   collapseTextBlocksToCopySlots,
@@ -126,5 +127,29 @@ describe("mimic-copy-coherence", () => {
     expect(inputs).toHaveLength(1);
     expect(inputs[0]?.slots.length).toBe(slots.length);
     expect(inputs[0]?.slots.length).toBeLessThan(3);
+  });
+
+  it("applySemanticCoherenceLlmResultToParsed rewrites drifting slides", () => {
+    const parsed = {
+      slides: [
+        { slide_index: 2, headline: "Generic pasta photo", body: "So yummy" },
+        { slide_index: 3, headline: "Recipe tips", body: "Try this restaurant" },
+      ],
+    };
+    const llm = {
+      slides: [
+        {
+          slide_index: 2,
+          headline: "Aries",
+          body: "Hot wings — bold, fiery, impossible to ignore.",
+          text_blocks: [{ role: "headline", text: "Aries" }, { role: "body", text: "Hot wings — bold, fiery." }],
+        },
+      ],
+    };
+    const applied = applySemanticCoherenceLlmResultToParsed(parsed, llm);
+    expect(applied.slides_rewritten).toBe(1);
+    const slides = applied.parsed.slides as Array<Record<string, unknown>>;
+    expect(slides[0]?.headline).toBe("Aries");
+    expect(slides[1]?.headline).toBe("Recipe tips");
   });
 });

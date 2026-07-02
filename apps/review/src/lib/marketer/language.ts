@@ -40,11 +40,22 @@ export const OPERATOR_LABELS = {
 
 const FLOW_TYPE_LABELS: Record<string, string> = {
   FLOW_CAROUSEL: "Carousel",
-  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL: "Visual mimic (carousel)",
-  FLOW_TOP_PERFORMER_MIMIC_IMAGE: "Visual mimic (image)",
+  FLOW_TOP_PERFORMER_MIMIC_CAROUSEL: "Visual mimic",
+  FLOW_WHY_MIMIC_CAROUSEL: "Why mimic",
+  FLOW_TOP_PERFORMER_MIMIC_IMAGE: "Visual mimic",
   FLOW_VISUAL_FIRST_CAROUSEL: "Brand-style carousel",
   FLOW_VIDEO: "Video",
   FLOW_PRODUCT_VIDEO: "Product video",
+  FLOW_VID_SCRIPT: "Video script",
+  FLOW_VID_PROMPT: "Video (avatar)",
+  FLOW_VID_PROMPT_NO_AVATAR: "Video (no avatar)",
+  FLOW_VID_SCENES: "Multi-scene video",
+  FLOW_SCENE_ASSEMBLY: "Multi-scene video",
+  FLOW_TEXT: "Text post",
+  FLOW_HOOKS: "Hooks",
+  FLOW_ANGLE: "Carousel angle",
+  FLOW_STRUCTURE: "Carousel structure",
+  FLOW_CTA: "CTA",
 };
 
 export function humanizeFlowType(flowType: string | null | undefined): string {
@@ -59,8 +70,16 @@ const CONTENT_STATUS_LABELS: Record<string, string> = {
   approved: "Approved",
   rejected: "Rejected",
   PLANNED: "Draft",
-  GENERATING: "Draft",
-  RENDERING: "Draft",
+  GENERATING: "Generating",
+  GENERATED: "Draft ready",
+  RENDERING: "Rendering",
+  IN_REVIEW: "Needs review",
+  NEEDS_EDIT: "Needs edits",
+  APPROVED: "Approved",
+  REJECTED: "Rejected",
+  READY: "Ready",
+  QC: "Quality check",
+  SUBMITTED: "Submitted",
 };
 
 export function humanizeContentStatus(status: string | null | undefined): string {

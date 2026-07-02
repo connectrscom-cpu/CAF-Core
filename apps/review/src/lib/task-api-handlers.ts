@@ -11,6 +11,7 @@ import {
 import { jobGeneratedSlidesJson } from "@/lib/job-generated-slides";
 import { previewFieldsFromJob } from "@/lib/job-preview-fields";
 import { textOverlayReprintUiState } from "@/lib/text-overlay-reprint-status";
+import { carouselRegenerateUiState } from "@/lib/carousel-regenerate-status";
 import { isVideoUrl } from "@/lib/media-url";
 import {
   pickCaptionFromGenerationPayload,
@@ -88,6 +89,7 @@ export async function jsonTaskDetailResponse(
           .join(",")
       : undefined;
     const reprintState = textOverlayReprintUiState(job.render_state);
+    const regenState = carouselRegenerateUiState(job.render_state);
     const data: Record<string, string | undefined> = {
       task_id: job.task_id,
       project: (job.project_slug ?? PROJECT_SLUG ?? reviewQueueFallbackSlug()).trim(),
@@ -136,6 +138,11 @@ export async function jsonTaskDetailResponse(
       text_overlay_reprint_requested_at: reprintState.requested_at ?? undefined,
       text_overlay_reprint_completed_at: reprintState.completed_at ?? undefined,
       text_overlay_reprint_slides: reprintState.slide_indices ?? undefined,
+      carousel_regenerate_active: regenState.active ? "true" : regenState.failed ? "failed" : "",
+      carousel_regenerate_status: regenState.status ?? undefined,
+      carousel_regenerate_error: regenState.error ?? undefined,
+      carousel_regenerate_done: regenState.total > 0 ? String(regenState.done_count) : undefined,
+      carousel_regenerate_total: regenState.total > 0 ? String(regenState.total) : undefined,
     };
     const body: Record<string, unknown> = { rowIndex: 0, data };
     if (opts?.includeJob) body.job = job;

@@ -4,11 +4,15 @@ import {
   buildSignalPackFromImport,
   getMarketIntelligenceForPack,
   getSignalPackForProject,
+  listEvidenceInsightsForImport,
+  listInputsScraperRuns,
   listProjects,
   listSignalPacksForProject,
 } from "@/lib/caf-core-client";
-import { parseHashtagsFromPack, toResearchBrief } from "@/lib/marketer/idea-adapters";
+import { parseHashtagsFromPack, toResearchBrief, enrichResearchBriefFromScraperRun } from "@/lib/marketer/idea-adapters";
+import { mapEnrichedRowToEvidencePost } from "@/lib/marketer/intel-evidence";
 import { buildMarketIntelligenceView } from "@/lib/marketer/market-intelligence-adapters";
+import type { IntelEvidencePost } from "@/lib/marketer/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -21,7 +25,15 @@ async function resolveDisplayName(slug: string): Promise<string> {
   return (project?.display_name ?? "").trim() || slug;
 }
 
-async function loadPack(slug: string, packId: string | null, displayName: string) {
+async function loadPack(
+  slug: string,
+  packId: string | null,
+  displayName: string,
+  scraperRuns: Array<{
+    evidence_import_id?: string | null;
+    config_snapshot_json?: Record<string, unknown>;
+  }>
+) {
   const list = await listSignalPacksForProject(slug, { limit: 20 }).catch(() => null);
   const packs = list?.signal_packs ?? [];
   const target = packId && packId !== "all" ? packs.find((p) => p.id === packId) : packs[0];
@@ -39,17 +51,21 @@ async function loadPack(slug: string, packId: string | null, displayName: string
     pack,
     packs,
     synthesized,
-    brief: toResearchBrief(
-      {
-        id: target.id,
-        created_at: target.created_at,
-        source_window: target.source_window,
-        notes: target.notes,
-        ideas_count: target.ideas_count,
-        upload_filename: target.upload_filename,
-        derived_globals_json: pack?.derived_globals_json,
-        source_inputs_import_id: str(pack?.source_inputs_import_id) || undefined,
-      },
+    brief: enrichResearchBriefFromScraperRun(
+      toResearchBrief(
+        {
+          id: target.id,
+          created_at: target.created_at,
+          source_window: target.source_window,
+          notes: target.notes,
+          ideas_count: target.ideas_count,
+          upload_filename: target.upload_filename,
+          derived_globals_json: pack?.derived_globals_json,
+          source_inputs_import_id: str(pack?.source_inputs_import_id) || undefined,
+        },
+        displayName
+      ),
+      scraperRuns,
       displayName
     ),
   };
@@ -65,20 +81,39 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   const displayName = await resolveDisplayName(slug);
   const packId = req.nextUrl.searchParams.get("packId");
-  const { pack, packs, brief, synthesized } = await loadPack(slug, packId, displayName);
+  const runs = await listInputsScraperRuns(slug, 10).catch(() => null);
+  const scraperRuns = (runs?.runs ?? []) as Array<{
+    evidence_import_id?: string | null;
+    config_snapshot_json?: Record<string, unknown>;
+  }>;
+  const { pack, packs, brief, synthesized } = await loadPack(slug, packId, displayName, scraperRuns);
 
   const intelligence = buildMarketIntelligenceView(pack, [], synthesized);
 
+  let evidencePosts: IntelEvidencePost[] = [];
+  const importId = brief?.importId ?? str(pack?.source_inputs_import_id);
+  if (importId) {
+    const insightsRes = await listEvidenceInsightsForImport(slug, importId, { limit: 200 }).catch(() => null);
+    const rows = insightsRes?.insights ?? [];
+    evidencePosts = rows
+      .map((row) => mapEnrichedRowToEvidencePost(row, pack))
+      .filter((p): p is IntelEvidencePost => p != null);
+  }
+
   const briefOptions = packs.map((p) =>
-    toResearchBrief(
-      {
-        id: p.id,
-        created_at: p.created_at,
-        source_window: p.source_window,
-        notes: p.notes,
-        ideas_count: p.ideas_count,
-        upload_filename: p.upload_filename,
-      },
+    enrichResearchBriefFromScraperRun(
+      toResearchBrief(
+        {
+          id: p.id,
+          created_at: p.created_at,
+          source_window: p.source_window,
+          notes: p.notes,
+          ideas_count: p.ideas_count,
+          upload_filename: p.upload_filename,
+        },
+        displayName
+      ),
+      scraperRuns,
       displayName
     )
   );
@@ -91,6 +126,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
     briefs: briefOptions,
     importId: brief?.importId ?? null,
     hashtags: parseHashtagsFromPack(pack),
+    evidencePosts,
   });
 }
 
@@ -105,7 +141,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     targetIdeaCount?: number;
   };
 
-  const { brief } = await loadPack(slug, body.packId ?? null, await resolveDisplayName(slug));
+  const displayName = await resolveDisplayName(slug);
+  const runs = await listInputsScraperRuns(slug, 10).catch(() => null);
+  const scraperRuns = (runs?.runs ?? []) as Array<{
+    evidence_import_id?: string | null;
+    config_snapshot_json?: Record<string, unknown>;
+  }>;
+  const { brief } = await loadPack(slug, body.packId ?? null, displayName, scraperRuns);
   const importId = brief?.importId;
   if (!importId) {
     return NextResponse.json(

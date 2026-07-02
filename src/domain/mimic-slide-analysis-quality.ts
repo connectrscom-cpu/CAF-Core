@@ -4,6 +4,7 @@
  * archived frame exists.
  */
 import type { MimicPayloadV1 } from "./mimic-payload.js";
+import { sourceSlideIndexForMimicOutput } from "./mimic-output-slide-index.js";
 import type { SlideIntelligenceBundleV1 } from "./slide-intelligence.js";
 import type { WhyMimicFluxSlideInput } from "./why-mimic-execution.js";
 
@@ -28,7 +29,48 @@ export type SlideIntelligenceTextQualityOpts = {
   whyMinChars?: number;
   thesisMinChars?: number;
   visualMinChars?: number;
+  /** When true (default in audits), reject heuristic template padding for Why Mimic readiness. */
+  requireSubstantive?: boolean;
+  /** Fraction of slides that must have non-template why + visual (0–1). Default 1. */
+  minSubstantiveSlideRatio?: number;
 };
+
+/** Heuristic `synthesizeSlideWhyItWorks()` markers — passes length checks but not reinterpretation-grade. */
+const SYNTHESIZED_WHY_MARKERS = [
+  /must keep its narrative job/i,
+  /new variants should pair fresh visuals with the same persuasion function/i,
+  /mechanisms to preserve:/i,
+  /do not echo the deck thesis verbatim or copy reference subjects literally/i,
+  /reference imagery:/i,
+] as const;
+
+/** Heuristic `ensureMinVisualDescription()` / synthesize padding markers. */
+const SYNTHESIZED_VISUAL_MARKERS = [
+  /art-only instagram carousel .+ plate \(slide \d+ of \d+\)/i,
+  /smooth overlay-safe regions and no readable text in the frame/i,
+  /supports narrative job:/i,
+] as const;
+
+/** True when `why_it_works` was padded by heuristic enrichment, not Nemotron vision analysis. */
+export function isSynthesizedSilWhyItWorks(raw: string | null | undefined): boolean {
+  const t = String(raw ?? "").trim();
+  if (!t) return false;
+  let hits = 0;
+  for (const re of SYNTHESIZED_WHY_MARKERS) {
+    if (re.test(t)) hits += 1;
+  }
+  return hits >= 2 || (/must keep its narrative job/i.test(t) && /reference imagery:/i.test(t));
+}
+
+/** True when `visual_description` was padded by heuristic enrichment. */
+export function isSynthesizedSilVisualDescription(raw: string | null | undefined): boolean {
+  const t = String(raw ?? "").trim();
+  if (!t) return false;
+  for (const re of SYNTHESIZED_VISUAL_MARKERS) {
+    if (re.test(t)) return true;
+  }
+  return /photo role:/i.test(t) && /visual role:/i.test(t) && /overlay-safe regions/i.test(t);
+}
 
 function effectiveVisualMinChars(opts?: SlideIntelligenceTextQualityOpts): number {
   const n = opts?.visualMinChars;
@@ -88,6 +130,26 @@ export function isSlideIntelligenceWhyItWorksSufficient(
   return t.length >= effectiveWhyMinChars(opts);
 }
 
+/** Why Mimic–grade per-slide why: sufficient length and not heuristic template padding. */
+export function isSlideIntelligenceWhyItWorksSubstantive(
+  raw: string | null | undefined,
+  opts?: SlideIntelligenceTextQualityOpts & { strategicThesis?: string | null }
+): boolean {
+  if (!isSlideIntelligenceWhyItWorksSufficient(raw, opts)) return false;
+  if (opts?.requireSubstantive === false) return true;
+  return !isSynthesizedSilWhyItWorks(raw);
+}
+
+/** Why Mimic–grade per-slide visual: sufficient length and not heuristic template padding. */
+export function isSlideIntelligenceVisualDescriptionSubstantive(
+  raw: string | null | undefined,
+  opts?: SlideIntelligenceTextQualityOpts
+): boolean {
+  if (!isSlideIntelligenceVisualDescriptionSufficient(raw, opts)) return false;
+  if (opts?.requireSubstantive === false) return true;
+  return !isSynthesizedSilVisualDescription(raw);
+}
+
 /** Deck-level strategic thesis meets minimum length and is not a placeholder. */
 export function isSlideIntelligenceStrategicThesisSufficient(
   raw: string | null | undefined,
@@ -101,7 +163,7 @@ export function isSlideIntelligenceStrategicThesisSufficient(
 export type SlideIntelligenceWhyQualityIssue = {
   slide_index: number;
   field: "why_it_works" | "visual_description";
-  reason: "missing" | "placeholder" | "too_short" | "deck_thesis_echo";
+  reason: "missing" | "placeholder" | "too_short" | "deck_thesis_echo" | "synthesized_template";
   char_count: number;
   min_chars: number;
   preview: string | null;
@@ -115,6 +177,8 @@ export type SlideIntelligenceBundleQualityReport = {
   slide_count: number;
   slides_with_sufficient_why: number;
   slides_with_sufficient_visual: number;
+  slides_with_substantive_why: number;
+  slides_with_substantive_visual: number;
   thin_slides: SlideIntelligenceWhyQualityIssue[];
   strategic_thesis: {
     sufficient: boolean;
@@ -124,6 +188,28 @@ export type SlideIntelligenceBundleQualityReport = {
     preview: string | null;
   };
 };
+
+export type WhyMimicSilPlanningEvaluation = {
+  eligible: boolean;
+  report: SlideIntelligenceBundleQualityReport;
+};
+
+/** Whether a SIL bundle is ready to plan Why Mimic jobs (substantive per-slide + deck thesis). */
+export function evaluateWhyMimicSilPlanning(
+  bundle: SlideIntelligenceBundleV1 | null | undefined,
+  opts?: SlideIntelligenceTextQualityOpts & {
+    minSlidePassRatio?: number;
+    minSubstantiveSlideRatio?: number;
+  }
+): WhyMimicSilPlanningEvaluation | null {
+  const report = auditSlideIntelligenceWhyQuality(bundle, {
+    ...opts,
+    requireSubstantive: opts?.requireSubstantive !== false,
+    minSubstantiveSlideRatio: opts?.minSubstantiveSlideRatio ?? 1,
+  });
+  if (!report) return null;
+  return { eligible: report.sufficient_for_reinterpretation, report };
+}
 
 /** Audit a SIL bundle for Why Mimic reinterpretation readiness. */
 export function auditSlideIntelligenceWhyQuality(
@@ -144,6 +230,10 @@ export function auditSlideIntelligenceWhyQuality(
   const thin_slides: SlideIntelligenceWhyQualityIssue[] = [];
   let slides_with_sufficient_why = 0;
   let slides_with_sufficient_visual = 0;
+  let slides_with_substantive_why = 0;
+  let slides_with_substantive_visual = 0;
+  const whyOpts = { ...opts, strategicThesis: thesis };
+  const requireSubstantive = opts?.requireSubstantive !== false;
 
   for (const slide of bundle.slides) {
     const whyRaw = slide.why_it_works;
@@ -186,8 +276,20 @@ export function auditSlideIntelligenceWhyQuality(
         min_chars: whyMin,
         preview: whyPreview,
       });
+    } else if (requireSubstantive && isSynthesizedSilWhyItWorks(whyRaw)) {
+      thin_slides.push({
+        slide_index: slide.slide_index,
+        field: "why_it_works",
+        reason: "synthesized_template",
+        char_count: whyChars,
+        min_chars: whyMin,
+        preview: whyPreview,
+      });
     } else {
       slides_with_sufficient_why += 1;
+      if (isSlideIntelligenceWhyItWorksSubstantive(whyRaw, whyOpts)) {
+        slides_with_substantive_why += 1;
+      }
     }
 
     const visRaw = slide.visual_description;
@@ -220,8 +322,20 @@ export function auditSlideIntelligenceWhyQuality(
         min_chars: visualMin,
         preview: visPreview,
       });
+    } else if (requireSubstantive && isSynthesizedSilVisualDescription(visRaw)) {
+      thin_slides.push({
+        slide_index: slide.slide_index,
+        field: "visual_description",
+        reason: "synthesized_template",
+        char_count: visChars,
+        min_chars: visualMin,
+        preview: visPreview,
+      });
     } else {
       slides_with_sufficient_visual += 1;
+      if (isSlideIntelligenceVisualDescriptionSubstantive(visRaw, opts)) {
+        slides_with_substantive_visual += 1;
+      }
     }
   }
 
@@ -235,17 +349,25 @@ export function auditSlideIntelligenceWhyQuality(
   const slideCount = Math.max(bundle.slides.length, 1);
   const whyPassRatio = slides_with_sufficient_why / slideCount;
   const visualPassRatio = slides_with_sufficient_visual / slideCount;
+  const substantiveRatio = Math.min(1, Math.max(0, opts?.minSubstantiveSlideRatio ?? 1));
+  const substantiveWhyRatio = slides_with_substantive_why / slideCount;
+  const substantiveVisualRatio = slides_with_substantive_visual / slideCount;
   const thesisOk = isSlideIntelligenceStrategicThesisSufficient(thesisRaw, opts);
+  const substantiveOk =
+    !requireSubstantive ||
+    (substantiveWhyRatio >= substantiveRatio && substantiveVisualRatio >= substantiveRatio);
 
   return {
     sufficient_for_reinterpretation:
-      thesisOk && whyPassRatio >= minRatio && visualPassRatio >= minRatio,
+      thesisOk && whyPassRatio >= minRatio && visualPassRatio >= minRatio && substantiveOk,
     why_min_chars: whyMin,
     visual_min_chars: visualMin,
     strategic_thesis_min_chars: thesisMin,
     slide_count: bundle.slides.length,
     slides_with_sufficient_why,
     slides_with_sufficient_visual,
+    slides_with_substantive_why,
+    slides_with_substantive_visual,
     thin_slides,
     strategic_thesis: {
       sufficient: thesisOk,
@@ -307,8 +429,9 @@ export function isWhyMimicFluxInputSufficientForT2i(
 ): boolean {
   if (!input) return false;
 
-  const hasSubstantiveWhy = isSlideIntelligenceWhyItWorksSufficient(input.why_it_works, opts);
-  const hasSubstantiveVisual = isSlideIntelligenceVisualDescriptionSufficient(input.visual_description, opts);
+  const whyOpts = { ...opts, strategicThesis: null };
+  const hasSubstantiveWhy = isSlideIntelligenceWhyItWorksSubstantive(input.why_it_works, whyOpts);
+  const hasSubstantiveVisual = isSlideIntelligenceVisualDescriptionSubstantive(input.visual_description, opts);
 
   const strategic = [
     input.slide_role,
@@ -353,7 +476,7 @@ export function mimicSlideHasUsableReference(
   if (archive.length === 0 && items.length === 0) return false;
 
   const plan = mimic.slide_plans?.find((p) => p.slide_index === slideIndex1Based);
-  const sourceIdx = plan?.source_slide_index ?? slideIndex1Based;
+  const sourceIdx = sourceSlideIndexForMimicOutput(mimic, slideIndex1Based);
 
   const hasFetchable = (item: { vision_fetch_url?: string; bucket?: string | null; object_path?: string | null }) => {
     if (String(item.vision_fetch_url ?? "").trim()) return true;

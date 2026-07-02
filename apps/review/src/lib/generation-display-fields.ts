@@ -97,8 +97,22 @@ export function pickTitleFromGenerationPayload(payload: Record<string, unknown> 
       stringVal(go.title).trim() ||
       stringVal(go.headline).trim() ||
       stringVal(go.hook_line).trim() ||
-      stringVal(go.hook).trim();
+      stringVal(go.hook).trim() ||
+      stringVal(go.cover).trim();
     if (g) return g;
+
+    const slideDeck = recordVal(go.slide_deck);
+    const slides =
+      (Array.isArray(go.slides) ? go.slides : null) ??
+      (slideDeck && Array.isArray(slideDeck.slides) ? slideDeck.slides : null);
+    const firstSlide = slides?.[0] ? recordVal(slides[0]) : null;
+    if (firstSlide) {
+      const slideTitle =
+        stringVal(firstSlide.headline).trim() ||
+        stringVal(firstSlide.title).trim() ||
+        stringVal(firstSlide.cover).trim();
+      if (slideTitle) return slideTitle;
+    }
   }
   return "";
 }

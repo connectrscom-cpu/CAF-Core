@@ -66,31 +66,123 @@ export function parseHandlesInput(text: string): string[] {
     .filter(Boolean);
 }
 
+/** Build a Core `inputs_source_rows` payload in the shape scrapers expect. */
+export function buildSourceRowPayload(
+  raw: string,
+  tab: string,
+  platformLabel: string
+): Record<string, unknown> {
+  const trimmed = raw.trim();
+  const bare = trimmed.replace(/^@+/, "").replace(/^#+/, "").replace(/^r\//i, "");
+
+  switch (tab) {
+    case "igaccounts": {
+      const handle = bare;
+      return {
+        Name: handle,
+        Link: `https://www.instagram.com/${handle}/`,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    }
+    case "tiktokaccounts": {
+      const link = /^https?:\/\//i.test(trimmed)
+        ? trimmed
+        : `https://www.tiktok.com/@${bare}`;
+      return {
+        Name: bare,
+        Link: link,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    }
+    case "hashtags":
+      return {
+        Name: bare,
+        Link: `#${bare}`,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    case "subreddits":
+      return {
+        Name: bare,
+        Link: `https://www.reddit.com/r/${bare}/`,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    case "facebook": {
+      const link = /^https?:\/\//i.test(trimmed)
+        ? trimmed
+        : `https://www.facebook.com/${trimmed.replace(/^\/+/, "")}`;
+      return {
+        Name: trimmed,
+        Link: link,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    }
+    case "websites_blogs": {
+      const link = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+      return {
+        Name: trimmed,
+        Link: link,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    }
+    default:
+      return {
+        Name: bare,
+        Link: trimmed,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+  }
+}
+
 export function handlesToSourceRows(
   handles: string[],
   tab: string,
   platformLabel: string
 ): Array<{ row_index: number; enabled: boolean; payload_json: Record<string, unknown> }> {
-  return handles.map((name, row_index) => ({
+  return handles.map((handle, row_index) => ({
     row_index,
     enabled: true,
-    payload_json: {
-      Name: name,
-      Link: "",
-      Platform: platformLabel,
-      source_tab: tab,
-    },
+    payload_json: buildSourceRowPayload(handle, tab, platformLabel),
   }));
 }
 
+function handleFromSourcePayload(
+  p: Record<string, unknown>,
+  tab?: string
+): string {
+  let name = String(p.Name ?? p.handle ?? p.name ?? "").trim();
+  const link = String(p.Link ?? p.link ?? p.url ?? "").trim();
+  if (!name && link) {
+    if (tab === "hashtags") {
+      name = link.replace(/^#+/, "");
+    } else if (tab === "subreddits") {
+      name = link.match(/reddit\.com\/r\/([^/?#\s]+)/i)?.[1] ?? link.replace(/^r\//i, "");
+    } else if (tab === "tiktokaccounts") {
+      name = link.match(/tiktok\.com\/@([^/?#\s]+)/i)?.[1] ?? link.replace(/^@+/, "");
+    } else if (tab === "igaccounts") {
+      name = link.match(/instagram\.com\/([^/?#\s]+)/i)?.[1] ?? link.replace(/^@+/, "");
+    } else {
+      name = link.replace(/^https?:\/\/(www\.)?/i, "");
+    }
+  }
+  if (!name) return "";
+  if (tab === "subreddits") return name.startsWith("r/") ? name : `r/${name}`;
+  if (tab === "hashtags") return name.startsWith("#") ? name : `#${name}`;
+  return name;
+}
+
 export function rowsToHandles(
-  rows: Array<{ payload_json?: Record<string, unknown> }>
+  rows: Array<{ payload_json?: Record<string, unknown> }>,
+  tab?: string
 ): string[] {
   return rows
-    .map((r) => {
-      const p = r.payload_json ?? {};
-      return String(p.Name ?? p.handle ?? p.name ?? "").trim();
-    })
+    .map((r) => handleFromSourcePayload(r.payload_json ?? {}, tab))
     .filter(Boolean);
 }
 
@@ -121,6 +213,6 @@ export function toResearchSourceGroups(
     label: g.label,
     tab: g.tab,
     placeholder: g.placeholder,
-    handles: rowsToHandles(rowsByTab[g.tab] ?? []),
+    handles: rowsToHandles(rowsByTab[g.tab] ?? [], g.tab),
   }));
 }

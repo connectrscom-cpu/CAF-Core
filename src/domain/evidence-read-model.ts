@@ -129,7 +129,7 @@ export function extractEngagementMetrics(evidenceKind: string, payload: Record<s
   return { likes, comments, shares, saves, views, engagement_rate };
 }
 
-function extractCreator(evidenceKind: string, payload: Record<string, unknown>): string | null {
+export function extractCreator(evidenceKind: string, payload: Record<string, unknown>): string | null {
   const k = String(evidenceKind ?? "");
   if (k === "instagram_post") {
     const h =

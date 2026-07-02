@@ -10,6 +10,7 @@ export interface BrandSummaryInput {
   signalPackCount: number;
   latestPackIdeasCount: number;
   hasBrandProfile: boolean;
+  hasBrandBible?: boolean;
 }
 
 function pipelineStatus(hasData: boolean, hasRecent: boolean): ResearchPipelineStatus {
@@ -31,6 +32,7 @@ export function toBrandSummary(input: BrandSummaryInput): BrandSummary {
   const steps = buildBrandOnboardingSteps({
     slug: project.slug,
     hasProfile: input.hasBrandProfile,
+    hasBrandBible: input.hasBrandBible === true,
     hasResearch,
     hasIntelligence,
     hasIdeas,

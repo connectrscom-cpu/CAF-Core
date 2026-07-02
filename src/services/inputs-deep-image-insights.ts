@@ -235,7 +235,7 @@ export async function runDeepImageInsightsForImport(
       skippedVideo++;
       continue;
     }
-    if (isCarouselDeepEligible(payload, 12)) {
+    if (isCarouselDeepEligible(payload, 15)) {
       skippedCarousel++;
       continue;
     }

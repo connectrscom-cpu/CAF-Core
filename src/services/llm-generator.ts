@@ -58,6 +58,8 @@ import {
   targetMimicCarouselCopySlideCount,
 } from "./mimic-carousel-render.js";
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
+import { resolveSemanticContractForJob } from "../domain/semantic-contract.js";
+import { parseSlideIntelligenceBundle } from "../domain/slide-intelligence.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -94,7 +96,7 @@ import {
   parseMimicCopyCharSlack,
   parseMimicCopyReferenceScale,
 } from "./mimic-reference-copy-budget.js";
-import { refineMimicCarouselCopyCoherence } from "./mimic-copy-coherence.js";
+import { refineMimicCarouselCopyCoherence, refineMimicCarouselSemanticCoherence } from "./mimic-copy-coherence.js";
 import { formatInstagramHandleForCta } from "./carousel-render-pack.js";
 import {
   mergeCarouselTypographyDefaultsFromPlatformConstraints,
@@ -671,6 +673,12 @@ export async function generateForJob(
       ? (await loadProjectMimicRenderSettings(db, job.project_id, appCfg)).whyMimicCopyEnabled
       : false;
 
+  const semanticContract = isTpGroundedCarouselRenderFlow(job.flow_type)
+    ? resolveSemanticContractForJob(payload, {
+        slideIntelligence: parseSlideIntelligenceBundle(asRecord(payload.mimic_v1)?.slide_intelligence),
+      })
+    : null;
+
   if (isTpGroundedCarouselRenderFlow(job.flow_type)) {
     userPrompt = appendMimicGroundedReferenceToUserPrompt(
       userPrompt,
@@ -678,6 +686,7 @@ export async function generateForJob(
         mimic_render_context: templateContext.mimic_render_context,
         hook_text_preview: mimicHookPreview,
         slide_copy_layout: mimicSlideCopyLayout,
+        semantic_contract: semanticContract,
         slide_intelligence: asRecord(payload.mimic_v1)?.slide_intelligence,
         brand_execution_brief: asRecord(payload.mimic_v1)?.brand_execution_brief,
       },
@@ -789,6 +798,7 @@ export async function generateForJob(
         mimic_render_context: templateContext.mimic_render_context,
         hook_text_preview: mimicHookPreview,
         slide_copy_layout: mimicSlideCopyLayout,
+        semantic_contract: semanticContract,
         slide_intelligence: asRecord(payload.mimic_v1)?.slide_intelligence,
         brand_execution_brief: asRecord(payload.mimic_v1)?.brand_execution_brief,
       }
@@ -1097,6 +1107,34 @@ export async function generateForJob(
           llmResult = {
             ...llmResult,
             total_tokens: llmResult.total_tokens + coherence.meta.tokens,
+          };
+        }
+      }
+
+      if (semanticContract && apiKey.trim() && !placeholderMode) {
+        const semantic = await refineMimicCarouselSemanticCoherence(
+          appCfg,
+          apiKey,
+          db,
+          {
+            task_id: job.task_id,
+            project_id: job.project_id,
+            run_id: job.run_id,
+          },
+          parsed,
+          semanticContract,
+          mimicSlideCopyLayout,
+          {
+            scale: parseMimicCopyReferenceScale(appCfg.MIMIC_FULL_BLEED_COPY_REFERENCE_SCALE),
+            charSlack: parseMimicCopyCharSlack(appCfg.MIMIC_COPY_CHAR_SLACK),
+            projectHandle: igRaw ? formatInstagramHandleForCta(igRaw) : null,
+          }
+        );
+        parsed = semantic.parsed;
+        if (semantic.meta) {
+          llmResult = {
+            ...llmResult,
+            total_tokens: llmResult.total_tokens + semantic.meta.tokens,
           };
         }
       }

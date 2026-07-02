@@ -9,9 +9,18 @@
  */
 import { useMemo, useState } from "react";
 import {
+  enrichSlideIntelligenceBundle,
   parseSlideIntelligenceBundle,
+  resolveSlideIntelligenceForOutputSlide,
   type SlideIntelligenceV1,
 } from "@caf-core-carousel/slide-intelligence";
+import { sourceSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-output-slide-index";
+import {
+  auditSlideIntelligenceWhyQuality,
+  isSlideIntelligenceStrategicThesisSufficient,
+  isSlideIntelligenceVisualDescriptionSubstantive,
+  isSlideIntelligenceWhyItWorksSubstantive,
+} from "@caf-core-carousel/mimic-slide-analysis-quality";
 
 function confidenceLabel(c: number): string {
   if (c >= 0.66) return "high";
@@ -19,12 +28,31 @@ function confidenceLabel(c: number): string {
   return "low";
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function fieldQualityLabel(ok: boolean, template?: boolean): string {
+  if (ok) return "✓ substantive";
+  if (template) return "⚠ template-padded";
+  return "✗ thin";
+}
+
+function Field({
+  label,
+  value,
+  quality,
+}: {
+  label: string;
+  value: string | null | undefined;
+  quality?: string | null;
+}) {
   if (!value || !value.trim()) return null;
   return (
     <div style={{ display: "flex", gap: 8, fontSize: 12, lineHeight: 1.4 }}>
       <span style={{ flex: "0 0 116px", opacity: 0.6 }}>{label}</span>
-      <span style={{ flex: 1 }}>{value}</span>
+      <span style={{ flex: 1 }}>
+        {quality ? (
+          <span style={{ fontSize: 10, opacity: 0.55, marginRight: 6 }}>{quality}</span>
+        ) : null}
+        {value}
+      </span>
     </div>
   );
 }
@@ -44,32 +72,67 @@ export function MimicSlideWhyPanel({
   slideIndex,
   taskId,
   projectSlug,
+  defaultOpen = true,
+  generatedOnScreenText,
 }: {
   mimicV1: Record<string, unknown> | null | undefined;
   slideIndex: number;
   taskId?: string;
   projectSlug?: string;
+  defaultOpen?: boolean;
+  /** Current generated copy for this slide (from edited slides / copy slots). */
+  generatedOnScreenText?: string | null;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(defaultOpen);
   const [correcting, setCorrecting] = useState(false);
   const [field, setField] = useState(CORRECTABLE_FIELDS[0].id);
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
 
-  const bundle = useMemo(
-    () => parseSlideIntelligenceBundle(mimicV1?.slide_intelligence),
-    [mimicV1]
-  );
+  const bundle = useMemo(() => {
+    const parsed = parseSlideIntelligenceBundle(mimicV1?.slide_intelligence);
+    return parsed ? enrichSlideIntelligenceBundle(parsed) : null;
+  }, [mimicV1]);
+
+  const sourceSlideIndex = useMemo(() => {
+    if (!mimicV1) return slideIndex;
+    return sourceSlideIndexForMimicOutput(
+      mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0],
+      slideIndex
+    );
+  }, [mimicV1, slideIndex]);
 
   const slide: SlideIntelligenceV1 | null = useMemo(() => {
     if (!bundle) return null;
-    return (
-      bundle.slides.find((s) => s.slide_index === slideIndex) ??
-      bundle.slides[slideIndex - 1] ??
-      null
-    );
-  }, [bundle, slideIndex]);
+    return resolveSlideIntelligenceForOutputSlide(bundle, slideIndex, sourceSlideIndex);
+  }, [bundle, slideIndex, sourceSlideIndex]);
+
+  const qualityReport = useMemo(
+    () => (bundle ? auditSlideIntelligenceWhyQuality(bundle, { requireSubstantive: true }) : null),
+    [bundle]
+  );
+
+  const deckThesis = bundle?.why_analysis?.strategic_thesis ?? null;
+  const whyQuality = slide
+    ? fieldQualityLabel(
+        isSlideIntelligenceWhyItWorksSubstantive(slide.why_it_works, { strategicThesis: deckThesis }),
+        qualityReport?.thin_slides.some(
+          (t) => t.slide_index === slide.slide_index && t.field === "why_it_works" && t.reason === "synthesized_template"
+        )
+      )
+    : null;
+  const visualQuality = slide
+    ? fieldQualityLabel(
+        isSlideIntelligenceVisualDescriptionSubstantive(slide.visual_description),
+        qualityReport?.thin_slides.some(
+          (t) =>
+            t.slide_index === slide.slide_index &&
+            t.field === "visual_description" &&
+            t.reason === "synthesized_template"
+        )
+      )
+    : null;
 
   const canCorrect = !!taskId?.trim();
 
@@ -115,6 +178,15 @@ export function MimicSlideWhyPanel({
         .filter((m): m is string => !!m && m.trim().length > 0)
     : [];
 
+  const generatedCopy = generatedOnScreenText?.trim() || null;
+  const referenceCopy = slide?.on_screen_text?.trim() || null;
+  const copyLooksMisaligned =
+    !!generatedCopy &&
+    !!referenceCopy &&
+    generatedCopy.toLowerCase() !== referenceCopy.toLowerCase() &&
+    !generatedCopy.toLowerCase().includes(referenceCopy.toLowerCase().slice(0, 24)) &&
+    !referenceCopy.toLowerCase().includes(generatedCopy.toLowerCase().slice(0, 24));
+
   return (
     <div
       style={{
@@ -145,11 +217,26 @@ export function MimicSlideWhyPanel({
         <span style={{ fontWeight: 600, fontSize: 12 }}>Why this works</span>
         <span style={{ fontSize: 11, opacity: 0.55 }}>
           slide {slideIndex}
+          {sourceSlideIndex !== slideIndex ? ` · ref ${sourceSlideIndex}` : ""}
           {slide ? ` · ${slide.slide_role ?? "?"}` : ""}
+          {" · reference strategy"}
         </span>
+        {qualityReport ? (
+          <span
+            style={{
+              fontSize: 10,
+              marginLeft: "auto",
+              opacity: 0.65,
+              color: qualityReport.sufficient_for_reinterpretation ? undefined : "#c0392b",
+            }}
+            title={`${qualityReport.slides_with_substantive_why}/${qualityReport.slide_count} substantive why · ${qualityReport.slides_with_substantive_visual}/${qualityReport.slide_count} substantive visual`}
+          >
+            {qualityReport.sufficient_for_reinterpretation ? "SIL ready" : "SIL thin"}
+          </span>
+        ) : null}
         {slide ? (
           <span
-            style={{ fontSize: 10, opacity: 0.5, marginLeft: "auto" }}
+            style={{ fontSize: 10, opacity: 0.5, marginLeft: qualityReport ? 8 : "auto" }}
             title={`provider: ${slide.provider}`}
           >
             confidence: {confidenceLabel(slide.confidence)}
@@ -162,6 +249,10 @@ export function MimicSlideWhyPanel({
 
       {open ? (
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 11, opacity: 0.58, lineHeight: 1.35 }}>
+            Persuasion role and deck strategy come from the reference carousel. Generated copy and imagery may differ
+            after reinterpretation or image regenerate.
+          </div>
           {slide ? (
             <>
               <Field label="Role" value={slide.slide_role} />
@@ -179,10 +270,23 @@ export function MimicSlideWhyPanel({
                     .join("; ")}
                 />
               ) : null}
-              <Field label="Why it works" value={slide.why_it_works} />
-              <Field label="Image description" value={slide.visual_description} />
-              {slide.on_screen_text ? (
-                <Field label="On-screen text" value={slide.on_screen_text} />
+              <Field label="Why it works" value={slide.why_it_works} quality={whyQuality} />
+              <Field
+                label="Reference image"
+                value={slide.visual_description}
+                quality={visualQuality}
+              />
+              {generatedCopy ? (
+                <Field label="Generated copy" value={generatedCopy} />
+              ) : null}
+              {referenceCopy ? (
+                <Field label="Reference on-screen text" value={referenceCopy} />
+              ) : null}
+              {copyLooksMisaligned ? (
+                <div style={{ fontSize: 11, opacity: 0.62, lineHeight: 1.35 }}>
+                  Generated copy differs from the reference transcript — that is expected after reinterpretation. Role
+                  and narrative job still describe what this slide beat should accomplish.
+                </div>
               ) : null}
             </>
           ) : (
@@ -193,7 +297,15 @@ export function MimicSlideWhyPanel({
             <details style={{ marginTop: 6 }}>
               <summary style={{ fontSize: 11, opacity: 0.65, cursor: "pointer" }}>Deck strategy</summary>
               <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
-                <Field label="Strategic intent" value={why.strategic_thesis} />
+                <Field
+                  label="Strategic intent"
+                  value={why.strategic_thesis}
+                  quality={
+                    why.strategic_thesis
+                      ? fieldQualityLabel(isSlideIntelligenceStrategicThesisSufficient(why.strategic_thesis))
+                      : null
+                  }
+                />
                 <Field label="Dominant" value={why.dominant_mechanism} />
                 <Field
                   label="Narrative spine"

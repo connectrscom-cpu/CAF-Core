@@ -283,6 +283,8 @@ export interface QueueFilters {
   /** Server-side pagination (CAF Core `/v1/review-queue/...` supports up to 500). */
   limit?: string;
   offset?: string;
+  /** When `1`, Core list omits heavy generation_payload blobs (agent mode). */
+  slim?: string;
 }
 
 // ── API Calls ────────────────────────────────────────────────────────────
@@ -805,6 +807,30 @@ export async function getBrandProfile(projectSlug: string) {
     parsed: Record<string, unknown> | null;
     versions: Array<{ version: number; label: string | null; is_active: boolean; created_at: string }>;
   }>(`/v1/projects/${encodeURIComponent(projectSlug)}/brand-profile`);
+}
+
+export async function getBrandBible(projectSlug: string) {
+  return coreGet<{
+    ok: boolean;
+    active: { version: number; label: string | null; bible_json: Record<string, unknown>; created_at: string } | null;
+    parsed: Record<string, unknown> | null;
+    snapshot: Record<string, unknown> | null;
+    brand_assets: Array<{
+      id: string;
+      kind: string;
+      label: string | null;
+      public_url: string | null;
+      metadata_json?: Record<string, unknown>;
+    }>;
+    versions: Array<{ version: number; label: string | null; is_active: boolean; created_at: string }>;
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/brand-bible`);
+}
+
+export async function saveBrandBible(projectSlug: string, bibleJson: Record<string, unknown>, label?: string | null) {
+  return corePost<{ ok: boolean; version: number; parsed: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/brand-bible`,
+    { bible_json: bibleJson, label: label ?? undefined }
+  );
 }
 
 export type ProjectAdminRow = {
@@ -1412,6 +1438,74 @@ export async function getRunDetail(
   );
 }
 
+export async function createRunForPack(
+  projectSlug: string,
+  body: {
+    signal_pack_id: string;
+    name?: string;
+    idea_picking_mode?: "manual" | "rules" | "llm";
+    metadata_json?: Record<string, unknown>;
+  }
+) {
+  return corePostRequired<{
+    ok: boolean;
+    run: { id: string; run_id: string; status: string; signal_pack_id: string | null };
+    materialize_error?: string | null;
+  }>(`/v1/runs/${encodeURIComponent(projectSlug)}`, {
+    idea_picking_mode: "manual",
+    ...body,
+  });
+}
+
+export async function materializeRunJobs(
+  projectSlug: string,
+  runId: string,
+  body: {
+    mode: "manual";
+    idea_ids?: string[];
+    mimic_picks?: Array<{ insights_id: string; mimic_kind: string }>;
+    bvs_overrides?: Array<{ key: string; enabled: boolean }>;
+  }
+) {
+  return corePostRequired<{ ok: boolean; planner_rows?: number }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}/jobs`,
+    body
+  );
+}
+
+export async function startRunForProject(projectSlug: string, runId: string) {
+  return corePostRequired<{ ok: boolean; run_id?: string; jobs_created?: number }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}/start`,
+    {}
+  );
+}
+
+export async function processRunForProject(projectSlug: string, runId: string) {
+  return corePostRequired<{ ok: boolean; accepted?: boolean; message?: string }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}/process`,
+    {}
+  );
+}
+
+export async function renderRunForProject(projectSlug: string, runId: string) {
+  return corePostRequired<{ ok: boolean; accepted?: boolean; message?: string }>(
+    `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}/render`,
+    {}
+  );
+}
+
+export async function setSignalPackMimicModeOverride(
+  projectSlug: string,
+  packId: string,
+  insightsId: string,
+  modeOverride: "carousel_visual" | "template_bg" | null
+) {
+  return corePostRequired<{ ok: boolean }>(
+    `/v1/signal-packs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(packId)}/mimic-mode-override`,
+    { insights_id: insightsId, mode_override: modeOverride }
+  );
+}
+
 // ── Pipeline: scraped inputs (evidence) + signal packs (ideas) ───────────
 
 export async function uploadInputsEvidenceWorkbook(formData: FormData) {
@@ -1500,6 +1594,25 @@ export async function listInputsEvidenceRowsPage(
   );
 }
 
+export async function listEvidenceInsightsForImport(
+  projectSlug: string,
+  importId: string,
+  opts?: { tier?: string; limit?: number; offset?: number }
+) {
+  const qs = new URLSearchParams();
+  if (opts?.tier) qs.set("tier", opts.tier);
+  qs.set("limit", String(opts?.limit ?? 200));
+  qs.set("offset", String(opts?.offset ?? 0));
+  qs.set("sort", "rating_desc");
+  const q = qs.toString();
+  return coreGet<{
+    ok: boolean;
+    insights: Record<string, unknown>[];
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/evidence-insights${q ? `?${q}` : ""}`
+  );
+}
+
 export type SignalPackListRow = {
   id: string;
   run_id: string;
@@ -1576,6 +1689,55 @@ export async function replaceInputsSourceTabRows(
     `/v1/inputs-sources/${encodeURIComponent(projectSlug)}/rows/${encodeURIComponent(tab)}`,
     { rows }
   );
+}
+
+/** Upload an INPUTS-style .xlsx workbook — syncs watchlist tabs into inputs_source_rows for this project. */
+export async function syncInputsSourcesFromWorkbook(projectSlug: string, formData: FormData) {
+  const headers: Record<string, string> = {};
+  if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
+  const res = await fetch(
+    `${CAF_CORE_URL}/v1/inputs-sources/${encodeURIComponent(projectSlug)}/sync-from-workbook`,
+    { method: "POST", headers, body: formData }
+  );
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Research workbook sync failed (${res.status}): ${text.slice(0, 600)}`);
+  }
+  return JSON.parse(text) as {
+    ok: boolean;
+    tabs: Array<{ source_tab: string; sheet_name: string; row_count: number }>;
+    total_rows: number;
+  };
+}
+
+/** JSON/base64 upload — avoids multipart issues through the Core → Review proxy. */
+export async function syncInputsSourcesFromWorkbookBase64(
+  projectSlug: string,
+  dataBase64: string,
+  filename?: string
+) {
+  return corePostRequired<{
+    ok: boolean;
+    tabs: Array<{ source_tab: string; sheet_name: string; row_count: number }>;
+    total_rows: number;
+  }>(`/v1/inputs-sources/${encodeURIComponent(projectSlug)}/sync-from-workbook`, {
+    data_base64: dataBase64,
+    filename,
+  });
+}
+
+export async function fetchInputsSourcesWorkbookTemplate(): Promise<ArrayBuffer> {
+  const headers: Record<string, string> = { Accept: "application/octet-stream" };
+  if (CAF_CORE_TOKEN) headers["x-caf-core-token"] = CAF_CORE_TOKEN;
+  const res = await fetch(`${CAF_CORE_URL}/v1/inputs-sources/workbook-template`, {
+    headers,
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Workbook template download failed (${res.status}): ${text.slice(0, 400)}`);
+  }
+  return res.arrayBuffer();
 }
 
 export async function runInputsScraper(

@@ -1,0 +1,104 @@
+import { NextRequest, NextResponse } from "next/server";
+import {
+  createRunForPack,
+  materializeRunJobs,
+  processRunForProject,
+  renderRunForProject,
+  setSignalPackMimicModeOverride,
+  startRunForProject,
+} from "@/lib/caf-core-client";
+import { cartItemsToMaterializeBody, cartMimicRenderOverrides } from "@/lib/marketer/cart-run-materialize";
+import { normalizeCartItemFlow } from "@/lib/marketer/cart-flow-resolve";
+import type { ContentCartItem } from "@/lib/marketer/types";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 120;
+
+type Ctx = { params: Promise<{ slug: string }> };
+
+export async function POST(req: NextRequest, ctx: Ctx) {
+  const { slug } = await ctx.params;
+  if (!slug) return NextResponse.json({ error: "Missing brand" }, { status: 400 });
+
+  const body = (await req.json()) as {
+    packId?: string;
+    items?: ContentCartItem[];
+    runName?: string;
+  };
+
+  const packId = String(body.packId ?? "").trim();
+  const items = (body.items ?? []).map(normalizeCartItemFlow);
+
+  if (!packId) {
+    return NextResponse.json(
+      { ok: false, error: "missing_pack", message: "Select a research brief before starting." },
+      { status: 400 }
+    );
+  }
+  if (!items.length) {
+    return NextResponse.json(
+      { ok: false, error: "empty_cart", message: "Add at least one idea or top performer to the cart." },
+      { status: 400 }
+    );
+  }
+
+  const { idea_ids, mimic_picks, bvs_overrides } = cartItemsToMaterializeBody(items);
+  if (!idea_ids.length && !mimic_picks.length) {
+    return NextResponse.json(
+      { ok: false, error: "invalid_cart", message: "Could not map cart items to planner rows." },
+      { status: 400 }
+    );
+  }
+
+  try {
+    for (const override of cartMimicRenderOverrides(items)) {
+      await setSignalPackMimicModeOverride(slug, packId, override.insights_id, override.mode_override);
+    }
+
+    const runLabel =
+      body.runName?.trim() ||
+      `Cart run · ${new Date().toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`;
+
+    const created = await createRunForPack(slug, {
+      signal_pack_id: packId,
+      name: runLabel,
+      idea_picking_mode: "manual",
+      metadata_json: {
+        source: "marketer_content_cart",
+        cart_item_count: items.length,
+        pack_id: packId,
+      },
+    });
+
+    const runId = created.run.run_id;
+
+    await materializeRunJobs(slug, runId, {
+      mode: "manual",
+      idea_ids: idea_ids.length ? idea_ids : undefined,
+      mimic_picks: mimic_picks.length ? mimic_picks : undefined,
+      bvs_overrides: bvs_overrides.length ? bvs_overrides : undefined,
+    });
+
+    const startResult = await startRunForProject(slug, runId);
+    await processRunForProject(slug, runId);
+    await renderRunForProject(slug, runId);
+
+    return NextResponse.json({
+      ok: true,
+      run_id: runId,
+      run_uuid: created.run.id,
+      jobs_created: startResult.jobs_created ?? null,
+      planner_summary: {
+        ideas: idea_ids.length,
+        mimic_picks: mimic_picks.length,
+      },
+      message:
+        "Run started. Draft generation and rendering are running in the background — check Content in a few minutes.",
+      content_url: `/brand/${encodeURIComponent(slug)}/content`,
+      admin_runs_url: `/admin/runs?project=${encodeURIComponent(slug)}`,
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to start run from cart";
+    return NextResponse.json({ ok: false, error: "cart_start_failed", message }, { status: 502 });
+  }
+}

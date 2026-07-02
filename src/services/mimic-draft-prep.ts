@@ -7,7 +7,7 @@ import {
 import { assertMimicCopyDiffersFromReference } from "../domain/mimic-copy-guard.js";
 import type { MimicPayloadV1 } from "../domain/mimic-payload.js";
 import { mergeMimicPayloadSlice, pickMimicPayload } from "../domain/mimic-payload.js";
-import { pickOrDeriveSlideIntelligence } from "../domain/slide-intelligence.js";
+import { pickOrDeriveSlideIntelligence, parseSlideIntelligenceBundle } from "../domain/slide-intelligence.js";
 import {
   buildWhyMimicSlidePlansFromSil,
   isWhyMimicExecution,
@@ -16,8 +16,13 @@ import {
 import { isWhyMimicCarouselFlow } from "../domain/why-mimic-carousel-flow-types.js";
 import { parseBrandProfile, type BrandProfileV1 } from "../domain/brand-profile.js";
 import { buildBrandExecutionBrief } from "../domain/brand-translation.js";
+import { parseBvsFromPayload, brandProfileFromBvsSnapshot } from "../domain/bvs-v1.js";
 import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
+import {
+  attachSemanticContractToPayload,
+  resolveSemanticContractForJob,
+} from "../domain/semantic-contract.js";
 import { assertMimicReferenceEligibleForFlow } from "../domain/mimic-reference-eligibility.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
@@ -221,7 +226,14 @@ async function resolveMimicPayloadForJob(
   const packOverride = overrides[resolved.source_insights_id] as MimicMode | null | undefined;
   const evidencePayload = evidencePayloadForResolved(lineage, resolved);
   const brandProfileRow = await getActiveBrandProfile(db, job.project_id);
-  const brandProfile = brandProfileRow ? parseBrandProfile(brandProfileRow.profile_json) : null;
+  let brandProfile: BrandProfileV1 | null = brandProfileRow
+    ? parseBrandProfile(brandProfileRow.profile_json)
+    : null;
+  const bvs = parseBvsFromPayload(job.generation_payload);
+  if (bvs?.enabled && bvs.bible_snapshot) {
+    const merged = brandProfileFromBvsSnapshot(bvs.bible_snapshot, null);
+    brandProfile = merged ? parseBrandProfile(merged) : brandProfile;
+  }
   const mimicSettings = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const built = buildMimicPayloadFromResolved(
     job.flow_type,
@@ -231,6 +243,15 @@ async function resolveMimicPayloadForJob(
     brandProfile,
     mimicSettings.whyMimicCopyEnabled
   );
+  if (bvs?.enabled) {
+    built.mimic = {
+      ...built.mimic,
+      bvs_enabled: true,
+      ...(bvs.bible_snapshot
+        ? { bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown> }
+        : {}),
+    };
+  }
 
   if (resolved.reference_tier_fallback) {
     logPipelineEvent("warn", "generate", "mimic reference tier fallback", {
@@ -312,6 +333,16 @@ async function persistGenerationPayload(
   );
 }
 
+function payloadWithSemanticContract(
+  gp: Record<string, unknown>,
+  mimic: MimicPayloadV1
+): Record<string, unknown> {
+  const contract = resolveSemanticContractForJob(gp, {
+    slideIntelligence: parseSlideIntelligenceBundle(mimic.slide_intelligence),
+  });
+  return attachSemanticContractToPayload(gp, contract);
+}
+
 /**
  * Resolve reference + classify render mode **before** LLM copy generation.
  * Persists `mimic_v1` and `mimic_render_context` so the copy prompt knows slide count / template path.
@@ -362,7 +393,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
       mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
     };
     const merged = refreshMimicJobGroundingSlideLayout(mergedBase, vg, filtered);
-    await persistGenerationPayload(db, job.id, merged);
+    await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, filtered));
     return filtered;
   }
 
@@ -393,7 +424,7 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     mimic
   );
 
-  await persistGenerationPayload(db, job.id, merged);
+  await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, mimic));
 
   logPipelineEvent("info", "generate", "mimic reference resolved before copy", {
     run_id: runId ?? undefined,

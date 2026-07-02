@@ -1,6 +1,6 @@
 /** Reference slide image URLs from mimic_v1 (original Instagram frames). */
 
-import { guidelineSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-slide-typography";
+import { sourceSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-output-slide-index";
 import {
   templateBgSlideIndicesForSlot,
   templateBgSlotForSlide,
@@ -113,7 +113,9 @@ export function mimicReferenceUrlForSlide(
   const items = referenceItemsFromMimicV1(mimicV1 ?? null);
   const slidePlans = Array.isArray(mimicV1?.slide_plans) ? mimicV1!.slide_plans : [];
   const plan = slidePlans.map((p) => asRec(p)).find((p) => p && Number(p.slide_index) === slideIndex1Based);
-  const sourceIdx = guidelineSlideIndexForMimicOutput(mimicV1 ?? {}, slideIndex1Based);
+  const sourceIdx = mimicV1
+    ? sourceSlideIndexForMimicOutput(mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0], slideIndex1Based)
+    : slideIndex1Based;
 
   const mode = String(mimicV1?.mode ?? "").trim();
   if (mode === "template_bg" && totalSlides != null && totalSlides > 0 && mimicV1) {
@@ -147,6 +149,7 @@ export function mimicReferenceUrlForSlide(
     }
   }
 
+  // Prefer source-deck frame list when mimic archive is sparse (map output → source, not raw output index).
   const frameUrl = referenceUrlFromFrameList(
     opts?.referenceFrameUrls ?? [],
     sourceIdx,
@@ -154,25 +157,7 @@ export function mimicReferenceUrlForSlide(
   );
   if (frameUrl) return frameUrl;
 
-  // 1:1 output deck when archive length matches slide count (each output maps to same-index frame).
-  if (
-    items.length > 0 &&
-    totalSlides != null &&
-    totalSlides > 0 &&
-    items.length >= totalSlides &&
-    slideIndex1Based <= items.length
-  ) {
-    const byOutput = items[slideIndex1Based - 1];
-    const url = byOutput ? pickUrl(byOutput) : "";
-    if (url) return url;
-  }
-
-  // Multi-frame archive without full TP frame list — cycle only when more than one distinct frame exists.
-  if (items.length > 1) {
-    const cycled = items[(slideIndex1Based - 1) % items.length];
-    return cycled ? pickUrl(cycled) || undefined : undefined;
-  }
-
+  // Never cycle a sparse archive by output index — that maps slide 3 → wrong sign when slide 1 was dropped.
   if (items.length === 1) {
     return pickUrl(items[0]!) || undefined;
   }

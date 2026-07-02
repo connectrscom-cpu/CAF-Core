@@ -98,6 +98,85 @@ export const SOURCE_TAB_TO_OUTPUT_SHEET: Record<string, string> = {
   hashtags: "Hashtags",
 };
 
+const WORKBOOK_TEMPLATE_SHEETS: Array<{
+  sheet_name: string;
+  source_tab: string;
+  example_rows: Array<Record<string, string>>;
+}> = [
+  {
+    sheet_name: "IGAccounts",
+    source_tab: "igaccounts",
+    example_rows: [
+      {
+        Name: "competitor.handle",
+        Link: "https://www.instagram.com/competitor.handle/",
+        Platform: "Instagram",
+      },
+    ],
+  },
+  {
+    sheet_name: "TikTokAccounts",
+    source_tab: "tiktokaccounts",
+    example_rows: [
+      {
+        Name: "creator",
+        Link: "https://www.tiktok.com/@creator",
+        Platform: "TikTok",
+      },
+    ],
+  },
+  {
+    sheet_name: "Hashtags",
+    source_tab: "hashtags",
+    example_rows: [{ Name: "contentmarketing", Link: "#contentmarketing", Platform: "Multi-platform" }],
+  },
+  {
+    sheet_name: "SubReddits",
+    source_tab: "subreddits",
+    example_rows: [
+      {
+        Name: "marketing",
+        Link: "https://www.reddit.com/r/marketing/",
+        Platform: "Reddit",
+      },
+    ],
+  },
+  {
+    sheet_name: "Facebook",
+    source_tab: "facebook",
+    example_rows: [
+      {
+        Name: "Competitor Page",
+        Link: "https://www.facebook.com/competitor.page",
+        Platform: "Facebook",
+      },
+    ],
+  },
+  {
+    sheet_name: "Websites+Blogs",
+    source_tab: "websites_blogs",
+    example_rows: [
+      {
+        Name: "Industry blog",
+        Link: "https://blog.example.com",
+        Platform: "Web",
+      },
+    ],
+  },
+];
+
+/** Minimal INPUTS-style workbook for marketer Research upload (one tab per watchlist type). */
+export function buildSourcesWorkbookTemplateBuffer(): Buffer {
+  const wb = XLSX.utils.book_new();
+  for (const sheet of WORKBOOK_TEMPLATE_SHEETS) {
+    const ws = XLSX.utils.json_to_sheet(sheet.example_rows, {
+      header: ["Name", "Link", "Platform"],
+    });
+    XLSX.utils.book_append_sheet(wb, ws, sheet.sheet_name);
+  }
+  return Buffer.from(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
+}
+
 export const SCRAPER_OUTPUT_SHEETS: Record<string, string> = {
   instagram: "InstagramPostData",
   tiktok: "Tiktok_Videos",

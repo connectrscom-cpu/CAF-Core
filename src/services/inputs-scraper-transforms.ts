@@ -81,7 +81,11 @@ export function normalizeInstagramProfileUrl(row: Record<string, unknown>): stri
     "";
 
   let value = String(raw).trim();
-  if (!value) return "";
+  if (!value) {
+    const name = stripAt(row.Name ?? row.name ?? row.handle ?? row.username ?? "");
+    if (!name) return "";
+    value = name;
+  }
 
   if (value.startsWith("@")) {
     value = `https://www.instagram.com/${stripAt(value)}/`;
@@ -345,7 +349,7 @@ export function transformTiktokApifyItem(item: Record<string, unknown>): Record<
 export function tiktokProfilesFromSources(rows: Record<string, unknown>[]): string[] {
   const handles: string[] = [];
   for (const row of rows) {
-    const link = String(row.Link ?? row.link ?? row.url ?? "").trim();
+    const link = String(row.Link ?? row.link ?? row.url ?? row.Name ?? row.name ?? "").trim();
     if (!link) continue;
     const m = link.match(/tiktok\.com\/@([^/?#]+)/i);
     if (m?.[1]) handles.push(m[1].replace(/^@/, ""));
@@ -611,14 +615,30 @@ export function transformHtmlFetch(
 export function facebookUrlsFromSources(rows: Record<string, unknown>[]): string[] {
   const urls: string[] = [];
   for (const row of rows) {
-    const u = String(row["Facebook URL"] ?? row.Link ?? row.link ?? row.url ?? "").trim();
+    let u = String(row["Facebook URL"] ?? row.Link ?? row.link ?? row.url ?? "").trim();
+    if (!u) {
+      const name = String(row.Name ?? row.name ?? "").trim();
+      if (name) u = /^https?:\/\//i.test(name) ? name : `https://www.facebook.com/${name.replace(/^\/+/, "")}`;
+    }
     if (u) urls.push(u);
   }
   return [...new Set(urls)];
 }
 
 export function subredditLinksFromSources(rows: Record<string, unknown>[]): string[] {
-  return [...new Set(rows.map((r) => String(r.Link ?? r.link ?? "").trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      rows
+        .map((r) => {
+          const link = String(r.Link ?? r.link ?? "").trim();
+          if (link) return link;
+          const name = String(r.Name ?? r.name ?? "").trim().replace(/^r\//i, "");
+          if (!name) return "";
+          return `https://www.reddit.com/r/${name}/`;
+        })
+        .filter(Boolean)
+    ),
+  ];
 }
 
 export function enabledWebsiteSources(rows: Record<string, unknown>[]): Array<{ url: string; name: string }> {
@@ -626,10 +646,18 @@ export function enabledWebsiteSources(rows: Record<string, unknown>[]): Array<{ 
     .filter((r) => {
       const enabled = r.Enabled ?? r.enabled;
       if (enabled === false || String(enabled).toLowerCase() === "false") return false;
-      return Boolean(String(r.Link ?? r.link ?? "").trim());
+      return Boolean(String(r.Link ?? r.link ?? r.Name ?? r.name ?? "").trim());
     })
-    .map((r) => ({
-      url: String(r.Link ?? r.link ?? "").trim(),
-      name: String(r.Name ?? r.name ?? r.Link ?? "").trim(),
-    }));
+    .map((r) => {
+      let url = String(r.Link ?? r.link ?? "").trim();
+      if (!url) {
+        const name = String(r.Name ?? r.name ?? "").trim();
+        url = /^https?:\/\//i.test(name) ? name : name ? `https://${name}` : "";
+      }
+      return {
+        url,
+        name: String(r.Name ?? r.name ?? r.Link ?? "").trim(),
+      };
+    })
+    .filter((r) => r.url);
 }

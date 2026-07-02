@@ -40,6 +40,8 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/projects",
   "/v1/projects/:project_slug",
   "/v1/projects/:project_slug/profile",
+  "/v1/projects/:project_slug/brand-bible",
+  "/v1/projects/:project_slug/brand-profile",
   "/v1/projects/:project_slug/strategy",
   "/v1/projects/:project_slug/brand",
   "/v1/projects/:project_slug/constraints",
@@ -52,6 +54,14 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/learning/:project_slug/context-preview",
   "/v1/jobs/:project_slug/:task_id/dossier",
   "/v1/publications/:project_slug",
+  "/v1/inputs-sources/:project_slug/rows",
+  "/v1/inputs-sources/:project_slug/rows/:tab",
+  "/v1/inputs-sources/:project_slug/run-scraper",
+  "/v1/inputs-sources/:project_slug/scraper-runs",
+  "/v1/inputs-sources/:project_slug/sync-from-workbook",
+  "/v1/inputs-sources/workbook-template",
+  "/v1/signal-packs/:project_slug",
+  "/v1/signal-packs/:project_slug/:id",
 ];
 
 describe("Review app contract (static)", () => {

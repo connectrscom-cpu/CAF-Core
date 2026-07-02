@@ -2,6 +2,9 @@
 
 import { useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ChromePanelToggle } from "@/components/ChromePanelToggle";
+import { humanizeContentStatus, humanizeFlowType } from "@/lib/marketer/language";
+import { displayReviewStatus, humanizePlatform } from "@/lib/review-queue-display";
 
 const QUERY_KEYS = [
   "project", "run_id", "platform", "flow_type", "review_status",
@@ -33,6 +36,8 @@ export interface WorkbenchFiltersProps {
   flowTypeValues?: string[];
   recommendedRouteValues?: string[];
   reviewStatusValues?: string[];
+  showCollapseToggle?: boolean;
+  onCollapseFilters?: () => void;
 }
 
 export function WorkbenchFilters({
@@ -46,6 +51,8 @@ export function WorkbenchFilters({
   flowTypeValues = [],
   recommendedRouteValues = [],
   reviewStatusValues,
+  showCollapseToggle = false,
+  onCollapseFilters,
 }: WorkbenchFiltersProps) {
   const reviewStatusOptions = reviewStatusValues?.length
     ? ["", ...reviewStatusValues.sort((a, b) => (a === "(empty)" ? 1 : b === "(empty)" ? -1 : a.localeCompare(b)))]
@@ -88,7 +95,12 @@ export function WorkbenchFilters({
     <>
       <div className="filter-header">
         <h3>Filters</h3>
-        <button type="button" className="filter-save-btn" onClick={saveView}>Save view</button>
+        <div className="filter-header-actions">
+          <button type="button" className="filter-save-btn" onClick={saveView}>Save view</button>
+          {showCollapseToggle && onCollapseFilters ? (
+            <ChromePanelToggle expanded onClick={onCollapseFilters} title="Hide filters" />
+          ) : null}
+        </div>
       </div>
 
       <div className="filter-group">
@@ -128,32 +140,49 @@ export function WorkbenchFilters({
         <label className="filter-label">Platform</label>
         <select className="filter-select" value={params.platform ?? ""} onChange={(e) => setParam("platform", e.target.value)}>
           <option value="">All</option>
-          {platformValues.map((v) => (<option key={v} value={v}>{v}</option>))}
+          {platformValues.map((v) => (
+            <option key={v} value={v}>
+              {marketerMode ? humanizePlatform(v) : v}
+            </option>
+          ))}
         </select>
       </div>
 
       <div className="filter-group">
-        <label className="filter-label">Flow type</label>
+        <label className="filter-label">{marketerMode ? "Format" : "Flow type"}</label>
         <select className="filter-select" value={params.flow_type ?? ""} onChange={(e) => setParam("flow_type", e.target.value)}>
           <option value="">All</option>
-          {flowTypeValues.map((v) => (<option key={v} value={v}>{v}</option>))}
+          {flowTypeValues.map((v) => (
+            <option key={v} value={v}>
+              {marketerMode ? humanizeFlowType(v) : v}
+            </option>
+          ))}
         </select>
       </div>
 
       <div className="filter-group">
         <label className="filter-label">Review status</label>
         <select className="filter-select" value={params.review_status ?? ""} onChange={(e) => setParam("review_status", e.target.value)}>
-          {reviewStatusOptions.map((v) => (<option key={v} value={v}>{v === "" ? "All" : v}</option>))}
+          {reviewStatusOptions.map((v) => (
+            <option key={v} value={v}>
+              {v === "" ? "All" : marketerMode ? displayReviewStatus(v, true) : v}
+            </option>
+          ))}
         </select>
       </div>
 
       <div className="filter-group">
         <label className="filter-label">Decision</label>
         <select className="filter-select" value={params.decision ?? ""} onChange={(e) => setParam("decision", e.target.value)}>
-          {DECISION_OPTIONS.map((v) => (<option key={v} value={v}>{v === "" ? "Any" : v}</option>))}
+          {DECISION_OPTIONS.map((v) => (
+            <option key={v} value={v}>
+              {v === "" ? "Any" : marketerMode ? humanizeContentStatus(v) : v}
+            </option>
+          ))}
         </select>
       </div>
 
+      {!marketerMode && (
       <div className="filter-group">
         <label className="filter-label">Recommended route</label>
         <select className="filter-select" value={params.recommended_route ?? ""} onChange={(e) => setParam("recommended_route", e.target.value)}>
@@ -161,19 +190,25 @@ export function WorkbenchFilters({
           {recommendedRouteValues.map((v) => (<option key={v} value={v}>{v}</option>))}
         </select>
       </div>
+      )}
 
-      <div className="filter-divider" />
+      {!marketerMode && <div className="filter-divider" />}
 
+      {!marketerMode && (
       <div className="filter-group">
         <label className="filter-label">QC status</label>
         <input type="text" className="filter-input" placeholder="e.g. PASS" value={params.qc_status ?? ""} onChange={(e) => setParam("qc_status", e.target.value)} />
       </div>
+      )}
 
+      {!marketerMode && (
       <div className="filter-group">
         <label className="filter-label">Risk score (min)</label>
         <input type="number" className="filter-input" min={0} max={1} step={0.1} placeholder="0–1" value={params.risk_score_min ?? ""} onChange={(e) => setParam("risk_score_min", e.target.value)} />
       </div>
+      )}
 
+      {!marketerMode && (
       <div className="filter-group">
         <label className="filter-label">Has preview</label>
         <select className="filter-select" value={params.has_preview ?? ""} onChange={(e) => setParam("has_preview", e.target.value)}>
@@ -181,8 +216,9 @@ export function WorkbenchFilters({
           <option value="true">Yes</option>
         </select>
       </div>
+      )}
 
-      <div className="filter-divider" />
+      {!marketerMode && <div className="filter-divider" />}
 
       <div className="filter-group">
         <label className="filter-label">Group by</label>

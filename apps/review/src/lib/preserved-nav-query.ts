@@ -1,5 +1,5 @@
 /** Query keys kept when navigating inside an admin iframe (`embed=admin`). */
-export const PRESERVED_NAV_QUERY_KEYS = ["embed", "tab"] as const;
+export const PRESERVED_NAV_QUERY_KEYS = ["embed"] as const;
 
 type QuerySource = { get(name: string): string | null };
 

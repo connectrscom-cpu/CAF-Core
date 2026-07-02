@@ -18,6 +18,14 @@ import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { evaluatePreLlmRow } from "./inputs-pre-llm-rank.js";
 import { summarizePayloadForLlm } from "./inputs-evidence-display.js";
 import { deriveEvidencePostFormat, EVIDENCE_POST_FORMATS, isEvidencePostFormat } from "./inputs-evidence-post-format.js";
+import {
+  customLabelJsonSchemaLines,
+  customLabelPromptInstructions,
+  customLabelUserPromptBlock,
+  insightColumnLabelsFromCriteria,
+  sanitizeCustomLabelAnswer,
+  type InsightColumnLabels,
+} from "../domain/insight-column-labels.js";
 
 const STEP = "inputs_broad_llm_insights_batch";
 
@@ -89,19 +97,6 @@ export interface BroadInsightsPromptPreview {
   rows_payload: unknown[];
 }
 
-function insightLabels(criteria: Record<string, unknown>): { l1: string; l2: string; l3: string } {
-  const raw = criteria.insight_column_labels;
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return { l1: "", l2: "", l3: "" };
-  }
-  const o = raw as Record<string, unknown>;
-  return {
-    l1: String(o.custom_label_1 ?? "").trim(),
-    l2: String(o.custom_label_2 ?? "").trim(),
-    l3: String(o.custom_label_3 ?? "").trim(),
-  };
-}
-
 function broadBatchSize(criteria: Record<string, unknown>): number {
   const raw = criteria.inputs_insights;
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
@@ -149,8 +144,9 @@ function stripLegacyRowsJsonBlock(text: string): string {
   return text.slice(0, m.index).trimEnd();
 }
 
-function defaultBroadSystemPrompt(): string {
+function defaultBroadSystemPrompt(labels: InsightColumnLabels): string {
   const formats = EVIDENCE_POST_FORMATS.join(" | ");
+  const customFields = customLabelJsonSchemaLines(labels).join(",\n");
   return `You analyze social/scraper evidence for a marketing content pipeline.
 Each input row includes **post_format_hint** (${formats}) — structural format (video vs carousel vs single image vs text-native vs article), derived from the scraper payload. Treat it as ground truth for how the post is consumed; tailor **why_it_worked** and **caption_style** to that format.
 
@@ -158,7 +154,7 @@ Each input row includes **post_format_hint** (${formats}) — structural format 
 question | bold_claim | list_promise | personal_story | controversy | pattern_interrupt | social_proof | before_after | myth_bust | direct_address | curiosity_gap | other
 Never output placeholder phrases like "hook in first seconds", "slide arc", or "cover slide" as hook_type — those describe format, not hook strategy.
 
-**risk_flags** — only include genuine risks (brand safety, saturation, weak hook, misleading claim). Use [] when none; do not flag strong performers.
+**risk_flags** — only include genuine risks (brand safety, saturation, weak hook, misleading claim). Use [] when none; do not flag strong performers.${customLabelPromptInstructions(labels)}
 Return ONLY valid JSON with shape:
 {"insights":[
   {
@@ -168,9 +164,7 @@ Return ONLY valid JSON with shape:
     "primary_emotion":"string",
     "secondary_emotion":"string",
     "hook_type":"string",
-    "custom_label_1":"string (short; use label meaning if provided)",
-    "custom_label_2":"string",
-    "custom_label_3":"string",
+${customFields},
     "cta_type":"string",
     "hashtags":"string (normalized list or sentence)",
     "caption_style":"string",
@@ -181,11 +175,8 @@ Return ONLY valid JSON with shape:
 One object per input row in this batch only. Do not invent row_db_id values.`;
 }
 
-function defaultBroadUserPrompt(labels: { l1: string; l2: string; l3: string }, rowsPayload: unknown[]): string {
-  return `Custom column label hints (may be empty — still output strings, can be ""):
-- custom_label_1: ${labels.l1 || "(none)"}
-- custom_label_2: ${labels.l2 || "(none)"}
-- custom_label_3: ${labels.l3 || "(none)"}
+function defaultBroadUserPrompt(labels: InsightColumnLabels, rowsPayload: unknown[]): string {
+  return `${customLabelUserPromptBlock(labels)}
 
 Rows (JSON):
 ${JSON.stringify(rowsPayload, null, 0)}`;
@@ -197,11 +188,11 @@ export function broadInsightsPromptTemplate(): {
   variables: string[];
 } {
   return {
-    system_prompt: defaultBroadSystemPrompt(),
-    user_prompt_template: `Custom column label hints (may be empty — still output strings, can be ""):
-- custom_label_1: {{CUSTOM_LABEL_1}}
-- custom_label_2: {{CUSTOM_LABEL_2}}
-- custom_label_3: {{CUSTOM_LABEL_3}}
+    system_prompt: defaultBroadSystemPrompt({ l1: "", l2: "", l3: "" }),
+    user_prompt_template: `Operator-defined extra columns (answer per row; empty string when unknown — never echo the column title):
+- custom_label_1 → column **"{{CUSTOM_LABEL_1}}"** (if configured)
+- custom_label_2 → column **"{{CUSTOM_LABEL_2}}"** (if configured)
+- custom_label_3 → column **"{{CUSTOM_LABEL_3}}"** (if configured)
 
 Rows (JSON):
 {{ROWS_JSON}}`,
@@ -213,7 +204,7 @@ function resolveLabels(
   criteria: Record<string, unknown>,
   overrides?: { l1?: string | null; l2?: string | null; l3?: string | null }
 ): { l1: string; l2: string; l3: string } {
-  const base = insightLabels(criteria);
+  const base = insightColumnLabelsFromCriteria(criteria);
   const l1 = (overrides?.l1 ?? "").trim();
   const l2 = (overrides?.l2 ?? "").trim();
   const l3 = (overrides?.l3 ?? "").trim();
@@ -240,7 +231,7 @@ function buildBroadPrompts(params: {
     ROWS_JSON: rowsJson,
   };
 
-  const systemRaw = (params.systemOverride ?? "").trim() || defaultBroadSystemPrompt();
+  const systemRaw = (params.systemOverride ?? "").trim() || defaultBroadSystemPrompt(labels);
   const system = substitutePromptVars(systemRaw, vars);
 
   const userRaw = (params.userOverride ?? "").trim() || defaultBroadUserPrompt(labels, params.rowsPayload);
@@ -457,9 +448,18 @@ export async function runBroadInsightsForImport(
         primary_emotion: typeof item.primary_emotion === "string" ? item.primary_emotion : null,
         secondary_emotion: typeof item.secondary_emotion === "string" ? item.secondary_emotion : null,
         hook_type: hookTypeForStorage(hookTypeRaw, hookText),
-        custom_label_1: typeof item.custom_label_1 === "string" ? item.custom_label_1 : null,
-        custom_label_2: typeof item.custom_label_2 === "string" ? item.custom_label_2 : null,
-        custom_label_3: typeof item.custom_label_3 === "string" ? item.custom_label_3 : null,
+        custom_label_1: sanitizeCustomLabelAnswer(
+          typeof item.custom_label_1 === "string" ? item.custom_label_1 : null,
+          prompts.labels.l1
+        ),
+        custom_label_2: sanitizeCustomLabelAnswer(
+          typeof item.custom_label_2 === "string" ? item.custom_label_2 : null,
+          prompts.labels.l2
+        ),
+        custom_label_3: sanitizeCustomLabelAnswer(
+          typeof item.custom_label_3 === "string" ? item.custom_label_3 : null,
+          prompts.labels.l3
+        ),
         cta_type: typeof item.cta_type === "string" ? item.cta_type : null,
         hashtags: typeof item.hashtags === "string" ? item.hashtags : null,
         caption_style: typeof item.caption_style === "string" ? item.caption_style : null,

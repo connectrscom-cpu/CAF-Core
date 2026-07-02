@@ -126,7 +126,13 @@ a.caf-pipeline-stage:hover{color:var(--fg);text-decoration:none;background:var(-
 span.caf-pipeline-stage{cursor:default}
 .wb-shell{display:flex;flex-direction:column;height:calc(100vh - 0px);min-height:480px;background:var(--bg)}
 .wb-shell-header{flex-shrink:0;padding:14px 28px 10px;border-bottom:1px solid rgba(59,130,246,.22);background:linear-gradient(135deg,rgba(59,130,246,.1) 0%,rgba(168,85,247,.06) 100%)}
-.wb-shell-header h2{font-size:18px;font-weight:600;margin:0 0 6px;letter-spacing:-.02em}
+.wb-shell-header-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+.wb-shell-header h2{font-size:18px;font-weight:600;margin:0;letter-spacing:-.02em}
+.wb-chrome-toggles{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.wb-chrome-btn{font-size:12px!important;padding:5px 10px!important}
+.wb-chrome-btn--active{background:var(--blue-bg)!important;color:var(--accent)!important}
+.shell--sb-hidden .sb{display:none}
+.shell--sb-hidden .main{margin-left:0}
 .wb-shell .wb-embed{flex:1;min-height:0;height:auto}
 .card-h{text-transform:none;letter-spacing:0;color:var(--fg);font-size:13px;font-weight:600}
 .caf-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;padding:10px 12px;background:linear-gradient(135deg,rgba(59,130,246,.12) 0%,rgba(59,130,246,.04) 100%);border:1px solid rgba(59,130,246,.28);border-radius:10px}
@@ -367,6 +373,15 @@ pre.json{background:linear-gradient(180deg,var(--surface-2) 0%,var(--bg) 100%);b
 `;
 }
 
+/** Layout toggles for admin workbench embed (controls admin sidebar + iframe filters). */
+export function adminWorkbenchChromeTogglesHtml(): string {
+  return `<div class="wb-chrome-toggles" data-wb-chrome-toggles role="toolbar" aria-label="Layout">
+  <button type="button" class="btn-ghost btn-sm wb-chrome-btn" data-wb-chrome="sidebar">Hide nav</button>
+  <button type="button" class="btn-ghost btn-sm wb-chrome-btn" data-wb-chrome="filters">Hide filters</button>
+  <button type="button" class="btn-ghost btn-sm wb-chrome-btn" data-wb-chrome="focus">Focus</button>
+</div>`;
+}
+
 export function adminCafUiScript(): string {
   const glossary = JSON.stringify(ADMIN_CAF_GLOSSARY);
   return `
@@ -417,6 +432,90 @@ export function adminCafUiScript(): string {
       else el.removeAttribute('aria-current');
     });
   };
+  var CHROME_KEY='caf-review-chrome-v1';
+  function readChromeLayout(){
+    try{
+      var raw=localStorage.getItem(CHROME_KEY);
+      if(!raw)return {hideAdminNav:false,hideWorkbenchFilters:false};
+      var p=JSON.parse(raw);
+      var legacy=!!p.hideSidebar;
+      return {
+        hideAdminNav:p.hideAdminNav!==undefined?!!p.hideAdminNav:legacy,
+        hideWorkbenchFilters:!!p.hideWorkbenchFilters
+      };
+    }catch(_e){return {hideAdminNav:false,hideWorkbenchFilters:false};}
+  }
+  function readReviewSidebarHidden(){
+    try{
+      var raw=localStorage.getItem(CHROME_KEY);
+      if(!raw)return false;
+      var p=JSON.parse(raw);
+      if(p.hideReviewSidebar!==undefined)return !!p.hideReviewSidebar;
+      return !!p.hideSidebar;
+    }catch(_e){return false;}
+  }
+  function writeChromeLayout(patch){
+    var cur=readChromeLayout();
+    var next={
+      hideAdminNav:cur.hideAdminNav,
+      hideReviewSidebar:readReviewSidebarHidden(),
+      hideWorkbenchFilters:cur.hideWorkbenchFilters
+    };
+    if('hideAdminNav' in patch)next.hideAdminNav=!!patch.hideAdminNav;
+    if('hideWorkbenchFilters' in patch)next.hideWorkbenchFilters=!!patch.hideWorkbenchFilters;
+    try{localStorage.setItem(CHROME_KEY,JSON.stringify(next));}catch(_e){}
+    return next;
+  }
+  function postChromeToIframe(layout){
+    var f=document.querySelector('.wb-embed-frame');
+    if(!f||!f.contentWindow)return;
+    try{f.contentWindow.postMessage({type:'caf-review-chrome',layout:{hideWorkbenchFilters:!!layout.hideWorkbenchFilters}},'*');}catch(_e){}
+  }
+  function updateChromeToggleLabels(layout){
+    document.querySelectorAll('[data-wb-chrome]').forEach(function(btn){
+      var kind=btn.getAttribute('data-wb-chrome');
+      if(kind==='sidebar'){
+        btn.textContent=layout.hideAdminNav?'Show nav':'Hide nav';
+        btn.classList.toggle('wb-chrome-btn--active',layout.hideAdminNav);
+      }else if(kind==='filters'){
+        btn.textContent=layout.hideWorkbenchFilters?'Show filters':'Hide filters';
+        btn.classList.toggle('wb-chrome-btn--active',layout.hideWorkbenchFilters);
+      }else if(kind==='focus'){
+        var on=layout.hideAdminNav&&layout.hideWorkbenchFilters;
+        btn.classList.toggle('wb-chrome-btn--active',on);
+      }
+    });
+  }
+  function applyAdminChromeSidebar(){
+    var layout=readChromeLayout();
+    var shell=document.querySelector('.shell');
+    if(shell)shell.classList.toggle('shell--sb-hidden',layout.hideAdminNav);
+    updateChromeToggleLabels(layout);
+    postChromeToIframe(layout);
+  }
+  window.__applyAdminChromeLayout=applyAdminChromeSidebar;
+  document.addEventListener('DOMContentLoaded',function(){
+    applyAdminChromeSidebar();
+    var toggles=document.querySelector('[data-wb-chrome-toggles]');
+    if(!toggles)return;
+    toggles.addEventListener('click',function(e){
+      var btn=e.target&&e.target.closest?e.target.closest('[data-wb-chrome]'):null;
+      if(!btn)return;
+      var kind=btn.getAttribute('data-wb-chrome');
+      var cur=readChromeLayout();
+      if(kind==='sidebar'){
+        cur=writeChromeLayout({hideAdminNav:!cur.hideAdminNav});
+      }else if(kind==='filters'){
+        cur=writeChromeLayout({hideWorkbenchFilters:!cur.hideWorkbenchFilters});
+      }else if(kind==='focus'){
+        var on=!(cur.hideAdminNav&&cur.hideWorkbenchFilters);
+        cur=writeChromeLayout({hideAdminNav:on,hideWorkbenchFilters:on});
+      }else return;
+      applyAdminChromeSidebar();
+    });
+    var frame=document.querySelector('.wb-embed-frame');
+    if(frame)frame.addEventListener('load',function(){postChromeToIframe(readChromeLayout());});
+  });
 })();
 `;
 }
@@ -1007,10 +1106,21 @@ export function adminManualIdeaPickScript(): string {
       var startD=await startR.json();
       if(!startR.ok||!startD.ok)throw new Error((startD&&startD.message)||(startD&&startD.error)||'Start failed after saving picks');
       var planned=startD.planned_jobs!=null?startD.planned_jobs:0;
-      setMsg('Saved '+d.planner_rows+' planner row(s) · '+planned+' content job(s) planned. Open Jobs → Generate to create packages.',false);
+      setMsg('Saved '+d.planner_rows+' planner row(s) · '+planned+' job(s) planned. Starting generation and rendering…',false);
+      var procR=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(st.runId)+'/process',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
+      });
+      var procD=await procR.json();
+      if(!procR.ok||!procD.ok)throw new Error((procD&&procD.message)||(procD&&procD.error)||'Generate failed after start');
+      var renderR=await cafFetch('/v1/runs/'+encodeURIComponent(SLUG)+'/'+encodeURIComponent(st.runId)+'/render',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:'{}'
+      });
+      var renderD=await renderR.json();
+      if(!renderR.ok||!renderD.ok)throw new Error((renderD&&renderD.message)||(renderD&&renderD.error)||'Render failed after start');
+      setMsg('Saved '+d.planner_rows+' planner row(s) · '+planned+' job(s) planned. Generation and rendering started in the background.',false);
       closePicker();
-      if(typeof st.onApplied==='function')st.onApplied(Object.assign({},d,{start:startD}));
-      else if(typeof showToast==='function')showToast('Run started: '+planned+' job(s) from manual pick.',true,12000);
+      if(typeof st.onApplied==='function')st.onApplied(Object.assign({},d,{start:startD,process:procD,render:renderD}));
+      else if(typeof showToast==='function')showToast('Run started: '+planned+' job(s). Generation and rendering are running in the background.',true,16000);
     }catch(e){
       setMsg(String(e.message||e),true);
     }finally{st.busy=false;}

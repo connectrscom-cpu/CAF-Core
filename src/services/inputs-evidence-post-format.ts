@@ -44,7 +44,7 @@ export function deriveEvidencePostFormat(evidenceKind: string, payload: Record<s
 
   if (isVideoLikeEvidence(evidenceKind, payload)) return "video";
 
-  if (parseCarouselSlideUrls(payload, 12).length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) return "carousel";
+  if (parseCarouselSlideUrls(payload, 15).length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) return "carousel";
 
   if (evidenceKind === "instagram_post" && instagramCarouselStructuralHintPresent(payload)) {
     return "carousel";

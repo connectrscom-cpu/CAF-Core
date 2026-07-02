@@ -13,6 +13,10 @@ import {
 import { getInputsEvidenceImport, listEvidenceRowsByIds } from "../repositories/inputs-evidence.js";
 import { buildCarouselAestheticAnalysisJson } from "./carousel-insights-llm-normalize.js";
 import {
+  TOP_PERFORMER_CAROUSEL_MAX_SLIDES_CAP,
+  TOP_PERFORMER_CAROUSEL_MAX_SLIDES_DEFAULT,
+} from "./inputs-deep-carousel-insights.js";
+import {
   assertDocumentAiConfigured,
   assertDocumentAiRuntimeAuth,
   documentAiAuthModeLabel,
@@ -141,7 +145,11 @@ export async function runCarouselDocumentAiOcrForImport(
   const progressId = opts.progress_id?.trim() || null;
   const mergeIntoInsights = opts.merge_into_insights !== false;
   const maxRows = clamp(opts.max_rows ?? 20, 1, 40);
-  const maxSlides = clamp(opts.max_slides ?? 12, 2, 12);
+  const maxSlides = clamp(
+    opts.max_slides ?? TOP_PERFORMER_CAROUSEL_MAX_SLIDES_DEFAULT,
+    2,
+    TOP_PERFORMER_CAROUSEL_MAX_SLIDES_CAP
+  );
 
   const logStep = (message: string, stage?: string) => {
     if (progressId) appendProcessingPassProgress(progressId, message, stage);

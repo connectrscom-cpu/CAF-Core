@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isMimicDocAiHandleLayer,
   MIMIC_DOCAI_HANDLE_FONT_SIZE_PX,
 } from "@caf-core-carousel/mimic-slide-typography";
-import { refKeyFromLayerPositionKey } from "@caf-core-carousel/mimic-docai-layer-positions";
+import {
+  clampMimicDocAiInitialEditorFontPx,
+  refKeyFromLayerPositionKey,
+} from "@caf-core-carousel/mimic-docai-layer-positions";
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
 const DEFAULT_FONT_PX = 50;
-const MIN_FONT_PX = 24;
+const MIN_FONT_PX = 32;
 const MAX_FONT_PX = 120;
 const MIN_BOX_W = 48;
 const MIN_BOX_H = 28;
@@ -72,7 +75,7 @@ const HIGHLIGHT_PAD_X = 16;
 const HIGHLIGHT_PAD_Y = 12;
 const HIGHLIGHT_LINE_HEIGHT = 1.15;
 
-/** Prefer saved geometry, then inspect layer size, then highlight fit — stops dimension flicker. */
+/** Prefer reviewer-saved geometry; otherwise fit box to copy (not raw inspect OCR size). */
 function resolveSeedBoxSize(
   layer: DocAiLayerBox,
   savedRow: DocAiLayerOverride | undefined,
@@ -92,14 +95,6 @@ function resolveSeedBoxSize(
     savedH > 0
   ) {
     return { w_px: Math.max(MIN_BOX_W, savedW), h_px: Math.max(MIN_BOX_H, savedH) };
-  }
-  if (
-    layer.w_px > 0 &&
-    layer.h_px > 0 &&
-    Number.isFinite(layer.w_px) &&
-    Number.isFinite(layer.h_px)
-  ) {
-    return { w_px: Math.max(MIN_BOX_W, layer.w_px), h_px: Math.max(MIN_BOX_H, layer.h_px) };
   }
   return openHighlightBoxForText(text, fontSizePx, xPx, yPx);
 }
@@ -192,7 +187,9 @@ function defaultLayerFontPx(
   if (isMimicDocAiHandleLayer(layer.role ?? null, text, projectHandle)) {
     return MIMIC_DOCAI_HANDLE_FONT_SIZE_PX;
   }
-  if (layer.font_size_px && layer.font_size_px > 0) return layer.font_size_px;
+  if (layer.font_size_px != null && layer.font_size_px > 0) {
+    return clampMimicDocAiInitialEditorFontPx(layer.font_size_px);
+  }
   return DEFAULT_FONT_PX;
 }
 
@@ -334,6 +331,10 @@ type MimicDocAiLayerPositionEditorProps = {
   overlayApplyBusy?: boolean;
   /** Parent bumped after cross-slide apply — merge into local overrides without full reseed. */
   draftSyncRevision?: number;
+  /** Renders below highlight/logo controls in the inspector column (save layout, reprint). */
+  inspectorFooter?: ReactNode;
+  /** Phrases | preview | inspector participate in the parent three-column grid. */
+  threeColumnLayout?: boolean;
 };
 
 export type MimicDeckApplyResult = { ok: boolean; message: string };
@@ -391,7 +392,7 @@ const CORNER_CURSORS: Record<ResizeCorner, string> = {
   se: "nwse-resize",
 };
 
-const PREVIEW_SCALE_KEY = "caf.mimic-docai.previewScale";
+const PREVIEW_SCALE_KEY = "caf.mimic-docai.previewScale.v2";
 const MIN_PREVIEW_SCALE = 0.45;
 const MAX_PREVIEW_SCALE = 2;
 const DEFAULT_PREVIEW_SCALE = 1;
@@ -410,7 +411,8 @@ function readStoredPreviewScale(): number {
 
 function layerStyleFromRow(
   layer: DocAiLayerBox,
-  row: DocAiLayerOverride | undefined
+  row: DocAiLayerOverride | undefined,
+  projectHandle?: string
 ): {
   font_size_px: number;
   font_weight: number;
@@ -418,7 +420,7 @@ function layerStyleFromRow(
   font_family: string;
   font_style_italic: boolean;
 } {
-  const font_size_px = row?.font_size_px ?? layer.font_size_px ?? DEFAULT_FONT_PX;
+  const font_size_px = defaultLayerFontPx(layer, row?.font_size_px, projectHandle);
   const font_weight = row?.font_weight ?? layer.font_weight ?? 700;
   const color_hex = row?.color_hex ?? layer.color_hex ?? "#111111";
   const font_family = row?.font_family ?? layer.font_family ?? "";
@@ -561,6 +563,8 @@ export function MimicDocAiLayerPositionEditor({
   deckApplyBusy = false,
   overlayApplyBusy = false,
   draftSyncRevision = 0,
+  inspectorFooter,
+  threeColumnLayout = false,
 }: MimicDocAiLayerPositionEditorProps) {
   const canvasColRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -823,7 +827,7 @@ export function MimicDocAiLayerPositionEditor({
         x_px,
         y_px
       );
-      const style = layerStyleFromRow(layer, savedRow);
+      const style = layerStyleFromRow(layer, savedRow, projectHandle);
       next[key] = {
         layer_key: key,
         x_px,
@@ -1415,7 +1419,7 @@ export function MimicDocAiLayerPositionEditor({
   }
 
   return (
-    <div className="mimic-docai-editor">
+    <div className={`mimic-docai-editor${threeColumnLayout ? " mimic-docai-editor--three-col" : ""}`}>
       <div className="mimic-docai-editor__toolbar">
         <div className="mimic-docai-editor__toolbar-actions">
           <button
@@ -1546,10 +1550,10 @@ export function MimicDocAiLayerPositionEditor({
                   y_px: layer.y_px,
                   w_px: layer.w_px,
                   h_px: layer.h_px,
-                  font_size_px: layer.font_size_px ?? DEFAULT_FONT_PX,
+                  font_size_px: defaultLayerFontPx(layer, undefined, projectHandle),
                   text: layer.text,
                 };
-                const style = layerStyleFromRow(layer, row);
+                const style = layerStyleFromRow(layer, row, projectHandle);
                 const fontSizePx = style.font_size_px;
                 const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
                 // Paint at the stored size so a manual resize (incl. shrinking) sticks.
@@ -1706,7 +1710,7 @@ export function MimicDocAiLayerPositionEditor({
               <textarea
                 ref={textInputRef}
                 value={resolveEditorLayerText(selectedLayerForPanel, selected, templateBgMode, projectHandle)}
-                rows={3}
+                rows={2}
                 readOnly={templateBgMode}
                 onChange={(e) => {
                   if (templateBgMode) return;
@@ -1725,7 +1729,7 @@ export function MimicDocAiLayerPositionEditor({
                 </p>
               ) : null}
               {(() => {
-                const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                const style = layerStyleFromRow(selectedLayerForPanel, selected, projectHandle);
                 const activeFontPx = selected.font_size_px ?? style.font_size_px;
                 const panelBox = {
                   w_px: Math.max(MIN_BOX_W, selected.w_px ?? MIN_BOX_W),
@@ -1904,7 +1908,7 @@ export function MimicDocAiLayerPositionEditor({
                     disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
-                      const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                      const style = layerStyleFromRow(selectedLayerForPanel, selected, projectHandle);
                       void runDeckApply("typography-headline", () =>
                         onApplyTypographyToRole("headline", {
                           font_size_px: style.font_size_px,
@@ -1924,7 +1928,7 @@ export function MimicDocAiLayerPositionEditor({
                     disabled={!selected || deckApplyBusy || deckApplyingId != null}
                     onClick={() => {
                       if (!selected || !selectedLayerForPanel) return;
-                      const style = layerStyleFromRow(selectedLayerForPanel, selected);
+                      const style = layerStyleFromRow(selectedLayerForPanel, selected, projectHandle);
                       void runDeckApply("typography-body", () =>
                         onApplyTypographyToRole("body", {
                           font_size_px: style.font_size_px,
@@ -2062,6 +2066,9 @@ export function MimicDocAiLayerPositionEditor({
                 </div>
               ) : null}
             </div>
+          ) : null}
+          {inspectorFooter ? (
+            <div className="mimic-docai-editor__inspector-footer">{inspectorFooter}</div>
           ) : null}
         </div>
       </div>

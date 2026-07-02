@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useAbortableLoad } from "@/lib/marketer/use-abortable-load";
 import type { ResearchBrief, ResearchSourceGroup } from "@/lib/marketer/types";
+import { formatResearchPlatformLabels } from "@/lib/marketer/research-notes";
 import { RESEARCH_POST_AGE_OPTIONS } from "@/lib/marketer/research-adapters";
 
 interface ResearchBoardProps {
@@ -36,57 +38,65 @@ function postAgeLabel(days: number | null): string {
 }
 
 function platformLabels(ids: string[]): string {
-  if (!ids.length) return "—";
-  const map: Record<string, string> = {
-    instagram: "Instagram",
-    tiktok: "TikTok",
-    reddit: "Reddit",
-    facebook: "Facebook",
-    html: "Websites & blogs",
-  };
-  return ids.map((id) => map[id] ?? id).join(", ");
+  const labels = formatResearchPlatformLabels(ids);
+  return labels || "—";
+}
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 export function ResearchBoard({ slug }: ResearchBoardProps) {
   const [data, setData] = useState<ResearchResponse | null>(null);
   const [activeSource, setActiveSource] = useState("instagram");
   const [paste, setPaste] = useState("");
-  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [selectedPlatforms, setSelectedPlatforms] = useState<ResearchPlatform[]>(["instagram", "tiktok"]);
   const [postMaxAgeDays, setPostMaxAgeDays] = useState(30);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [editingBriefId, setEditingBriefId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research`);
-      if (!res.ok) throw new Error("Failed to load research");
-      const j = (await res.json()) as ResearchResponse;
-      setData(j);
-      if (j.runOptions) {
-        setSelectedPlatforms(j.runOptions.defaultPlatforms as ResearchPlatform[]);
-        setPostMaxAgeDays(j.runOptions.defaultPostAgeDays);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed");
-    } finally {
-      setLoading(false);
+  const load = useCallback(async (signal: AbortSignal) => {
+    const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research`, { signal });
+    if (!res.ok) throw new Error("Failed to load research");
+    const j = (await res.json()) as ResearchResponse;
+    if (signal.aborted) return;
+    setData(j);
+    if (j.runOptions) {
+      setSelectedPlatforms(j.runOptions.defaultPlatforms as ResearchPlatform[]);
+      setPostMaxAgeDays(j.runOptions.defaultPostAgeDays);
     }
   }, [slug]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const refreshData = useCallback(async () => {
+    const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research`);
+    if (!res.ok) throw new Error("Failed to refresh research");
+    const j = (await res.json()) as ResearchResponse;
+    setData(j);
+    if (j.runOptions) {
+      setSelectedPlatforms(j.runOptions.defaultPlatforms as ResearchPlatform[]);
+      setPostMaxAgeDays(j.runOptions.defaultPostAgeDays);
+    }
+  }, [slug]);
+
+  const { loading, error, setError, reload } = useAbortableLoad([slug], load);
 
   useEffect(() => {
     const group = data?.sources.find((s) => s.id === activeSource);
     if (group) {
-      setPaste(group.handles.map((h) => (group.id === "hashtags" ? `#${h}` : h)).join("\n"));
+      setPaste(group.handles.join("\n"));
     }
   }, [activeSource, data?.sources]);
 
@@ -104,7 +114,7 @@ export function ResearchBoard({ slug }: ResearchBoardProps) {
       });
       if (!res.ok) throw new Error("Save failed");
       setMessage(`${group.label} saved.`);
-      await load();
+      reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Save failed");
     } finally {
@@ -153,11 +163,55 @@ export function ResearchBoard({ slug }: ResearchBoardProps) {
       setMessage(
         `Market research started for ${platformLabelsStr} (${ageLabel}). Results appear as research briefs once processing completes.`
       );
-      await load();
+      reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Run failed");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function uploadWorkbook(file: File) {
+    setUploading(true);
+    setUploadStatus(null);
+    setMessage(null);
+    setError(null);
+    try {
+      const data_base64 = await fileToBase64(file);
+      const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/research/upload`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, data_base64 }),
+      });
+      let j: {
+        ok?: boolean;
+        message?: string;
+        total_rows?: number;
+        tabs?: Array<{ label: string; row_count: number; sheet_name: string }>;
+      };
+      try {
+        j = (await res.json()) as typeof j;
+      } catch {
+        throw new Error(`Upload failed (HTTP ${res.status})`);
+      }
+      if (!res.ok) throw new Error(j.message ?? "Upload failed");
+      const parts =
+        j.tabs
+          ?.filter((t) => t.row_count > 0)
+          .map((t) => `${t.row_count} ${t.label.toLowerCase()}`)
+          .join(", ") ?? "";
+      const statusText = parts
+        ? `Imported ${j.total_rows ?? 0} sources (${parts}). Watchlist tabs updated below.`
+        : `Workbook uploaded but no source rows were found. Use sheet tabs: IGAccounts, TikTokAccounts, Hashtags, SubReddits, Facebook, Websites+Blogs.`;
+      setUploadStatus({ kind: "ok", text: statusText });
+      setMessage(statusText);
+      await refreshData();
+    } catch (e) {
+      const text = e instanceof Error ? e.message : "Upload failed";
+      setUploadStatus({ kind: "err", text });
+      setError(text);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -178,7 +232,7 @@ export function ResearchBoard({ slug }: ResearchBoardProps) {
       setMessage("Brief renamed.");
       setRenameDraft("");
       setEditingBriefId(null);
-      await load();
+      reload();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Rename failed");
     }
@@ -193,47 +247,88 @@ export function ResearchBoard({ slug }: ResearchBoardProps) {
   return (
     <div className="research-board">
       <section className="research-section">
+        <h3>Import from spreadsheet</h3>
+        <p className="research-lead">
+          Upload an <strong>.xlsx</strong> workbook to fill every watchlist tab at once for <strong>{slug}</strong>.
+          Each sheet tab maps to a source type (Instagram accounts, hashtags, subreddits, etc.). You can still edit
+          individual tabs below after import.
+        </p>
+        <div className="research-upload-panel">
+          <a
+            href={`/api/brand/${encodeURIComponent(slug)}/research/workbook-template`}
+            className="btn-ghost btn-sm"
+            download="caf-research-sources-template.xlsx"
+          >
+            Download template
+          </a>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            disabled={uploading}
+            className="research-upload-input-hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadWorkbook(file);
+            }}
+          />
+          <button
+            type="button"
+            className="btn-primary btn-sm"
+            disabled={uploading}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            {uploading ? "Importing…" : "Upload .xlsx"}
+          </button>
+        </div>
+        {uploadStatus && (
+          <p className={uploadStatus.kind === "err" ? "research-upload-status research-upload-status--err" : "research-upload-status research-upload-status--ok"}>
+            {uploadStatus.text}
+          </p>
+        )}
+        <p className="research-run-hint">
+          Expected sheet tabs: <span className="mono">IGAccounts</span>, <span className="mono">TikTokAccounts</span>,{" "}
+          <span className="mono">Hashtags</span>, <span className="mono">SubReddits</span>, <span className="mono">Facebook</span>,{" "}
+          <span className="mono">Websites+Blogs</span> — with columns <span className="mono">Name</span>,{" "}
+          <span className="mono">Link</span>, <span className="mono">Platform</span>.
+        </p>
+      </section>
+
+      <section className="research-section">
         <h3>Watchlist</h3>
         <p className="research-lead">
-          Add accounts, hashtags, and competitors by platform. Paste handles — one per line works fine. CAF uses these
-          when you start market research.
+          Add accounts, hashtags, subreddits, and competitors for <strong>{slug}</strong>. Paste one entry per line —
+          each brand keeps its own watchlist. CAF uses these when you start market research.
         </p>
-        {(data?.sources ?? []).length === 0 ? (
-          <div className="workspace-empty workspace-empty--compact">
-            <p>No watchlist sources configured yet. Add accounts or hashtags above to get started.</p>
-          </div>
-        ) : (
-          <>
-            <div className="research-source-tabs">
-              {(data?.sources ?? []).map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  className={`research-source-tab ${activeSource === s.id ? "active" : ""}`}
-                  onClick={() => setActiveSource(s.id)}
-                >
-                  {s.label}
-                  {s.handles.length > 0 && <span className="research-source-count">{s.handles.length}</span>}
-                </button>
-              ))}
+        <div className="research-source-tabs">
+          {(data?.sources ?? []).map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`research-source-tab ${activeSource === s.id ? "active" : ""}`}
+              onClick={() => setActiveSource(s.id)}
+            >
+              {s.label}
+              {s.handles.length > 0 && <span className="research-source-count">{s.handles.length}</span>}
+            </button>
+          ))}
+        </div>
+        {activeGroup && (
+          <div className="research-paste-panel">
+            <textarea
+              className="research-paste"
+              rows={8}
+              placeholder={activeGroup.placeholder}
+              value={paste}
+              onChange={(e) => setPaste(e.target.value)}
+            />
+            <div className="research-paste-actions">
+              <button type="button" className="btn-primary btn-sm" disabled={saving} onClick={() => void saveSources()}>
+                {saving ? "Saving…" : "Save list"}
+              </button>
             </div>
-            {activeGroup && (
-              <div className="research-paste-panel">
-                <textarea
-                  className="research-paste"
-                  rows={8}
-                  placeholder={activeGroup.placeholder}
-                  value={paste}
-                  onChange={(e) => setPaste(e.target.value)}
-                />
-                <div className="research-paste-actions">
-                  <button type="button" className="btn-primary btn-sm" disabled={saving} onClick={() => void saveSources()}>
-                    {saving ? "Saving…" : "Save list"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
+          </div>
         )}
       </section>
 
@@ -344,7 +439,7 @@ export function ResearchBoard({ slug }: ResearchBoardProps) {
                   <input
                     id={`brief-name-${b.id}`}
                     type="text"
-                    placeholder="e.g. Instagram & TikTok · last 30 days"
+                    placeholder="e.g. Jun 25, 2026 12:02 · Sign And Sound · Instagram, TikTok"
                     value={editingBriefId === b.id ? renameDraft : b.userTitle ?? ""}
                     onFocus={() => {
                       setEditingBriefId(b.id);

@@ -13,7 +13,7 @@ import {
   upsertScraperConfig,
   upsertSourceRow,
 } from "../repositories/inputs-sources.js";
-import { syncSourcesFromWorkbookBuffer } from "../services/inputs-source-sync.js";
+import { syncSourcesFromWorkbookBuffer, buildSourcesWorkbookTemplateBuffer } from "../services/inputs-source-sync.js";
 import { estimateInputsScraperRun } from "../services/inputs-scraper-cost-estimate.js";
 import {
   abortInputsScraperRun,
@@ -150,20 +150,48 @@ export function registerInputsScraperRoutes(
     return { ok: true, updated_at: row?.updated_at ?? null };
   });
 
+  app.get("/v1/inputs-sources/workbook-template", async (_request, reply) => {
+    const buffer = buildSourcesWorkbookTemplateBuffer();
+    return reply
+      .type("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      .header("content-disposition", 'attachment; filename="caf-research-sources-template.xlsx"')
+      .send(buffer);
+  });
+
   app.post("/v1/inputs-sources/:project_slug/sync-from-workbook", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
 
-    const parts = request.parts();
+    const contentType = String(request.headers["content-type"] ?? "").toLowerCase();
     let fileBuffer: Buffer | null = null;
-    for await (const part of parts) {
-      if (part.type === "file") {
-        const chunks: Buffer[] = [];
-        for await (const chunk of part.file) chunks.push(chunk);
-        fileBuffer = Buffer.concat(chunks);
+
+    if (contentType.includes("application/json")) {
+      const body = z
+        .object({
+          data_base64: z.string().min(1),
+          filename: z.string().optional(),
+        })
+        .safeParse(request.body ?? {});
+      if (!body.success) return reply.code(400).send({ ok: false, error: "bad_body" });
+      try {
+        fileBuffer = Buffer.from(body.data.data_base64, "base64");
+      } catch {
+        return reply.code(400).send({ ok: false, error: "invalid_base64" });
       }
+      if (!fileBuffer.length) {
+        return reply.code(400).send({ ok: false, error: "missing_file" });
+      }
+    } else {
+      const parts = request.parts();
+      for await (const part of parts) {
+        if (part.type === "file") {
+          const chunks: Buffer[] = [];
+          for await (const chunk of part.file) chunks.push(chunk);
+          fileBuffer = Buffer.concat(chunks);
+        }
+      }
+      if (!fileBuffer) return reply.code(400).send({ ok: false, error: "missing_file" });
     }
-    if (!fileBuffer) return reply.code(400).send({ ok: false, error: "missing_file" });
 
     const project = await ensureProject(db, params.data.project_slug);
     try {

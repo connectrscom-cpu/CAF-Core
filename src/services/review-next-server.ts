@@ -32,6 +32,10 @@ function reviewChildEnv(config: AppConfig, port: number): NodeJS.ProcessEnv {
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
     `http://localhost:${config.PORT}`;
 
+  const agentInspectionEnabled =
+    process.env.AGENT_INSPECTION_ENABLED === "true" ||
+    process.env.NEXT_PUBLIC_AGENT_INSPECTION_ENABLED === "true";
+
   return {
     ...process.env,
     NODE_ENV: config.NODE_ENV,
@@ -41,7 +45,38 @@ function reviewChildEnv(config: AppConfig, port: number): NodeJS.ProcessEnv {
     CAF_CORE_TOKEN: config.CAF_CORE_API_TOKEN ?? process.env.CAF_CORE_TOKEN ?? "",
     NEXT_PUBLIC_APP_URL: publicBase,
     RENDERER_BASE_URL: config.RENDERER_BASE_URL,
+    ...(agentInspectionEnabled
+      ? {
+          AGENT_INSPECTION_ENABLED: "true",
+          NEXT_PUBLIC_AGENT_INSPECTION_ENABLED: "true",
+        }
+      : {}),
   };
+}
+
+/** Probe embedded Review sidecar — used by /readyz and agent health. */
+export async function probeReviewSidecar(
+  upstream: string,
+  timeoutMs = 4000
+): Promise<{ ok: boolean; latency_ms?: number; error?: string }> {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${upstream}/api/health/core`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (res.status >= 500) {
+      return { ok: false, error: `HTTP ${res.status}` };
+    }
+    return { ok: true, latency_ms: Date.now() - started };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function waitForReviewReady(upstream: string, log: (msg: string) => void, timeoutMs = 120_000): Promise<void> {

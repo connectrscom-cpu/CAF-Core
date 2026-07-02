@@ -46,7 +46,7 @@ const DEFAULT_CRITERIA: Record<string, unknown> = {
   top_performer: {
     pre_llm_min_score: 0.35,
     max_rows: 24,
-    max_carousel_rows: 10,
+    max_carousel_rows: 30,
   },
   inputs_insights: {
     broad_model: "gpt-4o-mini",
@@ -54,7 +54,7 @@ const DEFAULT_CRITERIA: Record<string, unknown> = {
     deep_image_model: "gpt-4o-mini",
     deep_image_max: 24,
     deep_carousel_model: "gpt-4o-mini",
-    deep_carousel_max: 10,
+    deep_carousel_max: 30,
   },
 };
 

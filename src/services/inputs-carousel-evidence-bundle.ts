@@ -323,7 +323,7 @@ const TOP_LEVEL_COVER_IMAGE_KEYS = [
  * Merges **all** known list keys (not only the first non-empty) so a cover `display_url` plus
  * `carousel_slide_urls` dedupe correctly; also appends top-level cover fields when child lists are thin.
  */
-export function parseCarouselSlideUrls(payload: Record<string, unknown>, maxSlides = 12): string[] {
+export function parseCarouselSlideUrls(payload: Record<string, unknown>, maxSlides = 15): string[] {
   if (maxSlides <= 0) return [];
   const out: string[] = [];
   const seen = new Set<string>();

@@ -261,7 +261,8 @@ async function renderSlide(b, slideIndex) {
       }
 
       const slides = await page.$$(".slide");
-      const idx = (slideIndex ?? 1) - 1;
+      const useSingleDomSlide = Boolean(context?.single_slide_render ?? renderCtx?.single_slide_render);
+      const idx = useSingleDomSlide ? 0 : (slideIndex ?? 1) - 1;
       if (idx < 0 || idx >= slides.length) {
         throw new Error(`Slide index ${slideIndex} out of range (${slides.length} slides)`);
       }

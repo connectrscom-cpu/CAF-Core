@@ -6,6 +6,8 @@ import {
   buildMimicDocAiRenderTextLayers,
   constrainBBoxToFullBleedSideColumn,
   nudgeBBoxAwayFromFullBleedSubjectZone,
+  snapHandleBBoxToSafeCorner,
+  MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX,
   CAROUSEL_RENDER_WIDTH_PX,
   consolidateDocAiRenderLayersInVerticalStacks,
   docAiBBoxToRenderPx,
@@ -501,6 +503,17 @@ describe("mimic-slide-typography", () => {
     expect(bboxIntersectsFullBleedSubjectZone(center)).toBe(true);
     const nudged = nudgeBBoxAwayFromFullBleedSubjectZone(center);
     expect(bboxIntersectsFullBleedSubjectZone(nudged)).toBe(false);
+  });
+
+  it("snapHandleBBoxToSafeCorner pins handle boxes to bottom safe band", () => {
+    const faceCenter = { x: 0.42, y: 0.45, w: 0.22, h: 0.04 };
+    const snapped = snapHandleBBoxToSafeCorner(faceCenter);
+    const margin = MIMIC_DOCAI_CANVAS_SAFE_MARGIN_PX / CAROUSEL_RENDER_WIDTH_PX;
+    expect(snapped.y + snapped.h).toBeGreaterThan(0.82);
+    const atLeft = snapped.x <= margin + 0.02;
+    const atRight = snapped.x + snapped.w >= 1 - margin - 0.02;
+    expect(atLeft || atRight).toBe(true);
+    expect(bboxIntersectsFullBleedSubjectZone(snapped)).toBe(false);
   });
 
   it("normalizeBodyLinesForStackCount merges extra lines into semantic phrases", () => {
@@ -1688,7 +1701,7 @@ describe("mimic-slide-typography", () => {
       { projectHandle: "mybrand" }
     );
     expect(layers[0]?.text).toBe("@mybrand");
-    expect(layers[0]?.font_size_px).toBe(25);
+    expect(layers[0]?.font_size_px).toBe(MIMIC_DOCAI_MIN_FONT_SIZE_PX);
   });
 
   it("matches OCR text_layers to text_blocks by text not array index", () => {
