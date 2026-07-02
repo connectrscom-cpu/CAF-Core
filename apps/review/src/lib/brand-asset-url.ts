@@ -13,15 +13,20 @@ export function brandAssetProxyUrl(projectSlug: string, asset: BrandAssetRow): s
   return `/api/project-config/brand-assets/proxy?project=${encodeURIComponent(slug)}&id=${encodeURIComponent(id)}`;
 }
 
+/** Moodboard / previews: prefer stored public URL (Supabase), fall back to same-origin proxy. */
+export function resolveBrandAssetImageUrl(projectSlug: string, asset: BrandAssetRow): string {
+  const pub = typeof asset.public_url === "string" ? asset.public_url.trim() : "";
+  if (pub && /^https?:\/\//i.test(pub)) return pub;
+  return brandAssetProxyUrl(projectSlug, asset);
+}
+
 export function resolveBrandLogoDisplayUrl(
   projectSlug: string,
   assets: BrandAssetRow[]
 ): string {
   const logo = assets.find((a) => a.kind === "logo");
   if (!logo) return "";
-  if (logo.id) return brandAssetProxyUrl(projectSlug, logo);
-  const pub = typeof logo.public_url === "string" ? logo.public_url.trim() : "";
-  return pub;
+  return resolveBrandAssetImageUrl(projectSlug, logo);
 }
 
 /** Reprint/renderer needs a fetchable absolute URL — use stored public_url when valid. */

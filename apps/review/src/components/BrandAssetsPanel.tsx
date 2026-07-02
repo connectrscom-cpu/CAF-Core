@@ -110,7 +110,29 @@ function kindLabel(k: BrandAssetKind): string {
   return ({ logo: "Logo", reference_image: "Reference image", palette: "Color palette", font: "Typography", other: "Other" }[k]);
 }
 
-function PendingImagePreviews({ files }: { files: File[] }) {
+function fileFingerprint(file: File): string {
+  return `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+}
+
+function dedupeFiles(files: File[]): File[] {
+  const seen = new Set<string>();
+  const out: File[] = [];
+  for (const file of files) {
+    const key = fileFingerprint(file);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(file);
+  }
+  return out;
+}
+
+function PendingImagePreviews({
+  files,
+  onRemove,
+}: {
+  files: File[];
+  onRemove?: (index: number) => void;
+}) {
   const urls = useMemo(() => files.map((file) => URL.createObjectURL(file)), [files]);
   useEffect(() => () => urls.forEach((url) => URL.revokeObjectURL(url)), [urls]);
   if (files.length === 0) return null;
@@ -118,7 +140,19 @@ function PendingImagePreviews({ files }: { files: File[] }) {
     <div className="brand-kit-paste-previews">
       {files.map((file, i) => (
         <div key={`${file.name}-${file.size}-${i}`} className="brand-kit-paste-preview">
-          <img src={urls[i]} alt="" />
+          <div className="brand-kit-paste-preview-frame">
+            <img src={urls[i]} alt="" />
+            {onRemove && (
+              <button
+                type="button"
+                className="brand-kit-paste-remove"
+                aria-label={`Remove ${file.name}`}
+                onClick={() => onRemove(i)}
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <span>{file.name}</span>
         </div>
       ))}
@@ -161,18 +195,18 @@ export function BrandAssetsPanel({
 
   const applyPastedImages = useCallback(
     (files: File[]) => {
-      if (files.length === 0) return;
+      const unique = dedupeFiles(files);
+      if (unique.length === 0) return;
       const isReplace = Boolean(editing?.id);
       setPendingFiles((prev) => {
-        if (isReplace) return files.slice(0, 1);
-        if (prev.length > 0) return [...prev, ...files];
-        return files;
+        const merged = isReplace ? unique.slice(0, 1) : [...prev, ...unique];
+        return dedupeFiles(merged);
       });
       setMessage({
         text:
-          files.length === 1
+          unique.length === 1
             ? "Image pasted from clipboard."
-            : `${files.length} images pasted from clipboard.`,
+            : `${unique.length} images pasted from clipboard.`,
         type: "success",
       });
       pasteZoneRef.current?.focus();
@@ -187,12 +221,17 @@ export function BrandAssetsPanel({
       const files = imageFilesFromClipboard(e.clipboardData);
       if (files.length === 0) return;
       e.preventDefault();
+      e.stopPropagation();
       applyPastedImages(files);
     };
 
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
   }, [editing, editingImageKind, applyPastedImages]);
+
+  const removePendingFile = (index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -643,16 +682,6 @@ export function BrandAssetsPanel({
                       ref={pasteZoneRef}
                       className={isMarketer ? "brand-kit-dropzone brand-kit-dropzone--paste" : undefined}
                       tabIndex={isMarketer ? 0 : undefined}
-                      onPaste={
-                        isMarketer
-                          ? (e) => {
-                              const files = imageFilesFromClipboard(e.clipboardData);
-                              if (files.length === 0) return;
-                              e.preventDefault();
-                              applyPastedImages(files);
-                            }
-                          : undefined
-                      }
                     >
                       <input
                         type="file"
@@ -672,7 +701,9 @@ export function BrandAssetsPanel({
                         </>
                       )}
                     </div>
-                    {isMarketer && pendingFiles.length > 0 && <PendingImagePreviews files={pendingFiles} />}
+                    {isMarketer && pendingFiles.length > 0 && (
+                      <PendingImagePreviews files={pendingFiles} onRemove={removePendingFile} />
+                    )}
                     {pendingFiles.length > 0 && (
                       <div className="brand-kit-file-count">
                         {pendingFiles.length} file{pendingFiles.length === 1 ? "" : "s"} selected
@@ -687,16 +718,6 @@ export function BrandAssetsPanel({
                       ref={pasteZoneRef}
                       className={isMarketer ? "brand-kit-dropzone brand-kit-dropzone--paste" : undefined}
                       tabIndex={isMarketer ? 0 : undefined}
-                      onPaste={
-                        isMarketer
-                          ? (e) => {
-                              const files = imageFilesFromClipboard(e.clipboardData);
-                              if (files.length === 0) return;
-                              e.preventDefault();
-                              applyPastedImages(files);
-                            }
-                          : undefined
-                      }
                     >
                       <input
                         type="file"
@@ -710,7 +731,9 @@ export function BrandAssetsPanel({
                         </span>
                       )}
                     </div>
-                    {isMarketer && pendingFiles.length > 0 && <PendingImagePreviews files={pendingFiles} />}
+                    {isMarketer && pendingFiles.length > 0 && (
+                      <PendingImagePreviews files={pendingFiles} onRemove={removePendingFile} />
+                    )}
                   </div>
                 )}
                 <div className={formFieldClass}>

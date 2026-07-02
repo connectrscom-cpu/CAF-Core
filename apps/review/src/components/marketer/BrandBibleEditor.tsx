@@ -33,6 +33,9 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
   const [inspectAsset, setInspectAsset] = useState<MoodboardAsset | null>(null);
   const [editAssetId, setEditAssetId] = useState<string | null>(null);
   const [openAddKind, setOpenAddKind] = useState<"reference_image" | null>(null);
+  const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+
+  const projectQs = `?project=${encodeURIComponent(slug)}`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -111,6 +114,33 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
     patchBible({
       assetRefs: bible.assetRefs.filter((r) => !(r.assetId === assetId && r.role === role)),
     });
+  }
+
+  async function deleteAsset(asset: MoodboardAsset) {
+    const label = asset.label ?? asset.kind;
+    if (!confirm(`Delete "${label}" from your moodboard?`)) return;
+    setDeletingAssetId(asset.id);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/project-config/brand-assets/${encodeURIComponent(asset.id)}${projectQs}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t.slice(0, 200) || "Delete failed");
+      }
+      setAssets((prev) => prev.filter((a) => a.id !== asset.id));
+      if (bible) {
+        patchBible({ assetRefs: bible.assetRefs.filter((r) => r.assetId !== asset.id) });
+      }
+      if (inspectAsset?.id === asset.id) setInspectAsset(null);
+      setMessage(`Removed "${label}".`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingAssetId(null);
+    }
   }
 
   async function save() {
@@ -198,6 +228,8 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
             palette={bible.palette}
             onInspect={setInspectAsset}
             onAddClick={scrollToUpload}
+            onDelete={(asset) => void deleteAsset(asset)}
+            deletingId={deletingAssetId}
           />
           <section className="profile-section brand-bible-upload-section">
             <BrandAssetsPanel
@@ -394,6 +426,8 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
           onAddRole={(role) => addAssetRef(inspectAsset.id, role)}
           onRemoveRole={(role) => removeAssetRef(inspectAsset.id, role)}
           onUsageNotes={(role, notes) => updateAssetRef(inspectAsset.id, role, { usageNotes: notes })}
+          onDelete={() => void deleteAsset(inspectAsset)}
+          deleting={deletingAssetId === inspectAsset.id}
         />
       )}
     </div>

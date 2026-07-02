@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listBrandAssets } from "@/lib/caf-core-client";
-import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
+import { CAF_CORE_TOKEN, CAF_CORE_URL, PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
@@ -18,25 +17,18 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "project and id required" }, { status: 400 });
   }
 
-  const data = await listBrandAssets(slug);
-  if (!data?.brand_assets?.length) {
-    return NextResponse.json({ error: "brand_assets_not_found" }, { status: 404 });
-  }
-
-  const asset = data.brand_assets.find((a) => a.id === id);
-  if (!asset) {
-    return NextResponse.json({ error: "asset_not_found" }, { status: 404 });
-  }
-
-  const url = (asset.public_url ?? "").trim();
-  if (!url || !/^https?:\/\//i.test(url)) {
-    return NextResponse.json({ error: "asset_has_no_public_url" }, { status: 404 });
-  }
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const fileUrl = `${base}/v1/projects/${encodeURIComponent(slug)}/brand-assets/${encodeURIComponent(id)}/file`;
+  const headers: HeadersInit = { cache: "no-store" };
+  if (CAF_CORE_TOKEN) headers.Authorization = `Bearer ${CAF_CORE_TOKEN}`;
 
   try {
-    const upstream = await fetch(url, { cache: "no-store" });
+    const upstream = await fetch(fileUrl, { headers, cache: "no-store" });
     if (!upstream.ok) {
-      return NextResponse.json({ error: "upstream_fetch_failed", status: upstream.status }, { status: 502 });
+      return NextResponse.json(
+        { error: "upstream_fetch_failed", status: upstream.status },
+        { status: upstream.status === 404 ? 404 : 502 }
+      );
     }
     const bytes = await upstream.arrayBuffer();
     const contentType = upstream.headers.get("content-type") || "image/png";

@@ -26,7 +26,8 @@ import {
   fetchStoragePathAndUploadToHeygen,
   fetchUrlAndUploadToHeygen,
 } from "../services/heygen-assets.js";
-import { uploadBuffer } from "../services/supabase-storage.js";
+import { uploadBuffer, downloadBufferFromUrl, fetchableUrlFromAssetRow } from "../services/supabase-storage.js";
+import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
 import {
   importProjectFromCsv,
   PROJECT_IMPORT_CSV_TEMPLATE,
@@ -824,8 +825,40 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const project = await ensureProject(db, params.data.project_slug);
-    const rows = await listProjectBrandAssets(db, project.id);
+    const appConfig = loadConfig();
+    const rows = await signProjectBrandAssetsForClient(appConfig, await listProjectBrandAssets(db, project.id));
     return { ok: true, brand_assets: rows };
+  });
+
+  app.get("/v1/projects/:project_slug/brand-assets/:asset_id/file", async (request, reply) => {
+    const params = z
+      .object({ project_slug: z.string(), asset_id: z.string().uuid() })
+      .safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const asset = await getProjectBrandAsset(db, project.id, params.data.asset_id);
+    if (!asset) return reply.code(404).send({ ok: false, error: "not_found" });
+
+    const appConfig = loadConfig();
+    const bucket = appConfig.SUPABASE_ASSETS_BUCKET || "assets";
+    const fetchable = await fetchableUrlFromAssetRow(appConfig, {
+      public_url: asset.public_url,
+      bucket,
+      object_path: asset.storage_path,
+    });
+    if (!fetchable) {
+      return reply.code(404).send({ ok: false, error: "asset_has_no_fetchable_url" });
+    }
+
+    try {
+      const buf = await downloadBufferFromUrl(appConfig, fetchable);
+      const pathHint = asset.storage_path ?? asset.public_url ?? "";
+      const contentType = guessBrandKitContentType(pathHint.split("/").pop() ?? "file");
+      return reply.type(contentType).send(buf);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(502).send({ ok: false, error: "download_failed", message: msg.slice(0, 500) });
+    }
   });
 
   app.post("/v1/projects/:project_slug/brand-assets", async (request, reply) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { BrandAssetImage } from "@/components/marketer/BrandAssetImage";
 import { BRAND_BIBLE_ASSET_ROLES } from "@/lib/marketer/brand-bible-adapters";
 import type { BrandBibleAssetRef } from "@/lib/marketer/types";
 import type { MoodboardAsset } from "./BrandBibleAssetInspectModal";
@@ -13,6 +13,8 @@ type Props = {
   palette: string[];
   onInspect: (asset: MoodboardAsset) => void;
   onAddClick: () => void;
+  onDelete: (asset: MoodboardAsset) => void;
+  deletingId?: string | null;
 };
 
 function kindLabel(kind: string): string {
@@ -43,9 +45,8 @@ function assetThumb(slug: string, asset: MoodboardAsset): ReactNode {
   }
 
   const isImg = asset.kind === "logo" || asset.kind === "reference_image" || asset.kind === "other";
-  const src = isImg ? brandAssetProxyUrl(slug, asset) || asset.public_url || "" : "";
-  if (src) {
-    return <img src={src} alt="" className="brand-bible-moodboard-img" loading="lazy" />;
+  if (isImg) {
+    return <BrandAssetImage slug={slug} asset={asset} className="brand-bible-moodboard-img" />;
   }
 
   if (asset.kind === "font" && typeof asset.metadata_json?.font_family === "string") {
@@ -59,7 +60,16 @@ function assetThumb(slug: string, asset: MoodboardAsset): ReactNode {
   return <div className="brand-bible-moodboard-placeholder">{kindLabel(asset.kind)}</div>;
 }
 
-export function BrandBibleMoodboardGrid({ slug, assets, assetRefs, palette, onInspect, onAddClick }: Props) {
+export function BrandBibleMoodboardGrid({
+  slug,
+  assets,
+  assetRefs,
+  palette,
+  onInspect,
+  onAddClick,
+  onDelete,
+  deletingId = null,
+}: Props) {
   const imageCount = assets.filter((a) =>
     ["logo", "reference_image", "other"].includes(a.kind)
   ).length;
@@ -97,29 +107,44 @@ export function BrandBibleMoodboardGrid({ slug, assets, assetRefs, palette, onIn
 
         {assets.map((asset) => {
           const roles = rolesForAsset(asset.id, assetRefs);
+          const busy = deletingId === asset.id;
           return (
-            <button
-              key={asset.id}
-              type="button"
-              className="brand-bible-moodboard-tile"
-              onClick={() => onInspect(asset)}
-            >
-              <div className="brand-bible-moodboard-tile-media">{assetThumb(slug, asset)}</div>
-              <div className="brand-bible-moodboard-tile-foot">
-                <span className="brand-bible-moodboard-tile-kind">{kindLabel(asset.kind)}</span>
-                <span className="brand-bible-moodboard-tile-label">{asset.label ?? "Untitled"}</span>
-                {roles.length > 0 && (
-                  <div className="brand-bible-moodboard-tile-roles">
-                    {roles.slice(0, 2).map((r) => (
-                      <span key={r.role} className="profile-chip">
-                        {BRAND_BIBLE_ASSET_ROLES.find((x) => x.id === r.role)?.label ?? r.role}
-                      </span>
-                    ))}
-                    {roles.length > 2 && <span className="brand-bible-moodboard-more">+{roles.length - 2}</span>}
-                  </div>
-                )}
-              </div>
-            </button>
+            <div key={asset.id} className="brand-bible-moodboard-tile-wrap">
+              <button
+                type="button"
+                className="brand-bible-moodboard-tile"
+                onClick={() => onInspect(asset)}
+                disabled={busy}
+              >
+                <div className="brand-bible-moodboard-tile-media">{assetThumb(slug, asset)}</div>
+                <div className="brand-bible-moodboard-tile-foot">
+                  <span className="brand-bible-moodboard-tile-kind">{kindLabel(asset.kind)}</span>
+                  <span className="brand-bible-moodboard-tile-label">{asset.label ?? "Untitled"}</span>
+                  {roles.length > 0 && (
+                    <div className="brand-bible-moodboard-tile-roles">
+                      {roles.slice(0, 2).map((r) => (
+                        <span key={r.role} className="profile-chip">
+                          {BRAND_BIBLE_ASSET_ROLES.find((x) => x.id === r.role)?.label ?? r.role}
+                        </span>
+                      ))}
+                      {roles.length > 2 && <span className="brand-bible-moodboard-more">+{roles.length - 2}</span>}
+                    </div>
+                  )}
+                </div>
+              </button>
+              <button
+                type="button"
+                className="brand-bible-moodboard-delete"
+                aria-label={`Delete ${asset.label ?? asset.kind}`}
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(asset);
+                }}
+              >
+                {busy ? "…" : "✕"}
+              </button>
+            </div>
           );
         })}
       </div>

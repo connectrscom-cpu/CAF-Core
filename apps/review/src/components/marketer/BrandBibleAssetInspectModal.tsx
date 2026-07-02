@@ -1,6 +1,6 @@
 "use client";
 
-import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { BrandAssetImage } from "@/components/marketer/BrandAssetImage";
 import { BRAND_BIBLE_ASSET_ROLES } from "@/lib/marketer/brand-bible-adapters";
 import type { BrandBibleAssetRef, BrandBibleAssetRole } from "@/lib/marketer/types";
 
@@ -21,6 +21,8 @@ type Props = {
   onAddRole: (role: BrandBibleAssetRole) => void;
   onRemoveRole: (role: BrandBibleAssetRole) => void;
   onUsageNotes: (role: BrandBibleAssetRole, notes: string) => void;
+  onDelete?: () => void;
+  deleting?: boolean;
 };
 
 function kindLabel(kind: string): string {
@@ -34,11 +36,8 @@ function kindLabel(kind: string): string {
   return map[kind] ?? kind;
 }
 
-function assetImageUrl(slug: string, asset: MoodboardAsset): string {
-  if (asset.kind === "logo" || asset.kind === "reference_image" || asset.kind === "other") {
-    return brandAssetProxyUrl(slug, asset) || asset.public_url || "";
-  }
-  return "";
+function isImageAsset(asset: MoodboardAsset): boolean {
+  return asset.kind === "logo" || asset.kind === "reference_image" || asset.kind === "other";
 }
 
 export function BrandBibleAssetInspectModal({
@@ -50,9 +49,11 @@ export function BrandBibleAssetInspectModal({
   onAddRole,
   onRemoveRole,
   onUsageNotes,
+  onDelete,
+  deleting = false,
 }: Props) {
   const roles = assetRefs.filter((r) => r.assetId === asset.id);
-  const imgSrc = assetImageUrl(slug, asset);
+  const showImage = isImageAsset(asset);
   const paletteColors = Array.isArray(asset.metadata_json?.colors)
     ? (asset.metadata_json!.colors as unknown[]).filter((c) => typeof c === "string")
     : [];
@@ -86,8 +87,8 @@ export function BrandBibleAssetInspectModal({
                   </div>
                 ))}
               </div>
-            ) : imgSrc ? (
-              <img src={imgSrc} alt="" className="brand-bible-inspect-img" />
+            ) : showImage ? (
+              <BrandAssetImage slug={slug} asset={asset} className="brand-bible-inspect-img" />
             ) : asset.kind === "font" && typeof asset.metadata_json?.font_family === "string" ? (
               <div className="brand-bible-inspect-font" style={{ fontFamily: String(asset.metadata_json.font_family) }}>
                 Aa Bb Cc — {String(asset.metadata_json.font_family)}
@@ -145,6 +146,11 @@ export function BrandBibleAssetInspectModal({
         </div>
 
         <footer className="brand-bible-inspect-footer">
+          {onDelete && (
+            <button type="button" className="btn-ghost brand-bible-inspect-delete" onClick={onDelete} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete asset"}
+            </button>
+          )}
           <button type="button" className="btn-ghost" onClick={onEdit}>
             Edit file
           </button>

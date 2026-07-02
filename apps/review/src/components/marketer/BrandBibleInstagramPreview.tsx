@@ -1,6 +1,6 @@
 "use client";
 
-import { brandAssetProxyUrl } from "@/lib/brand-asset-url";
+import { BrandAssetImage } from "@/components/marketer/BrandAssetImage";
 import type { BrandBible } from "@/lib/marketer/types";
 import type { MoodboardAsset } from "./BrandBibleAssetInspectModal";
 
@@ -11,19 +11,17 @@ type Props = {
   assets: MoodboardAsset[];
 };
 
-function postImages(slug: string, assets: MoodboardAsset[]): string[] {
-  return assets
-    .filter((a) => (a.kind === "logo" || a.kind === "reference_image" || a.kind === "other") && a.public_url)
-    .map((a) => brandAssetProxyUrl(slug, a) || a.public_url || "")
-    .filter(Boolean);
+function postAssets(assets: MoodboardAsset[]): MoodboardAsset[] {
+  return assets.filter(
+    (a) => (a.kind === "logo" || a.kind === "reference_image" || a.kind === "other") && a.public_url
+  );
 }
 
-function profileAvatar(slug: string, assets: MoodboardAsset[]): string {
+function profileAvatarAsset(assets: MoodboardAsset[]): MoodboardAsset | null {
   const logo = assets.find((a) => a.kind === "logo" && a.public_url);
-  if (logo) return brandAssetProxyUrl(slug, logo) || logo.public_url || "";
+  if (logo) return logo;
   const ref = assets.find((a) => a.kind === "reference_image" && a.public_url);
-  if (ref) return brandAssetProxyUrl(slug, ref) || ref.public_url || "";
-  return "";
+  return ref ?? null;
 }
 
 function bioText(bible: BrandBible): string {
@@ -42,19 +40,19 @@ function gradientFromPalette(palette: string[], index: number): string {
 }
 
 export function BrandBibleInstagramPreview({ slug, displayName, bible, assets }: Props) {
-  const avatar = profileAvatar(slug, assets);
-  const posts = postImages(slug, assets);
+  const avatarAsset = profileAvatarAsset(assets);
+  const posts = postAssets(assets);
   const gridSlots = 9;
-  const slots: Array<{ type: "image"; src: string } | { type: "gradient"; css: string }> = [];
+  const slots: Array<{ type: "asset"; asset: MoodboardAsset } | { type: "gradient"; css: string }> = [];
 
   for (let i = 0; i < gridSlots; i++) {
-    if (posts[i]) slots.push({ type: "image", src: posts[i]! });
+    if (posts[i]) slots.push({ type: "asset", asset: posts[i]! });
     else slots.push({ type: "gradient", css: gradientFromPalette(bible.palette, i) });
   }
 
   const highlights: Array<
-    | { id: string; label: string; color: string; img?: undefined }
-    | { id: string; label: string; img: string; color?: undefined }
+    | { id: string; label: string; color: string; asset?: undefined }
+    | { id: string; label: string; asset: MoodboardAsset; color?: undefined }
   > = [
     ...bible.palette.slice(0, 3).map((c, i) => ({ id: `color-${i}`, label: "Palette", color: c })),
     ...assets
@@ -63,7 +61,7 @@ export function BrandBibleInstagramPreview({ slug, displayName, bible, assets }:
       .map((a) => ({
         id: a.id,
         label: (a.label ?? "Style").slice(0, 12),
-        img: brandAssetProxyUrl(slug, a) || a.public_url || "",
+        asset: a,
       })),
   ].slice(0, 5);
 
@@ -88,8 +86,8 @@ export function BrandBibleInstagramPreview({ slug, displayName, bible, assets }:
 
         <header className="brand-bible-ig-profile-header">
           <div className="brand-bible-ig-avatar-wrap">
-            {avatar ? (
-              <img src={avatar} alt="" className="brand-bible-ig-avatar" />
+            {avatarAsset ? (
+              <BrandAssetImage slug={slug} asset={avatarAsset} className="brand-bible-ig-avatar" />
             ) : (
               <div className="brand-bible-ig-avatar brand-bible-ig-avatar--empty">{displayName.slice(0, 1)}</div>
             )}
@@ -125,7 +123,7 @@ export function BrandBibleInstagramPreview({ slug, displayName, bible, assets }:
                   className="brand-bible-ig-highlight-ring"
                   style={h.color ? { background: h.color } : undefined}
                 >
-                  {h.img ? <img src={h.img} alt="" /> : null}
+                  {h.asset ? <BrandAssetImage slug={slug} asset={h.asset} alt="" /> : null}
                 </div>
                 <span>{h.label}</span>
               </div>
@@ -142,8 +140,8 @@ export function BrandBibleInstagramPreview({ slug, displayName, bible, assets }:
         <div className="brand-bible-ig-grid">
           {slots.map((slot, i) => (
             <div key={i} className="brand-bible-ig-post">
-              {slot.type === "image" ? (
-                <img src={slot.src} alt="" loading="lazy" />
+              {slot.type === "asset" ? (
+                <BrandAssetImage slug={slug} asset={slot.asset} alt="" loading="lazy" />
               ) : (
                 <div className="brand-bible-ig-post-fallback" style={{ background: slot.css }} />
               )}

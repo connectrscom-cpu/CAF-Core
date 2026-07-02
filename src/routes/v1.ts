@@ -33,6 +33,7 @@ import {
 import { parseBrandProfile } from "../domain/brand-profile.js";
 import { buildBrandBibleSnapshot, parseBrandBible } from "../domain/brand-bible.js";
 import { listProjectBrandAssets } from "../repositories/project-config.js";
+import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
 import {
   insertDiagnosticAudit,
   insertEditorialReview,
@@ -1878,7 +1879,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const project = await ensureProject(db, params.data.project_slug);
     const active = await getActiveBrandBible(db, project.id);
     const versions = await listBrandBibleVersions(db, project.id);
-    const assets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const rawAssets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const assets = await signProjectBrandAssetsForClient(config, rawAssets);
     const parsed = active ? parseBrandBible(active.bible_json) : null;
     const snapshot = parsed ? buildBrandBibleSnapshot(parsed, assets) : null;
     return {
@@ -1909,7 +1911,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     }
     const project = await ensureProject(db, params.data.project_slug);
     const inserted = await insertBrandBibleVersion(db, project.id, body.data.bible_json, body.data.label ?? null);
-    const assets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const rawAssets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const assets = await signProjectBrandAssetsForClient(config, rawAssets);
     return {
       ok: true,
       version: inserted.version,
