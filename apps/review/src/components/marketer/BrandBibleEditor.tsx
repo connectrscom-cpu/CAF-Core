@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
 import { BrandBibleAssetInspectModal } from "@/components/marketer/BrandBibleAssetInspectModal";
 import type { MoodboardAsset } from "@/components/marketer/BrandBibleAssetInspectModal";
+import { BrandBibleHowItApplies } from "@/components/marketer/BrandBibleHowItApplies";
 import { BrandBibleInstagramPreview } from "@/components/marketer/BrandBibleInstagramPreview";
 import { BrandBibleMoodboardGrid } from "@/components/marketer/BrandBibleMoodboardGrid";
 import {
@@ -16,7 +17,7 @@ import {
 } from "@/lib/marketer/brand-bible-adapters";
 import type { BrandBible, BrandBibleAssetRef, BrandBibleAssetRole } from "@/lib/marketer/types";
 
-type BibleView = "moodboard" | "instagram" | "guide";
+type BibleView = "moodboard" | "instagram" | "guide" | "how";
 
 type BrandAssetRow = MoodboardAsset;
 
@@ -206,6 +207,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
             { id: "moodboard" as const, label: "Moodboard" },
             { id: "instagram" as const, label: "Instagram preview" },
             { id: "guide" as const, label: "Rules & guide" },
+            { id: "how" as const, label: "How it applies" },
           ] as const
         ).map((tab) => (
           <button
@@ -250,6 +252,8 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
       {view === "instagram" && (
         <BrandBibleInstagramPreview slug={slug} displayName={brandLabel} bible={bible} assets={assets} />
       )}
+
+      {view === "how" && <BrandBibleHowItApplies bible={bible} slug={slug} />}
 
       {view === "guide" && (
         <>

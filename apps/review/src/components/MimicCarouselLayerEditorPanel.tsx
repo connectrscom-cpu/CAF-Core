@@ -27,6 +27,7 @@ import {
   type MimicTemplateBgSlot,
 } from "@/lib/mimic-template-bg";
 import { registerReviewBackgroundJob } from "@/lib/review-background-jobs";
+import { BvsInfluencePanel } from "@/components/BvsInfluencePanel";
 import { MimicSlideWhyPanel } from "@/components/MimicSlideWhyPanel";
 import {
   clusterIndexForOcrBoxIndex,
@@ -2783,6 +2784,17 @@ function ensureTemplateBgFieldLayerBoxes(
         projectSlug={projectSlug}
         defaultOpen={false}
         generatedOnScreenText={generatedOnScreenText}
+      />
+
+      <BvsInfluencePanel
+        generationPayload={gp}
+        mimicV1={mimicV1}
+        projectSlug={projectSlug}
+        slideIndex={editorSlide}
+        taskId={taskId}
+        generatedOnScreenText={generatedOnScreenText}
+        brandPalette={brandPalette}
+        defaultOpen={false}
       />
 
       <div className="mimic-layer-editor-panel__slide-row">
