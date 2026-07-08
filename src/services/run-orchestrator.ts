@@ -63,7 +63,9 @@ import {
 } from "../domain/semantic-contract.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
 import { attachBvsToPlannedPayload } from "../domain/bvs-v1.js";
+import { buildContentDisplayV1 } from "../domain/content-display-metadata.js";
 import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
 import {
   assignVideoFlowForPlanningRow,
@@ -331,7 +333,18 @@ export async function startRun(
         prompt_version_label: job.prompt_version_label,
         variation_index: job.variation_index,
       });
-      await attachBvsToPlannedPayload(db, run.project_id, plannedPayload, candidateData ?? {});
+      const contentDisplay = buildContentDisplayV1({
+        candidateData: candidateData ?? {},
+        flowType: job.flow_type,
+        platform: job.platform ?? null,
+      });
+      plannedPayload.content_display = contentDisplay;
+      if (contentDisplay.title) {
+        plannedPayload.title = contentDisplay.title;
+      }
+      await attachBvsToPlannedPayload(db, run.project_id, plannedPayload, candidateData ?? {}, {
+        force: isVisualFirstCarouselFlow(job.flow_type),
+      });
       if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
         const derived =
           pack.derived_globals_json &&

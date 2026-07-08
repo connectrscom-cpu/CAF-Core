@@ -60,7 +60,7 @@ export default function BrandProfilePage() {
           className={`tab ${tab === "bible" ? "active" : ""}`}
           data-agent-id="brand-profile-tab-bible"
         >
-          Brand moodboard
+          Brand Visual System
         </a>
       </div>
 

@@ -254,6 +254,8 @@ export async function listMimicImageAuditsForTask(
        AND (
          step LIKE 'mimic_bg_extract%' OR
          step LIKE 'mimic_slide_gen_%' OR
+         step LIKE 'mimic_slide_flux_text_%' OR
+         step LIKE 'mimic_flux_carousel_slide_%' OR
          step = 'mimic_image_edit'
        )
      ORDER BY created_at ASC

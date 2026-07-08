@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
+import { BrandProfileHeygenSection } from "@/components/marketer/BrandProfileHeygenSection";
 import type { BrandProfile } from "@/lib/marketer/types";
 
 interface BrandProfileEditorProps {
@@ -387,6 +388,8 @@ export function BrandProfileEditor({ slug }: BrandProfileEditorProps) {
       <section className="profile-section">
         <BrandAssetsPanel projectSlug={slug} variant="marketer" />
       </section>
+
+      <BrandProfileHeygenSection slug={slug} />
 
       <section className="profile-section">
         <h3 className="profile-section-title">Brand safety</h3>

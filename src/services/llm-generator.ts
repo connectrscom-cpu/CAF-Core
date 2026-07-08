@@ -60,6 +60,18 @@ import {
 import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import { resolveSemanticContractForJob } from "../domain/semantic-contract.js";
 import { parseSlideIntelligenceBundle } from "../domain/slide-intelligence.js";
+import {
+  buildContentDisplayV1,
+  mergeContentDisplayTitle,
+  parseContentDisplayV1,
+  pickCandidateDisplayTitle,
+  pickTitleFromGeneratedOutput,
+} from "../domain/content-display-metadata.js";
+import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
+import {
+  buildVisualFirstCarouselCopySystemBlock,
+  enforceVisualFirstCarouselCopyBudget,
+} from "../domain/visual-first-carousel-copy-budget.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -711,6 +723,10 @@ export async function generateForJob(
         branch: mimicCopyBranchForLength,
       })}`.trim();
     }
+    if (isVisualFirstCarouselFlow(job.flow_type)) {
+      const slideTarget = targetMimicCarouselCopySlideCount(payload, mimicForCopy) ?? 10;
+      systemPrompt = `${systemPrompt.trim()}\n\n${buildVisualFirstCarouselCopySystemBlock(slideTarget)}`.trim();
+    }
   }
 
   if (compiledLearning.merged_guidance.trim()) {
@@ -1073,6 +1089,10 @@ export async function generateForJob(
         projectHandle: igRaw ? formatInstagramHandleForCta(igRaw) : null,
       });
 
+      if (isVisualFirstCarouselFlow(job.flow_type)) {
+        parsed = enforceVisualFirstCarouselCopyBudget(parsed);
+      }
+
       if (
         appCfg.MIMIC_COPY_COHERENCE_LLM &&
         apiKey.trim() &&
@@ -1139,6 +1159,12 @@ export async function generateForJob(
         }
       }
 
+      llmResult = {
+        ...llmResult,
+        content: JSON.stringify(parsed),
+      };
+    } else if (isVisualFirstCarouselFlow(job.flow_type)) {
+      parsed = enforceVisualFirstCarouselCopyBudget(parsed);
       llmResult = {
         ...llmResult,
         content: JSON.stringify(parsed),
@@ -1344,10 +1370,29 @@ export async function generateForJob(
         mergeCarouselTypographyFromHumanFeedback(storedOutput, payload);
       }
       parsedOutputForResponse = storedOutput;
+      const candidateData = asRecord(payload.candidate_data) ?? {};
+      const generatedTitle = pickTitleFromGeneratedOutput(storedOutput);
+      const candidateTitle = pickCandidateDisplayTitle(candidateData);
+      const displayTitle = generatedTitle || candidateTitle;
+      const contentDisplay = mergeContentDisplayTitle(
+        parseContentDisplayV1(payload.content_display) ??
+          buildContentDisplayV1({
+            candidateData,
+            flowType: job.flow_type,
+            platform: job.platform,
+          }),
+        generatedTitle,
+        candidateTitle
+      );
       const merge: Record<string, unknown> = {
         generated_output: storedOutput,
         draft_id: draftId,
       };
+      if (displayTitle) {
+        merge.title = displayTitle;
+        merge.generated_title = displayTitle;
+      }
+      merge.content_display = contentDisplay;
       if (draftPackageValidation) {
         merge.draft_package_snapshot = storedOutput;
         merge.draft_package_type = draftPackageValidation.package_type;

@@ -1,6 +1,11 @@
 import { humanizeFlowType } from "./language";
 import { applyResearchBriefDisplayNames, parsePackNotes } from "./research-notes";
 import type { ContentIdea, HashtagInsight, IdeaStatus, ResearchBrief, TopPerformerRef } from "./types";
+import {
+  isNewVisualCarouselIdea,
+  NEW_VISUAL_CAROUSEL_FLOW,
+  newVisualCarouselLaneLabel,
+} from "./visual-first-carousel-idea";
 import { pickRenderableThumb } from "./inspection-media";
 import {
   contentPreviewMissing,
@@ -54,13 +59,19 @@ function humanizeFormat(format: string, platform: string): string {
 
 function resolveFlowType(row: Record<string, unknown>, format: string): { raw: string; label: string } {
   const explicit = str(row.target_flow_type) || str(row.flow_type);
-  if (explicit) return { raw: explicit, label: humanizeFlowType(explicit) };
-  const profile = str(row.execution_profile) || str(row.carousel_style) || str(row.video_style);
-  if (profile) {
-    const raw = profile;
-    return { raw, label: profile.replace(/_/g, " ") };
+  if (explicit.startsWith("FLOW_")) return { raw: explicit, label: humanizeFlowType(explicit) };
+  if (isNewVisualCarouselIdea(row)) {
+    return { raw: NEW_VISUAL_CAROUSEL_FLOW, label: humanizeFlowType(NEW_VISUAL_CAROUSEL_FLOW) };
   }
-  if (format === "carousel") return { raw: "FLOW_CAROUSEL", label: "Carousel" };
+  const profile = str(row.execution_profile) || str(row.carousel_style) || str(row.video_style);
+  if (profile && !explicit) {
+    if (format === "carousel" && profile === "text_heavy") {
+      return { raw: "FLOW_CAROUSEL", label: humanizeFlowType("FLOW_CAROUSEL") };
+    }
+    return { raw: profile, label: profile.replace(/_/g, " ") };
+  }
+  if (explicit) return { raw: explicit, label: explicit.replace(/_/g, " ") };
+  if (format === "carousel") return { raw: "FLOW_CAROUSEL", label: humanizeFlowType("FLOW_CAROUSEL") };
   if (format === "video") return { raw: "FLOW_VIDEO", label: "Video" };
   return { raw: "FLOW_CONTENT", label: "Content" };
 }
@@ -77,16 +88,20 @@ export function toContentIdea(row: Record<string, unknown>, index: number): Cont
   const platform = str(row.platform);
   const rationaleParts = [str(row.why_now), str(row.novelty_angle)].filter(Boolean);
   const flow = resolveFlowType(row, format);
+  const isNewVisualCarousel = isNewVisualCarouselIdea(row);
 
   return {
     id: str(row.id) || `idea_${index}`,
     title: str(row.title) || "Untitled idea",
     concept: str(row.three_liner) || str(row.thesis),
     rationale: rationaleParts.join(" "),
-    suggestedFormat: humanizeFormat(format, platform),
+    suggestedFormat: isNewVisualCarousel
+      ? `${newVisualCarouselLaneLabel(row)} · ${platform || "Instagram"}`
+      : humanizeFormat(format, platform),
     format: format || "other",
     flowType: flow.label,
     targetFlowType: flow.raw,
+    isNewVisualCarousel,
     contentLens: contentLensOf(row),
     emotion: str(row.emotion) || str(row.emotional_angle) || null,
     platform,

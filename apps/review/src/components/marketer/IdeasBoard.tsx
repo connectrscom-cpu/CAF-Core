@@ -36,7 +36,7 @@ type LocalState = Record<string, { status: IdeaStatus; strategy?: GenerationStra
 
 type MainTab = "new_content" | "top_performers";
 type LensTab = "niche" | "product";
-type FormatTab = "all" | "carousel" | "video";
+type FormatTab = "all" | "new_visual" | "carousel" | "video";
 
 function matchesLens(idea: ContentIdea, lens: LensTab): boolean {
   if (lens === "product") return idea.contentLens === "product";
@@ -157,7 +157,9 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   );
 
   const filteredIdeas = useMemo(() => {
-    if (formatTab === "carousel") return ideasInLens.filter((i) => i.format === "carousel");
+    if (formatTab === "new_visual") return ideasInLens.filter((i) => i.isNewVisualCarousel);
+    if (formatTab === "carousel")
+      return ideasInLens.filter((i) => i.format === "carousel" && !i.isNewVisualCarousel);
     if (formatTab === "video") return ideasInLens.filter((i) => i.format === "video");
     return ideasInLens;
   }, [ideasInLens, formatTab]);
@@ -165,11 +167,14 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   const formatCounts = useMemo(
     () => ({
       all: ideasInLens.length,
-      carousel: ideasInLens.filter((i) => i.format === "carousel").length,
+      new_visual: ideasInLens.filter((i) => i.isNewVisualCarousel).length,
+      carousel: ideasInLens.filter((i) => i.format === "carousel" && !i.isNewVisualCarousel).length,
       video: ideasInLens.filter((i) => i.format === "video").length,
     }),
     [ideasInLens]
   );
+
+  const newVisualCount = formatCounts.new_visual;
 
   const selectedCount = ideas.filter((i) => statusOf(i) === "selected").length;
 
@@ -267,14 +272,17 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
               {(
                 [
                   ["all", "All"],
-                  ["carousel", "Carousels"],
+                  ["new_visual", "New visual"],
+                  ["carousel", "Carousels (text)"],
                   ["video", "Videos"],
                 ] as const
               ).map(([key, label]) => (
                 <button
                   key={key}
                   type="button"
-                  className={`ideas-format-tab ${formatTab === key ? "active" : ""}`}
+                  className={`ideas-format-tab ${formatTab === key ? "active" : ""} ${
+                    key === "new_visual" ? "ideas-format-tab--new-visual" : ""
+                  } ${key === "new_visual" && formatTab !== key && newVisualCount > 0 ? "ideas-format-tab--has-new-visual" : ""}`}
                   onClick={() => setFormatTab(key)}
                 >
                   {label}
@@ -282,6 +290,21 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                 </button>
               ))}
             </div>
+            {newVisualCount > 0 && formatTab !== "new_visual" && (
+              <p className="ideas-new-visual-hint">
+                <strong>{newVisualCount}</strong> idea{newVisualCount === 1 ? "" : "s"} use{" "}
+                <button type="button" className="ideas-new-visual-link" onClick={() => setFormatTab("new_visual")}>
+                  New visual
+                </button>{" "}
+                — original concepts with AI-generated slide art and fresh copy (not mimic replicas).
+              </p>
+            )}
+            {formatTab === "new_visual" && (
+              <p className="ideas-new-visual-hint ideas-new-visual-hint--active">
+                Brand-style carousel lane: each idea becomes a completely new deck — AI slide plates plus fresh copy.
+                For replica or why-mimic picks, use the Top performers tab.
+              </p>
+            )}
           </>
         )}
 
@@ -406,11 +429,15 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
             const expanded = expandedId === idea.id;
             const status = statusOf(idea);
             const strategy = local[idea.id]?.strategy;
+            const isNewVisual = idea.isNewVisualCarousel === true;
             return (
               <article
                 key={idea.id}
-                className={`idea-tile ${expanded ? "idea-tile--expanded" : ""} idea-card--${status}`}
+                className={`idea-tile ${expanded ? "idea-tile--expanded" : ""} idea-card--${status}${
+                  isNewVisual ? " idea-tile--new-visual" : ""
+                }`}
               >
+                {isNewVisual && <span className="idea-new-visual-ribbon" aria-hidden="true" />}
                 <PreviewMediaCard
                   preview={idea.preview ?? contentPreviewMissing(idea.format === "video" ? "video" : idea.format === "carousel" ? "carousel" : "storyboard")}
                   alt={idea.title}
@@ -423,14 +450,28 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                   onClick={() => setExpandedId(expanded ? null : idea.id)}
                 >
                   <div className="idea-tile-badges">
-                    <span className="idea-format-badge">{idea.suggestedFormat}</span>
-                    <span className="idea-flow-badge">{idea.flowType}</span>
+                    {isNewVisual ? (
+                      <span className="idea-new-visual-badge" title="Original concept · AI slide art + fresh copy">
+                        New visual
+                      </span>
+                    ) : (
+                      <span className="idea-format-badge">{idea.suggestedFormat}</span>
+                    )}
+                    <span className={`idea-flow-badge ${isNewVisual ? "idea-flow-badge--new-visual" : ""}`}>
+                      {idea.flowType}
+                    </span>
                   </div>
                   <h3 className="idea-tile-title">{idea.title}</h3>
                 </button>
 
                 {expanded && (
                   <div className="idea-tile-body">
+                    {isNewVisual && (
+                      <p className="idea-new-visual-explainer">
+                        Completely new carousel — inspired by winning deck mechanics, not a pixel replica. CAF generates
+                        fresh copy and AI slide art via <strong>Brand-style carousel</strong>.
+                      </p>
+                    )}
                     {idea.concept && <p className="idea-concept">{idea.concept}</p>}
                     {idea.rationale && (
                       <p className="idea-rationale">

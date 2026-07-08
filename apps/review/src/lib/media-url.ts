@@ -44,6 +44,9 @@ export interface TaskAssetPreview {
   asset_type?: string | null;
 }
 
+/** Minimal shape for carousel preview media (mirrors CarouselSlider). */
+export type CarouselMediaItem = { url: string; kind: "image" | "video" };
+
 function normAssetType(t: string | null | undefined): string {
   return (t ?? "").trim().toLowerCase();
 }
@@ -109,3 +112,25 @@ export function taskAssetsToPreviewRows(
     return { position: a.position, public_url, kind, asset_type: a.asset_type ?? null };
   });
 }
+
+/**
+ * Align preview assets to carousel slide indices: `items[slideIndex - 1]` uses `asset.position`.
+ * Prevents mismatches when the assets API returns sparse or out-of-order rows.
+ */
+export function carouselMediaItemsFromPreviewRows(
+  rows: TaskAssetPreview[]
+): Array<CarouselMediaItem | null> {
+  if (rows.length === 0) return [];
+  const maxPos = rows.reduce((max, row) => Math.max(max, row.position), -1);
+  if (maxPos < 0) return [];
+  const byPosition = new Map(rows.map((row) => [row.position, row]));
+  return Array.from({ length: maxPos + 1 }, (_, position) => {
+    const row = byPosition.get(position);
+    if (!row || !row.public_url.trim()) return null;
+    return {
+      url: row.public_url,
+      kind: row.kind === "video" ? "video" : "image",
+    } satisfies CarouselMediaItem;
+  });
+}
+

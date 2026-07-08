@@ -73,6 +73,7 @@ import {
 } from "../domain/top-performer-mimic-flow-types.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
+import { isWhyMimicExecution } from "../domain/why-mimic-execution.js";
 import { parseBvsFromPayload } from "../domain/bvs-v1.js";
 import { paletteFromBrandBibleSnapshot } from "../domain/brand-bible.js";
 import {
@@ -128,11 +129,12 @@ import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import type { MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import { isOpenAiPlaceholderModeForProject } from "./openai-generation-placeholder.js";
 import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
-import { hasActiveProviderSession, pickRenderState } from "../domain/content-job-render-state.js";
+import { hasActiveProviderSession, isCarouselRenderComplete, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { mergeCarouselTypographyIntoGeneratedOutputRender } from "../domain/carousel-render-typography.js";
 import {
   isReviewRetainStatusDuringTextOverlayReprint,
+  isTextOverlayReprintInProgress,
   MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
   pickRenderStateRecord,
 } from "../domain/mimic-text-overlay-reprint.js";
@@ -153,6 +155,7 @@ import {
   markCarouselRegenerateFinished,
   markCarouselRegenerateSlideProgress,
   markCarouselRegenerateStarted,
+  pickCarouselRegenerateState,
 } from "./mimic-carousel-regenerate-state.js";
 
 export interface PipelineConfig {
@@ -208,6 +211,43 @@ function isVideoRenderingSafelyRetryable(j: JobRow): boolean {
   /** Empty render_state, "starting", or explicit "failed" with no resume key — safe to re-enter. Avoid retrying mid-stream phases like "polling" / "sora_polling" / "submitted" that imply a HeyGen/Sora id should already exist. */
   if (phase === "" || phase === "starting" || phase === "failed") return true;
   return false;
+}
+
+/**
+ * Carousel render finished (`render_state.status = completed`) but job status never left RENDERING
+ * (worker died between render completion and layout QA / IN_REVIEW transition).
+ */
+function isCarouselRenderStuckAfterComplete(j: JobRow): boolean {
+  if (j.status !== "RENDERING") return false;
+  if (!isCarouselFlow(j.flow_type) || isOfflinePipelineFlow(j.flow_type)) return false;
+  if (!isCarouselRenderComplete(j.render_state)) return false;
+  if (pickCarouselRegenerateState(j.render_state)?.status === "in_progress") return false;
+  if (isTextOverlayReprintInProgress(j.render_state)) return false;
+  return true;
+}
+
+/**
+ * Carousel RENDERING job is safe to re-enter for slide rendering. When render already completed we must
+ * NOT re-render (double work + resets render_state); finalize to IN_REVIEW instead.
+ */
+function isCarouselRenderingSafelyRetryable(j: JobRow): boolean {
+  if (j.status !== "RENDERING") return false;
+  if (!isCarouselFlow(j.flow_type) || isOfflinePipelineFlow(j.flow_type)) return false;
+  if (isCarouselRenderStuckAfterComplete(j)) return false;
+  if (pickCarouselRegenerateState(j.render_state)?.status === "in_progress") return true;
+  if (isTextOverlayReprintInProgress(j.render_state)) return true;
+  const status = String(pickRenderState(j.render_state).raw.status ?? "")
+    .trim()
+    .toLowerCase();
+  if (status === "completed") return false;
+  const { phase } = pickRenderState(j.render_state);
+  if (status === "pending" || status === "failed" || status === "") return true;
+  if (phase === "renderer_unavailable") return true;
+  return true;
+}
+
+function isCarouselRenderingPipelineEligible(j: JobRow): boolean {
+  return isCarouselRenderingSafelyRetryable(j) || isCarouselRenderStuckAfterComplete(j);
 }
 
 type PreRenderStep =
@@ -603,7 +643,7 @@ export async function processRunJobs(
   const jobsToRun = jobs.filter(
     (j) =>
       j.status !== "RENDERING" ||
-      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type)) ||
+      isCarouselRenderingPipelineEligible(j) ||
       isVideoRenderingSafelyRetryable(j)
   );
 
@@ -842,7 +882,7 @@ export async function renderRunGeneratedJobs(
   const eligible = jobs.filter(
     (j) =>
       j.status !== "RENDERING" ||
-      (isCarouselFlow(j.flow_type) && !isOfflinePipelineFlow(j.flow_type)) ||
+      isCarouselRenderingPipelineEligible(j) ||
       isVideoRenderingSafelyRetryable(j)
   );
 
@@ -1747,6 +1787,8 @@ export type CarouselRenderOpts = {
   textBackingColor?: string;
   /** Optional brand logo composited onto each slide (reprint option). */
   logoOverlay?: { url: string; position?: string };
+  /** Optional brand slide frame composited on top of each slide (reprint option). */
+  frameOverlay?: { url: string; asset_id?: string };
   /** Per-call mimic visual similarity % override (regenerate route picker). */
   mimicVisualSimilarityPctOverride?: number;
   /** Per-call mimic image input mode override: reference_edit vs analysis_t2i (no reference). */
@@ -1756,6 +1798,63 @@ export type CarouselRenderOpts = {
   /** Skip post-render layout QA gate (internal reprint passes). */
   skipLayoutQa?: boolean;
 };
+
+async function finalizeCarouselJobAfterRender(
+  db: Pool,
+  config: AppConfig,
+  job: JobRow,
+  run: RunRow | null,
+  recommendedRoute: string | null,
+  renderOpts?: CarouselRenderOpts
+): Promise<void> {
+  const priorStatus = job.status;
+  const textOverlayOnly = Boolean(renderOpts?.textOverlayOnly);
+  const keepInReview =
+    textOverlayOnly &&
+    (isReviewRetainStatusDuringTextOverlayReprint(priorStatus) || priorStatus === "RENDERING");
+
+  let layoutBlocked = false;
+  let layoutQcSummary: Record<string, unknown> | undefined;
+  if (
+    !keepInReview &&
+    !renderOpts?.skipLayoutQa &&
+    !textOverlayOnly &&
+    isTpGroundedCarouselRenderFlow(job.flow_type) &&
+    config.MIMIC_LAYOUT_QA_ENABLED !== false
+  ) {
+    const layoutResult = await runMimicPostRenderLayoutLoop(db, config, job.id);
+    layoutBlocked = layoutResult.blockReview;
+    layoutQcSummary = {
+      pass: layoutResult.pass,
+      overall_score: layoutResult.layoutQc.overall_score,
+      review_attention: layoutResult.layoutQc.review_attention,
+      block_review: layoutResult.blockReview,
+      iterations: layoutResult.reprintIterations,
+    };
+  }
+
+  const finalStatus = layoutBlocked
+    ? "BLOCKED"
+    : keepInReview
+      ? priorStatus
+      : finalJobStatusAfterRender(recommendedRoute);
+  if (!keepInReview || job.status !== finalStatus) {
+    await updateJobStatus(db, job.id, finalStatus);
+  }
+  if (run && !keepInReview) {
+    await insertJobStateTransition(db, {
+      task_id: job.task_id,
+      project_id: run.project_id,
+      from_state: "RENDERING",
+      to_state: finalStatus,
+      triggered_by: "system",
+      actor: layoutBlocked ? "layout-qc" : "job-pipeline",
+      ...(layoutBlocked
+        ? { metadata: { reason: "layout_qc_failed", layout_qc: layoutQcSummary } }
+        : {}),
+    });
+  }
+}
 
 async function processCarouselJob(
   db: Pool,
@@ -1777,6 +1876,19 @@ async function processCarouselJob(
   try {
   const priorStatus = job.status;
   const textOverlayOnly = Boolean(renderOpts?.textOverlayOnly);
+  const hasExplicitPartialRework =
+    Boolean(renderOpts?.onlySlideIndices?.length) || Boolean(renderOpts?.textOverlayOnly);
+  const freshForResume = await reloadJobRow(db, job.id);
+  const resumeJob = freshForResume ?? job;
+  if (
+    !hasExplicitPartialRework &&
+    isCarouselRenderStuckAfterComplete(resumeJob)
+  ) {
+    updateRenderActivity(job.task_id, { kind: "carousel", phase: "finalize_after_render" });
+    await finalizeCarouselJobAfterRender(db, config, resumeJob, run, recommendedRoute, renderOpts);
+    return;
+  }
+
   const keepInReview =
     textOverlayOnly &&
     (isReviewRetainStatusDuringTextOverlayReprint(priorStatus) || priorStatus === "RENDERING");
@@ -2016,8 +2128,9 @@ async function processCarouselJob(
     config.MIMIC_VISUAL_SIMILARITY_PCT;
   const mimicImageInputMode =
     renderOpts?.mimicImageInputModeOverride ??
-    mimicProjectRender?.imageInputMode ??
-    config.MIMIC_IMAGE_INPUT_MODE;
+    (mimicPayload && isWhyMimicExecution(job.flow_type, mimicPayload)
+      ? "analysis_t2i"
+      : mimicProjectRender?.imageInputMode ?? config.MIMIC_IMAGE_INPUT_MODE);
   const mimicRegenerationNote = renderOpts?.mimicRegenerationNote?.trim() || undefined;
   const mimicImageProviderLabel = () => mimicImageProviderAssetLabel(config, mimicBflModelOverride);
   let template = isMimicCarouselRender
@@ -2119,12 +2232,13 @@ async function processCarouselJob(
     [template, job.id]
   );
 
-  await updateJobRenderState(db, job.id, {
+  await mergeJobRenderState(db, job.id, {
     provider: "carousel-renderer",
     status: "pending",
-    phase: "preparing_slides",
+    phase: textOverlayOnly ? MIMIC_TEXT_OVERLAY_REPRINT_PHASE : "preparing_slides",
     slide_total: n,
     template,
+    ...(textOverlayOnly ? { render_step: "preparing_slides" } : {}),
   });
 
   try {
@@ -2184,13 +2298,14 @@ async function processCarouselJob(
         slide_index: i,
         slide_total: n,
       });
-      await updateJobRenderState(db, job.id, {
+      await mergeJobRenderState(db, job.id, {
         provider: "carousel-renderer",
         status: "pending",
-        phase: "POST /render-binary",
+        phase: textOverlayOnly ? MIMIC_TEXT_OVERLAY_REPRINT_PHASE : "POST /render-binary",
         slide_index: i,
         slide_total: n,
         template,
+        ...(textOverlayOnly ? { render_step: "POST /render-binary" } : {}),
       });
 
       const slideMode =
@@ -2481,6 +2596,14 @@ async function processCarouselJob(
           },
         };
       }
+      if (renderOpts?.frameOverlay?.url?.trim()) {
+        ctx = {
+          ...ctx,
+          frame_overlay: {
+            url: renderOpts.frameOverlay.url.trim(),
+          },
+        };
+      }
 
       ctx = applySingleSlideBinaryRenderContext(ctx, i, n);
 
@@ -2719,47 +2842,7 @@ async function processCarouselJob(
     }
   }
 
-  let layoutBlocked = false;
-  let layoutQcSummary: Record<string, unknown> | undefined;
-  if (
-    !keepInReview &&
-    !renderOpts?.skipLayoutQa &&
-    !textOverlayOnly &&
-    isTpGroundedCarouselRenderFlow(job.flow_type) &&
-    config.MIMIC_LAYOUT_QA_ENABLED !== false
-  ) {
-    const layoutResult = await runMimicPostRenderLayoutLoop(db, config, job.id);
-    layoutBlocked = layoutResult.blockReview;
-    layoutQcSummary = {
-      pass: layoutResult.pass,
-      overall_score: layoutResult.layoutQc.overall_score,
-      review_attention: layoutResult.layoutQc.review_attention,
-      block_review: layoutResult.blockReview,
-      iterations: layoutResult.reprintIterations,
-    };
-  }
-
-  const finalStatus = layoutBlocked
-    ? "BLOCKED"
-    : keepInReview
-      ? priorStatus
-      : finalJobStatusAfterRender(recommendedRoute);
-  if (!keepInReview || job.status !== finalStatus) {
-    await updateJobStatus(db, job.id, finalStatus);
-  }
-  if (run && !keepInReview) {
-    await insertJobStateTransition(db, {
-      task_id: job.task_id,
-      project_id: run.project_id,
-      from_state: "RENDERING",
-      to_state: finalStatus,
-      triggered_by: "system",
-      actor: layoutBlocked ? "layout-qc" : "job-pipeline",
-      ...(layoutBlocked
-        ? { metadata: { reason: "layout_qc_failed", layout_qc: layoutQcSummary } }
-        : {}),
-    });
-  }
+  await finalizeCarouselJobAfterRender(db, config, job, run, recommendedRoute, renderOpts);
   } finally {
     endRenderActivity(job.task_id);
   }
@@ -2907,7 +2990,7 @@ export async function rerenderCarouselTextOverlay(
   slideIndices1Based?: number[],
   renderExtras?: Pick<
     CarouselRenderOpts,
-    "slideCopyOverrides" | "renderTypographyPatch" | "textBacking" | "textBackingColor" | "logoOverlay"
+    "slideCopyOverrides" | "renderTypographyPatch" | "textBacking" | "textBackingColor" | "logoOverlay" | "frameOverlay"
   >
 ): Promise<void> {
   if (renderExtras?.renderTypographyPatch && Object.keys(renderExtras.renderTypographyPatch).length > 0) {
@@ -2938,6 +3021,7 @@ export async function rerenderCarouselTextOverlay(
     textBacking: renderExtras?.textBacking !== false,
     ...(renderExtras?.textBackingColor?.trim() ? { textBackingColor: renderExtras.textBackingColor } : {}),
     ...(renderExtras?.logoOverlay?.url?.trim() ? { logoOverlay: renderExtras.logoOverlay } : {}),
+    ...(renderExtras?.frameOverlay?.url?.trim() ? { frameOverlay: renderExtras.frameOverlay } : {}),
   });
 }
 

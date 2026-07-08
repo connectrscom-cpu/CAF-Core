@@ -6,6 +6,7 @@ import {
   buildWhyMimicSlidePlansFromSil,
   isWhyMimicExecution,
   MIMIC_EXECUTION_MODE_WHY,
+  whyMimicTemplateBgUsesInventedPlates,
 } from "./why-mimic-execution.js";
 import { FLOW_WHY_MIMIC_CAROUSEL } from "./why-mimic-carousel-flow-types.js";
 
@@ -29,6 +30,23 @@ describe("buildWhyMimicSlidePlansFromSil", () => {
     expect(plans[0]?.render_mode).toBe("full_bleed");
     expect(plans[1]?.slide_index).toBe(2);
   });
+
+  it("uses sequential output indices while preserving source_slide_index", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({
+      aesthetic: {
+        slides: [
+          { slide_index: 1, slide_purpose: "content", on_screen_text_transcript: "aries" },
+          { slide_index: 3, slide_purpose: "content", on_screen_text_transcript: "gemini" },
+        ],
+      },
+      mediaKind: "carousel",
+    });
+    const plans = buildWhyMimicSlidePlansFromSil(bundle!, "carousel_visual", 2);
+    expect(plans[0]?.slide_index).toBe(1);
+    expect(plans[0]?.source_slide_index).toBe(1);
+    expect(plans[1]?.slide_index).toBe(2);
+    expect(plans[1]?.source_slide_index).toBe(3);
+  });
 });
 
 describe("buildWhyMimicFluxSlideInput", () => {
@@ -46,6 +64,38 @@ describe("buildWhyMimicFluxSlideInput", () => {
     expect(input?.safe_zone_hint).toContain("smooth");
     expect(input?.slide_role).toBeTruthy();
   });
+
+  it("resolves SIL by source_slide_index when output order differs from source deck", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({
+      aesthetic: {
+        slides: [
+          {
+            slide_index: 1,
+            slide_purpose: "content",
+            on_screen_text_transcript: "how you should text your aries friend",
+            visual_description: "aries meme with googly eyes",
+          },
+          {
+            slide_index: 3,
+            slide_purpose: "content",
+            on_screen_text_transcript: "how you should text your gemini friend",
+            visual_description: "flower brain whimsical illustration",
+          },
+          {
+            slide_index: 4,
+            slide_purpose: "content",
+            on_screen_text_transcript: "how you should text your cancer friend",
+            visual_description: "paw print on concrete",
+          },
+        ],
+      },
+      mediaKind: "carousel",
+    });
+    const geminiInput = buildWhyMimicFluxSlideInput(bundle!, 2, { sourceSlideIndex: 3 });
+    expect(geminiInput?.visual_description?.toLowerCase()).toContain("flower brain");
+    const wrongInput = buildWhyMimicFluxSlideInput(bundle!, 2, { sourceSlideIndex: 4 });
+    expect(wrongInput?.visual_description?.toLowerCase()).toContain("paw print");
+  });
 });
 
 describe("isWhyMimicExecution", () => {
@@ -55,6 +105,18 @@ describe("isWhyMimicExecution", () => {
       true
     );
     expect(isWhyMimicExecution("FLOW_TOP_PERFORMER_MIMIC_CAROUSEL", { execution_mode: "classic" })).toBe(false);
+  });
+});
+
+describe("whyMimicTemplateBgUsesInventedPlates", () => {
+  it("is true only for why_mimic + template_bg", () => {
+    expect(
+      whyMimicTemplateBgUsesInventedPlates({ execution_mode: MIMIC_EXECUTION_MODE_WHY, mode: "template_bg" })
+    ).toBe(true);
+    expect(
+      whyMimicTemplateBgUsesInventedPlates({ execution_mode: MIMIC_EXECUTION_MODE_WHY, mode: "carousel_visual" })
+    ).toBe(false);
+    expect(whyMimicTemplateBgUsesInventedPlates({ execution_mode: "classic", mode: "template_bg" })).toBe(false);
   });
 });
 

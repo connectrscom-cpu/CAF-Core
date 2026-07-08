@@ -11,10 +11,20 @@ export type TemplateBgBodyOnScreenCopy = {
   inverted: boolean;
 };
 
+/** Short on-slide decor title — "Aries Mother", "Gemini Mother" (not "THE X MOTHER"). */
+export function shortListicleMotherDecorTitle(text: string): string {
+  const t = text.trim();
+  if (!t || t.includes("\n") || t.length > 40) return "";
+  if (/^[A-Za-z][A-Za-z'-]*\s+Mother$/i.test(t)) return t;
+  return "";
+}
+
 /** Derive zodiac-style decor title from kicker text ("Aries Mother Traits" → "THE ARIES MOTHER"). */
 export function listicleDecorTitleFromKicker(kicker: string): string {
   const k = kicker.trim();
   if (!k) return "";
+  const short = shortListicleMotherDecorTitle(k);
+  if (short) return short;
   const mother = k.match(/^([A-Za-z][A-Za-z'-]*)\s+Mother\b/i);
   if (mother) return `THE ${mother[1]!.toUpperCase()} MOTHER`;
   const mom = k.match(/\b([A-Za-z][A-Za-z'-]*)\s+mom\b/i);
@@ -26,11 +36,43 @@ export function listicleDecorTitleFromKicker(kicker: string): string {
 export function listicleDecorTitleFromParagraph(text: string): string {
   const t = text.trim();
   if (!t) return "";
+  const asMother = t.match(/^([A-Za-z][A-Za-z'-]*)\s+as\s+Mother\s*:/i);
+  if (asMother) {
+    const sign = asMother[1]!;
+    const titled = sign.charAt(0).toUpperCase() + sign.slice(1).toLowerCase();
+    return `${titled} as Mother`;
+  }
   const mother = t.match(/^The\s+([A-Za-z][A-Za-z'-]*)\s+Mother\b/i);
   if (mother) return `THE ${mother[1]!.toUpperCase()} MOTHER`;
   const mom = t.match(/^The\s+([A-Za-z][A-Za-z'-]*)\s+Mom\b/i);
   if (mom) return `THE ${mom[1]!.toUpperCase()} MOTHER`;
   return "";
+}
+
+/**
+ * Split listicle slides where the paragraph opens with a short sign title + colon
+ * ("Gemini as Mother: She is the voice…" → title + body).
+ */
+export function splitListicleColonLeadTitle(text: string): { title: string; body: string } | null {
+  const t = text.trim();
+  if (!t) return null;
+  const asMother = t.match(/^([A-Za-z][A-Za-z'-]*)\s+as\s+Mother\s*:\s*([\s\S]+)$/i);
+  if (asMother) {
+    const body = asMother[2]!.trim();
+    if (body.length >= 20) {
+      const sign = asMother[1]!;
+      const titled = sign.charAt(0).toUpperCase() + sign.slice(1).toLowerCase();
+      return { title: `${titled} as Mother`, body };
+    }
+  }
+  const theMother = t.match(/^(The\s+[A-Za-z][A-Za-z'-]*\s+Mother)\s*:\s*([\s\S]+)$/i);
+  if (theMother) {
+    const body = theMother[2]!.trim();
+    if (body.length >= 20) {
+      return { title: theMother[1]!.trim(), body };
+    }
+  }
+  return null;
 }
 
 export function looksLikeInstagramHandleLine(text: string): boolean {
@@ -42,6 +84,8 @@ export function isListicleBodyInvertedLlmCopy(headline: string, body: string, ki
   const h = headline.trim();
   const b = body.trim();
   if (!h) return false;
+  if (b && h === b && h.length > 80) return true;
+  if (h.length > 80 && splitListicleColonLeadTitle(h)) return true;
   if (h.length > 100 && b.length < h.length * 0.65) return true;
   if (h.length > 60 && listicleDecorTitleFromKicker(kicker)) return true;
   if (h.length > 80 && (looksLikeInstagramHandleLine(b) || b.length < 80)) return true;
@@ -59,14 +103,34 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
   const kicker = String(raw.kicker ?? "").trim();
   const slideTitle = String(raw.slide_title ?? "").trim();
 
+  if (headline && body && headline === body) {
+    const colonSplit = splitListicleColonLeadTitle(headline);
+    if (colonSplit) {
+      return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+    }
+  }
+
   if (!isListicleBodyInvertedLlmCopy(headline, body, kicker)) {
+    const colonSplit = splitListicleColonLeadTitle(headline);
+    if (colonSplit) {
+      return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+    }
     return { headline, body: body || kicker, inverted: false };
   }
 
+  const colonSplit = splitListicleColonLeadTitle(headline);
+  if (colonSplit) {
+    return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+  }
+
   const decorTitle =
+    shortListicleMotherDecorTitle(slideTitle) ||
+    shortListicleMotherDecorTitle(kicker) ||
+    shortListicleMotherDecorTitle(body) ||
     slideTitle ||
     listicleDecorTitleFromKicker(kicker) ||
     listicleDecorTitleFromParagraph(headline) ||
+    shortListicleMotherDecorTitle(headline) ||
     (headline.length <= 56 && !headline.includes("\n") ? headline : "");
 
   let bodyText = headline;
@@ -196,9 +260,21 @@ export function templateBgLlmSlideForDocAi(
   }
   if (slot === "cta") {
     const ctaText = String(rawLlmSlide.cta ?? rawLlmSlide.cta_text ?? "").trim();
+    let bodyForCta = body;
+    if (!bodyForCta && Array.isArray(rawLlmSlide.text_blocks)) {
+      for (const item of rawLlmSlide.text_blocks) {
+        if (!item || typeof item !== "object") continue;
+        const rec = item as Record<string, unknown>;
+        const role = String(rec.role ?? "body").toLowerCase();
+        if (role !== "body" && role !== "subtitle" && role !== "cta") continue;
+        const t = String(rec.text ?? "").trim();
+        if (!t || looksLikeInstagramHandleLine(t)) continue;
+        bodyForCta = bodyForCta ? `${bodyForCta}\n\n${t}` : t;
+      }
+    }
     const mapped = resolveTemplateBgCtaOnScreenCopy({
       headline,
-      body,
+      body: bodyForCta,
       cta: ctaText,
       handle,
       kicker: String(rawLlmSlide.kicker ?? "").trim(),

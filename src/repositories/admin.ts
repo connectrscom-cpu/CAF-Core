@@ -229,7 +229,16 @@ export async function listJobs(
                 WHEN 'BLOCKED' THEN
                   'BLOCKED · ' || COALESCE(
                     NULLIF(left(btrim(COALESCE(c.generation_payload->'qc_result'->>'reason_short', '')), 200), ''),
-                    'QC or policy'
+                    CASE
+                      WHEN COALESCE((c.generation_payload->'layout_qc'->>'block_review')::boolean, false) = true THEN
+                        'layout QC — text overlap / placement failed'
+                        || CASE
+                          WHEN COALESCE((c.generation_payload->'layout_qc'->>'iterations')::int, 0) > 0
+                            THEN ' after ' || (c.generation_payload->'layout_qc'->>'iterations') || ' reprint(s)'
+                          ELSE ''
+                        END
+                      ELSE 'QC or policy'
+                    END
                   )
                 WHEN 'REJECTED' THEN 'REJECTED'
                 WHEN 'FAILED' THEN 'FAILED · see error column or state transitions'

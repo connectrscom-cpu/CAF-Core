@@ -187,6 +187,10 @@ export function resolveDeckStrategicThesis(input: {
 
 const SIGN_AS_FOOD_ON_SCREEN = /^([a-z][a-z\s-]{1,20}?)\s+as\s+food\b/i;
 
+/** `how you should text your {sign} friend` iMessage-meme series (uniform beats, no cover). */
+const ZODIAC_TEXT_YOUR_FRIEND_ON_SCREEN =
+  /\bhow you should text your\s+([a-z][a-z\s-]{0,18}?)\s+friend\b/i;
+
 /** Common food nouns for detecting when a deck thesis overfits one dish. */
 const FOOD_TERM_RE =
   /\b(pasta|penne|rigatoni|spaghetti|linguine|fettuccine|macaroni|fries|french fries|chicken|burger|pizza|taco|sushi|ramen|noodles|steak|salad|sandwich|toast|eggs|bacon|cheese|bread|soup|curry|rice|dumpling|waffle|pancake|donut|doughnut|cake|cookie|seafood|fish|shrimp|lobster|crab)\b/gi;
@@ -221,6 +225,100 @@ export function detectSignAsFoodSeries(slides: SlideIntelligenceV1[]): string[] 
   return signs.length >= 2 ? signs : null;
 }
 
+/** Detect `how you should text your {sign} friend` uniform meme series. */
+export function detectZodiacTextYourFriendSeries(slides: SlideIntelligenceV1[]): string[] | null {
+  const signs: string[] = [];
+  for (const slide of slides) {
+    const text = slide.on_screen_text?.trim();
+    if (!text) continue;
+    const match = text.match(ZODIAC_TEXT_YOUR_FRIEND_ON_SCREEN);
+    if (match) {
+      const sign = match[1].trim().toLowerCase().replace(/\s+/g, " ");
+      if (sign && !signs.includes(sign)) signs.push(sign);
+    }
+  }
+  return signs.length >= 2 ? signs : null;
+}
+
+/** True when every beat shares the same swipeable sign-series format (no distinct cover slide). */
+export function isUniformSignSeriesDeck(slides: SlideIntelligenceV1[]): boolean {
+  return (
+    detectZodiacTextYourFriendSeries(slides) != null ||
+    detectZodiacRisingSeries(slides) != null ||
+    detectSignAsFoodSeries(slides) != null
+  );
+}
+
+/** Uniform sign series decks must not treat slide 1 as cover when reference has no cover beat. */
+function reconcileRolesForUniformSignSeries(slides: SlideIntelligenceV1[]): SlideIntelligenceV1[] {
+  if (!isUniformSignSeriesDeck(slides)) return slides;
+  return slides.map((slide) => {
+    if (slide.slide_role === "cta") return slide;
+    if (slide.slide_role === "cover" || slide.slide_role === "hook") {
+      return { ...slide, slide_role: "list_item" };
+    }
+    return slide;
+  });
+}
+
+const ZODIAC_RISING_ON_SCREEN = /\b([a-z][a-z\s-]{0,18}?)\s+rising\b/i;
+
+/** Detect `{sign} rising` meme-grid series (e.g. rising-sign astrology carousels). */
+export function detectZodiacRisingSeries(slides: SlideIntelligenceV1[]): string[] | null {
+  const signs: string[] = [];
+  for (const slide of slides) {
+    const text = slide.on_screen_text?.trim();
+    if (!text) continue;
+    const match = text.match(ZODIAC_RISING_ON_SCREEN);
+    if (match) {
+      const sign = match[1].trim().toLowerCase().replace(/\s+/g, " ");
+      if (sign && !signs.includes(sign)) signs.push(sign);
+    }
+  }
+  return signs.length >= 2 ? signs : null;
+}
+
+/** Collapse consecutive duplicate roles for readable deck arc (`body×9 → hook → cta`). */
+export function compressNarrativeSpine(roles: string[]): string {
+  const trimmed = roles.map((r) => String(r ?? "").trim()).filter(Boolean);
+  if (trimmed.length === 0) return "";
+  const parts: string[] = [];
+  let prev = trimmed[0]!;
+  let count = 1;
+  for (let i = 1; i < trimmed.length; i++) {
+    const role = trimmed[i]!;
+    if (role === prev) {
+      count += 1;
+    } else {
+      parts.push(count > 1 ? `${prev}×${count}` : prev);
+      prev = role;
+      count = 1;
+    }
+  }
+  parts.push(count > 1 ? `${prev}×${count}` : prev);
+  return parts.join(" → ");
+}
+
+/** Human label when slides form a recognizable swipeable series. */
+export function describeDeckSeriesPattern(slides: SlideIntelligenceV1[]): string | null {
+  const textFriend = detectZodiacTextYourFriendSeries(slides);
+  if (textFriend) {
+    const examples = textFriend.slice(0, 4).map(titleCaseWord).join(", ");
+    return `Zodiac text-your-friend series (${examples}${textFriend.length > 4 ? ", …" : ""})`;
+  }
+  const food = detectSignAsFoodSeries(slides);
+  if (food) {
+    const examples = food.slice(0, 4).map(titleCaseWord).join(", ");
+    return `Zodiac-as-food series (${examples}${food.length > 4 ? ", …" : ""})`;
+  }
+  const rising = detectZodiacRisingSeries(slides);
+  if (rising) {
+    const examples = rising.slice(0, 4).map(titleCaseWord).join(", ");
+    return `Zodiac rising meme series (${examples}${rising.length > 4 ? ", …" : ""})`;
+  }
+  return null;
+}
+
 function thesisClaimsFixedSlideGallery(thesis: string, slideCount: number): boolean {
   const match = thesis.match(/\b(\d+)\s+(?:different\s+)?(?:pictures?|photos?|images?|slides?)\b/i);
   if (!match) return false;
@@ -242,6 +340,12 @@ export function deckThesisContradictsSlideEvidence(
     const thesisFoods = extractFoodTerms(t);
     if (thesisFoods.length > 0) return true;
     if (/\b(?:same|each|every|all)\b.+\b(?:pasta|dish|food|picture|photo|image|red)\b/i.test(t)) return true;
+  }
+
+  const risingSeries = detectZodiacRisingSeries(slides);
+  if (risingSeries) {
+    if (!/\b(?:rising|zodiac|astrology|horoscope|sign)\b/i.test(t)) return true;
+    if (thesisClaimsFixedSlideGallery(t, slides.length)) return true;
   }
 
   if (thesisClaimsFixedSlideGallery(t, slides.length)) return true;
@@ -294,6 +398,19 @@ export function synthesizeDeckStrategicThesisFromSlides(
     context.narrative_spine?.filter(Boolean).join(" → ") ??
     slides.map((s) => s.slide_role).filter(Boolean).join(" → ");
   const signSeries = detectSignAsFoodSeries(slides);
+  const risingSeries = detectZodiacRisingSeries(slides);
+
+  if (risingSeries) {
+    const examples = risingSeries.slice(0, 4).map(titleCaseWord).join(", ");
+    const sentences = [
+      `A swipeable zodiac-rising meme carousel: each slide spotlights one rising sign with a multi-panel meme grid (e.g. ${examples}), so viewers self-select by sign identity and share relatable quotes.`,
+      `On-screen copy follows a consistent "{sign} rising" banner while meme panels change per slide — different emotional beats and quotes, not one repeated scene.`,
+      `The deck wins on series recognition and relatability: sign-spotting keeps swipers engaged through ${total} beats${spine ? ` (${spine})` : ""}, with fresh meme energy per rising sign instead of a single-subject gallery.`,
+    ];
+    if (context.arc_summary) sentences.push(`Arc: ${context.arc_summary}.`);
+    const thesis = padThesisToMinLength(sentences.join(" "), opts);
+    return isSlideIntelligenceStrategicThesisSufficient(thesis, opts) ? thesis : null;
+  }
 
   if (signSeries) {
     const examples = signSeries.slice(0, 4).map(titleCaseWord).join(", ");
@@ -332,6 +449,31 @@ export function synthesizeDeckStrategicThesisFromSlides(
   return null;
 }
 
+function reconcileNarrativeSpineInBundle(bundle: SlideIntelligenceBundleV1): SlideIntelligenceBundleV1 {
+  const why = bundle.why_analysis;
+  if (!why || bundle.slides.length < 2) return bundle;
+
+  const fromSlides = bundle.slides.map((s) => s.slide_role).filter((r): r is string => !!r);
+  if (fromSlides.length < 2) return bundle;
+
+  const stored = why.narrative_spine ?? [];
+  const storedLooksAbbreviated =
+    stored.length > 0 &&
+    stored.length < fromSlides.length &&
+    stored.every((role) => fromSlides.includes(role));
+  const shouldReplace = stored.length === 0 || stored.length < fromSlides.length || storedLooksAbbreviated;
+  if (!shouldReplace) return bundle;
+
+  return {
+    ...bundle,
+    why_analysis: {
+      ...why,
+      narrative_spine: fromSlides,
+      slide_count: Math.max(why.slide_count, fromSlides.length),
+    },
+  };
+}
+
 function reconcileDeckStrategicThesisInBundle(
   bundle: SlideIntelligenceBundleV1,
   opts?: SlideIntelligenceTextQualityOpts
@@ -340,7 +482,10 @@ function reconcileDeckStrategicThesisInBundle(
   if (!why || bundle.slides.length < 2) return bundle;
 
   const upstreamThesis = why.strategic_thesis;
-  if (!deckThesisContradictsSlideEvidence(upstreamThesis, bundle.slides)) return bundle;
+  const needsThesis =
+    !isSlideIntelligenceStrategicThesisSufficient(upstreamThesis, opts) ||
+    deckThesisContradictsSlideEvidence(upstreamThesis, bundle.slides);
+  if (!needsThesis) return bundle;
 
   const fromSlides = synthesizeDeckStrategicThesisFromSlides(
     bundle.slides,
@@ -376,15 +521,24 @@ function normalizeProvider(v: unknown): SlideIntelligenceProvider {
 function inferSlideRole(
   purpose: string | null,
   index: number,
-  total: number
+  total: number,
+  transcript?: string | null
 ): string | null {
   const p = (purpose ?? "").toLowerCase();
-  if (/\bcta\b|call.?to.?action|follow|comment|save|share|link in bio/.test(p)) return "cta";
-  if (/cover|title|intro|opening|hook/.test(p)) return index === 1 ? "cover" : "hook";
-  if (/proof|result|testimonial|case study|stat|data|evidence/.test(p)) return "proof";
-  if (/objection|myth|mistake|warning|avoid|don.?t/.test(p)) return "objection";
-  if (/step|tip|item|list|number|reason|way/.test(p)) return "list_item";
-  if (/context|background|why|problem|explain/.test(p)) return "context";
+  const t = (transcript ?? "").toLowerCase();
+  const combined = `${p} ${t}`;
+  if (/\bcta\b|call.?to.?action|follow|comment|save|share|link in bio/.test(combined)) return "cta";
+  if (ZODIAC_TEXT_YOUR_FRIEND_ON_SCREEN.test(combined)) return "list_item";
+  if (/cover|title|intro|opening|hook/.test(combined)) return index === 1 ? "cover" : "hook";
+  if (/proof|result|testimonial|case study|stat|data|evidence/.test(combined)) return "proof";
+  if (/objection|myth|mistake|warning|avoid|don.?t/.test(combined)) return "objection";
+  if (/step|tip|item|list|number|reason|way/.test(combined)) return "list_item";
+  if (/context|background|why|problem|explain/.test(combined)) return "context";
+  if (/\b(?:meme|collage|grid|panel|2x2|four.?panel)\b/.test(combined)) return "list_item";
+  if (ZODIAC_RISING_ON_SCREEN.test(combined) || /\b(?:moon in|new moon|vibes)\b/.test(combined)) {
+    return "list_item";
+  }
+  if (SIGN_AS_FOOD_ON_SCREEN.test(combined)) return "list_item";
   if (p) return "body";
   if (index === 1) return "cover";
   if (total > 1 && index === total) return "cta";
@@ -499,6 +653,23 @@ function synthesizeSlideWhyItWorks(
 ): string | null {
   const role = input.slide_role ?? "body";
   const sentences: string[] = [];
+
+  const risingBeat = input.on_screen_text?.match(ZODIAC_RISING_ON_SCREEN);
+  const foodBeat = input.on_screen_text?.match(SIGN_AS_FOOD_ON_SCREEN);
+  const textFriendBeat = input.on_screen_text?.match(ZODIAC_TEXT_YOUR_FRIEND_ON_SCREEN);
+  if (textFriendBeat) {
+    sentences.push(
+      `This ${role} beat spotlights ${titleCaseWord(textFriendBeat[1].trim())} in the text-your-friend meme format — preserve sign-specific relatability and the iMessage-style humor arc, not literal chat UI or quoted message text.`
+    );
+  } else if (risingBeat) {
+    sentences.push(
+      `This ${role} beat spotlights ${titleCaseWord(risingBeat[1].trim())} rising — preserve sign-specific relatability and the meme-grid emotional arc, not literal faces, quotes, or panel layout.`
+    );
+  } else if (foodBeat) {
+    sentences.push(
+      `This ${role} beat pairs ${titleCaseWord(foodBeat[1].trim())} with a food metaphor — preserve the sign-to-food joke and swipeable series format, not the literal dish photo.`
+    );
+  }
 
   sentences.push(
     `This ${role} slide (slide ${input.slide_index} of ${totalSlides}) must keep its narrative job${
@@ -624,7 +795,8 @@ export function enrichSlideIntelligenceBundle(
     };
   });
 
-  return reconcileDeckStrategicThesisInBundle({ ...bundle, slides }, opts);
+  const withSpine = reconcileNarrativeSpineInBundle({ ...bundle, slides });
+  return reconcileDeckStrategicThesisInBundle(withSpine, opts);
 }
 
 export interface DeriveSlideIntelligenceInput {
@@ -684,7 +856,7 @@ export function deriveSlideIntelligenceFromAnalysis(
       isSlideIntelligenceWhyItWorksSufficient(slideWhyRaw, { strategicThesis: deckWhy }) ? slideWhyRaw : null;
     const slideEmotion = str(s.emotion ?? s.primary_emotion, 80);
 
-    const role = inferSlideRole(purpose, index, total);
+    const role = inferSlideRole(purpose, index, total, transcript);
     const visualRole = inferVisualRole(imageRole, visualDescription);
     const mechanismText = [purpose, visualDescription, transcript, density].filter(Boolean).join(" ");
 
@@ -729,7 +901,9 @@ export function deriveSlideIntelligenceFromAnalysis(
     };
   });
 
-  const narrativeSpine = slides
+  const reconciledSlides = reconcileRolesForUniformSignSeries(slides);
+
+  const narrativeSpine = reconciledSlides
     .map((s) => s.slide_role)
     .filter((r): r is string => !!r);
 
@@ -755,12 +929,16 @@ export function deriveSlideIntelligenceFromAnalysis(
           }),
           arc_summary: arc,
           provider: "heuristic",
-          confidence: clampConfidence(slides.length ? slides.reduce((a, s) => a + s.confidence, 0) / slides.length : 0.4),
-          slide_count: slides.length,
+          confidence: clampConfidence(
+            reconciledSlides.length
+              ? reconciledSlides.reduce((a, s) => a + s.confidence, 0) / reconciledSlides.length
+              : 0.4
+          ),
+          slide_count: reconciledSlides.length,
         }
       : null;
 
-  if (slides.length === 0 && !why_analysis) return null;
+  if (reconciledSlides.length === 0 && !why_analysis) return null;
 
   return enrichSlideIntelligenceBundle({
     schema_version: SLIDE_INTELLIGENCE_SCHEMA,
@@ -769,7 +947,7 @@ export function deriveSlideIntelligenceFromAnalysis(
     provider: "heuristic",
     source_insights_id: insightsId,
     analysis_tier: analysisTier,
-    slides,
+    slides: reconciledSlides,
     why_analysis,
   });
 }
@@ -889,7 +1067,7 @@ export function slideIntelligenceCues(bundle: SlideIntelligenceBundleV1 | null):
   const why = bundle.why_analysis;
   if (why?.strategic_thesis) cues.push(`Why it works: ${why.strategic_thesis}`);
   if (why?.dominant_mechanism) cues.push(`Dominant mechanism: ${why.dominant_mechanism}`);
-  if (why?.narrative_spine.length) cues.push(`Narrative spine: ${why.narrative_spine.join(" → ")}`);
+  if (why?.narrative_spine.length) cues.push(`Narrative spine: ${compressNarrativeSpine(why.narrative_spine)}`);
   return cues;
 }
 
@@ -913,8 +1091,10 @@ export function buildWhyMimicPromptBlock(
   if (why?.dominant_mechanism) lines.push(`- Dominant mechanism: ${why.dominant_mechanism}`);
   if (why?.secondary_mechanisms?.length)
     lines.push(`- Supporting mechanisms: ${why.secondary_mechanisms.join(", ")}`);
+  const seriesPattern = describeDeckSeriesPattern(bundle.slides);
+  if (seriesPattern) lines.push(`- Series pattern: ${seriesPattern}`);
   if (why?.narrative_spine?.length)
-    lines.push(`- Narrative spine: ${why.narrative_spine.join(" → ")}`);
+    lines.push(`- Narrative spine: ${compressNarrativeSpine(why.narrative_spine)}`);
 
   const slideLines: string[] = [];
   for (const s of bundle.slides.slice(0, maxSlides)) {

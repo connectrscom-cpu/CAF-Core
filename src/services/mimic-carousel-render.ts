@@ -25,6 +25,7 @@ import {
   resolveEffectiveContentSlideIndices,
 } from "../domain/mimic-content-slide-indices.js";
 import { effectiveMimicImageInputMode, isBoldMimicVisualVariant, type MimicImageInputMode } from "../domain/mimic-render-settings.js";
+import { whyMimicTemplateBgUsesInventedPlates } from "../domain/why-mimic-execution.js";
 import type { Pool } from "pg";
 import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask } from "../repositories/assets.js";
 import { generateMimicSlideImage, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -485,8 +486,14 @@ export async function extractMimicSlideBackground(
   const configuredInputMode =
     opts?.imageInputMode ?? effectiveMimicImageInputMode(null, config.MIMIC_IMAGE_INPUT_MODE);
   const item = referenceItemForMimicSlide(mimic, slideIndex);
-  // template_bg plates strip text from archived frames — never use analysis_t2i when a reference exists.
-  const imageInputMode = item ? "reference_edit" : configuredInputMode;
+  // Classic template_bg strips text from archived frames via reference_edit.
+  // Why Mimic template_bg invents fresh plates from SIL flux prompts (analysis_t2i), like full-bleed.
+  const imageInputMode =
+    whyMimicTemplateBgUsesInventedPlates(mimic) || configuredInputMode === "analysis_t2i"
+      ? "analysis_t2i"
+      : item
+        ? "reference_edit"
+        : configuredInputMode;
   if (!item && imageInputMode === "reference_edit") return null;
 
   const styleHints = config.MIMIC_USE_BRAND_IMAGE_STYLE_HINTS;
@@ -1337,14 +1344,24 @@ export function reconcileMimicPayloadToOutputSlideCount(
   if (target >= refLen) {
     const slide_plans =
       mimic.slide_plans && mimic.slide_plans.length > 0
-        ? mimic.slide_plans.map((plan, i) => ({
-            slide_index: i + 1,
-            reference_index: Math.min(plan.reference_index ?? i + 1, refLen),
-            render_mode:
-              mimic.mode === "template_bg"
-                ? ("hbs" as const)
-                : (plan.render_mode ?? "full_bleed"),
-          }))
+        ? mimic.slide_plans.map((plan, i) => {
+            const item = mimic.reference_items[i];
+            const source_slide_index =
+              plan.source_slide_index != null && plan.source_slide_index > 0
+                ? plan.source_slide_index
+                : item?.source_slide_index != null && item.source_slide_index > 0
+                  ? item.source_slide_index
+                  : i + 1;
+            return {
+              slide_index: i + 1,
+              reference_index: Math.min(plan.reference_index ?? i + 1, refLen),
+              source_slide_index,
+              render_mode:
+                mimic.mode === "template_bg"
+                  ? ("hbs" as const)
+                  : (plan.render_mode ?? "full_bleed"),
+            };
+          })
         : mimic.reference_items.map((item, i) => {
             const sourceIdx =
               item.source_slide_index != null && item.source_slide_index > 0

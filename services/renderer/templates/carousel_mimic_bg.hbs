@@ -241,10 +241,10 @@
       text-shadow: inherit;
     }
 
-    /* Brand logo stamp (reviewer toggle) — small, lower-right by default. */
+    /* Brand logo stamp (reviewer toggle) — always topmost overlay. */
     .mimic-brand-logo{
       position:absolute;
-      z-index:6;
+      z-index:10;
       width:150px;
       max-width:18%;
       max-height:120px;
@@ -256,6 +256,17 @@
     .mimic-brand-logo--bl{ left:48px; right:auto; }
     .mimic-brand-logo--tr{ top:48px; bottom:auto; }
     .mimic-brand-logo--tl{ top:48px; left:48px; right:auto; bottom:auto; }
+
+    /* Brand slide frame overlay (reviewer toggle) — full-bleed PNG with transparent center. */
+    .mimic-slide-frame{
+      position:absolute;
+      z-index:8;
+      inset:0;
+      width:100%;
+      height:100%;
+      object-fit:cover;
+      pointer-events:none;
+    }
   </style>
 </head>
 
@@ -265,9 +276,6 @@
   <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
-    {{/if}}
-    {{#if logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -297,15 +305,18 @@
       </div>
       {{/if}}
     </div>
+    {{#if frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
   {{/if}}
   {{#if render_dom_body_only}}
   <div class="slide body-slide{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
-    {{/if}}
-    {{#if logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -319,15 +330,18 @@
       </div>
       {{/if}}
     </div>
+    {{#if frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
   {{/if}}
   {{#if render_dom_cta_only}}
   <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
-    {{/if}}
-    {{#if logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -359,6 +373,12 @@
       </div>
       {{/if}}
     </div>
+    {{#if frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
   {{/if}}
   {{else}}
@@ -366,9 +386,6 @@
   <div class="slide cover{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
-    {{/if}}
-    {{#if logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -399,15 +416,18 @@
       </div>
       {{/if}}
     </div>
+    {{#if frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
 
   {{#each body_slides}}
   <div class="slide body-slide{{#if ../mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if ../background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{../background_image_url}}}');"></div>
-    {{/if}}
-    {{#if ../logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if ../logo_overlay.position}} mimic-brand-logo--{{../logo_overlay.position}}{{/if}}" src="{{{../logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if ../mimic_use_docai_layers}} mimic-docai-layers{{#if ../mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if ../mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if ../mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if ../mimic_text_backing_color}} style="--mimic-text-back-bg:{{../mimic_text_backing_color}}"{{/if}}">
       {{#if ../mimic_render_text_layers}}
@@ -421,6 +441,12 @@
       </div>
       {{/if}}
     </div>
+    {{#if ../frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{../frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if ../logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if ../logo_overlay.position}} mimic-brand-logo--{{../logo_overlay.position}}{{/if}}" src="{{{../logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
   {{/each}}
 
@@ -428,9 +454,6 @@
   <div class="slide cta{{#if mimic_use_docai_layers}} mimic-docai-slide{{/if}}">
     {{#if background_image_url}}
     <div class="slide-bg" style="background-image:url('{{{background_image_url}}}');"></div>
-    {{/if}}
-    {{#if logo_overlay.url}}
-    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
     {{/if}}
     <div class="page{{#if mimic_use_docai_layers}} mimic-docai-layers{{#if mimic_avoid_center_subject}} mimic-docai-avoid-center{{/if}}{{#if mimic_full_bleed_layout}} mimic-docai-fullbleed{{/if}}{{else}}{{#if mimic_use_block_positioning}} mimic-block-positioned{{/if}}{{/if}}{{#if mimic_text_backing_color}} style="--mimic-text-back-bg:{{mimic_text_backing_color}}"{{/if}}">
       {{#if mimic_render_text_layers}}
@@ -463,6 +486,12 @@
       </div>
       {{/if}}
     </div>
+    {{#if frame_overlay.url}}
+    <img class="mimic-slide-frame" src="{{{frame_overlay.url}}}" alt="" />
+    {{/if}}
+    {{#if logo_overlay.url}}
+    <img class="mimic-brand-logo{{#if logo_overlay.position}} mimic-brand-logo--{{logo_overlay.position}}{{/if}}" src="{{{logo_overlay.url}}}" alt="" />
+    {{/if}}
   </div>
   {{/if}}
 </body>

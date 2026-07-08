@@ -408,6 +408,10 @@ export function applyIdeaStructureToPlannerRow(row: Record<string, unknown>): Re
 
   if (row.product_angle) out.product_angle = String(row.product_angle).trim().toLowerCase();
 
+  if (out.visual_first_carousel_lane === true && out.use_brand_visual_system !== false) {
+    out.use_brand_visual_system = true;
+  }
+
   return out;
 }
 

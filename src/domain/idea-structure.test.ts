@@ -36,4 +36,14 @@ describe("idea-structure", () => {
       })
     ).toBeNull();
   });
+
+  it("defaults use_brand_visual_system for visual-first carousel lane", () => {
+    const row = applyIdeaStructureToPlannerRow({
+      format: "carousel",
+      carousel_style: "visual_first",
+      visual_first_carousel_lane: true,
+      content_idea: "Zodiac style moments",
+    });
+    expect(row.use_brand_visual_system).toBe(true);
+  });
 });

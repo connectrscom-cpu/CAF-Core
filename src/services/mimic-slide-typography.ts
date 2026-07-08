@@ -45,6 +45,7 @@ import {
   listicleDecorTitleFromParagraph,
   resolveTemplateBgBodyOnScreenCopy,
   resolveTemplateBgCtaOnScreenCopy,
+  shortListicleMotherDecorTitle,
   templateBgLlmSlideForDocAi,
   templateBgReferenceSlideIndex,
   templateBgSlotForSlideIndex,
@@ -216,6 +217,10 @@ export const CAROUSEL_RENDER_HEIGHT_PX = 1350;
 
 /** Default on-canvas font when OCR/ref size is missing (review + Puppeteer). */
 export const MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX = 50;
+/** Default headline / decor title size when OCR size is missing. */
+export const MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX = 45;
+/** Default body paragraph size when OCR size is missing. */
+export const MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX = 37;
 /** Minimum shrink-to-fit floor for mimic Document AI overlays (review + Puppeteer). ~11.7px at 390px phone width. */
 export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 32;
 /** Default font for project / reference Instagram handle overlays. */
@@ -1416,6 +1421,7 @@ function perSlideDecorHeadlineFromLlm(
       if (!text || looksLikeInstagramHandleText(text)) continue;
       if (text.length > 56 || text.includes("\n")) continue;
       if (isListicleMotherDecorText(text) || isZodiacSignName(text)) return text;
+      if (shortListicleMotherDecorTitle(text)) return text;
     }
   }
 
@@ -1430,6 +1436,7 @@ function perSlideDecorHeadlineFromLlm(
     if (!text || looksLikeInstagramHandleText(text)) continue;
     if (text.includes("\n")) continue;
     if (isListicleMotherDecorText(text) || isZodiacSignName(text)) return text;
+    if (shortListicleMotherDecorTitle(text)) return text;
     // CTA / variant titles — "AQUARIUS: THE VISIONARY" (not "THE X MOTHER" decor shape).
     if (/^[A-Za-z][A-Za-z\s]{0,28}:\s*\S/.test(text) && text.length <= 64) return text;
   }
@@ -2012,11 +2019,15 @@ export function estimateDocAiFitFontSizePx(opts: {
   const refLen = Math.max(1, opts.refText.trim().length);
   const maxByHeight = Math.max(MIMIC_DOCAI_MIN_FONT_SIZE_PX, Math.round(opts.boxHPx * 0.96));
   const inferredFromBox = inferDocAiFontSizeFromBBox(opts.boxHPx, Boolean(opts.singleLine), lineCount);
+  const roleDefault =
+    roleBucket(opts.role ?? "") === "headline" || roleBucket(opts.role ?? "") === "cta"
+      ? MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX
+      : MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX;
 
   let size =
     opts.refFontPx != null && opts.refFontPx > 0
       ? clampDocAiFontSizePx(opts.refFontPx)
-      : inferredFromBox;
+      : Math.max(inferredFromBox, roleDefault);
   // Document AI size_px often under-reports — prefer filling the bbox height.
   size = Math.max(size, inferredFromBox);
   size = Math.min(size, maxByHeight);

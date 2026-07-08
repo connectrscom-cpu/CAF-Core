@@ -3,6 +3,7 @@ import type {
   BrandBibleApplicationGuide,
   BrandBibleAssetRef,
   BrandBibleAssetRole,
+  BrandBibleHeygenPresenter,
   BrandBibleVisualMode,
 } from "./types";
 
@@ -45,12 +46,28 @@ export const BRAND_BIBLE_CONTENT_AIMS = [
 
 export const BRAND_BIBLE_ASSET_ROLES: { id: BrandBibleAssetRole; label: string }[] = [
   { id: "style_reference", label: "Style reference" },
-  { id: "character", label: "Character / mascot" },
-  { id: "motif", label: "Motif / element" },
-  { id: "texture", label: "Texture / background" },
+  { id: "background", label: "Background" },
+  { id: "motif", label: "Design element / motif" },
+  { id: "mascot", label: "Mascot / character" },
+  { id: "character", label: "Character (legacy)" },
+  { id: "slide_frame", label: "Slide frame / border" },
+  { id: "texture", label: "Texture (legacy)" },
   { id: "logo", label: "Logo usage" },
   { id: "anti_reference", label: "Do not use (anti-reference)" },
 ];
+
+export const FLUX_PROMPT_ASSET_MAX = 7;
+
+function parseFluxPromptAssetIds(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const item of raw) {
+    const id = String(item ?? "").trim();
+    if (id && !out.includes(id)) out.push(id);
+    if (out.length >= FLUX_PROMPT_ASSET_MAX) break;
+  }
+  return out;
+}
 
 function parseGuide(raw: Record<string, unknown> | null | undefined): BrandBibleApplicationGuide {
   const g = raw ?? {};
@@ -83,6 +100,27 @@ function parseAssetRefs(raw: unknown): BrandBibleAssetRef[] {
   return out;
 }
 
+function parseHeygenPresenters(raw: unknown): BrandBibleHeygenPresenter[] {
+  if (!Array.isArray(raw)) return [];
+  const out: BrandBibleHeygenPresenter[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    const avatarId = String(rec.avatar_id ?? rec.avatarId ?? "").trim();
+    if (!avatarId) continue;
+    out.push({
+      label: String(rec.label ?? "").trim(),
+      avatarId,
+      voiceId: String(rec.voice_id ?? rec.voiceId ?? "").trim(),
+      avatarName: String(rec.avatar_name ?? rec.avatarName ?? "").trim(),
+      voiceName: String(rec.voice_name ?? rec.voiceName ?? "").trim(),
+      previewImageUrl: String(rec.preview_image_url ?? rec.previewImageUrl ?? "").trim(),
+    });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 export function toBrandBible(
   slug: string,
   parsed: Record<string, unknown> | null | undefined,
@@ -103,6 +141,8 @@ export function toBrandBible(
     ),
     applicationGuide: parseGuide(p.application_guide as Record<string, unknown> | undefined),
     assetRefs: parseAssetRefs(p.asset_refs),
+    heygenPresenters: parseHeygenPresenters(p.heygen_presenters),
+    fluxPromptAssetIds: parseFluxPromptAssetIds(p.flux_prompt_asset_ids),
     hasActiveVersion: version != null,
     version,
   };
@@ -132,7 +172,32 @@ export function toBrandBibleJson(edit: BrandBible): Record<string, unknown> {
       label: r.label.trim() || null,
       usage_notes: r.usageNotes.trim() || null,
     })),
+    heygen_presenters: edit.heygenPresenters
+      .filter((p) => p.avatarId.trim())
+      .map((p) => ({
+        label: p.label.trim() || null,
+        avatar_id: p.avatarId.trim(),
+        voice_id: p.voiceId.trim() || null,
+        avatar_name: p.avatarName.trim() || null,
+        voice_name: p.voiceName.trim() || null,
+        preview_image_url: p.previewImageUrl.trim() || null,
+      })),
+    flux_prompt_asset_ids: edit.fluxPromptAssetIds
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .slice(0, FLUX_PROMPT_ASSET_MAX),
   };
+}
+
+export function heygenPoolJsonFromPresenters(presenters: BrandBibleHeygenPresenter[]): string {
+  const out: Array<{ avatar_id: string; voice_id?: string }> = [];
+  for (const row of presenters) {
+    const avatar_id = row.avatarId.trim();
+    const voice_id = row.voiceId.trim();
+    if (!avatar_id) continue;
+    out.push(voice_id ? { avatar_id, voice_id } : { avatar_id });
+  }
+  return JSON.stringify(out);
 }
 
 export function brandBibleIsConfigured(bible: BrandBible): boolean {
@@ -140,6 +205,8 @@ export function brandBibleIsConfigured(bible: BrandBible): boolean {
   return (
     bible.palette.length > 0 ||
     bible.assetRefs.length > 0 ||
+    bible.fluxPromptAssetIds.length > 0 ||
+    bible.heygenPresenters.length > 0 ||
     bible.allowedMotifs.length > 0 ||
     bible.forbiddenMotifs.length > 0 ||
     Boolean(bible.visualMode) ||

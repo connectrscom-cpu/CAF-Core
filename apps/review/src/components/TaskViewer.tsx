@@ -6,7 +6,7 @@ import type { CarouselLivePreviewOptions, CarouselMediaItem } from "@/components
 import { createSyntheticSlides } from "@/lib/carousel-slides";
 import type { NormalizedSlide } from "@/lib/carousel-slides";
 import type { ReviewQueueRow } from "@/lib/types";
-import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
+import { isImageUrl, isVideoUrl, taskAssetsToPreviewRows, carouselMediaItemsFromPreviewRows, type TaskAssetPreview } from "@/lib/media-url";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isImageFlow, isVideoFlow } from "@/lib/flow-kind";
 
@@ -137,7 +137,10 @@ export function TaskViewer({
   }, [taskAssets, assetUrls, data]);
 
   const mediaItems: CarouselMediaItem[] = useMemo(
-    () => mediaRows.map((r) => ({ url: r.public_url, kind: r.kind === "video" ? "video" : "image" })),
+    () =>
+      carouselMediaItemsFromPreviewRows(mediaRows).map(
+        (item) => item ?? { url: "", kind: "image" as const }
+      ),
     [mediaRows]
   );
 

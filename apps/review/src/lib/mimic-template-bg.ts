@@ -1,7 +1,8 @@
 import type { NormalizedSlide } from "@/lib/carousel-slides";
-import { mimicSlideFieldsFromTextBlocks, type MimicTextBlock } from "@/lib/carousel-slides";
+import { formatMimicProjectHandle, mimicSlideFieldsFromTextBlocks, type MimicTextBlock } from "@/lib/carousel-slides";
 import {
   isListicleBodyInvertedLlmCopy,
+  looksLikeInstagramHandleLine,
   resolveTemplateBgBodyOnScreenCopy,
   resolveTemplateBgCtaOnScreenCopy,
   templateBgLlmSlideForDocAi,
@@ -35,6 +36,72 @@ export type MimicTemplateBgEditorField = {
   role: MimicTextBlock["role"];
   text: string;
 };
+
+/** CTA handle on slide — project handle wins over LLM/OCR fragments like "@signand". */
+export function resolveTemplateBgHandleDisplayText(
+  slideHandle: string,
+  mappedHandle: string,
+  projectHandle: string
+): string {
+  const project = formatMimicProjectHandle(projectHandle);
+  const fromSlide = formatMimicProjectHandle(slideHandle) || slideHandle.trim();
+  const mapped = formatMimicProjectHandle(mappedHandle) || mappedHandle.trim();
+  const norm = (h: string) => h.replace(/^@+/, "").toLowerCase();
+
+  if (project) {
+    const slideNorm = fromSlide ? norm(fromSlide) : "";
+    const projectNorm = norm(project);
+    if (!slideNorm || slideNorm === projectNorm || projectNorm.startsWith(slideNorm)) {
+      return project;
+    }
+    return fromSlide;
+  }
+
+  if (fromSlide) return fromSlide;
+  return mapped;
+}
+
+export function resolveMimicTemplateBgEditorFieldsForSlide(
+  slide: NormalizedSlide,
+  slideIndex1Based: number,
+  totalSlides: number,
+  projectHandle?: string
+): MimicTemplateBgEditorField[] {
+  const fields = resolveMimicTemplateBgEditorFields(slide, slideIndex1Based, totalSlides);
+  if (!projectHandle?.trim()) return fields;
+  return fields.map((f) =>
+    f.role === "handle"
+      ? { ...f, text: resolveTemplateBgHandleDisplayText(slide.handle, f.text, projectHandle) }
+      : f
+  );
+}
+
+/** Pull substantive CTA body copy from slide rows / blocks when top-level body is empty. */
+function resolveCtaSlideBodySource(slide: NormalizedSlide, headline: string, handle: string): string {
+  let body = slide.body.trim();
+  if (body) return body;
+
+  if (slide.text_blocks?.length) {
+    const fromBlocks = slide.text_blocks
+      .filter((b) => {
+        const role = b.role.toLowerCase();
+        return role === "body" || role === "subtitle" || role === "cta";
+      })
+      .map((b) => b.text.trim())
+      .filter((t) => t && !looksLikeInstagramHandleLine(t) && t !== headline.trim());
+    if (fromBlocks.length > 0) return fromBlocks.join("\n\n");
+  }
+
+  if (slide.on_slide_lines?.length) {
+    const hl = headline.trim();
+    const h = handle.trim();
+    const lines = slide.on_slide_lines.map((l) => l.trim()).filter(Boolean);
+    const middle = lines.filter((l) => l !== hl && l !== h && !looksLikeInstagramHandleLine(l));
+    if (middle.length > 0) return middle.join("\n");
+  }
+
+  return "";
+}
 
 /** Listicle editor fields — headline + body (cover may add subtitle; CTA adds handle). */
 export function resolveMimicTemplateBgEditorFields(
@@ -82,19 +149,32 @@ export function resolveMimicTemplateBgEditorFields(
   }
 
   if (slot === "cta") {
-    const ctaText = String(slide.extras?.cta ?? "").trim();
+    const fromBlocks = ctaEditorFieldsFromSlideBlocks(slide, handle);
+    if (fromBlocks) return fromBlocks;
+
+    const ctaText = String(slide.extras?.cta ?? slide.extras?.cta_text ?? "").trim();
+    const ctaBody = resolveCtaSlideBodySource(slide, headline, handle);
     const mapped = resolveTemplateBgCtaOnScreenCopy({
       headline,
-      body,
+      body: ctaBody || body,
       cta: ctaText,
       handle,
       kicker: String(slide.extras?.kicker ?? "").trim(),
       slide_title: String(slide.extras?.slide_title ?? "").trim(),
     });
     if (mapped.listicle_style) {
+      let title = mapped.headline;
+      let message = mapped.body;
+      if (title === message && message.length > 60) {
+        const shortTitle =
+          (ctaText && ctaText !== message ? ctaText : "") ||
+          (headline && headline !== message ? headline : "") ||
+          (message.includes("\n") ? message.split("\n")[0]!.trim() : "");
+        if (shortTitle && shortTitle !== message) title = shortTitle;
+      }
       const fields: MimicTemplateBgEditorField[] = [
-        { key: "headline", label: "Headline", role: "headline", text: mapped.headline },
-        { key: "body", label: "Body", role: "body", text: mapped.body },
+        { key: "headline", label: "CTA title", role: "headline", text: title },
+        { key: "body", label: "CTA message", role: "body", text: message },
       ];
       if (mapped.handle) {
         fields.push({ key: "handle", label: "Handle", role: "handle", text: mapped.handle });
@@ -128,6 +208,61 @@ export function resolveMimicTemplateBgEditorFields(
   ];
 }
 
+/** Stable CTA editor fields from persisted text_blocks (skips LLM re-mapping after user edits). */
+export function ctaEditorFieldsFromSlideBlocks(
+  slide: NormalizedSlide,
+  handle: string
+): MimicTemplateBgEditorField[] | null {
+  const blocks = slide.text_blocks ?? [];
+  const headlineText = blocks.find((b) => b.role === "headline")?.text?.trim() ?? "";
+  const bodyText =
+    blocks
+      .find((b) => {
+        const role = b.role.toLowerCase();
+        return role === "body" || role === "subtitle" || role === "cta";
+      })
+      ?.text?.trim() ?? "";
+  const handleText = blocks.find((b) => b.role === "handle")?.text?.trim() ?? handle.trim();
+  if (!headlineText && !bodyText) return null;
+
+  const fields: MimicTemplateBgEditorField[] = [];
+  if (headlineText) {
+    fields.push({ key: "headline", label: "CTA title", role: "headline", text: headlineText });
+  }
+  if (bodyText) {
+    fields.push({ key: "body", label: "CTA message", role: "body", text: bodyText });
+  }
+  fields.push({ key: "handle", label: "Handle", role: "handle", text: handleText });
+  return fields;
+}
+
+function buildCtaSlideFromEditedFields(
+  slide: NormalizedSlide,
+  title: string,
+  bodyText: string,
+  handleText: string
+): NormalizedSlide {
+  const text_blocks: MimicTextBlock[] = [];
+  const t = title.trim();
+  const b = bodyText.trim();
+  const h = handleText.trim();
+  if (t) text_blocks.push({ role: "headline", text: t });
+  if (b) text_blocks.push({ role: "body", text: b });
+  if (h) text_blocks.push({ role: "handle", text: h });
+  return {
+    ...slide,
+    headline: t,
+    body: b,
+    handle: h,
+    text_blocks,
+    on_slide_lines: text_blocks.map((block) => block.text).filter(Boolean),
+    extras: {
+      ...(slide.extras ?? {}),
+      ...(t ? { cta: t, cta_text: t } : {}),
+    },
+  };
+}
+
 export function applyMimicTemplateBgFieldEdit(
   slide: NormalizedSlide,
   slideIndex1Based: number,
@@ -143,11 +278,23 @@ export function applyMimicTemplateBgFieldEdit(
     isListicleBodyInvertedLlmCopy(slide.headline.trim(), slide.body.trim(), kicker);
 
   if (fieldKey === "headline") {
-    next = inverted
-      ? { ...next, extras: { ...(next.extras ?? {}), slide_title: text } }
-      : { ...next, headline: text };
+    if (slot === "cta") {
+      next = {
+        ...next,
+        headline: text,
+        extras: { ...(next.extras ?? {}), cta: text, cta_text: text },
+      };
+    } else if (inverted) {
+      next = { ...next, extras: { ...(next.extras ?? {}), slide_title: text } };
+    } else {
+      next = { ...next, headline: text };
+    }
   } else if (fieldKey === "body") {
-    next = inverted ? { ...next, headline: text } : { ...next, body: text };
+    if (slot === "cta") {
+      next = { ...next, body: text };
+    } else {
+      next = inverted ? { ...next, headline: text } : { ...next, body: text };
+    }
   } else if (fieldKey === "subtitle") {
     next = {
       ...next,
@@ -156,23 +303,31 @@ export function applyMimicTemplateBgFieldEdit(
     };
   } else if (fieldKey === "handle") {
     next = { ...next, handle: text };
-    if (slot === "cta") {
-      const cta = resolveTemplateBgCtaOnScreenCopy({
-        headline: next.headline,
-        body: next.body,
-        handle: text,
-        kicker: String(next.extras?.kicker ?? "").trim(),
-        slide_title: String(next.extras?.slide_title ?? "").trim(),
-      });
-      if (!cta.listicle_style) {
-        next = { ...next, body: text };
-      }
-    }
+  }
+
+  if (slot === "cta") {
+    return buildCtaSlideFromEditedFields(next, next.headline, next.body, next.handle);
   }
 
   const fields = resolveMimicTemplateBgEditorFields(next, slideIndex1Based, totalSlides);
   const text_blocks: MimicTextBlock[] = fields.map((f) => ({ role: f.role, text: f.text }));
   const derived = mimicSlideFieldsFromTextBlocks(text_blocks);
+  const invertedAfter =
+    slot === "body" &&
+    isListicleBodyInvertedLlmCopy(
+      next.headline.trim(),
+      next.body.trim(),
+      String(next.extras?.kicker ?? kicker).trim()
+    );
+
+  if (invertedAfter) {
+    return {
+      ...next,
+      text_blocks,
+      on_slide_lines: fields.map((f) => f.text).filter((t) => t.length > 0),
+    };
+  }
+
   return {
     ...next,
     text_blocks,
@@ -193,6 +348,8 @@ export function normalizeMimicTemplateBgSlide(
   const derived = mimicSlideFieldsFromTextBlocks(text_blocks);
   const slot = templateBgSlotForSlide(slideIndex1Based, totalSlides);
   const subtitle = fields.find((f) => f.key === "subtitle")?.text ?? "";
+  const bodyField = fields.find((f) => f.key === "body")?.text ?? "";
+  const handleField = fields.find((f) => f.key === "handle")?.text ?? slide.handle;
   return {
     ...slide,
     text_blocks,
@@ -201,10 +358,22 @@ export function normalizeMimicTemplateBgSlide(
     body:
       slot === "cover"
         ? subtitle
-        : fields.find((f) => f.key === "body")?.text ?? derived.body,
-    handle: fields.find((f) => f.key === "handle")?.text ?? slide.handle,
+        : slot === "cta"
+          ? bodyField || derived.body
+          : bodyField || derived.body,
+    handle: handleField,
     ...(slot === "cover" && subtitle
       ? { extras: { ...(slide.extras ?? {}), cover_subtitle: subtitle } }
+      : {}),
+    ...(slot === "cta" && bodyField
+      ? {
+          extras: {
+            ...(slide.extras ?? {}),
+            ...(fields.find((f) => f.key === "headline")?.text
+              ? { cta: fields.find((f) => f.key === "headline")!.text }
+              : {}),
+          },
+        }
       : {}),
   };
 }

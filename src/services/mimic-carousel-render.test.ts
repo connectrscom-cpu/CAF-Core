@@ -573,6 +573,20 @@ describe("expectedMimicCarouselOutputSlideCount and reconcileMimicPayloadToOutpu
     expect(reconciled.slide_plans?.[0]?.render_mode).toBe("hbs");
   });
 
+  it("preserves source_slide_index when remapping existing slide plans", () => {
+    const mimic = baseMimic({});
+    mimic.slide_plans = [
+      { slide_index: 1, reference_index: 1, render_mode: "full_bleed", source_slide_index: 1 },
+      { slide_index: 2, reference_index: 2, render_mode: "full_bleed", source_slide_index: 3 },
+    ];
+    mimic.reference_items = [
+      { index: 1, role: "carousel_slide", vision_fetch_url: "https://example.com/1.jpg", source_slide_index: 1 },
+      { index: 2, role: "carousel_slide", vision_fetch_url: "https://example.com/3.jpg", source_slide_index: 4 },
+    ];
+    const reconciled = reconcileMimicPayloadToOutputSlideCount(mimic, 2);
+    expect(reconciled.slide_plans?.[1]?.source_slide_index).toBe(3);
+  });
+
   it("keeps all text slides when content_slide_indices is a narrow subset", () => {
     const mimic = baseMimic({
       mimic_evaluation: {

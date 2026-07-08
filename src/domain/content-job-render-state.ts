@@ -71,3 +71,27 @@ export function isMidProviderPhase(phase: string): boolean {
   const p = (phase || "").toLowerCase();
   return p === "submitted" || p === "polling" || p === "sora_polling";
 }
+
+/** Lower-cased `render_state.status` for carousel-renderer jobs. */
+export function carouselRendererStatus(renderState: unknown): string {
+  return String(pickRenderState(renderState).raw.status ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * True when carousel PNG render finished and `render_state` was marked completed.
+ * Used to avoid re-rendering on pipeline retries when post-render finalization (layout QA → IN_REVIEW) did not run.
+ */
+export function isCarouselRenderComplete(renderState: unknown): boolean {
+  const v = pickRenderState(renderState);
+  const provider = String(v.raw.provider ?? "")
+    .trim()
+    .toLowerCase();
+  if (carouselRendererStatus(renderState) !== "completed") return false;
+  return (
+    provider === "carousel-renderer" ||
+    provider === "carousel_renderer" ||
+    provider === ""
+  );
+}

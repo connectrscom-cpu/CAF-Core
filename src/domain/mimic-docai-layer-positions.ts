@@ -59,6 +59,8 @@ export type MimicDocAiLayerPositionsBySlide = Record<string, MimicDocAiLayerPosi
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
 const MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX = 50;
+const MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX = 45;
+const MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX = 37;
 export const MIMIC_DOCAI_MIN_FONT_SIZE_PX = 32;
 /** Soft cap for first paint in Review layout editor — saved overrides may exceed this. */
 export const MIMIC_DOCAI_EDITOR_INITIAL_FONT_MAX_PX = 60;
@@ -107,7 +109,9 @@ export function buildCustomMimicDocAiLayerFromOverride(
   const defaultFontPx =
     role === "handle" || isHandleTextBlock(role, text) || looksLikeInstagramHandleText(text)
       ? MIMIC_DOCAI_HANDLE_FONT_SIZE_PX
-      : MIMIC_DOCAI_DEFAULT_FONT_SIZE_PX;
+      : role === "headline" || role === "title" || role === "cta"
+        ? MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX
+        : MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX;
   const fontSize = Math.max(
     MIMIC_DOCAI_MIN_FONT_SIZE_PX,
     Math.round(override.font_size_px ?? defaultFontPx)

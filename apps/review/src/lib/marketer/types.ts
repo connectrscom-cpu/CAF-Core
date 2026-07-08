@@ -152,6 +152,8 @@ export interface ContentIdea {
   confidence: number | null;
   priority: "high" | "medium" | "low";
   status: IdeaStatus;
+  /** FLOW_VISUAL_FIRST_CAROUSEL lane — original concept with AI slide art + fresh copy. */
+  isNewVisualCarousel?: boolean;
   /** Resolved from grounding insights / evidence thumbnails when available. */
   preview?: ContentPreview;
 }
@@ -201,10 +203,22 @@ export type BrandBibleVisualMode =
 export type BrandBibleAssetRole =
   | "style_reference"
   | "character"
+  | "mascot"
   | "motif"
+  | "slide_frame"
+  | "background"
   | "texture"
   | "logo"
   | "anti_reference";
+
+export interface BrandBibleHeygenPresenter {
+  label: string;
+  avatarId: string;
+  voiceId: string;
+  avatarName: string;
+  voiceName: string;
+  previewImageUrl: string;
+}
 
 export interface BrandBibleApplicationGuide {
   instructions: string;
@@ -229,6 +243,9 @@ export interface BrandBible {
   forbiddenMotifs: string;
   applicationGuide: BrandBibleApplicationGuide;
   assetRefs: BrandBibleAssetRef[];
+  heygenPresenters: BrandBibleHeygenPresenter[];
+  /** Ordered ids (max 7) described per-line in Flux image prompts when BVS is on. */
+  fluxPromptAssetIds: string[];
   hasActiveVersion: boolean;
   version: number | null;
 }

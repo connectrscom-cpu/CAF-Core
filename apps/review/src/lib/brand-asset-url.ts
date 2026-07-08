@@ -29,11 +29,106 @@ export function resolveBrandLogoDisplayUrl(
   return resolveBrandAssetImageUrl(projectSlug, logo);
 }
 
-/** Reprint/renderer needs a fetchable absolute URL — use stored public_url when valid. */
-export function resolveBrandLogoReprintUrl(assets: BrandAssetRow[]): string {
+/** Absolute URL the carousel renderer (Puppeteer) can fetch — Core brand-asset file route. */
+export function brandAssetCoreFileUrl(
+  projectSlug: string,
+  assetId: string,
+  coreBaseUrl?: string
+): string {
+  const slug = projectSlug.trim();
+  const id = assetId.trim();
+  if (!slug || !id) return "";
+  const base = (coreBaseUrl ?? "https://caf-core.fly.dev").replace(/\/$/, "");
+  return `${base}/v1/projects/${encodeURIComponent(slug)}/brand-assets/${encodeURIComponent(id)}/file`;
+}
+
+export function assetIdFromBrandProxyUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) return "";
+  try {
+    const parsed = raw.startsWith("/")
+      ? new URL(raw, "https://caf-core.local")
+      : new URL(raw);
+    if (!parsed.pathname.includes("brand-assets/proxy")) return "";
+    return parsed.searchParams.get("id")?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Reprint/renderer needs a fetchable absolute URL — public URL, signed URL, or Core file route. */
+export function resolveBrandLogoReprintUrl(
+  projectSlug: string,
+  assets: BrandAssetRow[],
+  coreBaseUrl?: string
+): string {
   const logo = assets.find((a) => a.kind === "logo");
   if (!logo) return "";
-  const pub = typeof logo.public_url === "string" ? logo.public_url.trim() : "";
+  return resolveBrandAssetReprintUrl(projectSlug, logo, coreBaseUrl);
+}
+
+export function resolveBrandAssetReprintUrl(
+  projectSlug: string,
+  asset: BrandAssetRow,
+  coreBaseUrl?: string
+): string {
+  const pub = typeof asset.public_url === "string" ? asset.public_url.trim() : "";
   if (pub && /^https?:\/\//i.test(pub)) return pub;
+  const id = typeof asset.id === "string" ? asset.id.trim() : "";
+  if (id && projectSlug.trim()) return brandAssetCoreFileUrl(projectSlug, id, coreBaseUrl);
+  return "";
+}
+
+export type BrandSlideFrameOption = {
+  assetId: string;
+  label: string;
+  displayUrl: string;
+  reprintUrl: string;
+};
+
+/** Brand bible slide_frame assets for the layout editor frame picker. */
+export function resolveBrandSlideFrames(
+  projectSlug: string,
+  resolvedAssets: Array<{
+    asset_id?: string;
+    role?: string;
+    label?: string | null;
+    public_url?: string | null;
+  }>
+): BrandSlideFrameOption[] {
+  const slug = projectSlug.trim();
+  const out: BrandSlideFrameOption[] = [];
+  for (const row of resolvedAssets) {
+    if (row.role !== "slide_frame") continue;
+    const assetId = typeof row.asset_id === "string" ? row.asset_id.trim() : "";
+    if (!assetId) continue;
+    const label = typeof row.label === "string" && row.label.trim() ? row.label.trim() : "Slide frame";
+    const pub = typeof row.public_url === "string" ? row.public_url.trim() : "";
+    const displayUrl =
+      pub && /^https?:\/\//i.test(pub) ? pub : brandAssetProxyUrl(slug, { id: assetId });
+    if (!displayUrl) continue;
+    const reprintUrl =
+      pub && /^https?:\/\//i.test(pub) ? pub : brandAssetCoreFileUrl(slug, assetId);
+    out.push({
+      assetId,
+      label,
+      displayUrl,
+      reprintUrl,
+    });
+  }
+  return out;
+}
+
+export function resolveBrandFrameReprintUrl(
+  projectSlug: string,
+  assets: BrandAssetRow[],
+  assetId: string,
+  coreBaseUrl?: string
+): string {
+  const id = assetId.trim();
+  if (!id) return "";
+  const hit = assets.find((a) => a.id === id);
+  if (hit) return resolveBrandAssetReprintUrl(projectSlug, hit, coreBaseUrl);
+  if (projectSlug.trim()) return brandAssetCoreFileUrl(projectSlug, id, coreBaseUrl);
   return "";
 }

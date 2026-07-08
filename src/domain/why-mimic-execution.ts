@@ -16,6 +16,7 @@ import { parseBrandExecutionBrief, type BrandExecutionBriefV1, type BrandSlideBr
 import {
   buildWhyMimicPromptBlock,
   parseSlideIntelligenceBundle,
+  resolveSlideIntelligenceForOutputSlide,
   type SlideIntelligenceBundleV1,
   type SlideIntelligenceV1,
 } from "./slide-intelligence.js";
@@ -35,6 +36,17 @@ export function isWhyMimicExecution(
   return (flowType ?? "").trim() === "FLOW_WHY_MIMIC_CAROUSEL";
 }
 
+/**
+ * Why Mimic listicle (`template_bg`) should invent fresh art-only plates from SIL + copy
+ * (analysis_t2i), matching full-bleed Why Mimic — not reference_edit text-stripping.
+ */
+export function whyMimicTemplateBgUsesInventedPlates(
+  mimic: Pick<MimicPayloadV1, "execution_mode" | "mode"> | null | undefined
+): boolean {
+  if (String(mimic?.execution_mode ?? "").trim() !== MIMIC_EXECUTION_MODE_WHY) return false;
+  return String(mimic?.mode ?? "").trim() === "template_bg";
+}
+
 /** Role-driven slide plans from SIL (output order follows intelligence, not 1:1 pixel lock). */
 export function buildWhyMimicSlidePlansFromSil(
   bundle: SlideIntelligenceBundleV1,
@@ -47,13 +59,18 @@ export function buildWhyMimicSlidePlansFromSil(
   if (slides.length === 0) return [];
 
   return slides.map((s, i) => {
-    const slideIndex = s.slide_index > 0 ? s.slide_index : i + 1;
-    const sourceIdx = s.source_slide_index ?? slideIndex;
+    const outputIndex = i + 1;
+    const sourceIdx =
+      s.source_slide_index != null && s.source_slide_index > 0
+        ? s.source_slide_index
+        : s.slide_index > 0
+          ? s.slide_index
+          : outputIndex;
     return {
-      slide_index: slideIndex,
+      slide_index: outputIndex,
       render_mode,
-      reference_index: Math.min(slideIndex, refCap),
-      source_slide_index: sourceIdx > 0 ? sourceIdx : slideIndex,
+      reference_index: Math.min(outputIndex, refCap),
+      source_slide_index: sourceIdx,
     };
   });
 }
@@ -91,8 +108,12 @@ function brandSlideBrief(
   return brief.slides.find((s) => s.slide_index === slideIndex) ?? null;
 }
 
-function silSlideForIndex(bundle: SlideIntelligenceBundleV1, slideIndex: number): SlideIntelligenceV1 | null {
-  return bundle.slides.find((s) => s.slide_index === slideIndex) ?? bundle.slides[slideIndex - 1] ?? null;
+function silSlideForOutput(
+  bundle: SlideIntelligenceBundleV1,
+  outputSlideIndex: number,
+  sourceSlideIndex?: number | null
+): SlideIntelligenceV1 | null {
+  return resolveSlideIntelligenceForOutputSlide(bundle, outputSlideIndex, sourceSlideIndex);
 }
 
 function copyFromParsedSlide(slide: Record<string, unknown> | null | undefined): {
@@ -112,9 +133,11 @@ export function buildWhyMimicFluxSlideInput(
     parsedSlide?: Record<string, unknown> | null;
     brandBrief?: BrandExecutionBriefV1 | null;
     safeZoneHint?: string;
+    /** Source-deck index when output order differs from reference frame order. */
+    sourceSlideIndex?: number | null;
   }
 ): WhyMimicFluxSlideInput | null {
-  const sil = silSlideForIndex(bundle, slideIndex1Based);
+  const sil = silSlideForOutput(bundle, slideIndex1Based, opts?.sourceSlideIndex);
   if (!sil) return null;
 
   const why = bundle.why_analysis;
@@ -320,9 +343,10 @@ export function buildSlideReinterpretationBrief(
     brandBrief?: BrandExecutionBriefV1 | null;
     generated?: Record<string, unknown> | null;
     deckThesis?: string | null;
+    sourceSlideIndex?: number | null;
   }
 ): string | null {
-  const sil = silSlideForIndex(bundle, slideIndex);
+  const sil = silSlideForOutput(bundle, slideIndex, opts?.sourceSlideIndex);
   const ref = opts?.reference ?? null;
   const generated = opts?.generated ?? null;
   const lines: string[] = [];
@@ -436,11 +460,15 @@ export function buildWhyMimicContentLogSummary(
   const intelligenceQuality = auditSlideIntelligenceWhyQuality(bundle, qualityOpts);
 
   const slides = slideIndices.map((slideIndex) => {
-    const sil = silSlideForIndex(bundle, slideIndex);
+    const plan = slidePlanForIndex(mimicRec, slideIndex);
+    const sourceSlideIndex =
+      plan?.source_slide_index != null && plan.source_slide_index > 0
+        ? plan.source_slide_index
+        : slideIndex;
+    const sil = silSlideForOutput(bundle, slideIndex, sourceSlideIndex);
     const refRow = layoutRowForIndex(copyLayout, slideIndex);
     const brandSlide = brandSlideBrief(brandBrief, slideIndex);
     const generated = generatedBySlide.get(slideIndex) ?? null;
-    const plan = slidePlanForIndex(mimicRec, slideIndex);
     const flux = fluxPromptForIndex(mimicRec, slideIndex);
 
     return {
@@ -461,6 +489,7 @@ export function buildWhyMimicContentLogSummary(
         brandBrief,
         generated,
         deckThesis: why?.strategic_thesis ?? null,
+        sourceSlideIndex,
       }),
     };
   });

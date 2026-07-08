@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  carouselRendererStatus,
   hasActiveProviderSession,
+  isCarouselRenderComplete,
   isMidProviderPhase,
   pickRenderState,
 } from "./content-job-render-state.js";
@@ -51,6 +53,26 @@ describe("hasActiveProviderSession (HeyGen idempotency invariant)", () => {
 
   it("is true when either id is numeric but non-empty", () => {
     expect(hasActiveProviderSession({ video_id: 42 })).toBe(true);
+  });
+});
+
+describe("carouselRendererStatus / isCarouselRenderComplete", () => {
+  it("reads carousel renderer completion", () => {
+    expect(carouselRendererStatus({ status: "Completed" })).toBe("completed");
+    expect(
+      isCarouselRenderComplete({
+        provider: "carousel-renderer",
+        status: "completed",
+        slides: [{ index: 1 }],
+      })
+    ).toBe(true);
+  });
+
+  it("is false for pending / failed / other providers", () => {
+    expect(isCarouselRenderComplete({ provider: "carousel-renderer", status: "pending" })).toBe(
+      false
+    );
+    expect(isCarouselRenderComplete({ provider: "heygen", status: "completed" })).toBe(false);
   });
 });
 

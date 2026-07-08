@@ -11,7 +11,7 @@ import {
 } from "@/lib/carousel-slides";
 import {
   applyMimicTemplateBgFieldEdit,
-  resolveMimicTemplateBgEditorFields,
+  resolveMimicTemplateBgEditorFieldsForSlide,
   type MimicTemplateBgEditorField,
 } from "@/lib/mimic-template-bg";
 import { isVideoUrl } from "@/lib/media-url";
@@ -53,6 +53,10 @@ export interface CarouselLivePreviewOptions {
   getPayload: () => Record<string, unknown>;
   /** Per-slide Qwen background plate for live preview (1-based slide index). */
   getBackgroundUrl?: (slideIndex1Based: number) => string | undefined;
+  /** Saved DocAI layer overrides for the slide (template_bg layout editor). */
+  getDocAiLayerPositions?: (slideIndex1Based: number) => Record<string, unknown>[] | undefined;
+  /** Bumped when layout positions change so compare preview re-renders. */
+  layoutRevisionKey?: number;
 }
 
 export interface CarouselSliderProps {
@@ -158,8 +162,11 @@ export function CarouselSlider({
     : Math.min(internalIndex, Math.max(0, slides.length - 1));
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [liveUrl, setLiveUrl] = useState<string | null>(null);
+  /** 1-based slide index that `liveUrl` was rendered for — prevents showing a prior slide's PNG after navigation. */
+  const [livePreviewSlide, setLivePreviewSlide] = useState<number | null>(null);
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveErr, setLiveErr] = useState<string | null>(null);
+  const livePreviewCacheRef = useRef<Map<string, string>>(new Map());
   const touchStartX = useRef<number | null>(null);
   const onCurrentSlideChangeRef = useRef(onCurrentSlideChange);
   onCurrentSlideChangeRef.current = onCurrentSlideChange;
@@ -199,15 +206,34 @@ export function CarouselSlider({
   }, [initialSlides]);
 
   useEffect(() => {
-    if (heyGenVideoMode || readOnly || mimicTemplateBg || !livePreview?.template) {
+    if (heyGenVideoMode || readOnly || !livePreview?.template) {
       setLiveUrl((u) => {
         if (u) URL.revokeObjectURL(u);
         return null;
       });
+      setLivePreviewSlide(null);
       setLiveErr(null);
       setLiveBusy(false);
+      livePreviewCacheRef.current.clear();
       return;
     }
+
+    const slideIndex1Based = currentIndex + 1;
+    const cacheKey = `${slideIndex1Based}:${livePreview?.layoutRevisionKey ?? ""}:${livePreview?.fontScale ?? "1"}`;
+    const cachedUrl = livePreviewCacheRef.current.get(cacheKey);
+    if (cachedUrl) {
+      setLiveUrl((prev) => {
+        if (prev && prev !== cachedUrl) URL.revokeObjectURL(prev);
+        return cachedUrl;
+      });
+      setLivePreviewSlide(slideIndex1Based);
+      setLiveBusy(false);
+      setLiveErr(null);
+      return;
+    }
+
+    // Keep the last stored asset visible while the renderer works — do not blank the pane.
+    setLivePreviewSlide(null);
 
     let cancelled = false;
     const handle = window.setTimeout(() => {
@@ -220,16 +246,18 @@ export function CarouselSlider({
           if (Number.isFinite(fs) && fs > 0) {
             (payload as Record<string, unknown>).font_scale = fs;
           }
+          const docai_layer_positions = livePreview.getDocAiLayerPositions?.(slideIndex1Based);
           const res = await fetch("/api/renderer/preview-live-slide", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               template: livePreview.template,
-              slide_index: currentIndex + 1,
+              slide_index: slideIndex1Based,
               task_id: livePreview.taskId,
               run_id: livePreview.runId,
               instagram_handle: livePreview.instagramHandle ?? "",
-              background_image_url: livePreview.getBackgroundUrl?.(currentIndex + 1) ?? "",
+              background_image_url: livePreview.getBackgroundUrl?.(slideIndex1Based) ?? "",
+              ...(docai_layer_positions?.length ? { docai_layer_positions } : {}),
               payload,
             }),
           });
@@ -240,23 +268,42 @@ export function CarouselSlider({
           const blob = await res.blob();
           if (cancelled) return;
           const url = URL.createObjectURL(blob);
+          livePreviewCacheRef.current.set(cacheKey, url);
+          if (livePreviewCacheRef.current.size > 16) {
+            const firstKey = livePreviewCacheRef.current.keys().next().value as string | undefined;
+            if (firstKey) {
+              const old = livePreviewCacheRef.current.get(firstKey);
+              livePreviewCacheRef.current.delete(firstKey);
+              if (old) URL.revokeObjectURL(old);
+            }
+          }
           setLiveUrl((prev) => {
-            if (prev) URL.revokeObjectURL(prev);
+            if (prev && prev !== url) URL.revokeObjectURL(prev);
             return url;
           });
+          setLivePreviewSlide(slideIndex1Based);
         } catch (e) {
           if (!cancelled) setLiveErr(e instanceof Error ? e.message : "Live preview failed");
         } finally {
           if (!cancelled) setLiveBusy(false);
         }
       })();
-    }, 380);
+    }, 120);
 
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [heyGenVideoMode, readOnly, mimicTemplateBg, livePreview, livePreview?.fontScale, currentIndex, slidesKey]);
+  }, [
+    heyGenVideoMode,
+    readOnly,
+    livePreview,
+    livePreview?.fontScale,
+    livePreview?.layoutRevisionKey,
+    currentIndex,
+    slidesKey,
+    assetRefreshKey,
+  ]);
 
   const updateSlide = useCallback(
     (
@@ -307,15 +354,16 @@ export function CarouselSlider({
       if (onMimicLayoutTextBlockChange) {
         const idx =
           blockIndex ??
-          resolveMimicTemplateBgEditorFields(
+          resolveMimicTemplateBgEditorFieldsForSlide(
             slides[slideIndex] ?? { index: slideIndex, type: "body", headline: "", body: "", handle: "" },
             slideIndex + 1,
-            slides.length
+            slides.length,
+            projectHandle
           ).findIndex((f) => f.key === field.key);
         if (idx >= 0) onMimicLayoutTextBlockChange(idx, text);
       }
     },
-    [emitSlides, onMimicLayoutTextBlockChange, slides]
+    [emitSlides, onMimicLayoutTextBlockChange, slides, projectHandle]
   );
 
   const updateMimicTextBlock = useCallback(
@@ -323,13 +371,15 @@ export function CarouselSlider({
       if (mimicTemplateBg) {
         const slideAt = slides[slideIndex];
         if (!slideAt) return;
-        const fields = resolveMimicTemplateBgEditorFields(slideAt, slideIndex + 1, slides.length);
+        const fields = resolveMimicTemplateBgEditorFieldsForSlide(
+          slideAt,
+          slideIndex + 1,
+          slides.length,
+          projectHandle
+        );
         const field = fields[blockIndex];
         if (!field) return;
         updateMimicTemplateBgField(slideIndex, field, text, blockIndex);
-        if (onMimicLayoutTextBlockChange) {
-          onMimicLayoutTextBlockChange(blockIndex, text);
-        }
         return;
       }
       if (mimicFullBleed && onMimicLayoutTextBlockChange) {
@@ -355,7 +405,7 @@ export function CarouselSlider({
         return next;
       });
     },
-    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, emitSlides, slides, updateMimicTemplateBgField]
+    [mimicFullBleed, mimicTemplateBg, onMimicLayoutTextBlockChange, emitSlides, slides, updateMimicTemplateBgField, projectHandle]
   );
 
   const handleSaveSlide = useCallback(() => {
@@ -384,33 +434,67 @@ export function CarouselSlider({
   const mimicTemplateBgFields = useMemo(
     () =>
       mimicCopyEditor && mimicTemplateBg
-        ? resolveMimicTemplateBgEditorFields(slide, currentIndex + 1, slides.length)
+        ? resolveMimicTemplateBgEditorFieldsForSlide(
+            slide,
+            currentIndex + 1,
+            slides.length,
+            projectHandle
+          )
         : [],
-    [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]
+    [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length, projectHandle]
   );
   const mimicTextBlocks = useMemo(() => {
     if (!mimicCopyEditor) return [];
     if (mimicTemplateBg) {
-      return resolveMimicTemplateBgEditorFields(slide, currentIndex + 1, slides.length).map((f) => ({
+      return resolveMimicTemplateBgEditorFieldsForSlide(
+        slide,
+        currentIndex + 1,
+        slides.length,
+        projectHandle
+      ).map((f) => ({
         role: f.role,
         text: f.text,
       }));
     }
     return resolveMimicTextBlocksForSlide(slide);
-  }, [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length]);
+  }, [mimicCopyEditor, mimicTemplateBg, slide, currentIndex, slides.length, projectHandle]);
   const fromMedia = mediaItems?.[currentIndex];
   const fallbackUrl = imageUrls[currentIndex]?.trim();
   const mediaUrl = (fromMedia?.url ?? fallbackUrl ?? "").trim();
   const mediaKind: "image" | "video" =
     fromMedia?.kind ?? (mediaUrl && isVideoUrl(mediaUrl) ? "video" : "image");
   const livePngUrl =
-    !heyGenVideoMode && livePreview?.template && liveUrl && mediaKind === "image" ? liveUrl : null;
+    !heyGenVideoMode &&
+    livePreview?.template &&
+    liveUrl &&
+    livePreviewSlide === currentIndex + 1 &&
+    mediaKind === "image"
+      ? liveUrl
+      : null;
   const total = slides.length;
   const canPrev = currentIndex > 0;
   const canNext = currentIndex < total - 1;
   const currentRenderState = slideRenderStatuses?.find((s) => s.slideIndex === currentIndex + 1);
   const generatedPreviewPending = currentRenderState?.status === "pending";
   const generatedPreviewFailed = currentRenderState?.status === "failed";
+  const storedSlideImageUrl =
+    !heyGenVideoMode && mediaKind === "image" && mediaUrl.trim() ? mediaUrl : "";
+
+  const renderGeneratedPreviewImage = (imgKey: string, className: string) => (
+    <div className={`mimic-compare-pane__img-stack${liveBusy && livePreview?.template ? " mimic-compare-pane__img-stack--pending" : ""}`}>
+      <img
+        key={imgKey}
+        src={livePngUrl ?? storedSlideImageUrl}
+        alt={`Slide ${currentIndex + 1} preview`}
+        className={className}
+        draggable={false}
+        {...(storedSlideImageUrl && !livePngUrl ? { referrerPolicy: "no-referrer" as const } : {})}
+      />
+      {liveBusy && livePreview?.template && !heyGenVideoMode ? (
+        <span className="mimic-compare-pane__live-badge">Updating live preview…</span>
+      ) : null}
+    </div>
+  );
 
   const renderMimicCompareRow = (placement: "above" | "below") => {
     if (!mimicCopyEditor) return null;
@@ -463,14 +547,13 @@ export function CarouselSlider({
               }
             >
               {hasReference ? <span className="mimic-compare-pane__label">Generated</span> : null}
-              {livePngUrl ? (
-                <img
-                  key={`live-${currentIndex}-${assetRefreshKey}`}
-                  src={livePngUrl}
-                  alt={`Slide ${currentIndex + 1} live preview`}
-                  className="mimic-compare-pane__img"
-                  draggable={false}
-                />
+              {livePngUrl || storedSlideImageUrl ? (
+                renderGeneratedPreviewImage(
+                  `gen-${currentIndex}-${assetRefreshKey}-${livePngUrl ? "live" : storedSlideImageUrl}`,
+                  "mimic-compare-pane__img"
+                )
+              ) : liveBusy && livePreview?.template && !heyGenVideoMode ? (
+                <span className="mimic-compare-pane__empty">Starting live preview…</span>
               ) : generatedPreviewPending ? (
                 <span className="mimic-compare-pane__empty">Regenerating image…</span>
               ) : generatedPreviewFailed ? (
@@ -635,15 +718,21 @@ export function CarouselSlider({
 
       {renderMimicCompareRow("above")}
 
-      {!copySidePanel && !heyGenVideoMode && !mimicTemplateBg && livePreview?.template && (
+      {!copySidePanel && !heyGenVideoMode && livePreview?.template && (
         <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
           {liveBusy
-            ? "Rendering live preview…"
+            ? storedSlideImageUrl
+              ? "Showing last reprint while live preview renders…"
+              : "Rendering live preview…"
             : liveErr
               ? `Live preview unavailable (${liveErr}). Showing stored asset if available.`
               : livePngUrl
-                ? "Live preview: font scale + slide copy (matches template). Stored thumbnails are from the last pipeline render."
-                : "Starting live preview…"}
+                ? mimicTemplateBg
+                  ? "Generated pane shows live layout + copy (matches the editor). Thumbnails stay on last reprint until you reprint."
+                  : "Live preview: font scale + slide copy (matches template). Stored thumbnails are from the last pipeline render."
+                : storedSlideImageUrl
+                  ? "Stored slide shown — live preview will replace it when ready."
+                  : "Starting live preview…"}
         </p>
       )}
 
@@ -662,12 +751,6 @@ export function CarouselSlider({
               <div className="mimic-text-blocks__list">
                 {mimicTemplateBgFields.map((field, bi) => {
                   const isHandle = field.role === "handle";
-                  const displayText =
-                    isHandle && projectHandle.trim()
-                      ? projectHandle.trim().startsWith("@")
-                        ? projectHandle.trim()
-                        : `@${projectHandle.trim().replace(/^@+/, "")}`
-                      : field.text;
                   const linked = activeTextBlockIndex === bi;
                   return (
                     <div
@@ -679,13 +762,11 @@ export function CarouselSlider({
                         <span>{field.label}</span>
                       </label>
                       <textarea
-                        value={isHandle && projectHandle.trim() ? displayText : field.text}
-                        readOnly={isHandle && Boolean(projectHandle.trim())}
+                        value={field.text}
                         onChange={(e) => {
-                          if (isHandle && projectHandle.trim()) return;
                           updateMimicTemplateBgField(currentIndex, field, e.target.value, bi);
                         }}
-                        rows={mimicCopyTextareaRows(isHandle ? displayText : field.text, { min: 3, max: 24 })}
+                        rows={mimicCopyTextareaRows(field.text, { min: isHandle ? 1 : 3, max: isHandle ? 3 : 24 })}
                         placeholder={`${field.label}…`}
                         className="mimic-text-block-field__input mimic-text-block-field__input--grow"
                         onFocus={(e) => {
@@ -696,7 +777,11 @@ export function CarouselSlider({
                         onMouseDown={stopTextareaBubble}
                       />
                       {isHandle ? (
-                        <p className="mimic-text-block-field__note">Always prints project handle on reprint</p>
+                        <p className="mimic-text-block-field__note">
+                          {projectHandle.trim()
+                            ? "Defaults to project handle — edit to override this slide."
+                            : "Shown on the handle box at the bottom of the CTA slide."}
+                        </p>
                       ) : null}
                     </div>
                   );

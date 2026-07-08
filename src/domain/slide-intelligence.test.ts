@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWhyMimicPromptBlock,
+  compressNarrativeSpine,
   deckThesisContradictsSlideEvidence,
   deriveSlideIntelligenceFromAnalysis,
+  describeDeckSeriesPattern,
   detectSignAsFoodSeries,
+  detectZodiacRisingSeries,
+  detectZodiacTextYourFriendSeries,
   parseSlideIntelligenceBundle,
   pickOrDeriveSlideIntelligence,
   resolveDeckStrategicThesis,
@@ -88,6 +92,89 @@ const zodiacFoodAesthetic = {
     },
   ],
 };
+
+const zodiacRisingAesthetic = {
+  slide_arc: "cover → list beats → cta",
+  why_it_worked: "Astrology meme carousel with rising-sign identity hooks.",
+  deck_as_whole_summary: "Each slide is a four-panel meme grid with a rising-sign banner.",
+  slides: Array.from({ length: 6 }, (_, i) => ({
+    slide_index: i + 1,
+    slide_purpose: "Body content",
+    on_screen_text_transcript:
+      i === 0
+        ? "LEO RISING — NEW MOON IN GEMINI VIBES · meme quotes"
+        : `${["VIRGO", "SCORPIO", "ARIES", "TAURUS", "GEMINI"][i - 1]} RISING — NEW MOON IN GEMINI VIBES · meme quotes`,
+    visual_description: "Four-panel meme collage with centered rising-sign banner and quote overlays.",
+  })),
+};
+
+describe("compressNarrativeSpine", () => {
+  it("collapses consecutive duplicate roles", () => {
+    expect(compressNarrativeSpine(["body", "body", "body", "hook", "cta"])).toBe("body×3 → hook → cta");
+  });
+});
+
+describe("zodiac text-your-friend series", () => {
+  const zodiacTextFriendAesthetic = {
+    slides: [
+      {
+        slide_index: 1,
+        slide_purpose: "hook",
+        on_screen_text_transcript: "how you should text your aries friend Lowkey us",
+        visual_description: "googly-eye stuffed animals on white background",
+      },
+      {
+        slide_index: 2,
+        slide_purpose: "content",
+        on_screen_text_transcript: "how you should text your taurus friend",
+        visual_description: "bowl of strawberries on steps",
+      },
+      {
+        slide_index: 3,
+        slide_purpose: "content",
+        on_screen_text_transcript: "how you should text your gemini friend",
+        visual_description: "flower brain illustration",
+      },
+    ],
+  };
+
+  it("detects uniform text-your-friend series from transcripts", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacTextFriendAesthetic });
+    expect(detectZodiacTextYourFriendSeries(bundle!.slides)).toEqual(["aries", "taurus", "gemini"]);
+    expect(describeDeckSeriesPattern(bundle!.slides)).toContain("text-your-friend");
+  });
+
+  it("does not label slide 1 as cover for uniform sign series", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacTextFriendAesthetic });
+    expect(bundle!.slides[0]!.slide_role).toBe("list_item");
+    expect(bundle!.slides[0]!.slide_role).not.toBe("cover");
+    expect(bundle!.slides.every((s) => s.slide_role === "list_item")).toBe(true);
+  });
+});
+
+describe("zodiac rising series", () => {
+  it("detects rising-sign meme series from on-screen transcripts", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacRisingAesthetic });
+    expect(detectZodiacRisingSeries(bundle!.slides)).toEqual(["leo", "virgo", "scorpio", "aries", "taurus", "gemini"]);
+    expect(describeDeckSeriesPattern(bundle!.slides)).toContain("Zodiac rising meme series");
+  });
+
+  it("classifies rising-sign slides as list_item beats, not generic body", () => {
+    const bundle = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacRisingAesthetic });
+    expect(bundle!.slides[1]!.slide_role).toBe("list_item");
+    expect(compressNarrativeSpine(bundle!.why_analysis!.narrative_spine)).toContain("list_item×");
+  });
+
+  it("synthesizes a rising-sign deck thesis when upstream summary is thin", () => {
+    const slides = deriveSlideIntelligenceFromAnalysis({ aesthetic: zodiacRisingAesthetic })!.slides;
+    const thesis = synthesizeDeckStrategicThesisFromSlides(slides, {
+      narrative_spine: slides.map((s) => s.slide_role).filter(Boolean) as string[],
+    });
+    expect(thesis).not.toBeNull();
+    expect(thesis!.toLowerCase()).toContain("rising");
+    expect(thesis!.toLowerCase()).toContain("leo");
+  });
+});
 
 describe("resolveDeckStrategicThesis", () => {
   it("combines deck-wide Nemotron fields into a long strategic thesis", () => {

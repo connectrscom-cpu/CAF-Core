@@ -512,6 +512,11 @@ export type MimicDocAiLayerPositionRow = {
   text?: string;
 };
 
+export type MimicReprintSlideCopyOverride = {
+  slide_index: number;
+  llm_slide: Record<string, unknown>;
+};
+
 export async function reprintMimicTextOverlay(
   projectSlug: string,
   taskId: string,
@@ -521,7 +526,9 @@ export async function reprintMimicTextOverlay(
     textBacking?: boolean;
     textBackingColor?: string;
     docaiLayerPositions?: Record<string, MimicDocAiLayerPositionRow[]>;
+    slideCopyOverrides?: MimicReprintSlideCopyOverride[];
     logoOverlay?: { url: string; position?: string };
+    frameOverlay?: { url: string; asset_id?: string };
   }
 ): Promise<ReprintTextOverlayResult> {
   const slug = projectSlug.trim();
@@ -545,10 +552,19 @@ export async function reprintMimicTextOverlay(
   if (opts?.docaiLayerPositions && Object.keys(opts.docaiLayerPositions).length > 0) {
     body.docai_layer_positions = opts.docaiLayerPositions;
   }
+  if (opts?.slideCopyOverrides && opts.slideCopyOverrides.length > 0) {
+    body.slide_copy_overrides = opts.slideCopyOverrides;
+  }
   if (opts?.logoOverlay?.url?.trim()) {
     body.logo_overlay = {
       url: opts.logoOverlay.url.trim(),
       position: opts.logoOverlay.position?.trim() || "br",
+    };
+  }
+  if (opts?.frameOverlay?.url?.trim() || opts?.frameOverlay?.asset_id?.trim()) {
+    body.frame_overlay = {
+      ...(opts.frameOverlay.url?.trim() ? { url: opts.frameOverlay.url.trim() } : {}),
+      ...(opts.frameOverlay.asset_id?.trim() ? { asset_id: opts.frameOverlay.asset_id.trim() } : {}),
     };
   }
   const base = CAF_CORE_URL.replace(/\/$/, "");
@@ -1051,6 +1067,29 @@ export async function saveHeygenDefaults(
     project: { id: string; slug: string };
     applied: { voice_id: string | null; avatar_id: string | null; avatar_pool_count: number };
   }>(`/v1/projects/${encodeURIComponent(projectSlug)}/heygen-defaults`, data);
+}
+
+export async function getHeygenCatalog(projectSlug: string) {
+  return coreGet<{
+    ok: boolean;
+    avatars: Array<{
+      avatar_id: string;
+      name: string;
+      preview_image_url: string | null;
+      preview_video_url?: string | null;
+      gender: string | null;
+      default_voice_id: string | null;
+    }>;
+    voices: Array<{
+      voice_id: string;
+      name: string;
+      language: string | null;
+      gender: string | null;
+      preview_audio_url: string | null;
+    }>;
+    error?: string;
+    message?: string;
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/heygen/catalog`);
 }
 
 // ── Flow Engine (CAF-level) ──────────────────────────────────────────────

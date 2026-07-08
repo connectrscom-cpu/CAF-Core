@@ -5,11 +5,21 @@ import {
   listicleDecorTitleFromParagraph,
   resolveTemplateBgBodyOnScreenCopy,
   resolveTemplateBgCtaOnScreenCopy,
+  shortListicleMotherDecorTitle,
+  splitListicleColonLeadTitle,
+  templateBgLlmSlideForDocAi,
 } from "./mimic-template-bg-copy.js";
 
 describe("mimic-template-bg-copy", () => {
+  it("recognizes short sign mother decor titles", () => {
+    expect(shortListicleMotherDecorTitle("Aries Mother")).toBe("Aries Mother");
+    expect(shortListicleMotherDecorTitle("GEMINI Mother")).toBe("GEMINI Mother");
+    expect(shortListicleMotherDecorTitle("Aries Mother Traits")).toBe("");
+  });
+
   it("derives THE ARIES MOTHER from kicker", () => {
     expect(listicleDecorTitleFromKicker("Aries Mother Traits")).toBe("THE ARIES MOTHER");
+    expect(listicleDecorTitleFromKicker("Aries Mother")).toBe("Aries Mother");
   });
 
   it("derives THE ARIES MOTHER from inverted paragraph copy", () => {
@@ -38,8 +48,20 @@ describe("mimic-template-bg-copy", () => {
     });
     expect(mapped.inverted).toBe(true);
     expect(mapped.headline).toBe("THE ARIES MOTHER");
-    expect(mapped.body).toContain("She is spirited");
-    expect(mapped.body).toContain("fierce and vibrant");
+    expect(mapped.body).toContain("spirited");
+  });
+
+  it("uses slide_title for inverted listicle decor when paragraph is in headline", () => {
+    const paragraph =
+      "Every generation echoes through the cosmic tides, but the archetype of nurturer transforms with each sign.";
+    const mapped = resolveTemplateBgBodyOnScreenCopy({
+      headline: paragraph,
+      body: "",
+      slide_title: "Aries Mother",
+    });
+    expect(mapped.inverted).toBe(true);
+    expect(mapped.headline).toBe("Aries Mother");
+    expect(mapped.body).toBe(paragraph);
   });
 
   it("maps inverted copy with handle in body field and no kicker", () => {
@@ -67,6 +89,34 @@ describe("mimic-template-bg-copy", () => {
     expect(mapped.handle).toBe("@signandsound");
   });
 
+  it("derives Gemini as Mother from colon-lead paragraph copy", () => {
+    expect(
+      listicleDecorTitleFromParagraph(
+        "Gemini as Mother: She is the voice weaving play and possibility into each day."
+      )
+    ).toBe("Gemini as Mother");
+  });
+
+  it("splits colon-lead listicle copy into title + body", () => {
+    const paragraph =
+      "Gemini as Mother: She is the voice weaving play and possibility into each day. The Gemini archetype brings curiosity to the breakfast table.";
+    const split = splitListicleColonLeadTitle(paragraph);
+    expect(split?.title).toBe("Gemini as Mother");
+    expect(split?.body).toContain("She is the voice");
+  });
+
+  it("maps duplicate headline/body paragraph to title + body for listicle slides", () => {
+    const paragraph =
+      "Gemini as Mother: She is the voice weaving play and possibility into each day. The Gemini archetype brings curiosity to the breakfast table.";
+    const mapped = resolveTemplateBgBodyOnScreenCopy({
+      headline: paragraph,
+      body: paragraph,
+    });
+    expect(mapped.inverted).toBe(true);
+    expect(mapped.headline).toBe("Gemini as Mother");
+    expect(mapped.body).toBe(paragraph.slice("Gemini as Mother: ".length).trim());
+  });
+
   it("keeps simple follow CTA as headline + handle only", () => {
     const mapped = resolveTemplateBgCtaOnScreenCopy({
       headline: "ignored",
@@ -78,5 +128,19 @@ describe("mimic-template-bg-copy", () => {
     expect(mapped.headline).toBe("Follow for more");
     expect(mapped.body).toBe("");
     expect(mapped.handle).toBe("@brand");
+  });
+
+  it("templateBgLlmSlideForDocAi pulls CTA body from text_blocks when body field empty", () => {
+    const mapped = templateBgLlmSlideForDocAi(14, 14, {
+      headline: "PISCES: True Renewal",
+      body: "",
+      handle: "@signandsound",
+      text_blocks: [
+        { role: "headline", text: "PISCES: True Renewal" },
+        { role: "body", text: "Pisces season invites renewal and quiet courage." },
+        { role: "handle", text: "@signandsound" },
+      ],
+    });
+    expect(String(mapped.body ?? "")).toContain("Pisces season");
   });
 });

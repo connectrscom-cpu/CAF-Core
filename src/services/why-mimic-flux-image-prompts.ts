@@ -21,6 +21,7 @@ import {
 } from "./mimic-prompt-builder.js";
 import type { MimicFluxPromptGenerationMeta } from "./mimic-flux-image-prompts.js";
 import { mimicSlideHasUsableReference, isWhyMimicFluxInputSufficientForT2i } from "../domain/mimic-slide-analysis-quality.js";
+import { appendBvsToMimicFluxPrompt } from "./mimic-flux-image-prompts.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { openaiChat } from "./openai-chat.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
@@ -118,6 +119,7 @@ export async function generateWhyMimicFluxImagePromptsForJob(
         parsedSlide: parsedSlides[slideIndex - 1] ?? null,
         brandBrief,
         safeZoneHint: safeZone,
+        sourceSlideIndex: sourceIdx,
       });
       if (!input) return null;
       const visualDesc = sanitizeVisualDescriptionForImagePrompt(
@@ -206,8 +208,8 @@ export async function generateWhyMimicFluxImagePromptsForJob(
       continue;
     }
 
-    const flux_image_prompt =
-      llmPrompts.get(input.slide_index) ?? deterministicWhyMimicFluxPrompt(input);
+    const rawPrompt = llmPrompts.get(input.slide_index) ?? deterministicWhyMimicFluxPrompt(input);
+    const flux_image_prompt = appendBvsToMimicFluxPrompt(mimic, rawPrompt);
     if (!flux_image_prompt.trim()) {
       if (hasReference) slidesReferenceFallback++;
       continue;

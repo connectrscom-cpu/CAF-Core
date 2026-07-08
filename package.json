@@ -16,6 +16,7 @@
     "seed:meta-links:sns": "node --import tsx src/cli/seed-brand-meta-from-urls.ts -- --project SNS --name \"Demo SNS\"",
     "seed:canonical-flows": "node --import tsx src/cli/seed-canonical-flows.ts",
     "seed:demo-sns": "node --import tsx src/cli/seed-canonical-flows.ts",
+    "seed:sns-brand": "node --import tsx src/cli/seed-sns-brand.ts",
     "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",
     "import:project-csv": "node --import tsx src/cli/import-project-csv.ts",
     "sync:sheets": "node --import tsx src/cli/sync-sheets.ts",

@@ -385,7 +385,12 @@ function shouldFallbackAnalysisT2iToReference(
     const bundle = parseWhyMimicSlideIntelligenceFromMimic(mimic);
     if (!bundle) return true;
     const brandBrief = parseBrandExecutionBrief(mimic.brand_execution_brief);
-    const whyInput = buildWhyMimicFluxSlideInput(bundle, slideIndex1Based, { brandBrief });
+    const plan = mimic.slide_plans?.find((p) => p.slide_index === slideIndex1Based);
+    const sourceIdx = plan?.source_slide_index ?? slideIndex1Based;
+    const whyInput = buildWhyMimicFluxSlideInput(bundle, slideIndex1Based, {
+      brandBrief,
+      sourceSlideIndex: sourceIdx,
+    });
     return !isWhyMimicFluxInputSufficientForT2i(whyInput);
   }
 
@@ -406,8 +411,12 @@ function bvsSnapshotFromMimic(mimic: MimicPayloadV1): BrandBibleSnapshotV1 | nul
   };
 }
 
-function withBvsFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
+export function appendBvsToMimicFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
   return appendBrandBibleToFluxPrompt(prompt, bvsSnapshotFromMimic(mimic));
+}
+
+function withBvsFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
+  return appendBvsToMimicFluxPrompt(mimic, prompt);
 }
 
 export function resolveMimicSlideImagePrompt(

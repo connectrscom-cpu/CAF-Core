@@ -1,9 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrandAssetsPanel } from "@/components/BrandAssetsPanel";
 import { BrandBibleAssetInspectModal } from "@/components/marketer/BrandBibleAssetInspectModal";
 import type { MoodboardAsset } from "@/components/marketer/BrandBibleAssetInspectModal";
+import { BrandBibleAssetCategories } from "@/components/marketer/BrandBibleAssetCategories";
+import { BrandBibleFluxReferences } from "@/components/marketer/BrandBibleFluxReferences";
+import { BrandBibleHeygenPresenters } from "@/components/marketer/BrandBibleHeygenPresenters";
 import { BrandBibleHowItApplies } from "@/components/marketer/BrandBibleHowItApplies";
 import { BrandBibleInstagramPreview } from "@/components/marketer/BrandBibleInstagramPreview";
 import { BrandBibleMoodboardGrid } from "@/components/marketer/BrandBibleMoodboardGrid";
@@ -16,8 +19,9 @@ import {
   toBrandBibleJson,
 } from "@/lib/marketer/brand-bible-adapters";
 import type { BrandBible, BrandBibleAssetRef, BrandBibleAssetRole } from "@/lib/marketer/types";
+import { BRAND_BIBLE_ASSET_ROLES } from "@/lib/marketer/brand-bible-adapters";
 
-type BibleView = "moodboard" | "instagram" | "guide" | "how";
+type BibleView = "moodboard" | "creative" | "instagram" | "guide" | "how";
 
 type BrandAssetRow = MoodboardAsset;
 
@@ -30,11 +34,13 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [paletteInput, setPaletteInput] = useState("");
-  const [view, setView] = useState<BibleView>("moodboard");
+  const [view, setView] = useState<BibleView>("creative");
   const [inspectAsset, setInspectAsset] = useState<MoodboardAsset | null>(null);
   const [editAssetId, setEditAssetId] = useState<string | null>(null);
   const [openAddKind, setOpenAddKind] = useState<"reference_image" | null>(null);
+  const [pendingDefaultRole, setPendingDefaultRole] = useState<BrandBibleAssetRole | null>(null);
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
+  const prevAssetIdsRef = useRef<Set<string>>(new Set());
 
   const projectQs = `?project=${encodeURIComponent(slug)}`;
 
@@ -46,7 +52,9 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "Failed to load brand bible");
       setBible(toBrandBible(slug, j.parsed, j.version ?? null));
-      setAssets(Array.isArray(j.brandAssets) ? j.brandAssets : []);
+      const loaded = Array.isArray(j.brandAssets) ? j.brandAssets : [];
+      prevAssetIdsRef.current = new Set(loaded.map((a: BrandAssetRow) => a.id));
+      setAssets(loaded);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
       setBible(emptyBrandBible(slug));
@@ -133,7 +141,10 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
       }
       setAssets((prev) => prev.filter((a) => a.id !== asset.id));
       if (bible) {
-        patchBible({ assetRefs: bible.assetRefs.filter((r) => r.assetId !== asset.id) });
+        patchBible({
+          assetRefs: bible.assetRefs.filter((r) => r.assetId !== asset.id),
+          fluxPromptAssetIds: bible.fluxPromptAssetIds.filter((id) => id !== asset.id),
+        });
       }
       if (inspectAsset?.id === asset.id) setInspectAsset(null);
       setMessage(`Removed "${label}".`);
@@ -168,7 +179,61 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
 
   const configured = useMemo(() => (bible ? brandBibleIsConfigured(bible) : false), [bible]);
 
-  function scrollToUpload() {
+  function handleAssetsChange(next: BrandAssetRow[]) {
+    if (pendingDefaultRole && bible) {
+      const prev = prevAssetIdsRef.current;
+      const added = next.find((a) => !prev.has(a.id));
+      if (added) {
+        addAssetRef(added.id, pendingDefaultRole);
+        setPendingDefaultRole(null);
+        setInspectAsset(added);
+      }
+    }
+    prevAssetIdsRef.current = new Set(next.map((a) => a.id));
+    setAssets(next);
+  }
+
+  function handleCategoryUpload(uploaded: BrandAssetRow[], role: BrandBibleAssetRole) {
+    setAssets((prev) => {
+      const ids = new Set(prev.map((a) => a.id));
+      const merged = [...prev];
+      for (const a of uploaded) {
+        if (!ids.has(a.id)) merged.push(a);
+      }
+      prevAssetIdsRef.current = new Set(merged.map((a) => a.id));
+      return merged;
+    });
+    setBible((prev) => {
+      if (!prev) return prev;
+      const nextRefs = [...prev.assetRefs];
+      for (const a of uploaded) {
+        if (nextRefs.some((r) => r.assetId === a.id && r.role === role)) continue;
+        nextRefs.push({
+          assetId: a.id,
+          role,
+          label: a.label ?? "",
+          usageNotes: "",
+        });
+      }
+      return { ...prev, assetRefs: nextRefs };
+    });
+    if (uploaded.length === 1) setInspectAsset(uploaded[0]!);
+    const roleLabel = BRAND_BIBLE_ASSET_ROLES.find((r) => r.id === role)?.label ?? role;
+    setMessage(`Added ${uploaded.length} file(s) to ${roleLabel}. Save brand bible when done.`);
+  }
+
+  function assignFromMoodboard(role: BrandBibleAssetRole) {
+    const roleLabel = BRAND_BIBLE_ASSET_ROLES.find((r) => r.id === role)?.label ?? role;
+    setPendingDefaultRole(role);
+    setView("moodboard");
+    setMessage(`Pick a moodboard asset and assign “${roleLabel}”, or upload in the Brand assets tab.`);
+    setTimeout(() => {
+      document.getElementById("brand-bible-upload-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }
+
+  function scrollToUpload(defaultRole?: BrandBibleAssetRole) {
+    if (defaultRole) setPendingDefaultRole(defaultRole);
     setView("moodboard");
     setOpenAddKind("reference_image");
     setTimeout(() => {
@@ -205,6 +270,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
         {(
           [
             { id: "moodboard" as const, label: "Moodboard" },
+            { id: "creative" as const, label: "Brand assets" },
             { id: "instagram" as const, label: "Instagram preview" },
             { id: "guide" as const, label: "Rules & guide" },
             { id: "how" as const, label: "How it applies" },
@@ -243,9 +309,39 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
               onEditAssetConsumed={() => setEditAssetId(null)}
               openAddKind={openAddKind}
               onOpenAddConsumed={() => setOpenAddKind(null)}
-              onAssetsChange={setAssets}
+              onAssetsChange={handleAssetsChange}
             />
           </section>
+        </>
+      )}
+
+      {view === "creative" && (
+        <>
+          <BrandBibleAssetCategories
+            slug={slug}
+            bible={bible}
+            assets={assets}
+            onInspect={setInspectAsset}
+            onAssetsUploaded={handleCategoryUpload}
+            onAssignFromMoodboard={assignFromMoodboard}
+          />
+          <BrandBibleFluxReferences
+            slug={slug}
+            bible={bible}
+            assets={assets}
+            selectedIds={bible.fluxPromptAssetIds}
+            onChange={(fluxPromptAssetIds) => patchBible({ fluxPromptAssetIds })}
+          />
+          <BrandBibleHeygenPresenters
+            slug={slug}
+            presenters={bible.heygenPresenters}
+            onChange={(heygenPresenters) => patchBible({ heygenPresenters })}
+          />
+          <div className="profile-editor-actions">
+            <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving || !configured}>
+              {saving ? "Saving…" : "Save brand bible"}
+            </button>
+          </div>
         </>
       )}
 
@@ -280,7 +376,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
                   <input
                     value={bible.visualModeCustom}
                     onChange={(e) => patchBible({ visualModeCustom: e.target.value })}
-                    placeholder="e.g. Misty botanical editorial"
+                    placeholder="e.g. Cosmic editorial illustration"
                   />
                 </label>
               )}
@@ -330,7 +426,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
                   rows={2}
                   value={bible.allowedMotifs}
                   onChange={(e) => patchBible({ allowedMotifs: e.target.value })}
-                  placeholder="botanical line art; olive branches; misty gradients"
+                  placeholder="zodiac glyphs; star fields; deep indigo gradients; orbit rings"
                 />
               </label>
               <label className="profile-field profile-field--full">
@@ -340,7 +436,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
                   rows={2}
                   value={bible.forbiddenMotifs}
                   onChange={(e) => patchBible({ forbiddenMotifs: e.target.value })}
-                  placeholder="stock food photos; faces; neon colors"
+                  placeholder="stock lifestyle photos; neon gradients; unrelated food imagery"
                 />
               </label>
             </div>
@@ -374,7 +470,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
                   rows={6}
                   value={bible.applicationGuide.instructions}
                   onChange={(e) => patchGuide({ instructions: e.target.value })}
-                  placeholder="Always use our botanical world — calm, premium, no faces. When mimicking a viral listicle, keep the hook structure but replace all visuals with our herb-garden aesthetic…"
+                  placeholder="Always use our cosmic zodiac world — mystical, premium, no stock faces. When mimicking a viral listicle, keep the hook structure but replace visuals with star fields and sign-specific motifs…"
                 />
               </label>
               <label className="profile-field profile-field--full">
@@ -394,7 +490,7 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
                   rows={3}
                   value={bible.applicationGuide.originalPolicy}
                   onChange={(e) => patchGuide({ originalPolicy: e.target.value })}
-                  placeholder="Lead with botanical motifs on every slide."
+                  placeholder="Lead with zodiac motifs and @signandsound palette on every slide."
                 />
               </label>
             </div>

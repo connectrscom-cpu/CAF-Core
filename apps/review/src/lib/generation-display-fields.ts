@@ -85,7 +85,11 @@ export function pickCaptionFromGenerationPayload(payload: Record<string, unknown
 /** Page / export title: prefer explicit title, then script hook_line (video script schema). */
 export function pickTitleFromGenerationPayload(payload: Record<string, unknown> | null | undefined): string {
   const p = payload ?? undefined;
+  const display = recordVal(p?.content_display);
+  const fromDisplay =
+    display?.schema_version === "content_display_v1" ? stringVal(display.title).trim() : "";
   const top =
+    fromDisplay ||
     stringVal(p?.title).trim() ||
     stringVal(p?.generated_title).trim() ||
     stringVal(p?.headline).trim();

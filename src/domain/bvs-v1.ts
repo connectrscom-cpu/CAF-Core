@@ -138,9 +138,11 @@ export async function attachBvsToPlannedPayload(
   db: Pool,
   projectId: string,
   payload: Record<string, unknown>,
-  candidateData: Record<string, unknown>
+  candidateData: Record<string, unknown>,
+  opts?: { force?: boolean }
 ): Promise<void> {
-  if (!isBvsEnabledForCandidate(candidateData)) {
+  const enabled = isBvsEnabledForCandidate(candidateData) || opts?.force === true;
+  if (!enabled) {
     payload.bvs_v1 = buildBvsSlice(false, null, null);
     return;
   }

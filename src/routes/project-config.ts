@@ -28,6 +28,7 @@ import {
 } from "../services/heygen-assets.js";
 import { uploadBuffer, downloadBufferFromUrl, fetchableUrlFromAssetRow } from "../services/supabase-storage.js";
 import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
+import { fetchHeygenCatalog } from "../services/heygen-catalog.js";
 import {
   importProjectFromCsv,
   PROJECT_IMPORT_CSV_TEMPLATE,
@@ -967,6 +968,25 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
   });
 
   // ── HeyGen Config ────────────────────────────────────────────────────
+  app.get("/v1/projects/:project_slug/heygen/catalog", async (_request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(_request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    await ensureProject(db, params.data.project_slug);
+    const appConfig = loadConfig();
+    const catalog = await fetchHeygenCatalog(appConfig);
+    if (!catalog.configured) {
+      return reply.code(503).send({ ok: false, error: "heygen_not_configured", message: catalog.error });
+    }
+    if (!catalog.ok) {
+      return reply.code(502).send({ ok: false, error: "heygen_catalog_failed", message: catalog.error });
+    }
+    return {
+      ok: true,
+      avatars: catalog.avatars,
+      voices: catalog.voices,
+    };
+  });
+
   app.get("/v1/projects/:project_slug/heygen-config", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });

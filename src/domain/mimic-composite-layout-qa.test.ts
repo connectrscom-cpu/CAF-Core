@@ -34,14 +34,14 @@ function layer(partial: Partial<MimicDocAiLayerPositionLayer> & { text: string }
 }
 
 describe("mimic-composite-layout-qa", () => {
-  it("detects overlapping boxes as soft warnings", () => {
+  it("detects overlapping boxes as blocking failures", () => {
     const boxes = visibleLayoutBoxes([
       layer({ role: "headline", text: "Hook", x_px: 96, y_px: 100, w_px: 400, h_px: 100 }),
       layer({ role: "body", text: "Body", x_px: 96, y_px: 150, w_px: 400, h_px: 120 }),
     ]);
     const findings = detectBoxCollisions(boxes);
-    expect(findings.some((f) => f.check === "collision")).toBe(true);
-    expect(slidePassesLayoutQa(findings)).toBe(true);
+    expect(findings.some((f) => f.check === "collision" && f.blocking)).toBe(true);
+    expect(slidePassesLayoutQa(findings)).toBe(false);
   });
 
   it("detects margin overflow as soft warning", () => {

@@ -147,9 +147,11 @@ const GENERATION_PAYLOAD_SLIM_EXPR = `
 
 const GENERATION_DISPLAY_EXTRACTS = `
   COALESCE(
+    NULLIF(TRIM(j.generation_payload #>> '{content_display,title}'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'generated_title'), ''),
+    NULLIF(TRIM(j.generation_payload ->> 'title'), ''),
     NULLIF(TRIM(j.generation_payload #>> '{generated_output,title}'), ''),
     NULLIF(TRIM(j.generation_payload #>> '{generated_output,headline}'), ''),
-    NULLIF(TRIM(j.generation_payload ->> 'title'), ''),
     ''
   ) AS generated_title,
   COALESCE(

@@ -54,6 +54,7 @@ import {
   registerReviewBackgroundJob,
   REVIEW_JOB_COMPLETED_EVENT,
 } from "@/lib/review-background-jobs";
+import { pickRenderableThumb } from "@/lib/marketer/inspection-media";
 import { mimicReferenceUrlForSlide } from "@/lib/mimic-reference-slides";
 import { sourceSlideIndexForMimicOutput } from "@caf-core-carousel/mimic-output-slide-index";
 import {
@@ -61,8 +62,10 @@ import {
   isMimicTemplateBgMode,
   normalizeMimicTemplateBgSlides,
   resolveMimicTemplateBgEditorFields,
+  resolveMimicTemplateBgEditorFieldsForSlide,
 } from "@/lib/mimic-template-bg";
-import { resolveBrandLogoDisplayUrl } from "@/lib/brand-asset-url";
+import { buildMimicReprintSlideCopyOverrides } from "@/lib/mimic-reprint-slide-copy";
+import { resolveBrandLogoDisplayUrl, resolveBrandLogoReprintUrl, resolveBrandSlideFrames, type BrandSlideFrameOption } from "@/lib/brand-asset-url";
 
 function hashtagsInitialFromRow(data: ReviewQueueRow): string {
   const override = (data.final_hashtags_override ?? "").trim();
@@ -105,6 +108,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [taskAssets, setTaskAssets] = useState<TaskAssetPreview[]>([]);
   /** Bumped after asset refetch so carousel/compare images remount and bust browser cache. */
   const [assetRefreshKey, setAssetRefreshKey] = useState(0);
+  const [mimicLayoutPreviewRevision, setMimicLayoutPreviewRevision] = useState(0);
   /** Qwen background plates by asset position (for live preview compositing). */
   const [mimicBackgroundByPosition, setMimicBackgroundByPosition] = useState<Record<number, string>>({});
   const [mimicPlateByPosition, setMimicPlateByPosition] = useState<Record<number, string>>({});
@@ -493,11 +497,15 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   // Brand palette swatches + logo for the mimic text editor (1.5).
   const [brandPalette, setBrandPalette] = useState<string[]>([]);
   const [brandLogoUrl, setBrandLogoUrl] = useState<string>("");
+  const [brandLogoReprintUrl, setBrandLogoReprintUrl] = useState<string>("");
+  const [brandFrames, setBrandFrames] = useState<BrandSlideFrameOption[]>([]);
   useEffect(() => {
     const slug = (data?.project ?? projectFromUrl ?? "").trim();
     if (!slug) {
       setBrandPalette([]);
       setBrandLogoUrl("");
+      setBrandLogoReprintUrl("");
+      setBrandFrames([]);
       return;
     }
     let cancelled = false;
@@ -525,10 +533,25 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         }
         setBrandPalette(colors.slice(0, 12));
         setBrandLogoUrl(resolveBrandLogoDisplayUrl(slug, assets));
+        setBrandLogoReprintUrl(resolveBrandLogoReprintUrl(slug, assets));
+
+        const bibleRes = await fetch(`/api/brand/${encodeURIComponent(slug)}/brand-bible`, { cache: "no-store" });
+        if (!bibleRes.ok) {
+          setBrandFrames([]);
+          return;
+        }
+        const bibleJson = (await bibleRes.json()) as {
+          snapshot?: { resolved_assets?: Array<{ asset_id?: string; role?: string; label?: string | null; public_url?: string | null }> };
+        };
+        if (cancelled) return;
+        const resolved = Array.isArray(bibleJson.snapshot?.resolved_assets) ? bibleJson.snapshot!.resolved_assets! : [];
+        setBrandFrames(resolveBrandSlideFrames(slug, resolved));
       } catch {
         if (!cancelled) {
           setBrandPalette([]);
           setBrandLogoUrl("");
+          setBrandLogoReprintUrl("");
+          setBrandFrames([]);
         }
       }
     })();
@@ -607,20 +630,6 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     if (flagged.length === 0) return null;
     return `Layout check flagged ${flagged.length} slide${flagged.length === 1 ? "" : "s"} — see thumb badges and open the layout editor before approving.`;
   }, [fullJob]);
-
-  const templateBgFieldRoles = useMemo(() => {
-    if (!mimicTemplateBg || editedSlides.length < 1) return [];
-    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
-    if (!slide) return [];
-    return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.role);
-  }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
-
-  const templateBgFieldTexts = useMemo(() => {
-    if (!mimicTemplateBg || editedSlides.length < 1) return [];
-    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
-    if (!slide) return [];
-    return resolveMimicTemplateBgEditorFields(slide, viewerSlideIndex, editedSlides.length).map((f) => f.text);
-  }, [mimicTemplateBg, editedSlides, viewerSlideIndex]);
 
   const fullBleedSlotTexts = useMemo(() => {
     if (mimicTemplateBg || editedSlides.length < 1) return [];
@@ -837,6 +846,30 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     return projectStrategyHandle;
   }, [fullJob, projectStrategyHandle]);
 
+  const templateBgFieldRoles = useMemo(() => {
+    if (!mimicTemplateBg || editedSlides.length < 1) return [];
+    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
+    if (!slide) return [];
+    return resolveMimicTemplateBgEditorFieldsForSlide(
+      slide,
+      viewerSlideIndex,
+      editedSlides.length,
+      instagramHandleForPreview
+    ).map((f) => f.role);
+  }, [mimicTemplateBg, editedSlides, viewerSlideIndex, instagramHandleForPreview]);
+
+  const templateBgFieldTexts = useMemo(() => {
+    if (!mimicTemplateBg || editedSlides.length < 1) return [];
+    const slide = editedSlides[Math.max(0, viewerSlideIndex - 1)];
+    if (!slide) return [];
+    return resolveMimicTemplateBgEditorFieldsForSlide(
+      slide,
+      viewerSlideIndex,
+      editedSlides.length,
+      instagramHandleForPreview
+    ).map((f) => f.text);
+  }, [mimicTemplateBg, editedSlides, viewerSlideIndex, instagramHandleForPreview]);
+
   const mimicReferenceUrlForViewer = useMemo(() => {
     if ((!mimicCarouselFlow && !tpGroundedCarouselReview) || !fullJob) return undefined;
     const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
@@ -854,14 +887,20 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     const fromMimic = mimicReferenceUrlForSlide(mimicV1, viewerSlideIndex, editedSlides.length, {
       referenceFrameUrls,
     });
-    if (fromMimic) return fromMimic;
-    if (referenceFrameUrls.length === 0 || !mimicV1) return undefined;
-    const sourceIdx = sourceSlideIndexForMimicOutput(
-      mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0],
-      viewerSlideIndex
-    );
-    const frameIdx = Math.max(0, sourceIdx - 1);
-    return referenceFrameUrls[frameIdx] ?? referenceFrameUrls[Math.min(frameIdx, referenceFrameUrls.length - 1)];
+    let fromFrames: string | undefined;
+    if (referenceFrameUrls.length > 0 && mimicV1) {
+      const sourceIdx = sourceSlideIndexForMimicOutput(
+        mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0],
+        viewerSlideIndex
+      );
+      const frameIdx = Math.max(0, sourceIdx - 1);
+      fromFrames =
+        pickRenderableThumb(
+          referenceFrameUrls[frameIdx],
+          referenceFrameUrls[Math.min(frameIdx, referenceFrameUrls.length - 1)]
+        ) ?? undefined;
+    }
+    return pickRenderableThumb(fromMimic, fromFrames) ?? undefined;
   }, [mimicCarouselFlow, tpGroundedCarouselReview, fullJob, viewerSlideIndex, editedSlides.length]);
 
   const referenceVideoUrl = useMemo(() => {
@@ -1004,6 +1043,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const handleMimicLayoutSaved = useCallback(
     (slideIndex: number, positions: Record<string, unknown>[]) => {
+      setMimicLayoutPreviewRevision((v) => v + 1);
       setFullJob((prev) => {
         if (!prev) return prev;
         const gp =
@@ -1035,76 +1075,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     []
   );
 
-  const carouselLivePreview = useMemo(() => {
-    // Mimic carousel slides are final Qwen-generated PNGs — no HBS template to live-preview.
-    if (videoFlow || imageFlow || tpGroundedCarouselReview || !carouselTemplate || editedSlides.length === 0) return null;
-    return {
-      template: carouselTemplate,
-      taskId: execTaskId,
-      runId: runId || "run",
-      fontScale,
-      instagramHandle: instagramHandleForPreview,
-      getPayload: () => {
-        const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
-        decorateCarouselSlidesPayload(slidesPayload);
-        const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
-        const mimicV1 =
-          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
-            ? gp.mimic_v1
-            : undefined;
-        const bgFromGp =
-          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
-        return {
-          ...slidesPayload,
-          task_id: execTaskId,
-          run_id: runId || undefined,
-          ...(mimicV1 ? { mimic_v1: mimicV1 } : {}),
-          ...(bgFromGp ? { background_image_url: bgFromGp } : {}),
-        };
-      },
-      getBackgroundUrl: (slideIndex1Based: number) => {
-        const pos = slideIndex1Based - 1;
-        if (mimicBackgroundByPosition[pos]) return mimicBackgroundByPosition[pos];
-        const positions = Object.keys(mimicBackgroundByPosition)
-          .map(Number)
-          .filter((n) => Number.isFinite(n))
-          .sort((a, b) => a - b);
-        if (positions.length > 0) {
-          const cycled = positions[pos % positions.length];
-          if (cycled != null && mimicBackgroundByPosition[cycled]) {
-            return mimicBackgroundByPosition[cycled];
-          }
-        }
-        const fromAsset = mimicBackgroundByPosition[0];
-        if (fromAsset) return fromAsset;
-        const gp = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
-        const mimicV1 =
-          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
-            ? (gp.mimic_v1 as Record<string, unknown>)
-            : null;
-        const fromPayload =
-          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
-        const fromMimic =
-          mimicV1 && typeof mimicV1.background_image_url === "string"
-            ? mimicV1.background_image_url.trim()
-            : "";
-        return fromPayload || fromMimic || undefined;
-      },
-    };
-  }, [
-    videoFlow,
-    imageFlow,
-    carouselTemplate,
-    execTaskId,
-    runId,
-    fontScale,
-    instagramHandleForPreview,
-    editedSlides,
-    rawPayload,
-    decorateCarouselSlidesPayload,
-    mimicBackgroundByPosition,
-    fullJob,
-  ]);
+  const buildSlideCopyOverridesForReprint = useCallback(
+    (slideIndices: number[] | undefined) =>
+      buildMimicReprintSlideCopyOverrides(editedSlides, mimicTemplateBg, slideIndices),
+    [editedSlides, mimicTemplateBg]
+  );
 
   const mimicCarouselInspectContext = useMemo(() => {
     if (!tpGroundedCarouselReview || editedSlides.length === 0) return null;
@@ -1180,6 +1155,110 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     mimicPlateByPosition,
     mimicBackgroundByPosition,
     taskAssets,
+  ]);
+
+  const carouselLivePreview = useMemo(() => {
+    if (videoFlow || imageFlow || editedSlides.length === 0) return null;
+
+    if (tpGroundedCarouselReview && mimicTemplateBg && mimicCarouselInspectContext) {
+      return {
+        template: mimicCarouselInspectContext.template,
+        taskId: execTaskId,
+        runId: runId || "run",
+        fontScale: "1",
+        instagramHandle: instagramHandleForPreview,
+        layoutRevisionKey: mimicLayoutPreviewRevision,
+        getPayload: mimicCarouselInspectContext.getPayload,
+        getBackgroundUrl: mimicCarouselInspectContext.getBackgroundUrl,
+        getDocAiLayerPositions: (slideIndex1Based: number) => {
+          const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+          const mimicV1 =
+            gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+              ? (gp.mimic_v1 as Record<string, unknown>)
+              : null;
+          const raw = mimicV1?.docai_layer_positions;
+          if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+          const rows = (raw as Record<string, unknown>)[String(slideIndex1Based)];
+          return Array.isArray(rows) && rows.length > 0
+            ? (rows as Record<string, unknown>[])
+            : undefined;
+        },
+      };
+    }
+
+    if (tpGroundedCarouselReview || !carouselTemplate) return null;
+
+    return {
+      template: carouselTemplate,
+      taskId: execTaskId,
+      runId: runId || "run",
+      fontScale,
+      instagramHandle: instagramHandleForPreview,
+      getPayload: () => {
+        const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
+        decorateCarouselSlidesPayload(slidesPayload);
+        const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? gp.mimic_v1
+            : undefined;
+        const bgFromGp =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        return {
+          ...slidesPayload,
+          task_id: execTaskId,
+          run_id: runId || undefined,
+          ...(mimicV1 ? { mimic_v1: mimicV1 } : {}),
+          ...(bgFromGp ? { background_image_url: bgFromGp } : {}),
+        };
+      },
+      getBackgroundUrl: (slideIndex1Based: number) => {
+        const pos = slideIndex1Based - 1;
+        if (mimicBackgroundByPosition[pos]) return mimicBackgroundByPosition[pos];
+        const positions = Object.keys(mimicBackgroundByPosition)
+          .map(Number)
+          .filter((n) => Number.isFinite(n))
+          .sort((a, b) => a - b);
+        if (positions.length > 0) {
+          const cycled = positions[pos % positions.length];
+          if (cycled != null && mimicBackgroundByPosition[cycled]) {
+            return mimicBackgroundByPosition[cycled];
+          }
+        }
+        const fromAsset = mimicBackgroundByPosition[0];
+        if (fromAsset) return fromAsset;
+        const gp = rawPayload && typeof rawPayload === "object" ? rawPayload : null;
+        const mimicV1 =
+          gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
+            ? (gp.mimic_v1 as Record<string, unknown>)
+            : null;
+        const fromPayload =
+          typeof gp?.background_image_url === "string" ? gp.background_image_url.trim() : "";
+        const fromMimic =
+          mimicV1 && typeof mimicV1.background_image_url === "string"
+            ? mimicV1.background_image_url.trim()
+            : "";
+        return fromPayload || fromMimic || undefined;
+      },
+    };
+  }, [
+    videoFlow,
+    imageFlow,
+    editedSlides.length,
+    tpGroundedCarouselReview,
+    mimicTemplateBg,
+    mimicCarouselInspectContext,
+    carouselTemplate,
+    execTaskId,
+    runId,
+    fontScale,
+    instagramHandleForPreview,
+    mimicLayoutPreviewRevision,
+    editedSlides,
+    rawPayload,
+    decorateCarouselSlidesPayload,
+    mimicBackgroundByPosition,
+    fullJob,
   ]);
 
   const finalSlidesJsonOverride =
@@ -1349,6 +1428,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     }
                     onReprintComplete={refreshTaskAssets}
                     buildReprintTypographyPatch={buildReprintTypographyPatch}
+                    buildSlideCopyOverrides={buildSlideCopyOverridesForReprint}
                     onMimicLayoutSaved={handleMimicLayoutSaved}
                     onSlideSelect={setViewerSlideIndex}
                     onDeleteSlide={handleDeleteMimicSlide}
@@ -1364,6 +1444,18 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                     fullBleedSlotTexts={fullBleedSlotTexts}
                     brandPalette={brandPalette}
                     brandLogoUrl={brandLogoUrl}
+                    brandLogoReprintUrl={brandLogoReprintUrl}
+                    brandFrames={brandFrames}
+                    resolveSlideFieldText={(slideIndex, fieldRole) => {
+                      const slide = editedSlides[slideIndex - 1];
+                      if (!slide) return "";
+                      const fields = resolveMimicTemplateBgEditorFields(
+                        slide,
+                        slideIndex,
+                        editedSlides.length
+                      );
+                      return fields.find((f) => f.role === fieldRole)?.text ?? "";
+                    }}
                     onTemplateBgFieldTextChange={(slideIndex, fieldRole, text) => {
                       setEditedSlides((prev) => {
                         const idx = slideIndex - 1;

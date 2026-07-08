@@ -286,10 +286,10 @@ const envSchema = z.object({
    */
   MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL: z.coerce.boolean().default(false),
   /**
-   * Layout QA never removes jobs from the pipeline by default — it auto-reprints and flags Review.
-   * Set true only if empty on-slide copy should BLOCK (not recommended for production throughput).
+   * When true (default), hard layout failures (overlap, clipped boxes, missing on-slide copy) BLOCK
+   * before human review after auto-reprint attempts are exhausted.
    */
-  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL: z.coerce.boolean().default(false),
+  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL: z.coerce.boolean().default(true),
   /**
    * After mimic carousel text_blocks[] are built, run OpenAI to suggest coherent copy groupings
    * and rewrite per-box lines. Set 0 to disable.

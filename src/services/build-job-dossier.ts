@@ -70,9 +70,9 @@ export async function buildJobDossier(
     }
   }
 
-  const draft = await qOne<{ draft_id: string; model_used: string | null; created_at: string }>(
+  const draft = await qOne<{ draft_id: string; prompt_name: string | null; created_at: string }>(
     db,
-    `SELECT draft_id, model_used, created_at::text FROM caf_core.job_drafts
+    `SELECT draft_id, prompt_name, created_at::text FROM caf_core.job_drafts
      WHERE project_id = $1::uuid AND task_id = $2
      ORDER BY created_at DESC LIMIT 1`,
     [projectId, tid]

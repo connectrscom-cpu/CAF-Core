@@ -449,6 +449,41 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       }
       out.publish_image_urls = next;
     }
+    const mimicRaw = out.mimic_v1;
+    if (mimicRaw && typeof mimicRaw === "object" && !Array.isArray(mimicRaw)) {
+      const mimic = { ...(mimicRaw as Record<string, unknown>) };
+      for (const field of ["reference_items", "archive_reference_items"] as const) {
+        const refArr = mimic[field];
+        if (!Array.isArray(refArr)) continue;
+        mimic[field] = await Promise.all(
+          refArr.map(async (raw) => {
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+            const item = { ...(raw as Record<string, unknown>) };
+            const bucket = String(item.bucket ?? "").trim();
+            const objectPath = String(item.object_path ?? "").trim();
+            if (bucket && objectPath) {
+              const signed = await createSignedUrlForObjectKey(config, bucket, objectPath, 7200);
+              if ("signedUrl" in signed) {
+                item.vision_fetch_url = signed.signedUrl;
+                return item;
+              }
+            }
+            for (const key of ["vision_fetch_url", "public_url", "preview_url", "source_url"] as const) {
+              const v = item[key];
+              if (typeof v !== "string" || !v.trim()) continue;
+              const signed = await maybeSignPublicAssetUrl(v);
+              if (!signed) continue;
+              if (key === "vision_fetch_url") item.vision_fetch_url = signed;
+              else if (key === "public_url") item.public_url = signed;
+              else if (key === "preview_url") item.preview_url = signed;
+              else item.source_url = signed;
+            }
+            return item;
+          })
+        );
+      }
+      out.mimic_v1 = mimic;
+    }
     return out;
   }
 
@@ -1386,8 +1421,22 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         position: z.string().max(8).optional(),
       })
       .optional(),
+    frame_overlay: z
+      .object({
+        url: z.string().min(1).max(2048).optional(),
+        asset_id: z.string().min(1).max(120).optional(),
+      })
+      .optional(),
     docai_layer_positions: z
       .record(z.string(), z.array(mimicDocAiLayerPositionOverrideRowSchema))
+      .optional(),
+    slide_copy_overrides: z
+      .array(
+        z.object({
+          slide_index: z.number().int().positive(),
+          llm_slide: z.record(z.unknown()),
+        })
+      )
       .optional(),
   });
 
@@ -1400,6 +1449,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     textBackingColor: string | undefined,
     docaiLayerPositions: Record<string, MimicDocAiLayerPositionOverride[]> | undefined,
     logoOverlay: { url: string; position?: string } | undefined,
+    frameOverlay: { url?: string; asset_id?: string } | undefined,
+    explicitSlideCopyOverrides: Array<{ slide_index: number; llm_slide: Record<string, unknown> }> | undefined,
     log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
   ): Promise<
     | { ok: true; accepted: true; task_id: string; message: string }
@@ -1444,6 +1495,20 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         if (patch) slideCopyOverrides.push({ slide_index: slideIndex, llm_slide: patch });
       }
     }
+    if (explicitSlideCopyOverrides?.length) {
+      const byIndex = new Map(
+        slideCopyOverrides.map((row) => [row.slide_index, row.llm_slide] as const)
+      );
+      for (const row of explicitSlideCopyOverrides) {
+        const slideIndex = Math.floor(row.slide_index);
+        if (!Number.isFinite(slideIndex) || slideIndex < 1) continue;
+        byIndex.set(slideIndex, row.llm_slide);
+      }
+      slideCopyOverrides = [...byIndex.entries()].map(([slide_index, llm_slide]) => ({
+        slide_index,
+        llm_slide,
+      }));
+    }
 
     await markCarouselTextOverlayReprintStarted(db, jobId, { slideIndices });
 
@@ -1456,6 +1521,14 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       ...(textBackingColor?.trim() ? { textBackingColor: textBackingColor.trim() } : {}),
       ...(logoOverlay?.url?.trim()
         ? { logoOverlay: { url: logoOverlay.url.trim(), position: logoOverlay.position?.trim() || "br" } }
+        : {}),
+      ...(frameOverlay?.url?.trim()
+        ? {
+            frameOverlay: {
+              url: frameOverlay.url.trim(),
+              ...(frameOverlay.asset_id?.trim() ? { asset_id: frameOverlay.asset_id.trim() } : {}),
+            },
+          }
         : {}),
     })
       .then(() => {
@@ -1519,6 +1592,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,
       body.data.logo_overlay,
+      body.data.frame_overlay,
+      body.data.slide_copy_overrides,
       request.log
     );
     if (!result.ok) {
@@ -1549,6 +1624,8 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
         ? (parseMimicDocAiLayerPositionsBySlide(body.data.docai_layer_positions) ?? undefined)
         : undefined,
       body.data.logo_overlay,
+      body.data.frame_overlay,
+      body.data.slide_copy_overrides,
       request.log
     );
     if (!result.ok) {

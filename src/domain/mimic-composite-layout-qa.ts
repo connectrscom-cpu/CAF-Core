@@ -177,8 +177,8 @@ export function detectBoxCollisions(boxes: LayoutQaBox[]): MimicLayoutFinding[] 
       if (boxesOverlap(a, b, OVERLAP_GAP_PX)) {
         findings.push({
           check: "collision",
-          severity: "warning",
-          blocking: false,
+          severity: "blocking",
+          blocking: true,
           layer_key: b.layer_key,
           message: `Text box overlaps "${a.role}" (${a.layer_key.slice(0, 24)})`,
         });

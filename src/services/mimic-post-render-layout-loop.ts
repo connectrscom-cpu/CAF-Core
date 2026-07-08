@@ -238,7 +238,7 @@ async function applyPatchesAndReprint(
 
 /**
  * Post-composite layout QA with auto-reprint loop.
- * Default: improve publish readiness (reprint + flags), never BLOCK — jobs always reach Review.
+ * Hard failures (overlap, clipped boxes) block Review by default after reprint attempts.
  */
 export async function runMimicPostRenderLayoutLoop(
   db: Pool,

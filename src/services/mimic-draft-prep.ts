@@ -16,7 +16,8 @@ import {
 import { isWhyMimicCarouselFlow } from "../domain/why-mimic-carousel-flow-types.js";
 import { parseBrandProfile, type BrandProfileV1 } from "../domain/brand-profile.js";
 import { buildBrandExecutionBrief } from "../domain/brand-translation.js";
-import { parseBvsFromPayload, brandProfileFromBvsSnapshot, resolveBvsForEnabledJob } from "../domain/bvs-v1.js";
+import { parseBvsFromPayload, brandProfileFromBvsSnapshot, resolveBvsForEnabledJob, resolveBvsSnapshotForProject, buildBvsSlice } from "../domain/bvs-v1.js";
+import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
 import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
 import {
@@ -229,7 +230,13 @@ async function resolveMimicPayloadForJob(
   let brandProfile: BrandProfileV1 | null = brandProfileRow
     ? parseBrandProfile(brandProfileRow.profile_json)
     : null;
-  const bvs = await resolveBvsForEnabledJob(db, job.project_id, job.generation_payload);
+  let bvs = await resolveBvsForEnabledJob(db, job.project_id, job.generation_payload);
+  if (isVisualFirstCarouselFlow(job.flow_type) && !bvs?.enabled) {
+    const resolved = await resolveBvsSnapshotForProject(db, job.project_id);
+    if (resolved) {
+      bvs = buildBvsSlice(true, resolved.version, resolved.snapshot);
+    }
+  }
   if (bvs?.enabled && bvs.bible_snapshot) {
     const merged = brandProfileFromBvsSnapshot(bvs.bible_snapshot, null);
     brandProfile = merged ? parseBrandProfile(merged) : brandProfile;
@@ -476,6 +483,11 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
   const mimic = pickMimicPayload(gp);
   if (!mimic || mimic.mode !== "template_bg") {
     return { prepared: false };
+  }
+
+  // Why Mimic template_bg: plates are generated after copy (SIL + flux prompts + BVS) — same as full-bleed.
+  if (isWhyMimicExecution(job.flow_type, mimic)) {
+    return { prepared: false, skipped: true };
   }
 
   const ctx = asRecord(gp.mimic_render_context);

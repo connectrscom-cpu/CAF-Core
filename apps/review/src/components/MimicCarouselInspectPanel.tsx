@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MimicImageAudit, MimicModeOverrideValue } from "@/lib/caf-core-client";
+import { auditForSlide } from "@/lib/mimic-image-audit";
 
 function asRec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -28,16 +29,6 @@ function pickCarouselTemplateName(generationPayload: Record<string, unknown>): s
     gp.template;
   const s = typeof v === "string" ? v.trim() : "";
   return s ? s.replace(/\.hbs$/i, "") : "";
-}
-
-function auditForSlide(audits: MimicImageAudit[], slideIndex: number): MimicImageAudit | null {
-  const genStep = `mimic_slide_gen_${slideIndex}`;
-  const bgStep = slideIndex === 1 ? "mimic_bg_extract" : `mimic_bg_extract_${slideIndex}`;
-  return (
-    audits.find((a) => a.step === genStep) ??
-    audits.find((a) => a.step === bgStep) ??
-    null
-  );
 }
 
 export interface MimicCarouselInspectPanelProps {

@@ -18,7 +18,8 @@ const profile = parseBrandProfile({
 
 const bundle = deriveSlideIntelligenceFromAnalysis({
   aesthetic: {
-    why_it_worked: "Aspirational exclusivity drives saves.",
+    why_it_worked:
+      "Aspirational exclusivity drives saves because viewers project themselves into the symbol and share when the metaphor matches their identity. The deck wins on self-selection: each slide pairs a recognizable status cue with a brand-safe aspiration so the audience bookmarks the carousel for later reference and tags friends who fit the archetype.",
     slides: [
       {
         slide_index: 1,

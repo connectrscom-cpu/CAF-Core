@@ -6,9 +6,13 @@ import {
   listBrandAssets,
   type MimicDocAiLayerPositionRow,
 } from "@/lib/caf-core-client";
-import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects } from "@/lib/env";
+import { PROJECT_SLUG, reviewQueueFallbackSlug, reviewUsesAllProjects, CAF_CORE_URL } from "@/lib/env";
 import { isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
-import { resolveBrandLogoReprintUrl } from "@/lib/brand-asset-url";
+import {
+  assetIdFromBrandProxyUrl,
+  resolveBrandFrameReprintUrl,
+  resolveBrandLogoReprintUrl,
+} from "@/lib/brand-asset-url";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +69,23 @@ export async function POST(request: NextRequest) {
         ? (rawDocAi as Record<string, MimicDocAiLayerPositionRow[]>)
         : undefined;
 
+    const rawSlideCopy = body?.slide_copy_overrides;
+    const slideCopyOverrides = Array.isArray(rawSlideCopy)
+      ? rawSlideCopy
+          .map((row: unknown) => {
+            const rec = row && typeof row === "object" && !Array.isArray(row) ? (row as Record<string, unknown>) : null;
+            if (!rec) return null;
+            const slide_index = Math.floor(Number(rec.slide_index));
+            const llm_slide =
+              rec.llm_slide && typeof rec.llm_slide === "object" && !Array.isArray(rec.llm_slide)
+                ? (rec.llm_slide as Record<string, unknown>)
+                : null;
+            if (!Number.isFinite(slide_index) || slide_index < 1 || !llm_slide) return null;
+            return { slide_index, llm_slide };
+          })
+          .filter(Boolean) as Array<{ slide_index: number; llm_slide: Record<string, unknown> }>
+      : undefined;
+
     const rawLogo = body?.logo_overlay;
     let logoUrl =
       rawLogo && typeof rawLogo === "object" && !Array.isArray(rawLogo) && typeof rawLogo.url === "string"
@@ -72,11 +93,38 @@ export async function POST(request: NextRequest) {
         : "";
     if (logoUrl.startsWith("/api/project-config/brand-assets/proxy")) {
       const assets = await listBrandAssets(slug);
-      logoUrl = resolveBrandLogoReprintUrl(assets?.brand_assets ?? []);
+      const pool = assets?.brand_assets ?? [];
+      const proxyId = assetIdFromBrandProxyUrl(logoUrl);
+      logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
+      if (!logoUrl && proxyId) {
+        const hit = pool.find((a) => a.id === proxyId);
+        if (hit) logoUrl = resolveBrandLogoReprintUrl(slug, [hit], CAF_CORE_URL);
+      }
+    } else if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
+      const assets = await listBrandAssets(slug);
+      logoUrl = resolveBrandLogoReprintUrl(slug, assets?.brand_assets ?? [], CAF_CORE_URL);
     }
     const logoOverlay = logoUrl
       ? { url: logoUrl, position: typeof rawLogo.position === "string" ? rawLogo.position.trim() : "br" }
       : undefined;
+
+    const rawFrame = body?.frame_overlay;
+    let frameUrl =
+      rawFrame && typeof rawFrame === "object" && !Array.isArray(rawFrame) && typeof rawFrame.url === "string"
+        ? rawFrame.url.trim()
+        : "";
+    const frameAssetId =
+      rawFrame && typeof rawFrame === "object" && !Array.isArray(rawFrame) && typeof rawFrame.asset_id === "string"
+        ? rawFrame.asset_id.trim()
+        : "";
+    if (!frameUrl || frameUrl.startsWith("/api/project-config/brand-assets/proxy")) {
+      const assets = await listBrandAssets(slug);
+      const pool = assets?.brand_assets ?? [];
+      if (frameAssetId) {
+        frameUrl = resolveBrandFrameReprintUrl(slug, pool, frameAssetId, CAF_CORE_URL);
+      }
+    }
+    const frameOverlay = frameUrl ? { url: frameUrl, ...(frameAssetId ? { asset_id: frameAssetId } : {}) } : undefined;
 
     const result = await reprintMimicTextOverlay(slug, tid, {
       slideIndices,
@@ -84,7 +132,9 @@ export async function POST(request: NextRequest) {
       textBacking,
       textBackingColor,
       docaiLayerPositions,
+      slideCopyOverrides,
       logoOverlay,
+      frameOverlay,
     });
     if (!result.ok) {
       const status = result.error === "job_not_found" ? 404 : 400;

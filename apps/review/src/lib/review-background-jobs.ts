@@ -1,4 +1,8 @@
-import { taskApiQuery } from "@/lib/task-links";
+import { buildReviewBackgroundJobDetail, type ReviewBackgroundJobDetail } from "@/lib/review-background-job-detail";
+import { taskApiQuery, LONG_TASK_ID_PATH_THRESHOLD } from "@/lib/task-links";
+import { resolveTextOverlayReprintUiState } from "@/lib/text-overlay-reprint-status";
+
+export type { ReviewBackgroundJobDetail } from "@/lib/review-background-job-detail";
 
 export type ReviewBackgroundJobKind = "text_reprint" | "image_regenerate";
 
@@ -16,6 +20,8 @@ export type ReviewBackgroundJob = {
   message?: string;
   /** Carousel asset public_url by position (0-based) at job start — image regen only. */
   baselineAssetUrls?: Record<number, string>;
+  /** Live status from the poller — shown when the toast is expanded. */
+  detail?: ReviewBackgroundJobDetail;
 };
 
 const STORAGE_KEY = "caf-review-background-jobs";
@@ -153,6 +159,15 @@ export async function registerReviewBackgroundJob(input: {
   return job;
 }
 
+function patchReviewBackgroundJob(id: string, patch: Partial<ReviewBackgroundJob>): void {
+  const jobs = loadReviewBackgroundJobs();
+  const idx = jobs.findIndex((job) => job.id === id);
+  if (idx < 0) return;
+  jobs[idx] = { ...jobs[idx]!, ...patch };
+  saveReviewBackgroundJobs(jobs);
+  notifyJobsChanged();
+}
+
 function finishJob(id: string, status: ReviewBackgroundJobStatus, message: string): void {
   const jobs = loadReviewBackgroundJobs();
   const idx = jobs.findIndex((job) => job.id === id);
@@ -164,16 +179,98 @@ function finishJob(id: string, status: ReviewBackgroundJobStatus, message: strin
   if (status === "done") notifyJobCompleted(job);
 }
 
-function parseTaskReprintState(data: Record<string, string | undefined>) {
-  const status = (data.text_overlay_reprint_status ?? "").trim().toLowerCase() || null;
+export type TextReprintPollState = {
+  active: boolean;
+  failed: boolean;
+  status: string | null;
+  error: string | null;
+  requested_at: string | null;
+  completed_at: string | null;
+  slide_indices: string | null;
+  slide_index: number | null;
+  slide_total: number | null;
+};
+
+function parseTextReprintSlideProgress(renderState: unknown): { slide_index: number; slide_total: number } | null {
+  const rs =
+    renderState && typeof renderState === "object" && !Array.isArray(renderState)
+      ? (renderState as Record<string, unknown>)
+      : null;
+  if (!rs) return null;
+  const slide_total = Math.floor(Number(rs.slide_total));
+  const slide_index = Math.floor(Number(rs.slide_index));
+  if (!Number.isFinite(slide_total) || slide_total < 1) return null;
+  if (!Number.isFinite(slide_index) || slide_index < 1) return null;
+  return { slide_index, slide_total };
+}
+
+function parseTaskReprintState(
+  data: Record<string, string | undefined>,
+  renderState?: unknown
+): TextReprintPollState {
+  const resolved = resolveTextOverlayReprintUiState(renderState, data);
+  const slideProgress = parseTextReprintSlideProgress(renderState);
+  const status = (resolved.status ?? data.text_overlay_reprint_status ?? "").trim().toLowerCase() || null;
+  const active =
+    resolved.active ||
+    data.text_overlay_reprint_active === "true" ||
+    (status === "pending" && Boolean(resolved.requested_at || slideProgress));
   return {
-    active: data.text_overlay_reprint_active === "true",
-    failed: data.text_overlay_reprint_active === "failed" || status === "failed",
+    active,
+    failed: resolved.failed || data.text_overlay_reprint_active === "failed" || status === "failed",
     status,
-    error: data.text_overlay_reprint_error ?? null,
-    requested_at: data.text_overlay_reprint_requested_at ?? null,
-    completed_at: data.text_overlay_reprint_completed_at ?? null,
+    error: resolved.error ?? data.text_overlay_reprint_error ?? null,
+    requested_at: resolved.requested_at ?? data.text_overlay_reprint_requested_at ?? null,
+    completed_at: resolved.completed_at ?? data.text_overlay_reprint_completed_at ?? null,
+    slide_indices: resolved.slide_indices ?? data.text_overlay_reprint_slides ?? null,
+    slide_index: slideProgress?.slide_index ?? null,
+    slide_total: slideProgress?.slide_total ?? null,
   };
+}
+
+function parseTaskRegenState(data: Record<string, string | undefined>) {
+  const status = (data.carousel_regenerate_status ?? "").trim().toLowerCase() || null;
+  return {
+    active: data.carousel_regenerate_active === "true",
+    failed: data.carousel_regenerate_active === "failed" || status === "failed",
+    status,
+    error: data.carousel_regenerate_error ?? null,
+    done: Number(data.carousel_regenerate_done ?? 0),
+    total: Number(data.carousel_regenerate_total ?? 0),
+  };
+}
+
+async function fetchTaskAssetsForJob(
+  taskId: string,
+  project: string,
+  slideIndices?: number[]
+): Promise<Record<number, string>> {
+  const qs = taskApiQuery(taskId, project);
+  const res = await fetch(`/api/task/assets?${qs}`, { cache: "no-store" });
+  if (!res.ok) return {};
+  const json = (await res.json()) as {
+    assets?: Array<{ asset_type?: string | null; public_url?: string | null; position: number }>;
+  };
+  return assetUrlsForSlides(json.assets ?? [], slideIndices);
+}
+
+function applyJobDetail(
+  job: ReviewBackgroundJob,
+  input: {
+    reprintState?: TextReprintPollState | null;
+    regenState?: ReturnType<typeof parseTaskRegenState> | null;
+    currentAssetUrls?: Record<number, string>;
+  }
+): void {
+  const detail = buildReviewBackgroundJobDetail({
+    job,
+    reprintState: input.reprintState ?? null,
+    regenState: input.regenState ?? null,
+    currentAssetUrls: input.currentAssetUrls ?? {},
+  });
+  const message =
+    job.status === "pending" && detail.progressLabel ? detail.progressLabel : job.message;
+  patchReviewBackgroundJob(job.id, { detail, ...(message ? { message } : {}) });
 }
 
 function reprintRequestedAfterJobStart(requestedAt: string | null, startedMs: number): boolean {
@@ -184,7 +281,7 @@ function reprintRequestedAfterJobStart(requestedAt: string | null, startedMs: nu
 
 function textReprintLooksComplete(
   job: ReviewBackgroundJob,
-  state: ReturnType<typeof parseTaskReprintState>,
+  state: TextReprintPollState,
   startedMs: number
 ): boolean {
   if (state.failed) return false;
@@ -264,12 +361,24 @@ async function pollReviewBackgroundJob(job: ReviewBackgroundJob): Promise<void> 
   }
 
   const qs = taskApiQuery(job.taskId, job.project);
+  const taskPath =
+    job.taskId.length >= LONG_TASK_ID_PATH_THRESHOLD
+      ? `/api/task?${qs}&include_job=1`
+      : `/api/task/${encodeURIComponent(job.taskId)}?${qs}&include_job=1`;
+
+  const taskRes = await fetch(taskPath, { cache: "no-store" });
+  if (!taskRes.ok) return;
+  const taskJson = (await taskRes.json()) as {
+    data?: Record<string, string | undefined>;
+    job?: { render_state?: unknown };
+  };
+  const taskData = taskJson.data ?? {};
+  const renderState = taskJson.job?.render_state;
+  const currentAssets = await fetchTaskAssetsForJob(job.taskId, job.project, job.slideIndices);
 
   if (job.kind === "text_reprint") {
-    const res = await fetch(`/api/task?${qs}`, { cache: "no-store" });
-    if (!res.ok) return;
-    const json = (await res.json()) as { data?: Record<string, string | undefined> };
-    const state = parseTaskReprintState(json.data ?? {});
+    const state = parseTaskReprintState(taskData, renderState);
+    applyJobDetail(job, { reprintState: state, currentAssetUrls: currentAssets });
     if (state.failed) {
       finishJob(job.id, "failed", state.error ?? "Text reprint failed.");
       return;
@@ -280,35 +389,23 @@ async function pollReviewBackgroundJob(job: ReviewBackgroundJob): Promise<void> 
     return;
   }
 
-  const taskRes = await fetch(`/api/task?${qs}`, { cache: "no-store" });
-  if (taskRes.ok) {
-    const taskJson = (await taskRes.json()) as { data?: Record<string, string | undefined> };
-    const d = taskJson.data ?? {};
-    if (d.carousel_regenerate_active === "failed") {
-      finishJob(job.id, "failed", d.carousel_regenerate_error ?? "Image regenerate failed.");
-      return;
-    }
-    if (d.carousel_regenerate_active === "true") {
-      const done = Number(d.carousel_regenerate_done ?? 0);
-      const total = Number(d.carousel_regenerate_total ?? 0);
-      if (total > 0 && done >= total) {
-        finishJob(job.id, "done", `${job.label} finished — ${done}/${total} slides updated.`);
-        return;
-      }
-    }
-    if (d.carousel_regenerate_status === "completed") {
-      finishJob(job.id, "done", `${job.label} finished — new images are ready.`);
-      return;
-    }
+  const regenState = parseTaskRegenState(taskData);
+  applyJobDetail(job, { regenState, currentAssetUrls: currentAssets });
+
+  if (regenState.failed) {
+    finishJob(job.id, "failed", regenState.error ?? "Image regenerate failed.");
+    return;
+  }
+  if (regenState.active && regenState.total > 0 && regenState.done >= regenState.total) {
+    finishJob(job.id, "done", `${job.label} finished — ${regenState.done}/${regenState.total} slides updated.`);
+    return;
+  }
+  if (regenState.status === "completed") {
+    finishJob(job.id, "done", `${job.label} finished — new images are ready.`);
+    return;
   }
 
-  const res = await fetch(`/api/task/assets?${qs}`, { cache: "no-store" });
-  if (!res.ok) return;
-  const json = (await res.json()) as {
-    assets?: Array<{ asset_type?: string | null; public_url?: string | null; position: number }>;
-  };
-  const current = assetUrlsForSlides(json.assets ?? [], job.slideIndices);
-  if (imageRegenLooksComplete(job, current)) {
+  if (imageRegenLooksComplete(job, currentAssets)) {
     finishJob(job.id, "done", `${job.label} finished — new images are ready.`);
   }
 }

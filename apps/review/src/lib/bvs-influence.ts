@@ -25,6 +25,14 @@ export type BvsSnapshot = {
     original_policy: string | null;
   };
   resolved_assets: BvsResolvedAsset[];
+  flux_prompt_asset_ids: string[];
+  heygen_presenters: Array<{
+    label: string | null;
+    avatar_id: string;
+    voice_id: string | null;
+    avatar_name: string | null;
+    voice_name: string | null;
+  }>;
 };
 
 export type BvsInfluenceContext = {
@@ -68,6 +76,23 @@ export function parseBvsSnapshot(raw: unknown): BvsSnapshot | null {
     }
   }
 
+  const heygen_presenters: BvsSnapshot["heygen_presenters"] = [];
+  if (Array.isArray(rec.heygen_presenters)) {
+    for (const row of rec.heygen_presenters) {
+      const r = asRec(row);
+      if (!r) continue;
+      const avatar_id = String(r.avatar_id ?? "").trim();
+      if (!avatar_id) continue;
+      heygen_presenters.push({
+        label: str(r.label),
+        avatar_id,
+        voice_id: str(r.voice_id),
+        avatar_name: str(r.avatar_name),
+        voice_name: str(r.voice_name),
+      });
+    }
+  }
+
   return {
     visual_mode: str(rec.visual_mode),
     visual_mode_custom: str(rec.visual_mode_custom),
@@ -81,6 +106,8 @@ export function parseBvsSnapshot(raw: unknown): BvsSnapshot | null {
       original_policy: str(guide.original_policy),
     },
     resolved_assets: resolved,
+    flux_prompt_asset_ids: strList(rec.flux_prompt_asset_ids).slice(0, 7),
+    heygen_presenters,
   };
 }
 
@@ -117,6 +144,20 @@ export function roleLabel(role: string): string {
 export function bvsPromptWasApplied(prompt: string | null | undefined): boolean {
   if (!prompt) return false;
   return /Brand Visual System \(BVS\)/i.test(prompt);
+}
+
+/** Resolve explicitly selected Flux prompt assets from a frozen bible snapshot. */
+export function resolveFluxPromptAssetsFromSnapshot(snapshot: BvsSnapshot | null): BvsResolvedAsset[] {
+  if (!snapshot) return [];
+  const ids = snapshot.flux_prompt_asset_ids ?? [];
+  if (ids.length === 0) return [];
+  const byId = new Map(snapshot.resolved_assets.map((a) => [a.asset_id, a]));
+  const out: BvsResolvedAsset[] = [];
+  for (const id of ids) {
+    const row = byId.get(id);
+    if (row && row.role !== "anti_reference") out.push(row);
+  }
+  return out;
 }
 
 export type BvsInfluenceSection = {
@@ -176,10 +217,29 @@ export function buildBvsInfluenceSections(
       bibleLines.push(`Mimic policy: ${snap.application_guide.mimic_policy}`);
     }
     const withRoles = snap.resolved_assets.filter((a) => a.public_url || a.label);
-    if (withRoles.length) {
+    const fluxSelected = resolveFluxPromptAssetsFromSnapshot(snap);
+    if (fluxSelected.length > 0) {
+      bibleLines.push(
+        `Flux prompt references (${fluxSelected.length} selected): ${fluxSelected
+          .map((a, i) => {
+            const label = a.label ? ` — ${a.label}` : "";
+            const notes = a.usage_notes ? ` (${a.usage_notes.slice(0, 60)}${a.usage_notes.length > 60 ? "…" : ""})` : "";
+            return `${i + 1}. ${roleLabel(a.role)}${label}${notes}`;
+          })
+          .join("; ")}`
+      );
+    } else if (withRoles.length) {
       bibleLines.push(
         `Moodboard roles (${withRoles.length}): ${withRoles
           .map((a) => `${roleLabel(a.role)}${a.label ? ` — ${a.label}` : ""}`)
+          .join("; ")}`
+      );
+    }
+    if (snap.heygen_presenters.length) {
+      bibleLines.push(
+        `Video presenters: ${snap.heygen_presenters
+          .map((p) => p.label ?? p.avatar_name ?? p.avatar_id)
+          .filter(Boolean)
           .join("; ")}`
       );
     }
@@ -199,6 +259,9 @@ export function buildBvsInfluenceSections(
 
   const visualLines = [
     "Slide backgrounds are regenerated with Flux. When BVS is on, the image prompt includes your palette, motifs, and mimic policy — not the competitor’s pixels.",
+    snap && resolveFluxPromptAssetsFromSnapshot(snap).length > 0
+      ? "Per-asset Flux references from your brand bible are described line-by-line in the prompt (labels + usage notes)."
+      : "Assign Flux prompt references on Profile → Brand Visual System → Brand assets to inject specific moodboard cues into image prompts.",
     "Carousel theming can pull colors from your bible palette for template slides and typography accents.",
   ];
   if (opts?.imagePromptApplied) {

@@ -9,6 +9,8 @@
  */
 import { useMemo, useState } from "react";
 import {
+  compressNarrativeSpine,
+  describeDeckSeriesPattern,
   enrichSlideIntelligenceBundle,
   parseSlideIntelligenceBundle,
   resolveSlideIntelligenceForOutputSlide,
@@ -20,6 +22,7 @@ import {
   isSlideIntelligenceStrategicThesisSufficient,
   isSlideIntelligenceVisualDescriptionSubstantive,
   isSlideIntelligenceWhyItWorksSubstantive,
+  isSynthesizedSilWhyItWorks,
 } from "@caf-core-carousel/mimic-slide-analysis-quality";
 
 function confidenceLabel(c: number): string {
@@ -114,6 +117,15 @@ export function MimicSlideWhyPanel({
   );
 
   const deckThesis = bundle?.why_analysis?.strategic_thesis ?? null;
+  const deckSeriesPattern = bundle ? describeDeckSeriesPattern(bundle.slides) : null;
+  const compressedSpine =
+    bundle?.why_analysis?.narrative_spine?.length
+      ? compressNarrativeSpine(bundle.why_analysis.narrative_spine)
+      : null;
+  const arcPosition =
+    slide && bundle
+      ? `${slide.slide_role ?? "?"} · beat ${slideIndex}/${bundle.slides.length}`
+      : null;
   const whyQuality = slide
     ? fieldQualityLabel(
         isSlideIntelligenceWhyItWorksSubstantive(slide.why_it_works, { strategicThesis: deckThesis }),
@@ -255,6 +267,7 @@ export function MimicSlideWhyPanel({
           </div>
           {slide ? (
             <>
+              {arcPosition ? <Field label="Arc position" value={arcPosition} /> : null}
               <Field label="Role" value={slide.slide_role} />
               <Field label="Narrative job" value={slide.narrative_function} />
               <Field label="Emotion" value={slide.emotion} />
@@ -294,9 +307,10 @@ export function MimicSlideWhyPanel({
           )}
 
           {why ? (
-            <details style={{ marginTop: 6 }}>
+            <details style={{ marginTop: 6 }} open={isSynthesizedSilWhyItWorks(slide?.why_it_works)}>
               <summary style={{ fontSize: 11, opacity: 0.65, cursor: "pointer" }}>Deck strategy</summary>
               <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 4 }}>
+                {deckSeriesPattern ? <Field label="Series pattern" value={deckSeriesPattern} /> : null}
                 <Field
                   label="Strategic intent"
                   value={why.strategic_thesis}
@@ -306,11 +320,15 @@ export function MimicSlideWhyPanel({
                       : null
                   }
                 />
+                {why.arc_summary ? <Field label="Deck arc" value={why.arc_summary} /> : null}
                 <Field label="Dominant" value={why.dominant_mechanism} />
-                <Field
-                  label="Narrative spine"
-                  value={why.narrative_spine.length ? why.narrative_spine.join(" → ") : null}
-                />
+                <Field label="Narrative spine" value={compressedSpine} />
+                {!why.strategic_thesis && !deckSeriesPattern ? (
+                  <div style={{ fontSize: 11, opacity: 0.62, lineHeight: 1.35 }}>
+                    Deck strategy is thin — upstream analysis did not capture a clear series thesis. Use reference
+                    on-screen text and arc position above to judge whether this beat still matches the reference job.
+                  </div>
+                ) : null}
               </div>
             </details>
           ) : null}

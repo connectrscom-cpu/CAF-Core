@@ -3,16 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   isMimicDocAiHandleLayer,
+  MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX,
+  MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX,
   MIMIC_DOCAI_HANDLE_FONT_SIZE_PX,
 } from "@caf-core-carousel/mimic-slide-typography";
 import {
   clampMimicDocAiInitialEditorFontPx,
   refKeyFromLayerPositionKey,
 } from "@caf-core-carousel/mimic-docai-layer-positions";
+import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
+import { resolveTemplateBgHandleDisplayText } from "@/lib/mimic-template-bg";
 
 const CANVAS_W = 1080;
 const CANVAS_H = 1350;
-const DEFAULT_FONT_PX = 50;
+const DEFAULT_HEADLINE_FONT_PX = MIMIC_DOCAI_DEFAULT_HEADLINE_FONT_SIZE_PX;
+const DEFAULT_BODY_FONT_PX = MIMIC_DOCAI_DEFAULT_BODY_FONT_SIZE_PX;
 const MIN_FONT_PX = 32;
 const MAX_FONT_PX = 120;
 const MIN_BOX_W = 48;
@@ -31,6 +36,11 @@ function ocrRoleForLayer(layer: DocAiLayerBox): string {
   return (layer.role ?? "").trim().toLowerCase();
 }
 
+function isPlaceholderEditorCopy(text: string | null | undefined): boolean {
+  const t = text?.trim() ?? "";
+  return !t || t === "New text";
+}
+
 /** On-slide copy for editor sizing — template_bg drafts omit text; fall back to inspect/field layer. */
 function resolveEditorLayerText(
   layer: DocAiLayerBox | undefined,
@@ -38,8 +48,13 @@ function resolveEditorLayerText(
   templateBgMode: boolean,
   projectHandle: string
 ): string {
+  if (templateBgMode && layer && ocrRoleForLayer(layer) === "handle") {
+    const fromSaved = row?.text?.trim() ?? "";
+    const fromInspect = layer.text?.trim() ?? "";
+    return resolveTemplateBgHandleDisplayText(fromSaved, fromInspect, projectHandle);
+  }
   // Never trim row.text here — controlled inputs need trailing spaces while typing.
-  if (row?.text != null) return row.text;
+  if (row?.text != null && !isPlaceholderEditorCopy(row.text)) return row.text;
   if (templateBgMode && layer) {
     return templateBgLayerSeedText(layer, row, projectHandle);
   }
@@ -56,7 +71,7 @@ function templateBgLayerSeedText(
   const fromSaved = savedRow?.text?.trim() ?? "";
   const fromInspect = layer.text?.trim() ?? "";
   if (ocrRole === "handle") {
-    return fromInspect || fromSaved || projectHandle.trim() || fromInspect;
+    return resolveTemplateBgHandleDisplayText(fromSaved, fromInspect, projectHandle);
   }
   if (ocrRole === "body" || ocrRole === "subtitle" || ocrRole === "caption") {
     if (fromSaved && !looksLikeHandleText(fromSaved)) return fromSaved;
@@ -123,7 +138,7 @@ export function openHighlightBoxForText(
   yPx: number,
   opts?: { fixedWidthPx?: number }
 ): { w_px: number; h_px: number } {
-  const fontSize = Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(fontSizePx) || DEFAULT_FONT_PX));
+  const fontSize = Math.max(MIN_FONT_PX, Math.min(MAX_FONT_PX, Math.round(fontSizePx) || DEFAULT_BODY_FONT_PX));
   const paragraphs = String(text ?? "")
     .split("\n")
     .map((l) => l.trimEnd())
@@ -178,11 +193,12 @@ function effectiveBoxDimensions(
 }
 
 function defaultLayerFontPx(
-  layer: { role?: string; text?: string; font_size_px?: number },
+  layer: { role?: string; text?: string; font_size_px?: number } | undefined,
   savedFont: number | undefined,
   projectHandle?: string
 ): number {
   if (savedFont != null && savedFont > 0) return savedFont;
+  if (!layer) return DEFAULT_BODY_FONT_PX;
   const text = String(layer.text ?? "");
   if (isMimicDocAiHandleLayer(layer.role ?? null, text, projectHandle)) {
     return MIMIC_DOCAI_HANDLE_FONT_SIZE_PX;
@@ -190,7 +206,9 @@ function defaultLayerFontPx(
   if (layer.font_size_px != null && layer.font_size_px > 0) {
     return clampMimicDocAiInitialEditorFontPx(layer.font_size_px);
   }
-  return DEFAULT_FONT_PX;
+  const role = String(layer.role ?? "").toLowerCase();
+  if (role === "headline" || role === "title" || role === "cta") return DEFAULT_HEADLINE_FONT_PX;
+  return DEFAULT_BODY_FONT_PX;
 }
 
 function customBoxFromOverride(row: DocAiLayerOverride, projectHandle?: string): DocAiLayerBox {
@@ -310,6 +328,13 @@ type MimicDocAiLayerPositionEditorProps = {
   logoStampEnabled?: boolean;
   onLogoStampEnabledChange?: (enabled: boolean) => void;
   brandLogoPreviewUrl?: string;
+  /** When set, preview the brand slide frame on top of the canvas. */
+  frameOverlayUrl?: string;
+  frameStampEnabled?: boolean;
+  onFrameStampEnabledChange?: (enabled: boolean) => void;
+  brandFrames?: BrandSlideFrameOption[];
+  selectedFrameAssetId?: string;
+  onSelectedFrameAssetIdChange?: (assetId: string) => void;
   /** Total slides in the deck — enables apply-typography-to-all actions. */
   slideCount?: number;
   /** Apply current box typography to all headline or body boxes in the carousel. */
@@ -322,12 +347,17 @@ type MimicDocAiLayerPositionEditorProps = {
     role: "headline" | "body",
     placement: DocAiLayerPlacementStyle
   ) => Promise<MimicDeckApplyResult | void>;
+  /** Copy current slide headline + body placement and typography to every slide in one pass. */
+  onApplyAllLayoutToDeck?: () => Promise<MimicDeckApplyResult | void>;
+  /** Persist layout drafts for every slide in local editor state. */
+  onSaveAllSlides?: () => void | Promise<void>;
   /** True while a deck-wide typography/placement apply is saving. */
   deckApplyBusy?: boolean;
-  /** Save layout + reprint every slide with current highlight on/off and colour. */
+  saveAllBusy?: boolean;
+  /** Highlight/logo/frame toggles apply on the next reprint (no auto-reprint). */
   onApplyHighlightToAllSlides?: () => void;
-  /** Save layout + reprint every slide with current brand logo stamp on/off. */
   onApplyLogoStampToAllSlides?: () => void;
+  onApplyFrameStampToAllSlides?: () => void;
   overlayApplyBusy?: boolean;
   /** Parent bumped after cross-slide apply — merge into local overrides without full reseed. */
   draftSyncRevision?: number;
@@ -343,7 +373,8 @@ type DeckApplyActionId =
   | "typography-headline"
   | "typography-body"
   | "placement-headline"
-  | "placement-body";
+  | "placement-body"
+  | "all-layout";
 
 type MoveDrag = {
   key: string;
@@ -426,6 +457,51 @@ function layerStyleFromRow(
   const font_family = row?.font_family ?? layer.font_family ?? "";
   const font_style_italic = row?.font_style_italic ?? layer.font_style_italic ?? false;
   return { font_size_px, font_weight, color_hex, font_family, font_style_italic };
+}
+
+function seedOverrideForLayer(
+  layer: DocAiLayerBox,
+  savedRow: DocAiLayerOverride | undefined,
+  templateBgMode: boolean,
+  projectHandle?: string
+): DocAiLayerOverride {
+  const key = layer.layer_key;
+  const text = templateBgMode
+    ? templateBgLayerSeedText(layer, savedRow, projectHandle ?? "")
+    : (savedRow?.text ?? layer.text);
+  const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
+  const x_px = savedRow?.x_px ?? layer.x_px;
+  const y_px = savedRow?.y_px ?? layer.y_px;
+  const seedSize = resolveSeedBoxSize(
+    layer,
+    savedRow,
+    text,
+    savedRow?.font_size_px ?? baseFont,
+    x_px,
+    y_px
+  );
+  const style = layerStyleFromRow(layer, savedRow, projectHandle);
+  const keepSavedBox =
+    savedRow?.box_locked &&
+    savedRow.w_px != null &&
+    savedRow.w_px > 0 &&
+    savedRow.h_px != null &&
+    savedRow.h_px > 0;
+  return {
+    layer_key: key,
+    x_px,
+    y_px,
+    w_px: keepSavedBox ? savedRow!.w_px! : seedSize.w_px,
+    h_px: keepSavedBox ? savedRow!.h_px! : seedSize.h_px,
+    font_size_px: style.font_size_px,
+    font_weight: style.font_weight,
+    color_hex: style.color_hex,
+    ...(style.font_family ? { font_family: style.font_family } : {}),
+    ...(style.font_style_italic ? { font_style_italic: true } : {}),
+    text,
+    ...(savedRow?.hidden && !templateBgMode ? { hidden: true } : {}),
+    box_locked: savedRow?.box_locked ?? true,
+  };
 }
 
 function roleLabel(role: string, fullBleed?: boolean, blockIndex?: number): string {
@@ -555,12 +631,22 @@ export function MimicDocAiLayerPositionEditor({
   logoStampEnabled,
   onLogoStampEnabledChange,
   brandLogoPreviewUrl = "",
+  frameOverlayUrl = "",
+  frameStampEnabled,
+  onFrameStampEnabledChange,
+  brandFrames = [],
+  selectedFrameAssetId = "",
+  onSelectedFrameAssetIdChange,
   slideCount = 1,
   onApplyTypographyToRole,
   onApplyPlacementToRole,
+  onApplyAllLayoutToDeck,
+  onSaveAllSlides,
   onApplyHighlightToAllSlides,
   onApplyLogoStampToAllSlides,
+  onApplyFrameStampToAllSlides,
   deckApplyBusy = false,
+  saveAllBusy = false,
   overlayApplyBusy = false,
   draftSyncRevision = 0,
   inspectorFooter,
@@ -792,13 +878,6 @@ export function MimicDocAiLayerPositionEditor({
     const slideChanged = slideSeedRef.current.slideIndex !== slideIndex;
     const overridesChanged = slideSeedRef.current.overridesKey !== initialOverridesFingerprint;
     if (!slideChanged && !layerKeysChanged && !overridesChanged) return;
-    if (suppressReseed && !slideChanged) return;
-
-    slideSeedRef.current = {
-      slideIndex,
-      layerKeys: layerKeysFingerprint,
-      overridesKey: initialOverridesFingerprint,
-    };
 
     const savedByKey = new Map((initialOverrides ?? []).map((p) => [p.layer_key, p]));
     const savedByRefKey = new Map(
@@ -807,42 +886,44 @@ export function MimicDocAiLayerPositionEditor({
     const resolveSaved = (layerKey: string): DocAiLayerOverride | undefined =>
       savedByKey.get(layerKey) ?? savedByRefKey.get(refKeyFromLayerPositionKey(layerKey));
 
+    if (suppressReseed && !slideChanged) {
+      slideSeedRef.current = {
+        slideIndex,
+        layerKeys: layerKeysFingerprint,
+        overridesKey: initialOverridesFingerprint,
+      };
+      if (!layerKeysChanged) return;
+      // New OCR/synth slots appeared while the user is editing — wire overrides without
+      // clobbering existing box geometry (fixes headline linked from Slide copy with no row).
+      setOverrides((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const layer of layers) {
+          if (isCustomLayerKey(layer.layer_key)) continue;
+          const key = layer.layer_key;
+          if (next[key]) continue;
+          next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle);
+          changed = true;
+        }
+        if (!changed) return prev;
+        programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
+        return next;
+      });
+      return;
+    }
+
+    slideSeedRef.current = {
+      slideIndex,
+      layerKeys: layerKeysFingerprint,
+      overridesKey: initialOverridesFingerprint,
+    };
+
     const nextCustom: DocAiLayerBox[] = [];
     const next: Record<string, DocAiLayerOverride> = {};
     for (const layer of layers) {
       if (isCustomLayerKey(layer.layer_key)) continue;
       const key = layer.layer_key;
-      const savedRow = resolveSaved(key);
-      const text = templateBgMode
-        ? templateBgLayerSeedText(layer, savedRow, projectHandle)
-        : (savedRow?.text ?? layer.text);
-      const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
-      const x_px = savedRow?.x_px ?? layer.x_px;
-      const y_px = savedRow?.y_px ?? layer.y_px;
-      const seedSize = resolveSeedBoxSize(
-        layer,
-        savedRow,
-        text,
-        savedRow?.font_size_px ?? baseFont,
-        x_px,
-        y_px
-      );
-      const style = layerStyleFromRow(layer, savedRow, projectHandle);
-      next[key] = {
-        layer_key: key,
-        x_px,
-        y_px,
-        w_px: seedSize.w_px,
-        h_px: seedSize.h_px,
-        font_size_px: style.font_size_px,
-        font_weight: style.font_weight,
-        color_hex: style.color_hex,
-        ...(style.font_family ? { font_family: style.font_family } : {}),
-        ...(style.font_style_italic ? { font_style_italic: true } : {}),
-        text,
-        ...(savedRow?.hidden && !templateBgMode ? { hidden: true } : {}),
-        box_locked: true,
-      };
+      next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle);
     }
     for (const savedRow of initialOverrides ?? []) {
       if (!isCustomLayerKey(savedRow.layer_key) || savedRow.hidden) continue;
@@ -854,7 +935,7 @@ export function MimicDocAiLayerPositionEditor({
         text: savedRow.text ?? box.text,
         w_px: savedRow.w_px ?? box.w_px,
         h_px: savedRow.h_px ?? box.h_px,
-        font_size_px: savedRow.font_size_px ?? box.font_size_px ?? DEFAULT_FONT_PX,
+        font_size_px: savedRow.font_size_px ?? box.font_size_px ?? defaultLayerFontPx(box, undefined, projectHandle),
         box_locked: true,
       };
     }
@@ -984,8 +1065,14 @@ export function MimicDocAiLayerPositionEditor({
 
   const updateOverride = useCallback((key: string, patch: Partial<DocAiLayerOverride>) => {
     setOverrides((prev) => {
-      const row = prev[key];
-      if (!row) return prev;
+      let row = prev[key];
+      if (!row) {
+        const layer =
+          layersRef.current.find((l) => l.layer_key === key) ??
+          customLayersRef.current.find((l) => l.layer_key === key);
+        if (!layer) return prev;
+        row = seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle);
+      }
       const layer =
         layersRef.current.find((l) => l.layer_key === key) ??
         customLayersRef.current.find((l) => l.layer_key === key);
@@ -1082,7 +1169,6 @@ export function MimicDocAiLayerPositionEditor({
     setResizeDrag(null);
   }, [moveDrag, resizeDrag, updateOverride, overrides, pushUndoSnapshot]);
 
-  const selected = selectedKey ? overrides[selectedKey] : null;
   const displayLayers = useMemo(() => {
     const byKey = new Map<string, DocAiLayerBox>();
     const order: string[] = [];
@@ -1099,6 +1185,31 @@ export function MimicDocAiLayerPositionEditor({
     for (const layer of customLayers) add(layer);
     return order.map((key) => byKey.get(key)!);
   }, [layers, customLayers]);
+
+  const selected = useMemo((): DocAiLayerOverride | null => {
+    if (!selectedKey) return null;
+    const row = overrides[selectedKey];
+    if (row) return row;
+    const layer = displayLayers.find((l) => l.layer_key === selectedKey);
+    if (!layer) return null;
+    return seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle);
+  }, [selectedKey, overrides, displayLayers, templateBgMode, projectHandle]);
+
+  useEffect(() => {
+    if (!selectedKey || overrides[selectedKey]) return;
+    const layer = displayLayers.find((l) => l.layer_key === selectedKey);
+    if (!layer) return;
+    setOverrides((prev) => {
+      if (prev[selectedKey]) return prev;
+      const next = {
+        ...prev,
+        [selectedKey]: seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle),
+      };
+      programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
+      return next;
+    });
+  }, [selectedKey, overrides, displayLayers, templateBgMode, projectHandle]);
+
   const selectedLayer = selectedKey ? displayLayers.find((l) => l.layer_key === selectedKey) : null;
   const selectedLayerForPanel: DocAiLayerBox | null =
     selected && selectedKey
@@ -1117,6 +1228,17 @@ export function MimicDocAiLayerPositionEditor({
     () => displayLayers.filter((layer) => !overrides[layer.layer_key]?.hidden),
     [displayLayers, overrides]
   );
+  /** Headline/title boxes paint last so they stay clickable above large body boxes. */
+  const visibleLayersForCanvas = useMemo(() => {
+    const paintPriority = (layer: DocAiLayerBox): number => {
+      const row = overrides[layer.layer_key];
+      const role = inferDisplayRole(layer, row).toLowerCase();
+      if (role === "headline" || role === "title" || role === "hook" || role === "cta") return 2;
+      if (role === "handle") return 3;
+      return 1;
+    };
+    return [...visibleLayers].sort((a, b) => paintPriority(a) - paintPriority(b));
+  }, [visibleLayers, overrides]);
   const layerPaintOrder = useMemo(() => {
     const sorted = [...visibleLayers].sort((a, b) => {
       const rowA = overrides[a.layer_key];
@@ -1219,7 +1341,7 @@ export function MimicDocAiLayerPositionEditor({
     const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
     const open = openHighlightBoxForText(
       copyText,
-      row.font_size_px ?? DEFAULT_FONT_PX,
+      defaultLayerFontPx(layer, row.font_size_px, projectHandle),
       row.x_px,
       row.y_px
     );
@@ -1238,7 +1360,7 @@ export function MimicDocAiLayerPositionEditor({
         const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
         const open = openHighlightBoxForText(
           copyText,
-          row.font_size_px ?? DEFAULT_FONT_PX,
+          defaultLayerFontPx(layer, row.font_size_px, projectHandle),
           row.x_px,
           row.y_px
         );
@@ -1261,7 +1383,7 @@ export function MimicDocAiLayerPositionEditor({
     pushUndo();
     const key = newCustomLayerKey();
     const text = "New text";
-    const font_size_px = DEFAULT_FONT_PX;
+    const font_size_px = DEFAULT_BODY_FONT_PX;
     const x_px = Math.round(CANVAS_W * 0.2);
     const y_px = Math.round(CANVAS_H * 0.35);
     const open = openHighlightBoxForText(text, font_size_px, x_px, y_px);
@@ -1533,16 +1655,7 @@ export function MimicDocAiLayerPositionEditor({
                   No background plate for this slide — reprint or regenerate art-only image first.
                 </div>
               ) : null}
-              {logoOverlayUrl.trim() ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={logoOverlayUrl}
-                  alt="Brand logo preview"
-                  draggable={false}
-                  className="mimic-docai-editor__logo-preview"
-                />
-              ) : null}
-              {visibleLayers.map((layer) => {
+              {visibleLayersForCanvas.map((layer) => {
                 const key = layer.layer_key;
                 const row = overrides[key] ?? {
                   layer_key: key,
@@ -1571,6 +1684,13 @@ export function MimicDocAiLayerPositionEditor({
                 const paintIndex = layerPaintOrder.get(key) ?? 0;
                 const linkedBlock =
                   (layer.block_index ?? visibleLayers.findIndex((l) => l.layer_key === key)) === activeBlockIndex;
+                const displayRole = inferDisplayRole(layer, row).toLowerCase();
+                const headlineRole =
+                  displayRole === "headline" ||
+                  displayRole === "title" ||
+                  displayRole === "hook" ||
+                  displayRole === "cta";
+                const roleZBoost = headlineRole ? 8 : 0;
                 return (
                   <div
                     key={key}
@@ -1618,7 +1738,7 @@ export function MimicDocAiLayerPositionEditor({
                       overflow: "visible",
                       whiteSpace: "pre-wrap",
                       wordBreak: "break-word",
-                      zIndex: isSelected ? 20 : 3 + paintIndex,
+                      zIndex: isSelected ? 20 : 3 + paintIndex + roleZBoost,
                       boxShadow: isSelected ? "0 0 0 2px rgba(37,99,235,0.25)" : undefined,
                     }}
                   >
@@ -1666,6 +1786,24 @@ export function MimicDocAiLayerPositionEditor({
                   </div>
                 );
               })}
+              {frameOverlayUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={frameOverlayUrl}
+                  alt="Brand frame preview"
+                  draggable={false}
+                  className="mimic-docai-editor__frame-preview"
+                />
+              ) : null}
+              {logoOverlayUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={logoOverlayUrl}
+                  alt="Brand logo preview"
+                  draggable={false}
+                  className="mimic-docai-editor__logo-preview"
+                />
+              ) : null}
             </div>
             <div
               className="mimic-docai-editor__canvas-resize-handle"
@@ -1880,7 +2018,7 @@ export function MimicDocAiLayerPositionEditor({
               Select a text box on the preview to edit copy and style.
             </div>
           )}
-          {slideCount >= 1 && (onApplyTypographyToRole || onApplyPlacementToRole) ? (
+          {slideCount >= 1 && (onApplyTypographyToRole || onApplyPlacementToRole || onApplyAllLayoutToDeck) ? (
             <div className="mimic-docai-editor__deck-actions">
               <p className="mimic-docai-editor__deck-actions-title">Apply to all slides</p>
               {deckApplyFeedback ? (
@@ -1895,10 +2033,42 @@ export function MimicDocAiLayerPositionEditor({
                   {deckApplyFeedback.ok ? "✓" : "✕"} {deckApplyFeedback.message}
                 </p>
               ) : null}
-              {!selected ? (
+              {!selected && !onApplyAllLayoutToDeck ? (
                 <p className="mimic-docai-editor__deck-actions-hint">
                   Select a box first — its settings become the source.
                 </p>
+              ) : null}
+              {onApplyAllLayoutToDeck && slideCount > 1 ? (
+                <button
+                  type="button"
+                  className={`btn-primary btn-sm mimic-docai-editor__apply-all-btn${deckApplyFeedback?.id === "all-layout" ? (deckApplyFeedback.ok ? " mimic-docai-editor__apply-btn--done" : " mimic-docai-editor__apply-btn--error") : ""}`}
+                  disabled={deckApplyBusy || deckApplyingId != null}
+                  onClick={() => void runDeckApply("all-layout", () => onApplyAllLayoutToDeck())}
+                  title="Copy this slide's headline and body box size, position, font, and colour to every slide"
+                >
+                  {deckApplyingId === "all-layout"
+                    ? "Applying…"
+                    : deckApplyFeedback?.id === "all-layout" && deckApplyFeedback.ok
+                      ? "✓ Applied to all slides"
+                      : "Apply all layout to all slides"}
+                </button>
+              ) : null}
+              {onApplyAllLayoutToDeck && slideCount > 1 ? (
+                <p className="mimic-docai-editor__deck-actions-hint">
+                  Syncs position, font, and colour within this slide type only (cover / middle /
+                  CTA). Headline boxes auto-stretch per slide. Layout auto-saves — reprint when ready.
+                </p>
+              ) : null}
+              {onSaveAllSlides && slideCount > 1 ? (
+                <button
+                  type="button"
+                  className="btn-secondary btn-sm mimic-docai-editor__save-all-btn"
+                  disabled={deckApplyBusy || saveAllBusy || deckApplyingId != null}
+                  onClick={() => void onSaveAllSlides()}
+                  title="Persist layout for every edited slide (does not reprint images)"
+                >
+                  {saveAllBusy ? "Saving all…" : "Save all slides"}
+                </button>
               ) : null}
               {onApplyTypographyToRole ? (
                 <>
@@ -2038,7 +2208,44 @@ export function MimicDocAiLayerPositionEditor({
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={brandLogoPreviewUrl} alt="Brand logo" className="brand-logo-chip" />
               ) : null}
-              {slideCount > 1 && (onApplyHighlightToAllSlides || onApplyLogoStampToAllSlides) ? (
+              {brandFrames.length > 0 && onFrameStampEnabledChange ? (
+                <label className="mimic-layer-editor-panel__option">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(frameStampEnabled)}
+                    onChange={(e) => onFrameStampEnabledChange(e.target.checked)}
+                  />
+                  <span>Brand slide frame</span>
+                </label>
+              ) : null}
+              {frameStampEnabled && brandFrames.length > 1 && onSelectedFrameAssetIdChange ? (
+                <div className="brand-frame-picker" title="Pick a frame style">
+                  {brandFrames.map((frame) => {
+                    const active = frame.assetId === selectedFrameAssetId;
+                    return (
+                      <button
+                        key={frame.assetId}
+                        type="button"
+                        className={`brand-frame-picker__item${active ? " brand-frame-picker__item--active" : ""}`}
+                        title={frame.label}
+                        aria-label={frame.label}
+                        aria-pressed={active}
+                        onClick={() => onSelectedFrameAssetIdChange(frame.assetId)}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={frame.displayUrl} alt="" />
+                        <span>{frame.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {frameStampEnabled && brandFrames.length === 1 && brandFrames[0]?.displayUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={brandFrames[0].displayUrl} alt={brandFrames[0].label} className="brand-frame-chip" />
+              ) : null}
+              {slideCount > 1 &&
+              (onApplyHighlightToAllSlides || onApplyLogoStampToAllSlides || onApplyFrameStampToAllSlides) ? (
                 <div className="mimic-docai-editor__deck-actions mimic-docai-editor__deck-actions--overlay">
                   {onApplyHighlightToAllSlides ? (
                     <button
@@ -2060,8 +2267,18 @@ export function MimicDocAiLayerPositionEditor({
                       Brand logo → all slides
                     </button>
                   ) : null}
+                  {onApplyFrameStampToAllSlides ? (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-sm mimic-docai-editor__apply-typography-btn"
+                      disabled={overlayApplyBusy || brandFrames.length === 0}
+                      onClick={() => onApplyFrameStampToAllSlides()}
+                    >
+                      Brand frame → all slides
+                    </button>
+                  ) : null}
                   <p className="mimic-docai-editor__deck-actions-hint">
-                    Saves layout and reprints every slide using the highlight / logo settings above.
+                    These toggles apply on the next reprint — save layout first, check every slide, then reprint.
                   </p>
                 </div>
               ) : null}

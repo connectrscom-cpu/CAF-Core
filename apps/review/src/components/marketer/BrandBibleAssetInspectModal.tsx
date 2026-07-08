@@ -101,7 +101,7 @@ export function BrandBibleAssetInspectModal({
           <div className="brand-bible-inspect-meta">
             <h4>Roles in brand bible</h4>
             <p className="brand-bible-inspect-hint">
-              Tell CAF how to use this asset — style reference, character, motif, or what to avoid.
+              Tell CAF how to use this asset — mascot, slide frame, style reference, motif, or what to avoid.
             </p>
             {roles.length > 0 && (
               <ul className="brand-bible-inspect-roles">
