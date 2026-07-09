@@ -150,6 +150,7 @@ import { estimateCarouselSlideFlyUsd } from "./render-cost-estimate.js";
 import { flowKindForContentLog, insertRunContentOutcome } from "../repositories/run-content-outcomes.js";
 import { HeygenPollTimeoutError } from "./heygen-renderer.js";
 import { SoraPollTimeoutError } from "./sora-scene-clips.js";
+import { pickLayoutQcFromPayload } from "../domain/mimic-composite-layout-qa.js";
 import { runMimicPostRenderLayoutLoop } from "./mimic-post-render-layout-loop.js";
 import {
   markCarouselRegenerateFinished,
@@ -248,6 +249,26 @@ function isCarouselRenderingSafelyRetryable(j: JobRow): boolean {
 
 function isCarouselRenderingPipelineEligible(j: JobRow): boolean {
   return isCarouselRenderingSafelyRetryable(j) || isCarouselRenderStuckAfterComplete(j);
+}
+
+function isLayoutQcReviewBlock(gp: Record<string, unknown> | null | undefined): boolean {
+  const layout = pickLayoutQcFromPayload(gp);
+  return layout?.block_review === true;
+}
+
+/** Layout QA blocked review but carousel PNGs already exist — operator can open Review without re-billing Flux. */
+export function isCarouselLayoutBlockedWithCompleteRender(job: {
+  status: string;
+  flow_type: string;
+  render_state?: unknown;
+  generation_payload?: unknown;
+}): boolean {
+  if (String(job.status ?? "").toUpperCase() !== "BLOCKED") return false;
+  if (!isCarouselFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) return false;
+  if (!isCarouselRenderComplete(job.render_state)) return false;
+  return isLayoutQcReviewBlock(
+    (job.generation_payload ?? null) as Record<string, unknown> | null | undefined
+  );
 }
 
 type PreRenderStep =
@@ -1081,6 +1102,10 @@ export async function processJobByTaskId(
     return { status: job.status, skipped: true };
   }
 
+  if (isCarouselLayoutBlockedWithCompleteRender(job)) {
+    return unblockLayoutBlockedJobToReview(db, projectId, taskId);
+  }
+
   const run = await getRunByRunId(db, projectId, job.run_id);
   const pipeConfig = getPipelineConfig(config);
 
@@ -1240,6 +1265,8 @@ export async function prepareContentJobForFullRerun(
     [job.id]
   );
   const gp: Record<string, unknown> = { ...(snap?.generation_payload ?? {}) };
+  const wasLayoutBlocked =
+    String(job.status ?? "").toUpperCase() === "BLOCKED" && isLayoutQcReviewBlock(gp);
   const hadVersion =
     gp.generated_output != null || gp.draft_id != null || gp.qc_result != null;
   if (hadVersion) {
@@ -1252,6 +1279,12 @@ export async function prepareContentJobForFullRerun(
   }
   for (const k of FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS) {
     delete gp[k];
+  }
+  delete gp.layout_qc;
+  if (wasLayoutBlocked) {
+    gp.layout_qc_skip_auto_reprint = true;
+  } else {
+    delete gp.layout_qc_skip_auto_reprint;
   }
 
   await db.query(
@@ -1374,6 +1407,41 @@ export async function prepareContentJobForCaptionsOnlyRerun(
   });
 
   return { ok: true };
+}
+
+/**
+ * Move a layout-BLOCKED carousel (render already complete) into the human review queue without
+ * re-running Flux or the layout auto-reprint loop.
+ */
+export async function unblockLayoutBlockedJobToReview(
+  db: Pool,
+  projectId: string,
+  taskId: string
+): Promise<{ status: string }> {
+  const job = await qOne<JobRow & { render_state?: unknown }>(
+    db,
+    `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload, render_state, recommended_route
+     FROM caf_core.content_jobs WHERE project_id = $1 AND task_id = $2`,
+    [projectId, taskId.trim()]
+  );
+  if (!job) throw new Error(`Job not found: ${taskId}`);
+  if (!isCarouselLayoutBlockedWithCompleteRender(job)) {
+    throw new Error("job_not_layout_blocked_with_complete_render");
+  }
+  const run = await getRunByRunId(db, projectId, job.run_id);
+  const route = job.recommended_route ?? "HUMAN_REVIEW";
+  await advanceToInReview(db, job, run, route);
+  await db.query(
+    `UPDATE caf_core.content_jobs
+     SET generation_payload = COALESCE(generation_payload, '{}'::jsonb)
+       - 'layout_qc_skip_auto_reprint'
+       - 'last_error'
+       - 'generation_error',
+         updated_at = now()
+     WHERE id = $1`,
+    [job.id]
+  );
+  return { status: "IN_REVIEW" };
 }
 
 /** Reset job (see `prepareContentJobForFullRerun`) then run the standard pipeline (LLM → QC → render / review). */
@@ -1813,11 +1881,15 @@ async function finalizeCarouselJobAfterRender(
     textOverlayOnly &&
     (isReviewRetainStatusDuringTextOverlayReprint(priorStatus) || priorStatus === "RENDERING");
 
+  const gpForLayout = (job.generation_payload ?? {}) as Record<string, unknown>;
+  const skipLayoutAutoReprint = gpForLayout.layout_qc_skip_auto_reprint === true;
+
   let layoutBlocked = false;
   let layoutQcSummary: Record<string, unknown> | undefined;
   if (
     !keepInReview &&
     !renderOpts?.skipLayoutQa &&
+    !skipLayoutAutoReprint &&
     !textOverlayOnly &&
     isTpGroundedCarouselRenderFlow(job.flow_type) &&
     config.MIMIC_LAYOUT_QA_ENABLED !== false
@@ -1840,6 +1912,15 @@ async function finalizeCarouselJobAfterRender(
       : finalJobStatusAfterRender(recommendedRoute);
   if (!keepInReview || job.status !== finalStatus) {
     await updateJobStatus(db, job.id, finalStatus);
+  }
+  if (skipLayoutAutoReprint && !layoutBlocked && !keepInReview) {
+    await db.query(
+      `UPDATE caf_core.content_jobs
+       SET generation_payload = COALESCE(generation_payload, '{}'::jsonb) - 'layout_qc_skip_auto_reprint',
+           updated_at = now()
+       WHERE id = $1`,
+      [job.id]
+    );
   }
   if (run && !keepInReview) {
     await insertJobStateTransition(db, {
@@ -2702,8 +2783,15 @@ async function processCarouselJob(
             completed_at: new Date().toISOString(),
             error: null,
           }
-        : {}),
+        : { phase: "completed", error: null }),
     });
+    await db.query(
+      `UPDATE caf_core.content_jobs
+       SET generation_payload = COALESCE(generation_payload, '{}'::jsonb) - 'last_error' - 'generation_error',
+           updated_at = now()
+       WHERE id = $1`,
+      [job.id]
+    );
 
     const manifestSlides = slideResults.map((s) => ({
       index: s.index,

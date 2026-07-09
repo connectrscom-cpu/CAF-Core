@@ -92,6 +92,7 @@ import {
   recordCarouselTextOverlayReprintFailure,
   reprocessJobFromScratch,
   rerenderCarouselTextOverlay,
+  unblockLayoutBlockedJobToReview,
 } from "../services/job-pipeline.js";
 import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { buildRenderingHealthSnapshot } from "../services/rendering-health-snapshot.js";
@@ -1244,6 +1245,31 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       message:
         "Re-run started in the background (LLM + QC + render can take several minutes). Keep this tab open or refresh the Jobs table to watch status.",
     });
+  });
+
+  /**
+   * POST /v1/admin/jobs/unblock-to-review
+   * Layout-BLOCKED mimic carousel with render already complete → IN_REVIEW (no Flux re-render).
+   */
+  app.post("/v1/admin/jobs/unblock-to-review", async (request, reply) => {
+    const bodySchema = z.object({
+      project: z.string().min(1),
+      task_id: z.string().min(1),
+    });
+    const parsed = bodySchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: parsed.error.flatten() });
+    }
+    const project = await resolveProject(db, parsed.data.project);
+    if (!project) return reply.code(404).send({ ok: false, error: "Project not found" });
+    const taskId = parsed.data.task_id.trim();
+    try {
+      const result = await unblockLayoutBlockedJobToReview(db, project.id, taskId);
+      return { ok: true, task_id: taskId, status: result.status };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return reply.code(400).send({ ok: false, error: "unblock_failed", message });
+    }
   });
 
   /**
@@ -5866,6 +5892,7 @@ const JOB_SLUG=${JSON.stringify(currentSlug)};
 const LLM_JOB_GEN_TITLE=${llmJobGenTitleJs};
 let jobsPage=1;
 let jobRowTaskIds=[];
+let jobRowSnapshots=[];
 /** Full last_error per row index (same order as table); used for one-click copy. */
 let jobLastErrors=[];
 /** When set, list auto-refresh is paused and this row is re-opened after each reload. */
@@ -5958,13 +5985,19 @@ async function eraseJobByTaskId(tid){
     loadFacets().then(function(){return loadJobs(jobsPage);});
   }catch(err){showToast(err.message||String(err),false);}
 }
-async function reprocessJobEntirely(ev,tid){
+async function reprocessJobEntirely(ev,tid,rowHint){
   if(ev)ev.stopPropagation();
   if(typeof window.cafFetch!=='function'){alert('cafFetch is missing. Hard-refresh this page (Ctrl+Shift+R).');return;}
   if(!JOB_SLUG){showToast('Pick a project in the sidebar, then open Jobs again.',false);return;}
   tid=String(tid||'').trim();
   if(!tid){showToast('Missing task id for this row. Click Filter to reload the table.',false);return;}
-  if(!confirm('Re-run this job from scratch?\\n\\nClears generated output, QC, renders, and assets for this task, sets status to PLANNED, then runs LLM → QC → diagnostics → render again. Editorial review history is kept.\\n\\n'+tid))return;
+  var row=rowHint||null;
+  var st=row?String(row.status||'').toUpperCase():'';
+  var layoutBlocked=st==='BLOCKED'&&String(row.pipeline_phase||'').toLowerCase().indexOf('layout qc')>=0;
+  var confirmMsg=layoutBlocked
+    ? 'This job was BLOCKED by layout QA (text overlap), not text QC. Slides already rendered.\\n\\nRe-run deletes all slides and re-bills Flux (LLM + images).\\n\\nPrefer Send to review or Reprint text instead.\\n\\nContinue full re-run anyway?\\n\\n'+tid
+    : 'Re-run this job from scratch?\\n\\nClears generated output, QC, renders, and assets for this task, sets status to PLANNED, then runs LLM → QC → diagnostics → render again. Editorial review history is kept.\\n\\n'+tid;
+  if(!confirm(confirmMsg))return;
   showToast('Sending re-run request…',true,4000);
   try{
     var r=await cafFetch('/v1/admin/jobs/reprocess-full',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
@@ -5979,6 +6012,22 @@ async function reprocessJobEntirely(ev,tid){
       throw new Error((d&&d.message)||(d&&d.error)||detail||('HTTP '+r.status));
     }
     showToast('Done — status: '+(d.status||'—'),true);
+    loadFacets().then(function(){return loadJobs(jobsPage,true);});
+  }catch(err){showToast(err.message||String(err),false,22000);}
+}
+async function unblockJobToReview(ev,tid){
+  if(ev)ev.stopPropagation();
+  if(typeof window.cafFetch!=='function'){alert('cafFetch is missing. Hard-refresh this page (Ctrl+Shift+R).');return;}
+  if(!JOB_SLUG){showToast('Pick a project in the sidebar, then open Jobs again.',false);return;}
+  tid=String(tid||'').trim();
+  if(!tid){showToast('Missing task id for this row.',false);return;}
+  if(!confirm('Send this layout-blocked job to human review?\\n\\nKeeps existing slides (no Flux re-render). Fix placement in Review with Reprint text if needed.\\n\\n'+tid))return;
+  showToast('Sending to review…',true,4000);
+  try{
+    var r=await cafFetch('/v1/admin/jobs/unblock-to-review',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project:JOB_SLUG,task_id:tid})});
+    var d=await r.json().catch(function(){return{};});
+    if(!r.ok||!d.ok)throw new Error((d&&d.message)||(d&&d.error)||('HTTP '+r.status));
+    showToast('Job is now IN_REVIEW — open in Content workspace to fix layout.',true,22000);
     loadFacets().then(function(){return loadJobs(jobsPage,true);});
   }catch(err){showToast(err.message||String(err),false,22000);}
 }
@@ -6044,7 +6093,11 @@ function reprintTextOverlayOneJob(ev,ix){
 }
 function reprocessOneJobEntirely(ev,ix){
   if(ev)ev.stopPropagation();
-  reprocessJobEntirely(ev,jobRowTaskIds[ix]);
+  reprocessJobEntirely(ev,jobRowTaskIds[ix],jobRowSnapshots[ix]);
+}
+function unblockOneJobToReview(ev,ix){
+  if(ev)ev.stopPropagation();
+  unblockJobToReview(ev,jobRowTaskIds[ix]);
 }
 function resumeOneJob(ev,ix){
   if(ev)ev.stopPropagation();
@@ -6327,6 +6380,7 @@ async function loadJobs(p,silent){
     return;
   }
   jobRowTaskIds=d.rows.map(function(j){return j.task_id;});
+  jobRowSnapshots=d.rows;
   jobLastErrors=d.rows.map(function(j){return j.last_error!=null?String(j.last_error):'';});
   var preserveTask=jobDetailOpenTaskId;
   var scrollY=window.scrollY||document.documentElement.scrollTop||0;
@@ -6335,6 +6389,7 @@ async function loadJobs(p,silent){
     var j=d.rows[i];
     var rph=[j.render_provider,j.render_status,j.render_phase].filter(Boolean).join(' · ');
     var stJob=String(j.status||'').toUpperCase();
+    var layoutBlockedRow=stJob==='BLOCKED'&&String(j.pipeline_phase||'').toLowerCase().indexOf('layout qc')>=0;
     if(stJob==='NEEDS_EDIT'){
       var rsl=String(j.render_status||'').toLowerCase();
       var rphLow=String(j.render_phase||'').toLowerCase();
@@ -6376,6 +6431,9 @@ async function loadJobs(p,silent){
     h+='<td>'+esc(j.qc_status||'—')+(isFailedBadge&&String(j.qc_status||'').toUpperCase()==='PASS'?' <span style="font-size:10px;color:var(--muted)" title="QC on LLM output passed; failure happened in a later step">(pre-render)</span>':'')+'</td>';
     h+='<td style="font-size:11px;color:var(--muted)">'+fmtDate(j.updated_at)+'</td>';
     h+='<td onclick="event.stopPropagation()" style="white-space:nowrap;vertical-align:middle"><div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;align-items:center">';
+    if(layoutBlockedRow){
+      h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--accent);color:var(--accent)" onclick="unblockOneJobToReview(event,'+i+')" title="Slides already rendered — open human review without re-billing Flux">Send to review</button>';
+    }
     if(showResume){
       h+='<button type="button" class="btn-ghost" style="font-size:10px;padding:4px 8px;border:1px solid var(--border)" onclick="resumeOneJob(event,'+i+')" title="Resume pipeline (no reset) — mimic reprint re-composites text on stored plates">Resume</button>';
     }
@@ -6416,6 +6474,8 @@ async function loadJobs(p,silent){
 document.getElementById('jobs-live')?.addEventListener('change',restartJobsPoll);
 window.reprocessJobEntirely=reprocessJobEntirely;
 window.reprocessOneJobEntirely=reprocessOneJobEntirely;
+window.unblockJobToReview=unblockJobToReview;
+window.unblockOneJobToReview=unblockOneJobToReview;
 window.resumeJob=resumeJob;
 window.resumeOneJob=resumeOneJob;
 window.reprintTextOverlayJob=reprintTextOverlayJob;
