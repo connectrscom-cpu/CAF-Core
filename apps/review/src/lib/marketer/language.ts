@@ -49,6 +49,7 @@ const FLOW_TYPE_LABELS: Record<string, string> = {
   FLOW_VID_SCRIPT: "Video script",
   FLOW_VID_PROMPT: "Video (avatar)",
   FLOW_VID_PROMPT_NO_AVATAR: "Video (no avatar)",
+  FLOW_VID_HOOK_FIRST: "Hook-first video",
   FLOW_VID_SCENES: "Multi-scene video",
   FLOW_SCENE_ASSEMBLY: "Multi-scene video",
   FLOW_TEXT: "Text post",

@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
     if (!job) {
       return NextResponse.json({ error: "job_not_found" }, { status: 404 });
     }
-    if (!isTpGroundedCarouselReviewFlow(job.flow_type)) {
+    if (!isTpGroundedCarouselReviewFlow(job.flow_type, job.generation_payload)) {
       return NextResponse.json(
         { ok: false, error: "mimic_docai_layer_positions_requires_tp_grounded_carousel_job" },
         { status: 400 }
@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
         positions,
       }),
       cache: "no-store",
+      signal: AbortSignal.timeout(60_000),
     });
     const json = await res.json();
     if (!res.ok) {

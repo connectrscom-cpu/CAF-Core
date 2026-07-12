@@ -446,7 +446,7 @@ function tpGroundedCarouselLaneLabel(
 
 ): string {
 
-  if (isVisualFirstCarouselFlow(flowType)) return "Visual-First";
+  if (isVisualFirstCarouselFlow(flowType)) return "New Visual";
 
   if (isWhyMimicCarouselFlow(flowType) || mimicKind === "why_carousel") return "Why Mimic";
 
@@ -548,11 +548,13 @@ function heygenSubLabel(flowType: string, candidate: Record<string, unknown> | n
 
   const style = str(candidate?.video_style) as VideoPipelineIntent;
 
-  if (style === "script_avatar" || style === "prompt_avatar" || style === "no_avatar") {
+  if (style === "script_avatar" || style === "prompt_avatar" || style === "no_avatar" || style === "hook_first") {
 
     return heygenLaneLabelForIntent(style);
 
   }
+
+  if (flowType === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST) return heygenLaneLabelForIntent("hook_first");
 
   if (flowType === CANONICAL_FLOW_TYPES.VID_SCRIPT) return heygenLaneLabelForIntent("script_avatar");
 

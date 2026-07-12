@@ -138,6 +138,30 @@ function deriveFallbackHashtags(o: Record<string, unknown>, opts?: { rising?: st
 /**
  * Ensures `caption` and `hashtags` are present for downstream review/publish when the LLM omitted them.
  */
+export function sanitizeVideoDisclaimerForBrand(
+  parsed: Record<string, unknown>,
+  brand: { mandatory_disclaimers?: string | null } | null | undefined
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...parsed };
+  const mandatory = String(brand?.mandatory_disclaimers ?? "").trim();
+  if (mandatory) {
+    const firstLine = mandatory.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+    if (firstLine) {
+      out.disclaimer_line = firstLine;
+      out.disclaimer = firstLine;
+    }
+    return out;
+  }
+
+  const disc = String(out.disclaimer_line ?? out.disclaimer ?? out.mandatory_disclaimer ?? "").trim();
+  if (disc && /\b(astrology|zodiac|horoscope|star sign)\b/i.test(disc)) {
+    delete out.disclaimer_line;
+    delete out.disclaimer;
+    delete out.mandatory_disclaimer;
+  }
+  return out;
+}
+
 export function ensureVideoScriptPublicationMetadata(
   parsed: Record<string, unknown>,
   opts?: {
@@ -179,7 +203,7 @@ export function ensureVideoScriptPublicationMetadata(
   return out;
 }
 
-async function pickVideoScriptTemplate(db: Pool, flowType: string) {
+export async function pickVideoScriptTemplate(db: Pool, flowType: string) {
   const resolved = resolveFlowEngineTemplateFlowType(flowType);
   /** Scene-assembly jobs resolve to Video_Scene_Generator; load script rows from that flow first, not scene_bundle rows. */
   const sceneAssemblyJob =

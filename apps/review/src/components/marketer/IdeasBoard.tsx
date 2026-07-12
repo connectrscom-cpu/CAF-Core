@@ -10,6 +10,13 @@ import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
 import { contentPreviewMissing } from "@/lib/marketer/preview-resolver";
 import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
 import { resolveCartFlowForIdea } from "@/lib/marketer/cart-flow-resolve";
+import {
+  flowTypeForVideoIntent,
+  labelForVideoIntent,
+  resolveRecommendedVideoIntent,
+  VIDEO_LANE_OPTIONS,
+  type VideoPipelineIntent,
+} from "@/lib/marketer/video-lane";
 import type {
   ContentIdea,
   GenerationStrategy,
@@ -28,6 +35,7 @@ interface IdeasResponse {
   packId: string | null;
   briefs: ResearchBrief[];
   sourceWindow?: string | null;
+  packIdStale?: boolean;
 }
 
 const LOCAL_KEY = (slug: string) => `caf-review-idea-states-${slug}`;
@@ -92,6 +100,9 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [tpMimic, setTpMimic] = useState<Record<string, "replica" | "why_carousel">>({});
   const [tpRender, setTpRender] = useState<Record<string, "full_bleed" | "template">>({});
+  const [tpVideoLane, setTpVideoLane] = useState<Record<string, VideoPipelineIntent>>({});
+  const [staleBriefNotice, setStaleBriefNotice] = useState(false);
+  const [queueHint, setQueueHint] = useState<string | null>(null);
   const packIdRef = useRef(packId);
   packIdRef.current = packId;
 
@@ -118,12 +129,38 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
       setIdeas(j.ideas ?? []);
       setTopPerformers(j.topPerformers ?? []);
       setBriefs(j.briefs ?? []);
-      if (!packIdRef.current && j.packId) setPackId(j.packId);
+
+      if (j.packIdStale && pid && pid !== "all") {
+        setStaleBriefNotice(true);
+        cart.detachBriefPackId();
+        const fallback = j.briefs?.[0]?.id ?? "all";
+        setPackId(fallback);
+        if (fallback !== "all") cart.attachBriefPackId(fallback, { keepItems: true });
+      } else {
+        setStaleBriefNotice(false);
+        if (!pid && j.packId) setPackId(j.packId);
+      }
     },
-    [slug]
+    [slug, cart]
   );
 
   const { loading, error } = useAbortableLoad([slug, packId], load);
+
+  function resolveQueuePackId(): string | null {
+    if (packId && packId !== "all") return packId;
+    if (cart.briefPackId) return cart.briefPackId;
+    return briefs[0]?.id ?? null;
+  }
+
+  function queueNeedsBriefMessage(): string {
+    return "Select a research brief in Research context before queueing for generation.";
+  }
+
+  function queueForGeneration(run: () => boolean) {
+    setQueueHint(null);
+    const ok = run();
+    if (!ok) setQueueHint(queueNeedsBriefMessage());
+  }
 
   function statusOf(idea: ContentIdea): IdeaStatus {
     return local[idea.id]?.status ?? idea.status;
@@ -223,7 +260,11 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
             <span>Research context</span>
             <select
               value={packId || "all"}
-              onChange={(e) => setPackId(e.target.value === "all" ? "all" : e.target.value)}
+              onChange={(e) => {
+                setStaleBriefNotice(false);
+                setQueueHint(null);
+                setPackId(e.target.value === "all" ? "all" : e.target.value);
+              }}
             >
               <option value="all">All research briefs</option>
               {briefs.map((b) => (
@@ -244,6 +285,14 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
             </>
           )}
         </div>
+
+        {staleBriefNotice ? (
+          <p className="content-cart-review-error">
+            Your saved research brief is no longer on CAF Core. Pick a current brief above and re-add items to your
+            cart.
+          </p>
+        ) : null}
+        {queueHint ? <p className="content-cart-review-error">{queueHint}</p> : null}
 
         {mainTab === "new_content" && (
           <>
@@ -318,14 +367,20 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
       {mainTab === "top_performers" ? (
         <div className="ideas-tp-section">
           <p className="ideas-tp-intro">
-            High-performing references from your research. Pick replica vs why mimic and carousel render mode, then queue
-            for generation.
+            High-performing references from your research. For carousels, pick replica vs why mimic and render mode.
+            For video references, choose the HeyGen lane (script avatar, prompt avatar, no avatar, or hook-first hybrid), then queue for
+            generation.
           </p>
           <div className="ideas-tp-grid">
             {topPerformers.map((tp) => {
+              const isVideo = tp.mimicKind === "video";
+              const isCarousel =
+                !isVideo &&
+                (tp.format.toLowerCase().includes("carousel") || tp.mimicKind === "replica" || tp.mimicKind === "why_carousel");
               const mimic = tpMimic[tp.id] ?? (tp.mimicKind === "why_carousel" ? "why_carousel" : "replica");
               const render = tpRender[tp.id] ?? "full_bleed";
-              const isCarousel = tp.format.toLowerCase().includes("carousel") || tp.mimicKind === "replica";
+              const videoLane =
+                tpVideoLane[tp.id] ?? tp.recommendedVideoIntent ?? resolveRecommendedVideoIntent(tp.format);
               return (
                 <article key={tp.id} className="idea-tp-card intel-card--hover">
                   <PreviewMediaCard
@@ -339,68 +394,114 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                       {tp.platform} · {tp.format}
                     </span>
                     <p>{MIMIC_EXPLAIN[tp.mimicKind]}</p>
-                    <div className="content-cart-radio-group">
-                      <label>
-                        <input
-                          type="radio"
-                          name={`tp-mimic-${tp.id}`}
-                          checked={mimic === "replica"}
-                          onChange={() => setTpMimic((p) => ({ ...p, [tp.id]: "replica" }))}
-                        />
-                        Replica
-                      </label>
-                      <label>
-                        <input
-                          type="radio"
-                          name={`tp-mimic-${tp.id}`}
-                          checked={mimic === "why_carousel"}
-                          onChange={() => setTpMimic((p) => ({ ...p, [tp.id]: "why_carousel" }))}
-                        />
-                        Why mimic
-                      </label>
-                    </div>
-                    {isCarousel && (
-                      <div className="content-cart-radio-group">
-                        <label>
-                          <input
-                            type="radio"
-                            name={`tp-render-${tp.id}`}
-                            checked={render === "full_bleed"}
-                            onChange={() => setTpRender((p) => ({ ...p, [tp.id]: "full_bleed" }))}
-                          />
-                          Full bleed
-                        </label>
-                        <label>
-                          <input
-                            type="radio"
-                            name={`tp-render-${tp.id}`}
-                            checked={render === "template"}
-                            onChange={() => setTpRender((p) => ({ ...p, [tp.id]: "template" }))}
-                          />
-                          Template
-                        </label>
-                      </div>
+                    {isVideo ? (
+                      <>
+                        <p className="idea-tp-recommended">
+                          CAF recommends <strong>{labelForVideoIntent(tp.recommendedVideoIntent ?? videoLane)}</strong>{" "}
+                          for this format.
+                        </p>
+                        <div className="content-cart-radio-group">
+                          {VIDEO_LANE_OPTIONS.map((lane) => (
+                            <label key={lane.id} title={lane.description}>
+                              <input
+                                type="radio"
+                                name={`tp-video-${tp.id}`}
+                                checked={videoLane === lane.id}
+                                onChange={() => setTpVideoLane((p) => ({ ...p, [tp.id]: lane.id }))}
+                              />
+                              {lane.label}
+                            </label>
+                          ))}
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="content-cart-radio-group">
+                          <label>
+                            <input
+                              type="radio"
+                              name={`tp-mimic-${tp.id}`}
+                              checked={mimic === "replica"}
+                              onChange={() => setTpMimic((p) => ({ ...p, [tp.id]: "replica" }))}
+                            />
+                            Replica
+                          </label>
+                          {isCarousel && (
+                            <label>
+                              <input
+                                type="radio"
+                                name={`tp-mimic-${tp.id}`}
+                                checked={mimic === "why_carousel"}
+                                onChange={() => setTpMimic((p) => ({ ...p, [tp.id]: "why_carousel" }))}
+                              />
+                              Why mimic
+                            </label>
+                          )}
+                        </div>
+                        {isCarousel && (
+                          <div className="content-cart-radio-group">
+                            <label>
+                              <input
+                                type="radio"
+                                name={`tp-render-${tp.id}`}
+                                checked={render === "full_bleed"}
+                                onChange={() => setTpRender((p) => ({ ...p, [tp.id]: "full_bleed" }))}
+                              />
+                              Full bleed
+                            </label>
+                            <label>
+                              <input
+                                type="radio"
+                                name={`tp-render-${tp.id}`}
+                                checked={render === "template"}
+                                onChange={() => setTpRender((p) => ({ ...p, [tp.id]: "template" }))}
+                              />
+                              Template
+                            </label>
+                          </div>
+                        )}
+                      </>
                     )}
                     <div className="idea-tp-actions">
                       <button
                         type="button"
                         className="btn-primary btn-sm"
                         onClick={() => {
-                          if (packId && packId !== "all") cart.setBriefPackId(packId);
-                          cart.addTopPerformer({
-                            id: `tp_${tp.id}`,
-                            title: tp.title,
-                            flowDestination:
-                              mimic === "why_carousel" ? "Why mimic" : "Visual mimic",
-                            flowTypeRaw:
-                              mimic === "why_carousel"
-                                ? "FLOW_WHY_MIMIC_CAROUSEL"
-                                : "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
-                            mimicMode: mimic,
-                            renderMode: isCarousel ? render : undefined,
-                            platform: tp.platform,
-                            format: tp.format,
-                            useBrandVisualSystem: true,
+                          const queuePackId = resolveQueuePackId();
+                          queueForGeneration(() => {
+                            if (isVideo) {
+                              return cart.addTopPerformer(
+                                {
+                                  id: `tp_${tp.id}`,
+                                  title: tp.title,
+                                  flowDestination: labelForVideoIntent(videoLane),
+                                  flowTypeRaw: flowTypeForVideoIntent(videoLane),
+                                  videoIntent: videoLane,
+                                  platform: tp.platform,
+                                  format: tp.format,
+                                  useBrandVisualSystem: true,
+                                },
+                                { packId: queuePackId ?? undefined }
+                              );
+                            }
+                            return cart.addTopPerformer(
+                              {
+                                id: `tp_${tp.id}`,
+                                title: tp.title,
+                                flowDestination:
+                                  mimic === "why_carousel" ? "Why mimic" : "Visual mimic",
+                                flowTypeRaw:
+                                  mimic === "why_carousel"
+                                    ? "FLOW_WHY_MIMIC_CAROUSEL"
+                                    : "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
+                                mimicMode: mimic,
+                                renderMode: isCarousel ? render : undefined,
+                                platform: tp.platform,
+                                format: tp.format,
+                                useBrandVisualSystem: true,
+                              },
+                              { packId: queuePackId ?? undefined }
+                            );
                           });
                         }}
                       >
@@ -524,20 +625,25 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                         type="button"
                         className="btn-primary btn-sm"
                         onClick={() => {
-                          if (packId && packId !== "all") cart.setBriefPackId(packId);
+                          const queuePackId = resolveQueuePackId();
                           const ideaStrategy = local[idea.id]?.strategy ?? "caf_recommended";
                           const resolved = resolveCartFlowForIdea(idea, ideaStrategy);
-                          cart.addIdea({
-                            id: `idea_${idea.id}`,
-                            title: idea.title,
-                            flowDestination: resolved.flowDestination,
-                            flowTypeRaw: resolved.flowTypeRaw,
-                            generationStrategy: resolved.generationStrategy,
-                            format: idea.format,
-                            platform: idea.platform,
-                            ideaTargetFlowType: idea.targetFlowType,
-                            useBrandVisualSystem: local[idea.id]?.useBvs !== false,
-                          });
+                          queueForGeneration(() =>
+                            cart.addIdea(
+                              {
+                                id: `idea_${idea.id}`,
+                                title: idea.title,
+                                flowDestination: resolved.flowDestination,
+                                flowTypeRaw: resolved.flowTypeRaw,
+                                generationStrategy: resolved.generationStrategy,
+                                format: idea.format,
+                                platform: idea.platform,
+                                ideaTargetFlowType: idea.targetFlowType,
+                                useBrandVisualSystem: local[idea.id]?.useBvs !== false,
+                              },
+                              { packId: queuePackId ?? undefined }
+                            )
+                          );
                         }}
                       >
                         Queue for generation

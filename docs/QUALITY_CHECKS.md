@@ -1,6 +1,6 @@
 # Quality checks (QC)
 
-CAF **QC** is the automated pass over **LLM output** using **checklist rows** stored in Postgres and keyed by **flow type**. It runs in **`src/services/qc-runtime.ts`** after generation (and from pipeline routes).
+CAF **QC** is the automated pass over **LLM output** using **checklist rows**, **copy-quality patterns**, **`risk_policies`**, and **`brand_constraints.banned_words`**. It runs in **`src/services/qc-runtime.ts`** after generation. **Project `risk_rules` are not enforced** — see **`GET /v1/projects/:slug/risk-qc-status`** and **`docs/RISK_RULES.md`**.
 
 ## What “QC” means here
 

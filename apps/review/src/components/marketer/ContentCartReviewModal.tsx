@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useContentCart } from "@/components/marketer/ContentCartContext";
 import { buildCartCreationPayload, normalizeCartItemFlow } from "@/lib/marketer/cart-flow-resolve";
 import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
+import { isVideoTopPerformerItem } from "@/lib/marketer/video-lane";
 
 type StartPhase = "idle" | "starting" | "done" | "error";
 
 export function ContentCartReviewModal({ slug }: { slug: string }) {
-  const { items, briefPackId, reviewOpen, setReviewOpen, setDrawerOpen, clear } = useContentCart();
+  const { items, briefPackId, detachBriefPackId, reviewOpen, setReviewOpen, setDrawerOpen, clear } = useContentCart();
   const [phase, setPhase] = useState<StartPhase>("idle");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{
@@ -29,8 +30,13 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
     setResult(null);
   }, [setReviewOpen]);
 
+  useEffect(() => {
+    if (briefPackId && error) setError(null);
+  }, [briefPackId, error]);
+
   if (!reviewOpen) return null;
 
+  const needsBrief = !briefPackId && normalized.length > 0;
   const canStart = Boolean(briefPackId) && normalized.length > 0 && phase !== "starting";
 
   async function handleStart() {
@@ -45,6 +51,7 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
       });
       const j = await res.json();
       if (!res.ok || !j.ok) {
+        if (j.error === "stale_brief") detachBriefPackId();
         throw new Error(j.message ?? j.error ?? "Failed to start run");
       }
       setResult({
@@ -77,9 +84,17 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
             </p>
             {briefPackId ? (
               <p className="content-cart-review-brief">Saved to this research brief</p>
-            ) : (
-              <p className="content-cart-review-error">Select a research brief on Ideas before starting.</p>
-            )}
+            ) : needsBrief ? (
+              <p className="content-cart-review-error">
+                Cart items kept —{" "}
+                <Link href={`/brand/${encodeURIComponent(slug)}/ideas`} onClick={close}>
+                  pick a research brief on Ideas
+                </Link>{" "}
+                before starting.
+              </p>
+            ) : normalized.length === 0 ? (
+              <p className="content-cart-review-sub">Add ideas or top performers from Ideas first.</p>
+            ) : null}
           </div>
           <button type="button" className="btn-ghost btn-sm" onClick={close}>
             Close
@@ -100,11 +115,13 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
                     <span>
                       {item.flowDestination}
                       {item.kind === "idea" && strategyLabel ? ` · ${strategyLabel}` : ""}
-                      {item.kind === "top_performer" && item.mimicMode === "why_carousel"
-                        ? " · Why mimic"
-                        : item.kind === "top_performer"
-                          ? " · Replica"
-                          : ""}
+                      {item.kind === "top_performer" && isVideoTopPerformerItem(item)
+                        ? " · Video"
+                        : item.kind === "top_performer" && item.mimicMode === "why_carousel"
+                          ? " · Why mimic"
+                          : item.kind === "top_performer"
+                            ? " · Replica"
+                            : ""}
                     </span>
                     <code>{item.flowTypeRaw}</code>
                   </li>

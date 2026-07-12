@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { runQcChecklistRow } from "./qc-runtime.js";
+import { runQcChecklistRow, runBrandBannedWordsCheck, runRiskPolicyCheck } from "./qc-runtime.js";
+import type { RiskPolicyRow } from "../repositories/flow-engine.js";
+
+const criticalPolicy: RiskPolicyRow = {
+  risk_policy_name: "self_harm_or_suicide",
+  risk_policy_version: "1",
+  risk_category: "self_harm",
+  detection_method: "keyword",
+  detection_terms: "suicide;kill myself",
+  severity_level: "CRITICAL",
+  default_action: "block",
+  requires_manual_review: true,
+  requires_senior_review: true,
+  block_publish: true,
+  disclaimer_template_name: null,
+  notes: null,
+  applies_to_flow_type: null,
+} as RiskPolicyRow;
+
+describe("qc-runtime: brand banned words vs risk policies", () => {
+  it("does not inherit CRITICAL severity when only a brand banned word matches", () => {
+    const content = { caption: "Meal planning made effortless for busy families." };
+    const policyHit = runRiskPolicyCheck(criticalPolicy, content);
+    expect(policyHit).toBeNull();
+
+    const brandHit = runBrandBannedWordsCheck(content, ["effortless"]);
+    expect(brandHit?.policy_name).toBe("brand_banned_words");
+    expect(brandHit?.severity).toBe("MEDIUM");
+    expect(brandHit?.block_publish).toBe(false);
+    expect(brandHit?.matched_terms).toContain("effortless");
+  });
+});
 
 describe("qc-runtime: not_empty for video_prompt", () => {
   it("fails when video_prompt missing/empty", () => {

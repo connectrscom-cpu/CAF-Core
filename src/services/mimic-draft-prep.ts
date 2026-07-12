@@ -17,7 +17,10 @@ import { isWhyMimicCarouselFlow } from "../domain/why-mimic-carousel-flow-types.
 import { parseBrandProfile, type BrandProfileV1 } from "../domain/brand-profile.js";
 import { buildBrandExecutionBrief } from "../domain/brand-translation.js";
 import { parseBvsFromPayload, brandProfileFromBvsSnapshot, resolveBvsForEnabledJob, resolveBvsSnapshotForProject, buildBvsSlice } from "../domain/bvs-v1.js";
+import { enrichMimicWithBvsRenderPlan, bvsTemplateBgUsesInventedPlates } from "../domain/bvs-render-plan.js";
 import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
+import { isNewVisualCarouselExecution, buildNewVisualSlidePlans } from "../domain/new-visual-carousel-execution.js";
+import { ensureNewVisualCarouselBeforeCopyGeneration } from "./new-visual-carousel-prep.js";
 import { getActiveBrandProfile } from "../repositories/brand-profiles.js";
 import { buildContentSlideCopyLayoutFromEntry, buildSlideCopyLayoutForLlmFromPayload } from "../domain/mimic-job-grounding.js";
 import {
@@ -57,6 +60,7 @@ import { compactStoredInspectionMedia } from "./visual-guidelines-media.js";
 import { loadMimicPromptOverrides } from "./mimic-prompt-overrides-loader.js";
 import { loadProjectMimicRenderSettings, buildMimicRenderSettingsSnapshot } from "./mimic-project-config.js";
 import { generateMimicFluxImagePromptsForJob } from "./mimic-flux-image-prompts.js";
+import { generateNewVisualFluxImagePromptsForJob } from "./new-visual-carousel-flux-prompts.js";
 import { generateWhyMimicFluxImagePromptsForJob } from "./why-mimic-flux-image-prompts.js";
 import {
   mimicDeckUsesSlotDeduplication,
@@ -251,13 +255,16 @@ async function resolveMimicPayloadForJob(
     mimicSettings.whyMimicCopyEnabled
   );
   if (bvs?.enabled) {
-    built.mimic = {
-      ...built.mimic,
-      bvs_enabled: true,
-      ...(bvs.bible_snapshot
-        ? { bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown> }
-        : {}),
-    };
+    built.mimic = enrichMimicWithBvsRenderPlan(
+      {
+        ...built.mimic,
+        bvs_enabled: true,
+        ...(bvs.bible_snapshot
+          ? { bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown> }
+          : {}),
+      },
+      bvs.bible_snapshot
+    );
   }
 
   if (resolved.reference_tier_fallback) {
@@ -367,6 +374,10 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     throw new Error(`ensureMimicReferenceBeforeCopyGeneration called for non-mimic flow: ${job.flow_type}`);
   }
 
+  if (isVisualFirstCarouselFlow(job.flow_type)) {
+    return ensureNewVisualCarouselBeforeCopyGeneration(db, config, job, runId);
+  }
+
   const mimicRender = await loadProjectMimicRenderSettings(db, job.project_id, config);
   const renderContextOpts = { visualSimilarityPct: mimicRender.visualSimilarityPct };
 
@@ -395,15 +406,23 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
     );
     const gp = row.rows[0]?.generation_payload ?? job.generation_payload;
     const bvs = await resolveBvsForEnabledJob(db, job.project_id, gp);
+    let filteredWithBvs = filtered;
+    if (bvs?.enabled && bvs.bible_snapshot) {
+      filteredWithBvs = enrichMimicWithBvsRenderPlan(filtered, bvs.bible_snapshot);
+    }
+    const renderSettings = buildMimicRenderSettingsSnapshot(config, {
+      ...mimicRender,
+      ...(bvsTemplateBgUsesInventedPlates(filteredWithBvs) ? { imageInputMode: "analysis_t2i" as const } : {}),
+    });
     const mergedBase = {
-      ...mergeMimicPayloadSlice(gp, filtered),
+      ...mergeMimicPayloadSlice(gp, filteredWithBvs),
       ...(bvs ? { bvs_v1: bvs } : {}),
       mimic_render_context: renderContext,
-      mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
+      mimic_render_settings: renderSettings,
     };
-    const merged = refreshMimicJobGroundingSlideLayout(mergedBase, vg, filtered);
-    await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, filtered));
-    return filtered;
+    const merged = refreshMimicJobGroundingSlideLayout(mergedBase, vg, filteredWithBvs);
+    await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, filteredWithBvs));
+    return filteredWithBvs;
   }
 
   const { mimic: resolvedMimic, resolved } = await resolveMimicPayloadForJob(db, config, job, runId);
@@ -422,36 +441,45 @@ export async function ensureMimicReferenceBeforeCopyGeneration(
   );
   const gp = row.rows[0]?.generation_payload ?? {};
   const bvs = await resolveBvsForEnabledJob(db, job.project_id, gp);
+  let mimicWithBvs = mimic;
+  if (bvs?.enabled && bvs.bible_snapshot) {
+    mimicWithBvs = enrichMimicWithBvsRenderPlan(mimic, bvs.bible_snapshot);
+  }
+  const renderSettings = buildMimicRenderSettingsSnapshot(config, {
+    ...mimicRender,
+    ...(bvsTemplateBgUsesInventedPlates(mimicWithBvs) ? { imageInputMode: "analysis_t2i" as const } : {}),
+  });
   const mergedBase = {
-    ...mergeMimicPayloadSlice(gp, mimic),
+    ...mergeMimicPayloadSlice(gp, mimicWithBvs),
     ...(bvs ? { bvs_v1: bvs } : {}),
     mimic_render_context: renderContext,
-    mimic_render_settings: buildMimicRenderSettingsSnapshot(config, mimicRender),
+    mimic_render_settings: renderSettings,
     template_storage_decision: templateStorage,
   };
   const merged = refreshMimicJobGroundingSlideLayout(
     mergedBase,
     resolved.guideline_entry,
-    mimic
+    mimicWithBvs
   );
 
-  await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, mimic));
+  await persistGenerationPayload(db, job.id, payloadWithSemanticContract(merged, mimicWithBvs));
 
   logPipelineEvent("info", "generate", "mimic reference resolved before copy", {
     run_id: runId ?? undefined,
     task_id: job.task_id,
     flow_type: job.flow_type,
     data: {
-      mode: mimic.mode,
+      mode: mimicWithBvs.mode,
       copy_before_visual_mimic: renderContext.copy_before_visual_mimic,
       target_slide_count: renderContext.target_slide_count,
-      reference_count: mimic.reference_items.length,
+      reference_count: mimicWithBvs.reference_items.length,
       template_storage_quality: templateStorage.quality,
       template_library_eligible: templateStorage.eligible_for_library,
+      bvs_template_bg_invent: bvsTemplateBgUsesInventedPlates(mimicWithBvs),
     },
   });
 
-  return mimic;
+  return mimicWithBvs;
 }
 
 /**
@@ -487,6 +515,11 @@ export async function ensureMimicTemplateBackgroundsBeforeCopy(
 
   // Why Mimic template_bg: plates are generated after copy (SIL + flux prompts + BVS) — same as full-bleed.
   if (isWhyMimicExecution(job.flow_type, mimic)) {
+    return { prepared: false, skipped: true };
+  }
+
+  // BVS template_bg: invent brand plates after copy (analysis_t2i + BVS flux prompts), not reference strip.
+  if (bvsTemplateBgUsesInventedPlates(mimic)) {
     return { prepared: false, skipped: true };
   }
 
@@ -552,9 +585,12 @@ export async function prepareMimicDraftPackage(
   const renderContextOpts = { visualSimilarityPct: mimicRender.visualSimilarityPct };
 
   let mimic = pickMimicPayload(job.generation_payload);
+  if (!mimic && isVisualFirstCarouselFlow(job.flow_type)) {
+    mimic = await ensureNewVisualCarouselBeforeCopyGeneration(db, config, job, runId);
+  }
   let resolvedGuideline: Record<string, unknown> | null = null;
 
-  if (!mimic?.reference_items?.length) {
+  if (!mimic?.reference_items?.length && !isNewVisualCarouselExecution(job.flow_type, mimic)) {
     const resolved = await resolveMimicPayloadForJob(db, config, job, runId);
     const filtered = filterPromotionalSlidesFromMimicPayload(resolved.mimic);
     mimic = filtered.mimic;
@@ -621,6 +657,7 @@ export async function prepareMimicDraftPackage(
   if (
     resolvedGuideline &&
     !isWhyMimicExecution(job.flow_type, mimic) &&
+    !isNewVisualCarouselExecution(job.flow_type, mimic) &&
     (isTopPerformerMimicImageFlow(job.flow_type) || isTpGroundedCarouselRenderFlow(job.flow_type))
   ) {
     assertMimicCopyDiffersFromReference(merged, resolvedGuideline);
@@ -635,7 +672,7 @@ export async function prepareMimicDraftPackage(
       slideHasRenderableContent(s as Record<string, unknown>)
     );
     const llmCount = renderableLlm.length;
-    if (llmCount > 0) {
+    if (llmCount > 0 && !isNewVisualCarouselExecution(job.flow_type, mimic)) {
       const refCountBefore = mimic.reference_items.length;
       const outputCount = expectedMimicCarouselOutputSlideCount(mimic, llmCount);
       if (refCountBefore !== outputCount) {
@@ -663,13 +700,25 @@ export async function prepareMimicDraftPackage(
           },
         });
       }
+    } else if (llmCount > 0 && isNewVisualCarouselExecution(job.flow_type, mimic)) {
+      mimic = {
+        ...mimic,
+        slide_plans: buildNewVisualSlidePlans(llmCount),
+      };
+      merged = mergeMimicPayloadSlice(merged, mimic);
+      await persistGenerationPayload(db, job.id, merged);
     }
 
     const whyFlux = isWhyMimicExecution(job.flow_type, mimic);
-    const imageInputMode = whyFlux ? "analysis_t2i" : mimicRender.imageInputMode;
+    const newVisualFlux = isNewVisualCarouselExecution(job.flow_type, mimic);
+    const bvsTemplateFlux = bvsTemplateBgUsesInventedPlates(mimic);
+    const imageInputMode =
+      whyFlux || newVisualFlux || bvsTemplateFlux ? "analysis_t2i" : mimicRender.imageInputMode;
     if (imageInputMode === "analysis_t2i" && !mimic.flux_image_prompts) {
       const layout = buildSlideCopyLayoutForLlmFromPayload(merged);
-      if (layout.length > 0) {
+      const canGenerateFlux =
+        layout.length > 0 || whyFlux || newVisualFlux || bvsTemplateFlux;
+      if (canGenerateFlux) {
         const fluxOpts = { imageInputMode, useLlm: config.MIMIC_FLUX_PROMPT_LLM } as const;
         const { bySlide, meta } = whyFlux
           ? await generateWhyMimicFluxImagePromptsForJob(
@@ -682,7 +731,18 @@ export async function prepareMimicDraftPackage(
               layout,
               fluxOpts
             )
-          : await generateMimicFluxImagePromptsForJob(
+          : newVisualFlux
+            ? await generateNewVisualFluxImagePromptsForJob(
+                config,
+                config.OPENAI_API_KEY ?? "",
+                db,
+                { task_id: job.task_id, project_id: job.project_id, run_id: runId },
+                mimic,
+                gen,
+                layout,
+                fluxOpts
+              )
+            : await generateMimicFluxImagePromptsForJob(
               config,
               config.OPENAI_API_KEY ?? "",
               db,
@@ -696,7 +756,7 @@ export async function prepareMimicDraftPackage(
           mimic = { ...mimic, flux_image_prompts: bySlide };
           merged = mergeMimicPayloadSlice(merged, mimic);
           await persistGenerationPayload(db, job.id, merged);
-          logPipelineEvent("info", "generate", whyFlux ? "why_mimic_flux_image_prompts_stored" : "mimic_flux_image_prompts_stored", {
+          logPipelineEvent("info", "generate", whyFlux ? "why_mimic_flux_image_prompts_stored" : newVisualFlux ? "new_visual_flux_image_prompts_stored" : "mimic_flux_image_prompts_stored", {
             run_id: runId ?? undefined,
             task_id: job.task_id,
             data: {

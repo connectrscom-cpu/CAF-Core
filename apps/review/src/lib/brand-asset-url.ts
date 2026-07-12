@@ -72,10 +72,13 @@ export function resolveBrandAssetReprintUrl(
   asset: BrandAssetRow,
   coreBaseUrl?: string
 ): string {
+  const id = typeof asset.id === "string" ? asset.id.trim() : "";
+  if (id && projectSlug.trim()) {
+    const core = brandAssetCoreFileUrl(projectSlug, id, coreBaseUrl);
+    if (core) return core;
+  }
   const pub = typeof asset.public_url === "string" ? asset.public_url.trim() : "";
   if (pub && /^https?:\/\//i.test(pub)) return pub;
-  const id = typeof asset.id === "string" ? asset.id.trim() : "";
-  if (id && projectSlug.trim()) return brandAssetCoreFileUrl(projectSlug, id, coreBaseUrl);
   return "";
 }
 
@@ -107,8 +110,7 @@ export function resolveBrandSlideFrames(
     const displayUrl =
       pub && /^https?:\/\//i.test(pub) ? pub : brandAssetProxyUrl(slug, { id: assetId });
     if (!displayUrl) continue;
-    const reprintUrl =
-      pub && /^https?:\/\//i.test(pub) ? pub : brandAssetCoreFileUrl(slug, assetId);
+    const reprintUrl = brandAssetCoreFileUrl(slug, assetId) || displayUrl;
     out.push({
       assetId,
       label,

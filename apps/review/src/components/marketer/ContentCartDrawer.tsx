@@ -3,6 +3,13 @@
 import { useContentCart, useContentCartOptional } from "@/components/marketer/ContentCartContext";
 import { normalizeCartItemFlow, resolveCartFlowForIdea, ideaShapeFromCartItem } from "@/lib/marketer/cart-flow-resolve";
 import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
+import {
+  flowTypeForVideoIntent,
+  isVideoTopPerformerItem,
+  labelForVideoIntent,
+  VIDEO_LANE_OPTIONS,
+  type VideoPipelineIntent,
+} from "@/lib/marketer/video-lane";
 import type { GenerationStrategy } from "@/lib/marketer/types";
 
 export function ContentCartDrawer() {
@@ -37,6 +44,14 @@ export function ContentCartDrawer() {
       flowTypeRaw:
         mimic === "why_carousel" ? "FLOW_WHY_MIMIC_CAROUSEL" : "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL",
       flowDestination: mimic === "why_carousel" ? "Why mimic" : "Visual mimic",
+    });
+  }
+
+  function setTopPerformerVideoLane(itemId: string, lane: VideoPipelineIntent) {
+    updateItem(itemId, {
+      videoIntent: lane,
+      flowTypeRaw: flowTypeForVideoIntent(lane),
+      flowDestination: labelForVideoIntent(lane),
     });
   }
 
@@ -99,6 +114,27 @@ export function ContentCartDrawer() {
                         <strong>{item.flowDestination}</strong>
                         <em>{strategyLabel}</em>
                       </p>
+                    </>
+                  ) : isVideoTopPerformerItem(item) ? (
+                    <>
+                      <p className="content-cart-route">
+                        <span>HeyGen lane</span>
+                        <strong>{item.flowDestination}</strong>
+                      </p>
+                      <div className="content-cart-radio-group">
+                        <span>Video lane</span>
+                        {VIDEO_LANE_OPTIONS.map((lane) => (
+                          <label key={lane.id}>
+                            <input
+                              type="radio"
+                              name={`video-lane-${item.id}`}
+                              checked={(item.videoIntent ?? "prompt_avatar") === lane.id}
+                              onChange={() => setTopPerformerVideoLane(item.id, lane.id)}
+                            />
+                            {lane.label}
+                          </label>
+                        ))}
+                      </div>
                     </>
                   ) : (
                     <>

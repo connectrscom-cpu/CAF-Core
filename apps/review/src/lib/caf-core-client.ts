@@ -583,6 +583,59 @@ export async function reprintMimicTextOverlay(
   return json;
 }
 
+export type ReprintVideoBrandOverlaysResult = {
+  ok: boolean;
+  accepted?: boolean;
+  task_id?: string;
+  message?: string;
+  error?: string;
+};
+
+/** Composite brand logo/frame onto stored VIDEO via ffmpeg — no HeyGen re-bill. Returns immediately (202). */
+export async function reprintVideoBrandOverlays(
+  projectSlug: string,
+  taskId: string,
+  opts?: {
+    logoOverlay?: { url: string; position?: string };
+    frameOverlay?: { url: string; asset_id?: string };
+  }
+): Promise<ReprintVideoBrandOverlaysResult> {
+  const slug = projectSlug.trim();
+  const tid = taskId.trim();
+  if (!slug || !tid) return { ok: false, error: "missing_project_or_task" };
+  const useQuery = tid.length >= LONG_TASK_ID_PATH_THRESHOLD;
+  const path = useQuery
+    ? `/v1/review-queue/${encodeURIComponent(slug)}/reprint-video-brand-overlays?task_id=${encodeURIComponent(tid)}`
+    : `/v1/review-queue/${encodeURIComponent(slug)}/task/${encodeURIComponent(tid)}/reprint-video-brand-overlays`;
+  const body: Record<string, unknown> = {};
+  if (opts?.logoOverlay?.url?.trim()) {
+    body.logo_overlay = {
+      url: opts.logoOverlay.url.trim(),
+      position: opts.logoOverlay.position?.trim() || "br",
+    };
+  }
+  if (opts?.frameOverlay?.url?.trim() || opts?.frameOverlay?.asset_id?.trim()) {
+    body.frame_overlay = {
+      ...(opts.frameOverlay.url?.trim() ? { url: opts.frameOverlay.url.trim() } : {}),
+      ...(opts.frameOverlay.asset_id?.trim() ? { asset_id: opts.frameOverlay.asset_id.trim() } : {}),
+    };
+  }
+  const base = CAF_CORE_URL.replace(/\/$/, "");
+  const url = `${base}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json()) as ReprintVideoBrandOverlaysResult;
+  if (res.status === 202 && json.ok) return json;
+  if (!res.ok) {
+    return { ok: false, error: json.error ?? `http_${res.status}`, message: json.message };
+  }
+  return json;
+}
+
 export type RegenerateCarouselSlidesResult = {
   ok: boolean;
   accepted?: boolean;
@@ -845,6 +898,30 @@ export async function getBrandBible(projectSlug: string) {
 export async function saveBrandBible(projectSlug: string, bibleJson: Record<string, unknown>, label?: string | null) {
   return corePost<{ ok: boolean; version: number; parsed: Record<string, unknown> | null }>(
     `/v1/projects/${encodeURIComponent(projectSlug)}/brand-bible`,
+    { bible_json: bibleJson, label: label ?? undefined }
+  );
+}
+
+export async function getProductBible(projectSlug: string) {
+  return coreGet<{
+    ok: boolean;
+    active: { version: number; label: string | null; bible_json: Record<string, unknown>; created_at: string } | null;
+    parsed: Record<string, unknown> | null;
+    snapshot: Record<string, unknown> | null;
+    brand_assets: Array<{
+      id: string;
+      kind: string;
+      label: string | null;
+      public_url: string | null;
+      metadata_json?: Record<string, unknown>;
+    }>;
+    versions: Array<{ version: number; label: string | null; is_active: boolean; created_at: string }>;
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/product-bible`);
+}
+
+export async function saveProductBible(projectSlug: string, bibleJson: Record<string, unknown>, label?: string | null) {
+  return corePost<{ ok: boolean; version: number; parsed: Record<string, unknown> | null }>(
+    `/v1/projects/${encodeURIComponent(projectSlug)}/product-bible`,
     { bible_json: bibleJson, label: label ?? undefined }
   );
 }
@@ -1502,7 +1579,7 @@ export async function materializeRunJobs(
   body: {
     mode: "manual";
     idea_ids?: string[];
-    mimic_picks?: Array<{ insights_id: string; mimic_kind: string }>;
+    mimic_picks?: Array<{ insights_id: string; mimic_kind: string; video_intent?: string }>;
     bvs_overrides?: Array<{ key: string; enabled: boolean }>;
   }
 ) {

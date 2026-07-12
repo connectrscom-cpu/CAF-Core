@@ -3,6 +3,9 @@
  * Written during Generate (draft phase); consumed during Render.
  */
 
+import type { BvsRenderPlanV1 } from "./bvs-render-plan.js";
+import { parseBvsRenderPlan } from "./bvs-render-plan.js";
+
 export type MimicMode = "image_full" | "template_bg" | "carousel_visual";
 
 export type MimicSlideRenderMode = "hbs" | "full_bleed";
@@ -44,7 +47,7 @@ export interface MimicSlidePlan {
   source_slide_index?: number | null;
 }
 
-export type MimicExecutionMode = "classic" | "why_mimic";
+export type MimicExecutionMode = "classic" | "why_mimic" | "new_visual" | "bvs_text_carousel";
 
 export interface MimicPayloadV1 {
   schema_version: 1;
@@ -100,6 +103,8 @@ export interface MimicPayloadV1 {
   /** Brand Visual System — snapshotted from generation_payload.bvs_v1 at mimic prep. */
   bvs_enabled?: boolean;
   bvs_bible_snapshot?: Record<string, unknown>;
+  /** Frozen BVS overlay + background strategy for template_bg listicles. */
+  bvs_render_plan?: BvsRenderPlanV1;
 }
 
 export const MIMIC_PAYLOAD_KEY = "mimic_v1";
@@ -142,7 +147,10 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       source_url: typeof o.source_url === "string" ? o.source_url : null,
     });
   }
-  if (reference_items.length === 0) return null;
+  if (reference_items.length === 0) {
+    const executionMode = String(rec.execution_mode ?? "").trim();
+    if (executionMode !== "new_visual" && executionMode !== "bvs_text_carousel") return null;
+  }
 
   const parseRefList = (rawList: unknown): MimicReferenceItem[] => {
     if (!Array.isArray(rawList)) return [];
@@ -198,7 +206,10 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
       : null;
 
   const execution_mode =
-    rec.execution_mode === "why_mimic" || rec.execution_mode === "classic"
+    rec.execution_mode === "why_mimic" ||
+    rec.execution_mode === "classic" ||
+    rec.execution_mode === "new_visual" ||
+    rec.execution_mode === "bvs_text_carousel"
       ? rec.execution_mode
       : undefined;
 
@@ -244,6 +255,11 @@ export function pickMimicPayload(payload: unknown): MimicPayloadV1 | null {
     ...(asRecord(rec.brand_execution_brief)
       ? { brand_execution_brief: rec.brand_execution_brief as Record<string, unknown> }
       : {}),
+    ...(rec.bvs_enabled === true ? { bvs_enabled: true } : {}),
+    ...(asRecord(rec.bvs_bible_snapshot)
+      ? { bvs_bible_snapshot: rec.bvs_bible_snapshot as Record<string, unknown> }
+      : {}),
+    ...(parseBvsRenderPlan(rec.bvs_render_plan) ? { bvs_render_plan: parseBvsRenderPlan(rec.bvs_render_plan)! } : {}),
   };
 }
 

@@ -12,6 +12,9 @@ export const BRAND_BIBLE_SCHEMA = "brand_bible_v1" as const;
 /** Max moodboard assets described per-line in Flux image prompts when explicitly selected. */
 export const FLUX_PROMPT_ASSET_MAX = 7;
 
+/** BFL multi-reference: input_image … input_image_8 (new visual + BVS auto refs). */
+export const NEW_VISUAL_BVS_FLUX_IMAGE_REF_MAX = 8;
+
 export const BRAND_BIBLE_ASSET_ROLES = [
   "style_reference",
   "character",
@@ -384,15 +387,118 @@ function formatFluxPromptAssetLine(asset: BrandBibleResolvedAsset, index1Based: 
   return `  ${parts.join(" ")}`;
 }
 
+function hasResolvableBrandAssetUrl(asset: BrandBibleResolvedAsset): boolean {
+  return Boolean(asset.public_url?.trim());
+}
+
+/**
+ * New visual carousel + BVS: backgrounds, design elements (motifs), and mascots sent as Flux image refs.
+ * Order: backgrounds → motifs → mascots/characters (stable, capped at BFL multi-ref limit).
+ */
+export function resolveNewVisualBvsFluxImageReferenceAssets(
+  snapshot: BrandBibleSnapshotV1 | null | undefined
+): BrandBibleResolvedAsset[] {
+  if (!snapshot) return [];
+  const resolved = Array.isArray(snapshot.resolved_assets) ? snapshot.resolved_assets : [];
+  const backgrounds = resolved.filter(
+    (a) => (a.role === "background" || a.role === "texture") && hasResolvableBrandAssetUrl(a)
+  );
+  const motifs = resolved.filter((a) => a.role === "motif" && hasResolvableBrandAssetUrl(a));
+  const mascots = resolved.filter(
+    (a) => (a.role === "mascot" || a.role === "character") && hasResolvableBrandAssetUrl(a)
+  );
+  const out: BrandBibleResolvedAsset[] = [];
+  const seen = new Set<string>();
+  for (const asset of [...backgrounds, ...motifs, ...mascots]) {
+    const id = String(asset.asset_id ?? "").trim();
+    const url = asset.public_url!.trim();
+    const key = id || url;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(asset);
+    if (out.length >= NEW_VISUAL_BVS_FLUX_IMAGE_REF_MAX) break;
+  }
+  return out;
+}
+
+export function resolveNewVisualBvsFluxImageReferenceUrls(
+  snapshot: BrandBibleSnapshotV1 | null | undefined
+): string[] {
+  return resolveNewVisualBvsFluxImageReferenceAssets(snapshot)
+    .map((a) => a.public_url!.trim())
+    .filter(Boolean);
+}
+
+/** Prompt block naming each attached reference image (image 1, image 2, …). */
+export function buildNewVisualBvsFluxImageReferencePromptBlock(
+  assets: BrandBibleResolvedAsset[]
+): string | null {
+  if (assets.length === 0) return null;
+  const lines = [
+    `Brand asset reference images (${assets.length} attached to Flux — match palette/mood/style; invent a fresh hero subject; do not collage or copy pixels verbatim):`,
+  ];
+  for (let i = 0; i < assets.length; i++) {
+    const asset = assets[i]!;
+    const role = roleLabelForPrompt(asset.role);
+    const label = asset.label?.trim();
+    const notes = asset.usage_notes?.trim();
+    const detail = [label, notes].filter(Boolean).join(" — ");
+    lines.push(`- Image ${i + 1} [${role}]${detail ? `: ${detail}` : ""}`);
+  }
+  return lines.join("\n");
+}
+
 /** Prompt block for LLM copy / Flux when BVS is enabled. */
-export function buildBrandBiblePromptBlock(
+/** Brand assets to attach on HeyGen Video Agent `files[]` (ordered; capped by caller). */
+export function resolveHeygenBvsReferenceAssets(
+  snapshot: BrandBibleSnapshotV1 | null | undefined
+): BrandBibleResolvedAsset[] {
+  if (!snapshot) return [];
+  const explicit = resolveExplicitFluxPromptAssets(snapshot).filter((a) => a.role !== "anti_reference");
+  if (explicit.length > 0) return explicit.filter((a) => hasResolvableBrandAssetUrl(a));
+
+  const resolved = Array.isArray(snapshot.resolved_assets) ? snapshot.resolved_assets : [];
+  const roleOrder: BrandBibleAssetRole[] = [
+    "logo",
+    "style_reference",
+    "character",
+    "mascot",
+    "motif",
+    "background",
+    "texture",
+    "slide_frame",
+  ];
+  const out: BrandBibleResolvedAsset[] = [];
+  const seen = new Set<string>();
+  for (const role of roleOrder) {
+    for (const asset of resolved) {
+      if (asset.role !== role || asset.role === "anti_reference") continue;
+      if (!hasResolvableBrandAssetUrl(asset)) continue;
+      if (seen.has(asset.asset_id)) continue;
+      seen.add(asset.asset_id);
+      out.push(asset);
+    }
+  }
+  return out;
+}
+
+function formatHeygenPromptAssetLine(asset: BrandBibleResolvedAsset, index1Based: number): string {
+  const role = roleLabelForPrompt(asset.role);
+  const label = asset.label?.trim();
+  const notes = asset.usage_notes?.trim();
+  const detail = [label, notes].filter(Boolean).join(" — ");
+  return `- File ${index1Based} [${role}]${detail ? `: ${detail}` : ""} — use as brand reference (palette/mood/style); do not paste pixels verbatim unless the role is logo.`;
+}
+
+/** Prompt block appended to HeyGen Video Agent production briefs when BVS is available. */
+export function buildBrandBibleHeygenPromptBlock(
   snapshot: BrandBibleSnapshotV1 | null | undefined,
-  opts?: { forMimic?: boolean }
+  attachedAssets: BrandBibleResolvedAsset[]
 ): string | null {
   if (!snapshot) return null;
 
   const lines: string[] = [
-    "Brand Visual System (BVS) — enforce this brand's visual identity on all generated visuals:",
+    "Brand Visual System (BVS) — apply this brand's visual identity to motion graphics, b-roll, overlays, and end cards:",
   ];
 
   const mode = visualModeLabel(snapshot);
@@ -403,9 +509,80 @@ export function buildBrandBiblePromptBlock(
 
   const guide = snapshot.application_guide;
   if (guide.content_aims.length) lines.push(`- Content aims: ${guide.content_aims.join(", ")}`);
-  if (opts?.forMimic && guide.mimic_policy) {
+  if (guide.original_policy) lines.push(`- Original content policy: ${guide.original_policy}`);
+  if (guide.instructions) {
+    lines.push("- Marketer application guide:");
+    lines.push(guide.instructions);
+  }
+
+  if (attachedAssets.length > 0) {
+    lines.push(
+      `- Uploaded brand asset files (${attachedAssets.length} attached on this request — match role instructions below):`
+    );
+    for (let i = 0; i < attachedAssets.length; i++) {
+      lines.push(formatHeygenPromptAssetLine(attachedAssets[i]!, i + 1));
+    }
+  } else {
+    const styleRefs = snapshot.resolved_assets.filter((a) => a.role === "style_reference" && a.public_url);
+    const logos = snapshot.resolved_assets.filter((a) => a.role === "logo" && a.public_url);
+    const mascots = snapshot.resolved_assets.filter(
+      (a) => (a.role === "mascot" || a.role === "character") && a.public_url
+    );
+    if (logos.length) lines.push(`- Brand logos (${logos.length}): use on end cards and lower-thirds when relevant.`);
+    if (styleRefs.length) {
+      lines.push(`- Style references (${styleRefs.length}): match illustration/photo look — not competitor pixels.`);
+    }
+    if (mascots.length) {
+      lines.push(`- Brand characters/mascots (${mascots.length}): use in motion overlays when relevant.`);
+    }
+  }
+
+  if (snapshot.heygen_presenters?.length) {
+    const names = snapshot.heygen_presenters
+      .map((p) => p.label ?? p.avatar_name ?? p.avatar_id)
+      .filter(Boolean)
+      .slice(0, 4);
+    if (names.length) {
+      lines.push(`- Video presenters (HeyGen): ${names.join("; ")} — prefer approved avatar+voice pairs when routing allows.`);
+    }
+  }
+
+  lines.push(
+    "- INVARIANT: stay on-brand for every scene — palette, motifs, and tone; never invent off-brand neon, stock clichés, or competitor looks."
+  );
+
+  if (lines.length <= 1) return null;
+  return lines.join("\n").trim();
+}
+
+export function buildBrandBiblePromptBlock(
+  snapshot: BrandBibleSnapshotV1 | null | undefined,
+  opts?: { forMimic?: boolean; forNewVisual?: boolean }
+): string | null {
+  if (!snapshot) return null;
+
+  const forNewVisual = opts?.forNewVisual === true;
+  const forMimic = !forNewVisual && opts?.forMimic === true;
+
+  const lines: string[] = [
+    forNewVisual
+      ? "Brand Visual System (BVS) — subject-first original carousel plates (NOT competitor mimic):"
+      : "Brand Visual System (BVS) — enforce this brand's visual identity on all generated visuals:",
+  ];
+
+  const mode = visualModeLabel(snapshot);
+  if (mode) lines.push(`- Visual mode: ${mode}`);
+  if (snapshot.palette.length) lines.push(`- Palette (use consistently): ${snapshot.palette.join(", ")}`);
+  if (snapshot.allowed_motifs.length) lines.push(`- Allowed motifs: ${snapshot.allowed_motifs.join("; ")}`);
+  if (snapshot.forbidden_motifs.length) lines.push(`- Forbidden motifs: ${snapshot.forbidden_motifs.join("; ")}`);
+
+  const guide = snapshot.application_guide;
+  if (guide.content_aims.length) lines.push(`- Content aims: ${guide.content_aims.join(", ")}`);
+  if (forNewVisual && guide.original_policy) {
+    lines.push(`- Original content policy: ${guide.original_policy}`);
+  } else if (forMimic && guide.mimic_policy) {
     lines.push(`- When mimicking references: ${guide.mimic_policy}`);
-  } else if (!opts?.forMimic && guide.original_policy) {
+  } else if (!forMimic && !forNewVisual && guide.original_policy) {
     lines.push(`- Original content policy: ${guide.original_policy}`);
   }
   if (guide.instructions) {
@@ -448,10 +625,18 @@ export function buildBrandBiblePromptBlock(
     lines.push(`- Slide frames/borders (${frames.length}): apply as overlay framing on listicle slides when relevant.`);
   }
   if (backgrounds.length) {
-    lines.push(`- Background plates (${backgrounds.length}): star fields, gradients, or scene backdrops for slide generation.`);
+    lines.push(
+      forNewVisual
+        ? `- Background references (${backgrounds.length}): mood/lighting cues only — always pair with a concrete hero subject (person, animal, object, or landscape); never output empty gradient/starfield plates.`
+        : `- Background plates (${backgrounds.length}): star fields, gradients, or scene backdrops for slide generation.`
+    );
   }
   if (designElements.length) {
-    lines.push(`- Design elements (${designElements.length}): glyphs, ornaments, stickers — accent overlays when relevant.`);
+    lines.push(
+      forNewVisual
+        ? `- Design elements (${designElements.length}): subtle accents inside a real scene only — never the entire background.`
+        : `- Design elements (${designElements.length}): glyphs, ornaments, stickers — accent overlays when relevant.`
+    );
   }
   }
 
@@ -465,9 +650,14 @@ export function buildBrandBiblePromptBlock(
     }
   }
 
-  if (opts?.forMimic) {
+  if (forMimic) {
     lines.push(
       "- INVARIANT: copy the reference deck's structure and persuasion; execute ALL visuals in this brand's style — never reproduce the competitor's look."
+    );
+  }
+  if (forNewVisual) {
+    lines.push(
+      "- INVARIANT: brand-original plates — vivid hero subjects (people, animals, objects, landscapes) with this palette/mood; no abstract zodiac wallpaper or constellation templates."
     );
   }
 
@@ -475,13 +665,61 @@ export function buildBrandBiblePromptBlock(
   return lines.join("\n").trim();
 }
 
-export function appendBrandBibleToFluxPrompt(basePrompt: string, snapshot: BrandBibleSnapshotV1 | null | undefined): string {
-  const block = buildBrandBiblePromptBlock(snapshot, { forMimic: true });
-  if (!block) return basePrompt;
-  return `${basePrompt.trim()}\n\n${block}`;
+export function appendBrandBibleToFluxPrompt(
+  basePrompt: string,
+  snapshot: BrandBibleSnapshotV1 | null | undefined,
+  opts?: { forMimic?: boolean; forNewVisual?: boolean }
+): string {
+  let prompt = basePrompt.trim();
+  const block = buildBrandBiblePromptBlock(snapshot, opts);
+  if (block) prompt = `${prompt}\n\n${block}`;
+  if (opts?.forNewVisual) {
+    const refBlock = buildNewVisualBvsFluxImageReferencePromptBlock(
+      resolveNewVisualBvsFluxImageReferenceAssets(snapshot)
+    );
+    if (refBlock) prompt = `${prompt}\n\n${refBlock}`;
+  }
+  return prompt;
+}
+
+/** @deprecated Prefer appendBrandBibleToFluxPrompt with explicit opts. */
+export function appendBrandBibleToMimicFluxPrompt(basePrompt: string, snapshot: BrandBibleSnapshotV1 | null | undefined): string {
+  return appendBrandBibleToFluxPrompt(basePrompt, snapshot, { forMimic: true });
 }
 
 export function paletteFromBrandBibleSnapshot(snapshot: BrandBibleSnapshotV1 | null | undefined): string[] {
   if (!snapshot?.palette?.length) return [];
   return snapshot.palette.filter((c) => typeof c === "string" && c.trim().length > 0);
+}
+
+/** Moodboard plates usable as carousel backgrounds (background + texture roles). */
+export function listBrandBibleBackgroundPlates(
+  snapshot: BrandBibleSnapshotV1 | null | undefined
+): BrandBibleResolvedAsset[] {
+  if (!snapshot) return [];
+  const resolved = Array.isArray(snapshot.resolved_assets) ? snapshot.resolved_assets : [];
+  return resolved.filter(
+    (a) => (a.role === "background" || a.role === "texture") && hasResolvableBrandAssetUrl(a)
+  );
+}
+
+function fnv1a32(input: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/** Deterministic background pick — stable per task/slot, varies across slots when multiple plates exist. */
+export function pickBrandBibleBackgroundForSlide(
+  snapshot: BrandBibleSnapshotV1 | null | undefined,
+  seed: string,
+  slideIndex: number
+): BrandBibleResolvedAsset | null {
+  const plates = listBrandBibleBackgroundPlates(snapshot);
+  if (plates.length === 0) return null;
+  const idx = fnv1a32(`${seed}:${slideIndex}`) % plates.length;
+  return plates[idx] ?? plates[0] ?? null;
 }

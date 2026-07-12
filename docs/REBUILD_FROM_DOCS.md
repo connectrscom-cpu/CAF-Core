@@ -4,7 +4,7 @@
 
 **Prerequisites:** Node.js ≥ 20, Docker (optional, for local Postgres), accounts for OpenAI and any media providers you enable.
 
-**Read first:** [EXTERNAL_CONTEXT_PACK.md](./EXTERNAL_CONTEXT_PACK.md), [DOMAIN_MODEL.md](./DOMAIN_MODEL.md), [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md).
+**Read first:** [CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md), [EXTERNAL_CONTEXT_PACK.md](./EXTERNAL_CONTEXT_PACK.md), [DOMAIN_MODEL.md](./DOMAIN_MODEL.md), [DATABASE_SCHEMA.md](./DATABASE_SCHEMA.md).
 
 ---
 
@@ -14,7 +14,7 @@
 |-----------|------|----------------|-----------|
 | **CAF Core API** | repo root | 3847 | **Yes** |
 | **PostgreSQL** | Docker or hosted | 5432 | **Yes** |
-| **Review app** | `apps/review` | 3000 | Recommended |
+| **Review app** | `apps/review` | 3000 | Recommended — production embeds in Core Fly at `/admin/workbench` |
 | **Carousel renderer** | `services/renderer` | 3333 | For carousel flows |
 | **Video assembly** | `services/video-assembly` | 3334 | For video stitch/mux |
 | **Media gateway** | `services/media-gateway` | 3300 / 8080 | Optional (combines renderer + assembly) |

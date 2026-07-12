@@ -4,7 +4,7 @@ This document explains **what CAF Core is**, **what problems it solves**, and **
 
 ## What is CAF Core?
 
-**CAF** (Content Automation Framework) is a **content pipeline platform**. **CAF Core** is the backend: a **Fastify API + PostgreSQL** application that owns **operational truth** for content production—research signals, planned work units (**content jobs**), AI-generated drafts, quality checks, rendered media, human review decisions, publication scheduling, and learning artifacts.
+**CAF** (Content Automation Framework) is a **content operations platform**. **CAF Core** is the backend: a **Fastify API + PostgreSQL** application that owns **operational truth** for content production—research signals, planned work units (**content jobs**), AI-generated drafts, quality checks, rendered media, human review decisions, publication scheduling, and learning artifacts.
 
 Companion apps and services talk to Core over HTTP:
 
@@ -29,7 +29,7 @@ Teams that produce **scaled social content** (carousels, reels, scripted video) 
 5. **Media production** — carousel PNGs, HeyGen/Sora/ffmpeg pipelines, assets in storage.
 6. **Publishing intent** — placements, schedules, outcomes (Meta or external workers).
 7. **Learning** — rules and evidence so future runs can score better and prompts can include guidance.
-8. **Top-performer mimic (optional)** — recreate visual patterns from archived high performers with fresh copy (`FLOW_TOP_PERFORMER_MIMIC_*` flows; requires Creative Intelligence ingest + `MIMIC_IMAGE_ENABLED`).
+8. **Mimic & BVS (optional)** — TP-grounded mimic carousels, **new visual** carousels (idea + BVS, no TP frames), **Why Mimic** (SIL-driven), and Brand Visual System (`brand_bibles` → `bvs_v1`). Requires Creative Intelligence + `MIMIC_IMAGE_ENABLED` for pixel render.
 
 CAF Core implements that **as data in Postgres** and **HTTP APIs**, not as a single monolithic LLM script.
 
@@ -60,7 +60,7 @@ For a **technical** walkthrough (files, tables, boundaries), see **[ARCHITECTURE
 | **Pitch / investors / evaluators** | **`docs/CAF_PRODUCT_PITCH.md`** |
 | **Complete product guide (what CAF does)** | **`docs/CAF_COMPLETE_PRODUCT_GUIDE.md`** |
 | Product / ops / leadership (short) | This file |
-| **External LLM / other repository** | **`docs/EXTERNAL_CONTEXT_PACK.md`** + Tier 1 bundle |
+| **External LLM / other repository** | **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** + **`docs/EXTERNAL_CONTEXT_PACK.md`** |
 | **Rebuild / bootstrap** | **`docs/REBUILD_FROM_DOCS.md`** |
 | Engineers implementing features | `docs/CAF_CORE_COMPLETE_GUIDE.md` (single file), or `docs/ARCHITECTURE.md`, `docs/layers/README.md`, `README.md`, `docs/API_REFERENCE.md` |
 | Database / schema | `docs/DATABASE_SCHEMA.md` |

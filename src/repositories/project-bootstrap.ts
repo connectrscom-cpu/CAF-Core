@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { CANONICAL_ALLOWED_FLOW_SEEDS } from "../domain/canonical-flow-types.js";
 import { q, qOne } from "../db/queries.js";
 import {
+  ensureMissingAllowedFlowRowsForPlanning,
   seedCanonicalAllowedFlowTypes,
   seedProductFlowTypesSkeleton,
   seedMimicFlowTypesSkeleton,
@@ -121,6 +122,9 @@ async function loadProfileCounts(db: Pool, projectId: string): Promise<ProfileCo
  */
 export async function ensureDefaultProjectProfileData(db: Pool, projectId: string): Promise<void> {
   await maybeSyncHeygenFromSnsTemplate(db, projectId);
+
+  // CAF features are project-agnostic: backfill any flow rows added after this project was created.
+  await ensureMissingAllowedFlowRowsForPlanning(db, projectId);
 
   const c = await loadProfileCounts(db, projectId);
   if (c.flow_types > 0 && c.risk_rules > 0 && c.heygen_config > 0 && c.constraints > 0) {

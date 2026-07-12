@@ -11,10 +11,18 @@ import {
   enrichSlideRenderContextWithMimicDocAi,
   mergeDocAiLayerPositionsIntoMimicV1,
 } from "@/lib/mimic-docai-slide-render-context";
+import { listBrandAssets } from "@/lib/caf-core-client";
+import {
+  assetIdFromBrandProxyUrl,
+  resolveBrandFrameReprintUrl,
+  resolveBrandLogoReprintUrl,
+} from "@/lib/brand-asset-url";
+import { CAF_CORE_URL as ENV_CAF_CORE_URL } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
 
 const RENDERER_BASE_URL = process.env.RENDERER_BASE_URL || "http://localhost:3333";
+const CAF_CORE_URL = (ENV_CAF_CORE_URL || process.env.CAF_CORE_URL || "https://caf-core.fly.dev").replace(/\/$/, "");
 
 function asRec(v: unknown): Record<string, unknown> | null {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
@@ -49,6 +57,58 @@ function parseLayerPosOverrides(raw: unknown): MimicDocAiLayerPositionOverride[]
   return out.length ? out : null;
 }
 
+async function resolveLogoOverlay(
+  projectSlug: string,
+  raw: unknown
+): Promise<{ url: string; position: string } | undefined> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  let logoUrl = typeof (raw as Record<string, unknown>).url === "string" ? String((raw as Record<string, unknown>).url).trim() : "";
+  if (!logoUrl) return undefined;
+  const slug = projectSlug.trim();
+  if (logoUrl.startsWith("/api/project-config/brand-assets/proxy") && slug) {
+    const assets = await listBrandAssets(slug);
+    const pool = assets?.brand_assets ?? [];
+    const proxyId = assetIdFromBrandProxyUrl(logoUrl);
+    logoUrl = resolveBrandLogoReprintUrl(slug, pool, CAF_CORE_URL);
+    if (!logoUrl && proxyId) {
+      const hit = pool.find((a) => a.id === proxyId);
+      if (hit) logoUrl = resolveBrandLogoReprintUrl(slug, [hit], CAF_CORE_URL);
+    }
+  } else if (slug && !/^https?:\/\//i.test(logoUrl)) {
+    const assets = await listBrandAssets(slug);
+    logoUrl = resolveBrandLogoReprintUrl(slug, assets?.brand_assets ?? [], CAF_CORE_URL);
+  }
+  if (!logoUrl) return undefined;
+  const position =
+    typeof (raw as Record<string, unknown>).position === "string"
+      ? String((raw as Record<string, unknown>).position).trim()
+      : "br";
+  return { url: logoUrl, position: position || "br" };
+}
+
+async function resolveFrameOverlay(
+  projectSlug: string,
+  raw: unknown
+): Promise<{ url: string; asset_id?: string } | undefined> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const slug = projectSlug.trim();
+  let frameUrl = typeof (raw as Record<string, unknown>).url === "string" ? String((raw as Record<string, unknown>).url).trim() : "";
+  const frameAssetId =
+    typeof (raw as Record<string, unknown>).asset_id === "string"
+      ? String((raw as Record<string, unknown>).asset_id).trim()
+      : "";
+  if (!frameUrl && !frameAssetId) return undefined;
+  if (slug && (!frameUrl || frameUrl.startsWith("/api/project-config/brand-assets/proxy"))) {
+    const assets = await listBrandAssets(slug);
+    const pool = assets?.brand_assets ?? [];
+    if (frameAssetId) {
+      frameUrl = resolveBrandFrameReprintUrl(slug, pool, frameAssetId, CAF_CORE_URL);
+    }
+  }
+  if (!frameUrl) return undefined;
+  return { url: frameUrl, ...(frameAssetId ? { asset_id: frameAssetId } : {}) };
+}
+
 /** Renderer PNG preview — same DocAI overlay + fit path as text-overlay reprint. */
 export async function POST(request: NextRequest) {
   try {
@@ -62,6 +122,7 @@ export async function POST(request: NextRequest) {
         ? (body.payload as Record<string, unknown>)
         : {};
     const instagramHandle = typeof body.instagram_handle === "string" ? body.instagram_handle.trim() : "";
+    const projectSlug = typeof body.project_slug === "string" ? body.project_slug.trim() : "";
     const backgroundFromBody =
       typeof body.background_image_url === "string" ? body.background_image_url.trim() : "";
     const textBacking = body.text_backing !== false;
@@ -127,6 +188,11 @@ export async function POST(request: NextRequest) {
       });
       ctx = enriched.renderContext;
     }
+
+    const logoOverlay = await resolveLogoOverlay(projectSlug, body.logo_overlay);
+    const frameOverlay = await resolveFrameOverlay(projectSlug, body.frame_overlay);
+    if (logoOverlay) ctx = { ...ctx, logo_overlay: logoOverlay };
+    if (frameOverlay) ctx = { ...ctx, frame_overlay: frameOverlay };
 
     const base = RENDERER_BASE_URL.replace(/\/$/, "");
     const taskId = String(body.task_id ?? payload.task_id ?? "preview");

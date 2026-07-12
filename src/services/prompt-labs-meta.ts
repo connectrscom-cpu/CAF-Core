@@ -16,6 +16,10 @@ export const PROMPT_LABS_ENV_HINTS: Record<string, string> = {
     "Maximum number of scenes in the scene_bundle produced by Video_Scene_Generator.",
   SCENE_ASSEMBLY_CLIP_DURATION_SEC:
     "Target per-clip duration used by the scene assembly system suffix.",
+  HOOK_FIRST_CLIP_PROVIDER:
+    "FLOW_VID_HOOK_FIRST hook opener: `sora` (OpenAI Videos API) or `heygen` (short Video Agent no-avatar clip).",
+  HOOK_FIRST_HOOK_DURATION_SEC:
+    "Target hook clip length in seconds for hook-first videos (Sora maps to 4/8/12).",
 };
 
 /**
@@ -81,6 +85,7 @@ export const HEYGEN_FLOW_TYPES: readonly string[] = [
   "FLOW_VID_SCRIPT",
   "FLOW_VID_PROMPT",
   "FLOW_VID_PROMPT_NO_AVATAR",
+  "FLOW_VID_HOOK_FIRST",
   "Video_Script_Generator",
   "Video_Prompt_Generator",
   /** Bootstrap / adapter prompts for HeyGen submit (Prompt-to-Video, Script-to-Video). */

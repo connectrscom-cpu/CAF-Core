@@ -79,6 +79,7 @@ type ReprintPollState = {
   slide_indices: string | null;
   slide_index?: number | null;
   slide_total?: number | null;
+  deck_slide_index?: number | null;
 };
 
 type RegenPollState = {
@@ -143,7 +144,7 @@ export function buildReviewBackgroundJobDetail(input: {
             : reprintState.completed_at
               ? "done"
               : "pending",
-        hint: "One slide at a time via carousel renderer (Puppeteer). Logo/frame applied last.",
+        hint: "One slide at a time via carousel renderer (Puppeteer). Use “Slide N only” scope to reprint a single slide (~30–60s). Full deck ≈ slides × that time.",
       },
       {
         id: "upload",
@@ -185,7 +186,15 @@ export function buildReviewBackgroundJobDetail(input: {
       if (reprintState.slide_index != null && reprintState.slide_total != null) {
         progressDone = Math.max(0, reprintState.slide_index - 1);
         progressTotal = reprintState.slide_total;
-        progressLabel = `Rendering slide ${reprintState.slide_index} of ${reprintState.slide_total} (${elapsed})`;
+        const deckNote =
+          reprintState.deck_slide_index != null &&
+          reprintState.slide_total > 1 &&
+          reprintState.deck_slide_index !== reprintState.slide_index
+            ? ` · deck slide ${reprintState.deck_slide_index}`
+            : reprintState.deck_slide_index != null && reprintState.slide_total === 1
+              ? ` · deck slide ${reprintState.deck_slide_index}`
+              : "";
+        progressLabel = `Rendering slide ${reprintState.slide_index} of ${reprintState.slide_total}${deckNote} (${elapsed})`;
       } else if (assetProgress.total > 0) {
         progressDone = assetProgress.updated;
         progressTotal = assetProgress.total;

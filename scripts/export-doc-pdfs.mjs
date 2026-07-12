@@ -33,11 +33,35 @@ const BUNDLES = [
     title: "CAF — Onboarding & External Context",
     files: [
       "docs/EXTERNAL_CONTEXT_PACK.md",
+      "docs/CAF_CURRENT_STATE_CONTEXT_PACK.md",
       "docs/REBUILD_FROM_DOCS.md",
       "docs/DOMAIN_MODEL.md",
       "docs/DATABASE_SCHEMA.md",
       "AGENTS.md",
     ],
+  },
+  {
+    id: "11-caf-current-state-vol1-platform",
+    title: "CAF Current State — Vol 1: Platform & Funnel",
+    files: ["docs/volumes/CAF_CONTEXT_VOL1_Platform_and_Funnel.md", "AGENTS.md"],
+  },
+  {
+    id: "12-caf-current-state-vol2-data",
+    title: "CAF Current State — Vol 2: Data & Contracts",
+    files: ["docs/volumes/CAF_CONTEXT_VOL2_Data_Contracts_and_Flows.md"],
+  },
+  {
+    id: "13-caf-current-state-vol3-mimic",
+    title: "CAF Current State — Vol 3: Operators, Mimic & BVS",
+    files: [
+      "docs/volumes/CAF_CONTEXT_VOL3_Operators_Mimic_and_BVS.md",
+      "apps/review/CHATGPT_CAROUSEL_REVIEW_CONSOLE_EDIT_GUIDE.md",
+    ],
+  },
+  {
+    id: "14-caf-current-state-vol4-ops",
+    title: "CAF Current State — Vol 4: Quality, Ops & Agent Map",
+    files: ["docs/volumes/CAF_CONTEXT_VOL4_Quality_Ops_and_Agent_Map.md"],
   },
   {
     id: "03-caf-architecture-and-layers",

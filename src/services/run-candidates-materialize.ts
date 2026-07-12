@@ -32,11 +32,17 @@ import {
 } from "../domain/top-performer-video-heygen-routing.js";
 import { findVisualGuidelineEntryForGrounding } from "../domain/top-performer-grounding.js";
 import { VISUAL_FIRST_CAROUSEL_PROVENANCE } from "../domain/visual-first-carousel-flow-types.js";
+import { normalizeCarouselIdeaPlatform } from "./task-id.js";
+import type { VideoPipelineIntent } from "../decision_engine/video-flow-routing.js";
 import { z } from "zod";
+
+const videoPipelineIntentSchema = z.enum(["script_avatar", "prompt_avatar", "no_avatar"]);
 
 export type RunCandidatesMimicPick = {
   insights_id: string;
   mimic_kind: MimicPickKind;
+  /** Operator HeyGen lane override for video top performers (content cart). */
+  video_intent?: VideoPipelineIntent;
 };
 
 /** Per-row BVS toggle from marketer content cart (idea_id or mimic key). */
@@ -56,6 +62,7 @@ export const runCandidatesMaterializeBodySchema = z.union([
           z.object({
             insights_id: z.string().min(1),
             mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]),
+            video_intent: videoPipelineIntentSchema.optional(),
           })
         )
         .optional(),
@@ -216,8 +223,10 @@ function mapIdeasV2ToPlannerSourceRows(
     const title = String(i.title ?? "").trim();
     const three = String(i.three_liner ?? i["3_liner"] ?? "").trim();
     const thesis = String(i.thesis ?? "").trim();
-    const platform = String(i.platform ?? "Multi").trim() || "Multi";
+    const platformRaw = String(i.platform ?? "Multi").trim() || "Multi";
     const format = String(i.format ?? "post").trim();
+    const platform =
+      format === "carousel" ? normalizeCarouselIdeaPlatform(platformRaw) : platformRaw;
     const cta = String(i.cta ?? "").trim();
     const whyNow = String(i.why_now ?? "").trim();
     const novelty = String(i.novelty_angle ?? "").trim();
@@ -277,6 +286,7 @@ function mapIdeasV2ToPlannerSourceRows(
       why_now: whyNow || undefined,
       novelty_angle: novelty || undefined,
       key_points: keyPoints.length ? keyPoints : undefined,
+      hook_opener_concept: i.hook_opener_concept,
       risk_flags: riskFlags.length ? riskFlags : undefined,
       grounding_insight_ids: grounding.length ? grounding : undefined,
       provenance:
@@ -350,7 +360,9 @@ export function plannerRowsFromMimicPicks(
 
     const flowType =
       mimicKind === "video"
-        ? resolveTopPerformerVideoHeygenRoute(entry).flow_type
+        ? resolveTopPerformerVideoHeygenRoute(entry, {
+            forceIntent: pick.video_intent,
+          }).flow_type
         : mimicKindToFlowType(mimicKind);
     const rowId = stringField(entry.source_evidence_row_id, 40);
     const hook = stringField(entry.hook_text_preview, 400);
@@ -366,7 +378,10 @@ export function plannerRowsFromMimicPicks(
           ? "video"
           : "post";
 
-    const videoRoute = mimicKind === "video" ? resolveTopPerformerVideoHeygenRoute(entry) : null;
+    const videoRoute =
+      mimicKind === "video"
+        ? resolveTopPerformerVideoHeygenRoute(entry, { forceIntent: pick.video_intent })
+        : null;
 
     rows.push({
       idea_id: ideaId,

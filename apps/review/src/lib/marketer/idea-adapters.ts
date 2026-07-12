@@ -6,6 +6,7 @@ import {
   NEW_VISUAL_CAROUSEL_FLOW,
   newVisualCarouselLaneLabel,
 } from "./visual-first-carousel-idea";
+import { normalizeCarouselIdeaPlatform } from "./carousel-platforms";
 import { pickRenderableThumb } from "./inspection-media";
 import {
   contentPreviewMissing,
@@ -14,6 +15,7 @@ import {
   resolveEvidencePreview,
   type ContentPreview,
 } from "./preview-resolver";
+import { resolveRecommendedVideoIntent } from "./video-lane";
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -68,6 +70,9 @@ function resolveFlowType(row: Record<string, unknown>, format: string): { raw: s
     if (format === "carousel" && profile === "text_heavy") {
       return { raw: "FLOW_CAROUSEL", label: humanizeFlowType("FLOW_CAROUSEL") };
     }
+    if (format === "video" && profile === "hook_first") {
+      return { raw: "FLOW_VID_HOOK_FIRST", label: humanizeFlowType("FLOW_VID_HOOK_FIRST") };
+    }
     return { raw: profile, label: profile.replace(/_/g, " ") };
   }
   if (explicit) return { raw: explicit, label: explicit.replace(/_/g, " ") };
@@ -85,7 +90,11 @@ function contentLensOf(row: Record<string, unknown>): ContentIdea["contentLens"]
 export function toContentIdea(row: Record<string, unknown>, index: number): ContentIdea {
   const score = num(row.idea_score) ?? num(row.confidence_score);
   const format = str(row.format);
-  const platform = str(row.platform);
+  const platformRaw = str(row.platform);
+  const platform =
+    format.toLowerCase() === "carousel"
+      ? normalizeCarouselIdeaPlatform(platformRaw || "Instagram")
+      : platformRaw;
   const rationaleParts = [str(row.why_now), str(row.novelty_angle)].filter(Boolean);
   const flow = resolveFlowType(row, format);
   const isNewVisualCarousel = isNewVisualCarouselIdea(row);
@@ -227,6 +236,7 @@ export function parseTopPerformersFromPack(
       platform,
       format: formatPattern,
       mimicKind,
+      recommendedVideoIntent: mimicKind === "video" ? resolveRecommendedVideoIntent(formatPattern) : undefined,
       renderLabel:
         mimicKind === "why_carousel"
           ? "Why mimic"

@@ -41,4 +41,21 @@ describe("cartBvsOverrides", () => {
     ]);
     expect(body.bvs_overrides).toEqual([{ key: "x", enabled: true }]);
   });
+
+  it("maps video top performers to mimic video with lane override", () => {
+    const body = cartItemsToMaterializeBody([
+      {
+        id: "tp_ins_video",
+        kind: "top_performer",
+        title: "Demo reel",
+        flowDestination: "Script avatar",
+        flowTypeRaw: "FLOW_VID_SCRIPT",
+        format: "product_demo",
+        videoIntent: "script_avatar",
+      },
+    ]);
+    expect(body.mimic_picks).toEqual([
+      { insights_id: "ins_video", mimic_kind: "video", video_intent: "script_avatar" },
+    ]);
+  });
 });

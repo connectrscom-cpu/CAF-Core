@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     if (!job) {
       return NextResponse.json({ ok: false, error: "job_not_found" }, { status: 404 });
     }
-    if (!isTpGroundedCarouselReviewFlow(job.flow_type)) {
+    if (!isTpGroundedCarouselReviewFlow(job.flow_type, job.generation_payload)) {
       return NextResponse.json(
         { ok: false, error: "regenerate_slide_requires_tp_grounded_carousel_job" },
         { status: 400 }

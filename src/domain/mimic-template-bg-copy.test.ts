@@ -7,6 +7,7 @@ import {
   resolveTemplateBgCtaOnScreenCopy,
   shortListicleMotherDecorTitle,
   splitListicleColonLeadTitle,
+  stripDuplicateHeadlineLeadFromBody,
   templateBgLlmSlideForDocAi,
 } from "./mimic-template-bg-copy.js";
 
@@ -103,6 +104,21 @@ describe("mimic-template-bg-copy", () => {
     const split = splitListicleColonLeadTitle(paragraph);
     expect(split?.title).toBe("Gemini as Mother");
     expect(split?.body).toContain("She is the voice");
+  });
+
+  it("strips duplicate headline from the first line of body copy", () => {
+    const headline = "Effortless Earth: Grounded Glam";
+    const paragraph =
+      "Taurus, Virgo, and Capricorn—earth signs crave minimalism and sensory calm.";
+    expect(stripDuplicateHeadlineLeadFromBody(headline, `${headline}\n\n${paragraph}`)).toBe(paragraph);
+
+    const mapped = resolveTemplateBgBodyOnScreenCopy({
+      headline,
+      body: `${headline}\n\n${paragraph}`,
+    });
+    expect(mapped.inverted).toBe(false);
+    expect(mapped.headline).toBe(headline);
+    expect(mapped.body).toBe(paragraph);
   });
 
   it("maps duplicate headline/body paragraph to title + body for listicle slides", () => {

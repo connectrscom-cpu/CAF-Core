@@ -41,6 +41,25 @@ export const CAROUSEL_TYPOGRAPHY_PAYLOAD_KEYS = [
 
 export type CarouselTypographyPayloadKey = (typeof CAROUSEL_TYPOGRAPHY_PAYLOAD_KEYS)[number];
 
+export const CAROUSEL_THEME_PAYLOAD_KEYS = ["carousel_paper", "carousel_ink"] as const;
+export type CarouselThemePayloadKey = (typeof CAROUSEL_THEME_PAYLOAD_KEYS)[number];
+
+function isHexColor(raw: string): boolean {
+  return /^#[0-9a-fA-F]{3,8}$/.test(raw.trim());
+}
+
+/** Append reviewer theme colors to the slide JSON blob (renderer CSS tokens). */
+export function mergeCarouselThemeIntoPayload(
+  payload: CarouselSlidesPayload,
+  fields: Partial<Record<CarouselThemePayloadKey, string>>
+): void {
+  for (const k of CAROUSEL_THEME_PAYLOAD_KEYS) {
+    const raw = fields[k]?.trim() ?? "";
+    if (isHexColor(raw)) (payload as Record<string, unknown>)[k] = raw;
+    else delete (payload as Record<string, unknown>)[k];
+  }
+}
+
 /** Append reviewer typography to the slide JSON blob (alongside `slides` / deck shape). */
 export function mergeCarouselTypographyIntoPayload(
   payload: CarouselSlidesPayload,

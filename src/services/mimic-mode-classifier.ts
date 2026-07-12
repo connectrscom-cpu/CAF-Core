@@ -14,6 +14,7 @@ import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   isTpGroundedCarouselRenderFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
+import { isNewVisualCarouselExecution } from "../domain/new-visual-carousel-execution.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -220,6 +221,9 @@ export function reconcileMimicPayloadAtRender(
   mimic: MimicPayloadV1,
   opts?: ReconcileMimicPayloadAtRenderOptions
 ): MimicPayloadV1 {
+  if (isNewVisualCarouselExecution(flowType, mimic)) {
+    return { ...mimic, mode: "carousel_visual", execution_mode: "new_visual" };
+  }
   if (!isTpGroundedCarouselRenderFlow(flowType)) return mimic;
   const vg = mimic.visual_guideline ?? {};
   const entry: Record<string, unknown> = {

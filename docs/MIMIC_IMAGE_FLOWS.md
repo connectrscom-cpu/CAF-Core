@@ -1,58 +1,76 @@
 # Top-performer mimic flows (quick reference)
 
-Optional pipeline lanes that recreate **visual patterns** from archived top-performer posts while generating **fresh copy**. Full detail: **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)** (PDF: `MIMIC_FLOWS_COMPLETE_GUIDE.pdf`).
+Optional pipeline lanes for carousel/image mimic, **new visual** carousels, and **Why Mimic**. Full detail: **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)**. Repo truth: **[CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md)** §11.
+
+> **Updated 2026-07:** Visual-first (`FLOW_VISUAL_FIRST_CAROUSEL`) is **not** TP frame replication — it uses `execution_mode: new_visual` with idea + BVS and empty `reference_items`.
 
 ## Flow types
 
-| Flow | Format | Reference tier |
-|------|--------|----------------|
+| Flow | Format | Lane |
+|------|--------|------|
 | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single post | `top_performer_deep` (exactly **one** frame) |
-| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | `top_performer_carousel` | Manual mimic picks |
-| `FLOW_VISUAL_FIRST_CAROUSEL` | Carousel | `top_performer_carousel` | Visual-first ideas (`carousel_style: visual_first` / `mixed`) |
-| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | Video | `top_performer_video` | Routes to **HeyGen** (`FLOW_VID_*`) — not pixel mimic |
+| `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Carousel | Manual mimic picks; `execution_mode: classic` |
+| `FLOW_VISUAL_FIRST_CAROUSEL` | Carousel | **New visual** — idea + BVS; `execution_mode: new_visual`; **no** TP frames |
+| `FLOW_WHY_MIMIC_CAROUSEL` | Carousel | SIL-driven; `execution_mode: why_mimic` |
+| `FLOW_TOP_PERFORMER_MIMIC_VIDEO` | Video | Routes to **HeyGen** (`FLOW_VID_*`) — not pixel mimic |
 
-TP-grounded carousel lanes (`mimic_carousel`, `visual_first_carousel`) share render/copy (`isTpGroundedCarouselRenderFlow`) but have **separate** plan caps and prompts.
+TP-grounded carousel lanes share render/copy (`isTpGroundedCarouselRenderFlow()`) but have **separate** plan caps and prompts.
 
 ## Enable (both required)
 
 1. **Env:** `MIMIC_IMAGE_ENABLED=1`, `OPENAI_API_KEY` (copy), and a render provider key for `MIMIC_IMAGE_PROVIDER` (default **`bfl`** → `BFL_API_KEY`; also `dashscope`, `nvidia`, `openai`).
-2. **Project:** enable mimic flow types + plan cap &gt; 0 (seeded **disabled** by default).
+2. **Project:** enable mimic flow types + plan cap > 0 (seeded **disabled** by default).
 
 ## Payload keys
 
 | Key | Role |
 |-----|------|
-| `mimic_v1` | **Render source of truth** — mode, references, slide plans |
-| `mimic_carousel_package` | Review snapshot for TP-grounded carousel flows (`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, `FLOW_VISUAL_FIRST_CAROUSEL`) — **not** `carousel_package` |
+| `mimic_v1` | **Render source of truth** — `execution_mode`, `mode`, references, slide plans, BVS slices |
+| `bvs_v1` | Frozen Brand Visual System snapshot when enabled |
+| `mimic_carousel_package` | Review snapshot for all TP-grounded carousel render flows — **not** `carousel_package` |
 | `mimic_render_context` | Copy-time hints (slide count, template path) |
 | `mimic_job_grounding` | Per-slide layout for copy LLM |
+
+## `mimic_v1.execution_mode`
+
+| Value | Flow | Notes |
+|-------|------|-------|
+| `classic` | `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | TP reference frames |
+| `new_visual` | `FLOW_VISUAL_FIRST_CAROUSEL` | No `reference_items`; prep in `new-visual-carousel-prep.ts` |
+| `why_mimic` | `FLOW_WHY_MIMIC_CAROUSEL` | SIL on `slide_intelligence` |
 
 ## Mimic modes (`mimic_v1.mode`)
 
 | Mode | When | Render |
 |------|------|--------|
 | `image_full` | Single reference frame | One `STATIC_IMAGE` via image edit + LLM on-image copy |
-| `template_bg` | Text-heavy / listicle deck | Background plate → `carousel_mimic_bg.hbs` or Sharp composite + text overlay |
-| `carousel_visual` | Image-led carousel (2+ frames) | Per-slide art-only plates + HBS/DocAI text overlay |
+| `template_bg` | Text-heavy / listicle deck | Background plate (reference strip or BVS-invented T2I) → HBS/DocAI overlay |
+| `carousel_visual` | Image-led carousel | Per-slide art-only plates + HBS/DocAI overlay |
 
-Classifier: `classifyMimicMode()` — reviewer override → Nemotron `mimic_evaluation.recommended_mode` → heuristics (`src/services/mimic-mode-classifier.ts`).
+New visual is always `carousel_visual` + T2I. Classifier (`classifyMimicMode()`) applies to classic/why mimic only.
 
-**Text invariant (all TP-grounded carousels, including `FLOW_VISUAL_FIRST_CAROUSEL`):** image models produce **art-only plates**. LLM copy is composited via **HTML/CSS** (Puppeteer HBS or DocAI `docai_layer_positions`). `MIMIC_CAROUSEL_TEXT_VIA_FLUX` is ignored at render — never bake typography into Flux for these jobs.
+**Text invariant:** image models produce **art-only plates**. Copy is composited via **HTML/CSS** (Puppeteer HBS or DocAI `docai_layer_positions`). `MIMIC_CAROUSEL_TEXT_VIA_FLUX` is **ignored** at render.
+
+## Brand Visual System (BVS)
+
+- **`brand_bibles`** table — versioned `brand_bible_v1` per project.
+- Snapshotted to **`generation_payload.bvs_v1`** at plan when `use_brand_visual_system` is true.
+- Visual-first defaults BVS on. `mimic_v1.bvs_render_plan` can invent `template_bg` plates.
 
 ## Operator workflow
 
 1. **Plan run** — mimic flows compete with `FLOW_CAROUSEL` when both enabled.
-2. **Resolve reference** (before LLM) — `mimic_v1`, `mimic_render_context`, `template_storage_decision`.
-3. **Template backgrounds** (`template_bg` only, optional pre-copy) — extract plates → `MIMIC_BACKGROUND`.
-4. **Generate** — OpenAI copy; carousel mimic writes `mimic_carousel_package` snapshot → **GENERATED**.
-5. **Review** — TP-grounded workbench for both lanes (layer editor, per-slide regen, reprint overlay). Manual mimic adds original-vs-generated compare; visual-first does not.
+2. **Prep** — classic/why: `mimic-draft-prep.ts`; new visual: `new-visual-carousel-prep.ts`.
+3. **Generate** — OpenAI copy; TP-grounded carousel → `mimic_carousel_package` snapshot.
+4. **Review** — layer editor, live preview, brand styling panel; manual mimic has compare row; visual-first does not.
+5. **Reprint** (cheap) vs **regenerate slide** (expensive) for wrong visuals.
 6. **Render** — image provider + Puppeteer/DocAI overlays → **IN_REVIEW**.
 
 ## Prerequisites
 
-- Top-performer archive in Supabase (`stored_inspection_media_json` on visual-guidelines entries).
-- Signal pack `visual_guidelines_pack_v1` + ideas grounded to `insights_id`.
-- See also **[CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)** for ingest.
+- **Classic / Why Mimic:** top-performer archive in Supabase; signal pack `visual_guidelines_pack_v1` + grounded ideas.
+- **New visual:** idea + BVS; no TP archive required for reference frames.
+- See **[CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)** for ingest.
 
 ## Config (defaults from `src/config.ts`)
 
@@ -60,24 +78,23 @@ Classifier: `classifyMimicMode()` — reviewer override → Nemotron `mimic_eval
 |----------|---------|
 | `MIMIC_IMAGE_ENABLED` | `false` |
 | `MIMIC_IMAGE_PROVIDER` | `bfl` |
-| `MIMIC_IMAGE_BFL_MODEL` | `flux-2-klein-4b` |
 | `MIMIC_VISUAL_SIMILARITY_PCT` | `70` |
-| `MIMIC_IMAGE_INPUT_MODE` | `reference_edit` (`analysis_t2i` = Flux T2I prompts) |
-| `MIMIC_IMAGE_DEFAULT_SIZE` | `1024x1536` |
-| `CAROUSEL_COMPOSITE_ENABLED` | `true` |
+| `MIMIC_IMAGE_INPUT_MODE` | `reference_edit` (`analysis_t2i` for new visual / invented plates) |
+| `WHY_MIMIC_REQUIRE_SUBSTANTIVE_SIL` | `true` |
+| `MIMIC_LAYOUT_QA_ENABLED` | `true` |
 
-Per-project overrides: `project_system_constraints.mimic_*` columns (migrations `066`–`069`).
+Per-project overrides: `project_system_constraints.mimic_*` (migrations `066`–`069`).
 
 ## Key modules
 
 | Area | Path |
 |------|------|
-| Prep / snapshot | `src/services/mimic-draft-prep.ts` |
-| Carousel render | `src/services/mimic-carousel-render.ts`, `mimic-image-job.ts` |
-| Image providers | `src/services/mimic-image-provider.ts` |
+| Classic prep | `src/services/mimic-draft-prep.ts` |
+| New visual prep | `src/services/new-visual-carousel-prep.ts` |
+| BVS | `src/domain/brand-bible.ts`, `bvs-v1.ts`, `bvs-render-plan.ts` |
+| Carousel render | `src/services/mimic-carousel-render.ts`, `bvs-render-overlays.ts` |
 | Payload types | `src/domain/mimic-payload.ts`, `mimic-carousel-package.ts` |
-| Pipeline hook | `src/services/job-pipeline.ts` |
 
 ## Migrations
 
-`060`–`069` — flow types, prompts, copy rules, grounding, BFL model, render settings, image input mode.
+`060`–`078` — flow types, prompts, BVS (`078_brand_bibles`), Why Mimic (`074`), visual-first (`070`), job outcomes (`075`).

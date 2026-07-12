@@ -2,6 +2,10 @@
  * Mobile carousel copy ceilings for FLOW_VISUAL_FIRST_CAROUSEL (brand-style lane).
  * Applied in addition to mimic reference budgets — never allows paragraph-length body copy.
  */
+import {
+  buildVisualFirstCarouselVisualDirectionSystemBlock,
+  enforceVisualFirstCarouselVisualDirection,
+} from "./visual-first-carousel-visual-direction.js";
 
 export const VISUAL_FIRST_HEADLINE_MAX_CHARS = 55;
 export const VISUAL_FIRST_BODY_MAX_CHARS = 100;
@@ -99,6 +103,8 @@ export function buildVisualFirstCarouselCopySystemBlock(slideCount: number): str
     `- **Final slide (slide ${n}):** mandatory CTA with imperative verb (Follow, Save, Shop, Discover) + brand/site/handle when known. Max ${VISUAL_FIRST_CTA_MAX_CHARS} chars.`,
     "- **Layout fit:** Copy must fit mobile safe zones without overlap — prefer fewer words over smaller type.",
     "- **Differentiation:** Vary hook angle per slide; zodiac/sign slides should name the sign in the headline, not bury it in body copy.",
+    "",
+    buildVisualFirstCarouselVisualDirectionSystemBlock(),
   ].join("\n");
 }
 
@@ -114,5 +120,5 @@ export function enforceVisualFirstCarouselCopyBudget(parsed: Record<string, unkn
     if (fallback) last.cta = clampField(fallback, VISUAL_FIRST_CTA_MAX_CHARS);
   }
 
-  return { ...parsed, slides: outSlides };
+  return enforceVisualFirstCarouselVisualDirection({ ...parsed, slides: outSlides });
 }

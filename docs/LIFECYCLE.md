@@ -19,9 +19,9 @@ Allowed values are constrained in SQL (see **`migrations/002_project_config_and_
 
 **Important:** **`startRun`** requires **`signal_pack_id`** on the run. **`CREATED`** runs with no pack will fail start.
 
-**Important (current wiring):** **`startRun`** also expects planner rows to already exist on the run as **`runs.candidates_json`**.
-- Create/materialize them via **`POST /v1/runs/:project_slug/:run_id/candidates`** while the run is still `CREATED`.
-- `start` will error if `candidates_json` is missing/unusable.
+**Important (current wiring):** **`startRun`** expects planner rows on **`runs.planned_jobs_json`** (canonical; dual-written with legacy **`candidates_json`**).
+- Materialize via **`POST /v1/runs/:project_slug/:run_id/jobs`** (or legacy `.../candidates`) while the run is still `CREATED`.
+- `start` will error if planner rows are missing/unusable.
 
 ## Content job lifecycle
 
@@ -39,7 +39,7 @@ Notes:
 
 - **`GENERATING`** — job picked up; LLM may run.
 - **`GENERATED`** — LLM output present in **`generation_payload`**.
-- After **`runQcForJob`**, status may become **`BLOCKED`**, **`QC_FAILED`**, **`REJECTED`**, **`NEEDS_EDIT`**, or advance toward render/review depending on **`recommended_route`** and flow type.
+- After **`runQcForJob`**, status may become **`BLOCKED`**, **`REJECTED`**, **`NEEDS_EDIT`**, or advance toward render/review depending on **`recommended_route`** and flow type. **`QC_FAILED`** is only set by `pipeline.ts` `/full` — not main pipeline.
 - **`IN_REVIEW`** — waiting for human decision (default path after QC + render when using **`CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC`**).
 - **`APPROVED` / `REJECTED` / `NEEDS_EDIT`** — set from review APIs (**`src/routes/v1.ts`**). **`NEEDS_EDIT`** often triggers **rework** (**`rework-orchestrator.ts`**).
 
@@ -47,7 +47,7 @@ QC can short-circuit: **`routeJobAfterQc`** maps **`DISCARD`** → **`REJECTED`*
 
 Video jobs may stay **`RENDERING`** for a long time while HeyGen/Sora poll; **`RenderNotReadyError`** keeps status **`RENDERING`** for retry.
 
-**Top-performer mimic jobs** (`FLOW_TOP_PERFORMER_MIMIC_*`) follow the same status enum. Mimic prep may run during **GENERATING** (reference resolve before copy); render produces assets then lands in **`IN_REVIEW`** like other carousel/image jobs. See **[MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md)**.
+**Mimic carousel jobs** (`isTpGroundedCarouselRenderFlow()`) follow the same status enum. Mimic prep may run during **GENERATING**; new visual uses `new-visual-carousel-prep.ts` (no TP references). Render produces assets then lands in **`IN_REVIEW`**. See **[MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md)** and **[CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md)**.
 
 ## Editorial decision (human)
 

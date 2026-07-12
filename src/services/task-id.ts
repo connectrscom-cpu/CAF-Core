@@ -33,6 +33,8 @@ export function flowSlugForTaskId(flowType: string): string {
   return slugSegment(s, 40);
 }
 
+const CAROUSEL_IDEA_PLATFORMS = ["Instagram", "Facebook"] as const;
+
 /** Carousels are only planned for Instagram and Facebook. */
 export function isCarouselAllowedPlatform(platform: string): boolean {
   const p = platform.trim().toLowerCase();
@@ -41,6 +43,19 @@ export function isCarouselAllowedPlatform(platform: string): boolean {
   if (p.includes("instagram")) return true;
   if (p.includes("facebook")) return true;
   return false;
+}
+
+/**
+ * Carousel ideas/jobs are IG/FB-only (see `shouldSkipCandidateForFlow`).
+ * Remap other platforms at generation or materialize time so cart picks always plan.
+ */
+export function normalizeCarouselIdeaPlatform(platform: string, alternateIndex = 0): string {
+  if (isCarouselAllowedPlatform(platform)) {
+    const p = platform.trim().toLowerCase();
+    if (p.includes("facebook") || p === "fb") return "Facebook";
+    return "Instagram";
+  }
+  return CAROUSEL_IDEA_PLATFORMS[Math.abs(alternateIndex) % CAROUSEL_IDEA_PLATFORMS.length]!;
 }
 
 export function buildContentTaskId(opts: {

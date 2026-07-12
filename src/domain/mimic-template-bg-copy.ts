@@ -79,6 +79,35 @@ export function looksLikeInstagramHandleLine(text: string): boolean {
   return /^@[a-z0-9_.]{2,}$/i.test(text.trim());
 }
 
+/** When body opens with the same line as headline, drop that line so copy is not duplicated on-slide. */
+export function stripDuplicateHeadlineLeadFromBody(headline: string, body: string): string {
+  const h = headline.trim();
+  if (!h || !body.trim()) return body;
+
+  const lines = body.split(/\r?\n/);
+  const firstContentIdx = lines.findIndex((line) => line.trim().length > 0);
+  if (firstContentIdx < 0) return body;
+
+  const firstLine = lines[firstContentIdx]!.trim();
+  if (firstLine.localeCompare(h, undefined, { sensitivity: "accent" }) !== 0) {
+    return body;
+  }
+
+  return lines.slice(firstContentIdx + 1).join("\n").trim();
+}
+
+function finalizeTemplateBgBodyOnScreenCopy(
+  headline: string,
+  body: string,
+  inverted: boolean
+): TemplateBgBodyOnScreenCopy {
+  return {
+    headline,
+    body: stripDuplicateHeadlineLeadFromBody(headline, body),
+    inverted,
+  };
+}
+
 /** Heuristic: LLM put the paragraph in `headline` and a short line in `body`. */
 export function isListicleBodyInvertedLlmCopy(headline: string, body: string, kicker: string): boolean {
   const h = headline.trim();
@@ -106,21 +135,21 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
   if (headline && body && headline === body) {
     const colonSplit = splitListicleColonLeadTitle(headline);
     if (colonSplit) {
-      return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+      return finalizeTemplateBgBodyOnScreenCopy(colonSplit.title, colonSplit.body, true);
     }
   }
 
   if (!isListicleBodyInvertedLlmCopy(headline, body, kicker)) {
     const colonSplit = splitListicleColonLeadTitle(headline);
     if (colonSplit) {
-      return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+      return finalizeTemplateBgBodyOnScreenCopy(colonSplit.title, colonSplit.body, true);
     }
-    return { headline, body: body || kicker, inverted: false };
+    return finalizeTemplateBgBodyOnScreenCopy(headline, body || kicker, false);
   }
 
   const colonSplit = splitListicleColonLeadTitle(headline);
   if (colonSplit) {
-    return { headline: colonSplit.title, body: colonSplit.body, inverted: true };
+    return finalizeTemplateBgBodyOnScreenCopy(colonSplit.title, colonSplit.body, true);
   }
 
   const decorTitle =
@@ -141,11 +170,7 @@ export function resolveTemplateBgBodyOnScreenCopy(raw: {
     }
   }
 
-  return {
-    headline: decorTitle,
-    body: bodyText,
-    inverted: true,
-  };
+  return finalizeTemplateBgBodyOnScreenCopy(decorTitle, bodyText, true);
 }
 
 export type TemplateBgCtaOnScreenCopy = {

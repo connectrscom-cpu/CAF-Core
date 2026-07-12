@@ -49,6 +49,8 @@ primary_region = "ams"
   MIMIC_LAYOUT_QA_MAX_REPRINT_ITERATIONS = "3"
   MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL = "0"
   MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL = "0"
+  # Text reprint: Puppeteer compositor per slide (must exceed renderer RENDER_TIMEOUT_MS).
+  CAROUSEL_RENDERER_SLIDE_TIMEOUT_MS = "150000"
 
 [http_service]
   internal_port = 3847

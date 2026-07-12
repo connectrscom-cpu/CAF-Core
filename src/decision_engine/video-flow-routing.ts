@@ -11,7 +11,7 @@ import { normalizeContentLens } from "../domain/idea-structure.js";
 import { isVideoFlow } from "./flow-kind.js";
 import { DEFAULT_VIDEO_FLOW_PLAN_CAP } from "./default-plan-caps.js";
 
-export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar";
+export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first";
 
 export type VideoRouteConfidence = "explicit" | "heuristic" | "platform" | "default";
 
@@ -36,7 +36,7 @@ export const DEFAULT_VIDEO_ROUTING: VideoRoutingConfig = {
   },
 };
 
-const VALID_INTENTS = new Set<VideoPipelineIntent>(["script_avatar", "prompt_avatar", "no_avatar"]);
+const VALID_INTENTS = new Set<VideoPipelineIntent>(["script_avatar", "prompt_avatar", "no_avatar", "hook_first"]);
 
 /** Canonical + legacy flow_type keys per intent (first match among enabled wins). */
 export const FLOW_KEYS_BY_VIDEO_INTENT: Record<VideoPipelineIntent, readonly string[]> = {
@@ -65,6 +65,7 @@ export const FLOW_KEYS_BY_VIDEO_INTENT: Record<VideoPipelineIntent, readonly str
     "Heygen_NoAvatar_Prompt",
     "HEYGEN_NO_AVATAR_PROMPT",
   ],
+  hook_first: [CANONICAL_FLOW_TYPES.VID_HOOK_FIRST],
 };
 
 const BROLL_HINTS =
@@ -83,6 +84,7 @@ export function normalizeVideoStyle(raw: unknown): VideoPipelineIntent | null {
   if (s === "script_avatar" || s === "script" || s === "script_led") return "script_avatar";
   if (s === "prompt_avatar" || s === "prompt" || s === "prompt_led") return "prompt_avatar";
   if (s === "no_avatar" || s === "noavatar" || s === "b_roll" || s === "broll") return "no_avatar";
+  if (s === "hook_first" || s === "hookfirst" || (s.includes("hook") && s.includes("hybrid"))) return "hook_first";
   if (s === "multi_scene" || s === "multiscene" || s === "scene") return "no_avatar";
   return null;
 }
@@ -225,6 +227,9 @@ export function flowTypeMatchesVideoIntent(
       !/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)
     );
   }
+  if (intent === "hook_first") {
+    return ft === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST || /hook_first|VID_HOOK_FIRST/i.test(ft);
+  }
   return false;
 }
 
@@ -286,6 +291,7 @@ export const CORE_VIDEO_INTENTS: readonly VideoPipelineIntent[] = [
   "prompt_avatar",
   "script_avatar",
   "no_avatar",
+  "hook_first",
 ];
 
 export interface VideoPlanningCaps {
@@ -375,6 +381,21 @@ export function assignVideoFlowForPlanningRow(
   const platform = String(row.platform ?? row.target_platform ?? "Instagram");
   const route = resolveVideoIntent(row, cfg);
   const targetFlow = String(row.target_flow_type ?? "").trim();
+  if (targetFlow === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST) {
+    if (!budget || budget.canAssign(targetFlow)) {
+      if (budget) budget.assign(targetFlow);
+      return {
+        flowType: targetFlow,
+        matchedIntent: "hook_first",
+        assignment: "natural",
+        route: {
+          intent: "hook_first",
+          reason: "target_flow_type hook-first hybrid video",
+          confidence: "explicit",
+        },
+      };
+    }
+  }
   if (targetFlow && isProductVideoFlow(targetFlow)) {
     const mode = productModes.get(targetFlow) ?? null;
     if (flowTypeMatchesVideoIntent(targetFlow, route.intent, mode)) {

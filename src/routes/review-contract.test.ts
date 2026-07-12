@@ -41,6 +41,7 @@ const REVIEW_CRITICAL_PATHS: string[] = [
   "/v1/projects/:project_slug",
   "/v1/projects/:project_slug/profile",
   "/v1/projects/:project_slug/brand-bible",
+  "/v1/projects/:project_slug/product-bible",
   "/v1/projects/:project_slug/brand-profile",
   "/v1/projects/:project_slug/strategy",
   "/v1/projects/:project_slug/brand",

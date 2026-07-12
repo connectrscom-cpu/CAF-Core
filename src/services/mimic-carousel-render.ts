@@ -26,6 +26,8 @@ import {
 } from "../domain/mimic-content-slide-indices.js";
 import { effectiveMimicImageInputMode, isBoldMimicVisualVariant, type MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import { whyMimicTemplateBgUsesInventedPlates } from "../domain/why-mimic-execution.js";
+import { bvsTemplateBgUsesInventedPlates } from "../domain/bvs-render-plan.js";
+import { isNewVisualMimicPayload } from "../domain/new-visual-carousel-execution.js";
 import type { Pool } from "pg";
 import { insertAsset, deleteMimicVisualPlateAssetsAtPositions, listAssetsByTask } from "../repositories/assets.js";
 import { generateMimicSlideImage, mimicImageProviderAssetLabel } from "./mimic-image-provider.js";
@@ -370,6 +372,8 @@ export async function resolveMimicSlideBackgroundPlate(
     totalSlides?: number;
     /** When true, never call image providers — fail if no stored plate exists. */
     reuseStoredPlatesOnly?: boolean;
+    /** Avoid re-querying assets on every slide during text-overlay reprint. */
+    cachedAssets?: MimicPlateAssetRow[];
   } & MimicRenderImageOpts
 ): Promise<string | null> {
   const totalSlides = opts?.totalSlides ?? mimic.reference_items.length;
@@ -391,7 +395,7 @@ export async function resolveMimicSlideBackgroundPlate(
     lookupPosition = slideIndex - 1;
   }
 
-  const assets = await listAssetsByTask(db, job.project_id, job.task_id);
+  const assets = opts?.cachedAssets ?? (await listAssetsByTask(db, job.project_id, job.task_id));
   const storedUrl = await pickStoredMimicPlateFetchableUrl(config, assets, lookupPosition, slideIndex);
   if (storedUrl) return storedUrl;
 
@@ -433,6 +437,7 @@ export async function requireMimicSlideBackgroundPlate(
     promptOverrides?: MimicPromptOverrides | null;
     totalSlides?: number;
     reuseStoredPlatesOnly?: boolean;
+    cachedAssets?: MimicPlateAssetRow[];
   } & MimicRenderImageOpts
 ): Promise<string> {
   const url = await resolveMimicSlideBackgroundPlate(db, config, job, mimic, slideIndex, opts);
@@ -489,7 +494,9 @@ export async function extractMimicSlideBackground(
   // Classic template_bg strips text from archived frames via reference_edit.
   // Why Mimic template_bg invents fresh plates from SIL flux prompts (analysis_t2i), like full-bleed.
   const imageInputMode =
-    whyMimicTemplateBgUsesInventedPlates(mimic) || configuredInputMode === "analysis_t2i"
+    whyMimicTemplateBgUsesInventedPlates(mimic) ||
+    bvsTemplateBgUsesInventedPlates(mimic) ||
+    configuredInputMode === "analysis_t2i"
       ? "analysis_t2i"
       : item
         ? "reference_edit"
@@ -565,6 +572,7 @@ export async function extractMimicSlideBackground(
 
     const generated = await generateMimicSlideImage(config, {
       ...(referenceUrl ? { referenceUrl } : {}),
+      ...(resolvedPrompt.bvsReferenceUrls?.length ? { referenceUrls: resolvedPrompt.bvsReferenceUrls } : {}),
       prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, retryNote),
       imageInputMode: resolvedPrompt.imageInputMode,
       size: "1024x1536",
@@ -1622,9 +1630,16 @@ export async function renderMimicCarouselSlideFullBleed(
     visualSimilarityPct?: number;
   } & MimicRenderImageOpts
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-  const imageInputMode =
+  const configuredInputMode =
     opts?.imageInputMode ?? effectiveMimicImageInputMode(null, config.MIMIC_IMAGE_INPUT_MODE);
   const item = referenceItemForMimicSlide(mimic, slideIndex);
+  const imageInputMode =
+    whyMimicTemplateBgUsesInventedPlates(mimic) ||
+    bvsTemplateBgUsesInventedPlates(mimic) ||
+    isNewVisualMimicPayload(mimic) ||
+    configuredInputMode === "analysis_t2i"
+      ? "analysis_t2i"
+      : configuredInputMode;
   if (!item?.vision_fetch_url && imageInputMode === "reference_edit") {
     throw new Error(`No reference URL for mimic slide ${slideIndex}`);
   }
@@ -1676,6 +1691,7 @@ export async function renderMimicCarouselSlideFullBleed(
 
   return generateMimicSlideImage(config, {
     ...(referenceUrl ? { referenceUrl } : {}),
+    ...(resolvedPrompt.bvsReferenceUrls?.length ? { referenceUrls: resolvedPrompt.bvsReferenceUrls } : {}),
     prompt: appendMimicRegenerationNote(resolvedPrompt.prompt, opts?.regenerationNote),
     imageInputMode: resolvedPrompt.imageInputMode,
     size: "1024x1536",

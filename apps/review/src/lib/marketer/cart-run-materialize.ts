@@ -1,9 +1,12 @@
 import { normalizeCartItemFlow } from "./cart-flow-resolve";
 import type { ContentCartItem } from "./types";
+import type { VideoPipelineIntent } from "./video-lane";
+import { isVideoTopPerformerItem } from "./video-lane";
 
 export type CartMimicPick = {
   insights_id: string;
   mimic_kind: "carousel" | "why_carousel" | "video" | "image";
+  video_intent?: VideoPipelineIntent;
 };
 
 export type CartMaterializeBody = {
@@ -25,16 +28,21 @@ export function cartTopPerformerToMimicPick(item: ContentCartItem): CartMimicPic
   const insightsId = stripPrefix(item.id, "tp_").trim();
   if (!insightsId) return null;
 
+  if (isVideoTopPerformerItem(item)) {
+    return {
+      insights_id: insightsId,
+      mimic_kind: "video",
+      video_intent: item.videoIntent,
+    };
+  }
+
   if (item.mimicMode === "why_carousel" || item.flowTypeRaw === "FLOW_WHY_MIMIC_CAROUSEL") {
     return { insights_id: insightsId, mimic_kind: "why_carousel" };
   }
 
   const fmt = String(item.format ?? "").toLowerCase();
   const flow = String(item.flowTypeRaw ?? "").toUpperCase();
-  if (fmt.includes("video") || flow.includes("VIDEO")) {
-    return { insights_id: insightsId, mimic_kind: "video" };
-  }
-  if (fmt.includes("image") || flow.includes("IMAGE")) {
+  if (fmt.includes("image") || flow.includes("MIMIC_IMAGE")) {
     return { insights_id: insightsId, mimic_kind: "image" };
   }
   return { insights_id: insightsId, mimic_kind: "carousel" };

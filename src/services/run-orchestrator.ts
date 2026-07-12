@@ -63,9 +63,11 @@ import {
 } from "../domain/semantic-contract.js";
 import { buildPlannedGenerationPayloadBase } from "../domain/stage-contract.js";
 import { attachBvsToPlannedPayload } from "../domain/bvs-v1.js";
+import { attachProductBibleToPlannedPayload } from "../domain/product-bible-v1.js";
 import { buildContentDisplayV1 } from "../domain/content-display-metadata.js";
 import { isTopPerformerMimicRenderableFlow } from "../domain/top-performer-mimic-flow-types.js";
 import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
+import { buildNewVisualCarouselPlanningGrounding } from "./new-visual-carousel-prep.js";
 import type { ProductHeygenMode } from "../domain/product-flow-types.js";
 import {
   assignVideoFlowForPlanningRow,
@@ -345,6 +347,9 @@ export async function startRun(
       await attachBvsToPlannedPayload(db, run.project_id, plannedPayload, candidateData ?? {}, {
         force: isVisualFirstCarouselFlow(job.flow_type),
       });
+      await attachProductBibleToPlannedPayload(db, run.project_id, plannedPayload, candidateData ?? {}, {
+        flowType: job.flow_type,
+      });
       if (isTopPerformerMimicRenderableFlow(job.flow_type)) {
         const derived =
           pack.derived_globals_json &&
@@ -352,14 +357,19 @@ export async function startRun(
           !Array.isArray(pack.derived_globals_json)
             ? (pack.derived_globals_json as Record<string, unknown>)
             : null;
-        const mimicGrounding = await buildMimicJobPlanningGrounding(
-          db,
-          run.project_id,
-          derived,
-          candidateData ?? {}
-        );
-        if (mimicGrounding) {
-          plannedPayload.mimic_job_grounding = mimicGrounding;
+        if (isVisualFirstCarouselFlow(job.flow_type)) {
+          const grounding = buildNewVisualCarouselPlanningGrounding(candidateData ?? {});
+          plannedPayload.mimic_job_grounding = grounding;
+        } else {
+          const mimicGrounding = await buildMimicJobPlanningGrounding(
+            db,
+            run.project_id,
+            derived,
+            candidateData ?? {}
+          );
+          if (mimicGrounding) {
+            plannedPayload.mimic_job_grounding = mimicGrounding;
+          }
         }
         const semanticContract = buildSemanticContractFromCandidate(candidateData ?? {});
         if (semanticContract) {

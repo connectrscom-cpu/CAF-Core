@@ -21,8 +21,14 @@ import {
   MIMIC_EXECUTION_MODE_WHY,
   parseWhyMimicSlideIntelligenceFromMimic,
 } from "../domain/why-mimic-execution.js";
+import { bvsTemplateBgUsesInventedPlates } from "../domain/bvs-render-plan.js";
+import { isNewVisualMimicPayload } from "../domain/new-visual-carousel-execution.js";
+import {
+  buildDeterministicNewVisualFluxPrompt,
+  buildNewVisualFluxSlideInput,
+} from "./new-visual-carousel-flux-prompts.js";
 import { parseBrandExecutionBrief } from "../domain/brand-translation.js";
-import { appendBrandBibleToFluxPrompt, parseBrandBible, type BrandBibleSnapshotV1 } from "../domain/brand-bible.js";
+import { appendBrandBibleToFluxPrompt, parseBrandBible, resolveNewVisualBvsFluxImageReferenceUrls, type BrandBibleSnapshotV1 } from "../domain/brand-bible.js";
 import {
   finalizeMimicImageModelPrompt,
   sanitizeLayoutTemplateForImagePrompt,
@@ -62,6 +68,8 @@ export type MimicSlideImagePromptResolution = {
   prompt: string;
   imageInputMode: MimicImageInputMode;
   usesReferenceImage: boolean;
+  /** New visual + BVS moodboard pixels (backgrounds, motifs, mascots) for Flux multi-ref. */
+  bvsReferenceUrls?: string[];
   /** analysis_t2i was requested but reference_edit was chosen due to thin Nemotron/SIL analysis. */
   analysisFallbackReason?: "insufficient_slide_analysis" | null;
 };
@@ -344,7 +352,8 @@ export async function generateMimicFluxImagePromptsForJob(
     if (
       imageInputMode === "analysis_t2i" &&
       hasReference &&
-      !isMimicFluxAnalysisSufficientForT2i(input)
+      !isMimicFluxAnalysisSufficientForT2i(input) &&
+      !bvsTemplateBgUsesInventedPlates(mimic)
     ) {
       slidesReferenceFallback++;
       continue;
@@ -381,6 +390,12 @@ function shouldFallbackAnalysisT2iToReference(
 ): boolean {
   if (!mimicSlideHasUsableReference(mimic, slideIndex1Based)) return false;
 
+  if (mimic.execution_mode === "new_visual") return false;
+
+  if (isNewVisualMimicPayload(mimic)) return false;
+
+  if (bvsTemplateBgUsesInventedPlates(mimic)) return false;
+
   if (mimic.execution_mode === MIMIC_EXECUTION_MODE_WHY) {
     const bundle = parseWhyMimicSlideIntelligenceFromMimic(mimic);
     if (!bundle) return true;
@@ -412,11 +427,41 @@ function bvsSnapshotFromMimic(mimic: MimicPayloadV1): BrandBibleSnapshotV1 | nul
 }
 
 export function appendBvsToMimicFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
-  return appendBrandBibleToFluxPrompt(prompt, bvsSnapshotFromMimic(mimic));
+  return appendBrandBibleToFluxPrompt(prompt, bvsSnapshotFromMimic(mimic), { forMimic: true });
 }
 
 function withBvsFluxPrompt(mimic: MimicPayloadV1, prompt: string): string {
+  if (isNewVisualMimicPayload(mimic)) {
+    return appendBrandBibleToFluxPrompt(prompt, bvsSnapshotFromMimic(mimic), { forNewVisual: true });
+  }
   return appendBvsToMimicFluxPrompt(mimic, prompt);
+}
+
+function newVisualBvsReferenceUrls(mimic: MimicPayloadV1): string[] {
+  if (!isNewVisualMimicPayload(mimic) || mimic.bvs_enabled !== true) return [];
+  return resolveNewVisualBvsFluxImageReferenceUrls(bvsSnapshotFromMimic(mimic));
+}
+
+function fluxPromptAlreadyHasBvs(prompt: string, forNewVisual: boolean): boolean {
+  return forNewVisual
+    ? /Brand Visual System \(BVS\) — subject-first/i.test(prompt)
+    : /Brand Visual System \(BVS\)/i.test(prompt);
+}
+
+function enrichFluxPromptWithBvs(mimic: MimicPayloadV1, prompt: string): string {
+  const trimmed = prompt.trim();
+  const forNewVisual = isNewVisualMimicPayload(mimic);
+  if (fluxPromptAlreadyHasBvs(trimmed, forNewVisual)) return trimmed;
+  return withBvsFluxPrompt(mimic, trimmed);
+}
+
+function withNewVisualBvsImageRefs(
+  mimic: MimicPayloadV1,
+  resolution: MimicSlideImagePromptResolution
+): MimicSlideImagePromptResolution {
+  const bvsReferenceUrls = newVisualBvsReferenceUrls(mimic);
+  if (bvsReferenceUrls.length === 0) return resolution;
+  return { ...resolution, bvsReferenceUrls };
 }
 
 export function resolveMimicSlideImagePrompt(
@@ -451,23 +496,23 @@ export function resolveMimicSlideImagePrompt(
     })();
 
   if (row?.flux_image_prompt?.trim()) {
-    return {
-      prompt: withBvsFluxPrompt(mimic, row.flux_image_prompt.trim()),
+    return withNewVisualBvsImageRefs(mimic, {
+      prompt: enrichFluxPromptWithBvs(mimic, row.flux_image_prompt.trim()),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
-    };
+    });
   }
 
   const fallbackInput = buildMimicFluxSlideAnalysisInput(mimic, slideIndex1Based);
   if (fallbackInput && isMimicFluxAnalysisSufficientForT2i(fallbackInput)) {
-    return {
-      prompt: withBvsFluxPrompt(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
+    return withNewVisualBvsImageRefs(mimic, {
+      prompt: enrichFluxPromptWithBvs(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
-    };
+    });
   }
 
-  if (mimicSlideHasUsableReference(mimic, slideIndex1Based)) {
+  if (mimicSlideHasUsableReference(mimic, slideIndex1Based) && !bvsTemplateBgUsesInventedPlates(mimic)) {
     return {
       prompt: referenceEditPrompt,
       imageInputMode: "reference_edit",
@@ -477,11 +522,33 @@ export function resolveMimicSlideImagePrompt(
   }
 
   if (fallbackInput) {
-    return {
-      prompt: withBvsFluxPrompt(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
+    return withNewVisualBvsImageRefs(mimic, {
+      prompt: enrichFluxPromptWithBvs(mimic, buildDeterministicFluxImagePrompt(fallbackInput)),
       imageInputMode: "analysis_t2i",
       usesReferenceImage: false,
-    };
+    });
+  }
+
+  if (bvsTemplateBgUsesInventedPlates(mimic)) {
+    return withNewVisualBvsImageRefs(mimic, {
+      prompt: enrichFluxPromptWithBvs(mimic, referenceEditPrompt),
+      imageInputMode: "analysis_t2i",
+      usesReferenceImage: false,
+    });
+  }
+
+  if (isNewVisualMimicPayload(mimic)) {
+    const totalSlides = Math.max(
+      ...(mimic.slide_plans ?? []).map((p) => p.slide_index).filter((n) => n > 0),
+      slideIndex1Based,
+      1
+    );
+    const input = buildNewVisualFluxSlideInput(mimic, slideIndex1Based, totalSlides);
+    return withNewVisualBvsImageRefs(mimic, {
+      prompt: enrichFluxPromptWithBvs(mimic, buildDeterministicNewVisualFluxPrompt(input)),
+      imageInputMode: "analysis_t2i",
+      usesReferenceImage: false,
+    });
   }
 
   return {

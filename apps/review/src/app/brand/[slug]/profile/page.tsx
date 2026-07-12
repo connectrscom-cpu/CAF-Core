@@ -3,14 +3,17 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BrandBibleEditor } from "@/components/marketer/BrandBibleEditor";
+import { ProductBibleEditor } from "@/components/marketer/ProductBibleEditor";
 import { BrandPageHeader } from "@/components/marketer/BrandPageHeader";
 import { BrandProfileEditor } from "@/components/marketer/BrandProfileEditor";
 import type { BrandSummary } from "@/lib/marketer/types";
 
-type ProfileTab = "profile" | "bible";
+type ProfileTab = "profile" | "bible" | "product-bible";
 
 function tabFromParam(tab: string | null): ProfileTab {
-  return tab === "bible" ? "bible" : "profile";
+  if (tab === "bible") return "bible";
+  if (tab === "product-bible") return "product-bible";
+  return "profile";
 }
 
 export default function BrandProfilePage() {
@@ -43,7 +46,9 @@ export default function BrandProfilePage() {
         subtitle={
           tab === "bible"
             ? "Build your moodboard — references, palette, and how CAF applies your visual identity"
-            : "Voice, audience, visual style, brand kit, and brand rules"
+            : tab === "product-bible"
+              ? "Product screenshots and feature evidence for product videos and visual-first content"
+              : "Voice, audience, visual style, brand kit, and brand rules"
         }
       />
 
@@ -62,10 +67,19 @@ export default function BrandProfilePage() {
         >
           Brand Visual System
         </a>
+        <a
+          href={`${base}?tab=product-bible`}
+          className={`tab ${tab === "product-bible" ? "active" : ""}`}
+          data-agent-id="brand-profile-tab-product-bible"
+        >
+          Product Bible
+        </a>
       </div>
 
       {tab === "bible" ? (
         <BrandBibleEditor slug={slug} displayName={brand?.displayName ?? slug} />
+      ) : tab === "product-bible" ? (
+        <ProductBibleEditor slug={slug} displayName={brand?.displayName ?? slug} />
       ) : (
         <BrandProfileEditor slug={slug} />
       )}

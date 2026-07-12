@@ -36,6 +36,7 @@ export function isVideoFlow(flowType: string): boolean {
     ft === CANONICAL_FLOW_TYPES.VID_PROMPT ||
     ft === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR ||
     ft === CANONICAL_FLOW_TYPES.VID_SCRIPT ||
+    ft === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST ||
     ft === CANONICAL_FLOW_TYPES.VID_SCENES
   ) {
     return true;

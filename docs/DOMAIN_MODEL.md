@@ -33,11 +33,11 @@
 | **Evidence import** | XLSX or scraper ingest → `inputs_evidence_imports` + `inputs_evidence_rows`. |
 | **Evidence insights** | Row-level LLM/vision passes → `inputs_evidence_row_insights` (broad, top-performer tiers). |
 | **Ideas** | Structured idea list → `ideas`, `signal_pack_ideas`, `inputs_ideas`. |
+| **Brand bible** | Versioned Brand Visual System per project → `brand_bibles`; snapshotted to `generation_payload.bvs_v1`. |
+| **Brand profile** | Marketer voice/strategy → `brand_profiles`. |
 | **Creative Intelligence** | Archived top-performer media + vision analysis → `creative_*` tables. |
 
-See **`docs/CAF_INPUTS_PIPELINE_ROADMAP.md`** and **`docs/CREATIVE_INTELLIGENCE.md`**.
-
----
+See **`docs/CAF_INPUTS_PIPELINE_ROADMAP.md`**, **`docs/CREATIVE_INTELLIGENCE.md`**, and **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`**.
 
 ## ID conventions
 
@@ -82,7 +82,7 @@ Typical path:
 PLANNED → GENERATING → GENERATED → (QC) → RENDERING → IN_REVIEW → APPROVED | REJECTED | NEEDS_EDIT
 ```
 
-QC may route to `BLOCKED`, `QC_FAILED`, or short-circuit to `REJECTED` / `NEEDS_EDIT`. Video jobs may remain `RENDERING` during HeyGen/Sora polls.
+QC may route to `BLOCKED`, `REJECTED`, or `NEEDS_EDIT`. **`QC_FAILED`** is set only by the limited `POST /v1/pipeline/.../full` path — not the main `job-pipeline.ts`. Video jobs may remain `RENDERING` during HeyGen/Sora polls.
 
 Full detail: **`docs/LIFECYCLE.md`**.
 
@@ -103,8 +103,9 @@ On **`caf_core.content_jobs`**. Integration hub for pipeline, Review, and admin.
 | `generated_output` | `src/domain/generation-payload-output.ts` |
 | `qc_result` | `src/domain/generation-payload-qc.ts` — write via **`mergeGenerationPayloadQc` only** |
 | `render_state` | `src/domain/content-job-render-state.ts` — **`hasActiveProviderSession`** for HeyGen idempotency |
-| Mimic render truth | `mimic_v1` on `generation_payload` (`src/domain/mimic-payload.ts`) |
-| Carousel mimic review | `mimic_carousel_package` — **only** `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`; not `carousel_package` |
+| Mimic render truth | `mimic_v1` on `generation_payload` (`src/domain/mimic-payload.ts`) — includes `execution_mode`: `classic` \| `why_mimic` \| `new_visual` |
+| Brand Visual System | `bvs_v1` on `generation_payload` (`src/domain/bvs-v1.ts`) |
+| TP-grounded carousel review | `mimic_carousel_package` — all `isTpGroundedCarouselRenderFlow()` flows; not `carousel_package` |
 
 ---
 
@@ -126,7 +127,7 @@ On **`caf_core.content_jobs`**. Integration hub for pipeline, Review, and admin.
 | Carousel | `FLOW_CAROUSEL` | Standard HBS renderer path |
 | Video | `FLOW_*` video kinds, HeyGen, scene assembly | See `flow-kind.ts` |
 | Product video | `FLOW_PRODUCT_*` | Product-focused video flows |
-| Mimic | `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | Requires `MIMIC_IMAGE_ENABLED` |
+| Mimic | `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, `FLOW_VISUAL_FIRST_CAROUSEL`, `FLOW_WHY_MIMIC_CAROUSEL` | Requires `MIMIC_IMAGE_ENABLED` for render; visual-first is **new visual** (no TP frames) |
 | Image product | `FLOW_IMG_*` | Registered; not fully wired to generation |
 | Offline | Various | Excluded from pipeline — `offline-flow-types.ts` |
 

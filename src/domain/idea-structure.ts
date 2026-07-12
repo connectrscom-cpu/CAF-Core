@@ -11,6 +11,7 @@ import {
   FLOW_PRODUCT_SOCIAL_PROOF,
   FLOW_PRODUCT_USECASE,
 } from "./product-flow-types.js";
+import { CANONICAL_FLOW_TYPES } from "./canonical-flow-types.js";
 
 export const CONTENT_LENS_VALUES = ["niche", "product"] as const;
 export type ContentLens = (typeof CONTENT_LENS_VALUES)[number];
@@ -21,7 +22,7 @@ export type IdeaFormat = (typeof IDEA_FORMAT_VALUES)[number];
 export const CAROUSEL_EXECUTION_PROFILES = ["text_heavy", "visual_first", "mixed"] as const;
 export type CarouselExecutionProfile = (typeof CAROUSEL_EXECUTION_PROFILES)[number];
 
-export const VIDEO_EXECUTION_PROFILES = ["script_avatar", "prompt_avatar", "no_avatar"] as const;
+export const VIDEO_EXECUTION_PROFILES = ["script_avatar", "prompt_avatar", "no_avatar", "hook_first"] as const;
 export type VideoExecutionProfile = (typeof VIDEO_EXECUTION_PROFILES)[number];
 
 export const POST_EXECUTION_PROFILES = ["text", "image_led"] as const;
@@ -65,6 +66,7 @@ export type IdeaGenerationBucketId =
   | "niche_video_no_avatar"
   | "niche_video_prompt_avatar"
   | "niche_video_script_avatar"
+  | "niche_video_hook_first"
   | "niche_post"
   | "niche_thread"
   | "product_carousel_text"
@@ -125,6 +127,14 @@ export const IDEA_GENERATION_BUCKET_DEFS: readonly IdeaGenerationBucketDef[] = [
     format: "video",
     content_lens: "niche",
     execution_profile: "script_avatar",
+    section: "niche",
+  },
+  {
+    id: "niche_video_hook_first",
+    label: "Niche video — hook-first hybrid",
+    format: "video",
+    content_lens: "niche",
+    execution_profile: "hook_first",
     section: "niche",
   },
   {
@@ -270,10 +280,14 @@ export function defaultIdeaGenerationQuotas(target: number, productAnglesEnabled
   buckets.niche_carousel_visual = nicheCarousel - buckets.niche_carousel_text;
 
   const nicheVideo = Math.max(0, Math.round(fmt.video * 0.7));
-  buckets.niche_video_no_avatar = Math.floor(nicheVideo * 0.35);
-  buckets.niche_video_prompt_avatar = Math.floor(nicheVideo * 0.45);
+  buckets.niche_video_no_avatar = Math.floor(nicheVideo * 0.3);
+  buckets.niche_video_prompt_avatar = Math.floor(nicheVideo * 0.35);
+  buckets.niche_video_hook_first = Math.max(0, Math.floor(nicheVideo * 0.15));
   buckets.niche_video_script_avatar =
-    nicheVideo - buckets.niche_video_no_avatar - buckets.niche_video_prompt_avatar;
+    nicheVideo -
+    buckets.niche_video_no_avatar -
+    buckets.niche_video_prompt_avatar -
+    buckets.niche_video_hook_first;
 
   buckets.niche_post = Math.max(0, Math.round(fmt.post * 0.85));
   buckets.niche_thread = Math.max(0, Math.round(fmt.thread * 0.85));
@@ -402,6 +416,9 @@ export function applyIdeaStructureToPlannerRow(row: Record<string, unknown>): Re
       out.video_style = vs;
       out.execution_profile = vs;
     }
+    if (vs === "hook_first") {
+      out.target_flow_type = CANONICAL_FLOW_TYPES.VID_HOOK_FIRST;
+    }
     const targetFt = resolveTargetFlowTypeFromIdea(out);
     if (targetFt) out.target_flow_type = targetFt;
   }
@@ -410,6 +427,10 @@ export function applyIdeaStructureToPlannerRow(row: Record<string, unknown>): Re
 
   if (out.visual_first_carousel_lane === true && out.use_brand_visual_system !== false) {
     out.use_brand_visual_system = true;
+  }
+
+  if (lens === "product" && out.use_product_bible !== false) {
+    out.use_product_bible = true;
   }
 
   return out;

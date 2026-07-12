@@ -60,12 +60,24 @@ When `CREATIVE_INTEL_INJECT_IN_GENERATION=1`, a capped **creative style guidance
 - OpenAI vision needs **HTTPS** image URLs (Supabase `public_url` after upload works).
 - Template mimicry v1 adjusts **palette variables only** — not full layout cloning.
 
-## Downstream: top-performer mimic flows
+## Downstream: mimic lanes (July 2026)
 
-When **`visual_guidelines_pack_v1`** entries include archived inspection media (`stored_inspection_media_json`) and Nemotron **`mimic_evaluation`**, signal-pack ideas grounded to those **`insights_id`** values can become **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** or **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** jobs (requires **`MIMIC_IMAGE_ENABLED=1`** on Core).
+When **`visual_guidelines_pack_v1`** entries include archived inspection media and Nemotron **`mimic_evaluation`**, grounded ideas can become mimic-family jobs (requires **`MIMIC_IMAGE_ENABLED=1`** on Core for pixel render).
+
+| Lane | Flow | Notes |
+|------|------|-------|
+| Manual mimic carousel | `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | TP reference frames; `execution_mode: classic` |
+| New visual carousel | `FLOW_VISUAL_FIRST_CAROUSEL` | **Not** TP replication — `execution_mode: new_visual`, idea + BVS, empty `reference_items` |
+| Why Mimic carousel | `FLOW_WHY_MIMIC_CAROUSEL` | SIL on `mimic_v1.slide_intelligence`; `execution_mode: why_mimic` |
+| Mimic image | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single-frame `image_full` |
+
+**Slide Intelligence (SIL)** — stored on insights / `mimic_v1` for Why Mimic strategic copy and image prompts (`migrations/071_inputs_evidence_insights_slide_intelligence.sql`).
+
+**Brand Visual System** — `brand_bibles` → `generation_payload.bvs_v1` when `use_brand_visual_system` is set on the planned candidate. See `src/domain/brand-bible.ts`, `bvs-v1.ts`.
 
 | Doc | Content |
 |-----|---------|
-| [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md) | Full mimic pipeline (modes, payloads, render providers) |
+| [CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md) | **Repo-derived current truth** (start here if stale) |
+| [MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md) | Full mimic pipeline (modes, payloads, BVS, new visual, Why Mimic) |
 | [MIMIC_IMAGE_FLOWS.md](./MIMIC_IMAGE_FLOWS.md) | Operator quick reference |
 | [CAF_INPUTS_PIPELINE_ROADMAP.md](./CAF_INPUTS_PIPELINE_ROADMAP.md) | Admin inputs → top-performer insight tiers |

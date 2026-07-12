@@ -2,8 +2,19 @@ import { describe, expect, it } from "vitest";
 import {
   marketerRenderFailureHeadline,
   parseFailedSlideFromError,
+  parseFailedSlidesFromError,
   resolveSlideRenderStatuses,
 } from "./slide-render-status";
+
+describe("parseFailedSlidesFromError", () => {
+  it("extracts multiple slide indices from partial reprint failure", () => {
+    expect(
+      parseFailedSlidesFromError(
+        "Text overlay reprint failed on slide(s) 3, 7: Renderer slide 3 request failed"
+      )
+    ).toEqual([3, 7]);
+  });
+});
 
 describe("parseFailedSlideFromError", () => {
   it("extracts slide index from renderer message", () => {

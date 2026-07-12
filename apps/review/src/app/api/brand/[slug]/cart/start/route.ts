@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   createRunForPack,
+  getSignalPackForProject,
   materializeRunJobs,
   processRunForProject,
   renderRunForProject,
@@ -13,6 +14,17 @@ import type { ContentCartItem } from "@/lib/marketer/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
+
+const STALE_BRIEF_MESSAGE =
+  "This research brief is no longer available on CAF Core. On Ideas, pick a current brief from Research context, re-add items to your cart, then try again.";
+
+function isStaleBriefError(message: string): boolean {
+  return (
+    message.includes("invalid_signal_pack") ||
+    message.includes("Signal pack not found") ||
+    message.includes('"error":"not_found"')
+  );
+}
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -51,6 +63,15 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
 
   try {
+    try {
+      await getSignalPackForProject(slug, packId);
+    } catch {
+      return NextResponse.json(
+        { ok: false, error: "stale_brief", message: STALE_BRIEF_MESSAGE, pack_id: packId },
+        { status: 400 }
+      );
+    }
+
     for (const override of cartMimicRenderOverrides(items)) {
       await setSignalPackMimicModeOverride(slug, packId, override.insights_id, override.mode_override);
     }
@@ -99,6 +120,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Failed to start run from cart";
+    if (isStaleBriefError(message)) {
+      return NextResponse.json(
+        { ok: false, error: "stale_brief", message: STALE_BRIEF_MESSAGE, pack_id: packId },
+        { status: 400 }
+      );
+    }
     return NextResponse.json({ ok: false, error: "cart_start_failed", message }, { status: 502 });
   }
 }

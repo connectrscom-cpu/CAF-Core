@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { parseMetaAccountSourceMap, resolveOutputSchemaValidationMode } from "./config.js";
+import {
+  parseEnvBooleanFlag,
+  parseMetaAccountSourceMap,
+  resolveOutputSchemaValidationMode,
+} from "./config.js";
+
+describe("parseEnvBooleanFlag", () => {
+  it('treats "0" and "false" as false (unlike z.coerce.boolean)', () => {
+    expect(parseEnvBooleanFlag("0", true)).toBe(false);
+    expect(parseEnvBooleanFlag("false", true)).toBe(false);
+    expect(parseEnvBooleanFlag("1", false)).toBe(true);
+    expect(parseEnvBooleanFlag(undefined, false)).toBe(false);
+  });
+});
 
 describe("parseMetaAccountSourceMap", () => {
   it("parses comma-separated FROM=TO pairs", () => {

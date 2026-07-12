@@ -238,7 +238,7 @@ async function applyPatchesAndReprint(
 
 /**
  * Post-composite layout QA with auto-reprint loop.
- * Hard failures (overlap, clipped boxes) block Review by default after reprint attempts.
+ * Remaining overlap/clipping flags `review_attention` — jobs route to IN_REVIEW for manual fix.
  */
 export async function runMimicPostRenderLayoutLoop(
   db: Pool,
@@ -260,7 +260,7 @@ export async function runMimicPostRenderLayoutLoop(
   const maxIterations = Math.max(0, config.MIMIC_LAYOUT_QA_MAX_REPRINT_ITERATIONS ?? 3);
   const minPassScore = config.MIMIC_LAYOUT_QA_MIN_PASS_SCORE ?? 0.72;
   const blockOnAnyFail = config.MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL === true;
-  const blockOnHardFail = config.MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL !== false;
+  const blockOnHardFail = config.MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL === true;
   let reprintIterations = 0;
   let slideResults = await analyzeJobSlides(db, config, job, slideCount, minPassScore);
 
@@ -279,13 +279,13 @@ export async function runMimicPostRenderLayoutLoop(
 
   const pass = slideResults.every((s) => slidePassesLayoutQa(s.findings, minPassScore));
   const hardFail = shouldHardBlockReviewFromSlides(slideResults);
-  const blockReview = blockOnAnyFail ? !pass : blockOnHardFail && hardFail;
+  const legacyStrictBlock = blockOnAnyFail ? !pass : blockOnHardFail && hardFail;
   const layoutQc = summarizeLayoutQc(slideResults, {
     iterations: reprintIterations,
-    blockReview,
+    blockReview: legacyStrictBlock,
   });
   await persistLayoutQc(db, jobId, layoutQc);
   logLayoutQcSummary(job.task_id, layoutQc);
 
-  return { pass, blockReview, layoutQc, reprintIterations };
+  return { pass, blockReview: false, layoutQc, reprintIterations };
 }

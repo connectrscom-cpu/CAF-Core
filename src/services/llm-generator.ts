@@ -48,6 +48,7 @@ import {
 } from "./openai-generation-placeholder.js";
 import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
+import { HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM, isHookFirstVideoFlow } from "../domain/hook-first-video.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
@@ -613,6 +614,9 @@ export async function generateForJob(
     const ft = job.flow_type;
     if (sceneAssemblyTemplate) {
       systemPrompt = withSceneAssemblyPolicy(systemPrompt, appCfg);
+    } else if (isHookFirstVideoFlow(ft)) {
+      systemPrompt = withVideoScriptDurationPolicy(systemPrompt, appCfg, { multiScene: false });
+      systemPrompt = `${systemPrompt.trim()}\n\n${HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM}`.trim();
     } else if (
       ((/Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
         !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft)) ||
@@ -691,7 +695,7 @@ export async function generateForJob(
       })
     : null;
 
-  if (isTpGroundedCarouselRenderFlow(job.flow_type)) {
+  if (isTpGroundedCarouselRenderFlow(job.flow_type) && !isVisualFirstCarouselFlow(job.flow_type)) {
     userPrompt = appendMimicGroundedReferenceToUserPrompt(
       userPrompt,
       {

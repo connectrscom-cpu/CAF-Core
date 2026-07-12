@@ -115,4 +115,48 @@ describe("mimic-flux-image-prompts", () => {
     expect(resolved.analysisFallbackReason).toBe("insufficient_slide_analysis");
     expect(resolved.prompt).toBe("edit from reference");
   });
+
+  it("resolveMimicSlideImagePrompt attaches BVS image refs for new visual carousel", () => {
+    const mimic: MimicPayloadV1 = {
+      mode: "carousel_visual",
+      execution_mode: "new_visual",
+      bvs_enabled: true,
+      reference_items: [],
+      slide_plans: [{ slide_index: 1 }],
+      flux_image_prompts: {
+        "1": {
+          slide_index: 1,
+          flux_image_prompt: "Cinematic hero plate, art-only, no text.",
+          image_input_mode: "analysis_t2i",
+        },
+      },
+      bvs_bible_snapshot: {
+        schema_version: "brand_bible_v1",
+        palette: ["#0B0B16"],
+        application_guide: { instructions: "Use cosmic guide on CTA." },
+        asset_refs: [
+          { asset_id: "bg1", role: "background" },
+          { asset_id: "m1", role: "mascot" },
+        ],
+        resolved_assets: [
+          {
+            asset_id: "bg1",
+            role: "background",
+            label: "Starfield",
+            public_url: "https://cdn/bg.png",
+          },
+          {
+            asset_id: "m1",
+            role: "mascot",
+            label: "Guide waving",
+            public_url: "https://cdn/mascot.png",
+          },
+        ],
+      },
+    };
+    const resolved = resolveMimicSlideImagePrompt(mimic, 1, "unused", "analysis_t2i");
+    expect(resolved.bvsReferenceUrls).toEqual(["https://cdn/bg.png", "https://cdn/mascot.png"]);
+    expect(resolved.prompt).toContain("Brand asset reference images (2 attached to Flux");
+    expect(resolved.prompt).toContain("subject-first original carousel plates");
+  });
 });

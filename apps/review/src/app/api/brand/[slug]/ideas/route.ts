@@ -155,7 +155,14 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   } else {
     const target = packIdParam ? packs.find((p) => p.id === packIdParam) : packs[0];
     if (!target) {
-      return NextResponse.json({ ok: true, ideas: [], topPerformers: [], packId: null, briefs });
+      return NextResponse.json({
+        ok: true,
+        ideas: [],
+        topPerformers: [],
+        packId: null,
+        briefs,
+        packIdStale: Boolean(packIdParam && packIdParam !== "all"),
+      });
     }
     const [packResp, synthesizedRes] = await Promise.all([
       getSignalPackForProject(slug, target.id, {

@@ -92,7 +92,17 @@ describe("mimic-planning-guards carousel lanes", () => {
     expect(shouldSkipMimicFlowExpansion(FLOW_VISUAL_FIRST_CAROUSEL, row, carouselDerived)).toBe(true);
   });
 
-  it("allows visual_first ideas only on visual-first flow", () => {
+  it("allows visual_first ideas without TP grounding", () => {
+    const row = {
+      format: "carousel",
+      carousel_style: "visual_first",
+      title: "Fresh idea",
+    };
+    expect(shouldExpandVisualFirstCarouselForRow(row, null)).toBe(true);
+    expect(shouldSkipMimicFlowExpansion(FLOW_VISUAL_FIRST_CAROUSEL, row, null)).toBe(false);
+  });
+
+  it("allows visual_first ideas with optional TP grounding", () => {
     const row = {
       format: "carousel",
       carousel_style: "visual_first",

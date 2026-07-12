@@ -32,13 +32,16 @@ Upload or paste these files together for **architecture, lifecycle, contracts, a
 
 | # | File | What it gives the reader |
 |---|------|--------------------------|
+| 0 | **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** | **Repo-derived current state (2026-07)** — start here if context is stale |
 | 1 | **`AGENTS.md`** | Invariants, “do not break,” where to change behavior |
-| 2 | **`docs/CAF_CORE_COMPLETE_GUIDE.md`** | Single-file merged reference (~500 lines) |
+| 2 | **`docs/CAF_CORE_COMPLETE_GUIDE.md`** | Single-file merged reference (~500 lines) — may lag BVS / new visual |
 | 3 | **`docs/DOMAIN_MODEL.md`** | Entities, ID patterns, lifecycles (external copy of domain rules) |
 | 4 | **`docs/ARCHITECTURE.md`** | Layer map, critical files, integration contracts |
 | 5 | **`docs/LIFECYCLE.md`** | Run & job state machines |
 | 6 | **`docs/TECH_STACK.md`** | Languages, services, third parties |
 | 7 | **`docs/layers/README.md`** | Index to per-layer deep dives |
+
+**ChatGPT PDF upload (4 volumes, everything operational):** `docs/export/pdf/11-caf-current-state-vol1-platform.pdf` through `14-caf-current-state-vol4-ops.pdf` — regenerate with `npm run export:doc-pdfs`. Source: `docs/volumes/CAF_CONTEXT_VOL*.md`.
 
 **Optional but recommended for rebuilds:**
 
@@ -72,6 +75,7 @@ Upload or paste these files together for **architecture, lifecycle, contracts, a
 | **Product pitch** | `docs/CAF_PRODUCT_PITCH.md` |
 | **Complete product guide** | `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` |
 | **Shareable PDFs by topic** | `docs/export/pdf/*.pdf` — see `docs/export/README.md` |
+| **Doc reconciliation task** | `docs/CURSOR_DOC_RECONCILIATION_PROMPT.md` — paste into Cursor to align stale docs with current-state pack |
 | **Stakeholder overview** | `docs/PROJECT_OVERVIEW.md` |
 
 ---

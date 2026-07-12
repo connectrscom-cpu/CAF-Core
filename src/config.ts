@@ -5,6 +5,25 @@ import { z } from "zod";
 // `.env` wins over inherited OS/IDE env (e.g. wrong RENDERER_BASE_URL from the shell). Fly/production has no `.env` in the image.
 loadDotenv({ override: true });
 
+/** `z.coerce.boolean()` treats `"0"` as true — use for Fly/env string flags. */
+export function parseEnvBooleanFlag(
+  value: string | boolean | undefined,
+  defaultValue: boolean
+): boolean {
+  if (value === undefined || value === "") return defaultValue;
+  if (typeof value === "boolean") return value;
+  const s = value.trim().toLowerCase();
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  return defaultValue;
+}
+
+const envBooleanFlag = (defaultValue: boolean) =>
+  z
+    .union([z.boolean(), z.string()])
+    .optional()
+    .transform((v) => parseEnvBooleanFlag(v, defaultValue));
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3847),
@@ -281,15 +300,15 @@ const envSchema = z.object({
   /** Minimum per-slide layout score — advisory only; does not block Review. */
   MIMIC_LAYOUT_QA_MIN_PASS_SCORE: z.coerce.number().min(0).max(1).default(0.72),
   /**
-   * When true, jobs with only soft layout warnings still go to IN_REVIEW (default).
-   * Set true to restore the old “block on any layout fail” behavior.
+   * Legacy strict gate: when true, any layout fail after auto-reprint sets `layout_qc.block_review`.
+   * Jobs still route to IN_REVIEW (operators fix placement in Review); does not set job status BLOCKED.
    */
-  MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL: z.coerce.boolean().default(false),
+  MIMIC_LAYOUT_QA_BLOCK_REVIEW_ON_FAIL: envBooleanFlag(false),
   /**
-   * When true (default), hard layout failures (overlap, clipped boxes, missing on-slide copy) BLOCK
-   * before human review after auto-reprint attempts are exhausted.
+   * Legacy strict gate: when true, hard layout failures set `layout_qc.block_review` after auto-reprint.
+   * Default off — overlap/clipping flags `review_attention` and slide badges; job goes to IN_REVIEW.
    */
-  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL: z.coerce.boolean().default(true),
+  MIMIC_LAYOUT_QA_BLOCK_ON_HARD_FAIL: envBooleanFlag(false),
   /**
    * After mimic carousel text_blocks[] are built, run OpenAI to suggest coherent copy groupings
    * and rewrite per-box lines. Set 0 to disable.
@@ -590,6 +609,14 @@ const envSchema = z.object({
       if (s === "1" || s === "true" || s === "yes") return true;
       return false;
     }),
+
+  /**
+   * Hook-first hybrid video (`FLOW_VID_HOOK_FIRST`): provider for the cinematic opener clip.
+   * `sora` = OpenAI Videos API; `heygen` = short HeyGen Video Agent no-avatar clip.
+   */
+  HOOK_FIRST_CLIP_PROVIDER: z.enum(["sora", "heygen"]).default("sora"),
+  /** Target hook clip length in seconds (Sora maps to 4/8/12; HeyGen uses prompt guidance). */
+  HOOK_FIRST_HOOK_DURATION_SEC: z.coerce.number().int().min(4).max(12).default(6),
 
   /** Single-take HeyGen / prompt-led videos: target spoken length band for LLM fallbacks. */
   VIDEO_TARGET_DURATION_MIN_SEC: z.coerce.number().min(5).max(300).default(30),

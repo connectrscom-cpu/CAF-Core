@@ -3141,7 +3141,7 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
       .join("");
 
     const body = `
-<div class="ph"><div><h2>Create New Project</h2><span class="ph-sub">Three ways: from scratch, clone an existing project, or import a CSV</span></div></div>
+<div class="ph"><div><h2>Create New Project</h2><span class="ph-sub">Four ways: blank shell, clone, CSV import, or onboarding pack upload</span></div></div>
 <div class="content">
 
   <!-- 1. Create blank project ──────────────────────────────────── -->
@@ -3214,6 +3214,34 @@ export function registerAdminRoutes(app: FastifyInstance, { db, config }: Deps):
         <span id="imp-msg" class="form-msg"></span>
       </div>
       <pre id="imp-result" style="display:none;margin-top:12px;padding:12px;background:var(--card2,#111);border:1px solid var(--border);border-radius:8px;font-size:12px;max-height:260px;overflow:auto;white-space:pre-wrap"></pre>
+    </form>
+  </div>
+
+  <!-- 4. Onboarding pack ───────────────────────────────────────── -->
+  <div class="card" style="border-left:3px solid #a855f7">
+    <div class="card-h">Option 4 — Import onboarding pack</div>
+    <p style="color:var(--muted);font-size:13px;margin:-6px 0 14px">
+      Upload a <strong>CAF Project Onboarding Pack</strong> (.md or .txt) — the structured document
+      produced by ChatGPT from <code>CHATGPT_PROJECT_SETUP_GUIDE.md</code>. Imports brand snapshot,
+      strategy, voice, visual system (brand profile + BVS bible), research watchlists, platform rules,
+      and compliance in one step. <code>[GAP]</code> fields are skipped and reported in the response.
+      <a href="#" id="dl-pack-template">Download blank template</a>.
+    </p>
+    <form id="pack-form" class="config-form">
+      <div class="form-group">
+        <label for="pack-file">Onboarding pack file</label>
+        <input type="file" id="pack-file" accept=".md,.txt,text/markdown,text/plain" required>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label for="pack-slug">Slug override (optional)</label><input type="text" id="pack-slug" pattern="[A-Za-z0-9_]{2,30}" placeholder="leave blank to use pack Slug" style="text-transform:uppercase"></div>
+        <div class="form-group"><label for="pack-name">Display name override (optional)</label><input type="text" id="pack-name" placeholder="leave blank to use pack Display name"></div>
+      </div>
+      <div class="form-actions">
+        <button type="button" id="pack-dry" class="btn-ghost btn">Dry-run preview</button>
+        <button type="submit" class="btn">Import pack</button>
+        <span id="pack-msg" class="form-msg"></span>
+      </div>
+      <pre id="pack-result" style="display:none;margin-top:12px;padding:12px;background:var(--card2,#111);border:1px solid var(--border);border-radius:8px;font-size:12px;max-height:320px;overflow:auto;white-space:pre-wrap"></pre>
     </form>
   </div>
 
@@ -3346,6 +3374,43 @@ async function submitImport(dryRun){
 }
 document.getElementById('imp-dry').addEventListener('click', ()=>submitImport(true));
 document.getElementById('import-form').addEventListener('submit', (e)=>{ e.preventDefault(); submitImport(false); });
+
+// ── 4. onboarding pack import ─────────────────────────────────────────
+document.getElementById('dl-pack-template').addEventListener('click', async (e) => {
+  e.preventDefault();
+  try { await downloadBlob('/v1/projects/import-onboarding-pack/template','caf-onboarding-pack-template.md'); }
+  catch(err){ alert('Error: '+err.message); }
+});
+
+async function submitPackImport(dryRun){
+  const msg=document.getElementById('pack-msg');
+  const out=document.getElementById('pack-result');
+  out.style.display='none';
+  const file = document.getElementById('pack-file').files[0];
+  if(!file){ setMsg(msg,'Pick an onboarding pack file','err'); return; }
+  const slugOverride=document.getElementById('pack-slug').value.trim().toUpperCase();
+  const nameOverride=document.getElementById('pack-name').value.trim();
+  const params=new URLSearchParams();
+  if (dryRun) params.set('dry_run','true');
+  if (slugOverride) params.set('slug', slugOverride);
+  if (nameOverride) params.set('default_display_name', nameOverride);
+  setMsg(msg, dryRun?'Parsing pack…':'Importing pack…');
+  try{
+    const fd = new FormData(); fd.append('file', file, file.name);
+    const r = await cafFetch('/v1/projects/import-onboarding-pack'+(params.toString()?'?'+params.toString():''), { method:'POST', body: fd });
+    const d = await r.json();
+    out.textContent = JSON.stringify(d, null, 2);
+    out.style.display = 'block';
+    if (!d.ok) { setMsg(msg, (d.errors&&d.errors.join('; '))||d.error||'Failed','err'); return; }
+    const gapNote = (d.gaps && d.gaps.length) ? ' ('+d.gaps.length+' gaps reported)' : '';
+    if (dryRun) { setMsg(msg,'Dry-run OK'+gapNote+'. Review the plan below, then click Import pack.','ok'); return; }
+    setMsg(msg,'Imported'+gapNote+' — redirecting…','ok');
+    const slug = (d.project && d.project.slug) || slugOverride;
+    setTimeout(()=>{ window.location.href = '/admin/config?project='+encodeURIComponent(slug); }, 500);
+  }catch(err){setMsg(msg,'Error: '+err.message,'err');}
+}
+document.getElementById('pack-dry').addEventListener('click', ()=>submitPackImport(true));
+document.getElementById('pack-form').addEventListener('submit', (e)=>{ e.preventDefault(); submitPackImport(false); });
 </script>`;
     reply.type("text/html").send(page("New Project", "", body, projects, "", adminHeadTokenScript(config)));
   });
@@ -4146,7 +4211,20 @@ ${adminPhWithPipelineHtml(esc(project.display_name || project.slug), null, curre
           <label for="plan-cap-video-agg" style="font-size:13px;white-space:nowrap">Max video jobs / run (all types)</label>
           <input type="number" id="plan-cap-video-agg" min="0" step="1" style="width:80px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Aggregate cap across video/reel jobs. Empty uses server default."/>
         </div>
+        <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-variation" style="font-size:13px;white-space:nowrap">Variations / idea</label>
+          <input type="number" id="plan-cap-variation" min="1" step="1" style="width:64px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="How many v1/v2/… jobs to plan per candidate (mimic flows stay at 1)."/>
+        </div>
+        <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-daily" style="font-size:13px;white-space:nowrap">Max jobs / day</label>
+          <input type="number" id="plan-cap-daily" min="0" step="1" style="width:64px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Calendar-day cap across all planned jobs. Empty = no daily cap."/>
+        </div>
+        <div class="plan-cap-toolbar-block">
+          <label for="plan-cap-min-score" style="font-size:13px;white-space:nowrap">Min score to plan</label>
+          <input type="number" id="plan-cap-min-score" min="0" max="1" step="0.01" style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--text)" title="Candidates below this pre_gen_score are dropped at plan time. Empty uses server default."/>
+        </div>
       </div>
+      <p id="plan-cap-planning-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
       <p id="plan-cap-openai-gen-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
       <p id="plan-cap-carousel-hint" class="runs-ops-hint" style="margin:0;max-width:none">Loading…</p>
       <p style="font-size:12px;color:var(--muted);margin:0;line-height:1.45">Per type below: caps apply to each flow family (synonyms share one limit). Empty = default <strong>${DEFAULT_VIDEO_FLOW_PLAN_CAP}</strong> per video family, <strong>${DEFAULT_CAROUSEL_FLOW_PLAN_CAP}</strong> per regular carousel family, <strong>${DEFAULT_TOP_PERFORMER_MIMIC_FLOW_PLAN_CAP}</strong> per mimic family.</p>
@@ -4280,6 +4358,8 @@ function mimicImageInputModeClientLabel(mode){
   return mode==='analysis_t2i'?'analysis text-to-image':'reference edit';
 }
 const SERVER_OPENAI_GEN_MODE=${JSON.stringify(config.OPENAI_GENERATION_MODE)};
+const DEFAULT_VARIATION_CAP=${config.DEFAULT_MAX_VARIATIONS};
+const DEFAULT_MIN_SCORE=${config.DEFAULT_MIN_SCORE_TO_GENERATE};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function runBtnId(runId,action){return 'ra-'+encodeURIComponent(runId)+'-'+action;}
@@ -4805,6 +4885,10 @@ async function loadPlanningCaps(){
   const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
   const genModeSel=document.getElementById('plan-cap-openai-gen-mode');
   const genModeHint=document.getElementById('plan-cap-openai-gen-hint');
+  const varInp=document.getElementById('plan-cap-variation');
+  const dailyInp=document.getElementById('plan-cap-daily');
+  const minScoreInp=document.getElementById('plan-cap-min-score');
+  const planningHint=document.getElementById('plan-cap-planning-hint');
   if(!cinp&&!aggInp)return;
   if(cinp)cinp.placeholder=String(DEFAULT_MAX_CAROUSEL);
   if(aggInp)aggInp.placeholder=String(DEFAULT_MAX_VIDEO_AGG);
@@ -4833,6 +4917,10 @@ async function loadPlanningCaps(){
     if(mWhyCopySel)mWhyCopySel.disabled=true;
     if(mInputModeSel)mInputModeSel.disabled=true;
     if(genModeSel)genModeSel.disabled=true;
+    if(varInp){varInp.disabled=true;varInp.placeholder=String(DEFAULT_VARIATION_CAP);}
+    if(dailyInp)dailyInp.disabled=true;
+    if(minScoreInp){minScoreInp.disabled=true;minScoreInp.placeholder=String(DEFAULT_MIN_SCORE);}
+    if(planningHint)planningHint.textContent='Pick a project to edit planning limits.';
     if(genModeHint)genModeHint.textContent='Pick a project to set copy generation mode.';
     if(vHint)vHint.textContent='Pick a project to edit video caps.';
     if(mHint)mHint.textContent='Pick a project to edit mimic caps.';
@@ -4850,6 +4938,10 @@ async function loadPlanningCaps(){
   if(mWhyCopySel)mWhyCopySel.disabled=false;
   if(mInputModeSel)mInputModeSel.disabled=false;
   if(genModeSel)genModeSel.disabled=false;
+  if(varInp){varInp.disabled=false;varInp.placeholder=String(DEFAULT_VARIATION_CAP);}
+  if(dailyInp)dailyInp.disabled=false;
+  if(minScoreInp){minScoreInp.disabled=false;minScoreInp.placeholder=String(DEFAULT_MIN_SCORE);}
+  if(planningHint)planningHint.textContent='Loading…';
   if(genModeHint)genModeHint.textContent='Loading…';
   if(chint)chint.textContent='Loading…';
   if(vHint)vHint.textContent='Loading…';
@@ -4863,7 +4955,34 @@ async function loadPlanningCaps(){
       if(vHint)vHint.textContent=errMsg;
       if(mHint)mHint.textContent=errMsg;
       if(genModeHint)genModeHint.textContent=errMsg;
+      if(planningHint)planningHint.textContent=errMsg;
       return;
+    }
+    if(varInp){
+      const dv=d.constraints&&d.constraints.default_variation_cap;
+      const vHas=dv!=null&&dv!=='';
+      varInp.value=vHas?String(dv):'';
+    }
+    if(dailyInp){
+      const dd=d.constraints&&d.constraints.max_daily_jobs;
+      const dHas=dd!=null&&dd!=='';
+      dailyInp.value=dHas?String(dd):'';
+    }
+    if(minScoreInp){
+      const ms=d.constraints&&d.constraints.min_score_to_generate;
+      const mHas=ms!=null&&ms!=='';
+      minScoreInp.value=mHas?String(ms):'';
+    }
+    if(planningHint){
+      const dv=d.constraints&&d.constraints.default_variation_cap;
+      const vHas=dv!=null&&dv!=='';
+      const vEff=vHas?Number(dv):DEFAULT_VARIATION_CAP;
+      const dd=d.constraints&&d.constraints.max_daily_jobs;
+      const dHas=dd!=null&&dd!=='';
+      const ms=d.constraints&&d.constraints.min_score_to_generate;
+      const mHas=ms!=null&&ms!=='';
+      const mEff=mHas?Number(ms):DEFAULT_MIN_SCORE;
+      planningHint.textContent='Variations: '+vEff+(vHas?' (saved)':(' (default '+DEFAULT_VARIATION_CAP+')'))+'. Daily jobs: '+(dHas?String(dd):'no cap')+'. Min score: '+mEff+(mHas?' (saved)':(' (server default '+DEFAULT_MIN_SCORE+')'))+'.';
     }
     if(genModeSel){
       const savedGen=d.constraints&&d.constraints.openai_generation_mode;
@@ -4894,7 +5013,7 @@ async function loadPlanningCaps(){
         var ceff=cset?cval:DEFAULT_MAX_CAROUSEL_PER_FLOW;
         cParts.push(g.label.split('(')[0].trim()+': '+ceff);
       });
-      if(chint)chint.textContent='Niche carousel lane: '+cEff+' / run aggregate ('+(cHas?'saved in System limits':'server default '+DEFAULT_MAX_CAROUSEL)+') — ideas with content_lens=niche. Per lane: '+cParts.join(' · ')+'.';
+      if(chint)chint.textContent='Niche carousel lane: '+cEff+' / run aggregate ('+(cHas?'saved':'server default '+DEFAULT_MAX_CAROUSEL)+') — ideas with content_lens=niche. Per lane: '+cParts.join(' · ')+'.';
     }
     if(aggInp){
       const vv=d.constraints&&d.constraints.max_video_jobs_per_run;
@@ -4912,7 +5031,7 @@ async function loadPlanningCaps(){
         var eff=set?val:DEFAULT_MAX_VIDEO_PER_FLOW;
         parts.push(g.label.split('(')[0].trim()+': '+eff);
       });
-      if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved in System limits':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and save to use defaults for that family.';
+      if(vHint)vHint.textContent='Aggregate video limit: '+vEffAgg+' / run ('+(vHas?'saved':'server default '+DEFAULT_MAX_VIDEO_AGG)+'). Per family: '+parts.join(' · ')+'. Clear a row and save to use defaults for that family.';
       var mParts=[];
       TOP_PERFORMER_MIMIC_PLAN_CAP_GROUPS.forEach(function(g){
         var mel=document.getElementById('plan-cap-mimic-'+g.id);
@@ -4999,8 +5118,26 @@ async function saveAllPlanningCaps(){
   const mFluxSel=document.getElementById('plan-cap-mimic-text-flux');
   const mWhyCopySel=document.getElementById('plan-cap-mimic-why-copy');
   const mInputModeSel=document.getElementById('plan-cap-mimic-image-input');
+  const varInp=document.getElementById('plan-cap-variation');
+  const dailyInp=document.getElementById('plan-cap-daily');
+  const minScoreInp=document.getElementById('plan-cap-min-score');
   const pick=(genModeSel&&genModeSel.value||'').trim();
   if(pick!==''&&pick!=='live'&&pick!=='placeholder'){showToast('Copy mode: live, placeholder, or empty for server default.',false);return;}
+  const varRaw=(varInp&&varInp.value||'').trim();
+  if(varRaw!==''){
+    var vn=parseInt(varRaw,10);
+    if(!Number.isFinite(vn)||vn<1){showToast('Variations / idea: integer ≥ 1 or empty for default.',false);return;}
+  }
+  const dailyRaw=(dailyInp&&dailyInp.value||'').trim();
+  if(dailyRaw!==''){
+    var dn=parseInt(dailyRaw,10);
+    if(!Number.isFinite(dn)||dn<0){showToast('Max jobs / day: non-negative integer or empty for no cap.',false);return;}
+  }
+  const minScoreRaw=(minScoreInp&&minScoreInp.value||'').trim();
+  if(minScoreRaw!==''){
+    var msn=Number(minScoreRaw);
+    if(!Number.isFinite(msn)||msn<0||msn>1){showToast('Min score to plan: number 0–1 or empty for server default.',false);return;}
+  }
   const cRaw=(cinp&&cinp.value||'').trim();
   if(cRaw!==''){
     var cn=parseInt(cRaw,10);
@@ -5060,6 +5197,9 @@ async function saveAllPlanningCaps(){
     var body={_project:SLUG,max_jobs_per_flow_type:merged,openai_generation_mode:pick};
     body.max_carousel_jobs_per_run=cRaw===''?'':parseInt(cRaw,10);
     body.max_video_jobs_per_run=aggRaw===''?'':parseInt(aggRaw,10);
+    body.default_variation_cap=varRaw===''?'':parseInt(varRaw,10);
+    body.max_daily_jobs=dailyRaw===''?'':parseInt(dailyRaw,10);
+    body.min_score_to_generate=minScoreRaw===''?'':Number(minScoreRaw);
     if(mModelSel)body.mimic_image_bfl_model=(mModelSel.value||'').trim();
     if(mSimInp)body.mimic_visual_similarity_pct=simRaw===''?'':parseInt(simRaw,10);
     if(mFluxSel){
@@ -7904,15 +8044,10 @@ async function loadConfig(){
   const c=d.constraints||{};
   h+='<div id="tab-constraints" class="tab-panel">';
   h+='<div class="card"><div class="card-h">System Constraints</div>';
+  h+='<p style="font-size:13px;color:var(--muted);margin:0 0 14px;line-height:1.45">Run <strong>planning caps</strong> (per-flow limits, carousel/video aggregates, variations, daily cap, min score, mimic render, copy mode) are edited on <a href="/admin/runs?project='+encodeURIComponent(SLUG)+'">Runs → Planning caps</a>.</p>';
   h+='<form id="constraints-form" class="config-form">';
-  h+=fg('max_daily_jobs','Max Daily Jobs',c.max_daily_jobs||'','number');
-  h+=fg('min_score_to_generate','Min Score to Generate',c.min_score_to_generate||'','number','0.01');
   h+=fg('max_active_prompt_versions','Max Active Prompt Versions',c.max_active_prompt_versions||'','number');
-  h+=fg('default_variation_cap','Default Variation Cap',c.default_variation_cap||1,'number');
   h+=fg('auto_validation_pass_threshold','Auto-validation Pass Threshold',c.auto_validation_pass_threshold||'','number','0.01');
-  h+=fg('max_carousel_jobs_per_run','Max regular carousel jobs (FLOW_CAROUSEL per run plan)',c.max_carousel_jobs_per_run??'','number');
-  h+=fg('max_video_jobs_per_run','Max video/reel jobs (per run plan)',c.max_video_jobs_per_run??'','number');
-  h+=fgTa('max_jobs_per_flow_type','Max jobs per flow type (JSON; regular carousel default 10, video/mimic families per defaults)',JSON.stringify(c.max_jobs_per_flow_type&&typeof c.max_jobs_per_flow_type==='object'?c.max_jobs_per_flow_type:{},null,2));
   h+='<div class="form-actions"><button type="submit" class="btn">Save Constraints</button><span id="constraints-msg" class="form-msg"></span></div>';
   h+='</form></div></div>';
 
@@ -7964,12 +8099,18 @@ async function loadConfig(){
   const ft=d.profile?.flow_types||[];
   const FT_META_STATIC={
     'FLOW_CAROUSEL':{label:'Carousel',cat:'Carousel',defaultNotes:'Publishable carousel copy JSON (renderer-ready).'},
+    'FLOW_TOP_PERFORMER_MIMIC_CAROUSEL':{label:'Mimic carousel',cat:'Carousel',defaultNotes:'Top-performer visual mimic — requires MIMIC_IMAGE_ENABLED and archived inspection media.'},
+    'FLOW_VISUAL_FIRST_CAROUSEL':{label:'Visual-first carousel',cat:'Carousel',defaultNotes:'Idea + BVS driven carousel lane (new_visual); same render engine as mimic carousel.'},
+    'FLOW_WHY_MIMIC_CAROUSEL':{label:'Why Mimic carousel',cat:'Carousel',defaultNotes:'SIL-driven strategic copy + paired image prompts; separate test lane from fidelity mimic.'},
+    'FLOW_TOP_PERFORMER_MIMIC_IMAGE':{label:'Mimic image',cat:'Other',defaultNotes:'Top-performer single-image mimic.'},
+    'FLOW_TOP_PERFORMER_MIMIC_VIDEO':{label:'Mimic video (planning cap)',cat:'Video (generic)',defaultNotes:'Planning cap alias — routes to HeyGen FLOW_VID_* flows.'},
     'Flow_Carousel_Copy':{label:'Carousel – Copy & Slides',cat:'Carousel',defaultNotes:'Instagram/TikTok carousel (text slides).'},
     'FLOW_VID_SCENES':{label:'Video – Scenes',cat:'Video (generic)',defaultNotes:'Multi-scene video bundle (scene prompts / clips) for assembly.'},
     'Video_Scene_Generator':{label:'Video – Multi-scene',cat:'Video (generic)',defaultNotes:'Multiple HeyGen scenes stitched together.'},
     'FLOW_VID_SCRIPT':{label:'Video – Script',cat:'Video (generic)',defaultNotes:'Spoken script JSON for script-led HeyGen (avatar reads verbatim).'},
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
     'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
+    'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'Cinematic AI hook clip (Sora/HeyGen, 4–8s) + HeyGen body segment → concat in Core.'},
     'FLOW_VID_PROMPT_NO_AVATAR':{label:'Video prompt — no avatar',cat:'Video (generic)',defaultNotes:'HeyGen Video Agent only (no on-camera avatar): narration + motion/stock/graphics; uses FLOW_VID_PROMPT templates.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
     'FLOW_HOOKS':{label:'Hooks',cat:'Hooks & Scripts',defaultNotes:'Hook variations list + rationale.'},
@@ -8000,18 +8141,17 @@ async function loadConfig(){
   for(const k in groups){groups[k].sort(function(a,b){return (Number(b.raw.priority_weight)||0)-(Number(a.raw.priority_weight)||0);});}
   h+='<div id="tab-flows" class="tab-panel"><div class="card">';
   h+='<div class="card-h">Allowed Flow Types ('+ft.length+(cats.length?' in '+cats.length+' format'+(cats.length===1?'':'s'):'')+')';
-  h+=' <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:8px">Grouped by output format. Raw <code>flow_type</code> IDs are shown below each label and are the join keys used by prompts, jobs, and history.</span>';
+  h+=' <span style="font-weight:400;color:var(--muted);font-size:11px;margin-left:8px">Grouped by output format. Raw <code>flow_type</code> IDs are join keys for prompts and jobs. Variations per idea: <a href="/admin/runs?project='+encodeURIComponent(SLUG)+'">Runs → Planning caps</a> (<code>default_variation_cap</code>), not per flow row.</span>';
   h+=' <button type="button" class="btn btn-sm" style="float:right;text-transform:none;letter-spacing:0" onclick="cfgBeginInlineAdd(this,\\'flow-type\\')">+ Add Flow Type</button></div>';
   if(ft.length){
     for(const cat of cats){
       const list=groups[cat];
       h+='<div style="padding:14px 20px 6px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:600">'+esc(cat)+' <span style="color:#555;font-weight:400">· '+list.length+'</span></div>';
-      h+='<div style="overflow-x:auto;padding:0 20px 12px"><table><thead><tr><th style="min-width:300px">Flow</th><th>Enabled</th><th>Variations</th><th>Platforms</th><th>Priority</th><th>Prompt Template</th><th>Notes</th><th></th></tr></thead><tbody>';
+      h+='<div style="overflow-x:auto;padding:0 20px 12px"><table><thead><tr><th style="min-width:300px">Flow</th><th>Enabled</th><th>Platforms</th><th>Priority</th><th>Prompt Template</th><th>Notes</th><th></th></tr></thead><tbody>';
       for(const entry of list){
         const f=entry.raw;
         h+='<tr><td><div style="line-height:1.35"><strong>'+esc(entry.meta.label)+'</strong><br><span class="mono" style="font-size:11px;color:var(--muted)">'+esc(f.flow_type)+'</span></div></td>';
         h+='<td>'+(f.enabled?'<span class="badge badge-g">Yes</span>':'<span class="badge badge-r">No</span>')+'</td>';
-        h+='<td>'+f.default_variation_count+'</td>';
         h+='<td>'+esc(f.allowed_platforms||'—')+'</td>';
         h+='<td>'+esc(f.priority_weight||'—')+'</td>';
         h+='<td class="mono">'+esc(f.prompt_template_id||'—')+'</td>';
@@ -8108,18 +8248,9 @@ function bindForms(){
     const fd=new FormData(e.target);
     const numField=(name)=>{const v=fd.get(name);if(v===''||v==null)return null;const n=Number(v);return Number.isFinite(n)?n:null;};
     const body={_project:SLUG,
-      max_daily_jobs:numField('max_daily_jobs'),
-      min_score_to_generate:numField('min_score_to_generate'),
       max_active_prompt_versions:numField('max_active_prompt_versions'),
-      default_variation_cap:numField('default_variation_cap')??1,
       auto_validation_pass_threshold:numField('auto_validation_pass_threshold'),
-      max_carousel_jobs_per_run:numField('max_carousel_jobs_per_run'),
-      max_video_jobs_per_run:numField('max_video_jobs_per_run'),
     };
-    const jt=String(fd.get('max_jobs_per_flow_type')||'').trim();
-    if(jt){
-      try{body.max_jobs_per_flow_type=JSON.parse(jt);}catch(err){alert('Invalid JSON in max jobs per flow type');return;}
-    }else body.max_jobs_per_flow_type={};
     await postForm('/v1/admin/config/constraints',body,'constraints-msg');
   });
   document.getElementById('strategy-form')?.addEventListener('submit',async(e)=>{
@@ -8165,7 +8296,7 @@ async function postForm(url,body,msgId){
 
 const FORM_FIELDS={
   'platform':[{k:'platform',l:'Platform',r:true},{k:'caption_max_chars',l:'Caption Max Chars',t:'number'},{k:'hook_max_chars',l:'Hook Max Chars',t:'number'},{k:'hook_must_fit_first_lines',l:'Hook Must Fit First Lines',t:'checkbox'},{k:'slide_min_chars',l:'Carousel body min chars / slide',t:'number'},{k:'slide_max_chars',l:'Carousel body max chars / slide',t:'number'},{k:'slide_min',l:'Min slides in deck',t:'number'},{k:'slide_max',l:'Max slides in deck',t:'number'},{k:'max_hashtags',l:'Max Hashtags',t:'number'},{k:'hashtag_format_rule',l:'Hashtag Format Rule'},{k:'line_break_policy',l:'Line Break Policy'},{k:'emoji_allowed',l:'Emoji Allowed',t:'checkbox'},{k:'link_allowed',l:'Link Allowed',t:'checkbox'},{k:'tag_allowed',l:'Tag Allowed',t:'checkbox'},{k:'formatting_rules',l:'Formatting Rules',ta:true},{k:'posting_frequency_limit',l:'Posting Frequency Limit'},{k:'best_posting_window',l:'Best Posting Window'},{k:'notes',l:'Notes',ta:true}],
-  'flow-type':[{k:'flow_type',l:'Flow Type',r:true},{k:'enabled',l:'Enabled',t:'checkbox'},{k:'default_variation_count',l:'Default Variation Count',t:'number'},{k:'requires_signal_pack',l:'Requires Signal Pack',t:'checkbox'},{k:'requires_learning_context',l:'Requires Learning Context',t:'checkbox'},{k:'allowed_platforms',l:'Allowed Platforms'},{k:'output_schema_version',l:'Output Schema Version'},{k:'qc_checklist_version',l:'QC Checklist Version'},{k:'prompt_template_id',l:'Prompt Template ID'},{k:'priority_weight',l:'Priority Weight',t:'number',step:'0.01'},{k:'heygen_mode',l:'HeyGen mode (product videos only — leave blank for code default)',t:'select',opts:[{v:'',l:'Default (FEATURE/COMPARISON/OFFER/USECASE \u2192 script-led; PROBLEM/SOCIAL_PROOF \u2192 prompt-led)'},{v:'script_led',l:'script_led \u2014 /v3/videos, avatar reads spoken_script verbatim'},{v:'prompt_led',l:'prompt_led \u2014 /v3/video-agents, HeyGen writes and speaks its own VO'}]},{k:'notes',l:'Notes',ta:true}],
+  'flow-type':[{k:'flow_type',l:'Flow Type',r:true},{k:'enabled',l:'Enabled',t:'checkbox'},{k:'requires_signal_pack',l:'Requires Signal Pack',t:'checkbox'},{k:'requires_learning_context',l:'Requires Learning Context',t:'checkbox'},{k:'allowed_platforms',l:'Allowed Platforms'},{k:'output_schema_version',l:'Output Schema Version'},{k:'qc_checklist_version',l:'QC Checklist Version'},{k:'prompt_template_id',l:'Prompt Template ID'},{k:'priority_weight',l:'Priority Weight',t:'number',step:'0.01'},{k:'heygen_mode',l:'HeyGen mode (product videos only — leave blank for code default)',t:'select',opts:[{v:'',l:'Default (FEATURE/COMPARISON/OFFER/USECASE \u2192 script-led; PROBLEM/SOCIAL_PROOF \u2192 prompt-led)'},{v:'script_led',l:'script_led \u2014 /v3/videos, avatar reads spoken_script verbatim'},{v:'prompt_led',l:'prompt_led \u2014 /v3/video-agents, HeyGen writes and speaks its own VO'}]},{k:'notes',l:'Notes',ta:true}],
   'risk-rule':[{k:'flow_type',l:'Flow Type',r:true},{k:'trigger_condition',l:'Trigger Condition',ta:true},{k:'risk_level',l:'Risk Level'},{k:'auto_approve_allowed',l:'Auto Approve Allowed',t:'checkbox'},{k:'requires_manual_review',l:'Requires Manual Review',t:'checkbox'},{k:'escalation_level',l:'Escalation Level'},{k:'sensitive_topics',l:'Sensitive Topics',ta:true},{k:'claim_restrictions',l:'Claim Restrictions',ta:true},{k:'rejection_reason_tag',l:'Rejection Reason Tag'},{k:'rollback_flag',l:'Rollback Flag',t:'checkbox'},{k:'notes',l:'Notes',ta:true}],
   'reference-post':[{k:'reference_post_id',l:'Reference Post ID',r:true},{k:'platform',l:'Platform'},{k:'post_url',l:'Post URL'},{k:'status',l:'Status'},{k:'last_run_id',l:'Last Run ID'},{k:'notes',l:'Notes',ta:true}],
   'heygen':[{k:'config_id',l:'Config ID',r:true},{k:'config_key',l:'Config Key',r:true},{k:'value',l:'Value',ta:true},{k:'platform',l:'Platform'},{k:'flow_type',l:'Flow Type'},{k:'render_mode',l:'Render Mode'},{k:'value_type',l:'Value Type'},{k:'is_active',l:'Active',t:'checkbox'},{k:'notes',l:'Notes',ta:true}]

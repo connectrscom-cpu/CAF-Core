@@ -1,6 +1,7 @@
 /** Marketer-facing product types — adapters over Core API shapes. */
 
 import type { ContentPreview } from "./preview-resolver";
+import type { VideoPipelineIntent } from "./video-lane";
 
 export type ResearchPipelineStatus = "not_started" | "in_progress" | "ready" | "stale";
 
@@ -170,6 +171,8 @@ export interface TopPerformerRef {
   postUrl: string | null;
   thumbnailUrl: string | null;
   preview?: ContentPreview;
+  /** CAF-recommended HeyGen lane from format_pattern (video references only). */
+  recommendedVideoIntent?: VideoPipelineIntent;
 }
 
 export type ContentCartItemKind = "idea" | "top_performer";
@@ -191,6 +194,8 @@ export interface ContentCartItem {
   renderMode?: "full_bleed" | "template";
   /** When true, stamp Brand Visual System (brand bible) onto this job at plan time. */
   useBrandVisualSystem?: boolean;
+  /** HeyGen lane for video top performers (script / prompt avatar / no avatar). */
+  videoIntent?: VideoPipelineIntent;
 }
 
 export type BrandBibleVisualMode =
@@ -246,6 +251,52 @@ export interface BrandBible {
   heygenPresenters: BrandBibleHeygenPresenter[];
   /** Ordered ids (max 7) described per-line in Flux image prompts when BVS is on. */
   fluxPromptAssetIds: string[];
+  hasActiveVersion: boolean;
+  version: number | null;
+}
+
+export type ProductBibleAssetRole =
+  | "screenshot"
+  | "ui_screen"
+  | "workflow_step"
+  | "feature_demo"
+  | "hero_shot"
+  | "comparison";
+
+export interface ProductBibleAssetRef {
+  assetId: string;
+  role: ProductBibleAssetRole;
+  label: string;
+  usageNotes: string;
+  stepOrder: number | null;
+}
+
+export interface ProductBibleFeature {
+  key: string;
+  label: string;
+  description: string;
+  assetRefs: ProductBibleAssetRef[];
+}
+
+export interface ProductBibleModule {
+  key: string;
+  label: string;
+  description: string;
+  oneLiner: string;
+  features: ProductBibleFeature[];
+  assetRefs: ProductBibleAssetRef[];
+}
+
+export interface ProductBibleApplicationGuide {
+  instructions: string;
+  heygenPolicy: string;
+  fluxPolicy: string;
+}
+
+export interface ProductBible {
+  slug: string;
+  applicationGuide: ProductBibleApplicationGuide;
+  products: ProductBibleModule[];
   hasActiveVersion: boolean;
   version: number | null;
 }

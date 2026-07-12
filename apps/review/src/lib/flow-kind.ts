@@ -38,6 +38,7 @@ const PRODUCT_IMAGE_SET = new Set<string>(PRODUCT_IMAGE_FLOW_TYPES);
 /** Canonical HeyGen / video flows (mirrors Core `CANONICAL_FLOW_TYPES`). */
 const FLOW_VID_PROMPT = "FLOW_VID_PROMPT";
 const FLOW_VID_PROMPT_NO_AVATAR = "FLOW_VID_PROMPT_NO_AVATAR";
+const FLOW_VID_HOOK_FIRST = "FLOW_VID_HOOK_FIRST";
 const FLOW_VID_SCRIPT = "FLOW_VID_SCRIPT";
 const FLOW_VID_SCENES = "FLOW_VID_SCENES";
 const FLOW_TOP_PERFORMER_MIMIC_VIDEO = "FLOW_TOP_PERFORMER_MIMIC_VIDEO";
@@ -46,6 +47,7 @@ const CANONICAL_VIDEO_FLOW_SET = new Set<string>([
   FLOW_VID_PROMPT,
   FLOW_VID_PROMPT_NO_AVATAR,
   FLOW_VID_SCRIPT,
+  FLOW_VID_HOOK_FIRST,
   FLOW_VID_SCENES,
 ]);
 
@@ -99,9 +101,28 @@ export function isTpGroundedCarouselRenderFlow(flowType: string | null | undefin
   return ft === "FLOW_TOP_PERFORMER_MIMIC_CAROUSEL" || ft === "FLOW_VISUAL_FIRST_CAROUSEL" || ft === "FLOW_WHY_MIMIC_CAROUSEL";
 }
 
-/** Review workbench for TP-grounded carousels (layer editor, slide regen, reprint overlay). */
-export function isTpGroundedCarouselReviewFlow(flowType: string | null | undefined): boolean {
-  return isTpGroundedCarouselRenderFlow(flowType);
+/** Review workbench for TP-grounded carousels + BVS text carousel (layer editor, slide regen, reprint overlay). */
+export function isBvsTextCarouselReviewJob(
+  flowType: string | null | undefined,
+  generationPayload?: Record<string, unknown> | null
+): boolean {
+  const ft = (flowType ?? "").trim();
+  if (ft !== "FLOW_CAROUSEL" && ft !== "Flow_Carousel_Copy") return false;
+  const gp = generationPayload;
+  if (!gp || typeof gp !== "object") return false;
+  const bvs = gp.bvs_v1;
+  if (!bvs || typeof bvs !== "object" || (bvs as Record<string, unknown>).enabled !== true) return false;
+  const mimic = gp.mimic_v1;
+  if (!mimic || typeof mimic !== "object") return false;
+  const m = mimic as Record<string, unknown>;
+  return m.bvs_enabled === true && m.mode === "template_bg";
+}
+
+export function isTpGroundedCarouselReviewFlow(
+  flowType: string | null | undefined,
+  generationPayload?: Record<string, unknown> | null
+): boolean {
+  return isTpGroundedCarouselRenderFlow(flowType) || isBvsTextCarouselReviewJob(flowType, generationPayload);
 }
 
 /** Why Mimic carousel — strategic lane; no original-vs-generated compare. */
@@ -142,7 +163,8 @@ export function isHeyGenVidCanonicalFlow(flowType: string | null | undefined): b
   return (
     ft === FLOW_VID_PROMPT ||
     ft === FLOW_VID_PROMPT_NO_AVATAR ||
-    ft === FLOW_VID_SCRIPT
+    ft === FLOW_VID_SCRIPT ||
+    ft === FLOW_VID_HOOK_FIRST
   );
 }
 

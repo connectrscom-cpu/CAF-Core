@@ -4,6 +4,8 @@
 
 **Convention:** Paths are from the **repository root**. Schema is **`caf_core`**.
 
+> **Updated current-state note (2026-07):** This merged guide may lag **BVS**, **New Visual** (`FLOW_VISUAL_FIRST_CAROUSEL` / `execution_mode: new_visual`), and **Why Mimic**. For repo-derived truth, start with **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`**.
+
 ---
 
 ## Table of contents
@@ -33,7 +35,7 @@
 
 ## 1. What CAF Core is
 
-**CAF** (Content Automation Framework) is a **content pipeline platform**. **CAF Core** is the backend: a **Fastify API + PostgreSQL** application that owns **operational truth** for content production—signals, **content jobs**, AI drafts, QC, rendered media, human review, publication placements, and learning data.
+**CAF** (Content Automation Framework) is a **content operations / automation platform**. **CAF Core** is the backend: a **Fastify API + PostgreSQL** application that owns **operational truth** for content production—signals, **content jobs**, AI drafts, QC, rendered media, human review, publication placements, and learning data.
 
 | Piece | Role |
 |--------|------|
@@ -207,7 +209,7 @@ Contains (non-exhaustive):
 - LLM: `generated_output`
 - QC: `qc_result` (also `qc_status`, `recommended_route` on columns)
 - Render: HeyGen/scene/video URLs, `render_state` / nested provider data
-- **Mimic (optional):** `mimic_v1` (render SSOT), `mimic_render_context`, `mimic_job_grounding`, `draft_package_snapshot` with `mimic_carousel_package` for carousel mimic review
+- **Mimic (optional):** `mimic_v1` (render SSOT), `bvs_v1` (Brand Visual System snapshot), `mimic_render_context`, `mimic_job_grounding`, `draft_package_snapshot` with `mimic_carousel_package` for **TP-grounded carousel render flows** (`isTpGroundedCarouselRenderFlow()`)
 - Publish helpers: `publish_media_urls_json`, `publish_video_url`, …
 
 ### Typed readers (incremental contract hardening)
@@ -219,6 +221,8 @@ The `src/domain/` folder carves out typed subsets one slice at a time so new cod
 | `qc_result` | `generation-payload-qc.ts` | `qcResultSchema` (Zod), `mergeGenerationPayloadQc` (canonical writer), `pickStoredQcResult` (tolerant reader) |
 | `generated_output` | `generation-payload-output.ts` | `pickGeneratedOutput`, `pickGeneratedOutputOrEmpty`, `hasGeneratedOutput` — reject arrays/primitives instead of coercing to `{}` |
 | `render_state` | `content-job-render-state.ts` | `pickRenderState`, **`hasActiveProviderSession`** (HeyGen idempotency invariant), `isMidProviderPhase` |
+| `mimic_v1` | `mimic-payload.ts` | `pickMimicPayload` |
+| `bvs_v1` | `bvs-v1.ts` | `parseBvsV1`, `attachBvsToPlannedPayload` |
 
 Adoption is incremental. Existing call sites keep working; code you touch or write should prefer these helpers. The HeyGen "don't double-submit when `render_state` already holds `video_id`/`session_id`" rule now has a grep-able name: `hasActiveProviderSession`.
 
@@ -250,7 +254,7 @@ Summary table:
 
 ### 7.2 Run orchestration
 
-- **`startRun`:** CREATED run + `signal_pack_id` + **materialized `runs.candidates_json`** → delete orphan jobs for run → `PLANNING` → allowed flows (skip `offline-flow-types`) → optional scene router expansion → build candidates from `runs.candidates_json` → `decideGenerationPlan` → `upsertContentJob` + transitions → `PLANNED`/`GENERATING`/terminal.
+- **`startRun`:** CREATED run + `signal_pack_id` + **materialized `runs.planned_jobs_json`** (canonical; dual-written with legacy `candidates_json`) → delete orphan jobs for run → `PLANNING` → allowed flows (skip `offline-flow-types`) → optional scene router expansion → build candidates from planner rows → `decideGenerationPlan` → `upsertContentJob` + transitions → `PLANNED`/`GENERATING`/terminal.
 - **`replanRun`:** same file family.
 
 ### 7.3 Decision engine
@@ -369,7 +373,7 @@ Every write path that touches **project risk rules** (`caf_core.risk_rules`) now
 
 - **Anti-repetition (carousel):** `buildLlmApprovalAntiRepetitionBlock` — `LLM_APPROVAL_ANTI_REPETITION_*`.
 - **Rework:** reviewer notes + `editorial_overrides_json` in user prompt when `isEditorialRework`.
-- **Attribution:** `caf_core.learning_generation_attribution`.
+- **Attribution:** `caf_core.learning_generation_attribution`, `job_outcomes` (publish → performance anchor), run context snapshots via `setRunContextSnapshot()`.
 
 ---
 
@@ -378,22 +382,33 @@ Every write path that touches **project risk rules** (`caf_core.risk_rules`) now
 - **`flow-kind.ts`:** `isCarouselFlow`, `isVideoFlow` (regex + product video).
 - **`product-flow-types.ts`:** `FLOW_PRODUCT_*` video; `FLOW_IMG_*` image flows **not** wired to generation.
 - **`offline-flow-types.ts`:** excluded from planning/pipeline (e.g. some reel/hook variation names).
-- **`top-performer-mimic-flow-types.ts`:** `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` (render when **`MIMIC_IMAGE_ENABLED=1`**); `FLOW_TOP_PERFORMER_MIMIC_VIDEO` placeholder.
-- **`format-routing.ts`:** separate planning lanes `mimic_image` / `mimic_carousel` parallel to standard carousel.
+- **`top-performer-mimic-flow-types.ts`:** `FLOW_TOP_PERFORMER_MIMIC_IMAGE`, `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, `FLOW_VISUAL_FIRST_CAROUSEL`, `FLOW_WHY_MIMIC_CAROUSEL` (render via `isTpGroundedCarouselRenderFlow()` when **`MIMIC_IMAGE_ENABLED=1`**); `FLOW_TOP_PERFORMER_MIMIC_VIDEO` routes to HeyGen only.
+- **`new-visual-carousel-*.ts`:** Visual-first lane — `execution_mode: new_visual`, idea + BVS, no TP `reference_items`.
+- **`brand-bible.ts` / `bvs-v1.ts`:** Brand Visual System — versioned `brand_bibles` → `generation_payload.bvs_v1`.
+- **`format-routing.ts`:** separate planning lanes `mimic_image` / `mimic_carousel` / `visual_first_carousel` parallel to standard carousel.
 
-### Top-performer mimic (summary)
+### Top-performer mimic & carousel lanes (summary)
 
-Recreate archived top-performer **visual patterns** with fresh LLM copy. Upstream: Creative Intelligence ingest → `visual_guidelines_pack_v1` on signal packs → ideas grounded to `insights_id`.
+Recreate or reinterpret carousel/image patterns with fresh LLM copy. Upstream: Creative Intelligence ingest → `visual_guidelines_pack_v1` on signal packs → ideas grounded to `insights_id` (classic mimic) or idea + BVS (new visual).
+
+| Lane | Flow | `execution_mode` | Reference frames |
+|------|------|------------------|------------------|
+| Manual mimic carousel | `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | `classic` | TP archived frames |
+| New visual carousel | `FLOW_VISUAL_FIRST_CAROUSEL` | `new_visual` | **None** — idea + BVS T2I |
+| Why Mimic carousel | `FLOW_WHY_MIMIC_CAROUSEL` | `why_mimic` | TP frames + SIL |
+| Mimic image | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | — | Single frame |
 
 | Phase | Module | Output on job |
 |-------|--------|----------------|
-| Pre-copy | `mimic-draft-prep.ts` | `mimic_v1`, `mimic_render_context`, `mimic_job_grounding` |
-| Copy | `llm-generator.ts` + mimic prompts | `generated_output`; carousel mimic → `mimic_carousel_package` snapshot |
-| Render | `mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-image-provider.ts` | `MIMIC_BACKGROUND`, `MIMIC_VISUAL_PLATE`, `STATIC_IMAGE` assets |
+| Pre-copy | `mimic-draft-prep.ts` or `new-visual-carousel-prep.ts` | `mimic_v1`, `bvs_v1`, `mimic_render_context`, `mimic_job_grounding` |
+| Copy | `llm-generator.ts` + mimic prompts | `generated_output`; TP-grounded carousel → `mimic_carousel_package` snapshot |
+| Render | `mimic-carousel-render.ts`, `mimic-image-job.ts`, `bvs-render-overlays.ts` | `MIMIC_BACKGROUND`, `MIMIC_VISUAL_PLATE`, `STATIC_IMAGE` assets |
 
-**Modes (`mimic_v1.mode`):** `image_full` (single frame), `template_bg` (text-heavy → bg plate + HBS), `carousel_visual` (per-slide art + overlay). Classifier: `mimic-mode-classifier.ts`.
+**Modes (`mimic_v1.mode`):** `image_full`, `template_bg`, `carousel_visual`. Classifier: `mimic-mode-classifier.ts` (bypassed for `new_visual`).
 
-**Providers:** `MIMIC_IMAGE_PROVIDER` default **`bfl`**; copy always uses OpenAI. Full guide: **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**; quick ref: **`docs/MIMIC_IMAGE_FLOWS.md`**.
+**Text invariant:** TP-grounded carousels do **not** bake LLM copy into image models — overlay-only via DocAI/HBS + `reprint-text-overlay` (`job-pipeline.ts`).
+
+**Providers:** `MIMIC_IMAGE_PROVIDER` default **`bfl`**; copy always uses OpenAI. Full guide: **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**; repo truth: **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** §11.
 
 ---
 
@@ -408,6 +423,8 @@ Recreate archived top-performer **visual patterns** with fresh LLM copy. Upstrea
 | `/v1/projects/...` | `src/routes/project-config.ts` |
 | `/v1/flow-engine/...` | `src/routes/flow-engine.ts` |
 | `/v1/learning/...` | `src/routes/learning.ts` |
+| `/v1/creative-intelligence/...` | `src/routes/creative-intelligence.ts` |
+| `/v1/inputs-evidence/...`, `/v1/inputs-processing/...` | `inputs-evidence.ts`, `inputs-processing.ts` |
 | `/v1/publications/...` | `src/routes/publications.ts` |
 | `/admin`, `/v1/admin/...` | `src/routes/admin.ts` |
 | `/api/templates/...` | `src/routes/renderer-templates.ts` |
@@ -496,8 +513,8 @@ For smaller files to edit in isolation:
 
 To give **another LLM or repository** enough context without uploading all source code:
 
-1. Start with **`docs/EXTERNAL_CONTEXT_PACK.md`** — tiered file list + system prompt template.
-2. **Tier 1 (always):** `AGENTS.md`, this file, `docs/DOMAIN_MODEL.md`, `docs/ARCHITECTURE.md`, `docs/LIFECYCLE.md`, `docs/TECH_STACK.md`, `docs/layers/README.md`.
+1. Start with **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** (repo-derived July 2026 truth) and **`docs/EXTERNAL_CONTEXT_PACK.md`** — tiered file list + system prompt template.
+2. **Tier 1 (always):** `AGENTS.md`, current-state pack (or volumes 11–14 PDFs), `docs/DOMAIN_MODEL.md`, `docs/ARCHITECTURE.md`, `docs/LIFECYCLE.md`, `docs/TECH_STACK.md`.
 3. **Tier 2 (by topic):** mimic, inputs, video, API reference, QC, risk — see EXTERNAL_CONTEXT_PACK table.
 4. **Tier 3 (implementation):** attach only the 3–15 relevant `src/` files for the task.
 
@@ -507,14 +524,14 @@ To give **another LLM or repository** enough context without uploading all sourc
 
 ## 18. Database schema summary
 
-All tables live in PostgreSQL schema **`caf_core`**. ~70 migrations in `migrations/`.
+All tables live in PostgreSQL schema **`caf_core`**. 79 migrations through **`078_brand_bibles.sql`** (see `migrations/`).
 
 | Domain | Key tables |
 |--------|------------|
 | Pipeline | `projects`, `runs`, `signal_packs`, `content_jobs`, `job_drafts`, `assets` |
 | Review/QC | `editorial_reviews`, `diagnostic_audits`, `qc_checklists`, `risk_policies` |
-| Config | `brand_constraints`, `allowed_flow_types`, `flow_definitions`, `prompt_templates` |
-| Learning | `learning_rules`, `learning_observations`, `performance_metrics` |
+| Config | `brand_constraints`, `brand_bibles`, `brand_profiles`, `allowed_flow_types`, `flow_definitions`, `prompt_templates` |
+| Learning | `learning_rules`, `learning_observations`, `performance_metrics`, `job_outcomes` |
 | Publishing | `publication_placements` |
 | Inputs | `inputs_evidence_*`, `inputs_ideas`, `ideas`, `signal_pack_ideas` |
 | Creative Intel | `creative_source_assets`, `creative_visual_analyses`, `creative_insights` |

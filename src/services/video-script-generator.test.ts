@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ensureVideoScriptPublicationMetadata } from "./video-script-generator.js";
+import {
+  ensureVideoScriptPublicationMetadata,
+  sanitizeVideoDisclaimerForBrand,
+} from "./video-script-generator.js";
 
 describe("ensureVideoScriptPublicationMetadata", () => {
   it("fills caption and hashtags when missing", () => {
@@ -32,5 +35,23 @@ describe("ensureVideoScriptPublicationMetadata", () => {
     });
     expect(out.caption).toBe("Already set caption for the feed.");
     expect(out.hashtags).toEqual(["#one", "#two", "#three"]);
+  });
+});
+
+describe("sanitizeVideoDisclaimerForBrand", () => {
+  it("strips astrology disclaimer bleed on non-astrology brands", () => {
+    const out = sanitizeVideoDisclaimerForBrand(
+      { disclaimer_line: "Astrology is a lens for reflection, not prediction." },
+      { mandatory_disclaimers: null }
+    );
+    expect(out.disclaimer_line).toBeUndefined();
+  });
+
+  it("uses mandatory brand disclaimer when configured", () => {
+    const out = sanitizeVideoDisclaimerForBrand(
+      { disclaimer_line: "Astrology is a lens for reflection, not prediction." },
+      { mandatory_disclaimers: "Not medical or nutrition advice." }
+    );
+    expect(out.disclaimer_line).toBe("Not medical or nutrition advice.");
   });
 });

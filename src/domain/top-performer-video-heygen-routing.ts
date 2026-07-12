@@ -32,14 +32,40 @@ export function readTopPerformerVideoFormatPattern(entry: Record<string, unknown
   return pickString(aes, "format_pattern").toLowerCase();
 }
 
+function routeFromIntent(intent: VideoPipelineIntent, reason: string): TopPerformerVideoHeygenRoute {
+  const flow_type =
+    intent === "script_avatar"
+      ? CANONICAL_FLOW_TYPES.VID_SCRIPT
+      : intent === "no_avatar"
+        ? CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR
+        : intent === "hook_first"
+          ? CANONICAL_FLOW_TYPES.VID_HOOK_FIRST
+          : CANONICAL_FLOW_TYPES.VID_PROMPT;
+  return { intent, flow_type, reason };
+}
+
+export interface TopPerformerVideoHeygenRouteOptions {
+  /** Used when format_pattern is unknown or missing. */
+  defaultIntent?: VideoPipelineIntent;
+  /** Operator override from content cart — wins over format_pattern routing. */
+  forceIntent?: VideoPipelineIntent;
+}
+
 /**
  * Map Nemotron video format_pattern → HeyGen intent + canonical flow_type.
  * Falls back to `defaultIntent` when pattern is unknown or missing.
  */
 export function resolveTopPerformerVideoHeygenRoute(
   entry: Record<string, unknown> | null,
-  defaultIntent: VideoPipelineIntent = "prompt_avatar"
+  defaultOrOptions: VideoPipelineIntent | TopPerformerVideoHeygenRouteOptions = "prompt_avatar"
 ): TopPerformerVideoHeygenRoute {
+  const options: TopPerformerVideoHeygenRouteOptions =
+    typeof defaultOrOptions === "string" ? { defaultIntent: defaultOrOptions } : defaultOrOptions;
+  if (options.forceIntent) {
+    return routeFromIntent(options.forceIntent, "operator_video_lane");
+  }
+
+  const defaultIntent = options.defaultIntent ?? "prompt_avatar";
   const pattern = readTopPerformerVideoFormatPattern(entry);
 
   if (pattern === "talking_head" || pattern === "ugc") {
@@ -65,18 +91,7 @@ export function resolveTopPerformerVideoHeygenRoute(
   }
 
   const intent = normalizeVideoStyle(defaultIntent) ?? defaultIntent;
-  const flow_type =
-    intent === "script_avatar"
-      ? CANONICAL_FLOW_TYPES.VID_SCRIPT
-      : intent === "no_avatar"
-        ? CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR
-        : CANONICAL_FLOW_TYPES.VID_PROMPT;
-
-  return {
-    intent,
-    flow_type,
-    reason: pattern ? `format_pattern=${pattern} (fallback)` : "default_intent",
-  };
+  return routeFromIntent(intent, pattern ? `format_pattern=${pattern} (fallback)` : "default_intent");
 }
 
 /** Human label for admin mimic picker UI. */
@@ -88,6 +103,8 @@ export function heygenLaneLabelForIntent(intent: VideoPipelineIntent): string {
       return "HeyGen · Prompt avatar";
     case "no_avatar":
       return "HeyGen · No avatar";
+    case "hook_first":
+      return "HeyGen · Hook-first hybrid";
   }
 }
 

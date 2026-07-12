@@ -28,7 +28,11 @@ import {
 } from "../domain/idea-structure.js";
 import { getBrandConstraints, getProductProfile, getStrategyDefaults } from "../repositories/project-config.js";
 import { pickBrandSliceForSnapshot, pickStrategySliceForSnapshot } from "./run-context-snapshot.js";
+import { normalizeCarouselIdeaPlatform } from "./task-id.js";
 import { z } from "zod";
+
+const CAROUSEL_IDEA_PLATFORM_RULE =
+  "platform MUST be Instagram or Facebook (carousel flows are not planned for other platforms)";
 
 export const STEP_IDEAS_FROM_INSIGHTS = "inputs_ideas_from_insights_llm";
 
@@ -40,11 +44,12 @@ export const IDEAS_FROM_INSIGHTS_IDEA_FIELD_CONTRACT = `Each idea object MUST in
 - thesis: string (<=800)
 - who_for: string (<=200)
 - format: "carousel" | "video" | "post" | "thread"
-- platform: string (e.g. Instagram, TikTok, Reddit, Facebook, Multi)
+- platform: string (Instagram, TikTok, Reddit, Facebook, Multi — when format=carousel use Instagram or Facebook only)
 - content_lens: "niche" | "product"
 - execution_profile: string (see bucket/group constraints)
 - carousel_style: "text_heavy" | "visual_first" | "mixed" (when format=carousel)
-- video_style: "script_avatar" | "prompt_avatar" | "no_avatar" (when format=video)
+- video_style: "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" (when format=video)
+- hook_opener_concept: string (optional, when video_style=hook_first) — cinematic 4–8s scroll-stop visual; no avatar VO
 - product_angle: problem|feature|comparison|usecase|social_proof|offer (required when content_lens=product and format=video)
 - why_now: string (<=800)
 - key_points: string[] (3–10 items)
@@ -113,8 +118,14 @@ export function bucketConstraintLines(bucket: IdeaGenerationBucketDef & { count:
     `content_lens MUST be "${bucket.content_lens}"`,
     `execution_profile MUST be "${bucket.execution_profile}"`,
   ];
-  if (bucket.format === "carousel") lines.push(`carousel_style MUST be "${bucket.execution_profile}"`);
+  if (bucket.format === "carousel") {
+    lines.push(`carousel_style MUST be "${bucket.execution_profile}"`);
+    lines.push(CAROUSEL_IDEA_PLATFORM_RULE);
+  }
   if (bucket.format === "video") lines.push(`video_style MUST be "${bucket.execution_profile}"`);
+  if (bucket.execution_profile === "hook_first") {
+    lines.push("Include hook_opener_concept: one sentence describing the cinematic 4–8s opener visual (no avatar, no on-screen text).");
+  }
   if (bucket.product_angle) lines.push(`product_angle MUST be "${bucket.product_angle}"`);
   else if (bucket.content_lens === "product" && bucket.format === "video") {
     lines.push(`product_angle MUST be one of: problem, feature, comparison, usecase, social_proof, offer`);
@@ -132,18 +143,29 @@ IDEAS vs MIMIC: propose NEW original concepts — not replicas of top performers
 Return ONLY valid JSON: {"ideas":[...]} — no markdown.`;
 
 export function buildIdeasBucketSystemPrompt(bucket: IdeaGenerationBucketDef & { count: number }): string {
+  const hookFirstBlock =
+    bucket.format === "video" && bucket.execution_profile === "hook_first"
+      ? `\n\n${HOOK_FIRST_VIDEO_IDEAS_ADDENDUM}`
+      : "";
   return `${IDEAS_SYSTEM_PREAMBLE}
 
-${bucketConstraintLines(bucket)}
+${bucketConstraintLines(bucket)}${hookFirstBlock}
 
 Every idea needs title, three_liner, thesis, who_for, platform, content_lens, execution_profile, why_now, key_points, novelty_angle, cta, cta_class, grounding_insight_ids, expected_outcome. Never propose app downloads, quizzes, or unsupported CTAs.`;
 }
 
-export const CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM = `Carousel visual-first ideas (separate lane from manual mimic picks):
-- When insight context includes top_performer_carousel rows, each visual_first idea MUST ground to at least one top_performer_carousel insights_id.
-- Propose NEW original concepts inspired by deck mechanics (slide arc, visual consistency, hook structure) — do NOT copy competitor slide text verbatim.
+export const HOOK_FIRST_VIDEO_IDEAS_ADDENDUM = `Hook-first hybrid video ideas (FLOW_VID_HOOK_FIRST):
+- Set video_style to hook_first.
+- Each idea needs a scroll-stopping cinematic opener concept (emotion, pattern interrupt, hyper-real or stylized B-roll) in hook_opener_concept — NO on-camera avatar in the opener.
+- The three_liner / thesis should describe how the body (avatar script or VO) continues the same topic after the visual hook.
+- Prefer ideas where a dramatic visual moment naturally hands off to an explainer (meal prep reveal, reaction → tip, before/after shock → how-to).`;
+
+export const CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM = `Carousel new-visual ideas (separate lane from manual mimic picks):
+- Propose NEW original brand carousel concepts — inspired by category mechanics when insights exist, but execution is not a competitor replica.
+- Optional: ground to top_performer_carousel for category inspiration only; execution does not require archived reference frames.
 - Set carousel_style to visual_first (or mixed when appropriate).
-- Downstream execution uses FLOW_VISUAL_FIRST_CAROUSEL (not FLOW_TOP_PERFORMER_MIMIC_CAROUSEL).`;
+- Each slide should imply a concrete visual scene (people, animals, objects, landscapes) — not abstract wallpaper or zodiac-template graphics.
+- Downstream execution uses FLOW_VISUAL_FIRST_CAROUSEL with brand visual system (BVS) + per-slide AI art plates.`;
 
 export function buildIdeasGroupSystemPrompt(group: {
   total: number;
@@ -178,7 +200,9 @@ Rules:
 - Respect the per-execution_profile counts above.
 - Every idea must include execution_profile and the required fields.
 - If content_lens=product and format=video, include product_angle (problem|feature|comparison|usecase|social_proof|offer).
-- Never propose app downloads, quizzes, giveaways, or unsupported CTAs.${visualFirstBlock}`;
+- Never propose app downloads, quizzes, giveaways, or unsupported CTAs.${
+    group.format === "carousel" ? `\n- ${CAROUSEL_IDEA_PLATFORM_RULE}.` : ""
+  }${visualFirstBlock}`;
 }
 
 export function groupIdeaGenerationBuckets(
@@ -879,7 +903,8 @@ export function buildLlmIdeaSchema() {
       content_lens: z.enum(["niche", "product"]).optional(),
       execution_profile: z.string().min(1).max(40).optional(),
       carousel_style: z.enum(["text_heavy", "visual_first", "mixed"]).optional(),
-      video_style: z.enum(["script_avatar", "prompt_avatar", "no_avatar"]).optional(),
+      video_style: z.enum(["script_avatar", "prompt_avatar", "no_avatar", "hook_first"]).optional(),
+      hook_opener_concept: z.string().min(1).max(800).optional(),
       product_angle: z
         .enum(["problem", "feature", "comparison", "usecase", "social_proof", "offer"])
         .optional(),
@@ -913,14 +938,27 @@ function normalizeCarouselStyle(raw: unknown, fallback: string): "text_heavy" | 
   return "mixed";
 }
 
-function normalizeVideoStyle(raw: unknown, fallback: string): "script_avatar" | "prompt_avatar" | "no_avatar" {
+function normalizeVideoStyle(
+  raw: unknown,
+  fallback: string
+): "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" {
   const s = String(raw ?? fallback)
     .toLowerCase()
     .replace(/-/g, "_");
+  if (s.includes("hook_first") || s.includes("hookfirst") || (s.includes("hook") && s.includes("hybrid"))) {
+    return "hook_first";
+  }
   if (s.includes("script")) return "script_avatar";
   if (s.includes("prompt")) return "prompt_avatar";
   if (s.includes("no_avatar") || s.includes("broll") || s.includes("b_roll")) return "no_avatar";
-  if (fallback === "script_avatar" || fallback === "prompt_avatar" || fallback === "no_avatar") return fallback;
+  if (
+    fallback === "script_avatar" ||
+    fallback === "prompt_avatar" ||
+    fallback === "no_avatar" ||
+    fallback === "hook_first"
+  ) {
+    return fallback as "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first";
+  }
   return "no_avatar";
 }
 
@@ -1001,7 +1039,8 @@ function resolveGroundingInsightIds(
 function coerceLlmIdeaRecord(
   raw: unknown,
   context: IdeasLlmInsightContextRow[],
-  bucket?: IdeaGenerationBucketDef
+  bucket?: IdeaGenerationBucketDef,
+  alternateIndex = 0
 ): Record<string, unknown> | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const rec = raw as Record<string, unknown>;
@@ -1015,12 +1054,14 @@ function coerceLlmIdeaRecord(
   const novelty_angle = String(rec.novelty_angle ?? rec.angle ?? thesis).trim().slice(0, 800);
   const cta = String(rec.cta ?? rec.call_to_action ?? "Comment your take").trim().slice(0, 200);
   const expected_outcome = String(rec.expected_outcome ?? rec.outcome ?? "Higher saves and shares").trim().slice(0, 400);
-  const platform =
+  const format = String(rec.format ?? bucket?.format ?? "").trim().toLowerCase() || bucket?.format || "carousel";
+  let platform =
     typeof rec.platform === "string" && rec.platform.trim()
       ? rec.platform.trim()
       : platformFromEvidenceKind(context[0]?.evidence_kind ?? "instagram_post");
-
-  const format = String(rec.format ?? bucket?.format ?? "").trim().toLowerCase() || bucket?.format || "carousel";
+  if (format === "carousel") {
+    platform = normalizeCarouselIdeaPlatform(platform, alternateIndex);
+  }
   const content_lens = String(rec.content_lens ?? bucket?.content_lens ?? "niche").trim().toLowerCase() === "product" ? "product" : "niche";
   const execution_profile = String(rec.execution_profile ?? bucket?.execution_profile ?? "").trim() || bucket?.execution_profile;
 
@@ -1050,6 +1091,8 @@ function coerceLlmIdeaRecord(
   }
   if (bucket?.format === "video" || format === "video") {
     coerced.video_style = normalizeVideoStyle(rec.video_style ?? execution_profile, bucket?.execution_profile ?? "no_avatar");
+    const hookConcept = String(rec.hook_opener_concept ?? rec.hook_scene_concept ?? "").trim();
+    if (hookConcept) coerced.hook_opener_concept = hookConcept.slice(0, 800);
   }
   const productAngle = normalizeProductAngle(rec.product_angle ?? bucket?.product_angle);
   if (productAngle) coerced.product_angle = productAngle;
@@ -1071,7 +1114,7 @@ export function parseLlmIdeasFromResponse(
   const ideas: z.infer<ReturnType<typeof buildLlmIdeaSchema>>[] = [];
   const errors: string[] = [];
   for (let i = 0; i < rows.length; i++) {
-    const coerced = coerceLlmIdeaRecord(rows[i], context, bucket);
+    const coerced = coerceLlmIdeaRecord(rows[i], context, bucket, i);
     if (!coerced) {
       errors.push(`idea[${i}]: missing title/thesis`);
       continue;
@@ -1363,10 +1406,13 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
     }
 
     // If platform is missing/blank, infer from evidence kinds present in context.
-    const inferredPlatform =
+    const rawPlatform =
       typeof r.platform === "string" && r.platform.trim()
         ? r.platform.trim()
         : platformFromEvidenceKind(context[0]?.evidence_kind ?? "instagram_post");
+    const ideaFormat = String(r.format ?? "carousel");
+    const inferredPlatform =
+      ideaFormat === "carousel" ? normalizeCarouselIdeaPlatform(rawPlatform, i) : rawPlatform;
 
     return {
       ...r,
@@ -1377,7 +1423,7 @@ export async function synthesizeIdeasJsonFromInsightsLlm(
       three_liner: String(r.three_liner ?? r.thesis ?? "").trim(),
       thesis: String(r.thesis ?? "").trim(),
       who_for: String(r.who_for ?? "Target audience").trim(),
-      format: String(r.format ?? "carousel"),
+      format: ideaFormat,
       platform: inferredPlatform,
       why_now: String(r.why_now ?? "Timely for current audience interests").trim(),
       key_points: Array.isArray(r.key_points) && r.key_points.length >= 3 ? r.key_points : coerceKeyPoints(r.key_points, String(r.title ?? ""), String(r.thesis ?? "")),

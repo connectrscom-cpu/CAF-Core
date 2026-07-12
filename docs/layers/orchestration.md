@@ -9,13 +9,13 @@
 ## Flow (start)
 
 1. Load **`caf_core.runs`** by UUID; require **`status === CREATED`** (or documented reset paths).
-2. Require **`signal_pack_id`** and (current wiring) require planner rows to be present on the run as **`runs.candidates_json`**.
+2. Require **`signal_pack_id`** and planner rows on **`runs.planned_jobs_json`** (canonical; dual-written with legacy **`candidates_json`**).
 3. **Delete** existing jobs for that **`run_id`** (cleanup).
 4. Set run **`PLANNING`**.
 5. **`ensureDefaultAllowedFlowsIfNone`**, **`listAllowedFlowTypes`**; drop **offline** flows (**`offline-flow-types.ts`**).
 6. Optionally route/expand planner rows for scene assembly (LLM seed expansion).
 7. **Mimic image expansion** — `shouldExpandTopPerformerMimicImageForRow` gates `FLOW_TOP_PERFORMER_MIMIC_IMAGE` to eligible single-frame references (`mimic-planning-guards.ts`).
-8. Build in-memory candidate rows × enabled flows from **`runs.candidates_json`** (materialized from the signal pack via `POST /v1/runs/:project_slug/:run_id/candidates`).
+8. Build in-memory candidate rows × enabled flows from **`readRunPlannedJobsJson()`** (materialized via `POST /v1/runs/:project_slug/:run_id/jobs`).
 9. **`decideGenerationPlan`** — scoring, caps, suppression, learning boosts → **`selected`** jobs.
 10. Persist prompt/context snapshots, then loop **`upsertContentJob`** + **`insertJobStateTransition`** for each planned row.
 11. Set run **`PLANNED`** / **`GENERATING`** / **`COMPLETED`** / **`FAILED`** as appropriate.
@@ -23,7 +23,7 @@
 ## Inputs
 
 - Run row (**`signal_pack_id`**, **`run_id`**, **`project_id`**).
-- Planner rows on the run (**`runs.candidates_json`**) materialized from the signal pack.
+- Planner rows on the run (**`runs.planned_jobs_json`**, legacy `candidates_json`) materialized from the signal pack.
 - Project slug (for decision engine).
 
 ## Outputs

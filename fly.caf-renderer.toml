@@ -25,6 +25,9 @@ primary_region = "ams"
   RENDERERS_BEFORE_RESET = "200"
   # Puppeteer default 30s is too tight under shared CPUs / cold starts.
   PUPPETEER_LAUNCH_TIMEOUT_MS = "120000"
+  # DocAI text-fit on dense listicle slides can exceed 90s; Core waits slightly longer per attempt.
+  RENDER_TIMEOUT_MS = "120000"
+  RENDER_CONCURRENCY = "2"
 
 [http_service]
   internal_port = 8080

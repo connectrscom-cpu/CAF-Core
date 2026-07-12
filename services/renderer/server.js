@@ -13,6 +13,10 @@ const PORT = parseInt(process.env.PORT || "3333", 10);
 const HOST = (process.env.HOST || "0.0.0.0").trim();
 const RENDERERS_BEFORE_RESET = parseInt(process.env.RENDERERS_BEFORE_RESET || "12", 10);
 const RENDER_TIMEOUT_MS = parseInt(process.env.RENDER_TIMEOUT_MS || "90000", 10);
+const RENDER_CONCURRENCY = Math.max(
+  1,
+  Math.min(4, parseInt(process.env.RENDER_CONCURRENCY || "2", 10) || 1)
+);
 const CAF_TEMPLATE_API_URL = process.env.CAF_TEMPLATE_API_URL || "";
 const SHUTDOWN_SECRET = process.env.RENDERER_SHUTDOWN_SECRET || "";
 const OUTPUT_DIR = path.join(__dirname, "output");
@@ -26,7 +30,7 @@ let browser = null;
 let renderCount = 0;
 const asyncJobs = new Map();
 const renderQueue = [];
-let rendering = false;
+let activeRenders = 0;
 let browserLaunchPromise = null;
 let browserResetPromise = null;
 
@@ -182,6 +186,18 @@ function cafCarouselTypographyStyleTag(context) {
     if (typeof raw !== "string" || !raw.trim()) continue;
     parts.push(`${cssVar}:${raw.trim()}`);
   }
+  const inkRaw = ctx.carousel_ink ?? inner.carousel_ink;
+  if (typeof inkRaw === "string" && inkRaw.trim()) {
+    const ink = inkRaw.trim();
+    parts.push(`--text:${ink}`);
+    parts.push(`--muted:${ink}`);
+  }
+  const paperRaw = ctx.carousel_paper ?? inner.carousel_paper;
+  if (typeof paperRaw === "string" && paperRaw.trim()) {
+    const paper = paperRaw.trim();
+    parts.push(`--bg1:${paper}`);
+    parts.push(`--bg2:${paper}`);
+  }
   if (parts.length === 0) return "";
   return `<style id="caf-carousel-typography">:root{${parts.join(";")}}</style>`;
 }
@@ -209,6 +225,56 @@ async function hardenPageForFastRendering(page) {
   }
   page.setDefaultTimeout(RENDER_TIMEOUT_MS);
   page.setDefaultNavigationTimeout(RENDER_TIMEOUT_MS);
+}
+
+async function injectCarouselBrandOverlays(page, context) {
+  const ctx = context?.render && typeof context.render === "object" && !Array.isArray(context.render) ? context.render : context;
+  const logo = ctx?.logo_overlay;
+  const frame = ctx?.frame_overlay;
+  const logoUrl = logo?.url && typeof logo.url === "string" ? logo.url.trim() : "";
+  const frameUrl = frame?.url && typeof frame.url === "string" ? frame.url.trim() : "";
+  if (!logoUrl && !frameUrl) return;
+  const position = typeof logo?.position === "string" && logo.position.trim() ? logo.position.trim() : "br";
+  await page.evaluate(
+    ({ logoUrl, frameUrl, position }) => {
+      document.querySelectorAll(".slide").forEach((slide) => {
+        if (!(slide instanceof HTMLElement)) return;
+        if (getComputedStyle(slide).position === "static") slide.style.position = "relative";
+        // Mimic HBS templates already render frame/logo overlays — skip duplicate injection.
+        if (frameUrl && !slide.querySelector(".mimic-slide-frame")) {
+          const img = document.createElement("img");
+          img.src = frameUrl;
+          img.alt = "";
+          img.className = "mimic-slide-frame caf-injected-brand-frame";
+          slide.appendChild(img);
+        }
+        if (logoUrl && !slide.querySelector(".mimic-brand-logo")) {
+          const img = document.createElement("img");
+          img.src = logoUrl;
+          img.alt = "";
+          img.className = "mimic-brand-logo caf-injected-brand-logo";
+          if (position === "bl") img.classList.add("mimic-brand-logo--bl");
+          else if (position === "tl") img.classList.add("mimic-brand-logo--tl");
+          else if (position === "tr") img.classList.add("mimic-brand-logo--tr");
+          slide.appendChild(img);
+        }
+      });
+    },
+    { logoUrl, frameUrl, position }
+  );
+  await page.evaluate(async () => {
+    const imgs = Array.from(document.querySelectorAll(".caf-injected-brand-frame, .caf-injected-brand-logo"));
+    await Promise.all(
+      imgs.map((node) => {
+        if (!(node instanceof HTMLImageElement)) return Promise.resolve();
+        if (node.complete) return Promise.resolve();
+        return new Promise((resolve) => {
+          node.onload = () => resolve(undefined);
+          node.onerror = () => resolve(undefined);
+        });
+      })
+    );
+  });
 }
 
 async function renderSlide(b, slideIndex) {
@@ -260,6 +326,8 @@ async function renderSlide(b, slideIndex) {
         await adaptMimicDocAiTextContrast(page);
       }
 
+      await injectCarouselBrandOverlays(page, context);
+
       const slides = await page.$$(".slide");
       const useSingleDomSlide = Boolean(context?.single_slide_render ?? renderCtx?.single_slide_render);
       const idx = useSingleDomSlide ? 0 : (slideIndex ?? 1) - 1;
@@ -303,17 +371,17 @@ async function renderSlide(b, slideIndex) {
 }
 
 async function processQueue() {
-  if (rendering || renderQueue.length === 0) return;
-  rendering = true;
-  const { body, slideIndex, resolve, reject } = renderQueue.shift();
-  try {
-    const result = await renderSlide(body, slideIndex);
-    resolve(result);
-  } catch (e) {
-    reject(e);
-  } finally {
-    rendering = false;
-    processQueue();
+  while (activeRenders < RENDER_CONCURRENCY && renderQueue.length > 0) {
+    const job = renderQueue.shift();
+    if (!job) break;
+    activeRenders++;
+    renderSlide(job.body, job.slideIndex)
+      .then(job.resolve)
+      .catch(job.reject)
+      .finally(() => {
+        activeRenders--;
+        processQueue();
+      });
   }
 }
 
@@ -335,7 +403,8 @@ app.get("/render-queue", (_req, res) => {
     ok: true,
     service: "caf-renderer",
     queue_depth: renderQueue.length,
-    rendering,
+    active_renders: activeRenders,
+    render_concurrency: RENDER_CONCURRENCY,
     render_count: renderCount,
     browser_up: Boolean(browser),
   });

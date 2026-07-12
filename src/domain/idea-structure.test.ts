@@ -37,6 +37,18 @@ describe("idea-structure", () => {
     ).toBeNull();
   });
 
+  it("maps hook-first niche video to FLOW_VID_HOOK_FIRST target", () => {
+    const row = applyIdeaStructureToPlannerRow({
+      format: "video",
+      content_lens: "niche",
+      video_style: "hook_first",
+      execution_profile: "hook_first",
+      title: "Shock fridge reveal → meal prep tip",
+    });
+    expect(row.target_flow_type).toBe("FLOW_VID_HOOK_FIRST");
+    expect(row.video_style).toBe("hook_first");
+  });
+
   it("defaults use_brand_visual_system for visual-first carousel lane", () => {
     const row = applyIdeaStructureToPlannerRow({
       format: "carousel",

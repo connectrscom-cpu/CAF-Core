@@ -189,19 +189,34 @@ export type TextReprintPollState = {
   slide_indices: string | null;
   slide_index: number | null;
   slide_total: number | null;
+  deck_slide_index: number | null;
 };
 
-function parseTextReprintSlideProgress(renderState: unknown): { slide_index: number; slide_total: number } | null {
+function parseTextReprintSlideProgress(renderState: unknown): {
+  slide_index: number;
+  slide_total: number;
+  deck_slide_index: number | null;
+} | null {
   const rs =
     renderState && typeof renderState === "object" && !Array.isArray(renderState)
       ? (renderState as Record<string, unknown>)
       : null;
   if (!rs) return null;
+  const deck_slide_index = Math.floor(Number(rs.slide_index));
+  const batch_total = Math.floor(Number(rs.slide_batch_total));
+  const batch_index = Math.floor(Number(rs.slide_batch_index));
+  if (Number.isFinite(batch_total) && batch_total >= 1 && Number.isFinite(batch_index) && batch_index >= 1) {
+    return {
+      slide_index: batch_index,
+      slide_total: batch_total,
+      deck_slide_index: Number.isFinite(deck_slide_index) && deck_slide_index >= 1 ? deck_slide_index : null,
+    };
+  }
   const slide_total = Math.floor(Number(rs.slide_total));
   const slide_index = Math.floor(Number(rs.slide_index));
   if (!Number.isFinite(slide_total) || slide_total < 1) return null;
   if (!Number.isFinite(slide_index) || slide_index < 1) return null;
-  return { slide_index, slide_total };
+  return { slide_index, slide_total, deck_slide_index: null };
 }
 
 function parseTaskReprintState(
@@ -225,6 +240,7 @@ function parseTaskReprintState(
     slide_indices: resolved.slide_indices ?? data.text_overlay_reprint_slides ?? null,
     slide_index: slideProgress?.slide_index ?? null,
     slide_total: slideProgress?.slide_total ?? null,
+    deck_slide_index: slideProgress?.deck_slide_index ?? null,
   };
 }
 

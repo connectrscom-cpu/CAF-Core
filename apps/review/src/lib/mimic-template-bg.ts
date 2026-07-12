@@ -5,6 +5,7 @@ import {
   looksLikeInstagramHandleLine,
   resolveTemplateBgBodyOnScreenCopy,
   resolveTemplateBgCtaOnScreenCopy,
+  stripDuplicateHeadlineLeadFromBody,
   templateBgLlmSlideForDocAi,
   templateBgSlotForSlideIndex,
 } from "@caf-core-carousel/mimic-template-bg-copy";
@@ -230,7 +231,12 @@ export function ctaEditorFieldsFromSlideBlocks(
     fields.push({ key: "headline", label: "CTA title", role: "headline", text: headlineText });
   }
   if (bodyText) {
-    fields.push({ key: "body", label: "CTA message", role: "body", text: bodyText });
+    fields.push({
+      key: "body",
+      label: "CTA message",
+      role: "body",
+      text: stripDuplicateHeadlineLeadFromBody(headlineText, bodyText),
+    });
   }
   fields.push({ key: "handle", label: "Handle", role: "handle", text: handleText });
   return fields;

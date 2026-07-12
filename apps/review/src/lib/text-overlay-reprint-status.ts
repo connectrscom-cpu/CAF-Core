@@ -1,3 +1,5 @@
+import { parseFailedSlidesFromError } from "@/lib/slide-render-status";
+
 export type TextOverlayReprintUiState = {
   active: boolean;
   failed: boolean;
@@ -87,10 +89,17 @@ export function textOverlayReprintFailureDetails(state: TextOverlayReprintUiStat
   if (!state.failed) return null;
   const technical = state.error;
   const failedSlide =
-    technical?.match(/Renderer slide (\d+)/i)?.[1] != null
+    parseFailedSlidesFromError(technical)?.[0] ??
+    (technical?.match(/Renderer slide (\d+)/i)?.[1] != null
       ? Number(technical.match(/Renderer slide (\d+)/i)![1])
-      : null;
-  const slideLabel = failedSlide ? `Slide ${failedSlide}` : "One or more slides";
+      : null);
+  const failedSlides = parseFailedSlidesFromError(technical);
+  const slideLabel =
+    failedSlides.length > 1
+      ? `Slides ${failedSlides.join(", ")}`
+      : failedSlide
+        ? `Slide ${failedSlide}`
+        : "One or more slides";
   return {
     headline: `${slideLabel} could not be updated — text overlay reprint failed. Try again or regenerate the slide image.`,
     technical,

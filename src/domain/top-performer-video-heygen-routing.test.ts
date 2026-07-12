@@ -28,9 +28,19 @@ describe("resolveTopPerformerVideoHeygenRoute", () => {
   });
 
   it("falls back to default intent when pattern unknown", () => {
-    const route = resolveTopPerformerVideoHeygenRoute({ format_pattern: "unknown" }, "no_avatar");
+    const route = resolveTopPerformerVideoHeygenRoute({ format_pattern: "unknown" }, { defaultIntent: "no_avatar" });
     expect(route.intent).toBe("no_avatar");
     expect(route.flow_type).toBe(CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR);
+  });
+
+  it("honours operator forceIntent over format_pattern", () => {
+    const route = resolveTopPerformerVideoHeygenRoute(
+      { format_pattern: "product_demo" },
+      { forceIntent: "script_avatar" }
+    );
+    expect(route.intent).toBe("script_avatar");
+    expect(route.flow_type).toBe(CANONICAL_FLOW_TYPES.VID_SCRIPT);
+    expect(route.reason).toBe("operator_video_lane");
   });
 });
 

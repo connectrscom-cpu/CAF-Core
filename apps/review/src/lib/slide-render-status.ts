@@ -12,14 +12,29 @@ export interface SlideRenderState {
 
 /** Extract 1-based slide index from renderer error strings. */
 export function parseFailedSlideFromError(error: string | null | undefined): number | null {
-  if (!error) return null;
+  const slides = parseFailedSlidesFromError(error);
+  return slides[0] ?? null;
+}
+
+/** Extract all failed slide indices from reprint/renderer error strings. */
+export function parseFailedSlidesFromError(error: string | null | undefined): number[] {
+  if (!error) return [];
+  const multi = error.match(/slide\(s\)\s+([\d,\s]+)/i);
+  if (multi) {
+    return [...new Set(
+      multi[1]
+        .split(/[,\s]+/)
+        .map((s) => Number(s.trim()))
+        .filter((n) => Number.isFinite(n) && n >= 1)
+    )].sort((a, b) => a - b);
+  }
   const m =
     error.match(/Renderer slide (\d+)/i) ??
     error.match(/slide[_ ](\d+)/i) ??
     error.match(/position (\d+)/i);
-  if (!m) return null;
+  if (!m) return [];
   const n = Number(m[1]);
-  return Number.isFinite(n) && n >= 1 ? n : null;
+  return Number.isFinite(n) && n >= 1 ? [n] : [];
 }
 
 function parseSlideIndicesLabel(label: string | null | undefined): number[] {
@@ -39,10 +54,14 @@ export function resolveSlideRenderStatuses(opts: {
 }): SlideRenderState[] {
   const { slideCount, taskAssets, textOverlayReprint, carouselRegenerate, renderError } = opts;
   const n = Math.max(1, slideCount);
-  const failedSlide =
-    parseFailedSlideFromError(textOverlayReprint?.error) ??
-    parseFailedSlideFromError(carouselRegenerate?.error) ??
-    parseFailedSlideFromError(renderError);
+  const failedSlides = (() => {
+    for (const err of [textOverlayReprint?.error, carouselRegenerate?.error, renderError]) {
+      const parsed = parseFailedSlidesFromError(err);
+      if (parsed.length > 0) return parsed;
+    }
+    return [] as number[];
+  })();
+  const failedSlide = failedSlides[0] ?? null;
 
   const reprintSlides = parseSlideIndicesLabel(textOverlayReprint?.slide_indices);
   const regenSlides = Object.keys(carouselRegenerate?.slides ?? {})
@@ -79,14 +98,14 @@ export function resolveSlideRenderStatuses(opts: {
       }
     }
 
-    if (failedSlide === slideIndex) {
+    if (failedSlides.includes(slideIndex)) {
       status = "failed";
       error =
         textOverlayReprint?.error ??
         carouselRegenerate?.error ??
         renderError ??
         "This slide could not be rendered.";
-    } else if (textOverlayReprint?.failed && !failedSlide) {
+    } else if (textOverlayReprint?.failed && failedSlides.length === 0) {
       const targetsAll = !reprintSlides.length || textOverlayReprint.slide_indices === "all slides";
       if (targetsAll || reprintSlides.includes(slideIndex)) {
         status = status === "ready" ? "failed" : status;

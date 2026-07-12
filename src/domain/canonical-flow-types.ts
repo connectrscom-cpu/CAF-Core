@@ -32,6 +32,8 @@ export const CANONICAL_FLOW_TYPES = {
   /** Prompt-led HeyGen Video Agent without avatar (narration + graphics / b-roll / motion). Distinct from FLOW_VID_PROMPT (avatar default). */
   VID_PROMPT_NO_AVATAR: "FLOW_VID_PROMPT_NO_AVATAR",
   VID_SCRIPT: "FLOW_VID_SCRIPT",
+  /** Cinematic AI hook clip (4–8s) + HeyGen body segment, stitched in Core. */
+  VID_HOOK_FIRST: "FLOW_VID_HOOK_FIRST",
   VID_SCENES: "FLOW_VID_SCENES",
 } as const;
 
@@ -82,6 +84,8 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
   const c = resolveCanonicalFlowType(flowType);
   /** Share FLOW_VID_PROMPT prompt templates / output schemas — routing differs by job flow_type (avatar vs no avatar). */
   if (c === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR) return CANONICAL_FLOW_TYPES.VID_PROMPT;
+  /** Hook-first uses script templates as base; hook fields enforced via addendum. */
+  if (c === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST) return CANONICAL_FLOW_TYPES.VID_SCRIPT;
   /** Mimic flows inherit carousel schema + fallback prompts until native rows exist. */
   if (c === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || c === FLOW_TOP_PERFORMER_MIMIC_IMAGE) {
     return CANONICAL_FLOW_TYPES.CAROUSEL;
@@ -123,6 +127,15 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
     priority_weight: 7,
     allowed_platforms: null,
     notes: "Single video — prompt JSON → HeyGen (prompt path; avatar via heygen_config)",
+  },
+  {
+    flow_type: CANONICAL_FLOW_TYPES.VID_HOOK_FIRST,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 6,
+    allowed_platforms: null,
+    notes:
+      "Hook-first hybrid video — cinematic AI hook clip (Sora/HeyGen) + HeyGen body (script/prompt/no-avatar) → concat",
   },
   {
     flow_type: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,

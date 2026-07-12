@@ -22,6 +22,7 @@ import {
  * Default per-run generation-plan caps (each planned job / variation counts as 1).
  * Applied unless overridden for the same flow_type key in
  * project_system_constraints.max_jobs_per_flow_type (DB wins per key).
+ * Operator UI: Admin → Runs → Planning caps (canonical editor; avoid duplicating in Project Config).
  */
 /** Default planned jobs per video-classified flow_type when not in DB (incl. FLOW_VIDEO, Reel_Script, etc.). */
 export const DEFAULT_VIDEO_FLOW_PLAN_CAP = 1;
@@ -182,6 +183,13 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
       "Heygen_NoAvatar_Prompt",
       "HEYGEN_NO_AVATAR_PROMPT",
     ],
+  },
+  {
+    id: "hook_first_video",
+    label: "Hook-first hybrid video (cinematic opener + HeyGen body)",
+    category: "niche_core_video",
+    uiChannel: "video",
+    keys: ["FLOW_VID_HOOK_FIRST"],
   },
   {
     id: "heygen_render",

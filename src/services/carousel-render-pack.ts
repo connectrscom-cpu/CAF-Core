@@ -1548,12 +1548,19 @@ export interface WithInlinedBackgroundImageOptions {
 /** Puppeteer renderer blocks https:// CSS backgrounds — inline as data: URI before POST /render-binary. */
 export async function withInlinedBackgroundImage(
   base: Record<string, unknown>,
-  opts?: WithInlinedBackgroundImageOptions
+  opts?: WithInlinedBackgroundImageOptions & {
+    /** Reuse data: URIs within one carousel/reprint pass (key = source https URL). */
+    inlineCache?: Map<string, string>;
+  }
 ): Promise<Record<string, unknown>> {
   const bg = typeof base.background_image_url === "string" ? base.background_image_url.trim() : "";
   if (!bg || bg.startsWith("data:")) return base;
+  const cached = opts?.inlineCache?.get(bg);
+  if (cached) return { ...base, background_image_url: cached };
   try {
-    return { ...base, background_image_url: await inlineRemoteImageUrlForRenderer(bg, opts?.config) };
+    const inlined = await inlineRemoteImageUrlForRenderer(bg, opts?.config);
+    if (inlined.startsWith("data:")) opts?.inlineCache?.set(bg, inlined);
+    return { ...base, background_image_url: inlined };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (opts?.strict) {

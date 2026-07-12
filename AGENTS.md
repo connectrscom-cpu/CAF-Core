@@ -12,6 +12,7 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 
 | Resource | Why |
 |----------|-----|
+| `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Repo-derived current state** — start here when context may be stale (BVS, new visual, Why Mimic) |
 | `docs/EXTERNAL_CONTEXT_PACK.md` | **Tiered doc bundle** for ChatGPT / other repos / rebuilds |
 | `docs/DOMAIN_MODEL.md` | **ID conventions**, `task_id` joins, lifecycle states (external copy) |
 | `.cursor/rules/caf-domain-model.mdc` | Same domain rules (Cursor always-on) |
@@ -31,10 +32,17 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
    - `pickGeneratedOutput` / `hasGeneratedOutput` for `generation_payload.generated_output`
    - `pickRenderState` / `hasActiveProviderSession` / `isMidProviderPhase` for `render_state`
    - `pickStoredQcResult` / `mergeGenerationPayloadQc` for `qc_result`
+   - `pickMimicPayload` for `generation_payload.mimic_v1`
+   - `parseBvsV1` / `attachBvsToPlannedPayload` for `generation_payload.bvs_v1`
+   - `pickMimicCarouselDraftPackage` for `mimic_carousel_package` (TP-grounded carousel flows only)
 9. **Structured logs**: when adding new pipeline logging, prefer **`logPipelineEvent(level, stage, message, { run_id, task_id, job_id, ... })`** from **`src/services/pipeline-logger.ts`** over `console.*`. Correlation fields are how we trace a single job across stages.
 10. **Upstream recommendations** (`src/domain/upstream-recommendations.ts`) are the structured shape the post-approval LLM reviewer emits. Writers must use `parseUpstreamRecommendations` (tolerant) and persist via **`insertLlmApprovalReview`**; each parsed item is also logged as its own `learning_observation` — do not bypass either when extending the reviewer.
 11. **Run context snapshot** (`src/services/run-context-snapshot.ts`) is the canonical record of "what we actually generated with" (prompt versions + brand/strategy slice + learning fingerprints). Persist via `setRunContextSnapshot`. Snapshot failures are logged but must never abort a run.
-12. **Mimic carousel package** — only `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` uses `mimic_carousel_package`; do not conflate with `FLOW_CAROUSEL` / `carousel_package`. Render truth is **`mimic_v1`** on `generation_payload`. Mimic LLM prompts must filter signal pack to the job's single planned idea (`llm-creation-pack-budget.ts`, `mimicFlowOnly: true`).
+12. **Mimic carousel package** — `mimic_carousel_package` is for **TP-grounded carousel render flows** (`isTpGroundedCarouselRenderFlow()`): `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`, `FLOW_VISUAL_FIRST_CAROUSEL`, `FLOW_WHY_MIMIC_CAROUSEL`. Do not conflate with `FLOW_CAROUSEL` / `carousel_package`. Render truth is **`mimic_v1`** on `generation_payload`. Mimic LLM prompts must filter signal pack to the job's single planned idea (`llm-creation-pack-budget.ts`, `mimicFlowOnly: true`).
+13. **Mimic carousel text overlay** — TP-grounded carousels must **not** bake LLM copy into image models at render. Overlay-only (DocAI/HBS + `reprint-text-overlay`) is enforced in `job-pipeline.ts`; do not re-enable Flux typography for carousels without explicit approval.
+14. **New visual carousel** — `FLOW_VISUAL_FIRST_CAROUSEL` uses `execution_mode: "new_visual"` on `mimic_v1`: idea + BVS driven, **no** top-performer `reference_items`. Prep in `new-visual-carousel-prep.ts` — not TP reference resolve. Do not treat visual-first as competitor frame replication.
+15. **Why Mimic carousel** — `FLOW_WHY_MIMIC_CAROUSEL` uses `execution_mode: "why_mimic"` with Slide Intelligence (`slide_intelligence` on `mimic_v1`). Same render engine as other TP-grounded flows; copy/prompts are SIL-driven.
+16. **Brand Visual System (BVS)** — versioned `brand_bibles` (`brand_bible_v1`) snapshotted to `generation_payload.bvs_v1` when `candidate_data.use_brand_visual_system` is set (visual-first defaults on). `mimic_v1.bvs_render_plan` drives invented plates for `template_bg`. Use `src/domain/brand-bible.ts`, `bvs-v1.ts`, `bvs-render-plan.ts` — do not ad-hoc read bible JSON from jobs.
 
 ## Where to change behavior
 
@@ -45,6 +53,10 @@ This file helps **Cursor agents** (and humans) work safely and efficiently in **
 | QC checks / risk keywords | `src/services/qc-runtime.ts`, checklist rows, scoped `risk_policies` via `listRiskPoliciesForJob` |
 | Job lifecycle & render | `src/services/job-pipeline.ts` |
 | Top-performer mimic (prep, render, modes) | `src/services/mimic-draft-prep.ts`, `mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-mode-classifier.ts`, `src/domain/mimic-payload.ts` |
+| New visual carousel (`FLOW_VISUAL_FIRST_CAROUSEL`) | `src/services/new-visual-carousel-prep.ts`, `new-visual-carousel-execution.ts`, `new-visual-carousel-flux-prompts.ts` |
+| Why Mimic carousel (`FLOW_WHY_MIMIC_CAROUSEL`) | `src/domain/why-mimic-carousel-flow-types.ts`, `why-mimic-execution.ts`, SIL on `mimic_v1` |
+| Brand Visual System (BVS) | `src/domain/brand-bible.ts`, `bvs-v1.ts`, `bvs-render-plan.ts`, `src/services/bvs-render-overlays.ts`, `src/repositories/brand-bibles.ts` |
+| Mimic text overlay / DocAI / reprint | `src/domain/mimic-docai-layer-positions.ts`, `mimic-post-render-layout-loop.ts`, Review `reprint-text-overlay` |
 | Human review & rework | `src/routes/v1.ts`, `src/services/rework-orchestrator.ts` |
 | Publications | `src/routes/publications.ts` |
 | Learning APIs & compiled guidance | `src/routes/learning.ts`, facade at `src/services/learning-rule-selection.ts` |
@@ -76,6 +88,7 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 |-----|----------|
 | `docs/CAF_PRODUCT_PITCH.md` | Leadership / investors / evaluators |
 | `docs/CAF_COMPLETE_PRODUCT_GUIDE.md` | **Complete product guide** — what CAF is and does |
+| `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` | **Current repo truth** — operational map; PDF volumes in `docs/export/pdf/11–14` |
 | `docs/EXTERNAL_CONTEXT_PACK.md` | **ChatGPT / external repos** — what to upload, system prompt |
 | `docs/REBUILD_FROM_DOCS.md` | Engineers bootstrapping from scratch |
 | `docs/DATABASE_SCHEMA.md` | Postgres table catalog |
@@ -90,7 +103,8 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 | `docs/QUALITY_CHECKS.md` | QC runtime |
 | `docs/GENERATION_GUIDANCE.md` | Prompt guidance |
 | `docs/RISK_RULES.md` | Risk policies vs project `risk_rules` |
-| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Top-performer mimic (full); `docs/MIMIC_IMAGE_FLOWS.md` quick ref |
+| `docs/MIMIC_FLOWS_COMPLETE_GUIDE.md` | Top-performer mimic (full; **lags** new visual / BVS — prefer current-state pack) |
+| `docs/MIMIC_IMAGE_FLOWS.md` | Mimic image quick ref |
 | `docs/MIMIC_TEXT_PLACEMENT_AUTOMATION.md` | **Future** mimic text placement QA (post-render composite loop) — read before automating |
 | `docs/CREATIVE_INTELLIGENCE.md` | Top-performer ingest upstream of mimic |
 | `docs/API_REFERENCE.md` | HTTP examples |
@@ -100,7 +114,7 @@ Review app: `cd apps/review && npm run dev` (needs **`CAF_CORE_URL`**).
 - `scene-assembly-n8n-legacy.mdc` — when touching scene/n8n-legacy paths
 - `mimic-signal-pack-llm-filter.mdc` — mimic LLM creation pack; single-idea `signal_pack` filter
 - `mimic-carousel-package.mdc` — `mimic_carousel_package` vs `FLOW_CAROUSEL` / `carousel_package`
-- `visual-first-carousel-flow.mdc` — `FLOW_VISUAL_FIRST_CAROUSEL`: same TP-grounded **render** on Core; Review uses TP-grounded workbench (regen, layer editor) without original-vs-generated compare
+- `visual-first-carousel-flow.mdc` — `FLOW_VISUAL_FIRST_CAROUSEL`: **new visual** lane (`execution_mode: "new_visual"`, idea+BVS, no TP references); same mimic **render engine** as manual mimic; Review workbench without original-vs-generated compare
 - `mimic-text-placement-automation.mdc` — **before automating mimic text placement**: post-render composite QA loop, HTML overlay invariants, `docai_layer_positions` schema
 - `caf-domain-model.mdc` — **alwaysApply**
 

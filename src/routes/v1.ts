@@ -32,6 +32,12 @@ import {
 } from "../repositories/brand-bibles.js";
 import { parseBrandProfile } from "../domain/brand-profile.js";
 import { buildBrandBibleSnapshot, parseBrandBible } from "../domain/brand-bible.js";
+import { buildProductBibleSnapshot, parseProductBible } from "../domain/product-bible.js";
+import {
+  getActiveProductBible,
+  insertProductBibleVersion,
+  listProductBibleVersions,
+} from "../repositories/product-bibles.js";
 import { listProjectBrandAssets } from "../repositories/project-config.js";
 import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
 import {
@@ -96,7 +102,9 @@ import {
 } from "../services/job-pipeline.js";
 import { parseCarouselRenderTypographyPatch } from "../domain/carousel-render-typography.js";
 import { isTpGroundedCarouselRenderFlow } from "../domain/top-performer-mimic-flow-types.js";
+import { isCarouselMimicOverlayRenderJob } from "../domain/bvs-text-carousel-flow.js";
 import { healAndPersistBvsOnJob } from "../domain/bvs-v1.js";
+import { scheduleVideoBrandOverlayReprint } from "../services/video-brand-overlay-composite.js";
 
 export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config: AppConfig }) {
   const { db, config } = deps;
@@ -1460,7 +1468,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isCarouselFlow(flowType) || !isTpGroundedCarouselRenderFlow(flowType)) {
+    if (
+      !isCarouselFlow(flowType) ||
+      !isCarouselMimicOverlayRenderJob(flowType, job.generation_payload as Record<string, unknown>)
+    ) {
       return { ok: false, error: "reprint_text_overlay_requires_mimic_carousel_job" };
     }
     const jobId = String(job.id ?? "");
@@ -1635,6 +1646,96 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     return reply.code(202).send(result);
   });
 
+  const reprintVideoBrandOverlaysBodySchema = z.object({
+    logo_overlay: z
+      .object({
+        url: z.string().min(1).max(2048).optional(),
+        position: z.string().max(8).optional(),
+      })
+      .optional(),
+    frame_overlay: z
+      .object({
+        url: z.string().min(1).max(2048).optional(),
+        asset_id: z.string().min(1).max(120).optional(),
+      })
+      .optional(),
+  });
+
+  async function scheduleReprintVideoBrandOverlays(
+    projectSlug: string,
+    taskId: string,
+    logoOverlay: { url?: string; position?: string } | undefined,
+    frameOverlay: { url?: string; asset_id?: string } | undefined,
+    log: { info: (o: unknown, msg?: string) => void; error: (o: unknown, msg?: string) => void }
+  ): Promise<
+    | { ok: true; accepted: true; task_id: string; message: string }
+    | { ok: false; error: string; message?: string }
+  > {
+    const project = await ensureProject(db, projectSlug);
+    const job = await getContentJobByTaskId(db, project.id, taskId.trim());
+    if (!job) return { ok: false, error: "job_not_found" };
+    if (!isVideoFlow(String(job.flow_type ?? ""))) {
+      return { ok: false, error: "video_brand_overlay_requires_video_job" };
+    }
+    const logoUrl = logoOverlay?.url?.trim() ?? "";
+    const frameUrl = frameOverlay?.url?.trim() ?? "";
+    return scheduleVideoBrandOverlayReprint(db, config, projectSlug, taskId.trim(), {
+      ...(logoUrl ? { logoOverlay: { url: logoUrl, position: logoOverlay?.position?.trim() || "br" } } : {}),
+      ...(frameUrl
+        ? {
+            frameOverlay: {
+              url: frameUrl,
+              ...(frameOverlay?.asset_id?.trim() ? { asset_id: frameOverlay.asset_id.trim() } : {}),
+            },
+          }
+        : {}),
+    }, log);
+  }
+
+  /** Composite brand logo/frame onto stored VIDEO asset via video-assembly ffmpeg (no HeyGen re-bill). */
+  app.post("/v1/review-queue/:project_slug/task/:task_id/reprint-video-brand-overlays", async (request, reply) => {
+    const params = z.object({ project_slug: z.string(), task_id: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = reprintVideoBrandOverlaysBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleReprintVideoBrandOverlays(
+      params.data.project_slug,
+      params.data.task_id,
+      body.data.logo_overlay,
+      body.data.frame_overlay,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
+  app.post("/v1/review-queue/:project_slug/reprint-video-brand-overlays", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const query = z.object({ task_id: z.string().min(1) }).safeParse(request.query);
+    if (!params.success || !query.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = reprintVideoBrandOverlaysBodySchema.safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const result = await scheduleReprintVideoBrandOverlays(
+      params.data.project_slug,
+      query.data.task_id,
+      body.data.logo_overlay,
+      body.data.frame_overlay,
+      request.log
+    );
+    if (!result.ok) {
+      const code = result.error === "job_not_found" ? 404 : 400;
+      return reply.code(code).send(result);
+    }
+    return reply.code(202).send(result);
+  });
+
   const regenerateCarouselSlidesBodySchema = z.object({
     slide_indices: z.array(z.number().int().positive()).min(1),
     visual_similarity_pct: z.number().int().min(0).max(100).optional(),
@@ -1662,7 +1763,10 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isCarouselFlow(flowType) || !isTpGroundedCarouselRenderFlow(flowType)) {
+    if (
+      !isCarouselFlow(flowType) ||
+      !isCarouselMimicOverlayRenderJob(flowType, job.generation_payload as Record<string, unknown>)
+    ) {
       return { ok: false, error: "regenerate_slide_requires_mimic_carousel_job" };
     }
     const jobId = String(job.id ?? "");
@@ -1782,7 +1886,9 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
     const job = await getContentJobByTaskId(db, project.id, taskId.trim());
     if (!job) return { ok: false, error: "job_not_found" };
     const flowType = String(job.flow_type ?? "");
-    if (!isTpGroundedCarouselRenderFlow(flowType)) {
+    if (
+      !isCarouselMimicOverlayRenderJob(flowType, job.generation_payload as Record<string, unknown>)
+    ) {
       return { ok: false, error: "mimic_docai_layer_positions_requires_mimic_carousel_job" };
     }
     const gp = job.generation_payload as Record<string, unknown>;
@@ -2002,6 +2108,56 @@ export function registerV1Routes(app: FastifyInstance, deps: { db: Pool; config:
       version: inserted.version,
       parsed,
       snapshot: buildBrandBibleSnapshot(parsed, assets),
+    };
+  });
+
+  /** Product Bible — read active product bible (+ version list) for a project. */
+  app.get("/v1/projects/:project_slug/product-bible", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const active = await getActiveProductBible(db, project.id);
+    const versions = await listProductBibleVersions(db, project.id);
+    const rawAssets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const assets = await signProjectBrandAssetsForClient(config, rawAssets);
+    const parsed = active ? parseProductBible(active.bible_json) : null;
+    const snapshot = parsed ? buildProductBibleSnapshot(parsed, rawAssets) : null;
+    return {
+      ok: true,
+      active: active
+        ? { version: active.version, label: active.label, bible_json: active.bible_json, created_at: active.created_at }
+        : null,
+      parsed,
+      snapshot,
+      brand_assets: assets,
+      versions: versions.map((v) => ({ version: v.version, label: v.label, is_active: v.is_active, created_at: v.created_at })),
+    };
+  });
+
+  /** Product Bible — create a new active product bible version. */
+  app.post("/v1/projects/:project_slug/product-bible", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = z
+      .object({ bible_json: z.record(z.unknown()), label: z.string().max(200).optional() })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+    }
+    const parsed = parseProductBible(body.data.bible_json);
+    if (!parsed) {
+      return reply.code(400).send({ ok: false, error: "product_bible_has_no_usable_fields" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const inserted = await insertProductBibleVersion(db, project.id, body.data.bible_json, body.data.label ?? null);
+    const rawAssets = await listProjectBrandAssets(db, project.id).catch(() => []);
+    const assets = await signProjectBrandAssetsForClient(config, rawAssets);
+    return {
+      ok: true,
+      version: inserted.version,
+      parsed,
+      snapshot: buildProductBibleSnapshot(parsed, rawAssets),
+      brand_assets: assets,
     };
   });
 

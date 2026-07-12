@@ -12,6 +12,7 @@ import {
   bflFlexTuningParams,
   isReadableImageBuffer,
   isBflTransientError,
+  collectMimicImageReferenceUrls,
 } from "./mimic-image-provider.js";
 
 function baseConfig(overrides: Partial<AppConfig> = {}): AppConfig {
@@ -217,5 +218,28 @@ describe("isVisualGenAiUnavailableError", () => {
       )
     ).toBe(true);
     expect(isVisualGenAiUnavailableError("timeout")).toBe(false);
+  });
+});
+
+describe("collectMimicImageReferenceUrls", () => {
+  it("dedupes and caps at eight URLs", () => {
+    const urls = collectMimicImageReferenceUrls({
+      prompt: "test",
+      referenceUrl: "https://a/1.png",
+      referenceUrls: [
+        "https://a/1.png",
+        "https://a/2.png",
+        "https://a/3.png",
+        "https://a/4.png",
+        "https://a/5.png",
+        "https://a/6.png",
+        "https://a/7.png",
+        "https://a/8.png",
+        "https://a/9.png",
+      ],
+    });
+    expect(urls).toHaveLength(8);
+    expect(urls[0]).toBe("https://a/1.png");
+    expect(urls[7]).toBe("https://a/8.png");
   });
 });

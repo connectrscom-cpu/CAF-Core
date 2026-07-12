@@ -39,7 +39,7 @@ Prefer the typed helpers in **`src/domain/generation-payload-output.ts`** over a
 - **Scene bundle** flows — **`prefersVideoSceneBundleTemplate`**; may call **`ensureVideoScriptInPayload`** first.
 - **Product image flows** — **`generateForJob`** returns failure without calling OpenAI (**`product-flow-types.ts`**).
 - **Carousel** — extra system addendum, high **`max_tokens`** floor, anti-repetition block.
-- **Top-performer mimic** (`FLOW_TOP_PERFORMER_MIMIC_*`) — **`ensureMimicReferenceBeforeCopyGeneration`** runs before OpenAI; signal pack filtered to **single planned idea** only (`llm-creation-pack-budget.ts`, `mimicFlowOnly: true`); carousel mimic uses **`mimic_carousel_package`** snapshot (not `carousel_package`). See **[../MIMIC_FLOWS_COMPLETE_GUIDE.md](../MIMIC_FLOWS_COMPLETE_GUIDE.md)**.
+- **Top-performer mimic** (`FLOW_TOP_PERFORMER_MIMIC_*`, `FLOW_VISUAL_FIRST_CAROUSEL`, `FLOW_WHY_MIMIC_CAROUSEL`) — classic/why: **`ensureMimicReferenceBeforeCopyGeneration`**; visual-first: **`ensureNewVisualCarouselBeforeCopyGeneration`** (no TP references). Signal pack filtered to **single planned idea** (`mimicFlowOnly: true`). TP-grounded carousel uses **`mimic_carousel_package`** (not `carousel_package`). BVS via **`bvs_v1`**. See **[../MIMIC_FLOWS_COMPLETE_GUIDE.md](../MIMIC_FLOWS_COMPLETE_GUIDE.md)** and **[../CAF_CURRENT_STATE_CONTEXT_PACK.md](../CAF_CURRENT_STATE_CONTEXT_PACK.md)**.
 
 ## State owned
 

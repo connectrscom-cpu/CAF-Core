@@ -123,20 +123,21 @@ export function shouldExpandWhyMimicCarouselForRow(
 }
 
 /**
- * Visual-first / mixed carousel ideas from ideas_json — separate lane from mimic picks.
+ * New Visual Carousel ideas from ideas_json — separate lane from manual mimic picks.
+ * Does not require top_performer_carousel grounding at plan time (BVS + original concept).
  */
 export function shouldExpandVisualFirstCarouselForRow(
   row: Record<string, unknown>,
-  derivedGlobals: Record<string, unknown> | null | undefined
+  _derivedGlobals: Record<string, unknown> | null | undefined
 ): boolean {
   if (row.manual_mimic_pick === true) return false;
   if (String(row.target_flow_type ?? "").trim() === FLOW_VISUAL_FIRST_CAROUSEL) {
-    return carouselReferenceEligible(row, derivedGlobals);
+    return String(row.format ?? "").trim().toLowerCase() === "carousel";
   }
   const style = normalizeCarouselStyle(row);
   if (style !== "visual_first" && style !== "mixed") return false;
   if (String(row.format ?? "").trim().toLowerCase() !== "carousel") return false;
-  return carouselReferenceEligible(row, derivedGlobals);
+  return true;
 }
 
 /** @deprecated Use shouldExpandMimicCarouselPickForRow or shouldExpandVisualFirstCarouselForRow. */

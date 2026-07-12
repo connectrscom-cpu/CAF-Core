@@ -447,15 +447,14 @@ export function runQcChecklistRow(check: QcChecklistRow, content: Record<string,
   return runCheck(check, content);
 }
 
-function runRiskPolicy(policy: RiskPolicyRow, content: Record<string, unknown>, brandBanned: string[]): RiskFinding | null {
+function runRiskPolicy(policy: RiskPolicyRow, content: Record<string, unknown>): RiskFinding | null {
   const contentStr = JSON.stringify(content).toLowerCase();
   const terms = (policy.detection_terms ?? "").split(";").map((t) => t.trim().toLowerCase()).filter(Boolean);
-  const allTerms = [...terms, ...brandBanned];
 
   const matched: string[] = [];
 
   if (policy.detection_method === "keyword" || policy.detection_method === "both") {
-    for (const term of allTerms) {
+    for (const term of terms) {
       if (riskDetectionTermMatches(contentStr, term)) {
         matched.push(term);
       }
@@ -472,6 +471,35 @@ function runRiskPolicy(policy: RiskPolicyRow, content: Record<string, unknown>, 
     action: policy.default_action ?? "route_to_manual",
     requires_manual_review: policy.requires_manual_review,
     block_publish: policy.block_publish,
+  };
+}
+
+/**
+ * Brand `banned_words` are evaluated separately — never merged into global risk policy term lists.
+ * Otherwise a brand term like "effortless" would inherit CRITICAL severity from unrelated policies.
+ */
+export function runBrandBannedWordsCheck(
+  content: Record<string, unknown>,
+  brandBanned: string[]
+): RiskFinding | null {
+  const terms = brandBanned.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  if (terms.length === 0) return null;
+
+  const contentStr = JSON.stringify(content).toLowerCase();
+  const matched: string[] = [];
+  for (const term of terms) {
+    if (riskDetectionTermMatches(contentStr, term)) matched.push(term);
+  }
+  if (matched.length === 0) return null;
+
+  return {
+    policy_name: "brand_banned_words",
+    risk_category: "brand_constraints",
+    severity: "MEDIUM",
+    matched_terms: matched,
+    action: "route_to_manual",
+    requires_manual_review: true,
+    block_publish: false,
   };
 }
 
@@ -534,9 +562,11 @@ export async function runQcForJob(
   );
   const allCheckResults = [...checkResults, ...copyQualityChecks];
   const blockingFailures = allCheckResults.filter((r) => !r.passed && r.blocking);
-  const riskFindings = policies
-    .map((p) => runRiskPolicy(p, qcContent, brandBanned))
+  const policyFindings = policies
+    .map((p) => runRiskPolicy(p, qcContent))
     .filter((f): f is RiskFinding => f !== null);
+  const brandFinding = runBrandBannedWordsCheck(qcContent, brandBanned);
+  const riskFindings = brandFinding ? [...policyFindings, brandFinding] : policyFindings;
 
   const hasCriticalRisk = riskFindings.some((f) => f.severity === "CRITICAL");
   const hasHighRisk = riskFindings.some((f) => f.severity === "HIGH");
@@ -623,4 +653,12 @@ export async function runQcForJob(
     recommended_route: recommendedRoute,
     qc_score: qcScore,
   };
+}
+
+/** Test helper — evaluate one risk policy against content (policy terms only; no brand banned merge). */
+export function runRiskPolicyCheck(
+  policy: RiskPolicyRow,
+  content: Record<string, unknown>
+): RiskFinding | null {
+  return runRiskPolicy(policy, content);
 }

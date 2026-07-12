@@ -4218,9 +4218,10 @@ function defaultIdeaBucketCountsClient(target,angles){
   set('niche_carousel_text',Math.floor(nicheCarousel*0.45));
   set('niche_carousel_visual',nicheCarousel-(out.niche_carousel_text||0));
   var nicheVideo=Math.round(video*0.7);
-  set('niche_video_no_avatar',Math.floor(nicheVideo*0.35));
-  set('niche_video_prompt_avatar',Math.floor(nicheVideo*0.45));
-  set('niche_video_script_avatar',nicheVideo-(out.niche_video_no_avatar||0)-(out.niche_video_prompt_avatar||0));
+  set('niche_video_no_avatar',Math.floor(nicheVideo*0.3));
+  set('niche_video_prompt_avatar',Math.floor(nicheVideo*0.35));
+  set('niche_video_hook_first',Math.max(0,Math.floor(nicheVideo*0.15)));
+  set('niche_video_script_avatar',nicheVideo-(out.niche_video_no_avatar||0)-(out.niche_video_prompt_avatar||0)-(out.niche_video_hook_first||0));
   set('niche_post',Math.max(0,Math.round(post*0.85)));
   set('niche_thread',Math.max(0,Math.round(thread*0.85)));
   var productCarousel=Math.max(0,carousel-nicheCarousel);

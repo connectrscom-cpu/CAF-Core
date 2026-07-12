@@ -12,7 +12,19 @@ import {
   type HeygenConfigRow,
 } from "../repositories/project-config.js";
 import { isProductVideoFlow, productVideoAgentPromptSuffix } from "../domain/product-flow-types.js";
-import { brandAssetsToHeygenFiles, mergeHeygenVideoAgentFiles } from "./brand-heygen-files.js";
+import {
+  buildBrandBibleHeygenPromptBlock,
+  resolveHeygenBvsReferenceAssets,
+} from "../domain/brand-bible.js";
+import { resolveBvsSnapshotForHeygen } from "../domain/bvs-v1.js";
+import {
+  brandAssetsToHeygenFiles,
+  brandBibleSnapshotToHeygenFiles,
+  mergeHeygenVideoAgentFiles,
+  productBibleSnapshotToHeygenFiles,
+} from "./brand-heygen-files.js";
+import { buildProductBibleVideoAgentPromptBlock } from "../domain/product-bible.js";
+import { resolveProductBibleForEnabledJob } from "../domain/product-bible-v1.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { buildProductVideoAgentBrandPromptBlock } from "./product-video-agent-brand.js";
 import { buildProductProfileVideoAgentPromptBlock } from "./product-video-agent-product.js";
@@ -1709,6 +1721,27 @@ export interface HeyGenRunAudit {
   scene_index?: number;
 }
 
+/** Append BVS prompt block + referenced brand assets to a Video Agent request body. */
+export async function appendBvsToHeygenVideoAgentBody(
+  db: Pool,
+  projectId: string,
+  generationPayload: Record<string, unknown>,
+  body: Record<string, unknown>
+): Promise<void> {
+  const snapshot = await resolveBvsSnapshotForHeygen(db, projectId, generationPayload).catch(() => null);
+  if (!snapshot) return;
+
+  const kit = await listProjectBrandAssets(db, projectId).catch(() => []);
+  const refAssets = resolveHeygenBvsReferenceAssets(snapshot);
+  const block = buildBrandBibleHeygenPromptBlock(snapshot, refAssets);
+  if (block && typeof body.prompt === "string") {
+    const p = body.prompt.trim();
+    body.prompt = p ? `${p}\n\n${block}` : block;
+  }
+
+  mergeHeygenVideoAgentFiles(body, brandBibleSnapshotToHeygenFiles(snapshot, kit, refAssets));
+}
+
 export async function runHeygenVideoWithBody(
   appConfig: AppConfig,
   body: Record<string, unknown>,
@@ -1895,6 +1928,11 @@ export async function runHeygenForContentJob(
        */
       spokenMode: productMode === "prompt_led" ? "agent_writes" : "user_provided",
     });
+    try {
+      await appendBvsToHeygenVideoAgentBody(db, job.project_id, job.generation_payload, body);
+    } catch {
+      /* non-fatal: BVS is an enhancement, not a requirement */
+    }
     if (isProductVideoFlow(job.flow_type)) {
       /**
        * Brand before product facts: constraints/disclaimers must frame how product_story is used.
@@ -1927,8 +1965,28 @@ export async function runHeygenForContentJob(
       } catch {
         /* non-fatal: product profile is an enhancement, not a requirement */
       }
-      const kit = await listProjectBrandAssets(db, job.project_id);
-      mergeHeygenVideoAgentFiles(body, brandAssetsToHeygenFiles(kit));
+      try {
+        const productSlice = await resolveProductBibleForEnabledJob(
+          db,
+          job.project_id,
+          job.generation_payload
+        );
+        const snapshot = productSlice?.enabled ? productSlice.bible_snapshot : null;
+        const productBibleBlock = buildProductBibleVideoAgentPromptBlock(snapshot);
+        if (productBibleBlock && typeof body.prompt === "string") {
+          const p = body.prompt.trim();
+          body.prompt = p ? `${p}\n\n${productBibleBlock}` : productBibleBlock;
+        }
+        const kit = await listProjectBrandAssets(db, job.project_id);
+        const productFiles = productBibleSnapshotToHeygenFiles(snapshot, kit);
+        if (productFiles.length > 0) {
+          mergeHeygenVideoAgentFiles(body, productFiles);
+        } else {
+          mergeHeygenVideoAgentFiles(body, brandAssetsToHeygenFiles(kit));
+        }
+      } catch {
+        /* non-fatal: product bible is an enhancement, not a requirement */
+      }
     }
   }
 

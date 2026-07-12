@@ -8,6 +8,8 @@ Auth: if enabled, send `x-caf-core-token: <CAF_CORE_API_TOKEN>` or `Authorizatio
 - `GET /robots.txt`
 - public renderer-template reads (see `src/routes/renderer-templates.ts` and `src/server.ts`)
 
+**Full route inventory (July 2026):** see **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`** §15 and **`src/server.ts`** registration. Key groups: runs, pipeline, review-queue, signal-packs, inputs-evidence/processing, creative-intelligence, learning, publications, project-config (incl. brand bibles), flow-engine, admin.
+
 ---
 
 ## `GET /health`

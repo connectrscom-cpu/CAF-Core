@@ -1369,7 +1369,8 @@ export function MimicCarouselLayerEditorPanel({
     inspectCacheRef.current = {};
   }, [taskId]);
 
-  const [reprintScope, setReprintScope] = useState<"selected" | "all">("all");
+  const [reprintScope, setReprintScope] = useState<"all" | "current" | "picked">("all");
+  const [reprintPickedSlides, setReprintPickedSlides] = useState<Set<number>>(() => new Set());
 
   const [reprintTextBacking, setReprintTextBacking] = useState(true);
   const [reprintTextBackingHex, setReprintTextBackingHex] = useState(() => readJobTextBackingColorHex(job));
@@ -1380,6 +1381,28 @@ export function MimicCarouselLayerEditorPanel({
   useEffect(() => {
     setReprintTextBackingHex(readJobTextBackingColorHex(job));
   }, [job]);
+
+  useEffect(() => {
+    setReprintPickedSlides((prev) => {
+      if (prev.size > 0) return prev;
+      return new Set([editorSlide]);
+    });
+  }, [editorSlide]);
+
+  const toggleReprintPickedSlide = useCallback((slide: number) => {
+    setReprintPickedSlides((prev) => {
+      const next = new Set(prev);
+      if (next.has(slide)) next.delete(slide);
+      else next.add(slide);
+      return next;
+    });
+  }, []);
+
+  const reprintTargetSlides = useMemo(() => {
+    if (reprintScope === "all") return undefined;
+    if (reprintScope === "current") return [editorSlide];
+    return [...reprintPickedSlides].filter((n) => n >= 1 && n <= slideCount).sort((a, b) => a - b);
+  }, [reprintScope, editorSlide, reprintPickedSlides, slideCount]);
 
   const reprintTextBackingCss = useMemo(
     () => formatMimicTextBackingBackground(reprintTextBackingHex),
@@ -2609,6 +2632,43 @@ function ensureTemplateBgFieldLayerBoxes(
   return result;
 }
 
+/** When OCR inspect is empty, seed one editable box per on-slide phrase so the three-column editor still loads. */
+function ensureFullBleedTextLayerBoxes(
+  boxes: DocAiLayerBox[],
+  slotTexts: string[],
+  draftByKey: Map<string, DocAiLayerOverride>,
+  useCopySlotKeys: boolean
+): DocAiLayerBox[] {
+  if (boxes.length > 0) return boxes;
+  const trimmed = slotTexts.map((t) => t.trim()).filter(Boolean);
+  if (trimmed.length === 0) return boxes;
+
+  const out: DocAiLayerBox[] = [];
+  let blockIndex = 0;
+  for (let i = 0; i < slotTexts.length; i++) {
+    const text = slotTexts[i]?.trim();
+    if (!text) continue;
+    const layerKey = useCopySlotKeys ? copySlotEditorLayerKey(i) : `slot@${blockIndex}`;
+    const row = draftByKey.get(layerKey);
+    const role = blockIndex === 0 ? "headline" : "body";
+    const yPx = blockIndex === 0 ? 108 : 280 + (blockIndex - 1) * 140;
+    const hPx = blockIndex === 0 ? 120 : Math.min(520, 180 + Math.ceil(text.length / 48) * 40);
+    out.push({
+      layer_key: layerKey,
+      text: row?.text?.trim() || text,
+      role,
+      block_index: blockIndex,
+      x_px: row?.x_px ?? 108,
+      y_px: row?.y_px ?? yPx,
+      w_px: Math.max(24, row?.w_px ?? 864),
+      h_px: Math.max(20, row?.h_px ?? hPx),
+      font_size_px: row?.font_size_px,
+    });
+    blockIndex += 1;
+  }
+  return out;
+}
+
   const docAiLayerBoxes = useMemo(() => {
     let boxes = parseDocAiLayerBoxes(renderInspect);
     if (templateBgMode) {
@@ -2731,6 +2791,14 @@ function ensureTemplateBgFieldLayerBoxes(
         draftByKey,
         copySlotsForEditor,
         fullBleedSlotTexts
+      );
+    }
+    if (collapsed.length === 0 && fullBleedSlotTexts.some((t) => t.trim())) {
+      collapsed = ensureFullBleedTextLayerBoxes(
+        collapsed,
+        fullBleedSlotTexts,
+        draftByKey,
+        willCollapseToCopySlots
       );
     }
     let blockIndex = 0;
@@ -3390,20 +3458,47 @@ function ensureTemplateBgFieldLayerBoxes(
       setReprintError(null);
 
       try {
-        const slide_indices = forceAllSlides || reprintScope === "all" ? undefined : [editorSlide];
+        const reprintAll = forceAllSlides || reprintScope === "all";
+        const slide_indices = reprintAll ? undefined : reprintTargetSlides;
+
+        if (!reprintAll && (!slide_indices || slide_indices.length === 0)) {
+          throw new Error("Pick at least one slide to reprint.");
+        }
 
         const allDrafts: Record<number, DocAiLayerOverride[]> = { ...slideDrafts };
 
         if (layerPosDraft.length > 0) allDrafts[editorSlide] = layerPosDraft;
 
-        for (const [slideKey, positions] of Object.entries(allDrafts)) {
-          if (positions.length === 0) continue;
+        const slidesToPersist = reprintAll
+          ? Object.keys(allDrafts)
+              .map(Number)
+              .filter((n) => Number.isFinite(n) && n >= 1 && (allDrafts[n]?.length ?? 0) > 0)
+          : (slide_indices ?? [editorSlide]);
 
-          const slideIndex = Number(slideKey);
-
-          if (!Number.isFinite(slideIndex) || slideIndex < 1) continue;
-
-          await persistLayerPositions(slideIndex, positions);
+        if ((reprintAll || (slide_indices?.length ?? 0) > 1) && slidesToPersist.length > 1) {
+          const subset: Record<number, DocAiLayerOverride[]> = {};
+          for (const slideIndex of slidesToPersist) {
+            const rows = allDrafts[slideIndex];
+            if (rows?.length) subset[slideIndex] = rows;
+          }
+          const { savedCount, failedSlides } = await persistAllSlideDrafts(subset, {
+            timeoutMs: DECK_PERSIST_TIMEOUT_MS,
+          });
+          if (savedCount === 0 && failedSlides.length > 0) {
+            const label = failedSlides.length === 1 ? "slide" : "slides";
+            throw new Error(
+              `Save failed for ${failedSlides.length} ${label} (${failedSlides.join(", ")}) — timed out or server error`
+            );
+          }
+        } else {
+          for (const slideIndex of slidesToPersist) {
+            const positions = allDrafts[slideIndex];
+            if (!positions?.length) continue;
+            const key = persistKeyFor(slideIndex, positions);
+            if (lastPersistedKeysBySlideRef.current[slideIndex] === key) continue;
+            await persistLayerPositions(slideIndex, positions);
+            lastPersistedKeysBySlideRef.current[slideIndex] = key;
+          }
         }
 
         await requestTextOverlayReprint(slide_indices, allDrafts, editorSlide, layerPosDraft);
@@ -3452,10 +3547,12 @@ function ensureTemplateBgFieldLayerBoxes(
       taskId,
       projectSlug,
       reprintScope,
+      reprintTargetSlides,
       editorSlide,
       slideDrafts,
       layerPosDraft,
       persistLayerPositions,
+      persistAllSlideDrafts,
       requestTextOverlayReprint,
       persistKeyFor,
       templateBgMode,
@@ -4026,16 +4123,64 @@ function ensureTemplateBgFieldLayerBoxes(
                       <input
                         type="radio"
                         name="mimic-reprint-scope"
-                        checked={reprintScope === "selected"}
-                        onChange={() => setReprintScope("selected")}
+                        checked={reprintScope === "current"}
+                        onChange={() => setReprintScope("current")}
                       />
                       <span>Slide {editorSlide} only</span>
                     </label>
+                    <label className="mimic-layer-editor-panel__option">
+                      <input
+                        type="radio"
+                        name="mimic-reprint-scope"
+                        checked={reprintScope === "picked"}
+                        onChange={() => {
+                          setReprintScope("picked");
+                          setReprintPickedSlides((prev) =>
+                            prev.size > 0 ? prev : new Set([editorSlide])
+                          );
+                        }}
+                      />
+                      <span>
+                        Selected slides
+                        {reprintScope === "picked" && reprintPickedSlides.size > 0
+                          ? ` (${reprintPickedSlides.size})`
+                          : ""}
+                      </span>
+                    </label>
                   </div>
+                  {reprintScope === "picked" ? (
+                    <div
+                      className="mimic-layer-editor-panel__reprint-pick"
+                      role="group"
+                      aria-label="Slides to reprint"
+                    >
+                      {Array.from({ length: slideCount }, (_, i) => i + 1).map((slide) => {
+                        const picked = reprintPickedSlides.has(slide);
+                        return (
+                          <button
+                            key={slide}
+                            type="button"
+                            className={`mimic-layer-editor-panel__reprint-pick-btn${
+                              picked ? " mimic-layer-editor-panel__reprint-pick-btn--on" : ""
+                            }${slide === editorSlide ? " mimic-layer-editor-panel__reprint-pick-btn--current" : ""}`}
+                            aria-pressed={picked}
+                            title={`${picked ? "Remove" : "Add"} slide ${slide}`}
+                            onClick={() => toggleReprintPickedSlide(slide)}
+                          >
+                            {slide}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                   <button
                     type="button"
                     className="btn-primary btn-sm mimic-layer-editor-panel__reprint-btn"
-                    disabled={reprintBusy || layerPosSaving}
+                    disabled={
+                      reprintBusy ||
+                      layerPosSaving ||
+                      (reprintScope === "picked" && reprintPickedSlides.size === 0)
+                    }
                     onClick={() => {
                       setReprintMsg("Saving layout and reprinting…");
                       void runTextOverlayReprint(reprintScope === "all");

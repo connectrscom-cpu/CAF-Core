@@ -7,10 +7,12 @@ import { TaskViewer } from "@/components/TaskViewer";
 import { DecisionPanel } from "@/components/DecisionPanel";
 import { MimicCarouselEdits } from "@/components/MimicCarouselEdits";
 import { CarouselEdits, CarouselEditsExport } from "@/components/CarouselEdits";
+import { CarouselBrandStylingPanel } from "@/components/CarouselBrandStylingPanel";
 import {
   buildCarouselRenderTypographyPatch,
   buildSlidesJson,
   createSyntheticSlides,
+  mergeCarouselThemeIntoPayload,
   mergeCarouselTypographyIntoPayload,
   mimicSlideFieldsFromTextBlocks,
   parseSlidesFromJson,
@@ -30,6 +32,7 @@ import { taskApiQuery } from "@/lib/task-links";
 import { parseMimicLayoutQcFromPayload, type MimicLayoutSlideBadge } from "@/lib/mimic-layout-qc";
 import { HeyGenReviewEdits } from "@/components/HeyGenReviewEdits";
 import { VideoReviewEdits } from "@/components/VideoReviewEdits";
+import { VideoBrandStampControls } from "@/components/VideoBrandStampControls";
 import { ImageReviewEdits } from "@/components/ImageReviewEdits";
 import { isHeyGenReviewFlow } from "@/lib/heygen-review-flow";
 import { isCarouselFlow, isImageFlow, isVideoFlow } from "@/lib/flow-kind";
@@ -165,6 +168,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const [carouselKickerFontPx, setCarouselKickerFontPx] = useState("");
   const [carouselCtaFontPx, setCarouselCtaFontPx] = useState("");
   const [carouselHandleFontPx, setCarouselHandleFontPx] = useState("");
+  const [carouselPaperHex, setCarouselPaperHex] = useState("");
+  const [carouselInkHex, setCarouselInkHex] = useState("");
+  const [carouselLogoEnabled, setCarouselLogoEnabled] = useState(false);
+  const [carouselFrameEnabled, setCarouselFrameEnabled] = useState(false);
+  const [carouselFrameAssetId, setCarouselFrameAssetId] = useState("");
+  const [videoLogoEnabled, setVideoLogoEnabled] = useState(false);
+  const [videoFrameEnabled, setVideoFrameEnabled] = useState(false);
+  const [videoFrameAssetId, setVideoFrameAssetId] = useState("");
   const [carouselTypoBaseline, setCarouselTypoBaseline] = useState({
     carousel_headline_font_px: "",
     carousel_body_font_px: "",
@@ -189,6 +200,14 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     setSkipVideoRegeneration(false);
     setImagePromptAnalysis("");
     setSkipImageRegeneration(false);
+    setCarouselPaperHex("");
+    setCarouselInkHex("");
+    setCarouselLogoEnabled(false);
+    setCarouselFrameEnabled(false);
+    setCarouselFrameAssetId("");
+    setVideoLogoEnabled(false);
+    setVideoFrameEnabled(false);
+    setVideoFrameAssetId("");
     setSubmittedHeygenPrompt(null);
     setUpstreamLineage(null);
     setFullJob(null);
@@ -239,6 +258,16 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     const raw = rawPayload && typeof rawPayload === "object" ? (rawPayload as Record<string, unknown>).font_scale : undefined;
     const n = Number(raw);
     setFontScale(Number.isFinite(n) && n > 0 ? String(n) : "1");
+    const paper =
+      rawPayload && typeof rawPayload === "object" && typeof (rawPayload as Record<string, unknown>).carousel_paper === "string"
+        ? String((rawPayload as Record<string, unknown>).carousel_paper).trim()
+        : "";
+    const ink =
+      rawPayload && typeof rawPayload === "object" && typeof (rawPayload as Record<string, unknown>).carousel_ink === "string"
+        ? String((rawPayload as Record<string, unknown>).carousel_ink).trim()
+        : "";
+    setCarouselPaperHex(paper);
+    setCarouselInkHex(ink);
   }, [rawPayload]);
 
   useEffect(() => {
@@ -560,6 +589,56 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     };
   }, [data?.project, projectFromUrl]);
 
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    const key = `caf-carousel-logo-stamp:${execTaskId}`;
+    const stored = sessionStorage.getItem(key);
+    if (stored === "0") setCarouselLogoEnabled(false);
+    else if (stored === "1") setCarouselLogoEnabled(true);
+    else setCarouselLogoEnabled(Boolean(brandLogoReprintUrl.trim()));
+  }, [execTaskId, brandLogoReprintUrl]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    sessionStorage.setItem(`caf-carousel-logo-stamp:${execTaskId}`, carouselLogoEnabled ? "1" : "0");
+  }, [carouselLogoEnabled, execTaskId]);
+
+  useEffect(() => {
+    if (brandFrames.length === 0) {
+      setCarouselFrameAssetId("");
+      return;
+    }
+    setCarouselFrameAssetId((prev) => {
+      if (prev && brandFrames.some((f) => f.assetId === prev)) return prev;
+      return brandFrames[0]!.assetId;
+    });
+  }, [brandFrames]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    const key = `caf-video-logo-stamp:${execTaskId}`;
+    const stored = sessionStorage.getItem(key);
+    if (stored === "0") setVideoLogoEnabled(false);
+    else if (stored === "1") setVideoLogoEnabled(true);
+    else setVideoLogoEnabled(Boolean(brandLogoReprintUrl.trim()));
+  }, [execTaskId, brandLogoReprintUrl]);
+
+  useEffect(() => {
+    if (!execTaskId || typeof window === "undefined") return;
+    sessionStorage.setItem(`caf-video-logo-stamp:${execTaskId}`, videoLogoEnabled ? "1" : "0");
+  }, [videoLogoEnabled, execTaskId]);
+
+  useEffect(() => {
+    if (brandFrames.length === 0) {
+      setVideoFrameAssetId("");
+      return;
+    }
+    setVideoFrameAssetId((prev) => {
+      if (prev && brandFrames.some((f) => f.assetId === prev)) return prev;
+      return brandFrames[0]!.assetId;
+    });
+  }, [brandFrames]);
+
   const decision = useMemo(() => (data?.decision ?? "").trim(), [data?.decision]);
   const notes = useMemo(() => (data?.notes ?? "").trim(), [data?.notes]);
   const runId = (data?.run_id ?? "").trim();
@@ -576,10 +655,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     () => (flowTypeStr ? isMimicCarouselFlow(flowTypeStr) : false),
     [flowTypeStr]
   );
-  const tpGroundedCarouselReview = useMemo(
-    () => (flowTypeStr ? isTpGroundedCarouselReviewFlow(flowTypeStr) : false),
-    [flowTypeStr]
-  );
+  const tpGroundedCarouselReview = useMemo(() => {
+    if (!flowTypeStr) return false;
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    return isTpGroundedCarouselReviewFlow(flowTypeStr, gp);
+  }, [flowTypeStr, fullJob?.generation_payload]);
 
   const slideRenderStatuses = useMemo(() => {
     if (!tpGroundedCarouselReview && !isCarouselFlow(flowTypeStr)) return [];
@@ -625,7 +705,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
 
   const layoutQcAttentionBanner = useMemo(() => {
     const qc = parseMimicLayoutQcFromPayload(fullJob?.generation_payload);
-    if (!qc?.review_attention || qc.block_review) return null;
+    if (!qc?.review_attention) return null;
     const flagged = qc.slides.filter((s) => !s.badges.includes("pass"));
     if (flagged.length === 0) return null;
     return `Layout check flagged ${flagged.length} slide${flagged.length === 1 ? "" : "s"} — see thumb badges and open the layout editor before approving.`;
@@ -1011,6 +1091,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         carousel_cta_font_px: carouselCtaFontPx,
         carousel_handle_font_px: carouselHandleFontPx,
       });
+      mergeCarouselThemeIntoPayload(slidesPayload, {
+        carousel_paper: carouselPaperHex,
+        carousel_ink: carouselInkHex,
+      });
     },
     [
       fontScale,
@@ -1019,8 +1103,115 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       carouselKickerFontPx,
       carouselCtaFontPx,
       carouselHandleFontPx,
+      carouselPaperHex,
+      carouselInkHex,
     ]
   );
+
+  const carouselLogoOverlay = useMemo(() => {
+    if (!carouselLogoEnabled || !brandLogoReprintUrl.trim()) return undefined;
+    return { url: brandLogoReprintUrl.trim(), position: "br" as const };
+  }, [carouselLogoEnabled, brandLogoReprintUrl]);
+
+  const carouselFrameOverlay = useMemo(() => {
+    if (!carouselFrameEnabled || brandFrames.length === 0) return undefined;
+    const frame = brandFrames.find((f) => f.assetId === carouselFrameAssetId) ?? brandFrames[0];
+    if (!frame?.reprintUrl.trim()) return undefined;
+    return { url: frame.reprintUrl.trim(), asset_id: frame.assetId };
+  }, [carouselFrameEnabled, carouselFrameAssetId, brandFrames]);
+
+  const carouselStylingRevisionKey = useMemo(
+    () =>
+      JSON.stringify({
+        fontScale,
+        carouselHeadlineFontPx,
+        carouselBodyFontPx,
+        carouselKickerFontPx,
+        carouselCtaFontPx,
+        carouselHandleFontPx,
+        carouselPaperHex,
+        carouselInkHex,
+        carouselLogoEnabled,
+        carouselFrameEnabled,
+        carouselFrameAssetId,
+      }),
+    [
+      fontScale,
+      carouselHeadlineFontPx,
+      carouselBodyFontPx,
+      carouselKickerFontPx,
+      carouselCtaFontPx,
+      carouselHandleFontPx,
+      carouselPaperHex,
+      carouselInkHex,
+      carouselLogoEnabled,
+      carouselFrameEnabled,
+      carouselFrameAssetId,
+    ]
+  );
+
+  const textCarouselStylingPanel =
+    carouselFlow && !tpGroundedCarouselReview && !videoFlow && !imageFlow;
+
+  const videoBrandOverlayPreview = useMemo(() => {
+    const logoUrl =
+      videoLogoEnabled && brandLogoUrl.trim() ? brandLogoUrl.trim() : undefined;
+    if (!videoFrameEnabled || brandFrames.length === 0) {
+      return { logoUrl, frameUrl: undefined as string | undefined };
+    }
+    const frame = brandFrames.find((f) => f.assetId === videoFrameAssetId) ?? brandFrames[0];
+    const frameUrl = frame?.displayUrl?.trim() || undefined;
+    return { logoUrl, frameUrl };
+  }, [videoLogoEnabled, brandLogoUrl, videoFrameEnabled, videoFrameAssetId, brandFrames]);
+
+  const videoPreviewSidePanel = videoFlow ? (
+    <VideoBrandStampControls
+      taskId={execTaskId}
+      projectSlug={(data?.project ?? projectFromUrl).trim()}
+      brandLogoDisplayUrl={brandLogoUrl}
+      logoEnabled={videoLogoEnabled}
+      onLogoEnabledChange={setVideoLogoEnabled}
+      brandFrames={brandFrames}
+      frameEnabled={videoFrameEnabled}
+      onFrameEnabledChange={setVideoFrameEnabled}
+      selectedFrameAssetId={videoFrameAssetId}
+      onSelectedFrameAssetIdChange={setVideoFrameAssetId}
+      onApplied={() => {
+        void refreshTaskAssets();
+        void fetchTask();
+      }}
+    />
+  ) : undefined;
+
+  const carouselPreviewSidePanel = textCarouselStylingPanel ? (
+    <CarouselBrandStylingPanel
+      fontScale={fontScale}
+      onFontScaleChange={setFontScale}
+      carouselHeadlineFontPx={carouselHeadlineFontPx}
+      onCarouselHeadlineFontPxChange={setCarouselHeadlineFontPx}
+      carouselBodyFontPx={carouselBodyFontPx}
+      onCarouselBodyFontPxChange={setCarouselBodyFontPx}
+      carouselKickerFontPx={carouselKickerFontPx}
+      onCarouselKickerFontPxChange={setCarouselKickerFontPx}
+      carouselCtaFontPx={carouselCtaFontPx}
+      onCarouselCtaFontPxChange={setCarouselCtaFontPx}
+      carouselHandleFontPx={carouselHandleFontPx}
+      onCarouselHandleFontPxChange={setCarouselHandleFontPx}
+      brandPalette={brandPalette}
+      brandLogoDisplayUrl={brandLogoUrl}
+      logoEnabled={carouselLogoEnabled}
+      onLogoEnabledChange={setCarouselLogoEnabled}
+      brandFrames={brandFrames}
+      frameEnabled={carouselFrameEnabled}
+      onFrameEnabledChange={setCarouselFrameEnabled}
+      selectedFrameAssetId={carouselFrameAssetId}
+      onSelectedFrameAssetIdChange={setCarouselFrameAssetId}
+      paperHex={carouselPaperHex}
+      onPaperHexChange={setCarouselPaperHex}
+      inkHex={carouselInkHex}
+      onInkHexChange={setCarouselInkHex}
+    />
+  ) : undefined;
 
   const buildReprintTypographyPatch = useCallback(
     () =>
@@ -1194,6 +1385,10 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
       runId: runId || "run",
       fontScale,
       instagramHandle: instagramHandleForPreview,
+      projectSlug: (data?.project ?? projectFromUrl ?? "").trim(),
+      stylingRevisionKey: carouselStylingRevisionKey,
+      logoOverlay: carouselLogoOverlay,
+      frameOverlay: carouselFrameOverlay,
       getPayload: () => {
         const slidesPayload = buildSlidesJson(editedSlides, rawPayload ?? null);
         decorateCarouselSlidesPayload(slidesPayload);
@@ -1253,6 +1448,11 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
     runId,
     fontScale,
     instagramHandleForPreview,
+    carouselStylingRevisionKey,
+    carouselLogoOverlay,
+    carouselFrameOverlay,
+    data?.project,
+    projectFromUrl,
     mimicLayoutPreviewRevision,
     editedSlides,
     rawPayload,
@@ -1372,6 +1572,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               spokenScript={heygenWorkbench ? editedScript : undefined}
               onSpokenScriptChange={heygenWorkbench ? setEditedScript : undefined}
               carouselLivePreview={carouselLivePreview}
+              carouselPreviewSidePanel={videoFlow ? videoPreviewSidePanel : carouselPreviewSidePanel}
+              videoBrandOverlay={videoFlow ? videoBrandOverlayPreview : undefined}
               previewToolbar={
                 marketerMode ? undefined : (
                   <CopyTaskDebugBundleButton {...debugBundleProps} variant="compact" />
@@ -1636,6 +1838,20 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
                 onCarouselCtaFontPxChange={setCarouselCtaFontPx}
                 carouselHandleFontPx={carouselHandleFontPx}
                 onCarouselHandleFontPxChange={setCarouselHandleFontPx}
+                paperHex={carouselPaperHex}
+                onPaperHexChange={setCarouselPaperHex}
+                inkHex={carouselInkHex}
+                onInkHexChange={setCarouselInkHex}
+                logoEnabled={carouselLogoEnabled}
+                onLogoEnabledChange={setCarouselLogoEnabled}
+                frameEnabled={carouselFrameEnabled}
+                onFrameEnabledChange={setCarouselFrameEnabled}
+                selectedFrameAssetId={carouselFrameAssetId}
+                onSelectedFrameAssetIdChange={setCarouselFrameAssetId}
+                brandPalette={brandPalette}
+                brandLogoDisplayUrl={brandLogoUrl}
+                brandFrames={brandFrames}
+                stylingInPreviewPanel={textCarouselStylingPanel}
                 finalTitleOverride={editedTitle}
                 onFinalTitleOverrideChange={setEditedTitle}
                 finalHookOverride={editedHook}

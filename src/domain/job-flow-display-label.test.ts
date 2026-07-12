@@ -110,7 +110,7 @@ describe("resolveJobFlowDisplayLabel", () => {
 
     expect(resolveJobFlowDisplayLabel(FLOW_VISUAL_FIRST_CAROUSEL, {}).flow_label).toBe(
 
-      "Visual-First · Carousel"
+      "New Visual · Carousel"
 
     );
 
@@ -122,7 +122,7 @@ describe("resolveJobFlowDisplayLabel", () => {
 
       }).flow_label
 
-    ).toBe("Visual-First · Carousel · Full-bleed");
+    ).toBe("New Visual · Carousel · Full-bleed");
 
 
 

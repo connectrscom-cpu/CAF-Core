@@ -8,11 +8,18 @@ import {
 } from "../repositories/project-config.js";
 import { getSignalPackById, type SignalPackRow } from "../repositories/signal-packs.js";
 import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
-import { isProductVideoFlow } from "../domain/product-flow-types.js";
+import { isProductImageFlow, isProductVideoFlow } from "../domain/product-flow-types.js";
+import {
+  isProductBibleEnabledForCandidate,
+  pickProductKeyFromCandidate,
+  resolveProductBibleSnapshotForProject,
+} from "../domain/product-bible-v1.js";
+import { slimProductBibleForCreationPack } from "../domain/product-bible.js";
 import {
   isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
+import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
 import {
   pickTopPerformerKnowledgeForStep,
   topPerformerKnowledgeStepForFlowType,
@@ -485,7 +492,20 @@ export async function buildCreationPack(
     pack.product_video_hashtag_allowlist = filteredForProduct;
   }
 
-  if (flowType && isTopPerformerMimicRenderableFlow(flowType)) {
+  if (
+    isProductBibleEnabledForCandidate(candidateData, { flowType }) ||
+    isProductVideoFlow(flowType) ||
+    isProductImageFlow(flowType)
+  ) {
+    const productKey = pickProductKeyFromCandidate(candidateData);
+    const resolved = await resolveProductBibleSnapshotForProject(db, projectId, productKey).catch(() => null);
+    const slim = resolved ? slimProductBibleForCreationPack(resolved.snapshot) : null;
+    if (slim) {
+      pack.product_bible = slim;
+    }
+  }
+
+  if (flowType && isTopPerformerMimicRenderableFlow(flowType) && !isVisualFirstCarouselFlow(flowType)) {
     const derivedGlobals =
       signalPack?.derived_globals_json &&
       typeof signalPack.derived_globals_json === "object" &&

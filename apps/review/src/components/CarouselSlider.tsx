@@ -57,6 +57,11 @@ export interface CarouselLivePreviewOptions {
   getDocAiLayerPositions?: (slideIndex1Based: number) => Record<string, unknown>[] | undefined;
   /** Bumped when layout positions change so compare preview re-renders. */
   layoutRevisionKey?: number;
+  /** Bumped when brand/typography styling changes (logo, frame, palette, px). */
+  stylingRevisionKey?: string;
+  logoOverlay?: { url: string; position?: string };
+  frameOverlay?: { url: string; asset_id?: string };
+  projectSlug?: string;
 }
 
 export interface CarouselSliderProps {
@@ -219,7 +224,7 @@ export function CarouselSlider({
     }
 
     const slideIndex1Based = currentIndex + 1;
-    const cacheKey = `${slideIndex1Based}:${livePreview?.layoutRevisionKey ?? ""}:${livePreview?.fontScale ?? "1"}`;
+    const cacheKey = `${slideIndex1Based}:${livePreview?.layoutRevisionKey ?? ""}:${livePreview?.stylingRevisionKey ?? ""}:${livePreview?.fontScale ?? "1"}`;
     const cachedUrl = livePreviewCacheRef.current.get(cacheKey);
     if (cachedUrl) {
       setLiveUrl((prev) => {
@@ -255,9 +260,12 @@ export function CarouselSlider({
               slide_index: slideIndex1Based,
               task_id: livePreview.taskId,
               run_id: livePreview.runId,
+              project_slug: livePreview.projectSlug ?? "",
               instagram_handle: livePreview.instagramHandle ?? "",
               background_image_url: livePreview.getBackgroundUrl?.(slideIndex1Based) ?? "",
               ...(docai_layer_positions?.length ? { docai_layer_positions } : {}),
+              ...(livePreview.logoOverlay?.url ? { logo_overlay: livePreview.logoOverlay } : {}),
+              ...(livePreview.frameOverlay?.url ? { frame_overlay: livePreview.frameOverlay } : {}),
               payload,
             }),
           });
@@ -300,6 +308,9 @@ export function CarouselSlider({
     livePreview,
     livePreview?.fontScale,
     livePreview?.layoutRevisionKey,
+    livePreview?.stylingRevisionKey,
+    livePreview?.logoOverlay?.url,
+    livePreview?.frameOverlay?.url,
     currentIndex,
     slidesKey,
     assetRefreshKey,
@@ -496,15 +507,55 @@ export function CarouselSlider({
     </div>
   );
 
+  const renderTextCarouselPreviewRow = () => {
+    if (mimicCopyEditor || heyGenVideoMode) return null;
+    if (!previewSidePanel && !livePreview?.template && !storedSlideImageUrl && !mediaUrl) return null;
+    const hasPreview = Boolean(livePngUrl || storedSlideImageUrl || mediaUrl);
+    return (
+      <div className="mimic-preview-row carousel-text-preview-row" style={{ marginBottom: 16 }}>
+        <div className="carousel-text-preview-row__main">
+          <p className="filter-label" style={{ marginBottom: 8 }}>
+            Slide preview
+          </p>
+          <div className="mimic-compare-frame mimic-compare-frame--generated-only">
+            <div className="mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo">
+              {hasPreview ? (
+                renderGeneratedPreviewImage(
+                  `text-carousel-${currentIndex}-${assetRefreshKey}-${livePngUrl ? "live" : storedSlideImageUrl || mediaUrl}`,
+                  "mimic-compare-pane__img"
+                )
+              ) : liveBusy && livePreview?.template ? (
+                <span className="mimic-compare-pane__empty">Rendering live preview…</span>
+              ) : generatedPreviewPending ? (
+                <span className="mimic-compare-pane__empty">Regenerating image…</span>
+              ) : generatedPreviewFailed ? (
+                <span className="mimic-compare-pane__empty">
+                  {currentRenderState?.error ?? "Render failed on this slide."}
+                </span>
+              ) : (
+                <span className="mimic-compare-pane__empty">No rendered asset for this slide</span>
+              )}
+            </div>
+          </div>
+        </div>
+        {previewSidePanel ? <div className="mimic-preview-side">{previewSidePanel}</div> : null}
+      </div>
+    );
+  };
+
   const renderMimicCompareRow = (placement: "above" | "below") => {
     if (!mimicCopyEditor) return null;
     if (placement !== "above") return null;
-    const vertical = Boolean(copySidePanel);
+    const textEditorLayout = Boolean(copySidePanel);
+    const vertical = textEditorLayout;
     const hasReference = Boolean(referenceSlideUrl?.trim());
+    if (textEditorLayout && !hasReference) return null;
     return (
       <div className={previewSidePanel && !copySidePanel ? "mimic-preview-row" : undefined}>
         {vertical ? (
-          <p className="filter-label mimic-compare-row__heading">Original vs generated</p>
+          <p className="filter-label mimic-compare-row__heading">
+            {hasReference ? "Original reference" : "Original vs generated"}
+          </p>
         ) : null}
         <div
           className={`flex items-center gap-2 mimic-compare-row${vertical ? " mimic-compare-row--vertical" : ""}`}
@@ -522,7 +573,13 @@ export function CarouselSlider({
           <div
             className={
               vertical
-                ? `mimic-compare-frame mimic-compare-frame--vertical${hasReference ? "" : " mimic-compare-frame--generated-only"}`
+                ? `mimic-compare-frame mimic-compare-frame--vertical${
+                    hasReference && textEditorLayout
+                      ? " mimic-compare-frame--original-only"
+                      : hasReference
+                        ? ""
+                        : " mimic-compare-frame--generated-only"
+                  }`
                 : "mimic-compare-frame"
             }
             onTouchStart={onTouchStart}
@@ -541,6 +598,7 @@ export function CarouselSlider({
                 />
               </div>
             ) : null}
+            {!textEditorLayout ? (
             <div
               className={
                 hasReference ? "mimic-compare-pane mimic-compare-pane--generated" : "mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo"
@@ -584,6 +642,7 @@ export function CarouselSlider({
                 <span className="mimic-compare-pane__empty">No rendered asset for this slide</span>
               )}
             </div>
+            ) : null}
           </div>
           <button
             type="button"
@@ -717,6 +776,7 @@ export function CarouselSlider({
       ) : null}
 
       {renderMimicCompareRow("above")}
+      {renderTextCarouselPreviewRow()}
 
       {!copySidePanel && !heyGenVideoMode && livePreview?.template && (
         <p style={{ fontSize: 11, color: "var(--muted)", margin: "0 0 12px", lineHeight: 1.4 }}>
@@ -729,7 +789,9 @@ export function CarouselSlider({
               : livePngUrl
                 ? mimicTemplateBg
                   ? "Generated pane shows live layout + copy (matches the editor). Thumbnails stay on last reprint until you reprint."
-                  : "Live preview: font scale + slide copy (matches template). Stored thumbnails are from the last pipeline render."
+                  : previewSidePanel
+                    ? "Live preview reflects copy, typography, palette, logo, and frame. Thumbnails show the last pipeline render until you rework."
+                    : "Live preview: font scale + slide copy (matches template). Stored thumbnails are from the last pipeline render."
                 : storedSlideImageUrl
                   ? "Stored slide shown — live preview will replace it when ready."
                   : "Starting live preview…"}

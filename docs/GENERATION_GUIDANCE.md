@@ -50,7 +50,7 @@ The planning path is also fronted by the facade: **`getLearningRulesForPlanning(
 
 ## Attribution
 
-**`caf_core.learning_generation_attribution`** records applied rule ids and context sizes (**`src/repositories/learning-evidence.ts`**, called from generation path).
+**`caf_core.learning_generation_attribution`** records applied rule ids and context sizes (**`src/repositories/learning-evidence.ts`**, called from generation path). **`job_outcomes`** links publish to performance metrics. Run context snapshots via **`setRunContextSnapshot()`** capture prompt versions + learning fingerprints at plan time (failures logged, never abort run).
 
 ## Related docs
 

@@ -11,6 +11,8 @@ export type MimicImageProvider = "openai" | "nvidia" | "dashscope" | "bfl";
 export interface MimicImageEditParams {
   /** Required for reference_edit; omitted for analysis_t2i text-to-image. */
   referenceUrl?: string;
+  /** Additional reference images (BFL input_image_2 … input_image_8). First URL may duplicate referenceUrl. */
+  referenceUrls?: string[];
   prompt: string;
   size?: string;
   inputFidelity?: "high" | "low";
@@ -56,6 +58,33 @@ function withArtOnlyImagePrompt(params: MimicImageEditParams): MimicImageEditPar
   });
   if (prompt === params.prompt) return params;
   return { ...params, prompt };
+}
+
+/** Collect unique reference URLs (max 8) for BFL multi-reference Flux calls. */
+export function collectMimicImageReferenceUrls(params: MimicImageEditParams): string[] {
+  const out: string[] = [];
+  const add = (raw: string | null | undefined) => {
+    const url = String(raw ?? "").trim();
+    if (url && !out.includes(url)) out.push(url);
+  };
+  add(params.referenceUrl);
+  for (const u of params.referenceUrls ?? []) add(u);
+  return out.slice(0, 8);
+}
+
+function bflInputImageFieldKey(index0: number): string {
+  return index0 === 0 ? "input_image" : `input_image_${index0 + 1}`;
+}
+
+async function attachBflReferenceImages(
+  config: AppConfig,
+  body: Record<string, unknown>,
+  urls: string[]
+): Promise<void> {
+  const capped = urls.slice(0, 8);
+  for (let i = 0; i < capped.length; i++) {
+    body[bflInputImageFieldKey(i)] = await bflImageInputFromUrl(config, capped[i]!, `reference ${i + 1}`);
+  }
 }
 
 function apiBaseUrl(base: string): string {
@@ -722,18 +751,22 @@ async function editViaBflOnce(config: AppConfig, params: MimicImageEditParams): 
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
 
+  const refUrls = collectMimicImageReferenceUrls(params);
+  if (refUrls.length === 0) {
+    throw new Error("referenceUrl is required for reference-conditioned mimic image edit");
+  }
+
   const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
   const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
-  const inputImage = await bflImageInputFromUrl(config, params.referenceUrl!, "reference");
   const body: Record<string, unknown> = {
     prompt: params.prompt,
-    input_image: inputImage,
     width,
     height,
     safety_tolerance: config.MIMIC_IMAGE_BFL_SAFETY_TOLERANCE,
     output_format: outputFormat,
     ...(!params.allowOnImageText ? { negative_prompt: MIMIC_ART_ONLY_NEGATIVE_PROMPT } : {}),
   };
+  await attachBflReferenceImages(config, body, refUrls);
   const flexTuning = bflFlexTuningParams(config);
   if (flexTuning) {
     body.steps = flexTuning.steps;
@@ -954,6 +987,7 @@ async function generateViaBflOnce(config: AppConfig, params: MimicImageEditParam
   const call = resolveMimicImageCall(config);
   if (!call.apiKey) throw new Error("BFL_API_KEY is required when MIMIC_IMAGE_PROVIDER=bfl");
 
+  const refUrls = collectMimicImageReferenceUrls(params);
   const { width, height } = bflFluxDimensions(params.size ?? config.MIMIC_IMAGE_DEFAULT_SIZE);
   const outputFormat = config.MIMIC_IMAGE_BFL_OUTPUT_FORMAT;
   const body: Record<string, unknown> = {
@@ -964,6 +998,9 @@ async function generateViaBflOnce(config: AppConfig, params: MimicImageEditParam
     output_format: outputFormat,
     ...(!params.allowOnImageText ? { negative_prompt: MIMIC_ART_ONLY_NEGATIVE_PROMPT } : {}),
   };
+  if (refUrls.length > 0) {
+    await attachBflReferenceImages(config, body, refUrls);
+  }
   const flexTuning = bflFlexTuningParams(config);
   if (flexTuning) {
     body.steps = flexTuning.steps;
@@ -1169,8 +1206,17 @@ export async function generateImageFromPrompt(
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
   params = withArtOnlyImagePrompt(params);
+  const refUrls = collectMimicImageReferenceUrls(params);
   const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
   assertMimicImageProviderConfigured(effectiveConfig);
+
+  if (refUrls.length > 0 && effectiveConfig.MIMIC_IMAGE_PROVIDER !== "bfl") {
+    return editImageFromReference(effectiveConfig, {
+      ...params,
+      referenceUrl: refUrls[0],
+      ...(refUrls.length > 1 ? { referenceUrls: refUrls.slice(1) } : {}),
+    });
+  }
 
   if (effectiveConfig.MIMIC_IMAGE_PROVIDER === "bfl") {
     try {
@@ -1225,11 +1271,20 @@ export async function generateMimicSlideImage(
   config: AppConfig,
   params: MimicSlideImageParams
 ): Promise<MimicImageEditResult> {
+  const refUrls = collectMimicImageReferenceUrls(params);
+  const withRefs =
+    refUrls.length > 0
+      ? {
+          ...params,
+          referenceUrl: refUrls[0],
+          ...(refUrls.length > 1 ? { referenceUrls: refUrls } : {}),
+        }
+      : params;
   if (params.imageInputMode === "analysis_t2i") {
-    return generateImageFromPrompt(config, params);
+    return generateImageFromPrompt(config, withRefs);
   }
   return editImageFromReference(config, {
-    ...params,
+    ...withRefs,
     inputFidelity: "low",
   });
 }
@@ -1256,11 +1311,15 @@ export async function editImageFromReference(
   config: AppConfig,
   params: MimicImageEditParams
 ): Promise<MimicImageEditResult> {
-  const referenceUrl = String(params.referenceUrl ?? "").trim();
-  if (!referenceUrl) {
+  const refUrls = collectMimicImageReferenceUrls(params);
+  if (refUrls.length === 0) {
     throw new Error("referenceUrl is required for reference-conditioned mimic image edit");
   }
-  params = withArtOnlyImagePrompt({ ...params, referenceUrl });
+  params = withArtOnlyImagePrompt({
+    ...params,
+    referenceUrl: refUrls[0],
+    ...(refUrls.length > 1 ? { referenceUrls: refUrls } : {}),
+  });
   const effectiveConfig = appConfigWithMimicBflModel(config, params.bflModelOverride);
   assertMimicImageProviderConfigured(effectiveConfig);
 
@@ -1276,7 +1335,7 @@ export async function editImageFromReference(
           return await editViaDashScope(effectiveConfig, params);
         } catch (dashErr) {
           if (isDashScopeAuthError(dashErr) && effectiveConfig.OPENAI_API_KEY?.trim()) {
-            const { blob, mimeType: refMime } = await downloadReferenceAsBlob(referenceUrl);
+            const { blob, mimeType: refMime } = await downloadReferenceAsBlob(refUrls[0]!);
             return editViaOpenAi(effectiveConfig, params, blob, refMime);
           }
           throw dashErr;
@@ -1290,7 +1349,7 @@ export async function editImageFromReference(
     return editViaDashScope(effectiveConfig, params);
   }
 
-  const { blob, mimeType: refMime } = await downloadReferenceAsBlob(referenceUrl);
+  const { blob, mimeType: refMime } = await downloadReferenceAsBlob(refUrls[0]!);
 
   if (effectiveConfig.MIMIC_IMAGE_PROVIDER !== "nvidia") {
     return editViaOpenAi(effectiveConfig, params, blob, refMime);

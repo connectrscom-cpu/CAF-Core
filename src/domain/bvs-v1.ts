@@ -13,6 +13,8 @@ import {
 } from "./brand-bible.js";
 import { getActiveBrandBible } from "../repositories/brand-bibles.js";
 import { listProjectBrandAssets } from "../repositories/project-config.js";
+import { enrichMimicWithBvsRenderPlan } from "./bvs-render-plan.js";
+import type { MimicPayloadV1 } from "./mimic-payload.js";
 
 export const BVS_V1_SCHEMA = "bvs_v1" as const;
 
@@ -118,11 +120,14 @@ export async function healAndPersistBvsOnJob(
   if (mimicRaw && typeof mimicRaw === "object" && !Array.isArray(mimicRaw)) {
     merged = {
       ...merged,
-      mimic_v1: {
-        ...(mimicRaw as Record<string, unknown>),
-        bvs_enabled: true,
-        bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown>,
-      },
+      mimic_v1: enrichMimicWithBvsRenderPlan(
+        {
+          ...(mimicRaw as Record<string, unknown>),
+          bvs_enabled: true,
+          bvs_bible_snapshot: bvs.bible_snapshot as unknown as Record<string, unknown>,
+        } as MimicPayloadV1,
+        bvs.bible_snapshot
+      ),
     };
   }
 
@@ -152,6 +157,26 @@ export async function attachBvsToPlannedPayload(
     return;
   }
   payload.bvs_v1 = buildBvsSlice(true, resolved.version, resolved.snapshot);
+}
+
+/**
+ * Resolve BVS snapshot for HeyGen Video Agent prompts.
+ * Respects `bvs_v1.enabled === false` on the job; otherwise uses job snapshot (healed when missing)
+ * or falls back to the project's active brand bible.
+ */
+export async function resolveBvsSnapshotForHeygen(
+  db: Pool,
+  projectId: string,
+  payload: Record<string, unknown>
+): Promise<BrandBibleSnapshotV1 | null> {
+  const current = parseBvsFromPayload(payload);
+  if (current && !current.enabled) return null;
+  if (current?.enabled) {
+    const healed = await resolveBvsForEnabledJob(db, projectId, payload);
+    return healed?.bible_snapshot ?? current.bible_snapshot ?? null;
+  }
+  const resolved = await resolveBvsSnapshotForProject(db, projectId).catch(() => null);
+  return resolved?.snapshot ?? null;
 }
 
 /** Merge bible palette/motifs into brand profile for brand translation when BVS is on. */

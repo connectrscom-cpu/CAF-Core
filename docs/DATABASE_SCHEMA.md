@@ -3,8 +3,10 @@
 **Purpose:** Table catalog for engineers, external re-implementers, and LLMs that need to understand **where state lives** without reading every migration.
 
 **Schema name:** `caf_core`  
-**Migrations:** `migrations/*.sql` (applied via `npm run migrate` or `CAF_RUN_MIGRATIONS_ON_START`)  
+**Migrations:** `migrations/*.sql` (applied via `npm run migrate` or `CAF_RUN_MIGRATIONS_ON_START`) — through **`078_brand_bibles.sql`** and later as added  
 **Tracking table:** `caf_core.schema_migrations`
+
+> **Updated current-state note (2026-07):** Prefer `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` §5 when this catalog lags new migrations.
 
 **Join convention:** Prefer **`(project_id, task_id)`** or **`(project_id, run_id)`** text keys — not UUID foreign keys across aggregates.
 
@@ -65,7 +67,9 @@
 | `allowed_flow_types` | Enabled flows per project |
 | `heygen_config` | HeyGen avatar / voice settings |
 | `project_product_profile` | Product video profile |
-| `project_brand_assets` | Brand images for HeyGen / mimic |
+| `project_brand_assets` | Brand images (logo, slide frame, style refs) for HeyGen / mimic / BVS |
+| `brand_profiles` | Marketer voice/strategy profile (`migrations/072_brand_profiles.sql`) |
+| `brand_bibles` | Versioned **Brand Visual System** — `brand_bible_v1` JSON; snapshotted to `generation_payload.bvs_v1` (`078_brand_bibles.sql`) |
 | `project_carousel_templates` | Project-specific carousel templates |
 | `project_integrations` | Meta FB/IG IDs, tokens metadata |
 | `reference_posts`, `viral_formats` | Reference content config |
@@ -85,6 +89,7 @@
 | `performance_metrics` | Post-publish metrics |
 | `performance_ingestion_batches` | Batch ingest metadata |
 | `run_content_outcomes` | Run-level outcome summaries |
+| `job_outcomes` | Per-job publish → performance anchor (`migrations/075_job_outcomes.sql`) |
 
 ---
 
@@ -148,7 +153,7 @@
 | `flow_type`, `platform` | Routing / QC scope |
 | `status` | Job lifecycle state |
 | `qc_status`, `recommended_route` | QC outcome (also inside payload) |
-| `generation_payload` | **Main JSON contract** — prompts, LLM output, QC, mimic, publish URLs |
+| `generation_payload` | **Main JSON contract** — prompts, LLM output, QC, `mimic_v1`, `bvs_v1`, publish URLs |
 | `render_state` | Provider session state (HeyGen video_id, etc.) |
 | `scene_bundle_state` | Scene assembly progress |
 | `review_snapshot` | Snapshot for review UI |

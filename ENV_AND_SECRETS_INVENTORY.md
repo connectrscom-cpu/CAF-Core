@@ -212,7 +212,10 @@ Set on the **Core** host (repo root `.env` / Fly secrets). Copy generation requi
 | `NVIDIA_NIM_API_KEY` | **yes** | — | NIM Qwen edit when provider=`nvidia` |
 | `MIMIC_IMAGE_BFL_MODEL` | no | `flux-2-klein-4b` | BFL model slug |
 | `MIMIC_VISUAL_SIMILARITY_PCT` | no | `70` | Reference-edit fidelity hint |
-| `MIMIC_IMAGE_INPUT_MODE` | no | `reference_edit` | `reference_edit` or `analysis_t2i` |
+| `MIMIC_IMAGE_INPUT_MODE` | no | `reference_edit` | `reference_edit` or `analysis_t2i` (new visual / invented plates) |
+| `WHY_MIMIC_REQUIRE_SUBSTANTIVE_SIL` | no | `true` | Planning guard for Why Mimic carousel |
+| `MIMIC_LAYOUT_QA_ENABLED` | no | `true` | Post-render layout QA reprint loop |
+| `MIMIC_LAYOUT_QA_MAX_REPRINT_ITERATIONS` | no | `3` | Max layout QA reprint iterations |
 | `MIMIC_IMAGE_DEFAULT_SIZE` | no | `1024x1536` | Output dimensions |
 | `LLM_MIMIC_*_MAX_CHARS` | no | see `.env.example` | Mimic prompt context caps |
 

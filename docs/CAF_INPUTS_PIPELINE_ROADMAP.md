@@ -28,7 +28,7 @@ Row-level LLM passes are in place: text broad, single-image vision, multi-slide 
 
 ### Stage 3 (before signal pack) — ideas
 
-**Ideas** are a structured list (many items) stored on or beside the signal pack. When a run creates **candidates**, the system mixes **project configuration constraints** with **selected ideas**: either an LLM chooses which ideas fit the run context, or a **human** picks them in admin/review. Implementation TBD (schema + UI + prompt contract).
+**Ideas** are a structured list stored in `inputs_idea_lists` / `inputs_ideas` and linkable to signal packs. **Partial:** full structured idea picker at plan time (LLM or human) is still TBD — idea lists exist but planner UX is incomplete.
 
 ## Done (Review, minimal)
 

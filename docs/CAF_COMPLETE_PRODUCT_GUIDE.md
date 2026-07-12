@@ -33,11 +33,11 @@
 
 ## 1. Executive summary
 
-**CAF** (Content Automation Framework) is a **content pipeline platform** for teams that produce scaled social content — carousels, reels, scripted video, and related formats.
+**CAF** (Content Automation Framework) is a **content operations platform** for teams that produce scaled social content — carousels, reels, scripted video, and related formats.
 
 It implements a full operating loop:
 
-**Signal Pack → Candidates → Decision Engine → Content Jobs → LLM Drafts → QC → Rendering → Review → Publishing → Learning**
+**Inputs / evidence → Signal pack → Planned jobs → Decision engine → Content jobs → LLM drafts → QC / risk → Rendering → Human review → Rework → Publishing → Performance → Learning**
 
 Unlike a script that calls an LLM once, CAF:
 
@@ -54,7 +54,7 @@ Unlike a script that calls an LLM once, CAF:
 | Component | Location | Role |
 |-----------|----------|------|
 | **CAF Core API** | Repo root (`src/`) | Orchestration, business logic, Postgres, HTTP APIs |
-| **Review app** | `apps/review/` | Next.js operator UI — client of Core, not DB of record |
+| **Review app** | `apps/review/` | Next.js operator + marketer UI — embedded in Core Fly at `/admin/workbench`; **client** of Core, not DB of record |
 | **Carousel renderer** | `services/renderer/` | Puppeteer + Handlebars → slide PNGs |
 | **Video assembly** | `services/video-assembly/` | ffmpeg → stitch, mux, subtitles |
 | **Media gateway** | `services/media-gateway/` | Single port exposing renderer + assembly |
@@ -265,22 +265,39 @@ Detail: **[layers/learning.md](./layers/learning.md)**, **[GENERATION_GUIDANCE.m
 
 ---
 
-## 13. Top-performer mimic & creative intelligence
+## 13. Mimic, BVS, and creative intelligence
 
-**Optional advanced capability** for brands with archived winners:
+**Optional advanced capabilities** for brands with archived winners or a defined Brand Visual System:
 
-1. **Ingest** top-performing posts (Creative Intelligence).
+### Creative Intelligence (upstream)
+1. **Ingest** top-performing posts.
 2. **Analyze** visuals (vision models) → styling cues on signal packs.
-3. **Plan** mimic flow jobs (`FLOW_TOP_PERFORMER_MIMIC_IMAGE` / `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`).
-4. **Resolve** reference frames before copy generation.
-5. **Generate** fresh copy (OpenAI) matching structure.
-6. **Render** via image providers + carousel overlays (HBS / DocAI).
+3. Ground ideas to insights for mimic lanes.
 
-**Modes:** single full-bleed image, template background + text, per-slide carousel visual.
+### Mimic carousel lanes (July 2026)
 
-Requires `MIMIC_IMAGE_ENABLED` and provider keys.
+| Lane | Flow | Behavior |
+|------|------|----------|
+| Manual mimic | `FLOW_TOP_PERFORMER_MIMIC_CAROUSEL` | TP reference frames; `execution_mode: classic` |
+| **New visual** | `FLOW_VISUAL_FIRST_CAROUSEL` | Idea + BVS; **no** TP frames; `execution_mode: new_visual` |
+| **Why Mimic** | `FLOW_WHY_MIMIC_CAROUSEL` | SIL-driven; `execution_mode: why_mimic` |
+| Mimic image | `FLOW_TOP_PERFORMER_MIMIC_IMAGE` | Single-frame `image_full` |
 
-Detail: **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)**, **[CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)**. Future text-placement QA: **[MIMIC_TEXT_PLACEMENT_AUTOMATION.md](./MIMIC_TEXT_PLACEMENT_AUTOMATION.md)**.
+### Brand Visual System (BVS)
+- Versioned **`brand_bibles`** per project (`brand_bible_v1`).
+- Snapshotted to **`generation_payload.bvs_v1`** when `use_brand_visual_system` is set (visual-first defaults on).
+- Drives invented plates (`bvs_render_plan`) and logo/frame overlays at render.
+
+### Render pipeline (all TP-grounded carousel lanes)
+1. **Resolve reference** (classic/why mimic) or **new-visual prep** (no references).
+2. **Generate** fresh copy (OpenAI).
+3. **Render** art-only plates via image providers.
+4. **Overlay** text via DocAI/HBS — **never** bake copy into Flux for carousels.
+5. **Review** layer editor → cheap reprint or expensive slide regen.
+
+Requires `MIMIC_IMAGE_ENABLED` and provider keys for pixel render.
+
+Detail: **[CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md)** §11, **[MIMIC_FLOWS_COMPLETE_GUIDE.md](./MIMIC_FLOWS_COMPLETE_GUIDE.md)**, **[CREATIVE_INTELLIGENCE.md](./CREATIVE_INTELLIGENCE.md)**.
 
 ---
 
@@ -294,7 +311,8 @@ Flows are registered in the **flow engine** per project. Families include:
 | **Video / reel** | Various `FLOW_*` video kinds | Production (provider-dependent) |
 | **Product video** | `FLOW_PRODUCT_*` | Production |
 | **Scene assembly** | Multi-clip + stitch | Production when configured |
-| **Mimic** | `FLOW_TOP_PERFORMER_MIMIC_*` | Production when enabled |
+| **Mimic** | `FLOW_TOP_PERFORMER_MIMIC_*`, `FLOW_VISUAL_FIRST_CAROUSEL`, `FLOW_WHY_MIMIC_CAROUSEL` | Production when `MIMIC_IMAGE_ENABLED=1` |
+| **BVS** | `brand_bibles` → `bvs_v1` on jobs | Production (migration 078) |
 | **Image product** | `FLOW_IMG_*` | Registered; not fully wired |
 | **Offline / legacy** | Some variation names | Excluded from auto-pipeline |
 
@@ -322,7 +340,7 @@ URLs use **`project_slug`** (e.g. `/v1/runs/SNS/...`).
 
 | Surface | User | Capabilities |
 |---------|------|--------------|
-| **Review app** | Editors, ops | Queue, approve/reject/rework, publish, learning UI, run logs |
+| **Review app** | Editors, marketers, ops | Marketer funnel (`/workspace`, `/brand/[slug]/*`); operator workbench (`/review`, `/t/[task_id]`); carousel + mimic layer editor, live preview, brand styling panel, cheap reprint, expensive regen, publish, learning UI, run logs |
 | **Core `/admin`** | Admins, engineers | Inputs, processing, project config, flow engine, diagnostics |
 | **HTTP `/v1` APIs** | Integrations | Full pipeline automation |
 | **CLIs** | Engineers | Migrate, seed, process-run, xlsx ingest, scrapers |
@@ -385,6 +403,7 @@ Env reference: **`ENV_AND_SECRETS_INVENTORY.md`**, **`.env.example`**.
 |----------|----------|
 | **Pitch / evaluators** | [CAF_PRODUCT_PITCH.md](./CAF_PRODUCT_PITCH.md) |
 | **This guide** | [CAF_COMPLETE_PRODUCT_GUIDE.md](./CAF_COMPLETE_PRODUCT_GUIDE.md) |
+| **Current repo truth** | [CAF_CURRENT_STATE_CONTEXT_PACK.md](./CAF_CURRENT_STATE_CONTEXT_PACK.md) |
 | **Stakeholder summary** | [PROJECT_OVERVIEW.md](./PROJECT_OVERVIEW.md) |
 | **Engineering merged ref** | [CAF_CORE_COMPLETE_GUIDE.md](./CAF_CORE_COMPLETE_GUIDE.md) |
 | **Architecture** | [ARCHITECTURE.md](./ARCHITECTURE.md) |

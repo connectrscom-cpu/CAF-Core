@@ -12,7 +12,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 /** Must match CAF Core `SUPABASE_ASSETS_BUCKET` (default assets). */
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_ASSETS_BUCKET || "assets";
 const WORK_DIR = path.join(__dirname, "workdir");
-const VERSION = "0.1.3";
+const VERSION = "0.1.4";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -401,6 +401,83 @@ async function burnSubtitlesIntoVideo(videoPath, subtitlesUrl, options = {}) {
   return outPath;
 }
 
+function logoOverlayPositionExpr(position) {
+  const pos = String(position || "br").trim().toLowerCase();
+  const margin = 48;
+  if (pos === "bl") return `${margin}:main_h-overlay_h-${margin}`;
+  if (pos === "tr") return `main_w-overlay_w-${margin}:${margin}`;
+  if (pos === "tl") return `${margin}:${margin}`;
+  return `main_w-overlay_w-${margin}:main_h-overlay_h-${margin}`;
+}
+
+/**
+ * Composite optional brand frame (full-bleed PNG) and logo onto a video. Re-encodes video; copies audio when present.
+ */
+async function compositeBrandOverlaysOnVideo(videoPath, opts = {}) {
+  const startedAt = Date.now();
+  const jobDir = path.dirname(videoPath);
+  const logoUrl = typeof opts.logo_url === "string" ? opts.logo_url.trim() : "";
+  const frameUrl = typeof opts.frame_url === "string" ? opts.frame_url.trim() : "";
+  if (!logoUrl && !frameUrl) return videoPath;
+
+  const inputArgs = ["-i", path.basename(videoPath)];
+  const filterParts = [];
+  let lastLabel = "0:v";
+  let inputIdx = 1;
+
+  if (frameUrl) {
+    const framePath = path.join(jobDir, "brand_frame.png");
+    await downloadFile(frameUrl, framePath);
+    inputArgs.push("-i", path.basename(framePath));
+    filterParts.push(`[${inputIdx}:v][0:v]scale2ref[frame][v0]`);
+    filterParts.push(`[v0][frame]overlay=0:0:format=auto[v${inputIdx}]`);
+    lastLabel = `v${inputIdx}`;
+    inputIdx += 1;
+  }
+
+  if (logoUrl) {
+    const logoPath = path.join(jobDir, "brand_logo.png");
+    await downloadFile(logoUrl, logoPath);
+    inputArgs.push("-i", path.basename(logoPath));
+    filterParts.push(`[${inputIdx}:v]scale=150:-1[logo${inputIdx}]`);
+    const posExpr = logoOverlayPositionExpr(opts.logo_position);
+    filterParts.push(`[${lastLabel}][logo${inputIdx}]overlay=${posExpr}:format=auto[v${inputIdx}]`);
+    lastLabel = `v${inputIdx}`;
+    inputIdx += 1;
+  }
+
+  const outBasename = "branded.mp4";
+  const outPath = path.join(jobDir, outBasename);
+  const args = [
+    ...inputArgs,
+    "-filter_complex",
+    filterParts.join(";"),
+    "-map",
+    `[${lastLabel}]`,
+    "-map",
+    "0:a?",
+    "-c:v",
+    "libx264",
+    "-pix_fmt",
+    "yuv420p",
+    "-preset",
+    "fast",
+    "-crf",
+    "23",
+    "-c:a",
+    "copy",
+    "-movflags",
+    "+faststart",
+    "-y",
+    outBasename,
+  ];
+  await runFfmpeg(args, "composite-brand-overlays", { cwd: jobDir });
+  console.info(
+    `[video-assembly] composite-brand-overlays ok logo=${Boolean(logoUrl)} frame=${Boolean(frameUrl)} duration_ms=${Date.now() - startedAt}`
+  );
+  return outPath;
+}
+
 function cleanupJob(jobDir) {
   try { fs.rmSync(jobDir, { recursive: true, force: true }); } catch {}
 }
@@ -651,6 +728,91 @@ app.post("/burn-subtitles", async (req, res) => {
       cleanupJob(jobDir);
     }
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : burned });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/**
+ * Composite brand frame and/or logo onto an MP4 (HeyGen / scene output). Audio is copied when present.
+ *
+ * Body: { video_url, logo_url?, frame_url?, logo_position?, task_id?, run_id? }
+ * Query: ?async=1 — polled via GET /status/:request_id
+ */
+app.post("/composite-brand-overlays", async (req, res) => {
+  try {
+    const { video_url, logo_url, frame_url, logo_position, task_id, run_id } = req.body;
+    if (!video_url) return res.status(400).json({ ok: false, error: "video_url required" });
+    const logoUrl = typeof logo_url === "string" ? logo_url.trim() : "";
+    const frameUrl = typeof frame_url === "string" ? frame_url.trim() : "";
+    if (!logoUrl && !frameUrl) {
+      return res.status(400).json({ ok: false, error: "logo_url or frame_url required" });
+    }
+
+    const isAsync = req.query.async === "1";
+    if (isAsync) {
+      const requestId = randomUUID();
+      asyncJobs.set(requestId, { status: "pending" });
+      (async () => {
+        const jobStartedAt = Date.now();
+        try {
+          const jobDir = path.join(WORK_DIR, randomUUID());
+          fs.mkdirSync(jobDir, { recursive: true });
+          const vidPath = path.join(jobDir, "video.mp4");
+          await Promise.race([
+            downloadFile(video_url, vidPath),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          const branded = await Promise.race([
+            compositeBrandOverlaysOnVideo(vidPath, {
+              logo_url: logoUrl || undefined,
+              frame_url: frameUrl || undefined,
+              logo_position,
+            }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+          ]);
+          let publicUrl = null;
+          if (SUPABASE_URL) {
+            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
+            publicUrl = await uploadToSupabase(branded, remotePath);
+          }
+          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: branded });
+          setTimeout(() => {
+            asyncJobs.delete(requestId);
+            cleanupJob(jobDir);
+          }, 3600000);
+          console.info(
+            `[video-assembly] async composite-brand-overlays done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`
+          );
+        } catch (e) {
+          asyncJobs.set(requestId, { status: "error", error: e.message });
+        }
+      })();
+      return res.status(202).json({ ok: true, request_id: requestId, status: "pending" });
+    }
+
+    const jobDir = path.join(WORK_DIR, randomUUID());
+    fs.mkdirSync(jobDir, { recursive: true });
+    const vidPath = path.join(jobDir, "video.mp4");
+    await Promise.race([
+      downloadFile(video_url, vidPath),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
+    const branded = await Promise.race([
+      compositeBrandOverlaysOnVideo(vidPath, {
+        logo_url: logoUrl || undefined,
+        frame_url: frameUrl || undefined,
+        logo_position,
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
+    ]);
+    let publicUrl = null;
+    if (SUPABASE_URL) {
+      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
+      publicUrl = await uploadToSupabase(branded, remotePath);
+      cleanupJob(jobDir);
+    }
+    res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : branded });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

@@ -1,6 +1,7 @@
 import { getGenerationStrategyOption } from "./generation-strategy";
 import { humanizeFlowType } from "./language";
 import type { ContentCartItem, ContentIdea, GenerationStrategy } from "./types";
+import { flowTypeForVideoIntent, isVideoTopPerformerItem, labelForVideoIntent } from "./video-lane";
 
 const CAROUSEL_PROFILE_TO_FLOW: Record<string, string> = {
   text_heavy: "FLOW_CAROUSEL",
@@ -12,6 +13,7 @@ const VIDEO_PROFILE_TO_FLOW: Record<string, string> = {
   script_avatar: "FLOW_VID_SCRIPT",
   prompt_avatar: "FLOW_VID_PROMPT",
   no_avatar: "FLOW_VID_PROMPT_NO_AVATAR",
+  hook_first: "FLOW_VID_HOOK_FIRST",
 };
 
 export function resolveCartFlowForIdea(
@@ -65,6 +67,17 @@ export function ideaShapeFromCartItem(item: ContentCartItem): Pick<ContentIdea, 
 
 export function normalizeCartItemFlow(item: ContentCartItem): ContentCartItem {
   if (item.kind === "top_performer") {
+    if (isVideoTopPerformerItem(item)) {
+      const intent = item.videoIntent ?? "prompt_avatar";
+      const flowTypeRaw = item.flowTypeRaw.startsWith("FLOW_VID_")
+        ? item.flowTypeRaw
+        : flowTypeForVideoIntent(intent);
+      return {
+        ...item,
+        flowTypeRaw,
+        flowDestination: labelForVideoIntent(intent),
+      };
+    }
     return item.flowTypeRaw.startsWith("FLOW_")
       ? item
       : {
@@ -93,9 +106,10 @@ export interface CartCreationLine {
   generation_strategy?: GenerationStrategy;
   format?: string;
   platform?: string;
-  mimic_mode?: ContentCartItem["mimicMode"];
-  render_mode?: ContentCartItem["renderMode"];
-  use_brand_visual_system?: boolean;
+      mimic_mode?: ContentCartItem["mimicMode"];
+      render_mode?: ContentCartItem["renderMode"];
+      video_intent?: ContentCartItem["videoIntent"];
+      use_brand_visual_system?: boolean;
 }
 
 export function buildCartCreationPayload(slug: string, items: ContentCartItem[]): {
@@ -120,6 +134,7 @@ export function buildCartCreationPayload(slug: string, items: ContentCartItem[])
       platform: item.platform,
       mimic_mode: item.mimicMode,
       render_mode: item.renderMode,
+      video_intent: item.videoIntent,
       use_brand_visual_system: item.useBrandVisualSystem !== false,
     })),
   };

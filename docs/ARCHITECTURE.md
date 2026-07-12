@@ -116,7 +116,8 @@ Rules must be **`active`** (and correctly **`rule_family`**) to affect the right
 Optional lanes **`FLOW_TOP_PERFORMER_MIMIC_IMAGE`** and **`FLOW_TOP_PERFORMER_MIMIC_CAROUSEL`** recreate archived top-performer **visual patterns** with fresh LLM copy. Gated by **`MIMIC_IMAGE_ENABLED`**; copy uses **OpenAI**; render uses **`MIMIC_IMAGE_PROVIDER`** (default BFL FLUX, or DashScope / NVIDIA / OpenAI).
 
 - **Render contract:** **`generation_payload.mimic_v1`** (`src/domain/mimic-payload.ts`) — mode (`image_full` \| `template_bg` \| `carousel_visual`), reference frames, slide plans.
-- **Review snapshot:** **`mimic_carousel_package`** on carousel mimic jobs only — distinct from **`FLOW_CAROUSEL`** / `carousel_package` (`src/domain/mimic-carousel-package.ts`).
+- **Review snapshot:** **`mimic_carousel_package`** on all **TP-grounded carousel render flows** (`isTpGroundedCarouselRenderFlow()`) — distinct from **`FLOW_CAROUSEL`** / `carousel_package` (`src/domain/mimic-carousel-package.ts`).
+- **Brand Visual System:** **`bvs_v1`** on `generation_payload` when `use_brand_visual_system` is set; versioned source in **`brand_bibles`** (`src/domain/brand-bible.ts`, `bvs-v1.ts`).
 - **Pipeline:** reference resolve before LLM (`mimic-draft-prep.ts`) → generate → optional template-bg extract → render (`mimic-carousel-render.ts`, `mimic-image-job.ts`, `mimic-image-provider.ts`) inside **`job-pipeline.ts`**.
 - **Planning:** separate lanes `mimic_image` / `mimic_carousel` (`format-routing.ts`); image mimic expansion guarded by **`mimic-planning-guards.ts`**.
 

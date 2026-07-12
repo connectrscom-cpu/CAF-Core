@@ -27,7 +27,8 @@ What runs **in this repo**, what runs **beside** it, and how configuration ties 
 | Structured output | Prompt templates + **`output_schemas`** validation; tri-state rollout via **`CAF_OUTPUT_SCHEMA_VALIDATION_MODE`** (`skip` / `warn` / `enforce`) with legacy **`CAF_SKIP_OUTPUT_SCHEMA_VALIDATION`** as fallback |
 | Video clips (scene path) | **OpenAI Videos API** / Sora when **`SCENE_ASSEMBLY_CLIP_PROVIDER=sora`** (`src/config.ts`) |
 | Vision / approval review | Configurable model **`OPENAI_APPROVAL_REVIEW_MODEL`** |
-| Top-performer mimic render | **`MIMIC_IMAGE_PROVIDER`** (default **`bfl`**) — BFL FLUX, DashScope Qwen edit, NVIDIA NIM, or OpenAI `gpt-image-1`; gated by **`MIMIC_IMAGE_ENABLED`**. Copy for mimic jobs still uses OpenAI. See **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**. |
+| Top-performer mimic render | **`MIMIC_IMAGE_PROVIDER`** (default **`bfl`**) — BFL FLUX, DashScope, NVIDIA NIM, or OpenAI `gpt-image-1`; gated by **`MIMIC_IMAGE_ENABLED`**. Lanes: classic mimic, **new visual** (`FLOW_VISUAL_FIRST_CAROUSEL`), **Why Mimic**. Copy always uses OpenAI. See **`docs/MIMIC_FLOWS_COMPLETE_GUIDE.md`**, **`docs/CAF_CURRENT_STATE_CONTEXT_PACK.md`**. |
+| Brand Visual System | Versioned **`brand_bibles`** → `generation_payload.bvs_v1`; logo/frame overlays at render. See **`src/domain/brand-bible.ts`**. |
 
 ## Media & rendering (out-of-process services)
 

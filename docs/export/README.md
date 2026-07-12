@@ -28,8 +28,12 @@
 | [08-caf-inputs-pipeline.pdf](./pdf/08-caf-inputs-pipeline.pdf) | Inputs pipeline | Research / inputs operators | Inputs roadmap |
 | [10-caf-job-lifecycle.pdf](./pdf/10-caf-job-lifecycle.pdf) | **Content job lifecycle** | Engineers, ops, reviewers | Job lifecycle guide, LIFECYCLE, job-pipeline, review-rework |
 | [09-caf-operations-and-deploy.pdf](./pdf/09-caf-operations-and-deploy.pdf) | Operations & deploy | DevOps, production setup | Fly checklist, secrets guide, env inventory |
+| [11-caf-current-state-vol1-platform.pdf](./pdf/11-caf-current-state-vol1-platform.pdf) | **Current state Vol 1** | ChatGPT / stale context refresh | Platform, funnel, domain model + AGENTS |
+| [12-caf-current-state-vol2-data.pdf](./pdf/12-caf-current-state-vol2-data.pdf) | **Current state Vol 2** | Engineers debugging payloads | DB schema, lifecycles, JSON contracts, flow types |
+| [13-caf-current-state-vol3-mimic.pdf](./pdf/13-caf-current-state-vol3-mimic.pdf) | **Current state Vol 3** | Mimic operators, BVS | Review app, inputs, mimic/BVS + carousel edit guide |
+| [14-caf-current-state-vol4-ops.pdf](./pdf/14-caf-current-state-vol4-ops.pdf) | **Current state Vol 4** | Ops, integrators, agent onboarding | QC, learning, publish, API map, maturity, drift |
 
-*Last generated: 2026-06-16*
+*Last generated: run `npm run export:doc-pdfs` after doc changes.*
 
 ---
 
@@ -43,7 +47,8 @@
 | External integrator | `06` + `09` |
 | Mimic / creative team | `07` |
 | Job lifecycle (ops / engineers) | `10-caf-job-lifecycle.pdf` |
-| ChatGPT / Claude project | `02` (or upload Tier 1 markdown from EXTERNAL_CONTEXT_PACK) |
+| ChatGPT / Claude project (fresh context) | **`11` + `12` + `13` + `14`** (current-state volumes) or `docs/CAF_CURRENT_STATE_CONTEXT_PACK.md` |
+| ChatGPT / Claude project (classic) | `02` (or upload Tier 1 markdown from EXTERNAL_CONTEXT_PACK) |
 
 ---
 

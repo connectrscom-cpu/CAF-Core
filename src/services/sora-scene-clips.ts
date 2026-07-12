@@ -186,6 +186,10 @@ export async function createUploadSoraSceneClip(
     taskId: string;
     runId: string;
     sceneIndex: number;
+    /** Override clip length hint (maps to Sora 4/8/12 seconds). */
+    clipDurationSec?: number;
+    /** Full object path under assets bucket (e.g. hooks/run/task/hook_clip.mp4). */
+    storageObjectPath?: string;
     audit: {
       db: Pool;
       projectId: string;
@@ -203,7 +207,8 @@ export async function createUploadSoraSceneClip(
   const base = openAiBase(config);
   const model = (config.SORA_VIDEO_MODEL || "sora-2").trim();
   const size = normalizeSoraVideoSize(config.SORA_VIDEO_SIZE || "720x1280");
-  const seconds = soraSecondsFromClipHint(config.SCENE_ASSEMBLY_CLIP_DURATION_SEC);
+  const clipHint = args.clipDurationSec ?? config.SCENE_ASSEMBLY_CLIP_DURATION_SEC;
+  const seconds = soraSecondsFromClipHint(clipHint);
   const fullPrompt = buildSoraScenePrompt(args.global_visual_context, args.prompt);
   if (!fullPrompt.trim()) {
     throw new Error("Sora scene clip: empty prompt after merging global context");
@@ -311,7 +316,9 @@ export async function createUploadSoraSceneClip(
 
   const safeTask = args.taskId.replace(/[^a-zA-Z0-9_-]/g, "_");
   const safeRun = args.runId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const objectPath = `scenes/${safeRun}/${safeTask}/sora_scene_${args.sceneIndex}.mp4`;
+  const objectPath =
+    args.storageObjectPath?.trim() ||
+    `scenes/${safeRun}/${safeTask}/sora_scene_${args.sceneIndex}.mp4`;
 
   const up = await uploadBuffer(config, objectPath, buf, "video/mp4");
   if (!up.public_url?.trim()) {

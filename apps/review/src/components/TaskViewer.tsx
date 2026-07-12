@@ -14,6 +14,44 @@ function getVal(row: ReviewQueueRow, key: string): string {
   return (row[key] ?? "").trim();
 }
 
+function VideoWithBrandOverlays({
+  src,
+  logoUrl,
+  frameUrl,
+  className,
+  style,
+  onError,
+}: {
+  src: string;
+  logoUrl?: string;
+  frameUrl?: string;
+  className?: string;
+  style?: React.CSSProperties;
+  onError?: () => void;
+}) {
+  const showFrame = Boolean(frameUrl?.trim());
+  const showLogo = Boolean(logoUrl?.trim());
+  return (
+    <div className={`video-brand-overlay-wrap${className ? ` ${className}` : ""}`} style={style}>
+      <video
+        src={src}
+        controls
+        playsInline
+        className="video-brand-overlay-wrap__video"
+        onError={onError}
+      />
+      {showFrame ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={frameUrl} alt="" className="video-brand-overlay-wrap__frame" aria-hidden />
+      ) : null}
+      {showLogo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logoUrl} alt="" className="video-brand-overlay-wrap__logo" aria-hidden />
+      ) : null}
+    </div>
+  );
+}
+
 export interface TaskViewerProps {
   data: ReviewQueueRow;
   assetUrls?: string[];
@@ -42,6 +80,8 @@ export interface TaskViewerProps {
   referenceSlideUrl?: string;
   /** Mimic video: archived top-performer source video for side-by-side review. */
   referenceVideoUrl?: string;
+  /** Live CSS preview of brand logo/frame on generated video (before ffmpeg apply). */
+  videoBrandOverlay?: { logoUrl?: string; frameUrl?: string };
   projectHandle?: string;
   caption?: string;
   onCaptionChange?: (value: string) => void;
@@ -83,6 +123,7 @@ export function TaskViewer({
   carouselActiveSlideIndex,
   referenceSlideUrl,
   referenceVideoUrl,
+  videoBrandOverlay,
   projectHandle,
   caption,
   onCaptionChange,
@@ -253,7 +294,15 @@ export function TaskViewer({
     const refSlide = referenceSlideUrl?.trim() ?? "";
     const showMimicCompare = Boolean(refVideo || refSlide);
     return (
-      <div className="card">
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: carouselPreviewSidePanel ? "minmax(0, 1fr) minmax(260px, 340px)" : "1fr",
+          gap: 16,
+          alignItems: "start",
+        }}
+      >
+        <div className="card">
         {showMimicCompare ? (
           <p className="filter-label mimic-compare-row__heading" style={{ marginBottom: 8 }}>
             Original vs generated
@@ -285,11 +334,11 @@ export function TaskViewer({
             </div>
             <div className="mimic-compare-pane mimic-compare-pane--generated">
               <span className="mimic-compare-pane__label">Generated</span>
-              <video
+              <VideoWithBrandOverlays
                 src={fullBleedVideoUrl}
-                controls
-                playsInline
-                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#000" }}
+                logoUrl={videoBrandOverlay?.logoUrl}
+                frameUrl={videoBrandOverlay?.frameUrl}
+                style={{ width: "100%", maxHeight: "70vh" }}
                 onError={() => setVideoLoadFailed(true)}
               />
             </div>
@@ -317,21 +366,21 @@ export function TaskViewer({
             </div>
             <div className="mimic-compare-pane mimic-compare-pane--generated">
               <span className="mimic-compare-pane__label">Generated</span>
-              <video
+              <VideoWithBrandOverlays
                 src={fullBleedVideoUrl}
-                controls
-                playsInline
-                style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#000" }}
+                logoUrl={videoBrandOverlay?.logoUrl}
+                frameUrl={videoBrandOverlay?.frameUrl}
+                style={{ width: "100%", maxHeight: "70vh" }}
                 onError={() => setVideoLoadFailed(true)}
               />
             </div>
           </div>
         ) : (
-          <video
+          <VideoWithBrandOverlays
             src={fullBleedVideoUrl}
-            controls
-            playsInline
-            style={{ maxHeight: "70vh", width: "100%", borderRadius: 8, background: "#000" }}
+            logoUrl={videoBrandOverlay?.logoUrl}
+            frameUrl={videoBrandOverlay?.frameUrl}
+            style={{ maxHeight: "70vh", width: "100%", borderRadius: 8 }}
             onError={() => setVideoLoadFailed(true)}
           />
         )}
@@ -419,6 +468,8 @@ export function TaskViewer({
             )}
           </div>
         )}
+        </div>
+        {carouselPreviewSidePanel ? <div>{carouselPreviewSidePanel}</div> : null}
       </div>
     );
   }

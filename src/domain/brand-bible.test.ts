@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendBrandBibleToFluxPrompt,
+  buildBrandBibleHeygenPromptBlock,
   buildBrandBiblePromptBlock,
   buildBrandBibleSnapshot,
   buildBibleFromBrandAssets,
   parseBrandBible,
   resolveExplicitFluxPromptAssets,
+  resolveHeygenBvsReferenceAssets,
+  resolveNewVisualBvsFluxImageReferenceAssets,
+  resolveNewVisualBvsFluxImageReferenceUrls,
+  pickBrandBibleBackgroundForSlide,
 } from "./brand-bible.js";
 
 describe("parseBrandBible", () => {
@@ -208,5 +214,107 @@ describe("buildBrandBiblePromptBlock", () => {
     });
     expect(bible?.flux_prompt_asset_ids).toHaveLength(7);
     expect(bible?.flux_prompt_asset_ids).toEqual(["a", "b", "c", "d", "e", "f", "g"]);
+  });
+
+  it("pickBrandBibleBackgroundForSlide is stable per seed and slide", () => {
+    const snap = buildBrandBibleSnapshot(
+      parseBrandBible({
+        application_guide: { instructions: "test" },
+        asset_refs: [
+          { asset_id: "bg1", role: "background" },
+          { asset_id: "bg2", role: "background" },
+        ],
+      })!,
+      [
+        { id: "bg1", public_url: "https://cdn/a.png", kind: "reference_image", label: "A" },
+        { id: "bg2", public_url: "https://cdn/b.png", kind: "reference_image", label: "B" },
+      ]
+    );
+    const a = pickBrandBibleBackgroundForSlide(snap, "TASK_1", 1);
+    const b = pickBrandBibleBackgroundForSlide(snap, "TASK_1", 1);
+    const c = pickBrandBibleBackgroundForSlide(snap, "TASK_1", 2);
+    expect(a?.asset_id).toBe(b?.asset_id);
+    expect(a?.public_url).toMatch(/^https:\/\/cdn\//);
+    expect(c?.asset_id).toBeTruthy();
+  });
+
+  it("resolveNewVisualBvsFluxImageReferenceAssets orders backgrounds, motifs, mascots", () => {
+    const snap = buildBrandBibleSnapshot(
+      parseBrandBible({
+        application_guide: { instructions: "test" },
+        asset_refs: [
+          { asset_id: "m1", role: "mascot" },
+          { asset_id: "bg1", role: "background" },
+          { asset_id: "el1", role: "motif" },
+        ],
+      })!,
+      [
+        {
+          id: "bg1",
+          public_url: "https://cdn/bg.png",
+          kind: "reference_image",
+          label: "Starfield",
+        },
+        {
+          id: "el1",
+          public_url: "https://cdn/glyph.png",
+          kind: "reference_image",
+          label: "Glyph",
+        },
+        {
+          id: "m1",
+          public_url: "https://cdn/mascot.png",
+          kind: "reference_image",
+          label: "Guide",
+        },
+      ] as never
+    );
+    const assets = resolveNewVisualBvsFluxImageReferenceAssets(snap);
+    expect(assets.map((a) => a.asset_id)).toEqual(["bg1", "el1", "m1"]);
+    expect(resolveNewVisualBvsFluxImageReferenceUrls(snap)).toEqual([
+      "https://cdn/bg.png",
+      "https://cdn/glyph.png",
+      "https://cdn/mascot.png",
+    ]);
+  });
+
+  it("appendBrandBibleToFluxPrompt forNewVisual adds attached image reference block", () => {
+    const snap = buildBrandBibleSnapshot(
+      parseBrandBible({
+        palette: ["#0B0B16"],
+        application_guide: { instructions: "Cosmic guide on CTA slides." },
+        asset_refs: [{ asset_id: "bg1", role: "background", label: "Nebula" }],
+      })!,
+      [{ id: "bg1", public_url: "https://cdn/nebula.png", kind: "reference_image", label: "Nebula" }] as never
+    );
+    const out = appendBrandBibleToFluxPrompt("Hero scene, art-only.", snap, { forNewVisual: true });
+    expect(out).toContain("Brand asset reference images (1 attached to Flux");
+    expect(out).toContain("Image 1 [background]: Nebula");
+  });
+});
+
+describe("buildBrandBibleHeygenPromptBlock", () => {
+  it("lists attached files with role labels for HeyGen Video Agent", () => {
+    const snap = buildBrandBibleSnapshot(
+      parseBrandBible({
+        visual_mode: "illustrated_cartoon",
+        palette: ["#0B0B16", "#9B5CFF"],
+        asset_refs: [
+          { asset_id: "logo1", role: "logo", label: "Mark white" },
+          { asset_id: "s1", role: "style_reference", label: "Cosmic wash", usage_notes: "Indigo star fields" },
+        ],
+      })!,
+      [
+        { id: "logo1", public_url: "https://cdn/logo.png", kind: "logo", label: "Mark white" },
+        { id: "s1", public_url: "https://cdn/style.png", kind: "reference_image", label: "Cosmic wash" },
+      ] as never
+    );
+    const refs = resolveHeygenBvsReferenceAssets(snap);
+    const block = buildBrandBibleHeygenPromptBlock(snap, refs);
+    expect(block).toContain("Brand Visual System (BVS)");
+    expect(block).toContain("Uploaded brand asset files (2 attached");
+    expect(block).toContain("File 1 [logo]: Mark white");
+    expect(block).toContain("File 2 [style reference]");
+    expect(block).toContain("#9B5CFF");
   });
 });

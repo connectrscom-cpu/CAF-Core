@@ -54,6 +54,9 @@ import { normalizeLlmParsedForSchemaValidation } from "./llm-output-normalize.js
 import { runHeygenForContentJob } from "./heygen-renderer.js";
 import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
+import { ensureHookFirstVideoInPayload } from "./hook-first-video-prep.js";
+import { runHookFirstVideoPipeline } from "./hook-first-video-pipeline.js";
+import { isHookFirstVideoFlow } from "../domain/hook-first-video.js";
 import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
@@ -74,6 +77,12 @@ import {
 import { logPipelineEvent } from "./pipeline-logger.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { isWhyMimicExecution } from "../domain/why-mimic-execution.js";
+import { isNewVisualCarouselExecution } from "../domain/new-visual-carousel-execution.js";
+import { bvsTemplateBgUsesInventedPlates, bvsTextCarouselUsesBibleAssetPlates } from "../domain/bvs-render-plan.js";
+import { isCarouselMimicOverlayRenderJob } from "../domain/bvs-text-carousel-flow.js";
+import { resolveBvsCarouselRenderOverlays } from "./bvs-render-overlays.js";
+import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
+import { stripNewVisualCarouselRerunPayload } from "./new-visual-carousel-prep.js";
 import { parseBvsFromPayload } from "../domain/bvs-v1.js";
 import { paletteFromBrandBibleSnapshot } from "../domain/brand-bible.js";
 import {
@@ -82,6 +91,10 @@ import {
   ensureMimicTemplateBackgroundsBeforeCopy,
   backfillMimicArchiveReferenceItems,
 } from "./mimic-draft-prep.js";
+import {
+  prepareFlowCarouselBvsDraftPackage,
+  shouldPrepareBvsTextCarouselPackage,
+} from "./flow-carousel-bvs-prep.js";
 import { processImageMimicJob } from "./mimic-image-job.js";
 import {
   classifyMimicMode,
@@ -394,7 +407,7 @@ async function processJobUpToRender(
   const projectGenMode = await loadProjectOpenAiGenerationMode(db, job.project_id);
   const openAiPlaceholder = isOpenAiPlaceholderModeForProject(projectGenMode, config);
 
-  if (job.status === "PLANNED") {
+  if (job.status === "PLANNED" || (job.status === "FAILED" && isVisualFirstCarouselFlow(job.flow_type))) {
     await advanceToGenerating(db, job, run);
   }
 
@@ -421,19 +434,21 @@ async function processJobUpToRender(
           },
           run?.run_id ?? null
         );
-        await ensureMimicTemplateBackgroundsBeforeCopy(
-          db,
-          config,
-          {
-            id: preGenJob.id,
-            task_id: preGenJob.task_id,
-            project_id: preGenJob.project_id,
-            run_id: preGenJob.run_id,
-            flow_type: preGenJob.flow_type,
-            generation_payload: (preGenJob.generation_payload ?? {}) as Record<string, unknown>,
-          },
-          run?.run_id ?? null
-        );
+        if (!isVisualFirstCarouselFlow(preGenJob.flow_type)) {
+          await ensureMimicTemplateBackgroundsBeforeCopy(
+            db,
+            config,
+            {
+              id: preGenJob.id,
+              task_id: preGenJob.task_id,
+              project_id: preGenJob.project_id,
+              run_id: preGenJob.run_id,
+              flow_type: preGenJob.flow_type,
+              generation_payload: (preGenJob.generation_payload ?? {}) as Record<string, unknown>,
+            },
+            run?.run_id ?? null
+          );
+        }
       }
     }
 
@@ -472,6 +487,25 @@ async function processJobUpToRender(
           project_id: freshJob.project_id,
           flow_type: freshJob.flow_type,
           generation_payload: (freshJob.generation_payload ?? {}) as Record<string, unknown>,
+        },
+        run?.run_id ?? null
+      );
+    }
+  }
+
+  const freshForBvsCarousel = await reloadJobRow(db, job.id);
+  if (freshForBvsCarousel) {
+    const bvsGp = (freshForBvsCarousel.generation_payload ?? {}) as Record<string, unknown>;
+    if (shouldPrepareBvsTextCarouselPackage(freshForBvsCarousel.flow_type, bvsGp)) {
+      await prepareFlowCarouselBvsDraftPackage(
+        db,
+        config,
+        {
+          id: freshForBvsCarousel.id,
+          task_id: freshForBvsCarousel.task_id,
+          project_id: freshForBvsCarousel.project_id,
+          flow_type: freshForBvsCarousel.flow_type,
+          generation_payload: bvsGp,
         },
         run?.run_id ?? null
       );
@@ -1017,7 +1051,7 @@ async function shouldResumeAsTextOverlayReprint(
   db: Pool,
   job: JobRow & { render_state?: unknown }
 ): Promise<boolean> {
-  if (!isTpGroundedCarouselRenderFlow(job.flow_type)) return false;
+  if (!isCarouselMimicOverlayRenderJob(job.flow_type, job.generation_payload as Record<string, unknown>)) return false;
   const rs = pickRenderStateRecord(job.render_state) ?? {};
   const phase = String(rs.phase ?? "").trim();
   const renderStatus = String(rs.status ?? "").trim().toLowerCase();
@@ -1280,6 +1314,9 @@ export async function prepareContentJobForFullRerun(
   for (const k of FULL_RERUN_GENERATION_PAYLOAD_DROP_KEYS) {
     delete gp[k];
   }
+  if (isVisualFirstCarouselFlow(job.flow_type ?? "")) {
+    stripNewVisualCarouselRerunPayload(gp);
+  }
   delete gp.layout_qc;
   if (wasLayoutBlocked) {
     gp.layout_qc_skip_auto_reprint = true;
@@ -1494,6 +1531,11 @@ async function ensureHeygenPayloadForFlowType(
   if (/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)) {
     const r = await ensureVideoPromptInPayload(db, config, jobId);
     if (!r.ok) throw new Error(r.error ?? "video prompt prep failed");
+    return;
+  }
+  if (ft === "FLOW_VID_HOOK_FIRST" || isHookFirstVideoFlow(ft)) {
+    const r = await ensureHookFirstVideoInPayload(db, config, jobId);
+    if (!r.ok) throw new Error(r.error ?? "hook-first video prep failed");
     return;
   }
   if (ft === "FLOW_VID_SCRIPT" || /video_script|script_generator/i.test(ft)) {
@@ -1884,36 +1926,34 @@ async function finalizeCarouselJobAfterRender(
   const gpForLayout = (job.generation_payload ?? {}) as Record<string, unknown>;
   const skipLayoutAutoReprint = gpForLayout.layout_qc_skip_auto_reprint === true;
 
-  let layoutBlocked = false;
+  let layoutNeedsAttention = false;
   let layoutQcSummary: Record<string, unknown> | undefined;
   if (
     !keepInReview &&
     !renderOpts?.skipLayoutQa &&
     !skipLayoutAutoReprint &&
     !textOverlayOnly &&
-    isTpGroundedCarouselRenderFlow(job.flow_type) &&
+    isCarouselMimicOverlayRenderJob(job.flow_type, gpForLayout) &&
     config.MIMIC_LAYOUT_QA_ENABLED !== false
   ) {
     const layoutResult = await runMimicPostRenderLayoutLoop(db, config, job.id);
-    layoutBlocked = layoutResult.blockReview;
+    layoutNeedsAttention = layoutResult.layoutQc.review_attention;
     layoutQcSummary = {
       pass: layoutResult.pass,
       overall_score: layoutResult.layoutQc.overall_score,
       review_attention: layoutResult.layoutQc.review_attention,
-      block_review: layoutResult.blockReview,
+      block_review: false,
       iterations: layoutResult.reprintIterations,
     };
   }
 
-  const finalStatus = layoutBlocked
-    ? "BLOCKED"
-    : keepInReview
-      ? priorStatus
-      : finalJobStatusAfterRender(recommendedRoute);
+  const finalStatus = keepInReview
+    ? priorStatus
+    : finalJobStatusAfterRender(recommendedRoute);
   if (!keepInReview || job.status !== finalStatus) {
     await updateJobStatus(db, job.id, finalStatus);
   }
-  if (skipLayoutAutoReprint && !layoutBlocked && !keepInReview) {
+  if (skipLayoutAutoReprint && !keepInReview) {
     await db.query(
       `UPDATE caf_core.content_jobs
        SET generation_payload = COALESCE(generation_payload, '{}'::jsonb) - 'layout_qc_skip_auto_reprint',
@@ -1929,9 +1969,9 @@ async function finalizeCarouselJobAfterRender(
       from_state: "RENDERING",
       to_state: finalStatus,
       triggered_by: "system",
-      actor: layoutBlocked ? "layout-qc" : "job-pipeline",
-      ...(layoutBlocked
-        ? { metadata: { reason: "layout_qc_failed", layout_qc: layoutQcSummary } }
+      actor: layoutNeedsAttention ? "layout-qc" : "job-pipeline",
+      ...(layoutNeedsAttention && layoutQcSummary
+        ? { metadata: { reason: "layout_qc_attention", layout_qc: layoutQcSummary } }
         : {}),
     });
   }
@@ -2015,9 +2055,10 @@ async function processCarouselJob(
   }
   baseRender = stripNonRenderableDeckFields(baseRender);
   baseRender = normalizeLlmParsedForSchemaValidation(job.flow_type, baseRender);
-  const mimicForSlidePick = pickMimicPayload(job.generation_payload);
+  const carouselGp = job.generation_payload as Record<string, unknown>;
+  const mimicForSlidePick = pickMimicPayload(carouselGp);
   const mimicSlideTarget =
-    isTpGroundedCarouselRenderFlow(job.flow_type) && mimicForSlidePick
+    isCarouselMimicOverlayRenderJob(job.flow_type, carouselGp) && mimicForSlidePick
       ? targetMimicCarouselCopySlideCount(job.generation_payload as Record<string, unknown>, mimicForSlidePick)
       : null;
   const slides = slidesFromGeneratedOutput(
@@ -2073,7 +2114,7 @@ async function processCarouselJob(
   let mimicPayload = mimicPayloadRaw;
   if (
     (config.MIMIC_IMAGE_ENABLED || textOverlayOnly) &&
-    isTpGroundedCarouselRenderFlow(job.flow_type) &&
+    isCarouselMimicOverlayRenderJob(job.flow_type, carouselGp) &&
     mimicPayloadRaw
   ) {
     mimicPayload = await refreshMimicPayloadReferenceUrls(config, mimicPayloadRaw);
@@ -2171,13 +2212,14 @@ async function processCarouselJob(
 
   const projectPinnedTemplates = await listProjectCarouselTemplates(db, job.project_id).catch(() => []);
   const mimicJob =
-    isTpGroundedCarouselRenderFlow(job.flow_type) && Boolean(mimicPayload);
+    isCarouselMimicOverlayRenderJob(job.flow_type, carouselGp) && Boolean(mimicPayload);
   /** Text-only reprint must use mimic DocAI/HBS path even when image gen is disabled globally. */
   const isMimicCarousel =
     config.MIMIC_IMAGE_ENABLED &&
     mimicJob;
   const isMimicCarouselRender =
-    mimicJob && (config.MIMIC_IMAGE_ENABLED || textOverlayOnly);
+    mimicJob &&
+    (config.MIMIC_IMAGE_ENABLED || textOverlayOnly || bvsTextCarouselUsesBibleAssetPlates(mimicPayload));
   const mimicVisualGenAiReachable =
     isMimicCarousel && config.MIMIC_IMAGE_PROVIDER === "nvidia"
       ? await isNvidiaVisualGenAiReachable(config)
@@ -2209,7 +2251,10 @@ async function processCarouselJob(
     config.MIMIC_VISUAL_SIMILARITY_PCT;
   const mimicImageInputMode =
     renderOpts?.mimicImageInputModeOverride ??
-    (mimicPayload && isWhyMimicExecution(job.flow_type, mimicPayload)
+    (mimicPayload &&
+    (isWhyMimicExecution(job.flow_type, mimicPayload) ||
+      isNewVisualCarouselExecution(job.flow_type, mimicPayload) ||
+      bvsTemplateBgUsesInventedPlates(mimicPayload))
       ? "analysis_t2i"
       : mimicProjectRender?.imageInputMode ?? config.MIMIC_IMAGE_INPUT_MODE);
   const mimicRegenerationNote = renderOpts?.mimicRegenerationNote?.trim() || undefined;
@@ -2294,6 +2339,23 @@ async function processCarouselJob(
     }
   }
 
+  const bvsAutoOverlays =
+    isMimicCarouselRender && mimicPayload?.bvs_enabled && mimicTemplateBgJob
+      ? await resolveBvsCarouselRenderOverlays(
+          db,
+          config,
+          job.project_id,
+          projectRow?.slug?.trim() ?? "",
+          mimicPayload
+        )
+      : {};
+  const resolvedLogoOverlay = renderOpts?.logoOverlay?.url?.trim()
+    ? renderOpts.logoOverlay
+    : bvsAutoOverlays.logoOverlay;
+  const resolvedFrameOverlay = renderOpts?.frameOverlay?.url?.trim()
+    ? renderOpts.frameOverlay
+    : bvsAutoOverlays.frameOverlay;
+
   // Persist chosen carousel template onto the job payload so downstream systems (review UI, editorial learning,
   // engineering prompts) can reliably resolve `carousel_template_name` by task_id. Without this, the resolver
   // falls back to "default" even when render used a different template.
@@ -2356,19 +2418,33 @@ async function processCarouselJob(
     const slideIndicesToRender =
       uniquePartial.length > 0 ? uniquePartial : Array.from({ length: n }, (_, j) => j + 1);
 
-    if (uniquePartial.length > 0) {
-      await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, uniquePartial);
-    } else {
-      await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
+    // Text-overlay reprint deletes each slide only after a successful render — never wipe the full deck upfront.
+    if (!textOverlayOnly) {
+      if (uniquePartial.length > 0) {
+        await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, uniquePartial);
+      } else {
+        await deleteCarouselSlideAssetsForTask(db, job.project_id, job.task_id);
+      }
     }
 
     const existingCarouselAssets =
-      uniquePartial.length > 0
+      textOverlayOnly || uniquePartial.length > 0
         ? await listAssetsByTask(db, job.project_id, job.task_id)
         : [];
 
+    const mimicTaskAssets =
+      isMimicCarouselRender && mimicPayload
+        ? existingCarouselAssets.length > 0
+          ? existingCarouselAssets
+          : await listAssetsByTask(db, job.project_id, job.task_id)
+        : null;
+    const inlinedBackgroundCache = new Map<string, string>();
+    const slideBatchTotal = slideIndicesToRender.length;
+
     const slideResults: Array<{ index: number; public_url: string | null; object_path: string }> = [];
-    for (const i of slideIndicesToRender) {
+    const textOverlayReprintFailures: Array<{ slide: number; error: string }> = [];
+    for (const [batchPos, i] of slideIndicesToRender.entries()) {
+      try {
       if (uniquePartial.length > 0 && !textOverlayOnly) {
         await markCarouselRegenerateSlideProgress(db, job.id, i, "rendering");
       }
@@ -2385,6 +2461,8 @@ async function processCarouselJob(
         phase: textOverlayOnly ? MIMIC_TEXT_OVERLAY_REPRINT_PHASE : "POST /render-binary",
         slide_index: i,
         slide_total: n,
+        slide_batch_index: batchPos + 1,
+        slide_batch_total: slideBatchTotal,
         template,
         ...(textOverlayOnly ? { render_step: "POST /render-binary" } : {}),
       });
@@ -2438,6 +2516,7 @@ async function processCarouselJob(
             bflModelOverride: mimicBflModelOverride,
             totalSlides: n,
             reuseStoredPlatesOnly: textOverlayOnly,
+            cachedAssets: mimicTaskAssets ?? undefined,
             visualSimilarityPct: mimicVisualSimilarityPct,
             imageInputMode: mimicImageInputMode,
             ...(mimicRegenerationNote ? { regenerationNote: mimicRegenerationNote } : {}),
@@ -2464,6 +2543,7 @@ async function processCarouselJob(
       slideRenderBase = await withInlinedBackgroundImage(slideRenderBase, {
         config,
         strict: Boolean(mimicStrictBgInline),
+        inlineCache: inlinedBackgroundCache,
       });
       if (mimicStrictBgInline) {
         assertMimicSlideBackgroundPresent(
@@ -2668,20 +2748,20 @@ async function processCarouselJob(
           );
         }
       }
-      if (renderOpts?.logoOverlay?.url?.trim()) {
+      if (resolvedLogoOverlay?.url?.trim()) {
         ctx = {
           ...ctx,
           logo_overlay: {
-            url: renderOpts.logoOverlay.url.trim(),
-            position: renderOpts.logoOverlay.position?.trim() || "br",
+            url: resolvedLogoOverlay.url.trim(),
+            position: resolvedLogoOverlay.position?.trim() || "br",
           },
         };
       }
-      if (renderOpts?.frameOverlay?.url?.trim()) {
+      if (resolvedFrameOverlay?.url?.trim()) {
         ctx = {
           ...ctx,
           frame_overlay: {
-            url: renderOpts.frameOverlay.url.trim(),
+            url: resolvedFrameOverlay.url.trim(),
           },
         };
       }
@@ -2702,12 +2782,16 @@ async function processCarouselJob(
           ? slideRenderBase.background_image_url.trim()
           : null;
       const slideStarted = Date.now();
+      const slideTimeoutMs = textOverlayOnly
+        ? Math.max(pipeConfig.carouselRendererSlideTimeoutMs, 120_000)
+        : pipeConfig.carouselRendererSlideTimeoutMs;
+      const slideMaxRetries = pipeConfig.carouselRendererSlideRetryAttempts;
       const response = await postCarouselRenderBinary(
         renderUrl,
         body,
-        pipeConfig.carouselRendererSlideTimeoutMs,
+        slideTimeoutMs,
         i,
-        pipeConfig.carouselRendererSlideRetryAttempts,
+        slideMaxRetries,
         {
           taskId: job.task_id,
           runId: job.run_id,
@@ -2721,7 +2805,7 @@ async function processCarouselJob(
       const buf = Buffer.from(
         await readResponseBodyWithTimeout(
           response,
-          pipeConfig.carouselRendererSlideTimeoutMs,
+          slideTimeoutMs,
           `Renderer slide ${i} PNG`
         )
       );
@@ -2754,6 +2838,10 @@ async function processCarouselJob(
         // Supabase optional
       }
 
+      if (textOverlayOnly) {
+        await deleteCarouselSlideAssetsAtPositions(db, job.project_id, job.task_id, [i]);
+      }
+
       await insertAsset(db, {
         asset_id: `${job.task_id}__CAROUSEL_SLIDE_${i}_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
         task_id: job.task_id,
@@ -2771,17 +2859,45 @@ async function processCarouselJob(
       if (uniquePartial.length > 0 && !textOverlayOnly) {
         await markCarouselRegenerateSlideProgress(db, job.id, i, "completed");
       }
+      } catch (slideErr) {
+        if (!textOverlayOnly) throw slideErr;
+        const slideMsg = slideErr instanceof Error ? slideErr.message : String(slideErr);
+        textOverlayReprintFailures.push({ slide: i, error: slideMsg });
+        logPipelineEvent("warn", "render", "text overlay reprint slide failed — continuing deck", {
+          task_id: job.task_id,
+          data: { slide_index: i, error: slideMsg.slice(0, 300) },
+        });
+      }
     }
+
+    if (textOverlayOnly && textOverlayReprintFailures.length > 0 && slideResults.length === 0) {
+      const failedList = textOverlayReprintFailures.map((f) => f.slide).join(", ");
+      throw new Error(
+        `Text overlay reprint failed on slide(s) ${failedList}: ${textOverlayReprintFailures[0].error}`
+      );
+    }
+
+    const textOverlayReprintPartialFailure = textOverlayOnly && textOverlayReprintFailures.length > 0;
+    const textOverlayReprintError = textOverlayReprintPartialFailure
+      ? `Text overlay reprint failed on slide(s) ${textOverlayReprintFailures.map((f) => f.slide).join(", ")}: ${textOverlayReprintFailures[0].error}`
+      : null;
 
     await mergeJobRenderState(db, job.id, {
       provider: "carousel-renderer",
-      status: "completed",
+      status: textOverlayReprintPartialFailure ? "failed" : "completed",
       slides: slideResults,
       ...(textOverlayOnly
         ? {
             phase: MIMIC_TEXT_OVERLAY_REPRINT_PHASE,
-            completed_at: new Date().toISOString(),
-            error: null,
+            ...(textOverlayReprintPartialFailure
+              ? {
+                  error: textOverlayReprintError?.slice(0, 500) ?? "text overlay reprint failed",
+                  failed_at: new Date().toISOString(),
+                }
+              : {
+                  completed_at: new Date().toISOString(),
+                  error: null,
+                }),
           }
         : { phase: "completed", error: null }),
     });
@@ -2798,7 +2914,7 @@ async function processCarouselJob(
       object_path: s.object_path,
       public_url: s.public_url,
     }));
-    if (uniquePartial.length > 0) {
+    if (textOverlayOnly || uniquePartial.length > 0) {
       for (const a of existingCarouselAssets) {
         if ((a.asset_type ?? "").toUpperCase() !== "CAROUSEL_SLIDE") continue;
         const idx = a.position + 1;
@@ -2980,7 +3096,7 @@ export async function rerenderCarouselSlidesAtIndices(
     await deleteMimicVisualPlateAssetsAtPositions(db, job.project_id, job.task_id, indices);
     const mimicPayload = pickMimicPayload(job.generation_payload);
     const usesTemplateBgSlots =
-      isTpGroundedCarouselRenderFlow(job.flow_type) &&
+      isCarouselMimicOverlayRenderJob(job.flow_type, job.generation_payload as Record<string, unknown>) &&
       mimicPayload?.mode === "template_bg" &&
       mimicDeckUsesSlotDeduplication(mimicPayload);
     const totalSlides =
@@ -3088,7 +3204,11 @@ export async function rerenderCarouselTextOverlay(
     await persistCarouselTextBackingColor(db, jobId, renderExtras.textBackingColor);
   }
   const job = await reloadJobRow(db, jobId);
-  if (!job || !isTpGroundedCarouselRenderFlow(job.flow_type) || isOfflinePipelineFlow(job.flow_type)) {
+  if (
+    !job ||
+    !isCarouselMimicOverlayRenderJob(job.flow_type, job.generation_payload as Record<string, unknown>) ||
+    isOfflinePipelineFlow(job.flow_type)
+  ) {
     throw new Error("carousel_text_overlay_reprint_requires_mimic_carousel_job");
   }
   const run = await getRunByRunId(db, job.project_id, job.run_id);
@@ -3161,7 +3281,19 @@ async function processVideoJob(
   let videoProvider: string = "pending";
   try {
     const startedAt = Date.now();
-    if (isScene) {
+    if (isHookFirstVideoFlow(job.flow_type)) {
+      videoProvider = "hook-first-video";
+      await runHookFirstVideoPipeline(db, config, pipeConfig.videoAssemblyBaseUrl, {
+        id: job.id,
+        task_id: job.task_id,
+        project_id: job.project_id,
+        run_id: job.run_id,
+        flow_type: job.flow_type,
+        platform: job.platform,
+        generation_payload: job.generation_payload as Record<string, unknown>,
+      });
+      await updateJobRenderState(db, job.id, { provider: "hook-first-video", status: "completed" });
+    } else if (isScene) {
       videoProvider = "scene-pipeline";
       await runScenePipeline(db, config, pipeConfig.videoAssemblyBaseUrl, job);
       await updateJobRenderState(db, job.id, { provider: "scene-pipeline", status: "completed" });

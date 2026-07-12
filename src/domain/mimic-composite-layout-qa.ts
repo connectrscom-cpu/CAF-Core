@@ -88,7 +88,7 @@ export type MimicLayoutQcV1 = {
   overall_score: number;
   /** True when operator should open layout editor before approving (any remaining findings). */
   review_attention: boolean;
-  /** True only for catastrophic failures (empty copy on slide) — rare hard gate to BLOCKED. */
+  /** Legacy advisory flag; job status stays IN_REVIEW — use `review_attention` + slide findings. */
   block_review: boolean;
   slides: Record<string, MimicLayoutSlideQa>;
 };

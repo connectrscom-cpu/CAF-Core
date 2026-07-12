@@ -84,8 +84,11 @@ This separates expensive generation from expensive rendering.
 | **`REJECTED`** | Human or QC discarded the job |
 | **`NEEDS_EDIT`** | Human or QC requested rework |
 | **`BLOCKED`** | QC blocked (risk / checklist failure) |
-| **`QC_FAILED`** | QC failed without a softer route |
+| **`QC_FAILED`** | QC failed without a softer route — **only** set by `POST /v1/pipeline/.../full` (`pipeline.ts`), not the main `job-pipeline.ts` path |
+| **`READY_FOR_REVIEW`** | Legacy/alternate review-ready — still counted in some progress helpers |
 | **`FAILED`** | Pipeline error (generation, render, timeout) |
+
+> **`content_jobs.status`** has **no** SQL CHECK constraint (unlike `runs.status`) — treat status strings as a soft contract consumed by pipeline, Review, and observability.
 
 > **`APPROVED`** is set only via **human review** — QC does not auto-approve by default (`CAF_REQUIRE_HUMAN_REVIEW_AFTER_QC`).
 

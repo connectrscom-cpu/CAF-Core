@@ -241,5 +241,48 @@ describe("ideas prompt labs registry", () => {
     });
     expect(system).toContain("FLOW_VISUAL_FIRST_CAROUSEL");
     expect(system).toContain("visual_first");
+    expect(system).toContain("Instagram or Facebook");
+  });
+
+  it("remaps non-IG/FB carousel platforms to Instagram or Facebook", () => {
+    const context: IdeasLlmInsightContextRow[] = [
+      {
+        source_evidence_row_id: "1",
+        evidence_kind: "youtube_video",
+        grounding_insight_ids: ["ins_1"],
+        broad: { why_it_worked: "hook" },
+        top_performer_styles: null,
+      },
+    ];
+    const schema = buildLlmIdeaSchema();
+    const { ideas, errors } = parseLlmIdeasFromResponse(
+      [
+        {
+          title: "Zodiac home decor",
+          thesis: "Room-by-room sign styling",
+          platform: "Pinterest",
+          grounding_insight_ids: ["ins_1"],
+        },
+        {
+          title: "Mercury wellness",
+          thesis: "Mindful rituals by sign",
+          platform: "YouTube",
+          grounding_insight_ids: ["ins_1"],
+        },
+      ],
+      context,
+      schema,
+      {
+        id: "niche_carousel_visual",
+        label: "Niche carousel — visual-first",
+        format: "carousel",
+        content_lens: "niche",
+        execution_profile: "visual_first",
+        section: "niche",
+        count: 2,
+      }
+    );
+    expect(errors).toEqual([]);
+    expect(ideas.map((i) => i.platform)).toEqual(["Instagram", "Facebook"]);
   });
 });

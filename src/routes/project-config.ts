@@ -28,11 +28,16 @@ import {
 } from "../services/heygen-assets.js";
 import { uploadBuffer, downloadBufferFromUrl, fetchableUrlFromAssetRow } from "../services/supabase-storage.js";
 import { signProjectBrandAssetsForClient } from "../services/brand-asset-display-urls.js";
+import { stripFakeTransparencyFromPng } from "../services/png-fake-transparency.js";
 import { fetchHeygenCatalog } from "../services/heygen-catalog.js";
 import {
   importProjectFromCsv,
   PROJECT_IMPORT_CSV_TEMPLATE,
 } from "../services/project-csv-import.js";
+import {
+  importProjectFromOnboardingPack,
+} from "../services/onboarding-pack-import.js";
+import { ONBOARDING_PACK_TEMPLATE } from "../services/onboarding-pack-parser.js";
 import { exportProjectAsCsv } from "../services/project-csv-export.js";
 import { buildRiskQcStatus, riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 
@@ -138,6 +143,74 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       .type("text/csv; charset=utf-8")
       .header("content-disposition", "attachment; filename=\"caf-project-template.csv\"")
       .send(PROJECT_IMPORT_CSV_TEMPLATE);
+  });
+
+  // ── Import a project from a CAF onboarding pack (markdown / plain text) ─
+  app.post("/v1/projects/import-onboarding-pack", async (request, reply) => {
+    const query = z
+      .object({
+        slug: z.string().trim().min(1).optional(),
+        dry_run: z.coerce.boolean().default(false),
+        default_display_name: z.string().optional(),
+      })
+      .safeParse(request.query);
+    if (!query.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_query", details: query.error.flatten() });
+    }
+
+    const contentType = (request.headers["content-type"] ?? "").toLowerCase();
+    let packText: string | null = null;
+
+    try {
+      if (contentType.startsWith("multipart/")) {
+        const parts = request.parts();
+        for await (const part of parts) {
+          if (part.type === "file") {
+            const chunks: Buffer[] = [];
+            for await (const chunk of part.file) chunks.push(chunk);
+            packText = Buffer.concat(chunks).toString("utf8");
+            break;
+          }
+        }
+        if (!packText) {
+          return reply.code(400).send({
+            ok: false,
+            error: "file_required",
+            message: "Upload a .md or .txt onboarding pack in the multipart body.",
+          });
+        }
+      } else if (contentType.startsWith("application/json")) {
+        const body = z.object({ pack: z.string().min(1) }).safeParse(request.body);
+        if (!body.success) {
+          return reply.code(400).send({ ok: false, error: "invalid_body", details: body.error.flatten() });
+        }
+        packText = body.data.pack;
+      } else {
+        return reply.code(415).send({
+          ok: false,
+          error: "unsupported_media_type",
+          message: "Use multipart/form-data (file upload) or application/json { pack: \"...\" }.",
+        });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: "read_failed", message: msg.slice(0, 500) });
+    }
+
+    const result = await importProjectFromOnboardingPack(db, packText, {
+      slug_override: query.data.slug ?? null,
+      default_display_name: query.data.default_display_name ?? null,
+      dry_run: query.data.dry_run,
+    });
+    const status = result.ok ? 200 : 400;
+    return reply.code(status).send(result);
+  });
+
+  app.get("/v1/projects/import-onboarding-pack/template", async (_request, reply) => {
+    return reply
+      .type("text/markdown; charset=utf-8")
+      .header("content-disposition", "attachment; filename=\"caf-onboarding-pack-template.md\"")
+      .send(ONBOARDING_PACK_TEMPLATE);
   });
 
   // ── Export an existing project as an import-ready CSV ────────────────
@@ -804,6 +877,11 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     if (!fileBuffer || fileBuffer.length === 0) {
       return reply.code(400).send({ ok: false, error: "file_required" });
     }
+    const lowerName = fileName.toLowerCase();
+    if (lowerName.endsWith(".png")) {
+      const stripped = await stripFakeTransparencyFromPng(fileBuffer);
+      if (stripped.stripped) fileBuffer = stripped.buffer;
+    }
     const safeSlug = params.data.project_slug.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 64) || "project";
     const base = fileName.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^\.+/, "") || "file";
     const short = base.slice(0, 120);
@@ -852,9 +930,13 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     }
 
     try {
-      const buf = await downloadBufferFromUrl(appConfig, fetchable);
+      let buf = await downloadBufferFromUrl(appConfig, fetchable);
       const pathHint = asset.storage_path ?? asset.public_url ?? "";
       const contentType = guessBrandKitContentType(pathHint.split("/").pop() ?? "file");
+      if (contentType === "image/png") {
+        const stripped = await stripFakeTransparencyFromPng(buf);
+        if (stripped.stripped) buf = stripped.buffer;
+      }
       return reply.type(contentType).send(buf);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
