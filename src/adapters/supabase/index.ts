@@ -5,12 +5,13 @@
  *   import { syncTasksFromSupabase, syncAssetsFromSupabase } from "./adapters/supabase";
  *   await syncTasksFromSupabase(pool, { supabaseUrl, supabaseKey, projectSlug });
  */
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Pool } from "pg";
 import { q, qOne } from "../../db/queries.js";
+import { createCafSupabaseClient } from "../../services/supabase-storage.js";
 
 function getClient(url: string, key: string): SupabaseClient {
-  return createClient(url, key, { auth: { persistSession: false } });
+  return createCafSupabaseClient(url, key);
 }
 
 // ───── tasks → content_jobs ──────

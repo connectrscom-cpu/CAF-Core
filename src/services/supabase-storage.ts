@@ -2,15 +2,24 @@
  * Supabase Storage uploads for rendered assets (carousels, HeyGen video, scenes, audio).
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import ws from "ws";
 import type { AppConfig } from "../config.js";
 
 let cached: SupabaseClient | null = null;
+
+/** Node 20 lacks native WebSocket; realtime-js requires explicit `ws` transport. */
+export function createCafSupabaseClient(url: string, key: string): SupabaseClient {
+  return createClient(url, key, {
+    auth: { persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
+  });
+}
 
 export function getSupabaseStorageClient(config: AppConfig): SupabaseClient | null {
   const url = config.SUPABASE_URL?.trim();
   const key = config.SUPABASE_SERVICE_ROLE_KEY?.trim();
   if (!url || !key) return null;
-  if (!cached) cached = createClient(url, key, { auth: { persistSession: false } });
+  if (!cached) cached = createCafSupabaseClient(url, key);
   return cached;
 }
 

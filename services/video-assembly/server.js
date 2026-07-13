@@ -5,6 +5,7 @@ const fs = require("fs");
 const { execFileSync, spawn } = require("child_process");
 const { randomUUID } = require("crypto");
 const { createClient } = require("@supabase/supabase-js");
+const ws = require("ws");
 
 const PORT = parseInt(process.env.PORT || "3334", 10);
 const SUPABASE_URL = process.env.SUPABASE_URL || "";
@@ -29,7 +30,10 @@ const JOB_TIMEOUT_MS = envInt("VIDEO_ASSEMBLY_JOB_TIMEOUT_MS", 1_800_000);
 
 function supabase() {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return null;
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false },
+    realtime: { transport: ws },
+  });
 }
 
 function ffmpegAvailable() {

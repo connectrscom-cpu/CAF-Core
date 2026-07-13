@@ -17,9 +17,9 @@ export const PROMPT_LABS_ENV_HINTS: Record<string, string> = {
   SCENE_ASSEMBLY_CLIP_DURATION_SEC:
     "Target per-clip duration used by the scene assembly system suffix.",
   HOOK_FIRST_CLIP_PROVIDER:
-    "FLOW_VID_HOOK_FIRST hook opener: `sora` (OpenAI Videos API) or `heygen` (short Video Agent no-avatar clip).",
+    "FLOW_VID_HOOK_FIRST hook opener: `heygen` (default — HeyGen Video Agent no-avatar AI clip, 4–8s) or `sora` (OpenAI Videos API).",
   HOOK_FIRST_HOOK_DURATION_SEC:
-    "Target hook clip length in seconds for hook-first videos (Sora maps to 4/8/12).",
+    "Target hook clip length in seconds for hook-first videos (clamped to 4–8).",
 };
 
 /**

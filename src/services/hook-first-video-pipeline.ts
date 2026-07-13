@@ -1,5 +1,5 @@
 /**
- * Hook-first hybrid video pipeline: cinematic hook clip (Sora or HeyGen) + HeyGen body → concat → final asset.
+ * Hook-first hybrid video pipeline: HeyGen AI hook clip (4–8s) + HeyGen body (avatar / video agent) → concat.
  */
 import type { Pool } from "pg";
 import type { AppConfig } from "../config.js";
@@ -10,9 +10,11 @@ import { uploadBuffer, downloadBufferFromUrl } from "./supabase-storage.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
+  clampHookClipDurationSec,
   extractHookScenePrompt,
   hookFirstBodyFlowType,
   isHookFirstVideoFlow,
+  resolveHookClipProvider,
   resolveHookFirstBodyLane,
 } from "../domain/hook-first-video.js";
 import { ensureHookFirstVideoInPayload } from "./hook-first-video-prep.js";
@@ -59,10 +61,7 @@ async function persistHookFirstState(
 }
 
 function hookClipProvider(config: AppConfig): "sora" | "heygen" {
-  if (config.HOOK_FIRST_CLIP_PROVIDER === "heygen") return "heygen";
-  if (config.HOOK_FIRST_CLIP_PROVIDER === "sora") return "sora";
-  if (config.OPENAI_API_KEY?.trim()) return "sora";
-  return "heygen";
+  return resolveHookClipProvider(config);
 }
 
 function buildHookClipAgentPrompt(hookScenePrompt: string, durationSec: number): string {
@@ -156,7 +155,7 @@ async function renderHookClipHeyGen(
       agentMode: "no_avatar",
       durationBounds: {
         minSec: sceneAgentMin,
-        maxSec: 30,
+        maxSec: 8,
         missingFallbackSec: sceneDurationSec,
       },
     }
@@ -348,9 +347,9 @@ export async function runHookFirstVideoPipeline(
   if (!hookScenePrompt) throw new Error("hook-first: missing hook_scene_prompt");
 
   const hookLine = String(gen.hook ?? gen.hook_line ?? "").trim();
-  const durationSec = Math.max(
-    4,
-    Math.min(12, Math.round(Number(gen.hook_duration_sec ?? config.HOOK_FIRST_HOOK_DURATION_SEC) || 6))
+  const durationSec = clampHookClipDurationSec(
+    gen.hook_duration_sec ?? config.HOOK_FIRST_HOOK_DURATION_SEC,
+    config.HOOK_FIRST_HOOK_DURATION_SEC
   );
   const bodyLane = resolveHookFirstBodyLane(gen.body_lane ?? gen.video_lane ?? gen.hook_first_body_lane);
 

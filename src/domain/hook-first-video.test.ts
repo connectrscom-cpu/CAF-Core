@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  clampHookClipDurationSec,
   extractHookScenePrompt,
   hookFirstBodyFlowType,
   hookFirstPayloadReady,
   isHookFirstVideoFlow,
   normalizeHookFirstGeneratedOutput,
+  resolveHookClipProvider,
   resolveHookFirstBodyLane,
 } from "./hook-first-video.js";
 import { CANONICAL_FLOW_TYPES } from "./canonical-flow-types.js";
@@ -66,5 +68,17 @@ describe("hook-first-video", () => {
     });
     expect(String(out.hook_scene_prompt ?? "")).toContain("dinner chaos");
     expect(String(out.spoken_script ?? "")).toContain("HeyGen segment");
+  });
+
+  it("defaults hook clip provider to heygen", () => {
+    expect(resolveHookClipProvider({ HOOK_FIRST_CLIP_PROVIDER: "heygen" })).toBe("heygen");
+    expect(resolveHookClipProvider({ HOOK_FIRST_CLIP_PROVIDER: "sora" })).toBe("sora");
+  });
+
+  it("clamps hook duration to 4–8 seconds", () => {
+    expect(clampHookClipDurationSec(3)).toBe(4);
+    expect(clampHookClipDurationSec(6)).toBe(6);
+    expect(clampHookClipDurationSec(12)).toBe(8);
+    expect(clampHookClipDurationSec(undefined, 7)).toBe(7);
   });
 });

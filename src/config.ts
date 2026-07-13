@@ -612,11 +612,11 @@ const envSchema = z.object({
 
   /**
    * Hook-first hybrid video (`FLOW_VID_HOOK_FIRST`): provider for the cinematic opener clip.
-   * `sora` = OpenAI Videos API; `heygen` = short HeyGen Video Agent no-avatar clip.
+   * Default `heygen` = HeyGen Video Agent no-avatar AI clip (4–8s). Set `sora` to use OpenAI Videos API instead.
    */
-  HOOK_FIRST_CLIP_PROVIDER: z.enum(["sora", "heygen"]).default("sora"),
-  /** Target hook clip length in seconds (Sora maps to 4/8/12; HeyGen uses prompt guidance). */
-  HOOK_FIRST_HOOK_DURATION_SEC: z.coerce.number().int().min(4).max(12).default(6),
+  HOOK_FIRST_CLIP_PROVIDER: z.enum(["sora", "heygen"]).default("heygen"),
+  /** Target hook clip length in seconds (clamped to 4–8 in the pipeline). */
+  HOOK_FIRST_HOOK_DURATION_SEC: z.coerce.number().int().min(4).max(8).default(6),
 
   /** Single-take HeyGen / prompt-led videos: target spoken length band for LLM fallbacks. */
   VIDEO_TARGET_DURATION_MIN_SEC: z.coerce.number().min(5).max(300).default(30),

@@ -17,6 +17,21 @@ const BODY_LANE_ALIASES: Record<string, HookFirstBodyLane> = {
   noavatar: "no_avatar",
 };
 
+export const HOOK_CLIP_DURATION_MIN_SEC = 4;
+export const HOOK_CLIP_DURATION_MAX_SEC = 8;
+
+export function clampHookClipDurationSec(raw: unknown, fallbackSec = 6): number {
+  const n = Math.round(Number(raw) || fallbackSec);
+  return Math.max(HOOK_CLIP_DURATION_MIN_SEC, Math.min(HOOK_CLIP_DURATION_MAX_SEC, n));
+}
+
+export function resolveHookClipProvider(
+  config: Pick<{ HOOK_FIRST_CLIP_PROVIDER: "sora" | "heygen" }, "HOOK_FIRST_CLIP_PROVIDER">
+): "sora" | "heygen" {
+  if (config.HOOK_FIRST_CLIP_PROVIDER === "sora") return "sora";
+  return "heygen";
+}
+
 export function isHookFirstVideoFlow(flowType: string | null | undefined): boolean {
   const ft = (flowType ?? "").trim();
   return ft === FLOW_VID_HOOK_FIRST || /hook_first|Hook_First|VID_HOOK_FIRST/i.test(ft);

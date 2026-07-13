@@ -22,6 +22,7 @@ import {
   brandBibleSnapshotToHeygenFiles,
   mergeHeygenVideoAgentFiles,
   productBibleSnapshotToHeygenFiles,
+  resolveHeygenVideoAgentBodyFiles,
 } from "./brand-heygen-files.js";
 import { buildProductBibleVideoAgentPromptBlock } from "../domain/product-bible.js";
 import { resolveProductBibleForEnabledJob } from "../domain/product-bible-v1.js";
@@ -1759,6 +1760,13 @@ export async function runHeygenVideoWithBody(
   const postPath = opts?.postPath ?? "/v3/video-agents";
   const endpoint = `${appConfig.HEYGEN_API_BASE.replace(/\/$/, "")}${postPath}`;
   try {
+    if (postPath === "/v3/video-agents" && Array.isArray(body.files) && body.files.length > 0) {
+      const kit =
+        audit?.projectId && audit.db
+          ? await listProjectBrandAssets(audit.db, audit.projectId).catch(() => [])
+          : [];
+      await resolveHeygenVideoAgentBodyFiles(appConfig, body, kit);
+    }
     const videoId = await submitHeyGenVideo(
       apiKey,
       appConfig.HEYGEN_API_BASE,

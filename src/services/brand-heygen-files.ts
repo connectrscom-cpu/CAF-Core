@@ -1,6 +1,7 @@
 /**
  * Build HeyGen Video Agent v3 `files` array from project brand assets (max 20).
  */
+import type { AppConfig } from "../config.js";
 import {
   resolveHeygenBvsReferenceAssets,
   type BrandBibleResolvedAsset,
@@ -11,6 +12,12 @@ import {
   type ProductBibleSnapshotV1,
 } from "../domain/product-bible.js";
 import type { ProjectBrandAssetRow } from "../repositories/project-config.js";
+import {
+  createSignedUrlForObjectKey,
+  fetchableUrlFromAssetRow,
+  tryParseSupabasePublicObjectUrl,
+  tryParseSupabaseSignedObjectUrl,
+} from "./supabase-storage.js";
 
 const HEYGEN_FILES_MAX = 20;
 
@@ -133,4 +140,86 @@ export function mergeHeygenVideoAgentFiles(
     if (merged.length >= HEYGEN_FILES_MAX) break;
   }
   body.files = merged;
+}
+
+function findBrandAssetRowForUrl(rows: ProjectBrandAssetRow[], url: string): ProjectBrandAssetRow | undefined {
+  const u = url.trim();
+  if (!u) return undefined;
+  return rows.find((r) => {
+    const pub = (r.public_url ?? "").trim();
+    if (pub && pub === u) return true;
+    const path = (r.storage_path ?? "").trim();
+    if (!path) return false;
+    try {
+      const parsed = tryParseSupabasePublicObjectUrl(u) ?? tryParseSupabaseSignedObjectUrl(u);
+      if (!parsed) return false;
+      return parsed.objectPath === path || parsed.objectPath.endsWith(`/${path}`);
+    } catch {
+      return false;
+    }
+  });
+}
+
+/** Resolve url-type entries to signed/fetchable URLs HeyGen can download (private Supabase buckets). */
+export async function resolveHeygenFileEntryUrl(
+  config: AppConfig,
+  url: string,
+  assetRow?: ProjectBrandAssetRow | null
+): Promise<string | null> {
+  const trimmed = url.trim();
+  if (!trimmed || !/^https?:\/\//i.test(trimmed)) return null;
+
+  const bucket = config.SUPABASE_ASSETS_BUCKET || "assets";
+  const fromRow = await fetchableUrlFromAssetRow(config, {
+    public_url: trimmed,
+    bucket,
+    object_path: assetRow?.storage_path ?? null,
+  });
+  if (fromRow) return fromRow;
+
+  const parsed =
+    tryParseSupabasePublicObjectUrl(trimmed) ?? tryParseSupabaseSignedObjectUrl(trimmed);
+  if (parsed) {
+    const signed = await createSignedUrlForObjectKey(config, parsed.bucket, parsed.objectPath, 7200);
+    if ("signedUrl" in signed) return signed.signedUrl;
+  }
+
+  return trimmed;
+}
+
+export async function resolveHeygenFilesForHeyGenSubmit(
+  config: AppConfig,
+  files: HeygenFileEntry[],
+  assetRows: ProjectBrandAssetRow[]
+): Promise<HeygenFileEntry[]> {
+  const out: HeygenFileEntry[] = [];
+  for (const entry of files) {
+    if (entry.type === "asset_id") {
+      const id = entry.asset_id?.trim();
+      if (id) out.push({ type: "asset_id", asset_id: id });
+      continue;
+    }
+    const url = entry.url?.trim();
+    if (!url) continue;
+    const row = findBrandAssetRowForUrl(assetRows, url);
+    const fetchable = await resolveHeygenFileEntryUrl(config, url, row);
+    if (!fetchable) continue;
+    out.push({ type: "url", url: fetchable });
+    if (out.length >= HEYGEN_FILES_MAX) break;
+  }
+  return out;
+}
+
+/** In-place: replace `body.files` with fetchable URLs before POST /v3/video-agents. */
+export async function resolveHeygenVideoAgentBodyFiles(
+  config: AppConfig,
+  body: Record<string, unknown>,
+  assetRows: ProjectBrandAssetRow[]
+): Promise<void> {
+  const raw = body.files;
+  if (!Array.isArray(raw) || raw.length === 0) return;
+  const entries = raw.filter((x) => x && typeof x === "object") as HeygenFileEntry[];
+  const resolved = await resolveHeygenFilesForHeyGenSubmit(config, entries, assetRows);
+  if (resolved.length > 0) body.files = resolved;
+  else delete body.files;
 }
