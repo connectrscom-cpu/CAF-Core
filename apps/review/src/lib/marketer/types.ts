@@ -192,6 +192,8 @@ export interface ContentCartItem {
   ideaTargetFlowType?: string;
   mimicMode?: "replica" | "why_carousel";
   renderMode?: "full_bleed" | "template";
+  /** Top-performer video lane (HeyGen routing). */
+  videoIntent?: VideoPipelineIntent;
   /** When true, stamp Brand Visual System (brand bible) onto this job at plan time. */
   useBrandVisualSystem?: boolean;
   /** LinkedIn document post lane (2–3 companion images). */
