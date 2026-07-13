@@ -54,8 +54,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     );
   }
 
-  const { idea_ids, mimic_picks, bvs_overrides } = cartItemsToMaterializeBody(items);
-  if (!idea_ids.length && !mimic_picks.length) {
+  const { idea_ids, idea_picks, mimic_picks, bvs_overrides, cart_manifest } = cartItemsToMaterializeBody(items);
+  if (!cart_manifest.length) {
     return NextResponse.json(
       { ok: false, error: "invalid_cart", message: "Could not map cart items to planner rows." },
       { status: 400 }
@@ -88,19 +88,58 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         source: "marketer_content_cart",
         cart_item_count: items.length,
         pack_id: packId,
+        cart_manifest,
       },
     });
 
     const runId = created.run.run_id;
 
-    await materializeRunJobs(slug, runId, {
+    const materializeResult = await materializeRunJobs(slug, runId, {
       mode: "manual",
-      idea_ids: idea_ids.length ? idea_ids : undefined,
-      mimic_picks: mimic_picks.length ? mimic_picks : undefined,
+      cart_manifest,
       bvs_overrides: bvs_overrides.length ? bvs_overrides : undefined,
     });
 
+    const plannerRows = materializeResult.planner_rows ?? 0;
+    if (plannerRows !== items.length) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "materialize_count_mismatch",
+          message:
+            `Cart has ${items.length} items but CAF materialized ${plannerRows} planner rows. ` +
+            "Re-attach the research brief on Ideas, refresh the cart, and try again.",
+          expected_rows: items.length,
+          planner_rows: plannerRows,
+          planner_summary: {
+            ideas: idea_ids.length,
+            idea_picks: idea_picks.length,
+            mimic_picks: mimic_picks.length,
+          },
+        },
+        { status: 502 }
+      );
+    }
+
     const startResult = await startRunForProject(slug, runId);
+    const jobsCreated = startResult.planned_jobs ?? startResult.jobs_created ?? 0;
+    if (jobsCreated !== items.length) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "job_count_mismatch",
+          message:
+            `Cart materialized ${plannerRows} rows but CAF planned ${jobsCreated} jobs (expected ${items.length}). ` +
+            "Check Admin → Runs → Planned jobs for this run.",
+          run_id: runId,
+          expected_jobs: items.length,
+          planner_rows: plannerRows,
+          jobs_created: jobsCreated,
+        },
+        { status: 502 }
+      );
+    }
+
     await processRunForProject(slug, runId);
     await renderRunForProject(slug, runId);
 
@@ -108,9 +147,12 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       ok: true,
       run_id: runId,
       run_uuid: created.run.id,
-      jobs_created: startResult.jobs_created ?? null,
+      jobs_created: jobsCreated,
+      planned_jobs: startResult.planned_jobs ?? jobsCreated,
+      planner_rows: materializeResult.planner_rows ?? null,
       planner_summary: {
         ideas: idea_ids.length,
+        idea_picks: idea_picks.length,
         mimic_picks: mimic_picks.length,
       },
       message:

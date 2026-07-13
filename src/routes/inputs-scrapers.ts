@@ -231,12 +231,12 @@ export function registerInputsScraperRoutes(
     if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
     const body = z
       .object({
-        scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "all"]),
+        scraper: z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "linkedin", "all"]),
         max_sources: z.number().int().min(1).max(500).optional(),
         platforms: z
-          .array(z.enum(["instagram", "tiktok", "html", "facebook", "reddit"]))
+          .array(z.enum(["instagram", "tiktok", "html", "facebook", "reddit", "linkedin"]))
           .min(1)
-          .max(5)
+          .max(6)
           .optional(),
         post_max_age_days: z.number().int().min(1).max(365).optional(),
       })

@@ -374,7 +374,11 @@ export function registerRunRoutes(app: FastifyInstance, deps: { db: Pool; config
         ...materializeBody,
         mimic_picks: materializeBody.mimic_picks.map((p) => {
           const n = normalizeMimicPickRef(p.insights_id, p.mimic_kind as MimicPickKind);
-          return { insights_id: n.insights_id, mimic_kind: n.mimic_kind };
+          return {
+            insights_id: n.insights_id,
+            mimic_kind: n.mimic_kind,
+            ...(p.video_intent ? { video_intent: p.video_intent } : {}),
+          };
         }),
       };
     }

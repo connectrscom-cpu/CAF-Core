@@ -20,7 +20,7 @@ import {
 } from "./llm-generator-helpers.js";
 import { budgetCreationPackForCarouselFlow, budgetCreationPackForMimicFlow } from "./llm-creation-pack-budget.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
-import { isCarouselFlow, isVideoFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isLinkedInDocumentPostFlow } from "../decision_engine/flow-kind.js";
 import {
   isProductImageFlow,
   isProductVideoFlow,
@@ -69,6 +69,11 @@ import {
   pickTitleFromGeneratedOutput,
 } from "../domain/content-display-metadata.js";
 import { isVisualFirstCarouselFlow } from "../domain/visual-first-carousel-flow-types.js";
+import {
+  buildLinkedInDocumentPostV1FromGenerated,
+  LINKEDIN_DOCUMENT_POST_LLM_SYSTEM_APPENDIX,
+  mergeLinkedInDocumentPostV1,
+} from "../domain/linkedin-document-post.js";
 import {
   buildVisualFirstCarouselCopySystemBlock,
   enforceVisualFirstCarouselCopyBudget,
@@ -759,11 +764,18 @@ export async function generateForJob(
 
   systemPrompt = `${systemPrompt.trim()}\n\n${PUBLICATION_SYSTEM_ADDENDUM}`.trim();
 
+  if (isLinkedInDocumentPostFlow(job.flow_type)) {
+    systemPrompt = `${systemPrompt.trim()}\n\n${LINKEDIN_DOCUMENT_POST_LLM_SYSTEM_APPENDIX}`.trim();
+  }
+
   /** Carousel JSON is slide-heavy; low DB defaults truncate copy before it reaches the renderer. */
   const carouselFloor = 5500;
   let maxTokens = openAiMaxTokens(promptTemplate.max_tokens_default, 4000);
   if (isCarouselFlow(job.flow_type)) {
     maxTokens = Math.max(maxTokens, carouselFloor);
+  }
+  if (isLinkedInDocumentPostFlow(job.flow_type)) {
+    maxTokens = Math.max(maxTokens, 4500);
   }
   if (isEditorialRework && hf) {
     const notes = (hf.notes ?? "").trim();
@@ -1395,6 +1407,13 @@ export async function generateForJob(
       if (displayTitle) {
         merge.title = displayTitle;
         merge.generated_title = displayTitle;
+      }
+      if (isLinkedInDocumentPostFlow(job.flow_type) && storedOutput && typeof storedOutput === "object") {
+        const liSlice = buildLinkedInDocumentPostV1FromGenerated(
+          storedOutput as Record<string, unknown>,
+          candidateData
+        );
+        Object.assign(merge, mergeLinkedInDocumentPostV1({}, liSlice));
       }
       merge.content_display = contentDisplay;
       if (draftPackageValidation) {

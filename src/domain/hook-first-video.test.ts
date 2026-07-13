@@ -4,6 +4,7 @@ import {
   extractHookScenePrompt,
   hookFirstBodyFlowType,
   hookFirstPayloadReady,
+  isHookFirstFailedConcatRetryEligible,
   isHookFirstVideoFlow,
   normalizeHookFirstGeneratedOutput,
   resolveHookClipProvider,
@@ -80,5 +81,23 @@ describe("hook-first-video", () => {
     expect(clampHookClipDurationSec(6)).toBe(6);
     expect(clampHookClipDurationSec(12)).toBe(8);
     expect(clampHookClipDurationSec(undefined, 7)).toBe(7);
+  });
+
+  it("detects FAILED hook-first jobs eligible for concat-only retry", () => {
+    const payload = {
+      generated_output: {
+        hook_clip_url: "https://example.com/hook.mp4",
+        body_video_url: "https://example.com/body.mp4",
+      },
+    };
+    expect(
+      isHookFirstFailedConcatRetryEligible("FLOW_VID_HOOK_FIRST", "FAILED", payload)
+    ).toBe(true);
+    expect(
+      isHookFirstFailedConcatRetryEligible("FLOW_VID_HOOK_FIRST", "FAILED", {
+        generated_output: { ...payload.generated_output, merged_video_url: "https://x/y.mp4" },
+      })
+    ).toBe(false);
+    expect(isHookFirstFailedConcatRetryEligible("FLOW_VID_SCRIPT", "FAILED", payload)).toBe(false);
   });
 });

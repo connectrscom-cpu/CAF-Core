@@ -1578,7 +1578,25 @@ export async function materializeRunJobs(
   runId: string,
   body: {
     mode: "manual";
+    cart_manifest?: Array<{
+      cart_item_id: string;
+      kind: "idea" | "top_performer";
+      title?: string;
+      target_flow_type: string;
+      platform?: string;
+      format?: string;
+      use_brand_visual_system?: boolean;
+      insights_id?: string;
+      mimic_kind?: string;
+      video_intent?: string;
+    }>;
     idea_ids?: string[];
+    idea_picks?: Array<{
+      idea_id: string;
+      target_flow_type: string;
+      platform?: string;
+      use_brand_visual_system?: boolean;
+    }>;
     mimic_picks?: Array<{ insights_id: string; mimic_kind: string; video_intent?: string }>;
     bvs_overrides?: Array<{ key: string; enabled: boolean }>;
   }
@@ -1590,7 +1608,7 @@ export async function materializeRunJobs(
 }
 
 export async function startRunForProject(projectSlug: string, runId: string) {
-  return corePostRequired<{ ok: boolean; run_id?: string; jobs_created?: number }>(
+  return corePostRequired<{ ok: boolean; run_id?: string; jobs_created?: number; planned_jobs?: number }>(
     `/v1/runs/${encodeURIComponent(projectSlug)}/${encodeURIComponent(runId)}/start`,
     {}
   );
@@ -1859,8 +1877,8 @@ export async function fetchInputsSourcesWorkbookTemplate(): Promise<ArrayBuffer>
 export async function runInputsScraper(
   projectSlug: string,
   opts: {
-    scraper?: "instagram" | "tiktok" | "html" | "facebook" | "reddit" | "all";
-    platforms?: Array<"instagram" | "tiktok" | "html" | "facebook" | "reddit">;
+    scraper?: "instagram" | "tiktok" | "html" | "facebook" | "reddit" | "linkedin" | "all";
+    platforms?: Array<"instagram" | "tiktok" | "html" | "facebook" | "reddit" | "linkedin">;
     postMaxAgeDays?: number;
     maxSources?: number;
   } = {}

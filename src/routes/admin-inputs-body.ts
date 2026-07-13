@@ -9,6 +9,8 @@ const SOURCE_TABS = [
   { id: "tiktokaccounts", label: "TikTok Accounts" },
   { id: "subreddits", label: "SubReddits" },
   { id: "facebook", label: "Facebook" },
+  { id: "linkedinaccounts", label: "LinkedIn Accounts" },
+  { id: "linkedinsearches", label: "LinkedIn Searches" },
   { id: "hashtags", label: "Hashtags" },
 ] as const;
 
@@ -17,6 +19,7 @@ const CFG_SECTIONS: Array<{ id: string; title: string }> = [
   { id: "tiktok", title: "TikTok · clockworks/tiktok-scraper" },
   { id: "reddit", title: "Reddit · trudax/reddit-scraper-lite" },
   { id: "facebook", title: "Facebook · apify/facebook-posts-scraper" },
+  { id: "linkedin", title: "LinkedIn · harvestapi/profile-posts + profile-search" },
   { id: "html", title: "HTML / blogs (HTTP, no Apify)" },
 ];
 
@@ -101,6 +104,17 @@ const DEFAULT_ACTOR_JSON: Record<string, string> = {
     null,
     2
   ),
+  linkedin: JSON.stringify(
+    {
+      targetUrls: [],
+      maxPosts: 20,
+      postedLimit: "month",
+      searchQuery: "content marketing director",
+      maxItems: 20,
+    },
+    null,
+    2
+  ),
 };
 
 function escTextareaContent(s: string): string {
@@ -113,6 +127,12 @@ const SCRAPERS = [
   { key: "html", label: "HTML / Blogs", sourceTab: "websites_blogs", actor: "HTTP (no Apify)" },
   { key: "facebook", label: "Facebook", sourceTab: "facebook", actor: "apify/facebook-posts-scraper" },
   { key: "reddit", label: "Reddit", sourceTab: "subreddits", actor: "trudax/reddit-scraper-lite" },
+  {
+    key: "linkedin",
+    label: "LinkedIn",
+    sourceTab: "linkedinaccounts",
+    actor: "harvestapi/linkedin-profile-posts + linkedin-profile-search",
+  },
 ] as const;
 
 const SCRAPER_LABEL: Record<string, string> = Object.fromEntries(SCRAPERS.map((s) => [s.key, s.label]));
@@ -324,8 +344,8 @@ var scraperPollTimer=null;
 var scraperInspectImportId=null;
 var scraperInspectRowsCache=[];
 var SCRAPER_PREVIEW_KEYS=['post_url','url','link','account_handle','handle','caption','title','media_type','like_count','comment_count','hashtags','subreddit','page_name','source_url'];
-var EVIDENCE_PACK_PLATFORMS=['instagram','tiktok','reddit','facebook','html'];
-var EVIDENCE_PACK_LABELS={instagram:'Instagram',tiktok:'TikTok',reddit:'Reddit',facebook:'Facebook',html:'HTML / Blogs'};
+var EVIDENCE_PACK_PLATFORMS=['instagram','tiktok','reddit','facebook','linkedin','html'];
+var EVIDENCE_PACK_LABELS={instagram:'Instagram',tiktok:'TikTok',reddit:'Reddit',facebook:'Facebook',linkedin:'LinkedIn',html:'HTML / Blogs'};
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 function defaultActorJsonText(sec){

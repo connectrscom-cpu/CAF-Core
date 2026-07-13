@@ -38,6 +38,12 @@ export function flowTypeForVideoIntent(intent: VideoPipelineIntent): string {
   return VIDEO_LANE_OPTIONS.find((o) => o.id === intent)?.flowTypeRaw ?? "FLOW_VID_PROMPT";
 }
 
+/** Map a cart / planner FLOW_VID_* selection back to a HeyGen lane intent. */
+export function videoIntentFromFlowType(flowTypeRaw: string): VideoPipelineIntent | undefined {
+  const flow = String(flowTypeRaw ?? "").trim().toUpperCase();
+  return VIDEO_LANE_OPTIONS.find((o) => o.flowTypeRaw === flow)?.id;
+}
+
 export function labelForVideoIntent(intent: VideoPipelineIntent): string {
   return VIDEO_LANE_OPTIONS.find((o) => o.id === intent)?.label ?? "Video";
 }

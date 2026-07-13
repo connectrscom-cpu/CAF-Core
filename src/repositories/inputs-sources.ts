@@ -9,6 +9,8 @@ export const INPUTS_SOURCE_TABS = [
   "tiktokaccounts",
   "subreddits",
   "facebook",
+  "linkedinaccounts",
+  "linkedinsearches",
   "hashtags",
 ] as const;
 

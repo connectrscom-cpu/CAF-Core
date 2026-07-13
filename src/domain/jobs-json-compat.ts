@@ -37,6 +37,33 @@ export function dualWriteRunPlannedJobs(rows: unknown[]): { planned_jobs_json: u
   return { planned_jobs_json: list, candidates_json: list };
 }
 
+/**
+ * All insight-backed ideas for materialize / manual pick.
+ * Review Ideas board reads `ideas_json`; do not let a partial stale `jobs_json` hide it.
+ */
+export function readSignalPackIdeasUnion(
+  pack: Record<string, unknown> | null | undefined
+): Record<string, unknown>[] {
+  if (!pack) return [];
+  const byId = new Map<string, Record<string, unknown>>();
+  const ingest = (raw: unknown, overwrite: boolean) => {
+    if (!Array.isArray(raw)) return;
+    for (const item of raw) {
+      if (!item || typeof item !== "object") continue;
+      const row = item as Record<string, unknown>;
+      const id = String(row.id ?? row.idea_id ?? "").trim();
+      if (!id) continue;
+      if (overwrite || !byId.has(id)) byId.set(id, row);
+    }
+  };
+  ingest(pack.jobs_json, false);
+  ingest(pack.ideas_json, true);
+  if (byId.size > 0) return [...byId.values()];
+  return (readSignalPackJobsJson(pack) as Record<string, unknown>[]).filter(
+    (r) => !!r && typeof r === "object"
+  );
+}
+
 /** API shape: primary jobs fields with optional legacy when requested. */
 export function signalPackJobsApiFields(
   pack: Record<string, unknown>,

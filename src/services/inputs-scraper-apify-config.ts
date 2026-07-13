@@ -3,11 +3,18 @@
  * Stored in `inputs_scraper_config.config_json` and edited from Admin → Inputs → Scrapers.
  */
 
+export const LINKEDIN_ACTOR_IDS = {
+  posts: "harvestapi/linkedin-profile-posts",
+  profileSearch: "harvestapi/linkedin-profile-search",
+} as const;
+
 export const DEFAULT_ACTOR_IDS = {
   instagram: "shu8hvrXbJbY3Eb9W",
   tiktok: "GdWCkxBtKWOsKjdch",
   facebook: "KoJrdxJCTtpon81KY",
   reddit: "oAuCIx3ItNrs2okjQ",
+  linkedin_posts: LINKEDIN_ACTOR_IDS.posts,
+  linkedin_profile_search: LINKEDIN_ACTOR_IDS.profileSearch,
 } as const;
 
 export interface ApifyGlobalConfig {
@@ -94,6 +101,29 @@ export interface HtmlScraperConfig {
   maxMainTextChars?: number;
 }
 
+export interface LinkedInScraperConfig {
+  enabled?: boolean;
+  /** harvestapi/linkedin-profile-posts */
+  postsActorId?: string;
+  /** harvestapi/linkedin-profile-search — optional niche/profile discovery */
+  profileSearchActorId?: string;
+  /** Run profile search on `linkedinsearches` sources before post scrape. */
+  profileSearchEnabled?: boolean;
+  /** Max posts per profile/company URL (Apify `maxPosts`). */
+  maxPosts?: number;
+  /** Max profiles returned per search query (Apify `maxItems`). */
+  profileSearchMaxItems?: number;
+  /** Apify `postedLimit` — 24h | week | month | 3months | 6months | year */
+  postedLimit?: string;
+  includeQuotePosts?: boolean;
+  includeReposts?: boolean;
+  scrapeReactions?: boolean;
+  maxReactions?: number;
+  scrapeComments?: boolean;
+  maxComments?: number;
+  datasetLimit?: number;
+}
+
 export interface ScraperProjectConfig {
   apify?: ApifyGlobalConfig;
   scrapers?: {
@@ -102,9 +132,15 @@ export interface ScraperProjectConfig {
     reddit?: RedditScraperConfig;
     facebook?: FacebookScraperConfig;
     html?: HtmlScraperConfig;
+    linkedin?: LinkedInScraperConfig;
   };
   /** Deep-merge overrides onto built actor input (power users). */
-  actorInputExtras?: Partial<Record<"instagram" | "tiktok" | "reddit" | "facebook", Record<string, unknown>>>;
+  actorInputExtras?: Partial<
+    Record<
+      "instagram" | "tiktok" | "reddit" | "facebook" | "linkedin_posts" | "linkedin_profile_search",
+      Record<string, unknown>
+    >
+  >;
 }
 
 export function defaultScraperConfig(): ScraperProjectConfig {
@@ -179,6 +215,20 @@ export function defaultScraperConfig(): ScraperProjectConfig {
         minParagraphChars: 30,
         maxMainTextChars: 30_000,
       },
+      linkedin: {
+        enabled: true,
+        profileSearchEnabled: true,
+        maxPosts: 20,
+        profileSearchMaxItems: 20,
+        postedLimit: "month",
+        includeQuotePosts: false,
+        includeReposts: false,
+        scrapeReactions: false,
+        maxReactions: 5,
+        scrapeComments: false,
+        maxComments: 5,
+        datasetLimit: 2000,
+      },
     },
     actorInputExtras: {},
   };
@@ -194,7 +244,7 @@ export function mergeScraperConfig(stored: Record<string, unknown> | null | unde
   if (!stored || typeof stored !== "object") return base;
   const scrapersIn = stored.scrapers as Record<string, Record<string, unknown>> | undefined;
   const mergedScrapers: NonNullable<ScraperProjectConfig["scrapers"]> = {};
-  for (const key of ["instagram", "tiktok", "reddit", "facebook", "html"] as const) {
+  for (const key of ["instagram", "tiktok", "reddit", "facebook", "html", "linkedin"] as const) {
     mergedScrapers[key] = mergeSection(
       (base.scrapers?.[key] ?? {}) as Record<string, unknown>,
       scrapersIn?.[key]
@@ -239,6 +289,14 @@ export function resolveActorId(
 ): string {
   const id = cfg?.actorId?.trim();
   return id || DEFAULT_ACTOR_IDS[scraper];
+}
+
+export function resolveLinkedInPostsActorId(cfg: LinkedInScraperConfig | undefined): string {
+  return cfg?.postsActorId?.trim() || LINKEDIN_ACTOR_IDS.posts;
+}
+
+export function resolveLinkedInProfileSearchActorId(cfg: LinkedInScraperConfig | undefined): string {
+  return cfg?.profileSearchActorId?.trim() || LINKEDIN_ACTOR_IDS.profileSearch;
 }
 
 export function buildInstagramApifyInput(
@@ -369,6 +427,82 @@ export function buildRedditApifyInputFromConfig(
   return deepMergeActorInput(input, cfg.actorInputExtras?.reddit);
 }
 
+/** LinkedIn HarvestAPI `postedLimit` from marketer post-age days. */
+export function daysToLinkedInPostedLimit(days: number): NonNullable<LinkedInScraperConfig["postedLimit"]> {
+  const d = Math.max(1, Math.floor(days));
+  if (d <= 1) return "24h";
+  if (d <= 7) return "week";
+  if (d <= 30) return "month";
+  if (d <= 90) return "3months";
+  if (d <= 180) return "6months";
+  return "year";
+}
+
+export function buildLinkedInPostsApifyInput(
+  cfg: ScraperProjectConfig,
+  targetUrls: string[]
+): Record<string, unknown> {
+  const li = cfg.scrapers?.linkedin ?? {};
+  const input: Record<string, unknown> = {
+    targetUrls: [...new Set(targetUrls.map((u) => u.trim()).filter(Boolean))],
+    maxPosts: li.maxPosts ?? 20,
+  };
+  if (li.postedLimit?.trim()) input.postedLimit = li.postedLimit.trim();
+  if (li.includeQuotePosts === true) input.includeQuotePosts = true;
+  if (li.includeReposts === true) input.includeReposts = true;
+  if (li.scrapeReactions === true) {
+    input.scrapeReactions = true;
+    if (li.maxReactions != null) input.maxReactions = li.maxReactions;
+  }
+  if (li.scrapeComments === true) {
+    input.scrapeComments = true;
+    if (li.maxComments != null) input.maxComments = li.maxComments;
+  }
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_posts);
+}
+
+export function buildLinkedInProfileSearchApifyInput(
+  cfg: ScraperProjectConfig,
+  sourceRow: Record<string, unknown>
+): Record<string, unknown> | null {
+  const li = cfg.scrapers?.linkedin ?? {};
+  const searchQuery = String(
+    sourceRow.searchQuery ??
+      sourceRow.SearchQuery ??
+      sourceRow.query ??
+      sourceRow.Name ??
+      sourceRow.name ??
+      ""
+  ).trim();
+  if (!searchQuery) return null;
+
+  const input: Record<string, unknown> = {
+    searchQuery,
+    maxItems: li.profileSearchMaxItems ?? 20,
+  };
+
+  const passthroughKeys = [
+    "locations",
+    "currentCompanies",
+    "pastCompanies",
+    "schools",
+    "currentJobTitles",
+    "pastJobTitles",
+    "industryIds",
+    "functionIds",
+    "seniorityLevelIds",
+    "profileLanguages",
+    "companyHeadcount",
+    "recentlyPostedOnLinkedIn",
+  ] as const;
+  for (const key of passthroughKeys) {
+    const v = sourceRow[key];
+    if (v != null && v !== "") input[key] = v;
+  }
+
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_profile_search);
+}
+
 export function buildFacebookApifyInput(
   cfg: ScraperProjectConfig,
   startUrl: string
@@ -391,11 +525,17 @@ export function apifyWaitSec(cfg: ScraperProjectConfig): number {
 
 export function datasetLimitFor(
   cfg: ScraperProjectConfig,
-  scraper: "instagram" | "tiktok" | "reddit" | "facebook"
+  scraper: "instagram" | "tiktok" | "reddit" | "facebook" | "linkedin"
 ): number {
   const n = cfg.scrapers?.[scraper]?.datasetLimit;
   if (n == null || !Number.isFinite(n)) {
-    const defaults: Record<string, number> = { instagram: 500, tiktok: 2000, reddit: 5000, facebook: 500 };
+    const defaults: Record<string, number> = {
+      instagram: 500,
+      tiktok: 2000,
+      reddit: 5000,
+      facebook: 500,
+      linkedin: 2000,
+    };
     return defaults[scraper] ?? 1000;
   }
   return Math.min(Math.max(n, 1), 20_000);
@@ -474,9 +614,40 @@ export const SCRAPER_CONFIG_FIELDS = {
     { key: "minParagraphChars", label: "Min paragraph length", type: "number" as const, min: 10, max: 500 },
     { key: "maxMainTextChars", label: "Max main_text chars", type: "number" as const, min: 1000, max: 100000 },
   ],
+  linkedin: [
+    { key: "enabled", label: "Enabled", type: "checkbox" as const },
+    {
+      key: "postsActorId",
+      label: "Posts actor ID",
+      type: "text" as const,
+      placeholder: LINKEDIN_ACTOR_IDS.posts,
+    },
+    {
+      key: "profileSearchActorId",
+      label: "Profile search actor ID",
+      type: "text" as const,
+      placeholder: LINKEDIN_ACTOR_IDS.profileSearch,
+    },
+    { key: "profileSearchEnabled", label: "Run profile search (linkedinsearches tab)", type: "checkbox" as const },
+    { key: "maxPosts", label: "maxPosts (per profile/company)", type: "number" as const, min: 1, max: 100 },
+    { key: "profileSearchMaxItems", label: "maxItems (per search query)", type: "number" as const, min: 1, max: 500 },
+    {
+      key: "postedLimit",
+      label: "postedLimit",
+      type: "select" as const,
+      options: ["24h", "week", "month", "3months", "6months", "year"],
+    },
+    { key: "includeQuotePosts", label: "includeQuotePosts", type: "checkbox" as const },
+    { key: "includeReposts", label: "includeReposts", type: "checkbox" as const },
+    { key: "scrapeReactions", label: "scrapeReactions", type: "checkbox" as const },
+    { key: "maxReactions", label: "maxReactions", type: "number" as const, min: 0, max: 100 },
+    { key: "scrapeComments", label: "scrapeComments", type: "checkbox" as const },
+    { key: "maxComments", label: "maxComments", type: "number" as const, min: 0, max: 100 },
+    { key: "datasetLimit", label: "Dataset fetch limit", type: "number" as const, min: 1, max: 20000 },
+  ],
 } as const;
 
-export type ScraperPlatformKey = "instagram" | "tiktok" | "html" | "facebook" | "reddit";
+export type ScraperPlatformKey = "instagram" | "tiktok" | "html" | "facebook" | "reddit" | "linkedin";
 
 /** Human-facing post age → Apify `oldestPostDateUnified` / `onlyPostsNewerThan` label. */
 export function daysToOldestPostDateLabel(days: number): string {
@@ -532,6 +703,13 @@ export function applyPostMaxAgeToConfig(
     out.actorInputExtras.facebook = {
       ...(out.actorInputExtras.facebook ?? {}),
       onlyPostsNewerThan: ageLabel,
+    };
+  }
+  if (forPlatform("linkedin")) {
+    out.scrapers = out.scrapers ?? {};
+    out.scrapers.linkedin = {
+      ...out.scrapers.linkedin,
+      postedLimit: daysToLinkedInPostedLimit(days),
     };
   }
   return out;

@@ -8,7 +8,16 @@ describe("buildSourcesWorkbookTemplateBuffer", () => {
     expect(buffer.length).toBeGreaterThan(100);
     const wb = XLSX.read(buffer, { type: "buffer" });
     expect(wb.SheetNames).toEqual(
-      expect.arrayContaining(["IGAccounts", "TikTokAccounts", "Hashtags", "SubReddits", "Facebook", "Websites+Blogs"])
+      expect.arrayContaining([
+        "IGAccounts",
+        "TikTokAccounts",
+        "Hashtags",
+        "SubReddits",
+        "Facebook",
+        "LinkedInAccounts",
+        "LinkedInSearches",
+        "Websites+Blogs",
+      ])
     );
   });
 });

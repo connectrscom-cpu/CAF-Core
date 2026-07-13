@@ -64,6 +64,24 @@ export function parseIdeasV2(raw: unknown): SignalPackIdeaV2[] {
   return parsed.success ? parsed.data : [];
 }
 
+/** Tolerant per-row parse for materialize / manual pick (matches Review Ideas board). */
+export function parseIdeasV2Lenient(raw: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const parsed = signalPackIdeaSchema.safeParse(item);
+    if (parsed.success) {
+      out.push(parsed.data as unknown as Record<string, unknown>);
+      continue;
+    }
+    const row = item as Record<string, unknown>;
+    const id = String(row.id ?? row.idea_id ?? "").trim();
+    if (id) out.push(row);
+  }
+  return out;
+}
+
 export function parseSelectedIdeaIds(raw: unknown): string[] {
   const parsed = z.array(z.string().min(1)).safeParse(raw);
   if (!parsed.success) return [];

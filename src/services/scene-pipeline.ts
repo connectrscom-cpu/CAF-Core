@@ -44,7 +44,7 @@ import {
 import { fitSpokenScriptToWordBudget } from "./spoken-script-word-budget.js";
 import { synthesizeSpeechToStorage } from "./tts-service.js";
 import { createUploadSoraSceneClip } from "./sora-scene-clips.js";
-import { parseVideoAssemblyJson, pollVideoAssemblyJob } from "./video-assembly-client.js";
+import { parseVideoAssemblyJson, pollVideoAssemblyJob, fetchVideoAssemblyJobOutput } from "./video-assembly-client.js";
 
 // Re-export for backward compatibility (job-pipeline + tests import these from scene-pipeline).
 export { pollVideoAssemblyJob };
@@ -506,27 +506,32 @@ export async function runScenePipeline(
     requestJson: { endpoint: concatEndpoint, body: concatPayload },
     responseJson: { request_id: concatJson.request_id, public_url: merged.public_url },
   });
-  let mergedUrl = merged.public_url;
-  if (!mergedUrl && merged.local_path) {
-    throw new Error("concat completed without public_url — configure Supabase on video-assembly or use sync concat from CAF Core");
+  const mergedBuf = merged.public_url?.trim()
+    ? await downloadBufferFromUrl(config, merged.public_url.trim())
+    : await fetchVideoAssemblyJobOutput(
+        videoAssemblyBaseUrl,
+        concatJson.request_id,
+        merged,
+        { timeoutMs: config.VIDEO_ASSEMBLY_CONCAT_POLL_MAX_MS }
+      );
+
+  const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const finalPath = `videos/${safeRun}/${safeTask}/scene_merged.mp4`;
+  let finalPublic: string | null = null;
+  let mergedObjectPath: string = finalPath;
+  try {
+    const up = await uploadBuffer(config, finalPath, mergedBuf, "video/mp4");
+    finalPublic = up.public_url;
+    mergedObjectPath = up.object_path;
+  } catch {
+    finalPublic = merged.public_url?.trim() || null;
+  }
+  if (!finalPublic) {
+    throw new Error("scene concat final upload to Supabase failed");
   }
 
-  if (mergedUrl) {
-    const finalBuf = await downloadBufferFromUrl(config, mergedUrl);
-    const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
-    const finalPath = `videos/${safeRun}/${safeTask}/scene_merged.mp4`;
-    let finalPublic: string | null = null;
-    let mergedObjectPath: string = finalPath;
-    try {
-      const up = await uploadBuffer(config, finalPath, finalBuf, "video/mp4");
-      finalPublic = up.public_url;
-      mergedObjectPath = up.object_path;
-    } catch {
-      finalPublic = mergedUrl;
-    }
-
-    await insertAsset(db, {
+  await insertAsset(db, {
       asset_id: `${job.task_id}__VIDEO_MERGED_v1`.replace(/[^a-zA-Z0-9_.-]/g, "_"),
       task_id: job.task_id,
       project_id: job.project_id,
@@ -540,7 +545,7 @@ export async function runScenePipeline(
     });
     report.merged_object_path = mergedObjectPath;
 
-    const T_video_probe = await probeMediaDurationSec(finalBuf);
+    const T_video_probe = await probeMediaDurationSec(mergedBuf);
     report.probed_merged_video_duration_sec = T_video_probe;
     const clipDurs = mergeProbedClipDurations(
       scenes,
@@ -655,7 +660,7 @@ export async function runScenePipeline(
         const audioSign = await createSignedUrlForObjectKey(config, bucketForSign, tts.object_path, signTtlSec);
         const srtSign = await createSignedUrlForObjectKey(config, bucketForSign, srtUp.object_path, signTtlSec);
         const videoMuxUrl =
-          "signedUrl" in videoSign ? videoSign.signedUrl : (finalPublic ?? mergedUrl ?? "");
+          "signedUrl" in videoSign ? videoSign.signedUrl : (finalPublic ?? "");
         const audioMuxUrl =
           "signedUrl" in audioSign ? audioSign.signedUrl : (tts.public_url ?? "");
         const subtitlesMuxUrl = "signedUrl" in srtSign ? srtSign.signedUrl : null;
@@ -775,7 +780,6 @@ export async function runScenePipeline(
         report.warnings.push(`tts_mux: ${msg}`);
       }
     }
-  }
 
   await db.query(
     `UPDATE caf_core.content_jobs SET scene_bundle_state = $1::jsonb, updated_at = now() WHERE id = $2`,
@@ -783,7 +787,7 @@ export async function runScenePipeline(
       JSON.stringify({
         status: "completed",
         scene_count: sceneUrls.length,
-        merged_url: mergedUrl ?? null,
+        merged_url: finalPublic ?? null,
         mux_completed: report.mux_completed,
         mux_error: report.mux_error,
         final_video_object_path: report.final_video_object_path,

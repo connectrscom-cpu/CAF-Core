@@ -11,7 +11,10 @@ import {
 } from "./inputs-scraper-apify-config.js";
 import {
   enabledWebsiteSources,
+  extractLinkedInProfileUrl,
   facebookUrlsFromSources,
+  linkedinSearchQueryFromSource,
+  linkedinUrlsFromSources,
   prepareInstagramSources,
   subredditLinksFromSources,
   tiktokProfilesFromSources,
@@ -24,6 +27,8 @@ export const APIFY_RUN_COST_USD = {
   tiktok: { min: 0.08, max: 0.22, mid: 0.13 },
   reddit: { min: 0.04, max: 0.1, mid: 0.06 },
   facebook_per_page: { min: 0.025, max: 0.07, mid: 0.04 },
+  linkedin_posts: { min: 0.06, max: 0.18, mid: 0.1 },
+  linkedin_profile_search: { min: 0.04, max: 0.12, mid: 0.07 },
   html: { min: 0, max: 0, mid: 0 },
 } as const;
 
@@ -194,6 +199,42 @@ export function estimateScraperLine(
         cost_estimate_usd: { min: 0, max: 0, mid: 0 },
       };
     }
+    case "linkedin": {
+      const accountUrls = linkedinUrlsFromSources(sources);
+      const cappedAccounts = applySourceCap(accountUrls, cap);
+      const searchQueries = hashtagSources
+        .map((row) => linkedinSearchQueryFromSource(row))
+        .filter(Boolean);
+      const cappedSearches = applySourceCap(searchQueries, cap);
+      const li = projectConfig.scrapers?.linkedin ?? {};
+      const searchRuns =
+        li.profileSearchEnabled !== false && cappedSearches.length > 0 ? cappedSearches.length : 0;
+      const postRuns = cappedAccounts.length > 0 || searchRuns > 0 ? 1 : 0;
+      const runs = searchRuns + postRuns;
+      return {
+        scraper_key: scraperKey,
+        enabled: true,
+        enabled_sources: accountUrls.length + searchQueries.length,
+        sources_after_cap: cappedAccounts.length + cappedSearches.length,
+        max_sources: cap,
+        apify_runs_estimated: runs,
+        run_mode: "profile_search_then_posts",
+        cost_estimate_usd: {
+          min: roundUsd(
+            APIFY_RUN_COST_USD.linkedin_profile_search.min * searchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.min * postRuns
+          ),
+          max: roundUsd(
+            APIFY_RUN_COST_USD.linkedin_profile_search.max * searchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.max * postRuns
+          ),
+          mid: roundUsd(
+            APIFY_RUN_COST_USD.linkedin_profile_search.mid * searchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.mid * postRuns
+          ),
+        },
+      };
+    }
   }
 }
 
@@ -203,6 +244,7 @@ const SOURCE_TAB: Record<Exclude<ScraperKey, "all">, string> = {
   html: "websites_blogs",
   facebook: "facebook",
   reddit: "subreddits",
+  linkedin: "linkedinaccounts",
 };
 
 async function loadEnabledSourcePayloads(
@@ -224,17 +266,19 @@ export async function estimateInputsScraperRun(
   const projectConfig = mergeScraperConfig(stored?.config_json);
   const cap = maxSources != null && maxSources > 0 ? Math.floor(maxSources) : null;
   const hashtagSources = await loadEnabledSourcePayloads(db, projectId, "hashtags");
+  const linkedinSearchSources = await loadEnabledSourcePayloads(db, projectId, "linkedinsearches");
 
   const keys: Array<Exclude<ScraperKey, "all">> =
     scraperKey === "all"
-      ? ["instagram", "tiktok", "html", "facebook", "reddit"]
+      ? ["instagram", "tiktok", "html", "facebook", "reddit", "linkedin"]
       : [scraperKey];
 
   const lines: ScraperRunEstimateLine[] = [];
   for (const key of keys) {
     const tab = SOURCE_TAB[key];
     const sources = await loadEnabledSourcePayloads(db, projectId, tab);
-    lines.push(estimateScraperLine(key, projectConfig, sources, hashtagSources, cap));
+    const searchRows = key === "linkedin" ? linkedinSearchSources : hashtagSources;
+    lines.push(estimateScraperLine(key, projectConfig, sources, searchRows, cap));
   }
 
   const activeLines = lines.filter((l) => l.enabled && l.sources_after_cap > 0);

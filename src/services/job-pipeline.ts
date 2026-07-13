@@ -56,7 +56,7 @@ import { ensureVideoScriptInPayload } from "./video-script-generator.js";
 import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
 import { ensureHookFirstVideoInPayload } from "./hook-first-video-prep.js";
 import { runHookFirstVideoPipeline } from "./hook-first-video-pipeline.js";
-import { isHookFirstVideoFlow } from "../domain/hook-first-video.js";
+import { isHookFirstVideoFlow, isHookFirstFailedConcatRetryEligible } from "../domain/hook-first-video.js";
 import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
@@ -68,7 +68,8 @@ import {
 } from "./render-control.js";
 import { RenderNotReadyError } from "../domain/render-not-ready-error.js";
 import { isOfflinePipelineFlow } from "./offline-flow-types.js";
-import { isCarouselFlow, isVideoFlow, isImageFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow, isLinkedInDocumentPostFlow } from "../decision_engine/flow-kind.js";
+import { processLinkedInDocumentPostJob } from "./linkedin-document-post-render.js";
 import {
   isTpGroundedCarouselRenderFlow,
   isTopPerformerMimicRenderableFlow,
@@ -289,12 +290,13 @@ type PreRenderStep =
   | { kind: "terminal" }
   | { kind: "render_carousel"; recommended_route: string | null }
   | { kind: "render_video"; recommended_route: string | null }
-  | { kind: "render_image"; recommended_route: string | null };
+  | { kind: "render_image"; recommended_route: string | null }
+  | { kind: "render_linkedin_document"; recommended_route: string | null };
 
 type RenderTicket = {
   jobId: string;
   task_id: string;
-  kind: "carousel" | "video" | "image";
+  kind: "carousel" | "video" | "image" | "linkedin_document";
   recommended_route: string | null;
 };
 
@@ -408,8 +410,28 @@ async function processJobUpToRender(
   const projectGenMode = await loadProjectOpenAiGenerationMode(db, job.project_id);
   const openAiPlaceholder = isOpenAiPlaceholderModeForProject(projectGenMode, config);
 
-  if (job.status === "PLANNED" || (job.status === "FAILED" && isVisualFirstCarouselFlow(job.flow_type))) {
-    await advanceToGenerating(db, job, run);
+  if (
+    job.status === "PLANNED" ||
+    (job.status === "FAILED" && isVisualFirstCarouselFlow(job.flow_type)) ||
+    (job.status === "FAILED" &&
+      isHookFirstFailedConcatRetryEligible(job.flow_type, job.status, job.generation_payload))
+  ) {
+    if (job.status === "FAILED" && isHookFirstFailedConcatRetryEligible(job.flow_type, job.status, job.generation_payload)) {
+      await updateJobStatus(db, job.id, "GENERATED");
+      if (run) {
+        await insertJobStateTransition(db, {
+          task_id: job.task_id,
+          project_id: run.project_id,
+          from_state: "FAILED",
+          to_state: "GENERATED",
+          triggered_by: "system",
+          actor: "job-pipeline",
+          metadata: { hook_first_concat_retry: true },
+        });
+      }
+    } else {
+      await advanceToGenerating(db, job, run);
+    }
   }
 
   const payloadSnap = await qOne<{ generation_payload: Record<string, unknown> }>(
@@ -530,7 +552,7 @@ async function processJobUpToRender(
   // If QC fails but the router wants HUMAN_REVIEW, skip media for non-carousel flows (often incomplete JSON).
   // Carousel jobs still run the renderer when possible so review queue rows get slide thumbnails in `assets`.
   if (!qcResult.qc_passed && qcResult.recommended_route === "HUMAN_REVIEW") {
-    if (!isCarouselFlow(job.flow_type) && !isImageFlow(job.flow_type)) {
+    if (!isCarouselFlow(job.flow_type) && !isImageFlow(job.flow_type) && !isLinkedInDocumentPostFlow(job.flow_type)) {
       await advanceToInReview(db, job, run, qcResult.recommended_route);
       return { kind: "terminal" };
     }
@@ -605,6 +627,9 @@ async function processJobUpToRender(
     }
     return { kind: "render_image", recommended_route: route };
   }
+  if (isLinkedInDocumentPostFlow(job.flow_type)) {
+    return { kind: "render_linkedin_document", recommended_route: route };
+  }
   await advanceToInReview(db, job, run, route);
   return { kind: "terminal" };
 }
@@ -625,6 +650,8 @@ async function processOneJob(
     await processCarouselJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
   } else if (step.kind === "render_image") {
     await processImageMimicJob(db, config, jobForMedia as JobRow, run, step.recommended_route);
+  } else if (step.kind === "render_linkedin_document") {
+    await processLinkedInDocumentPostJob(db, config, jobForMedia as JobRow, run, step.recommended_route);
   } else {
     await processVideoJob(db, config, pipeConfig, jobForMedia, run, step.recommended_route);
   }
@@ -683,7 +710,7 @@ export async function processRunJobs(
     db,
     `SELECT id, task_id, flow_type, status, project_id, run_id, platform, generation_payload, render_state
        FROM caf_core.content_jobs
-     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING', 'GENERATED', 'RENDERING')
+     WHERE project_id = $1 AND run_id = $2 AND status IN ('PLANNED', 'GENERATING', 'GENERATED', 'RENDERING', 'FAILED')
      ORDER BY created_at`,
     [run.project_id, run.run_id]
   );
@@ -698,9 +725,11 @@ export async function processRunJobs(
    */
   const jobsToRun = jobs.filter(
     (j) =>
-      j.status !== "RENDERING" ||
-      isCarouselRenderingPipelineEligible(j) ||
-      isVideoRenderingSafelyRetryable(j)
+      (j.status !== "FAILED" ||
+        isHookFirstFailedConcatRetryEligible(j.flow_type, j.status, j.generation_payload)) &&
+      (j.status !== "RENDERING" ||
+        isCarouselRenderingPipelineEligible(j) ||
+        isVideoRenderingSafelyRetryable(j))
   );
 
   /** Carousels first in the pre-render pass so tickets queue as [carousel…, video…]; render phase runs all carousels, then all videos, one job at a time. */
@@ -730,7 +759,9 @@ export async function processRunJobs(
               ? "carousel"
               : step.kind === "render_image"
                 ? "image"
-                : "video",
+                : step.kind === "render_linkedin_document"
+                  ? "linkedin_document"
+                  : "video",
           recommended_route: step.recommended_route,
         });
       }
@@ -744,7 +775,7 @@ export async function processRunJobs(
   }
 
   const carouselTickets = renderTickets.filter((t) => t.kind === "carousel");
-  const imageTickets = renderTickets.filter((t) => t.kind === "image");
+  const imageTickets = renderTickets.filter((t) => t.kind === "image" || t.kind === "linkedin_document");
   const videoTickets = renderTickets.filter((t) => t.kind === "video");
 
   if (carouselTickets.length > 0) {
@@ -758,6 +789,8 @@ export async function processRunJobs(
       await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     } else if (t.kind === "image") {
       await processImageMimicJob(db, config, jobRow as JobRow, run, t.recommended_route);
+    } else if (t.kind === "linkedin_document") {
+      await processLinkedInDocumentPostJob(db, config, jobRow as JobRow, run, t.recommended_route);
     } else {
       await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     }
@@ -964,6 +997,13 @@ export async function renderRunGeneratedJobs(
       carouselTickets.push({ jobId: job.id, task_id: job.task_id, kind: "carousel", recommended_route: route });
     } else if (isImageFlow(job.flow_type)) {
       imageTickets.push({ jobId: job.id, task_id: job.task_id, kind: "image", recommended_route: route });
+    } else if (isLinkedInDocumentPostFlow(job.flow_type)) {
+      imageTickets.push({
+        jobId: job.id,
+        task_id: job.task_id,
+        kind: "linkedin_document",
+        recommended_route: route,
+      });
     } else if (isVideoFlow(job.flow_type)) {
       videoTickets.push({ jobId: job.id, task_id: job.task_id, kind: "video", recommended_route: route });
     }
@@ -980,6 +1020,8 @@ export async function renderRunGeneratedJobs(
       await processCarouselJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     } else if (t.kind === "image") {
       await processImageMimicJob(db, config, jobRow as JobRow, run, t.recommended_route);
+    } else if (t.kind === "linkedin_document") {
+      await processLinkedInDocumentPostJob(db, config, jobRow as JobRow, run, t.recommended_route);
     } else {
       await processVideoJob(db, config, pipeConfig, jobRow, run, t.recommended_route);
     }

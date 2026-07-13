@@ -25,6 +25,7 @@ import {
   type RunRow,
 } from "../repositories/runs.js";
 import {
+  ensureCartTargetFlowsEnabled,
   ensureDefaultAllowedFlowsIfNone,
   ensureMimicFlowsEnabledWhenCapped,
   ensureMissingAllowedFlowRowsForPlanning,
@@ -94,6 +95,7 @@ export interface StartRunResult {
   status: string;
   total_candidates: number;
   planned_jobs: number;
+  jobs_created: number;
   suppressed: boolean;
   suppression_reasons: Array<{ code: string; message: string }>;
   created_job_ids: string[];
@@ -134,7 +136,21 @@ export async function startRun(
     await ensureMissingAllowedFlowRowsForPlanning(db, run.project_id);
     await ensureVideoFlowsEnabledWhenCapped(db, run.project_id, config.DEFAULT_MAX_VIDEO_JOBS_PER_RUN);
     await ensureMimicFlowsEnabledWhenCapped(db, run.project_id);
-    const allowedFlows = await listAllowedFlowTypes(db, run.project_id);
+
+    const isContentCartRun =
+      (run.metadata_json as Record<string, unknown> | undefined)?.source === "marketer_content_cart";
+
+    if (isContentCartRun) {
+      const enabledNow = await ensureCartTargetFlowsEnabled(db, run.project_id, overallCandidates);
+      if (enabledNow.length > 0) {
+        logPipelineEvent("info", "plan", "cart_flows_auto_enabled", {
+          run_id: run.run_id,
+          data: { flows: enabledNow },
+        });
+      }
+    }
+
+    let allowedFlows = await listAllowedFlowTypes(db, run.project_id);
     const enabledFlows = allowedFlows.filter((f) => f.enabled && !isOfflinePipelineFlow(f.flow_type));
 
     if (enabledFlows.length === 0) {
@@ -145,7 +161,7 @@ export async function startRun(
     await updateRunStatus(db, runUuid, "PLANNING", { started_at: new Date().toISOString() });
 
     const videoRouting = await loadVideoRoutingConfig(db, config, run.project_id);
-    if (!videoRouting.enabled) {
+    if (!videoRouting.enabled && !isContentCartRun) {
       overallCandidates = await expandOverallCandidatesWithSceneAssemblyRouter(db, config, {
         projectId: run.project_id,
         runId: run.run_id,
@@ -165,9 +181,11 @@ export async function startRun(
       constraints,
       enabledFlows.map((f) => f.flow_type)
     );
+
     const candidates = buildCandidatesFromSignalPack(overallCandidates, enabledFlows, run.run_id, {
       videoRouting,
       productHeygenModes,
+      strictCartPlanning: isContentCartRun,
       derivedGlobals: (pack.derived_globals_json &&
       typeof pack.derived_globals_json === "object" &&
       !Array.isArray(pack.derived_globals_json)
@@ -181,6 +199,16 @@ export async function startRun(
         : undefined,
     });
 
+    if (isContentCartRun && candidates.length < overallCandidates.length) {
+      logPipelineEvent("warn", "plan", "cart_planner_rows_not_all_candidates", {
+        run_id: run.run_id,
+        data: {
+          planner_rows: overallCandidates.length,
+          candidates: candidates.length,
+        },
+      });
+    }
+
     if (candidates.length === 0) {
       await updateRunStatus(db, runUuid, "COMPLETED", {
         completed_at: new Date().toISOString(),
@@ -191,6 +219,7 @@ export async function startRun(
         status: "COMPLETED",
         total_candidates: overallCandidates.length,
         planned_jobs: 0,
+        jobs_created: 0,
         suppressed: false,
         suppression_reasons: [],
         created_job_ids: [],
@@ -205,6 +234,7 @@ export async function startRun(
       project_slug: projectRow.slug,
       run_id: run.run_id,
       candidates,
+      content_cart_exact: isContentCartRun,
     });
 
     try {
@@ -231,6 +261,7 @@ export async function startRun(
         status: "COMPLETED",
         total_candidates: candidates.length,
         planned_jobs: 0,
+        jobs_created: 0,
         suppressed: plan.suppressed,
         suppression_reasons: plan.suppression_reasons,
         created_job_ids: [],
@@ -430,6 +461,7 @@ export async function startRun(
       status: "GENERATING",
       total_candidates: candidates.length,
       planned_jobs: plan.selected.length,
+      jobs_created: plan.selected.length,
       suppressed: plan.suppressed,
       suppression_reasons: plan.suppression_reasons,
       created_job_ids: createdJobIds,
@@ -515,6 +547,8 @@ function buildCandidatesFromSignalPack(
     productHeygenModes?: Map<string, ProductHeygenMode | null>;
     videoPlanningCaps?: { maxVideoPlan: number; perFlowCaps: Record<string, number> };
     derivedGlobals?: Record<string, unknown> | null;
+    /** Marketer content cart runs: never fan out a planner row without target_flow_type. */
+    strictCartPlanning?: boolean;
   }
 ): CandidateInput[] {
   const candidates: CandidateInput[] = [];
@@ -574,6 +608,17 @@ function buildCandidatesFromSignalPack(
     const sourceRowIndex1Based = rowIdx + 1;
 
     const targetFlowType = String(row.target_flow_type ?? "").trim();
+    if (opts?.strictCartPlanning && !targetFlowType && row.manual_mimic_pick !== true) {
+      logPipelineEvent("warn", "plan", "cart_row_missing_target_flow_type", {
+        run_id: runId,
+        data: {
+          candidate_id: candidateId,
+          idea_id: row.idea_id,
+          source_row_index: sourceRowIndex1Based,
+        },
+      });
+      continue;
+    }
     if (targetFlowType) {
       if (shouldSkipCandidateForFlow(platform, targetFlowType)) {
         continue;
@@ -589,7 +634,12 @@ function buildCandidatesFromSignalPack(
       const flowPlatforms = flow.allowed_platforms
         ? flow.allowed_platforms.split(",").map((p) => p.trim())
         : null;
-      if (flowPlatforms && !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())) {
+      const cartPick = row.content_cart_pick === true || row.manual_mimic_pick === true;
+      if (
+        !cartPick &&
+        flowPlatforms &&
+        !flowPlatforms.some((p) => p.toLowerCase() === platform.toLowerCase())
+      ) {
         continue;
       }
       pushCandidate(row, targetFlowType, row, {

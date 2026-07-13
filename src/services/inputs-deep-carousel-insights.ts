@@ -1,6 +1,6 @@
 /**
  * Top-performer **carousel** pass: multimodal on **all slide images** (+ caption context).
- * **Instagram only** (`instagram_post`); other platforms are skipped.
+ * Carousel deck vision runs on Instagram and LinkedIn multi-image evidence rows.
  * Slide URLs come from `parseCarouselSlideUrls(payload)` (**Apify / ingest-first** ordered URLs from
  * `carousel_slide_urls_json`, `childPosts`, etc., then explicit list keys + top-level covers + **nested**
  * Graph/scraper JSON). When embed fetch is enabled, also re-fetches slide URLs from the post permalink
@@ -56,6 +56,7 @@ import { summarizePayloadForLlm, extractEvidenceDisplayFields } from "./inputs-e
 import {
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
   instagramCarouselStructuralHintPresent,
+  linkedinCarouselStructuralHintPresent,
   instagramPostPermalinkFromPayload,
   parseCarouselCaptionContext,
   carouselSlideUrlsLookStale,
@@ -110,8 +111,13 @@ export const TOP_PERFORMER_CAROUSEL_MAX_ROWS_CAP = 40;
 export const TOP_PERFORMER_CAROUSEL_MAX_SLIDES_DEFAULT = 15;
 export const TOP_PERFORMER_CAROUSEL_MAX_SLIDES_CAP = 15;
 
-/** Carousel deck vision runs only on Instagram evidence rows. */
-const CAROUSEL_VISION_EVIDENCE_KIND = "instagram_post";
+/** Carousel deck vision evidence kinds (Instagram + LinkedIn multi-image posts). */
+const CAROUSEL_VISION_EVIDENCE_KINDS = new Set(["instagram_post", "linkedin_post"]);
+const CAROUSEL_VISION_EVIDENCE_KIND_INSTAGRAM = "instagram_post";
+
+function isCarouselVisionEvidenceKind(kind: string): boolean {
+  return CAROUSEL_VISION_EVIDENCE_KINDS.has(String(kind ?? "").trim());
+}
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
@@ -348,10 +354,12 @@ export interface RunDeepCarouselInsightsResult {
   broad_llm_rows_in_import?: number;
   skipped_broad_insights_gate?: number;
   broad_insights_gate_disabled?: string;
-  /** Rows skipped because `evidence_kind` is not Instagram (carousel vision is IG-only). */
+  /** Rows skipped because `evidence_kind` is not carousel-vision eligible (Instagram / LinkedIn multi-image). */
   skipped_evidence_kind_filter?: number;
-  /** Rows with `evidence_kind === instagram_post` in this scan (after non-IG filter). */
+  /** Rows with `evidence_kind === instagram_post` in this scan. */
   instagram_post_rows?: number;
+  /** Rows with `evidence_kind === linkedin_post` in this scan. */
+  linkedin_post_rows?: number;
   /** IG rows excluded: `media_type` / payload says video or reel (`isVideoLikeEvidence`). */
   skipped_instagram_video_like?: number;
   /** IG still-image rows without ≥2 parsed slide URLs in `payload_json` (no sidecar / carousel columns Core reads). */
@@ -716,7 +724,8 @@ export async function runDeepCarouselInsightsForImport(
       };
       const pres: EmbedPre[] = [];
       for (const r of dbRows) {
-        if (r.evidence_kind !== CAROUSEL_VISION_EVIDENCE_KIND) continue;
+        if (!isCarouselVisionEvidenceKind(r.evidence_kind)) continue;
+        if (r.evidence_kind !== CAROUSEL_VISION_EVIDENCE_KIND_INSTAGRAM) continue;
         const payload = (r.payload_json ?? {}) as Record<string, unknown>;
         if (isVideoLikeEvidence(r.evidence_kind, payload)) continue;
         const baseSlides = parseCarouselSlideUrls(payload, maxSlides);
@@ -798,12 +807,14 @@ export async function runDeepCarouselInsightsForImport(
   let carouselDeckRows = 0;
   const qualifyingCarouselScratch: TopPerformerMediaQualifierPreviewRow[] = [];
 
+  let linkedinPostRows = 0;
   for (const r of dbRows) {
-    if (r.evidence_kind !== CAROUSEL_VISION_EVIDENCE_KIND) {
+    if (!isCarouselVisionEvidenceKind(r.evidence_kind)) {
       skippedEvidenceKindFilter++;
       continue;
     }
-    instagramPostRows++;
+    if (r.evidence_kind === "linkedin_post") linkedinPostRows++;
+    if (r.evidence_kind === CAROUSEL_VISION_EVIDENCE_KIND_INSTAGRAM) instagramPostRows++;
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
     if (isVideoLikeEvidence(r.evidence_kind, payload)) {
       skippedInstagramVideoLike++;
@@ -811,7 +822,10 @@ export async function runDeepCarouselInsightsForImport(
     }
     let slideUrls = parseCarouselSlideUrls(payload, maxSlides);
     const preEmbedCount = slideUrls.length;
-    const structuralHint = instagramCarouselStructuralHintPresent(payload);
+    const structuralHint =
+      r.evidence_kind === "linkedin_post"
+        ? linkedinCarouselStructuralHintPresent(payload)
+        : instagramCarouselStructuralHintPresent(payload);
     let usedEmbedFetch = false;
     if (embedSlideOverrideByRowId.has(r.id)) {
       slideUrls = embedSlideOverrideByRowId.get(r.id)!;
@@ -821,7 +835,7 @@ export async function runDeepCarouselInsightsForImport(
     }
     if (slideUrls.length < MIN_CAROUSEL_SLIDES_FOR_DEEP) {
       skippedInstagramFewSlides++;
-      if (structuralHint) {
+      if (structuralHint && r.evidence_kind === CAROUSEL_VISION_EVIDENCE_KIND_INSTAGRAM) {
         instagramCarouselHintMissingSlideUrls++;
       }
       continue;
@@ -1220,6 +1234,7 @@ ${textBundle}`;
     broad_insights_gate_disabled: broadGate.disabled,
     skipped_evidence_kind_filter: skippedEvidenceKindFilter,
     instagram_post_rows: instagramPostRows,
+    linkedin_post_rows: linkedinPostRows,
     skipped_instagram_video_like: skippedInstagramVideoLike,
     skipped_instagram_few_slide_urls: skippedInstagramFewSlides,
     instagram_carousel_url_hint_missing_slide_urls: instagramCarouselHintMissingSlideUrls,

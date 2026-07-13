@@ -6,7 +6,7 @@ import type { AppConfig } from "../config.js";
 import { qOne } from "../db/queries.js";
 import { insertAsset } from "../repositories/assets.js";
 import { listHeygenConfig } from "../repositories/project-config.js";
-import { uploadBuffer, downloadBufferFromUrl } from "./supabase-storage.js";
+import { uploadBuffer } from "./supabase-storage.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import {
@@ -27,12 +27,13 @@ import {
   resolveHeygenGeneratePath,
   resolveHeygenRenderMode,
   runHeygenVideoWithBody,
+  ensureHeygenVideoWithSubtitles,
   mapHeyGenV2StyleBodyToV3CreateVideoAvatar,
   type HeygenGeneratePath,
   type HeygenSubmitProgress,
 } from "./heygen-renderer.js";
 import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
-import { pollVideoAssemblyJob, parseVideoAssemblyJson } from "./video-assembly-client.js";
+import { fetchVideoAssemblyJobOutput, pollVideoAssemblyJob, parseVideoAssemblyJson } from "./video-assembly-client.js";
 import { extractSpokenScriptText } from "./video-gen-fields.js";
 
 type HookFirstJob = {
@@ -162,34 +163,11 @@ async function renderHookClipHeyGen(
   const apiKey = config.HEYGEN_API_KEY?.trim();
   if (!apiKey) throw new Error("HEYGEN_API_KEY required for hook clip (provider=heygen)");
 
-  const rows = await listHeygenConfig(db, job.project_id);
-  const flowType = "Video_Prompt_HeyGen_NoAvatar";
-  const renderMode = "HEYGEN_NO_AVATAR";
-  const merged = mergeHeygenConfigForJob(rows, job.platform, flowType, renderMode);
-  applyHeygenEnvAvatarDefaults(merged, config);
-  const postPath = resolveHeygenGeneratePath(flowType, renderMode);
-  const sceneAgentMin = config.HEYGEN_SCENE_AGENT_CLIP_MIN_SEC;
-  const sceneDurationSec = Math.max(sceneAgentMin, durationSec);
-
-  const body = buildHeyGenVideoAgentRequestBody(
-    merged,
-    {
-      video_prompt: buildHookClipAgentPrompt(hookScenePrompt, durationSec),
-      estimated_runtime_seconds: durationSec,
-    },
-    undefined,
-    {
-      flowType,
-      taskId: `${job.task_id}__hook_clip`,
-      avatarPickSeed: `${job.task_id}__hook_clip`,
-      agentMode: "no_avatar",
-      durationBounds: {
-        minSec: sceneAgentMin,
-        maxSec: 8,
-        missingFallbackSec: sceneDurationSec,
-      },
-    }
-  );
+  /** Minimal visual-only brief — do not wrap in full Video Agent production brief (12s scene plan + VO). */
+  const body: Record<string, unknown> = {
+    prompt: buildHookClipAgentPrompt(hookScenePrompt, durationSec),
+    orientation: "portrait",
+  };
 
   const { videoUrl } = await runHeygenVideoWithBody(
     config,
@@ -202,7 +180,7 @@ async function renderHookClipHeyGen(
       step: "hook_first_clip_heygen",
       scene_index: 0,
     },
-    { postPath, progress: heygenSegmentProgress(db, job.id, "hook_clip") }
+    { postPath: "/v3/video-agents", progress: heygenSegmentProgress(db, job.id, "hook_clip") }
   );
   return videoUrl;
 }
@@ -266,7 +244,7 @@ async function renderBodyHeyGen(
     });
   }
 
-  const { videoUrl } = await runHeygenVideoWithBody(
+  const heygenResult = await runHeygenVideoWithBody(
     config,
     body,
     {
@@ -278,7 +256,26 @@ async function renderBodyHeyGen(
     },
     { postPath, progress: heygenSegmentProgress(db, job.id, "body_heygen") }
   );
-  return videoUrl;
+
+  return ensureHeygenVideoWithSubtitles(
+    db,
+    config,
+    {
+      id: job.id,
+      task_id: job.task_id,
+      project_id: job.project_id,
+      run_id: job.run_id,
+      flow_type: job.flow_type,
+      platform: job.platform,
+      generation_payload: job.generation_payload,
+    },
+    heygenResult,
+    {
+      postPath,
+      spokenScript: extractSpokenScriptText(bodyGen) || null,
+      storageSuffix: "hook_first_body",
+    }
+  );
 }
 
 async function concatHookAndBody(
@@ -319,31 +316,29 @@ async function concatHookAndBody(
     model: null,
     ok: true,
     requestJson: { endpoint: concatEndpoint, body: concatPayload },
-    responseJson: { request_id: concatJson.request_id, public_url: merged.public_url },
+    responseJson: {
+      request_id: concatJson.request_id,
+      public_url: merged.public_url,
+      upload_error: merged.upload_error ?? null,
+    },
   });
 
-  if (!merged.public_url) {
-    throw new Error("hook-first concat completed without public_url");
-  }
-
-  const finalBuf = await downloadBufferFromUrl(config, merged.public_url);
+  const finalBuf = await fetchVideoAssemblyJobOutput(
+    videoAssemblyBaseUrl,
+    concatJson.request_id,
+    merged,
+    { timeoutMs: config.VIDEO_ASSEMBLY_CONCAT_POLL_MAX_MS }
+  );
   const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const finalPath = `videos/${safeRun}/${safeTask}/hook_first_merged.mp4`;
 
-  let finalPublic = merged.public_url;
-  let mergedObjectPath = finalPath;
-  try {
-    const up = await uploadBuffer(config, finalPath, finalBuf, "video/mp4");
-    if (up.public_url?.trim()) {
-      finalPublic = up.public_url.trim();
-      mergedObjectPath = up.object_path;
-    }
-  } catch {
-    /* keep assembly URL */
+  const up = await uploadBuffer(config, finalPath, finalBuf, "video/mp4");
+  if (!up.public_url?.trim()) {
+    throw new Error("hook-first final upload to Supabase failed");
   }
 
-  return { publicUrl: finalPublic, objectPath: mergedObjectPath };
+  return { publicUrl: up.public_url.trim(), objectPath: up.object_path };
 }
 
 export async function runHookFirstVideoPipeline(

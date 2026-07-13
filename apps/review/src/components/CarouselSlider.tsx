@@ -549,12 +549,12 @@ export function CarouselSlider({
     const textEditorLayout = Boolean(copySidePanel);
     const vertical = textEditorLayout;
     const hasReference = Boolean(referenceSlideUrl?.trim());
-    if (textEditorLayout && !hasReference) return null;
+    const generatedAlongsideEditor = textEditorLayout && !hasReference;
     return (
       <div className={previewSidePanel && !copySidePanel ? "mimic-preview-row" : undefined}>
         {vertical ? (
           <p className="filter-label mimic-compare-row__heading">
-            {hasReference ? "Original reference" : "Original vs generated"}
+            {hasReference ? "Original reference" : generatedAlongsideEditor ? "Generated slide" : "Original vs generated"}
           </p>
         ) : null}
         <div
@@ -576,9 +576,9 @@ export function CarouselSlider({
                 ? `mimic-compare-frame mimic-compare-frame--vertical${
                     hasReference && textEditorLayout
                       ? " mimic-compare-frame--original-only"
-                      : hasReference
-                        ? ""
-                        : " mimic-compare-frame--generated-only"
+                      : generatedAlongsideEditor || !hasReference
+                        ? " mimic-compare-frame--generated-only"
+                        : ""
                   }`
                 : "mimic-compare-frame"
             }
@@ -598,13 +598,17 @@ export function CarouselSlider({
                 />
               </div>
             ) : null}
-            {!textEditorLayout ? (
+            {!textEditorLayout || generatedAlongsideEditor ? (
             <div
               className={
-                hasReference ? "mimic-compare-pane mimic-compare-pane--generated" : "mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo"
+                hasReference && !generatedAlongsideEditor
+                  ? "mimic-compare-pane mimic-compare-pane--generated"
+                  : "mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo"
               }
             >
-              {hasReference ? <span className="mimic-compare-pane__label">Generated</span> : null}
+              {hasReference || generatedAlongsideEditor ? (
+                <span className="mimic-compare-pane__label">Generated</span>
+              ) : null}
               {livePngUrl || storedSlideImageUrl ? (
                 renderGeneratedPreviewImage(
                   `gen-${currentIndex}-${assetRefreshKey}-${livePngUrl ? "live" : storedSlideImageUrl}`,

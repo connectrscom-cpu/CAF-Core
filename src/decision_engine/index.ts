@@ -22,6 +22,7 @@ import {
   createPlanSelectionState,
   ideaKeyFallbackPass,
   ideaKeyPrimaryPass,
+  selectExactCartJobsFromCandidates,
   selectJobsFromCandidates,
   selectTemplatedCarouselExtraVariations,
 } from "./plan-selection.js";
@@ -143,10 +144,83 @@ export async function decideGenerationPlan(
 
   let scored: ScoredCandidate[] = req.candidates.map((c) => scoreCandidate(c, weights));
   scored = applyLearningBoosts(scored, learningRules);
-  scored = dedupeByKey(scored);
 
   const dropped: GenerationPlanResult["dropped_candidates"] = [];
   const flowOk = (flow: string) => !kill.blockedFlowTypes.has(flow);
+
+  if (req.content_cart_exact) {
+    scored = scored.filter((c) => {
+      if (!flowOk(c.flow_type)) {
+        dropped.push({ candidate_id: c.candidate_id, reason: "flow_blocked", pre_gen_score: c.pre_gen_score });
+        return false;
+      }
+      return true;
+    });
+
+    const planningCaps = resolvePlanningCaps(
+      config,
+      constraints,
+      scored.map((c) => c.flow_type)
+    );
+    const selectionCtx = {
+      db,
+      projectId: project.id,
+      cafGlobalProjectId: cafGlobal.id,
+      minScore,
+      variationCap,
+      maxDaily: null,
+      jobsToday,
+      maxPrompts: constraints?.max_active_prompt_versions ?? null,
+      maxCarouselPlan: planningCaps.maxCarouselPlan,
+      maxVideoPlan: planningCaps.maxVideoPlan,
+      perFlowCaps: planningCaps.perFlowCaps,
+      autoValThreshold,
+      promptOverride: req.prompt_override,
+    };
+    const selectionState = createPlanSelectionState(selectionCtx);
+    await selectExactCartJobsFromCandidates(selectionCtx, selectionState, scored);
+    if (selectionState.remainingSlots <= 0 && scored.length > selectionState.selected.length) {
+      for (const c of scored.slice(selectionState.selected.length)) {
+        dropped.push({ candidate_id: c.candidate_id, reason: "daily_cap", pre_gen_score: c.pre_gen_score });
+      }
+    }
+
+    const selected = selectionState.selected;
+    const result: GenerationPlanResult = {
+      trace_id: traceId,
+      project_slug: req.project_slug,
+      run_id: req.run_id ?? null,
+      suppressed: selected.length === 0 && req.candidates.length > 0,
+      suppression_reasons: suppressionReasons,
+      dropped_candidates: dropped,
+      selected,
+      meta: {
+        engine_version: config.DECISION_ENGINE_VERSION,
+        jobs_created_today: jobsToday,
+        max_daily_jobs: maxDaily,
+        min_score_used: minScore,
+        variation_cap: variationCap,
+        prompt_override_used: req.prompt_override ?? null,
+        content_cart_exact: true,
+        planned_carousel_jobs: selectionState.plannedCarousel,
+        planned_video_jobs: selectionState.plannedVideo,
+      },
+    };
+
+    if (!req.dry_run) {
+      await insertDecisionTrace(db, {
+        traceId,
+        projectId: project.id,
+        runId: req.run_id ?? null,
+        engineVersion: config.DECISION_ENGINE_VERSION,
+        inputSnapshot: req,
+        outputSnapshot: result,
+      });
+    }
+    return result;
+  }
+
+  scored = dedupeByKey(scored);
 
   scored = scored.filter((c) => {
     if (!flowOk(c.flow_type)) {

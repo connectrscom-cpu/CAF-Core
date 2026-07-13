@@ -536,6 +536,152 @@ function cleanLines(arr: unknown): string[] {
     .filter((s, i, a) => a.indexOf(s) === i);
 }
 
+export function normalizeLinkedInTargetUrl(row: Record<string, unknown>): string {
+  const raw = String(
+    row.linkedinUrl ?? row.linkedin_url ?? row.Link ?? row.link ?? row.URL ?? row.url ?? row.Name ?? row.name ?? ""
+  ).trim();
+  if (!raw) return "";
+
+  let value = raw;
+  if (!/^https?:\/\//i.test(value)) {
+    const bare = stripAt(value.replace(/^\/+/, ""));
+    if (/^company\//i.test(bare) || bare.includes("/company/")) {
+      const slug = bare.replace(/^.*company\//i, "").replace(/\/+$/, "");
+      value = `https://www.linkedin.com/company/${slug}/`;
+    } else {
+      const handle = bare.replace(/^.*\/in\//i, "").replace(/\/+$/, "");
+      value = `https://www.linkedin.com/in/${handle}/`;
+    }
+  }
+
+  value = value.split("?")[0].split("#")[0].trim();
+  const inMatch = value.match(/linkedin\.com\/in\/([^/?#\s]+)/i);
+  if (inMatch?.[1]) return `https://www.linkedin.com/in/${stripAt(inMatch[1])}/`;
+  const coMatch = value.match(/linkedin\.com\/company\/([^/?#\s]+)/i);
+  if (coMatch?.[1]) return `https://www.linkedin.com/company/${stripAt(coMatch[1])}/`;
+  if (/linkedin\.com\/(posts|feed)\//i.test(value)) return value;
+  return value.endsWith("/") ? value : `${value}/`;
+}
+
+export function linkedinUrlsFromSources(rows: Record<string, unknown>[]): string[] {
+  return [...new Set(rows.map((row) => normalizeLinkedInTargetUrl(row)).filter(Boolean))];
+}
+
+export function linkedinSearchQueryFromSource(row: Record<string, unknown>): string {
+  return String(row.searchQuery ?? row.SearchQuery ?? row.query ?? row.Name ?? row.name ?? "").trim();
+}
+
+export function extractLinkedInProfileUrl(item: Record<string, unknown>): string | null {
+  const direct = cleanUrl(item.linkedinUrl ?? item.linkedin_url ?? item.url);
+  if (direct && /linkedin\.com\/(in|company)\//i.test(direct)) return direct;
+  const id = String(item.publicIdentifier ?? item.public_identifier ?? "").trim();
+  if (id) return `https://www.linkedin.com/in/${stripAt(id)}/`;
+  return null;
+}
+
+function linkedinPostImageUrls(item: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const img of toArray(item.postImages)) {
+    if (typeof img === "string") {
+      const u = cleanUrl(img);
+      if (u) out.push(u);
+    } else if (img && typeof img === "object") {
+      const o = img as Record<string, unknown>;
+      const u = cleanUrl(o.url ?? o.imageUrl ?? o.image_url);
+      if (u) out.push(u);
+    }
+  }
+  const doc = item.document as Record<string, unknown> | undefined;
+  if (doc) {
+    for (const page of toArray(doc.coverPages)) {
+      const p = page as Record<string, unknown>;
+      out.push(...normalizeUrlArray([p.imageUrls, p.image_urls]));
+    }
+  }
+  const article = item.article as Record<string, unknown> | undefined;
+  if (article) {
+    const cover = cleanUrl(article.coverImage ?? article.cover_image ?? article.imageUrl);
+    if (cover) out.push(cover);
+  }
+  return [...new Set(out)];
+}
+
+function linkedinMediaType(item: Record<string, unknown>, imageUrls: string[]): string {
+  if (item.document && typeof item.document === "object") return "document";
+  if (item.article && typeof item.article === "object") return "article";
+  const video = item.postVideo ?? item.post_video ?? item.video;
+  if (video) return "video";
+  if (imageUrls.length > 1) return "multi_image";
+  if (imageUrls.length === 1) return "image";
+  return "text";
+}
+
+export function transformLinkedInApifyPost(
+  item: Record<string, unknown>,
+  context: Record<string, unknown> = {}
+): Record<string, unknown> | null {
+  if (item.error) return null;
+  const type = String(item.type ?? "post").toLowerCase();
+  if (type && type !== "post") return null;
+
+  const postId = String(item.id ?? item.postId ?? item.post_id ?? "").trim();
+  const postUrl = String(item.linkedinUrl ?? item.linkedin_url ?? item.postUrl ?? item.post_url ?? "").trim();
+  if (!postId && !postUrl) return null;
+
+  const content = String(item.content ?? item.text ?? item.caption ?? "").trim();
+  const author = (item.author ?? {}) as Record<string, unknown>;
+  const engagement = (item.engagement ?? {}) as Record<string, unknown>;
+  const postedAt = (item.postedAt ?? item.posted_at ?? {}) as Record<string, unknown>;
+  const imageUrls = linkedinPostImageUrls(item);
+  const mediaType = linkedinMediaType(item, imageUrls);
+  const hashtags = extractHashtags(content);
+  const carouselSlides = imageUrls.map((url, idx) => ({
+    slide_index: idx + 1,
+    media_type: "image",
+    url,
+    display_url: url,
+  }));
+  const doc = item.document as Record<string, unknown> | undefined;
+
+  return {
+    platform: "LinkedIn",
+    source_platform: "linkedin",
+    post_id: postId || null,
+    post_url: postUrl || null,
+    linkedin_url: postUrl || null,
+    url: postUrl || null,
+    content,
+    caption: content,
+    media_type: mediaType,
+    image_urls: safeJson(imageUrls),
+    image_url: imageUrls[0] ?? null,
+    display_url: imageUrls[0] ?? null,
+    carousel_slide_urls: safeJson(imageUrls),
+    carousel_slides: safeJson(carouselSlides),
+    document_title: doc?.title ?? null,
+    document_page_count: doc?.totalPageCount ?? doc?.total_page_count ?? null,
+    author_name: author.name ?? null,
+    author_handle: author.publicIdentifier ?? author.public_identifier ?? null,
+    author_url: author.linkedinUrl ?? author.linkedin_url ?? null,
+    author_headline: author.info ?? author.headline ?? null,
+    author_type: author.type ?? null,
+    posted_at: postedAt.date ?? postedAt.timestamp ?? null,
+    posted_at_text: postedAt.postedAgoText ?? postedAt.posted_ago_text ?? null,
+    like_count: engagement.likes ?? item.likes ?? null,
+    likes: engagement.likes ?? item.likes ?? null,
+    comment_count: engagement.comments ?? item.comments ?? null,
+    comments: engagement.comments ?? item.comments ?? null,
+    share_count: engagement.shares ?? item.shares ?? null,
+    shares: engagement.shares ?? item.shares ?? null,
+    reactions_json: safeJson(engagement.reactions ?? item.reactions ?? []),
+    hashtags: hashtags.join(","),
+    mentions: extractMentions(content).join(","),
+    source_name: context.Name ?? context.name ?? author.name ?? null,
+    source_url: context.Link ?? context.link ?? author.linkedinUrl ?? null,
+    fetched_at: new Date().toISOString(),
+  };
+}
+
 function extractParagraphTexts(html: string, selectorHint: string): string[] {
   const patterns: RegExp[] = [];
   if (selectorHint === "article") {

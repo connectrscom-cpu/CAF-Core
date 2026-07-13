@@ -44,6 +44,8 @@ export const generationPlanRequestSchema = z.object({
     })
     .optional(),
   dry_run: z.boolean().optional(),
+  /** Marketer cart: plan exactly one job per candidate (skip caps / idea-spread dedupe). */
+  content_cart_exact: z.boolean().optional(),
 });
 
 export type GenerationPlanRequest = z.infer<typeof generationPlanRequestSchema>;
@@ -102,5 +104,6 @@ export interface GenerationPlanResult {
     planned_video_jobs?: number;
     planning_primary_candidates?: number;
     planning_fallback_candidates?: number;
+    content_cart_exact?: boolean;
   };
 }

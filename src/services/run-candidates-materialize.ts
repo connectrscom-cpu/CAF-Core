@@ -11,10 +11,10 @@ import { mapIdeasJsonToPlannerSourceRows, type SignalPackIdea } from "./signal-p
 import { normalizeOverallCandidateRows } from "./signal-pack-parser.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
-import { parseIdeasV2 } from "../domain/signal-pack-ideas-v2.js";
+import { parseIdeasV2, parseIdeasV2Lenient } from "../domain/signal-pack-ideas-v2.js";
 import { normalizeVideoStyle } from "../decision_engine/video-flow-routing.js";
 import { applyIdeaStructureToPlannerRow } from "../domain/idea-structure.js";
-import { readSignalPackJobsJson } from "../domain/jobs-json-compat.js";
+import { readSignalPackIdeasUnion } from "../domain/jobs-json-compat.js";
 import { listSignalPackSelectedIdeaIds } from "../repositories/signal-pack-ideas.js";
 import { getBrandConstraints, getProductProfile, getStrategyDefaults } from "../repositories/project-config.js";
 import { pickBrandSliceForSnapshot, pickStrategySliceForSnapshot } from "./run-context-snapshot.js";
@@ -51,12 +51,64 @@ export type RunCandidatesBvsOverride = {
   enabled: boolean;
 };
 
+/** Per-idea flow/platform from marketer content cart (manual picker). */
+export type RunCandidatesIdeaPick = {
+  idea_id: string;
+  target_flow_type: string;
+  platform?: string;
+  use_brand_visual_system?: boolean;
+  linkedin_aspect_ratio?: string;
+  linkedin_image_count?: number;
+};
+
+/** One cart line from Review — source of truth for marketer content cart materialize. */
+export type CartManifestItem = {
+  cart_item_id: string;
+  kind: "idea" | "top_performer";
+  title?: string;
+  target_flow_type: string;
+  platform?: string;
+  format?: string;
+  use_brand_visual_system?: boolean;
+  linkedin_aspect_ratio?: string;
+  linkedin_image_count?: number;
+  insights_id?: string;
+  mimic_kind?: MimicPickKind;
+  video_intent?: VideoPipelineIntent;
+};
+
+const cartManifestItemSchema = z.object({
+  cart_item_id: z.string().min(1),
+  kind: z.enum(["idea", "top_performer"]),
+  title: z.string().optional(),
+  target_flow_type: z.string().min(1),
+  platform: z.string().optional(),
+  format: z.string().optional(),
+  use_brand_visual_system: z.boolean().optional(),
+  linkedin_aspect_ratio: z.string().optional(),
+  linkedin_image_count: z.coerce.number().int().min(2).max(3).optional(),
+  insights_id: z.string().optional(),
+  mimic_kind: z.enum(["image", "carousel", "why_carousel", "video"]).optional(),
+  video_intent: videoPipelineIntentSchema.optional(),
+});
+
 /** POST /v1/runs/.../jobs and /candidates body validation. */
 export const runCandidatesMaterializeBodySchema = z.union([
   z
     .object({
       mode: z.literal("manual"),
+      cart_manifest: z.array(cartManifestItemSchema).optional(),
       idea_ids: z.array(z.string()).optional(),
+      idea_picks: z
+        .array(
+          z.object({
+            idea_id: z.string().min(1),
+            target_flow_type: z.string().min(1),
+            platform: z.string().optional(),
+            use_brand_visual_system: z.boolean().optional(),
+          })
+        )
+        .optional(),
       mimic_picks: z
         .array(
           z.object({
@@ -75,8 +127,14 @@ export const runCandidatesMaterializeBodySchema = z.union([
         )
         .optional(),
     })
-    .refine((b) => (b.idea_ids?.length ?? 0) > 0 || (b.mimic_picks?.length ?? 0) > 0, {
-      message: "idea_ids or mimic_picks required for manual mode",
+    .refine(
+      (b) =>
+        (b.cart_manifest?.length ?? 0) > 0 ||
+        (b.idea_ids?.length ?? 0) > 0 ||
+        (b.mimic_picks?.length ?? 0) > 0 ||
+        (b.idea_picks?.length ?? 0) > 0,
+      {
+      message: "cart_manifest, idea_ids, idea_picks, or mimic_picks required for manual mode",
     }),
   z.object({ mode: z.literal("llm"), max_ideas: z.number().int().min(1).max(100).optional() }),
   z.object({ mode: z.literal("from_pack_ideas_all") }),
@@ -111,8 +169,12 @@ export type RunCandidatesMaterializeMode =
 
 export interface RunCandidatesMaterializeBody {
   mode: RunCandidatesMaterializeMode;
+  /** Marketer content cart — one row per UI line (preferred for cart runs). */
+  cart_manifest?: CartManifestItem[];
   /** Required when mode === manual (unless mimic_picks is non-empty). */
   idea_ids?: string[];
+  /** Per-idea flow/platform overrides from marketer content cart. */
+  idea_picks?: RunCandidatesIdeaPick[];
   /** Top-performer references to plan as mimic-only jobs (manual picker mimic tabs). */
   mimic_picks?: RunCandidatesMimicPick[];
   /** Marketer per-idea Brand Visual System toggles from content cart. */
@@ -183,15 +245,28 @@ function productProfileSliceForLlmPick(
 }
 
 function ideasArray(pack: SignalPackRow): SignalPackIdea[] {
-  const raw = readSignalPackJobsJson(pack as unknown as Record<string, unknown>);
-  if (!Array.isArray(raw) || raw.length === 0) return [];
-  return raw as SignalPackIdea[];
+  const raw = readSignalPackIdeasUnion(pack as unknown as Record<string, unknown>);
+  if (raw.length === 0) return [];
+  return raw as unknown as SignalPackIdea[];
 }
 
 function ideasJsonAsRich(pack: SignalPackRow): Record<string, unknown>[] {
-  const raw = readSignalPackJobsJson(pack as unknown as Record<string, unknown>);
-  if (!Array.isArray(raw) || raw.length === 0) return [];
-  return parseIdeasV2(raw) as unknown as Record<string, unknown>[];
+  const raw = readSignalPackIdeasUnion(pack as unknown as Record<string, unknown>);
+  if (raw.length === 0) return [];
+  const strict = parseIdeasV2(raw);
+  if (strict.length > 0) return strict as unknown as Record<string, unknown>[];
+  return parseIdeasV2Lenient(raw);
+}
+
+function packIdeaIdentity(row: Record<string, unknown>): string {
+  return String(row.id ?? row.idea_id ?? "").trim();
+}
+
+/** Raw pack ideas for cart materialize — same union as Review `parseIdeasFromPack`. */
+function packIdeasForMaterialize(pack: SignalPackRow): Record<string, unknown>[] {
+  return readSignalPackIdeasUnion(pack as unknown as Record<string, unknown>).filter(
+    (r) => packIdeaIdentity(r).length > 0
+  );
 }
 
 function ideasV2Array(pack: SignalPackRow): Record<string, unknown>[] {
@@ -308,17 +383,58 @@ export function plannerRowsFromIdeaSubset(
   runIdHint: string,
   config?: AppConfig
 ): Record<string, unknown>[] {
-  const want = new Set(ideaIds.map((x) => String(x).trim()).filter(Boolean));
-  // Prefer canonical rich ideas stored in ideas_json (id field), fall back to legacy idea_id shape.
-  const rich = ideasJsonAsRich(pack).filter((i) => want.has(String(i.id ?? i.idea_id ?? "").trim()));
-  if (rich.length > 0) {
-    const mapped = mapIdeasV2ToPlannerSourceRows(rich, config, pack);
+  const want = new Set<string>();
+  for (const raw of ideaIds) {
+    for (const k of plannerIdeaKeyVariants(raw)) want.add(k);
+  }
+  const matchesId = (i: Record<string, unknown>) =>
+    plannerIdeaKeyVariants(packIdeaIdentity(i)).some((k) => want.has(k));
+  const loose = packIdeasForMaterialize(pack).filter(matchesId);
+  if (loose.length > 0) {
+    const mapped = mapIdeasV2ToPlannerSourceRows(loose, config, pack);
     return normalizePlannerRows(mapped, runIdHint);
   }
-  const legacy = ideasArray(pack).filter((i) => want.has(String(i.idea_id ?? "").trim()));
+  const legacy = ideasArray(pack).filter((i) =>
+    plannerIdeaKeyVariants(packIdeaIdentity(i as unknown as Record<string, unknown>)).some((k) =>
+      want.has(k)
+    )
+  );
   if (legacy.length === 0) return [];
   const mappedLegacy = mapIdeasJsonToPlannerSourceRows(legacy);
   return normalizePlannerRows(mappedLegacy as unknown as Record<string, unknown>[], runIdHint);
+}
+
+/**
+ * One planner row per content-cart idea pick (preserves cart order, stamps target_flow_type).
+ * Throws when a pick cannot be resolved in the signal pack — avoids silent 1-job cart runs.
+ */
+export function plannerRowsFromCartIdeaPicks(
+  pack: SignalPackRow,
+  picks: RunCandidatesIdeaPick[],
+  runIdHint: string,
+  config?: AppConfig
+): Record<string, unknown>[] {
+  const mapped: Record<string, unknown>[] = [];
+  const missing: string[] = [];
+
+  for (const pick of picks) {
+    const rows = plannerRowsFromIdeaSubset(pack, [pick.idea_id], runIdHint, config);
+    if (!rows.length) {
+      missing.push(pick.idea_id);
+      continue;
+    }
+    mapped.push(stampIdeaPickOnPlannerRow(rows[0]!, pick));
+  }
+
+  if (missing.length) {
+    const sample = missing.slice(0, 6).join(", ");
+    throw new Error(
+      `Cart idea_picks could not resolve ${missing.length} id(s) in the signal pack (${sample}${missing.length > 6 ? "…" : ""}). ` +
+        "On Ideas, attach the current research brief, re-add cart items, then start again."
+    );
+  }
+
+  return mapped;
 }
 
 function stringField(v: unknown, max = 800): string {
@@ -438,6 +554,240 @@ export function applyBvsOverridesToPlannerRows(
   });
 }
 
+/** Match cart / pack idea ids (`idea_x`, `x`, `idea_idea_x`). */
+export function plannerIdeaKeyVariants(raw: string): string[] {
+  const t = String(raw ?? "").trim();
+  if (!t) return [];
+  const stripped = t.replace(/^(idea_)+/i, "");
+  const keys = new Set<string>([t]);
+  if (stripped) {
+    keys.add(stripped);
+    keys.add(`idea_${stripped}`);
+  }
+  return [...keys];
+}
+
+function stampIdeaPickOnPlannerRow(
+  row: Record<string, unknown>,
+  pick: RunCandidatesIdeaPick
+): Record<string, unknown> {
+  const ideaKey = pick.idea_id.trim();
+  const out: Record<string, unknown> = {
+    ...row,
+    idea_id: String(row.idea_id ?? ideaKey).trim() || ideaKey,
+    target_flow_type: pick.target_flow_type,
+    content_cart_pick: true,
+  };
+  if (pick.platform?.trim()) {
+    out.platform = pick.platform.trim();
+    out.target_platform = pick.platform.trim();
+  }
+  if (pick.use_brand_visual_system !== undefined) {
+    out.use_brand_visual_system = pick.use_brand_visual_system;
+  }
+  if (pick.linkedin_aspect_ratio?.trim()) {
+    out.linkedin_aspect_ratio = pick.linkedin_aspect_ratio.trim();
+  }
+  if (pick.linkedin_image_count != null) {
+    out.linkedin_image_count = pick.linkedin_image_count;
+  }
+  return out;
+}
+
+export function normalizeCartIdeaIdFromItemId(raw: string): string {
+  const core = String(raw ?? "")
+    .trim()
+    .replace(/^(idea_)+/i, "");
+  return core ? `idea_${core}` : "";
+}
+
+function normalizeTpInsightsId(raw: string): string {
+  return String(raw ?? "")
+    .trim()
+    .replace(/^tp_/i, "");
+}
+
+function formatForCartManifest(targetFlowType: string, format?: string): string {
+  const explicit = String(format ?? "")
+    .trim()
+    .toLowerCase();
+  if (explicit) return explicit;
+  const ft = targetFlowType.toUpperCase();
+  if (ft.includes("CAROUSEL")) return "carousel";
+  if (ft.includes("LINKEDIN")) return "linkedin_document";
+  if (ft.includes("VID") || ft.includes("VIDEO")) return "video";
+  return "post";
+}
+
+function syntheticPlannerRowFromCartManifest(
+  item: CartManifestItem,
+  ideaId: string
+): Record<string, unknown> {
+  const format = formatForCartManifest(item.target_flow_type, item.format);
+  const platformRaw = item.platform ?? "Instagram";
+  const platform = format === "carousel" ? normalizeCarouselIdeaPlatform(platformRaw) : platformRaw;
+  const title = String(item.title ?? ideaId).trim() || ideaId;
+  const base = applyIdeaStructureToPlannerRow({
+    idea_id: ideaId,
+    candidate_id: ideaId,
+    platform,
+    target_platform: platform,
+    format,
+    content_idea: title,
+    summary: title,
+    confidence_score: 0.85,
+    confidence: 0.85,
+    novelty_score: 0.6,
+    platform_fit: 0.75,
+    past_performance: 0.5,
+    recommended_route: "HUMAN_REVIEW",
+    provenance: "marketer_content_cart.manifest",
+    target_flow_type: item.target_flow_type,
+    ...(item.linkedin_aspect_ratio ? { linkedin_aspect_ratio: item.linkedin_aspect_ratio } : {}),
+    ...(item.linkedin_image_count != null ? { linkedin_image_count: item.linkedin_image_count } : {}),
+  });
+  return base;
+}
+
+function syntheticMimicPlannerRowFromCartManifest(
+  item: CartManifestItem,
+  insightsId: string
+): Record<string, unknown> {
+  const format = formatForCartManifest(item.target_flow_type, item.format);
+  const platform = item.platform ?? "Instagram";
+  const ideaId = `mimic_${insightsId}`;
+  const title = String(item.title ?? `Mimic · ${insightsId}`).trim();
+  return {
+    idea_id: ideaId,
+    candidate_id: ideaId,
+    platform,
+    target_platform: platform,
+    format,
+    content_idea: title,
+    summary: title,
+    confidence: 0.88,
+    confidence_score: 0.88,
+    novelty_score: 0.55,
+    platform_fit: 0.82,
+    past_performance: 0.85,
+    recommended_route: "HUMAN_REVIEW",
+    grounding_insight_ids: [insightsId],
+    target_flow_type: item.target_flow_type,
+    manual_mimic_pick: true,
+    mimic_kind: item.mimic_kind ?? "video",
+    content_cart_pick: true,
+    provenance: "marketer_content_cart.manifest",
+  };
+}
+
+function plannerRowFromManifestMimicItem(
+  pack: SignalPackRow,
+  item: CartManifestItem,
+  runIdHint: string
+): Record<string, unknown> {
+  const insightsId = String(item.insights_id ?? normalizeTpInsightsId(item.cart_item_id)).trim();
+  const mimicKind = item.mimic_kind;
+  if (insightsId && mimicKind) {
+    try {
+      const rows = plannerRowsFromMimicPicks(
+        pack,
+        [
+          {
+            insights_id: insightsId,
+            mimic_kind: mimicKind,
+            ...(item.video_intent ? { video_intent: item.video_intent } : {}),
+          },
+        ],
+        runIdHint
+      );
+      if (rows[0]) {
+        return { ...rows[0], content_cart_pick: true, target_flow_type: item.target_flow_type };
+      }
+    } catch {
+      /* pack entry missing — fall back to cart manifest row */
+    }
+  }
+  return syntheticMimicPlannerRowFromCartManifest(item, insightsId || normalizeTpInsightsId(item.cart_item_id));
+}
+
+/**
+ * One planner row per cart manifest line (cart order). Enriches from pack when possible;
+ * otherwise builds rows from the cart payload so job count matches the UI.
+ */
+export function plannerRowsFromCartManifest(
+  pack: SignalPackRow,
+  manifest: CartManifestItem[],
+  runIdHint: string,
+  config?: AppConfig
+): Record<string, unknown>[] {
+  const rows: Record<string, unknown>[] = [];
+  for (const item of manifest) {
+    if (item.kind === "idea") {
+      const ideaId = normalizeCartIdeaIdFromItemId(item.cart_item_id);
+      if (!ideaId) {
+        throw new Error(`Cart manifest idea missing id: ${item.cart_item_id}`);
+      }
+      let base = plannerRowsFromIdeaSubset(pack, [ideaId], runIdHint, config)[0];
+      if (!base) {
+        base = syntheticPlannerRowFromCartManifest(item, ideaId);
+      }
+      rows.push(
+        stampIdeaPickOnPlannerRow(base, {
+          idea_id: ideaId,
+          target_flow_type: item.target_flow_type,
+          platform: item.platform,
+          use_brand_visual_system: item.use_brand_visual_system,
+          linkedin_aspect_ratio: item.linkedin_aspect_ratio,
+          linkedin_image_count: item.linkedin_image_count,
+        })
+      );
+      continue;
+    }
+    rows.push(plannerRowFromManifestMimicItem(pack, item, runIdHint));
+  }
+  return rows;
+}
+
+export function applyIdeaPicksToPlannerRows(
+  rows: Record<string, unknown>[],
+  picks: RunCandidatesIdeaPick[] | undefined,
+  ideaIdsOrder?: string[]
+): Record<string, unknown>[] {
+  if (!picks?.length) return rows;
+
+  const pickByKey = new Map<string, RunCandidatesIdeaPick>();
+  for (const p of picks) {
+    for (const k of plannerIdeaKeyVariants(p.idea_id)) {
+      pickByKey.set(k, p);
+    }
+  }
+
+  const resolvePick = (row: Record<string, unknown>, idx: number): RunCandidatesIdeaPick | undefined => {
+    const rowKeys = plannerIdeaKeyVariants(
+      String(row.idea_id ?? row.candidate_id ?? row.id ?? "")
+    );
+    for (const k of rowKeys) {
+      const hit = pickByKey.get(k);
+      if (hit) return hit;
+    }
+    const orderKey = ideaIdsOrder?.[idx];
+    if (orderKey) {
+      for (const k of plannerIdeaKeyVariants(orderKey)) {
+        const hit = pickByKey.get(k);
+        if (hit) return hit;
+      }
+    }
+    if (picks.length === rows.length) return picks[idx];
+    return undefined;
+  };
+
+  return rows.map((row, idx) => {
+    const pick = resolvePick(row, idx);
+    if (!pick) return row;
+    return stampIdeaPickOnPlannerRow(row, pick);
+  });
+}
+
 export async function materializeRunCandidates(
   db: Pool,
   config: AppConfig,
@@ -507,22 +857,34 @@ export async function materializeRunCandidates(
   } else if (body.mode === "manual") {
     const ids = body.idea_ids ?? [];
     const mimicPicks = body.mimic_picks ?? [];
-    if (ids.length === 0 && mimicPicks.length === 0) {
-      throw new Error("idea_ids or mimic_picks required when mode=manual");
+    const hasCartManifest = (body.cart_manifest?.length ?? 0) > 0;
+    if (
+      !hasCartManifest &&
+      ids.length === 0 &&
+      mimicPicks.length === 0 &&
+      !body.idea_picks?.length
+    ) {
+      throw new Error("cart_manifest, idea_ids, idea_picks, or mimic_picks required when mode=manual");
     }
     const merged: Record<string, unknown>[] = [];
-    if (ids.length > 0) {
+    if (hasCartManifest) {
+      merged.push(...plannerRowsFromCartManifest(pack, body.cart_manifest!, run.run_id, config));
+    } else if (body.idea_picks?.length) {
+      merged.push(...plannerRowsFromCartIdeaPicks(pack, body.idea_picks, run.run_id, config));
+    } else if (ids.length > 0) {
       const ideaRows = plannerRowsFromIdeaSubset(pack, ids, run.run_id, config);
       if (ideaRows.length === 0) throw new Error("No matching ideas for the given idea_ids");
-      merged.push(...ideaRows);
+      merged.push(...applyIdeaPicksToPlannerRows(ideaRows, body.idea_picks, ids));
     }
-    if (mimicPicks.length > 0) {
+    if (!hasCartManifest && mimicPicks.length > 0) {
       merged.push(...plannerRowsFromMimicPicks(pack, mimicPicks, run.run_id));
     }
     rows = merged;
     provenance = {
       ...provenance,
+      ...(body.cart_manifest?.length ? { cart_manifest: body.cart_manifest, source: "marketer_content_cart.manifest" } : {}),
       ...(ids.length ? { idea_ids: ids } : {}),
+      ...(body.idea_picks?.length ? { idea_picks: body.idea_picks } : {}),
       ...(mimicPicks.length ? { mimic_picks: mimicPicks } : {}),
       row_count: rows.length,
     };

@@ -13,7 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 /** Must match CAF Core `SUPABASE_ASSETS_BUCKET` (default assets). */
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_ASSETS_BUCKET || "assets";
 const WORK_DIR = path.join(__dirname, "workdir");
-const VERSION = "0.1.4";
+const VERSION = "0.1.5";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -153,6 +153,39 @@ async function uploadToSupabase(localPath, remotePath) {
   if (error) throw new Error(`Upload failed: ${error.message}`);
   const { data: urlData } = sb.storage.from(SUPABASE_BUCKET).getPublicUrl(key);
   return urlData.publicUrl;
+}
+
+/** Best-effort Supabase upload — ffmpeg success must not depend on storage reachability from this VM. */
+async function tryUploadToSupabase(localPath, remotePath) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return { publicUrl: null, error: "supabase_not_configured" };
+  }
+  const backoffMs = [0, 2000, 5000];
+  let lastErr = "unknown";
+  for (const wait of backoffMs) {
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const publicUrl = await uploadToSupabase(localPath, remotePath);
+      return { publicUrl, error: null };
+    } catch (e) {
+      lastErr = e instanceof Error ? e.message : String(e);
+      console.warn(`[video-assembly] supabase upload retry failed: ${lastErr}`);
+    }
+  }
+  return { publicUrl: null, error: lastErr };
+}
+
+function markAsyncJobDone(requestId, localPath, publicUrl, uploadError, jobDir) {
+  asyncJobs.set(requestId, {
+    status: "done",
+    public_url: publicUrl,
+    local_path: localPath,
+    upload_error: uploadError || undefined,
+  });
+  setTimeout(() => {
+    asyncJobs.delete(requestId);
+    if (jobDir) cleanupJob(jobDir);
+  }, 3600000);
 }
 
 async function stitchImages(imageUrls, outputOptions = {}) {
@@ -518,13 +551,12 @@ app.post("/stitch", async (req, res) => {
             p,
             new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
           ]);
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
-            publicUrl = await uploadToSupabase(localPath, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(localPath, remotePath);
+          if (uploadError) {
+            console.warn(`[video-assembly] async stitch upload skipped request_id=${requestId}: ${uploadError}`);
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: localPath });
-          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          markAsyncJobDone(requestId, localPath, publicUrl, uploadError, jobDir);
           console.info(`[video-assembly] async stitch done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
@@ -537,12 +569,9 @@ app.post("/stitch", async (req, res) => {
       stitchImages(image_urls, options),
       new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
     ]);
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
-      publicUrl = await uploadToSupabase(localPath, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/slideshow.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(localPath, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : localPath });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -567,13 +596,12 @@ app.post("/concat-videos", async (req, res) => {
             concatVideoFiles(video_urls, jobDir),
             new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
           ]);
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
-            publicUrl = await uploadToSupabase(merged, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(merged, remotePath);
+          if (uploadError) {
+            console.warn(`[video-assembly] async concat upload skipped request_id=${requestId}: ${uploadError}`);
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: merged });
-          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          markAsyncJobDone(requestId, merged, publicUrl, uploadError, jobDir);
           console.info(`[video-assembly] async concat done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
@@ -588,12 +616,9 @@ app.post("/concat-videos", async (req, res) => {
       concatVideoFiles(video_urls, jobDir),
       new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
     ]);
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
-      publicUrl = await uploadToSupabase(merged, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/merged.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(merged, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : merged });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -625,13 +650,12 @@ app.post("/mux", async (req, res) => {
               : muxAudio(vidPath, audio_url, options),
             new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
           ]);
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
-            publicUrl = await uploadToSupabase(muxed, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(muxed, remotePath);
+          if (uploadError) {
+            console.warn(`[video-assembly] async mux upload skipped request_id=${requestId}: ${uploadError}`);
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: muxed });
-          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          markAsyncJobDone(requestId, muxed, publicUrl, uploadError, jobDir);
           console.info(`[video-assembly] async mux done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
@@ -653,12 +677,9 @@ app.post("/mux", async (req, res) => {
         : muxAudio(vidPath, audio_url, options),
       new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
     ]);
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
-      publicUrl = await uploadToSupabase(muxed, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(muxed, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : muxed });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -699,13 +720,12 @@ app.post("/burn-subtitles", async (req, res) => {
             burnSubtitlesIntoVideo(vidPath, subtitles_url.trim(), options),
             new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
           ]);
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
-            publicUrl = await uploadToSupabase(burned, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(burned, remotePath);
+          if (uploadError) {
+            console.warn(`[video-assembly] async burn-subtitles upload skipped request_id=${requestId}: ${uploadError}`);
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: burned });
-          setTimeout(() => { asyncJobs.delete(requestId); cleanupJob(jobDir); }, 3600000);
+          markAsyncJobDone(requestId, burned, publicUrl, uploadError, jobDir);
           console.info(`[video-assembly] async burn-subtitles done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`);
         } catch (e) {
           asyncJobs.set(requestId, { status: "error", error: e.message });
@@ -725,12 +745,9 @@ app.post("/burn-subtitles", async (req, res) => {
       burnSubtitlesIntoVideo(vidPath, subtitles_url.trim(), options),
       new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
     ]);
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
-      publicUrl = await uploadToSupabase(burned, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/burned.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(burned, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : burned });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -775,16 +792,14 @@ app.post("/composite-brand-overlays", async (req, res) => {
             }),
             new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
           ]);
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
-            publicUrl = await uploadToSupabase(branded, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(branded, remotePath);
+          if (uploadError) {
+            console.warn(
+              `[video-assembly] async composite-brand-overlays upload skipped request_id=${requestId}: ${uploadError}`
+            );
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: branded });
-          setTimeout(() => {
-            asyncJobs.delete(requestId);
-            cleanupJob(jobDir);
-          }, 3600000);
+          markAsyncJobDone(requestId, branded, publicUrl, uploadError, jobDir);
           console.info(
             `[video-assembly] async composite-brand-overlays done request_id=${requestId} duration_ms=${Date.now() - jobStartedAt}`
           );
@@ -810,12 +825,9 @@ app.post("/composite-brand-overlays", async (req, res) => {
       }),
       new Promise((_, rej) => setTimeout(() => rej(new Error(`job timeout after ${JOB_TIMEOUT_MS}ms`)), JOB_TIMEOUT_MS)),
     ]);
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
-      publicUrl = await uploadToSupabase(branded, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/branded.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(branded, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : branded });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -848,16 +860,12 @@ app.post("/full-pipeline", async (req, res) => {
             ]);
           }
 
-          let publicUrl = null;
-          if (SUPABASE_URL) {
-            const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
-            publicUrl = await uploadToSupabase(finalPath, remotePath);
+          const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
+          const { publicUrl, error: uploadError } = await tryUploadToSupabase(finalPath, remotePath);
+          if (uploadError) {
+            console.warn(`[video-assembly] async full-pipeline upload skipped request_id=${requestId}: ${uploadError}`);
           }
-          asyncJobs.set(requestId, { status: "done", public_url: publicUrl, local_path: finalPath });
-          setTimeout(() => {
-            asyncJobs.delete(requestId);
-            if (jobDir) cleanupJob(jobDir);
-          }, 3600000);
+          markAsyncJobDone(requestId, finalPath, publicUrl, uploadError, jobDir);
           console.info(
             `[video-assembly] async full-pipeline done request_id=${requestId} images=${image_urls.length} has_audio=${Boolean(audio_url)} duration_ms=${Date.now() - jobStartedAt}`
           );
@@ -885,17 +893,28 @@ app.post("/full-pipeline", async (req, res) => {
       ]);
     }
 
-    let publicUrl = null;
-    if (SUPABASE_URL) {
-      const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
-      publicUrl = await uploadToSupabase(finalPath, remotePath);
-      cleanupJob(jobDir);
-    }
+    const remotePath = `videos/${run_id || "default"}/${task_id || randomUUID()}/final.mp4`;
+    const { publicUrl } = await tryUploadToSupabase(finalPath, remotePath);
+    if (publicUrl) cleanupJob(jobDir);
     console.info(`[video-assembly] full-pipeline ok images=${image_urls.length} has_audio=${Boolean(audio_url)} duration_ms=${Date.now() - jobStartedAt}`);
     res.json({ ok: true, public_url: publicUrl, local_path: publicUrl ? undefined : finalPath });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+/** Stream async job MP4 when Supabase upload from this VM failed — CAF Core re-uploads from here. */
+app.get("/jobs/:requestId/output", (req, res) => {
+  const job = asyncJobs.get(req.params.requestId);
+  if (!job || job.status !== "done" || !job.local_path) {
+    return res.status(404).json({ ok: false, error: "output not available" });
+  }
+  const localPath = job.local_path;
+  if (!fs.existsSync(localPath)) {
+    return res.status(410).json({ ok: false, error: "output expired" });
+  }
+  res.setHeader("Content-Type", "video/mp4");
+  res.sendFile(path.resolve(localPath));
 });
 
 app.get("/status/:requestId", (req, res) => {

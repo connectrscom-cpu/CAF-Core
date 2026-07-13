@@ -387,9 +387,18 @@ export function carouselSlideUrlsLookStale(urls: string[], nowMs = Date.now()): 
   return urls.some((u) => isLikelyStaleInstagramCdnUrl(u, nowMs));
 }
 
+export function linkedinCarouselStructuralHintPresent(payload: Record<string, unknown>): boolean {
+  const mt = String(payload.media_type ?? "")
+    .trim()
+    .toLowerCase();
+  if (mt === "multi_image" || mt === "document") return true;
+  if (parseCarouselSlideUrls(payload, 15).length >= MIN_CAROUSEL_SLIDES_FOR_DEEP) return true;
+  return false;
+}
+
 export function parseCarouselCaptionContext(payload: Record<string, unknown>, maxChars = 6000): string {
   const parts: string[] = [];
-  for (const k of ["caption", "Caption", "body_text", "main_text", "accessibility_caption"]) {
+  for (const k of ["caption", "Caption", "content", "body_text", "main_text", "accessibility_caption"]) {
     const v = payload[k];
     if (v != null && String(v).trim()) parts.push(String(v).trim());
   }

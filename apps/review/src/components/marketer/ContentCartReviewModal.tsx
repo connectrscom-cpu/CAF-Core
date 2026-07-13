@@ -58,7 +58,7 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
         run_id: j.run_id,
         content_url: j.content_url,
         admin_runs_url: j.admin_runs_url,
-        message: j.message,
+        message: `${j.jobs_created ?? j.planned_jobs ?? "?"} job(s) planned. ${j.message ?? ""}`,
       });
       setPhase("done");
     } catch (e) {

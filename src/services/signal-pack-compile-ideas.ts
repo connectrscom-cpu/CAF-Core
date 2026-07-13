@@ -41,6 +41,7 @@ export function platformFromEvidenceKind(kind: string): string {
   if (k.includes("reddit")) return "Reddit";
   if (k.includes("facebook") || k.includes("fb")) return "Facebook";
   if (k.includes("instagram") || k === "instagram_post") return "Instagram";
+  if (k.includes("linkedin") || k === "linkedin_post") return "LinkedIn";
   if (k.includes("scraped") || k.includes("html")) return "Multi";
   return "Instagram";
 }

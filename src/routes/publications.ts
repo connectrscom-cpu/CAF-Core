@@ -21,6 +21,7 @@ import { upsertJobOutcomeOnPublish } from "../repositories/job-outcomes.js";
 import { buildPublicationN8nPayload } from "../services/publication-n8n-payload.js";
 import { dryRunPublishPlacement } from "../services/publish-executors/dry-run.js";
 import { publishPlacementToMeta } from "../services/meta-graph-publish.js";
+import { publishPlacementToLinkedIn } from "../services/linkedin-rest-publish.js";
 import type { AppConfig } from "../config.js";
 
 interface Deps {
@@ -281,6 +282,41 @@ export function registerPublicationRoutes(app: FastifyInstance, { db, config }: 
         placement: rowToJson(completed ?? row),
         payload: buildPublicationN8nPayload(completed ?? row, project.slug),
         executor: "meta",
+      };
+    }
+
+    if (config.CAF_PUBLISH_EXECUTOR === "linkedin") {
+      const pub = await publishPlacementToLinkedIn(db, row, project.id, config);
+      if (!pub.ok) {
+        const failed = await completePublicationPlacement(db, project.id, row.id, {
+          post_success: false,
+          publish_error: pub.error,
+          result_json: { executor: "linkedin", error: pub.error },
+          external_ref: "caf_core_linkedin_failed",
+        });
+        return reply.code(502).send({
+          ok: false,
+          error: "linkedin_publish_failed",
+          message: pub.error,
+          placement: rowToJson(failed ?? row),
+          executor: "linkedin",
+        });
+      }
+      const completed = await completePublicationPlacement(db, project.id, row.id, {
+        post_success: true,
+        platform_post_id: pub.platform_post_id,
+        posted_url: pub.posted_url,
+        result_json: pub.result_json,
+        external_ref: "caf_core_linkedin",
+      });
+      if (completed) {
+        await recordPublishOnJob(db, project.id, completed);
+      }
+      return {
+        ok: true,
+        placement: rowToJson(completed ?? row),
+        payload: buildPublicationN8nPayload(completed ?? row, project.slug),
+        executor: "linkedin",
       };
     }
 

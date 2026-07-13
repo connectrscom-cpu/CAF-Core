@@ -5,6 +5,7 @@
 import {
   MIN_CAROUSEL_SLIDES_FOR_DEEP,
   instagramCarouselStructuralHintPresent,
+  linkedinCarouselStructuralHintPresent,
   parseCarouselSlideUrls,
 } from "./inputs-carousel-evidence-bundle.js";
 import { isVideoLikeEvidence, pickPrimaryImageUrlForDeepAnalysis } from "./inputs-image-url-for-analysis.js";
@@ -50,7 +51,12 @@ export function deriveEvidencePostFormat(evidenceKind: string, payload: Record<s
     return "carousel";
   }
 
+  if (evidenceKind === "linkedin_post" && linkedinCarouselStructuralHintPresent(payload)) {
+    return "carousel";
+  }
+
   if (evidenceKind === "instagram_post" || evidenceKind === "facebook_post") return "single_image";
+  if (evidenceKind === "linkedin_post") return "single_image";
 
   return "unknown";
 }
@@ -72,6 +78,10 @@ export function deriveEvidenceDisplayKind(evidenceKind: string, payload: Record<
     if (fmt === "video") return "facebook_video";
     if (fmt === "carousel") return "facebook_carousel";
     return "facebook_post";
+  }
+  if (k === "linkedin_post") {
+    if (fmt === "carousel") return "linkedin_carousel";
+    return "linkedin_post";
   }
   return k;
 }

@@ -32,11 +32,17 @@ export function parseVideoAssemblyJson(
   }
 }
 
+export type VideoAssemblyPollResult = {
+  public_url?: string;
+  local_path?: string;
+  upload_error?: string;
+};
+
 export async function pollVideoAssemblyJob(
   baseUrl: string,
   requestId: string,
   maxMs = 600_000
-): Promise<{ public_url?: string; local_path?: string }> {
+): Promise<VideoAssemblyPollResult> {
   const start = Date.now();
   let delay = 2000;
   const statusUrl = `${baseUrl.replace(/\/$/, "")}/status/${requestId}`;
@@ -49,11 +55,45 @@ export async function pollVideoAssemblyJob(
       error?: string;
       public_url?: string;
       local_path?: string;
+      upload_error?: string;
     };
-    if (j.status === "done") return { public_url: j.public_url, local_path: j.local_path };
+    if (j.status === "done") {
+      return { public_url: j.public_url, local_path: j.local_path, upload_error: j.upload_error };
+    }
     if (j.status === "error") throw new Error(j.error ?? "video-assembly error");
     await new Promise((x) => setTimeout(x, delay));
     delay = Math.min(delay * 2, 30_000);
   }
   throw new Error("video-assembly async timeout");
+}
+
+/**
+ * Resolve MP4 bytes from a completed async video-assembly job.
+ * Prefers `public_url` when the renderer uploaded to Supabase; otherwise streams from GET /jobs/:id/output.
+ */
+export async function fetchVideoAssemblyJobOutput(
+  baseUrl: string,
+  requestId: string,
+  pollResult: VideoAssemblyPollResult,
+  opts?: { timeoutMs?: number }
+): Promise<Buffer> {
+  const timeoutMs = opts?.timeoutMs ?? 300_000;
+  const publicUrl = pollResult.public_url?.trim();
+  if (publicUrl) {
+    const r = await fetch(publicUrl, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) {
+      throw new Error(`video-assembly public_url download failed (${r.status}): ${publicUrl.slice(0, 120)}`);
+    }
+    return Buffer.from(await r.arrayBuffer());
+  }
+  if (!pollResult.local_path && !requestId) {
+    throw new Error("video-assembly job has no public_url and no fetchable output");
+  }
+  const outputUrl = `${baseUrl.replace(/\/$/, "")}/jobs/${requestId}/output`;
+  const r = await fetch(outputUrl, { signal: AbortSignal.timeout(timeoutMs) });
+  if (!r.ok) {
+    const preview = await r.text().catch(() => "");
+    throw new Error(`video-assembly output fetch failed (${r.status}): ${preview.slice(0, 200)}`);
+  }
+  return Buffer.from(await r.arrayBuffer());
 }

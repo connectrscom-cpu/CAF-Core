@@ -27,6 +27,8 @@ import {
   applyPostMaxAgeToConfig,
   buildFacebookApifyInput,
   buildInstagramApifyInput,
+  buildLinkedInPostsApifyInput,
+  buildLinkedInProfileSearchApifyInput,
   buildRedditApifyInputFromConfig,
   buildTiktokApifyInput,
   datasetLimitFor,
@@ -34,17 +36,22 @@ import {
   mergeScraperConfig,
   parseHashtagList,
   resolveActorId,
+  resolveLinkedInPostsActorId,
+  resolveLinkedInProfileSearchActorId,
   type ScraperProjectConfig,
 } from "./inputs-scraper-apify-config.js";
 import {
   enabledWebsiteSources,
+  extractLinkedInProfileUrl,
   facebookUrlsFromSources,
+  linkedinUrlsFromSources,
   prepareInstagramSources,
   subredditLinksFromSources,
   tiktokProfilesFromSources,
   transformFacebookApifyPost,
   transformHtmlFetch,
   transformInstagramApifyPost,
+  transformLinkedInApifyPost,
   transformRedditApifyDataset,
   transformTiktokApifyItem,
 } from "./inputs-scraper-transforms.js";
@@ -107,7 +114,7 @@ function isAbortError(e: unknown): boolean {
   return false;
 }
 
-export const SCRAPER_KEYS = ["instagram", "tiktok", "html", "facebook", "reddit", "all"] as const;
+export const SCRAPER_KEYS = ["instagram", "tiktok", "html", "facebook", "reddit", "linkedin", "all"] as const;
 export type ScraperKey = (typeof SCRAPER_KEYS)[number];
 
 export interface ScraperApifyRunRef {
@@ -324,6 +331,62 @@ async function scrapeFacebook(
   return { payloads: out, apifyRunIds };
 }
 
+async function scrapeLinkedIn(
+  token: string,
+  cfg: ScraperProjectConfig,
+  accountSources: Record<string, unknown>[],
+  searchSources: Record<string, unknown>[],
+  maxSources?: number | null,
+  abortCtx?: ScraperAbortContext
+): Promise<ScrapePayloadResult> {
+  checkScraperAbort(abortCtx);
+  const li = cfg.scrapers?.linkedin ?? {};
+  const targetUrls = applySourceCap(linkedinUrlsFromSources(accountSources), maxSources);
+  const apifyRunIds: string[] = [];
+
+  if (li.profileSearchEnabled !== false && searchSources.length > 0) {
+    const searchActorId = resolveLinkedInProfileSearchActorId(li);
+    const wait = apifyWaitSec(cfg);
+    const searchLimit = datasetLimitFor(cfg, "linkedin");
+    for (const src of applySourceCap(searchSources, maxSources)) {
+      checkScraperAbort(abortCtx);
+      const input = buildLinkedInProfileSearchApifyInput(cfg, src);
+      if (!input) continue;
+      const run = await runApifyActor(token, searchActorId, input, {
+        waitForFinishSec: wait,
+        ...apifyAbortHooks(abortCtx),
+      });
+      apifyRunIds.push(run.id);
+      const profiles = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, {
+        limit: searchLimit,
+      });
+      for (const profile of profiles) {
+        const url = extractLinkedInProfileUrl(profile);
+        if (url) targetUrls.push(url);
+      }
+    }
+  }
+
+  const uniqueTargets = [...new Set(targetUrls.map((u) => u.trim()).filter(Boolean))];
+  if (uniqueTargets.length === 0) return { payloads: [], apifyRunIds };
+
+  const postsActorId = resolveLinkedInPostsActorId(li);
+  const wait = apifyWaitSec(cfg);
+  const limit = datasetLimitFor(cfg, "linkedin");
+  const run = await runApifyActor(token, postsActorId, buildLinkedInPostsApifyInput(cfg, uniqueTargets), {
+    waitForFinishSec: wait,
+    ...apifyAbortHooks(abortCtx),
+  });
+  apifyRunIds.push(run.id);
+  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+  const out: Record<string, unknown>[] = [];
+  for (const item of items) {
+    const row = transformLinkedInApifyPost(item);
+    if (row) out.push(row);
+  }
+  return { payloads: out, apifyRunIds };
+}
+
 async function scrapeHtml(
   cfg: ScraperProjectConfig,
   sources: Record<string, unknown>[],
@@ -376,6 +439,7 @@ const SCRAPER_SOURCE_TAB: Record<string, string> = {
   html: "websites_blogs",
   facebook: "facebook",
   reddit: "subreddits",
+  linkedin: "linkedinaccounts",
 };
 
 async function runOneScraper(
@@ -390,7 +454,7 @@ async function runOneScraper(
   const abortCtx = runOpts?.abortContext;
   const tab = SCRAPER_SOURCE_TAB[scraperKey];
   const sources = await loadEnabledSources(db, projectId, tab);
-  if (sources.length === 0 && scraperKey !== "tiktok") {
+  if (sources.length === 0 && scraperKey !== "tiktok" && scraperKey !== "linkedin") {
     throw new Error(`No enabled sources in ${tab}`);
   }
 
@@ -420,6 +484,21 @@ async function runOneScraper(
       case "facebook":
         scrapeResult = await scrapeFacebook(token!, projectConfig, sources, maxSources, abortCtx);
         break;
+      case "linkedin": {
+        const searchSources = await loadEnabledSources(db, projectId, "linkedinsearches");
+        if (sources.length === 0 && searchSources.length === 0) {
+          throw new Error("No enabled sources in linkedinaccounts or linkedinsearches");
+        }
+        scrapeResult = await scrapeLinkedIn(
+          token!,
+          projectConfig,
+          sources,
+          searchSources,
+          maxSources,
+          abortCtx
+        );
+        break;
+      }
     }
   }
 
@@ -461,7 +540,7 @@ async function executeInputsScraperRunCore(
   const keys: Array<Exclude<ScraperKey, "all">> = runOpts?.platforms?.length
     ? runOpts.platforms
     : scraperKey === "all"
-      ? ["instagram", "tiktok", "html", "facebook", "reddit"]
+      ? ["instagram", "tiktok", "html", "facebook", "reddit", "linkedin"]
       : [scraperKey];
 
   const allRows: ParsedInputsEvidenceRow[] = [];

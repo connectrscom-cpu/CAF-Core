@@ -673,6 +673,75 @@ export async function ensureVideoFlowsEnabledWhenCapped(
   await enableAllowedFlowRowsWhenCapped(db, projectId, VIDEO_PLAN_CAP_GROUPS, DEFAULT_VIDEO_FLOW_PLAN_CAP);
 }
 
+/** Flow types explicitly chosen in a marketer content cart (planner row target_flow_type). */
+export function cartTargetFlowTypesFromPlannerRows(
+  plannerRows: readonly Record<string, unknown>[]
+): string[] {
+  const targets = new Set<string>();
+  for (const row of plannerRows) {
+    const ft = String(row.target_flow_type ?? "").trim();
+    if (ft) targets.add(ft);
+  }
+  return [...targets];
+}
+
+/**
+ * Enable every flow type the operator picked in the content cart.
+ * Disabled allowed_flow_types rows otherwise drop cart candidates silently during planning.
+ */
+export async function ensureCartTargetFlowsEnabled(
+  db: Pool,
+  projectId: string,
+  plannerRows: readonly Record<string, unknown>[]
+): Promise<string[]> {
+  const targets = cartTargetFlowTypesFromPlannerRows(plannerRows);
+  if (targets.length === 0) return [];
+
+  const rows = await listAllowedFlowTypes(db, projectId);
+  const byFlow = new Map(rows.map((r) => [r.flow_type, r]));
+  const enabled: string[] = [];
+
+  for (const ft of targets) {
+    const row = byFlow.get(ft);
+    if (!row) {
+      await upsertAllowedFlowType(db, projectId, {
+        flow_type: ft,
+        enabled: true,
+        default_variation_count: 1,
+        requires_signal_pack: true,
+        requires_learning_context: false,
+        allowed_platforms: null,
+        output_schema_version: null,
+        qc_checklist_version: null,
+        prompt_template_id: null,
+        priority_weight: 1,
+        notes: "Auto-enabled for marketer content cart run.",
+        heygen_mode: null,
+      });
+      enabled.push(ft);
+      continue;
+    }
+    if (row.enabled) continue;
+    await upsertAllowedFlowType(db, projectId, {
+      flow_type: row.flow_type,
+      enabled: true,
+      default_variation_count: row.default_variation_count,
+      requires_signal_pack: row.requires_signal_pack,
+      requires_learning_context: row.requires_learning_context,
+      allowed_platforms: row.allowed_platforms,
+      output_schema_version: row.output_schema_version,
+      qc_checklist_version: row.qc_checklist_version,
+      prompt_template_id: row.prompt_template_id,
+      priority_weight: row.priority_weight,
+      notes: row.notes,
+      heygen_mode: row.heygen_mode ?? null,
+    });
+    enabled.push(ft);
+  }
+
+  return enabled;
+}
+
 /**
  * When operator sets a positive plan cap for mimic flows, ensure the corresponding
  * allowed_flow_types row is enabled (caps alone do not expand candidates).

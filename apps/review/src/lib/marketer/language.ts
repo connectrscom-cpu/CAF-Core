@@ -53,6 +53,7 @@ const FLOW_TYPE_LABELS: Record<string, string> = {
   FLOW_VID_SCENES: "Multi-scene video",
   FLOW_SCENE_ASSEMBLY: "Multi-scene video",
   FLOW_TEXT: "Text post",
+  FLOW_LINKEDIN_DOCUMENT_POST: "LinkedIn document post",
   FLOW_HOOKS: "Hooks",
   FLOW_ANGLE: "Carousel angle",
   FLOW_STRUCTURE: "Carousel structure",

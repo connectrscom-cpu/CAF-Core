@@ -133,7 +133,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     tab?: string;
     handles?: string[];
     paste?: string;
-    platforms?: Array<"instagram" | "tiktok" | "html" | "facebook" | "reddit">;
+    platforms?: Array<"instagram" | "tiktok" | "html" | "facebook" | "reddit" | "linkedin">;
     postMaxAgeDays?: number;
   };
 

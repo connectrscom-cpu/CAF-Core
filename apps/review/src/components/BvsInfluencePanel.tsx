@@ -2,17 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { BrandAssetImage } from "@/components/marketer/BrandAssetImage";
-import {
-  buildBvsInfluenceSections,
-  bvsPromptWasApplied,
-  parseBvsFromGenerationPayload,
-  resolveFluxPromptAssetsFromSnapshot,
-  roleLabel,
-  visualModeLabel,
-  type BvsResolvedAsset,
-} from "@/lib/bvs-influence";
+import { buildBvsInfluenceSections, bvsPromptWasApplied, parseBvsFromGenerationPayload, resolveFluxPromptAssetsFromSnapshot, roleLabel, visualModeLabel, type BvsResolvedAsset } from "@/lib/bvs-influence";
 import type { MimicImageAudit } from "@/lib/caf-core-client";
 import { auditForSlide, imageProviderLabel } from "@/lib/mimic-image-audit";
+import { isNewVisualCarouselMimic } from "@/lib/new-visual-slide-why";
 
 function Field({ label, value }: { label: string; value: string | null | undefined }) {
   if (!value?.trim()) return null;
@@ -168,6 +161,7 @@ export function BvsInfluencePanel({
   }, [taskId, projectSlug, slideIndex]);
 
   const snap = ctx.snapshot;
+  const newVisualLane = isNewVisualCarouselMimic(mimicV1);
   const fluxPromptAssets = useMemo(() => resolveFluxPromptAssetsFromSnapshot(snap), [snap]);
   const moodboardAssets = snap?.resolved_assets.filter((a) => a.public_url) ?? [];
   const promptTextAssets = fluxPromptAssets.length > 0 ? fluxPromptAssets : moodboardAssets;
@@ -193,8 +187,12 @@ export function BvsInfluencePanel({
       {open ? (
         <div className="bvs-influence-panel__body">
           <p className="bvs-influence-panel__lead">
-            Your Brand Visual System moodboard and rules — how they shaped this generated piece alongside the
-            reference strategy in <strong>Why this works</strong>.
+            Your Brand Visual System moodboard and rules — how they shaped this generated piece
+            {newVisualLane ? (
+              <> alongside the original concept strategy in <strong>Why this works</strong>.</>
+            ) : (
+              <> alongside the reference strategy in <strong>Why this works</strong>.</>
+            )}
           </p>
 
           {snap?.palette.length ? (

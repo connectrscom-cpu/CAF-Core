@@ -43,7 +43,7 @@ import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
 import { estimateHeyGenVideoUsd } from "./render-cost-estimate.js";
 import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
 import { buildRoughSrt } from "./caption-generator.js";
-import { parseVideoAssemblyJson, pollVideoAssemblyJob } from "./video-assembly-client.js";
+import { fetchVideoAssemblyJobOutput, parseVideoAssemblyJson, pollVideoAssemblyJob } from "./video-assembly-client.js";
 
 function rowMatchesPlatformAndFlow(
   r: HeygenConfigRow,
@@ -1780,7 +1780,7 @@ export async function runHeygenVideoWithBody(
       videoId,
       { maxMs: appConfig.HEYGEN_POLL_MAX_MS }
     );
-    if (!polled.usedVideoUrlCaption && postPath === "/v3/videos") {
+  if (!polled.usedVideoUrlCaption) {
       polled = await retryPollForCaptionedHeyGenUrl(
         apiKey,
         appConfig.HEYGEN_API_BASE,
@@ -2114,6 +2114,63 @@ export async function runHeygenForContentJob(
   return { public_url: publicUrl, object_path: storedObjectPath, video_id: videoId };
 }
 
+/**
+ * Ensure a HeyGen MP4 has burned-in subtitles when `HEYGEN_BURN_SUBTITLES` is enabled.
+ * Prefers HeyGen's pre-captioned `video_url_caption` when available; otherwise burns SRT locally.
+ */
+export async function ensureHeygenVideoWithSubtitles(
+  db: Pool,
+  appConfig: AppConfig,
+  job: HeygenJobContext,
+  polled: {
+    videoUrl: string;
+    videoId: string;
+    usedVideoUrlCaption: boolean;
+    subtitleUrl: string | null;
+    durationSec: number | null;
+  },
+  opts: {
+    postPath: HeygenGeneratePath;
+    spokenScript: string | null;
+    storageSuffix?: string;
+  }
+): Promise<string> {
+  if (polled.usedVideoUrlCaption) return polled.videoUrl;
+
+  const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const suffix = opts.storageSuffix ?? "heygen";
+  const objectPath = `videos/${safeRun}/${safeTask}/${suffix}_${polled.videoId}.mp4`;
+
+  let storedObjectPath: string | null = null;
+  let storedPublicUrl: string | null = null;
+  try {
+    const buf = await downloadUrl(polled.videoUrl);
+    const up = await uploadBuffer(appConfig, objectPath, buf, "video/mp4");
+    storedObjectPath = up.object_path;
+    storedPublicUrl = up.public_url;
+  } catch {
+    /* burn may still work with remote HeyGen URLs when Supabase is unavailable */
+  }
+
+  const burnReport = await maybeBurnHeygenSubtitles(db, appConfig, job, {
+    videoId: polled.videoId,
+    videoUrl: polled.videoUrl,
+    postPath: opts.postPath,
+    usedVideoUrlCaption: polled.usedVideoUrlCaption,
+    subtitleUrl: polled.subtitleUrl,
+    durationSec: polled.durationSec,
+    spokenScript: opts.spokenScript,
+    storedObjectPath,
+    storedPublicUrl,
+    safeRun,
+    safeTask,
+  });
+
+  if (burnReport.replacedPublicUrl) return burnReport.replacedPublicUrl;
+  return polled.videoUrl;
+}
+
 interface HeygenBurnReport {
   burned: boolean;
   /** "heygen_v3_srt" | "synthesized_from_spoken_script" | null */
@@ -2127,18 +2184,12 @@ interface HeygenBurnReport {
 /**
  * After HeyGen returns a video, optionally burn captions in via the local video-assembly `/burn-subtitles` service.
  *
- * **Script-led `/v3/videos` only.** Video Agent (`/v3/video-agents`) and silence-voice (`/v2/video/generate`)
- * paths are intentionally skipped:
- *   - Video Agent prompts produce non-script narration whose words/timing are not knowable client-side, so a
- *     synthesized SRT from `spoken_script` would not match what the avatar actually said.
- *   - Silence-voice is visual-only (no spoken script to caption).
- *   Only `/v3/videos` opts in to `caption: { file_format: "srt" }`, so it's the only path where HeyGen returns
- *   an authoritative `data.subtitle_url` aligned to the rendered audio. For that path we burn HeyGen's SRT
- *   (or, only when HeyGen omits one for some reason, fall back to a synthesized SRT from `spoken_script` +
- *   reported `durationSec`).
+ * Supports `POST /v3/videos` (authoritative HeyGen SRT) and `POST /v3/video-agents` when HeyGen returns
+ * `subtitle_url` or when a caller-provided `spoken_script` + duration can synthesize a fallback SRT.
+ * Skips silence-voice `/v2/video/generate` (no narration to caption).
  *
- * On success the burned MP4 replaces the previously uploaded raw MP4 at the same Supabase object path so downstream
- * tables (`assets.object_path`) keep pointing at the captioned file.
+ * On success the burned MP4 replaces the previously uploaded raw MP4 at the same Supabase object path when one
+ * was provided; otherwise returns the captioned URL from video-assembly upload.
  */
 async function maybeBurnHeygenSubtitles(
   db: Pool,
@@ -2167,12 +2218,13 @@ async function maybeBurnHeygenSubtitles(
     replacedPublicUrl: null,
   });
   if (!appConfig.HEYGEN_BURN_SUBTITLES) return skip("HEYGEN_BURN_SUBTITLES=false");
-  if (opts.postPath !== "/v3/videos") {
-    // Script-led only: Video Agent has no client-side script alignment, silence-voice has nothing to caption.
-    return skip(`script_led_only (postPath=${opts.postPath})`);
+  if (opts.postPath === "/v2/video/generate") {
+    return skip("silence_voice_no_narration");
+  }
+  if (opts.postPath !== "/v3/videos" && opts.postPath !== "/v3/video-agents") {
+    return skip(`unsupported_post_path (${opts.postPath})`);
   }
   if (opts.usedVideoUrlCaption) return skip("heygen_already_burned (video_url_caption returned)");
-  if (!opts.storedObjectPath) return skip("supabase_not_configured");
 
   let subtitleSource: "heygen_v3_srt" | "synthesized_from_spoken_script" | null = null;
   let burnSubtitlesUrl: string | null = null;
@@ -2207,10 +2259,25 @@ async function maybeBurnHeygenSubtitles(
       else return { burned: false, subtitleSource, skippedReason: null, error: `srt_sign_failed: ${srtSign.error}`, replacedObjectPath: null, replacedPublicUrl: null };
     }
 
-    const videoSign = await createSignedUrlForObjectKey(appConfig, bucket, opts.storedObjectPath, signTtlSec);
-    const videoMuxUrl = "signedUrl" in videoSign ? videoSign.signedUrl : opts.storedPublicUrl;
-    if (!videoMuxUrl) {
-      return { burned: false, subtitleSource, skippedReason: null, error: `video_sign_failed: ${"error" in videoSign ? videoSign.error : "missing_public_url"}`, replacedObjectPath: null, replacedPublicUrl: null };
+    let videoMuxUrl: string | null = null;
+    if (opts.storedObjectPath) {
+      const videoSign = await createSignedUrlForObjectKey(appConfig, bucket, opts.storedObjectPath, signTtlSec);
+      videoMuxUrl = "signedUrl" in videoSign ? videoSign.signedUrl : opts.storedPublicUrl;
+      if (!videoMuxUrl) {
+        return {
+          burned: false,
+          subtitleSource,
+          skippedReason: null,
+          error: `video_sign_failed: ${"error" in videoSign ? videoSign.error : "missing_public_url"}`,
+          replacedObjectPath: null,
+          replacedPublicUrl: null,
+        };
+      }
+    } else {
+      videoMuxUrl = opts.videoUrl?.trim() || null;
+      if (!videoMuxUrl) {
+        return { burned: false, subtitleSource, skippedReason: null, error: "no_fetchable_video_url", replacedObjectPath: null, replacedPublicUrl: null };
+      }
     }
     if (!subtitlesMuxUrl) {
       return { burned: false, subtitleSource, skippedReason: null, error: "no_fetchable_subtitle_url", replacedObjectPath: null, replacedPublicUrl: null };
@@ -2265,29 +2332,73 @@ async function maybeBurnHeygenSubtitles(
         subtitles_object_path: srtObjectPath,
         subtitles_source: subtitleSource,
       },
-      responseJson: { request_id: burnJson.request_id, public_url: burned.public_url },
+      responseJson: {
+        request_id: burnJson.request_id,
+        public_url: burned.public_url,
+        upload_error: burned.upload_error ?? null,
+      },
     });
-    if (!burned.public_url) {
-      return {
-        burned: false,
-        subtitleSource,
-        skippedReason: null,
-        error: "burn_completed_without_public_url (set SUPABASE_* on video-assembly)",
-        replacedObjectPath: null,
-        replacedPublicUrl: null,
-      };
+
+    let burnedPublicUrl = burned.public_url?.trim() || null;
+    if (!burnedPublicUrl) {
+      try {
+        const burnedBuf = await fetchVideoAssemblyJobOutput(baseUrl, burnJson.request_id, burned, {
+          timeoutMs: appConfig.HEYGEN_BURN_SUBTITLES_POLL_MAX_MS,
+        });
+        if (opts.storedObjectPath) {
+          const replaceUp = await uploadBuffer(appConfig, opts.storedObjectPath, burnedBuf, "video/mp4");
+          return {
+            burned: true,
+            subtitleSource,
+            skippedReason: null,
+            error: null,
+            replacedObjectPath: replaceUp.object_path,
+            replacedPublicUrl: replaceUp.public_url ?? opts.storedPublicUrl,
+          };
+        }
+        const fallbackPath = `videos/${opts.safeRun}/${opts.safeTask}/heygen_burned_${opts.videoId}.mp4`;
+        const fallbackUp = await uploadBuffer(appConfig, fallbackPath, burnedBuf, "video/mp4");
+        return {
+          burned: true,
+          subtitleSource,
+          skippedReason: null,
+          error: null,
+          replacedObjectPath: fallbackUp.object_path,
+          replacedPublicUrl: fallbackUp.public_url,
+        };
+      } catch (fetchErr) {
+        const msg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        return {
+          burned: false,
+          subtitleSource,
+          skippedReason: null,
+          error: `burn_output_fetch_failed: ${msg.slice(0, 400)}`,
+          replacedObjectPath: null,
+          replacedPublicUrl: null,
+        };
+      }
     }
 
-    // Replace the raw HeyGen MP4 at the same Supabase path so downstream consumers automatically pick up captions.
-    const burnedBuf = await downloadBufferFromUrl(appConfig, burned.public_url);
-    const replaceUp = await uploadBuffer(appConfig, opts.storedObjectPath, burnedBuf, "video/mp4");
+    if (opts.storedObjectPath) {
+      // Replace the raw HeyGen MP4 at the same Supabase path so downstream consumers automatically pick up captions.
+      const burnedBuf = await downloadBufferFromUrl(appConfig, burnedPublicUrl);
+      const replaceUp = await uploadBuffer(appConfig, opts.storedObjectPath, burnedBuf, "video/mp4");
+      return {
+        burned: true,
+        subtitleSource,
+        skippedReason: null,
+        error: null,
+        replacedObjectPath: replaceUp.object_path,
+        replacedPublicUrl: replaceUp.public_url ?? opts.storedPublicUrl,
+      };
+    }
     return {
       burned: true,
       subtitleSource,
       skippedReason: null,
       error: null,
-      replacedObjectPath: replaceUp.object_path,
-      replacedPublicUrl: replaceUp.public_url ?? opts.storedPublicUrl,
+      replacedObjectPath: null,
+      replacedPublicUrl: burnedPublicUrl,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

@@ -2,6 +2,7 @@
  * Hook-first hybrid video — cinematic AI hook clip (4–8s) + HeyGen body segment.
  */
 import { CANONICAL_FLOW_TYPES } from "./canonical-flow-types.js";
+import { pickGeneratedOutputOrEmpty, type GenerationPayloadLike } from "./generation-payload-output.js";
 
 export const FLOW_VID_HOOK_FIRST = CANONICAL_FLOW_TYPES.VID_HOOK_FIRST;
 
@@ -123,6 +124,24 @@ export function hookFirstPayloadReady(gen: Record<string, unknown>): boolean {
   const hook = extractHookScenePrompt(normalized, 20);
   const body = extractHookFirstSpokenScript(normalized, 20);
   return hook.length >= 20 && body.length >= 20;
+}
+
+/**
+ * FAILED hook-first jobs with both segments rendered but no merged output — safe to retry concat only
+ * (no HeyGen re-bill for hook/body when URLs are still in generated_output).
+ */
+export function isHookFirstFailedConcatRetryEligible(
+  flowType: string | null | undefined,
+  status: string | null | undefined,
+  generationPayload: GenerationPayloadLike
+): boolean {
+  if (String(status ?? "").toUpperCase() !== "FAILED") return false;
+  if (!isHookFirstVideoFlow(flowType)) return false;
+  const gen = pickGeneratedOutputOrEmpty(generationPayload);
+  const hook = String(gen.hook_clip_url ?? "").trim();
+  const body = String(gen.body_video_url ?? "").trim();
+  const merged = String(gen.merged_video_url ?? "").trim();
+  return hook.length > 0 && body.length > 0 && merged.length === 0;
 }
 
 /** System addendum for primary LLM generation and render-time prep. */

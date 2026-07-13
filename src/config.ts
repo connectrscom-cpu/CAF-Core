@@ -81,7 +81,7 @@ const envSchema = z.object({
    * - "dry_run": Core completes with a fake platform_post_id (plumbing tests)
    * - "meta": Core calls Meta Graph (Facebook Page + Instagram) using project_integrations + META_GRAPH_API_VERSION
    */
-  CAF_PUBLISH_EXECUTOR: z.enum(["none", "dry_run", "meta"]).default("none"),
+  CAF_PUBLISH_EXECUTOR: z.enum(["none", "dry_run", "meta", "linkedin"]).default("none"),
 
   /** Graph API version for Meta publishing (e.g. v21.0, v25.0). */
   META_GRAPH_API_VERSION: z.string().default("v21.0"),
@@ -102,6 +102,11 @@ const envSchema = z.object({
    * META_FB / META_IG rows from `TO` (e.g. `CUISINA=SNS` — same Facebook Page and Instagram account as SNS).
    */
   CAF_META_ACCOUNT_SOURCE_MAP: z.string().optional(),
+
+  /** Optional env overrides for CAF_PUBLISH_EXECUTOR=linkedin */
+  CAF_LINKEDIN_ACCESS_TOKEN: z.string().optional(),
+  /** urn:li:person:… or urn:li:organization:… */
+  CAF_LINKEDIN_AUTHOR_URN: z.string().optional(),
 
   DECISION_ENGINE_VERSION: z.string().default("v1"),
 
@@ -693,10 +698,11 @@ const envSchema = z.object({
   /**
    * HeyGen v3 `POST /v3/videos` accepts `caption: { file_format: "srt" }` which causes HeyGen to render an SRT
    * sidecar (exposed as `data.subtitle_url` in the v3 status response) — but the MP4 itself is **not** modified.
-   * When this flag is on (default) CAF downloads the SRT, calls the local video-assembly `/burn-subtitles` service
-   * to burn captions into the MP4 with ffmpeg, and uploads the captioned version to Supabase as the canonical asset.
-   * Set to 0/false to keep the raw HeyGen MP4 (no captions). Falls back to a synthesized SRT built from
-   * `spoken_script` + reported duration when HeyGen does not return one (Video Agent / silence-voice paths).
+   * When this flag is on (default) CAF downloads the SRT (or synthesizes one from `spoken_script` when HeyGen
+   * omits it), calls the local video-assembly `/burn-subtitles` service to burn captions into the MP4, and
+   * stores the captioned version as the canonical asset. Applies to script-led `/v3/videos` and Video Agent
+   * `/v3/video-agents` when an SRT or spoken script is available. Also retries HeyGen's pre-captioned
+   * `video_url_caption` / `captioned_video_url` when HeyGen provides one.
    */
   HEYGEN_BURN_SUBTITLES: z
     .string()

@@ -30,6 +30,8 @@ import { registerReviewBackgroundJob } from "@/lib/review-background-jobs";
 import type { BrandSlideFrameOption } from "@/lib/brand-asset-url";
 import { BvsInfluencePanel } from "@/components/BvsInfluencePanel";
 import { MimicSlideWhyPanel } from "@/components/MimicSlideWhyPanel";
+import { NewVisualSlideWhyPanel } from "@/components/NewVisualSlideWhyPanel";
+import { hasSlideIntelligenceBundle, isNewVisualCarouselMimic } from "@/lib/new-visual-slide-why";
 import {
   clusterIndexForOcrBoxIndex,
   ocrBoxSpanForClusterIndex,
@@ -1514,6 +1516,11 @@ export function MimicCarouselLayerEditorPanel({
   const gp = useMemo(() => asRec(job?.generation_payload) ?? {}, [job]);
 
   const mimicV1 = useMemo(() => asRec(gp.mimic_v1), [gp]);
+  const showNewVisualWhyPanel = useMemo(() => isNewVisualCarouselMimic(mimicV1), [mimicV1]);
+  const showReferenceWhyPanel = useMemo(
+    () => !showNewVisualWhyPanel && hasSlideIntelligenceBundle(mimicV1),
+    [showNewVisualWhyPanel, mimicV1]
+  );
 
   const slideCopyLayout = useMemo(() => {
     const grounding = asRec(gp.mimic_job_grounding);
@@ -3720,14 +3727,25 @@ function ensureFullBleedTextLayerBoxes(
 
       <div className="mimic-layer-editor-panel__chrome">
 
-      <MimicSlideWhyPanel
-        mimicV1={mimicV1}
-        slideIndex={editorSlide}
-        taskId={taskId}
-        projectSlug={projectSlug}
-        defaultOpen={false}
-        generatedOnScreenText={generatedOnScreenText}
-      />
+      {showNewVisualWhyPanel ? (
+        <NewVisualSlideWhyPanel
+          generationPayload={gp}
+          mimicV1={mimicV1}
+          slideIndex={editorSlide}
+          slideCount={slideCount}
+          generatedOnScreenText={generatedOnScreenText}
+          defaultOpen={false}
+        />
+      ) : showReferenceWhyPanel ? (
+        <MimicSlideWhyPanel
+          mimicV1={mimicV1}
+          slideIndex={editorSlide}
+          taskId={taskId}
+          projectSlug={projectSlug}
+          defaultOpen={false}
+          generatedOnScreenText={generatedOnScreenText}
+        />
+      ) : null}
 
       <BvsInfluencePanel
         generationPayload={gp}

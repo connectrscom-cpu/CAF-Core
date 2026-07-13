@@ -1,4 +1,5 @@
 import { PRODUCT_VIDEO_FLOW_TYPES } from "./product-flow-types.js";
+import { FLOW_LINKEDIN_DOCUMENT_POST } from "./linkedin-document-post-flow-types.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
@@ -92,6 +93,7 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
   }
   if (c === FLOW_VISUAL_FIRST_CAROUSEL) return FLOW_VISUAL_FIRST_CAROUSEL;
   if (c === FLOW_WHY_MIMIC_CAROUSEL) return FLOW_WHY_MIMIC_CAROUSEL;
+  if (c === FLOW_LINKEDIN_DOCUMENT_POST) return CANONICAL_FLOW_TYPES.TEXT;
   return c;
 }
 
@@ -145,5 +147,13 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
     allowed_platforms: null,
     notes:
       "Single video — prompt JSON → HeyGen Video Agent (no on-camera avatar; narration + motion/stock/graphics)",
+  },
+  {
+    flow_type: FLOW_LINKEDIN_DOCUMENT_POST,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 5,
+    allowed_platforms: "LinkedIn",
+    notes: "LinkedIn document post — long copy + 2–3 companion images (1:1 or 4:5)",
   },
 ] as const;

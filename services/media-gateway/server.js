@@ -199,6 +199,16 @@ app.use(
   })
 );
 
+/** CAF Core fetches MP4 bytes when renderer-side Supabase upload failed but ffmpeg succeeded. */
+app.use(
+  "/jobs",
+  createProxyMiddleware({
+    target: `http://127.0.0.1:${VIDEO_PORT}`,
+    changeOrigin: true,
+    pathRewrite: { "^/jobs": "/jobs" },
+  })
+);
+
 app.use(
   "/full-pipeline",
   createProxyMiddleware({

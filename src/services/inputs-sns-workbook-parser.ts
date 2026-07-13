@@ -43,6 +43,8 @@ export function sheetNameToEvidenceKind(sheetName: string): string {
     subreddits: "source_registry",
     tiktokaccounts: "source_registry",
     igaccounts: "source_registry",
+    linkedinaccounts: "source_registry",
+    linkedinsearches: "source_registry",
     facebook: "source_registry",
     hashtags: "source_registry",
     // "INPUTS_Example.xlsx" naming (exported from current inputs pipeline)
@@ -57,6 +59,7 @@ export function sheetNameToEvidenceKind(sheetName: string): string {
     instagrampostdata: "instagram_post",
     facebook_info: "facebook_post",
     facebookpostdata: "facebook_post",
+    linkedinpostdata: "linkedin_post",
   };
   return map[k] ?? `sheet_${k}`;
 }
@@ -105,6 +108,12 @@ export function computeDedupeKey(
       const id = pickFirst(row, ["postId", "post_id", "Post ID"]);
       if (id) return id;
       const url = pickFirst(row, ["postUrl", "post_url", "url", "Post URL"]);
+      return url || null;
+    }
+    case "linkedin_post": {
+      const id = pickFirst(row, ["post_id", "post id", "Post ID", "postId"]);
+      if (id) return id;
+      const url = pickFirst(row, ["post_url", "post_url", "linkedin_url", "url", "Post URL"]);
       return url || null;
     }
     case "scraped_page": {

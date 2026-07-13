@@ -184,6 +184,27 @@ export function pickPrimaryImageUrlForDeepAnalysis(
       if (u && isHttpsUrl(u) && IMAGE_EXT.test(u)) return u;
       return null;
     }
+    case "linkedin_post": {
+      const mt = str(payload.media_type).toLowerCase();
+      if (mt === "video") return null;
+      for (const k of ["display_url", "image_url", "thumbnail_url", "media_url"]) {
+        const raw = str(payload[k]);
+        const u = raw ? sanitizeOneHttpsImageUrl(raw) ?? "" : "";
+        if (u && isHttpsUrl(u)) return u;
+      }
+      try {
+        const parsed = JSON.parse(str(payload.image_urls) || "[]") as unknown;
+        if (Array.isArray(parsed)) {
+          for (const entry of parsed) {
+            const u = typeof entry === "string" ? sanitizeOneHttpsImageUrl(entry) : null;
+            if (u && isHttpsUrl(u)) return u;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      return null;
+    }
     case "scraped_page": {
       const ogRaw = str(payload.og_image ?? payload.image_url);
       const og = ogRaw ? sanitizeOneHttpsImageUrl(ogRaw) ?? "" : "";
@@ -206,6 +227,9 @@ export function isVideoLikeEvidence(evidenceKind: string, payload: Record<string
     if (String(payload.isVideo ?? "").toLowerCase() === "true") return true;
     const u = String(payload.url ?? "");
     return /\/reel\//i.test(u);
+  }
+  if (evidenceKind === "linkedin_post") {
+    return String(payload.media_type ?? "").toLowerCase() === "video";
   }
   return false;
 }

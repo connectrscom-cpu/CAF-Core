@@ -3,6 +3,7 @@
  */
 import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
+import { isLinkedInDocumentPostFlow } from "../domain/linkedin-document-post-flow-types.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
@@ -10,6 +11,8 @@ import {
   FLOW_WHY_MIMIC_CAROUSEL,
   isTopPerformerMimicImageFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
+
+export { isLinkedInDocumentPostFlow };
 
 export function isCarouselFlow(flowType: string): boolean {
   const raw = flowType ?? "";

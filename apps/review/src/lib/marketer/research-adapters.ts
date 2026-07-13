@@ -7,7 +7,7 @@ export const RESEARCH_SOURCE_GROUPS: Array<{
   tab: string;
   platformLabel: string;
   placeholder: string;
-  scraper: "instagram" | "tiktok" | "reddit" | "facebook" | "html" | null;
+  scraper: "instagram" | "tiktok" | "reddit" | "facebook" | "linkedin" | "html" | null;
 }> = [
   {
     id: "instagram",
@@ -48,6 +48,24 @@ export const RESEARCH_SOURCE_GROUPS: Array<{
     platformLabel: "Facebook",
     placeholder: "Paste page names or URLs",
     scraper: "facebook",
+  },
+  {
+    id: "linkedin",
+    label: "LinkedIn profiles & companies",
+    tab: "linkedinaccounts",
+    platformLabel: "LinkedIn",
+    placeholder:
+      "Paste profile or company URLs — one per line\nhttps://www.linkedin.com/in/satyanadella/\nhttps://www.linkedin.com/company/google",
+    scraper: "linkedin",
+  },
+  {
+    id: "linkedin_searches",
+    label: "LinkedIn niche searches",
+    tab: "linkedinsearches",
+    platformLabel: "LinkedIn",
+    placeholder:
+      "Paste LinkedIn people-search queries — one per line\ncontent marketing director\nB2B SaaS founder",
+    scraper: "linkedin",
   },
   {
     id: "websites",
@@ -121,6 +139,27 @@ export function buildSourceRowPayload(
         source_tab: tab,
       };
     }
+    case "linkedinaccounts": {
+      const link = /^https?:\/\//i.test(trimmed)
+        ? trimmed
+        : trimmed.includes("/company/")
+          ? `https://www.linkedin.com/company/${bare.replace(/^company\//i, "")}/`
+          : `https://www.linkedin.com/in/${bare}/`;
+      return {
+        Name: bare,
+        Link: link,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
+    }
+    case "linkedinsearches":
+      return {
+        Name: bare,
+        Link: bare,
+        searchQuery: bare,
+        Platform: platformLabel,
+        source_tab: tab,
+      };
     case "websites_blogs": {
       const link = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
       return {
@@ -167,6 +206,12 @@ function handleFromSourcePayload(
       name = link.match(/tiktok\.com\/@([^/?#\s]+)/i)?.[1] ?? link.replace(/^@+/, "");
     } else if (tab === "igaccounts") {
       name = link.match(/instagram\.com\/([^/?#\s]+)/i)?.[1] ?? link.replace(/^@+/, "");
+    } else if (tab === "linkedinaccounts") {
+      name =
+        link.match(/linkedin\.com\/(?:in|company)\/([^/?#\s]+)/i)?.[1] ??
+        link.replace(/^https?:\/\/(www\.)?linkedin\.com\//i, "");
+    } else if (tab === "linkedinsearches") {
+      name = String(p.searchQuery ?? p.SearchQuery ?? link).trim();
     } else {
       name = link.replace(/^https?:\/\/(www\.)?/i, "");
     }
@@ -191,6 +236,7 @@ export const RESEARCH_RUN_PLATFORMS = [
   { id: "tiktok" as const, label: "TikTok" },
   { id: "reddit" as const, label: "Reddit" },
   { id: "facebook" as const, label: "Facebook" },
+  { id: "linkedin" as const, label: "LinkedIn" },
   { id: "html" as const, label: "Websites & blogs" },
 ];
 

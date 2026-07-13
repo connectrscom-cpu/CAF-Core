@@ -48,6 +48,13 @@ export function resolveCartFlowForIdea(
     flowTypeRaw = CAROUSEL_PROFILE_TO_FLOW[profile] ?? "FLOW_CAROUSEL";
   } else if (format === "post" || format === "thread") {
     flowTypeRaw = "FLOW_TEXT";
+  } else if (format === "linkedin_document") {
+    flowTypeRaw = "FLOW_LINKEDIN_DOCUMENT_POST";
+  }
+
+  const platform = String(idea.platform ?? "").toLowerCase();
+  if (!raw.startsWith("FLOW_") && platform.includes("linkedin") && (format === "post" || format === "carousel")) {
+    flowTypeRaw = "FLOW_LINKEDIN_DOCUMENT_POST";
   }
 
   return {
@@ -109,6 +116,8 @@ export interface CartCreationLine {
       mimic_mode?: ContentCartItem["mimicMode"];
       render_mode?: ContentCartItem["renderMode"];
       video_intent?: ContentCartItem["videoIntent"];
+      linkedin_aspect_ratio?: ContentCartItem["linkedinAspectRatio"];
+      linkedin_image_count?: ContentCartItem["linkedinImageCount"];
       use_brand_visual_system?: boolean;
 }
 
@@ -135,6 +144,8 @@ export function buildCartCreationPayload(slug: string, items: ContentCartItem[])
       mimic_mode: item.mimicMode,
       render_mode: item.renderMode,
       video_intent: item.videoIntent,
+      linkedin_aspect_ratio: item.linkedinAspectRatio,
+      linkedin_image_count: item.linkedinImageCount,
       use_brand_visual_system: item.useBrandVisualSystem !== false,
     })),
   };

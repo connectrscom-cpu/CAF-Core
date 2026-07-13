@@ -70,6 +70,12 @@ export function extractEvidenceDisplayFields(
         hashtags: null,
       };
     }
+    case "linkedin_post":
+      return {
+        url: firstStr(payload, ["post_url", "linkedin_url", "url", "URL"]),
+        caption: firstStr(payload, ["content", "caption", "Caption"]) || null,
+        hashtags: firstStr(payload, ["hashtags", "Hashtags"]) || null,
+      };
     case "scraped_page":
       return {
         url: firstStr(payload, ["url", "Url", "URL"]),

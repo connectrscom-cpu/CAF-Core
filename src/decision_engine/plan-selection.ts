@@ -84,6 +84,52 @@ function duplicateReason(pass: "primary" | "fallback"): string {
   return pass === "primary" ? "duplicate_idea_primary_format" : "duplicate_idea_flow_bucket";
 }
 
+export async function selectExactCartJobsFromCandidates(
+  ctx: PlanSelectionContext,
+  state: PlanSelectionState,
+  sorted: ScoredCandidate[]
+): Promise<void> {
+  const ordered = [...sorted].sort((a, b) => {
+    const ai = a.source_row_index_1_based ?? Number.MAX_SAFE_INTEGER;
+    const bi = b.source_row_index_1_based ?? Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return b.pre_gen_score - a.pre_gen_score;
+  });
+
+  for (const c of ordered) {
+    if (state.remainingSlots <= 0) break;
+
+    const resolvedPrompt = await resolvePromptVersion(ctx.db, {
+      projectId: ctx.projectId,
+      cafGlobalProjectId: ctx.cafGlobalProjectId,
+      flowType: c.flow_type,
+      maxActive: ctx.maxPrompts,
+      override: ctx.promptOverride,
+    });
+    const route = selectRoute(c, { autoValidationThreshold: ctx.autoValThreshold });
+
+    state.selected.push({
+      candidate_id: c.candidate_id,
+      flow_type: c.flow_type,
+      platform: c.target_platform ?? c.platform,
+      source_row_index_1_based: c.source_row_index_1_based,
+      variation_index: 0,
+      variation_name: "v1",
+      prompt_version_id: resolvedPrompt.selected?.prompt_version_id ?? null,
+      prompt_id: resolvedPrompt.selected?.prompt_id ?? null,
+      prompt_version_label: resolvedPrompt.selected?.version ?? null,
+      prompt_source: resolvedPrompt.source,
+      recommended_route: route,
+      pre_gen_score: c.pre_gen_score,
+    });
+    state.remainingSlots -= 1;
+    const ft = c.flow_type;
+    if (countsTowardCarouselRunCap(ft)) state.plannedCarousel += 1;
+    if (isVideoFlow(ft)) state.plannedVideo += 1;
+    state.perFlowPlanned[ft] = (state.perFlowPlanned[ft] ?? 0) + 1;
+  }
+}
+
 export async function selectJobsFromCandidates(
   ctx: PlanSelectionContext,
   state: PlanSelectionState,

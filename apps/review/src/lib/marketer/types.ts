@@ -194,8 +194,9 @@ export interface ContentCartItem {
   renderMode?: "full_bleed" | "template";
   /** When true, stamp Brand Visual System (brand bible) onto this job at plan time. */
   useBrandVisualSystem?: boolean;
-  /** HeyGen lane for video top performers (script / prompt avatar / no avatar). */
-  videoIntent?: VideoPipelineIntent;
+  /** LinkedIn document post lane (2–3 companion images). */
+  linkedinAspectRatio?: "1:1" | "4:5";
+  linkedinImageCount?: 2 | 3;
 }
 
 export type BrandBibleVisualMode =

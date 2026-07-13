@@ -77,12 +77,20 @@ export function ProductBibleEditor({ slug, displayName }: { slug: string; displa
       if (!prev) return prev;
       return {
         ...prev,
-        products: prev.products.map((p) => {
-          if (p.key !== productKey) return p;
-          const next = { ...p, ...patch };
-          if (patch.label && !patch.key) next.key = productModuleSlugKey(patch.label) || p.key;
-          return next;
-        }),
+        products: prev.products.map((p) => (p.key === productKey ? { ...p, ...patch } : p)),
+      };
+    });
+  }
+
+  function syncProductKeyFromLabel(productKey: string, label: string) {
+    const nextKey = productModuleSlugKey(label) || productKey;
+    if (nextKey === productKey) return;
+    setExpandedProduct((current) => (current === productKey ? nextKey : current));
+    setBible((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        products: prev.products.map((p) => (p.key === productKey ? { ...p, key: nextKey } : p)),
       };
     });
   }
@@ -96,12 +104,25 @@ export function ProductBibleEditor({ slug, displayName }: { slug: string; displa
           if (p.key !== productKey) return p;
           return {
             ...p,
-            features: p.features.map((f) => {
-              if (f.key !== featureKey) return f;
-              const next = { ...f, ...patch };
-              if (patch.label && !patch.key) next.key = productModuleSlugKey(patch.label) || f.key;
-              return next;
-            }),
+            features: p.features.map((f) => (f.key === featureKey ? { ...f, ...patch } : f)),
+          };
+        }),
+      };
+    });
+  }
+
+  function syncFeatureKeyFromLabel(productKey: string, featureKey: string, label: string) {
+    const nextKey = productModuleSlugKey(label) || featureKey;
+    if (nextKey === featureKey) return;
+    setBible((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        products: prev.products.map((p) => {
+          if (p.key !== productKey) return p;
+          return {
+            ...p,
+            features: p.features.map((f) => (f.key === featureKey ? { ...f, key: nextKey } : f)),
           };
         }),
       };
@@ -390,6 +411,7 @@ export function ProductBibleEditor({ slug, displayName }: { slug: string; displa
                       <input
                         value={product.label}
                         onChange={(e) => updateProduct(product.key, { label: e.target.value })}
+                        onBlur={(e) => syncProductKeyFromLabel(product.key, e.target.value)}
                       />
                     </label>
                     <label className="profile-field">
@@ -453,6 +475,9 @@ export function ProductBibleEditor({ slug, displayName }: { slug: string; displa
                             <input
                               value={feature.label}
                               onChange={(e) => updateFeature(product.key, feature.key, { label: e.target.value })}
+                              onBlur={(e) =>
+                                syncFeatureKeyFromLabel(product.key, feature.key, e.target.value)
+                              }
                             />
                           </label>
                           <label className="profile-field">

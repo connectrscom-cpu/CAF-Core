@@ -30,7 +30,7 @@ interface ResearchResponse {
   }>;
 }
 
-type ResearchPlatform = "instagram" | "tiktok" | "html" | "facebook" | "reddit";
+type ResearchPlatform = "instagram" | "tiktok" | "html" | "facebook" | "reddit" | "linkedin";
 
 function postAgeLabel(days: number | null): string {
   if (days == null) return "—";

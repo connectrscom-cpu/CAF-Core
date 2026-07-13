@@ -4814,10 +4814,21 @@ async function runAction(runId,action){
       return;
     }
     // If Start fails because candidates_json is empty, offer to materialize candidates automatically.
+    // Never for marketer content cart runs — those require cart_manifest materialize from Ideas.
     if(action==='start'&&(!r.ok||!d.ok)){
       const msg=apiErr(d,'start failed');
       const looksLikeCandidatesIssue=String(msg||'').toLowerCase().includes('candidates_json')||String(msg||'').toLowerCase().includes('materialize');
+      let isContentCartRun=false;
       if(r.status===400&&looksLikeCandidatesIssue){
+        try{
+          const runInfo=await doReq(base,{method:'GET'});
+          if(runInfo.r.ok&&runInfo.d&&runInfo.d.run){
+            const meta=runInfo.d.run.metadata_json&&typeof runInfo.d.run.metadata_json==='object'&&!Array.isArray(runInfo.d.run.metadata_json)?runInfo.d.run.metadata_json:{};
+            isContentCartRun=String(meta.source||'')==='marketer_content_cart';
+          }
+        }catch(_e){/* ignore — fall through to generic error */}
+      }
+      if(r.status===400&&looksLikeCandidatesIssue&&!isContentCartRun){
         const ok=confirm(
           'This run cannot Start because candidates_json is empty.\\n\\n' +
           'Fix now by materializing candidates from the selected signal pack ideas, then re-trying Start?'
@@ -4831,6 +4842,8 @@ async function runAction(runId,action){
           const again=await doReq(base+'/start',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
           r=again.r; d=again.d;
         }
+      }else if(r.status===400&&looksLikeCandidatesIssue&&isContentCartRun){
+        throw new Error('Content cart run has empty candidates_json — restart from Ideas → cart → Start generation run (do not use Admin Start with auto-materialize).');
       }
     }
     if(!r.ok||!d.ok)throw new Error(apiErr(d,action+' failed'));
@@ -8110,7 +8123,7 @@ async function loadConfig(){
     'FLOW_VID_SCRIPT':{label:'Video – Script',cat:'Video (generic)',defaultNotes:'Spoken script JSON for script-led HeyGen (avatar reads verbatim).'},
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
     'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
-    'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'Cinematic AI hook clip (Sora/HeyGen, 4–8s) + HeyGen body segment → concat in Core.'},
+    'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'HeyGen AI hook clip (4–8s, no avatar) + HeyGen body (script avatar / video agent by body_lane) → concat in Core.'},
     'FLOW_VID_PROMPT_NO_AVATAR':{label:'Video prompt — no avatar',cat:'Video (generic)',defaultNotes:'HeyGen Video Agent only (no on-camera avatar): narration + motion/stock/graphics; uses FLOW_VID_PROMPT templates.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
     'FLOW_HOOKS':{label:'Hooks',cat:'Hooks & Scripts',defaultNotes:'Hook variations list + rationale.'},

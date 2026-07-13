@@ -14,6 +14,8 @@ const SOURCE_TAB_MAP: Record<string, string> = {
   tiktokaccounts: "tiktokaccounts",
   subreddits: "subreddits",
   facebook: "facebook",
+  linkedinaccounts: "linkedinaccounts",
+  linkedinsearches: "linkedinsearches",
   hashtags: "hashtags",
 };
 
@@ -93,6 +95,8 @@ export const SOURCE_TAB_TO_OUTPUT_SHEET: Record<string, string> = {
   tiktokaccounts: "TikTokAccounts",
   subreddits: "SubReddits",
   facebook: "Facebook",
+  linkedinaccounts: "LinkedInAccounts",
+  linkedinsearches: "LinkedInSearches",
   websites_blogs: "Websites+Blogs",
   all_sources: "All Sources",
   hashtags: "Hashtags",
@@ -153,6 +157,28 @@ const WORKBOOK_TEMPLATE_SHEETS: Array<{
     ],
   },
   {
+    sheet_name: "LinkedInAccounts",
+    source_tab: "linkedinaccounts",
+    example_rows: [
+      {
+        Name: "satyanadella",
+        Link: "https://www.linkedin.com/in/satyanadella/",
+        Platform: "LinkedIn",
+      },
+    ],
+  },
+  {
+    sheet_name: "LinkedInSearches",
+    source_tab: "linkedinsearches",
+    example_rows: [
+      {
+        Name: "content marketing director",
+        Link: "content marketing director",
+        Platform: "LinkedIn",
+      },
+    ],
+  },
+  {
     sheet_name: "Websites+Blogs",
     source_tab: "websites_blogs",
     example_rows: [
@@ -182,5 +208,6 @@ export const SCRAPER_OUTPUT_SHEETS: Record<string, string> = {
   tiktok: "Tiktok_Videos",
   reddit: "Reddit_Raw_Info",
   facebook: "Facebook_Info",
+  linkedin: "LinkedInPostData",
   html: "SCRAPED",
 };

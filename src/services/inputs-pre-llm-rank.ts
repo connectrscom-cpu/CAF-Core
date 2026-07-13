@@ -55,6 +55,7 @@ function textLen(payload: Record<string, unknown>): number {
     payload.title,
     payload.Title,
     payload.body_text,
+    payload.content,
     payload.caption,
     payload.Caption,
     payload.main_text,
@@ -123,6 +124,17 @@ function extractRawPreLlmFeatures(evidenceKind: string, payload: Record<string, 
         fb_likes: normLog1p(likes, 5_000_000),
         fb_comments: normLog1p(comments, 2_000_000),
         fb_shares: normLog1p(shares, 1_000_000),
+        text_signal,
+      };
+    }
+    case "linkedin_post": {
+      const likes = numFromPayload(payload, ["likes", "like_count", "Likes"]);
+      const comments = numFromPayload(payload, ["comments", "comment_count", "Comments"]);
+      const shares = numFromPayload(payload, ["shares", "share_count", "Shares"]);
+      return {
+        li_likes: normLog1p(likes, 500_000),
+        li_comments: normLog1p(comments, 50_000),
+        li_shares: normLog1p(shares, 25_000),
         text_signal,
       };
     }
@@ -212,6 +224,11 @@ function defaultRawKindProfile(kind: string): PreLlmKindProfile {
         min_score: 0.06,
         weights: { fb_likes: 0.35, fb_comments: 0.25, fb_shares: 0.2, text_signal: 0.2 },
       };
+    case "linkedin_post":
+      return {
+        min_score: 0.06,
+        weights: { li_likes: 0.4, li_comments: 0.25, li_shares: 0.15, text_signal: 0.2 },
+      };
     case "scraped_page":
       return {
         min_score: 0.05,
@@ -243,6 +260,11 @@ function defaultRelativeKindProfile(kind: string): PreLlmKindProfile {
       return {
         min_score: 0.06,
         weights: { page_relative_engagement: 0.45, page_relative_shares: 0.2, text_signal: 0.35 },
+      };
+    case "linkedin_post":
+      return {
+        min_score: 0.06,
+        weights: { page_relative_engagement: 0.45, page_relative_comments: 0.2, text_signal: 0.35 },
       };
     default:
       return defaultRawKindProfile(kind);
@@ -291,6 +313,7 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
     "tiktok_video",
     "instagram_post",
     "facebook_post",
+    "linkedin_post",
     "scraped_page",
     "source_registry",
   ];
@@ -368,6 +391,7 @@ const POST_KINDS_TEXT_GATE = new Set([
   "tiktok_video",
   "instagram_post",
   "facebook_post",
+  "linkedin_post",
 ]);
 
 /**
