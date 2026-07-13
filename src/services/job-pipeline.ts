@@ -142,7 +142,7 @@ import { loadProjectMimicRenderSettings } from "./mimic-project-config.js";
 import type { MimicImageInputMode } from "../domain/mimic-render-settings.js";
 import { isOpenAiPlaceholderModeForProject } from "./openai-generation-placeholder.js";
 import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
-import { hasActiveProviderSession, isCarouselRenderComplete, pickRenderState } from "../domain/content-job-render-state.js";
+import { hasActiveProviderSession, isCarouselRenderComplete, isHookFirstRenderingSafelyRetryable, pickRenderState } from "../domain/content-job-render-state.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { mergeCarouselTypographyIntoGeneratedOutputRender } from "../domain/carousel-render-typography.js";
 import {
@@ -218,6 +218,7 @@ function isVideoRenderingSafelyRetryable(j: JobRow): boolean {
   if (isCarouselFlow(j.flow_type)) return false;
   if (isOfflinePipelineFlow(j.flow_type)) return false;
   if (!isVideoFlow(j.flow_type)) return false;
+  if (isHookFirstRenderingSafelyRetryable(j.flow_type, j.status, j.render_state)) return true;
   // HeyGen idempotency invariant (see `src/domain/content-job-render-state.ts`):
   // if a provider already holds a resume key we must NOT re-submit.
   if (hasActiveProviderSession(j.render_state)) return false;

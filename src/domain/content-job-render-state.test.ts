@@ -3,6 +3,7 @@ import {
   carouselRendererStatus,
   hasActiveProviderSession,
   isCarouselRenderComplete,
+  isHookFirstRenderingSafelyRetryable,
   isMidProviderPhase,
   pickRenderState,
 } from "./content-job-render-state.js";
@@ -88,5 +89,29 @@ describe("isMidProviderPhase", () => {
     expect(isMidProviderPhase("starting")).toBe(false);
     expect(isMidProviderPhase("failed")).toBe(false);
     expect(isMidProviderPhase("SUBMITTED")).toBe(true); // case-insensitive
+  });
+});
+
+describe("isHookFirstRenderingSafelyRetryable", () => {
+  it("allows retry when hook-first is stuck mid-segment without HeyGen resume keys", () => {
+    expect(
+      isHookFirstRenderingSafelyRetryable("FLOW_VID_HOOK_FIRST", "RENDERING", {
+        provider: "hook-first-video",
+        status: "in_progress",
+        phase: "hook_clip",
+        hook_clip_provider: "heygen",
+      })
+    ).toBe(true);
+  });
+
+  it("blocks retry when a HeyGen video_id is already persisted", () => {
+    expect(
+      isHookFirstRenderingSafelyRetryable("FLOW_VID_HOOK_FIRST", "RENDERING", {
+        provider: "hook-first-video",
+        status: "in_progress",
+        phase: "hook_clip",
+        video_id: "abc123",
+      })
+    ).toBe(false);
   });
 });

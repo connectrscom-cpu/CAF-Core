@@ -19,6 +19,8 @@
  * gave us) and returns structured information.
  */
 
+import { isHookFirstVideoFlow } from "./hook-first-video.js";
+
 /** Narrow view of the persisted render state. All fields are optional. */
 export interface RenderStateView {
   /** Lower-cased `phase` if present (e.g. "starting", "submitted", "polling"). */
@@ -72,11 +74,37 @@ export function isMidProviderPhase(phase: string): boolean {
   return p === "submitted" || p === "polling" || p === "sora_polling";
 }
 
-/** Lower-cased `render_state.status` for carousel-renderer jobs. */
 export function carouselRendererStatus(renderState: unknown): string {
   return String(pickRenderState(renderState).raw.status ?? "")
     .trim()
     .toLowerCase();
+}
+
+/**
+ * Hook-first hybrid jobs use multi-segment render_state (`prep` → `hook_clip` → `body_heygen` → `concat`).
+ * Safe to re-enter when the worker died mid-segment and no HeyGen resume key is held for the current segment.
+ */
+export function isHookFirstRenderingSafelyRetryable(
+  flowType: string | null | undefined,
+  status: string | null | undefined,
+  renderState: unknown
+): boolean {
+  if (String(status ?? "").toUpperCase() !== "RENDERING") return false;
+  if (!isHookFirstVideoFlow(flowType)) return false;
+  const rs = pickRenderState(renderState);
+  const provider = String(rs.raw.provider ?? "").toLowerCase();
+  if (provider && provider !== "hook-first-video") return false;
+  if (String(rs.raw.status ?? "").toLowerCase() === "completed") return false;
+  if (hasActiveProviderSession(renderState)) return false;
+  const phase = rs.phase;
+  return (
+    phase === "" ||
+    phase === "prep" ||
+    phase === "hook_clip" ||
+    phase === "body_heygen" ||
+    phase === "concat" ||
+    phase === "failed"
+  );
 }
 
 /**

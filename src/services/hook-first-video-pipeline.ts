@@ -29,6 +29,7 @@ import {
   runHeygenVideoWithBody,
   mapHeyGenV2StyleBodyToV3CreateVideoAvatar,
   type HeygenGeneratePath,
+  type HeygenSubmitProgress,
 } from "./heygen-renderer.js";
 import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
 import { pollVideoAssemblyJob, parseVideoAssemblyJson } from "./video-assembly-client.js";
@@ -85,6 +86,35 @@ function buildHookClipAgentPrompt(hookScenePrompt: string, durationSec: number):
     "FINAL CHECK",
     "- Single continuous hook moment; end on a beat that can cut into a presenter segment",
   ].join("\n");
+}
+
+function heygenSegmentProgress(
+  db: Pool,
+  jobId: string,
+  phase: "hook_clip" | "body_heygen"
+): HeygenSubmitProgress {
+  return {
+    onSession: async (sessionId) => {
+      await mergeHookFirstRenderState(db, jobId, {
+        provider: "hook-first-video",
+        status: "in_progress",
+        phase,
+        session_id: sessionId,
+      });
+    },
+    onVideoId: async (videoId) => {
+      await mergeHookFirstRenderState(db, jobId, {
+        provider: "hook-first-video",
+        status: "in_progress",
+        phase,
+        video_id: videoId,
+      });
+    },
+  };
+}
+
+function clearedHeygenResumeKeys(): Record<string, string> {
+  return { video_id: "", session_id: "" };
 }
 
 async function renderHookClipSora(
@@ -172,7 +202,7 @@ async function renderHookClipHeyGen(
       step: "hook_first_clip_heygen",
       scene_index: 0,
     },
-    { postPath }
+    { postPath, progress: heygenSegmentProgress(db, job.id, "hook_clip") }
   );
   return videoUrl;
 }
@@ -246,7 +276,7 @@ async function renderBodyHeyGen(
       taskId: job.task_id,
       step: "hook_first_body_heygen",
     },
-    { postPath }
+    { postPath, progress: heygenSegmentProgress(db, job.id, "body_heygen") }
   );
   return videoUrl;
 }
@@ -375,6 +405,7 @@ export async function runHookFirstVideoPipeline(
       status: "in_progress",
       phase: "body_heygen",
       hook_clip_url: hookClipUrl,
+      ...clearedHeygenResumeKeys(),
     });
   }
 
@@ -389,6 +420,7 @@ export async function runHookFirstVideoPipeline(
       phase: "concat",
       hook_clip_url: hookClipUrl,
       body_video_url: bodyVideoUrl,
+      ...clearedHeygenResumeKeys(),
     });
   }
 
