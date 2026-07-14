@@ -549,12 +549,12 @@ export function CarouselSlider({
     const textEditorLayout = Boolean(copySidePanel);
     const vertical = textEditorLayout;
     const hasReference = Boolean(referenceSlideUrl?.trim());
-    const generatedAlongsideEditor = textEditorLayout && !hasReference;
+    const showSideBySide = hasReference;
     return (
       <div className={previewSidePanel && !copySidePanel ? "mimic-preview-row" : undefined}>
         {vertical ? (
           <p className="filter-label mimic-compare-row__heading">
-            {hasReference ? "Original reference" : generatedAlongsideEditor ? "Generated slide" : "Original vs generated"}
+            {showSideBySide ? "Original vs generated" : "Generated slide"}
           </p>
         ) : null}
         <div
@@ -574,11 +574,9 @@ export function CarouselSlider({
             className={
               vertical
                 ? `mimic-compare-frame mimic-compare-frame--vertical${
-                    hasReference && textEditorLayout
-                      ? " mimic-compare-frame--original-only"
-                      : generatedAlongsideEditor || !hasReference
-                        ? " mimic-compare-frame--generated-only"
-                        : ""
+                    showSideBySide
+                      ? " mimic-compare-frame--side-by-side"
+                      : " mimic-compare-frame--generated-only"
                   }`
                 : "mimic-compare-frame"
             }
@@ -598,17 +596,14 @@ export function CarouselSlider({
                 />
               </div>
             ) : null}
-            {!textEditorLayout || generatedAlongsideEditor ? (
             <div
               className={
-                hasReference && !generatedAlongsideEditor
+                showSideBySide
                   ? "mimic-compare-pane mimic-compare-pane--generated"
                   : "mimic-compare-pane mimic-compare-pane--generated mimic-compare-pane--solo"
               }
             >
-              {hasReference || generatedAlongsideEditor ? (
-                <span className="mimic-compare-pane__label">Generated</span>
-              ) : null}
+              {showSideBySide ? <span className="mimic-compare-pane__label">Generated</span> : null}
               {livePngUrl || storedSlideImageUrl ? (
                 renderGeneratedPreviewImage(
                   `gen-${currentIndex}-${assetRefreshKey}-${livePngUrl ? "live" : storedSlideImageUrl}`,
@@ -646,7 +641,6 @@ export function CarouselSlider({
                 <span className="mimic-compare-pane__empty">No rendered asset for this slide</span>
               )}
             </div>
-            ) : null}
           </div>
           <button
             type="button"

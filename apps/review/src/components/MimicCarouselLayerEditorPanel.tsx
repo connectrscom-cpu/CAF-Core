@@ -285,6 +285,33 @@ function draftRowMatchesTargetRole(
   return docAiLayerMatchesTargetRole(pseudoLayer, row, targetRole, fieldRoles, fullBleedMode, templateBgMode);
 }
 
+function layerTextMatchesSlideCopy(
+  layerText: string,
+  layerKey: string,
+  slotTexts: string[]
+): boolean {
+  if (isCopySlotEditorLayerKey(layerKey) || layerKey.startsWith("custom@")) return true;
+  const text = normalizePhraseKey(layerText);
+  if (text.length < 3) return false;
+  const slotNorms = slotTexts.map((t) => normalizePhraseKey(t.trim())).filter(Boolean);
+  if (slotNorms.length === 0) return true;
+  return slotNorms.some(
+    (slotText) =>
+      slotText === text ||
+      slotText.includes(text.slice(0, Math.min(20, text.length))) ||
+      text.includes(slotText.slice(0, Math.min(20, slotText.length)))
+  );
+}
+
+function resolveEditorLayerColorHex(
+  row: DocAiLayerOverride | undefined,
+  layer: DocAiLayerBox | null | undefined
+): string {
+  const raw = row?.color_hex ?? layer?.color_hex;
+  if (!raw || raw === "#000000" || raw === "#111111") return "#ffffff";
+  return raw;
+}
+
 function combinedLayoutPatchFromRow(
   row: DocAiLayerOverride,
   layer: DocAiLayerBox | null
@@ -296,7 +323,7 @@ function combinedLayoutPatchFromRow(
     h_px: row.h_px ?? layer?.h_px ?? 72,
     font_size_px: row.font_size_px ?? layer?.font_size_px ?? 45,
     font_weight: row.font_weight ?? layer?.font_weight ?? 700,
-    color_hex: row.color_hex ?? layer?.color_hex ?? "#111111",
+    color_hex: resolveEditorLayerColorHex(row, layer),
     ...(row.font_family || layer?.font_family
       ? { font_family: row.font_family ?? layer?.font_family }
       : {}),
@@ -579,6 +606,39 @@ function readJobTextBackingColorHex(job: Record<string, unknown> | null): string
   const render = asRec(gen?.render);
   const stored = typeof render?.mimic_text_backing_color === "string" ? render.mimic_text_backing_color : null;
   return mimicTextBackingColorToHex(stored);
+}
+
+function readJobTextBackingEnabled(job: Record<string, unknown> | null): boolean {
+  const gp = asRec(job?.generation_payload);
+  const gen = asRec(gp?.generated_output);
+  const render = asRec(gen?.render);
+  if (typeof render?.mimic_text_backing === "boolean") return render.mimic_text_backing;
+  return false;
+}
+
+function syncFullBleedDraftTextsFromSlots(
+  draft: DocAiLayerOverride[],
+  slotTexts: string[],
+  copySlots: MimicReferenceCopySlot[]
+): DocAiLayerOverride[] {
+  if (slotTexts.length === 0 || copySlots.length === 0) return draft;
+  const editable = [...copySlots]
+    .sort((a, b) => a.slot_index - b.slot_index)
+    .filter((s) => s.llm_field !== "handle");
+  if (editable.length === 0) return draft;
+  return draft.map((row) => {
+    for (let ei = 0; ei < editable.length; ei++) {
+      const slot = editable[ei]!;
+      const slotKey = copySlotEditorLayerKey(slot.slot_index);
+      const rowRef = refKeyFromLayerPositionKey(row.layer_key);
+      const slotRef = refKeyFromLayerPositionKey(slotKey);
+      if (row.layer_key !== slotKey && rowRef !== slotRef) continue;
+      const text = slotTexts[ei]?.trim();
+      if (text && text !== row.text) return { ...row, text };
+      break;
+    }
+    return row;
+  });
 }
 
 
@@ -1374,13 +1434,14 @@ export function MimicCarouselLayerEditorPanel({
   const [reprintScope, setReprintScope] = useState<"all" | "current" | "picked">("all");
   const [reprintPickedSlides, setReprintPickedSlides] = useState<Set<number>>(() => new Set());
 
-  const [reprintTextBacking, setReprintTextBacking] = useState(true);
+  const [reprintTextBacking, setReprintTextBacking] = useState(() => readJobTextBackingEnabled(job));
   const [reprintTextBackingHex, setReprintTextBackingHex] = useState(() => readJobTextBackingColorHex(job));
   const [userTouchedLayout, setUserTouchedLayout] = useState(false);
   const [draftSyncRevision, setDraftSyncRevision] = useState(0);
   const [layoutResetToken, setLayoutResetToken] = useState(0);
 
   useEffect(() => {
+    setReprintTextBacking(readJobTextBackingEnabled(job));
     setReprintTextBackingHex(readJobTextBackingColorHex(job));
   }, [job]);
 
@@ -1453,6 +1514,7 @@ export function MimicCarouselLayerEditorPanel({
   );
 
   // Slide change: restore per-slide inspect cache immediately; only show loading when uncached.
+  // (Hydration of layerPosDraft runs in a later effect — after copySlotsForEditor is defined.)
   useEffect(() => {
     lastEmittedTextBlocksRef.current = "";
     setUserTouchedLayout(false);
@@ -1471,16 +1533,6 @@ export function MimicCarouselLayerEditorPanel({
         setRenderInspectLoading(true);
       }
     }
-
-    const cached = slideDraftsRef.current[editorSlide];
-    setLayerPosDraft(
-      cached?.length
-        ? normalizeLayerPosDraft(
-            templateBgMode ? stripTemplateBgHiddenOverrides(cached) : [...cached],
-            templateBgMode
-          )
-        : []
-    );
   }, [editorSlide, templateBgMode]);
 
   // Initial load: if slideDrafts arrives after first render, hydrate layerPosDraft
@@ -1542,6 +1594,26 @@ export function MimicCarouselLayerEditorPanel({
   copySlotsRef.current = copySlotsForEditor;
   const fullBleedSlotTextsRef = useRef(fullBleedSlotTexts);
   fullBleedSlotTextsRef.current = fullBleedSlotTexts;
+
+  useEffect(() => {
+    const cached = slideDraftsRef.current[editorSlide];
+    const hydrated =
+      cached?.length
+        ? normalizeLayerPosDraft(
+            templateBgMode ? stripTemplateBgHiddenOverrides(cached) : [...cached],
+            templateBgMode
+          )
+        : [];
+    setLayerPosDraft(
+      fullBleedMode && !templateBgMode
+        ? syncFullBleedDraftTextsFromSlots(
+            hydrated,
+            fullBleedSlotTextsRef.current,
+            copySlotsRef.current
+          )
+        : hydrated
+    );
+  }, [editorSlide, templateBgMode, fullBleedMode, slideDrafts]);
 
   const generatedOnScreenText = useMemo(() => {
     const parts = templateBgMode
@@ -2730,6 +2802,13 @@ function ensureFullBleedTextLayerBoxes(
       if (isDraftHiddenForLayer(layer.layer_key, draftByKey)) return false;
       if (isPlaceholderCustomLayer(layer, draftByKey.get(layer.layer_key))) return false;
       if (
+        fullBleedMode &&
+        fullBleedSlotTexts.length > 0 &&
+        !layerTextMatchesSlideCopy(layer.text ?? "", layer.layer_key, fullBleedSlotTexts)
+      ) {
+        return false;
+      }
+      if (
         customDraftRows.some((draftRow) => isLegacyInspectEchoOfCustomDraft(layer, draftRow))
       ) {
         return false;
@@ -2755,6 +2834,13 @@ function ensureFullBleedTextLayerBoxes(
     if (!willCollapseToCopySlots) {
       for (const row of layerPosDraft) {
         if (row.hidden || seenKeys.has(row.layer_key)) continue;
+        if (
+          fullBleedMode &&
+          fullBleedSlotTexts.length > 0 &&
+          !layerTextMatchesSlideCopy(row.text ?? "", row.layer_key, fullBleedSlotTexts)
+        ) {
+          continue;
+        }
         if (isPlaceholderCustomLayer(
           { layer_key: row.layer_key, text: row.text ?? "", role: roleFromLayerKey(row.layer_key), x_px: row.x_px, y_px: row.y_px, w_px: row.w_px ?? 120, h_px: row.h_px ?? 48 },
           row
@@ -2806,6 +2892,11 @@ function ensureFullBleedTextLayerBoxes(
         fullBleedSlotTexts,
         draftByKey,
         willCollapseToCopySlots
+      );
+    }
+    if (fullBleedMode && willCollapseToCopySlots) {
+      collapsed = collapsed.filter(
+        (layer) => isCopySlotEditorLayerKey(layer.layer_key) || layer.layer_key?.startsWith("custom@")
       );
     }
     let blockIndex = 0;

@@ -21,6 +21,15 @@ export function sourceSlideIndexForMimicOutput(
   const items = mimic.reference_items ?? [];
   if (items.length === 0) return outputSlideIndex1Based;
 
+  const byOutputIndex = items.find((r) => r.index === outputSlideIndex1Based);
+  if (byOutputIndex) {
+    const srcFromExact = byOutputIndex.source_slide_index;
+    if (srcFromExact != null && Number.isFinite(srcFromExact) && srcFromExact > 0) {
+      return srcFromExact;
+    }
+    return outputSlideIndex1Based;
+  }
+
   const refIdx = plan?.reference_index ?? outputSlideIndex1Based;
 
   let item = items[outputSlideIndex1Based - 1] ?? null;

@@ -1152,6 +1152,14 @@ textarea { resize: vertical; }
 .mimic-compare-frame--vertical.mimic-compare-frame--original-only .mimic-compare-pane {
   max-height: min(24vh, 240px);
 }
+.mimic-compare-frame--vertical.mimic-compare-frame--side-by-side {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  width: min(100%, 420px);
+  gap: 8px;
+}
+.mimic-compare-frame--vertical.mimic-compare-frame--side-by-side .mimic-compare-pane {
+  max-height: min(28vh, 280px);
+}
 .mimic-compare-frame--vertical .mimic-compare-pane {
   position: relative;
   aspect-ratio: 4 / 5;

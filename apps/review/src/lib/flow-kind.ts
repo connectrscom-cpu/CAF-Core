@@ -125,9 +125,38 @@ export function isTpGroundedCarouselReviewFlow(
   return isTpGroundedCarouselRenderFlow(flowType) || isBvsTextCarouselReviewJob(flowType, generationPayload);
 }
 
-/** Why Mimic carousel — strategic lane; no original-vs-generated compare. */
+/** Why Mimic carousel — strategic lane that still mirrors a reference post when archived. */
 export function isWhyMimicCarouselFlow(flowType: string | null | undefined): boolean {
   return (flowType ?? "").trim() === "FLOW_WHY_MIMIC_CAROUSEL";
+}
+
+function isNewVisualExecutionMode(generationPayload?: Record<string, unknown> | null): boolean {
+  const gp = generationPayload;
+  if (!gp || typeof gp !== "object") return false;
+  const mimic = gp.mimic_v1;
+  if (!mimic || typeof mimic !== "object" || Array.isArray(mimic)) return false;
+  return String((mimic as Record<string, unknown>).execution_mode ?? "").trim() === "new_visual";
+}
+
+/**
+ * Replicate / mimic lanes that should show the original reference frame for side-by-side compare.
+ * Visual-first (new_visual) and idea-only lanes intentionally omit TP compare.
+ */
+export function shouldShowMimicOriginalReference(
+  flowType: string | null | undefined,
+  generationPayload?: Record<string, unknown> | null
+): boolean {
+  const ft = (flowType ?? "").trim();
+  if (isVisualFirstCarouselFlow(ft) || isNewVisualExecutionMode(generationPayload)) return false;
+  if (
+    isMimicCarouselFlow(ft) ||
+    isWhyMimicCarouselFlow(ft) ||
+    ft === "FLOW_TOP_PERFORMER_MIMIC_VIDEO" ||
+    ft === "FLOW_TOP_PERFORMER_MIMIC_IMAGE"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Ideas-from-insights visual-first lane. */

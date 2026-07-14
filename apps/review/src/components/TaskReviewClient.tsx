@@ -42,7 +42,7 @@ import { JobInfoBar } from "@/components/JobInfoBar";
 import { JobJourneyPanel } from "@/components/JobJourneyPanel";
 import { MimicCarouselLayerEditorPanel } from "@/components/MimicCarouselLayerEditorPanel";
 import { CopyTaskDebugBundleButton } from "@/components/CopyTaskDebugBundleButton";
-import { isMimicCarouselFlow, isTpGroundedCarouselReviewFlow } from "@/lib/flow-kind";
+import { isMimicCarouselFlow, isTpGroundedCarouselReviewFlow, shouldShowMimicOriginalReference } from "@/lib/flow-kind";
 import { displayFlowLabel, displayFlowDetail } from "@/lib/display-flow-label";
 import {
   jobRenderFailureBanner,
@@ -951,8 +951,8 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   }, [mimicTemplateBg, editedSlides, viewerSlideIndex, instagramHandleForPreview]);
 
   const mimicReferenceUrlForViewer = useMemo(() => {
-    if ((!mimicCarouselFlow && !tpGroundedCarouselReview) || !fullJob) return undefined;
-    const gp = fullJob.generation_payload as Record<string, unknown> | undefined;
+    const gp = fullJob?.generation_payload as Record<string, unknown> | undefined;
+    if (!fullJob || !shouldShowMimicOriginalReference(flowTypeStr, gp)) return undefined;
     const mimicV1 =
       gp?.mimic_v1 && typeof gp.mimic_v1 === "object" && !Array.isArray(gp.mimic_v1)
         ? (gp.mimic_v1 as Record<string, unknown>)
@@ -974,14 +974,12 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
         viewerSlideIndex
       );
       const frameIdx = Math.max(0, sourceIdx - 1);
-      fromFrames =
-        pickRenderableThumb(
-          referenceFrameUrls[frameIdx],
-          referenceFrameUrls[Math.min(frameIdx, referenceFrameUrls.length - 1)]
-        ) ?? undefined;
+      if (frameIdx < referenceFrameUrls.length) {
+        fromFrames = pickRenderableThumb(referenceFrameUrls[frameIdx]) ?? undefined;
+      }
     }
     return pickRenderableThumb(fromMimic, fromFrames) ?? undefined;
-  }, [mimicCarouselFlow, tpGroundedCarouselReview, fullJob, viewerSlideIndex, editedSlides.length]);
+  }, [flowTypeStr, fullJob, viewerSlideIndex, editedSlides.length]);
 
   const referenceVideoUrl = useMemo(() => {
     if (!videoFlow || !fullJob) return undefined;
@@ -1351,7 +1349,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
   const carouselLivePreview = useMemo(() => {
     if (videoFlow || imageFlow || editedSlides.length === 0) return null;
 
-    if (tpGroundedCarouselReview && mimicTemplateBg && mimicCarouselInspectContext) {
+    if (tpGroundedCarouselReview && mimicCarouselInspectContext) {
       return {
         template: mimicCarouselInspectContext.template,
         taskId: execTaskId,
@@ -1581,9 +1579,7 @@ export function TaskReviewClient({ taskIdParam, projectFromUrl }: TaskReviewClie
               }
               onCarouselSlideChange={setViewerSlideIndex}
               carouselActiveSlideIndex={tpGroundedCarouselReview ? viewerSlideIndex : undefined}
-              referenceSlideUrl={
-                mimicCarouselFlow || tpGroundedCarouselReview ? mimicReferenceUrlForViewer : undefined
-              }
+              referenceSlideUrl={mimicReferenceUrlForViewer}
               referenceVideoUrl={referenceVideoUrl}
               projectHandle={tpGroundedCarouselReview ? instagramHandleForPreview : undefined}
               caption={videoFlow ? editedCaption : undefined}

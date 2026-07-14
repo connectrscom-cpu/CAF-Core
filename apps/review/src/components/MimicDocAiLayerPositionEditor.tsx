@@ -23,6 +23,23 @@ const MAX_FONT_PX = 120;
 const MIN_BOX_W = 48;
 const MIN_BOX_H = 28;
 const CUSTOM_LAYER_KEY_PREFIX = "custom@";
+/** Review editor default — white copy on plates; highlight off by default in layer panel. */
+const MIMIC_EDITOR_DEFAULT_TEXT_COLOR = "#ffffff";
+const LEGACY_EDITOR_TEXT_COLORS = new Set(["#000000", "#000", "#111111", "#111"]);
+
+function isLegacyDefaultEditorTextColor(hex: string | null | undefined): boolean {
+  if (!hex) return true;
+  return LEGACY_EDITOR_TEXT_COLORS.has(hex.trim().toLowerCase());
+}
+
+function resolveEditorTextColorHex(
+  row: DocAiLayerOverride | undefined,
+  layer: DocAiLayerBox | undefined
+): string {
+  const raw = row?.color_hex ?? layer?.color_hex;
+  if (!raw || isLegacyDefaultEditorTextColor(raw)) return MIMIC_EDITOR_DEFAULT_TEXT_COLOR;
+  return raw;
+}
 
 function isCustomLayerKey(layerKey: string): boolean {
   return layerKey.startsWith(CUSTOM_LAYER_KEY_PREFIX);
@@ -46,12 +63,17 @@ function resolveEditorLayerText(
   layer: DocAiLayerBox | undefined,
   row: DocAiLayerOverride | undefined,
   templateBgMode: boolean,
-  projectHandle: string
+  projectHandle: string,
+  fullBleedMode?: boolean
 ): string {
   if (templateBgMode && layer && ocrRoleForLayer(layer) === "handle") {
     const fromSaved = row?.text?.trim() ?? "";
     const fromInspect = layer.text?.trim() ?? "";
     return resolveTemplateBgHandleDisplayText(fromSaved, fromInspect, projectHandle);
+  }
+  // Full-bleed carousels: per-slide copy slots (layer.text) beat stale saved row.text from deck apply.
+  if (fullBleedMode && layer?.text != null) {
+    return layer.text;
   }
   // Never trim row.text here — controlled inputs need trailing spaces while typing.
   if (row?.text != null && !isPlaceholderEditorCopy(row.text)) return row.text;
@@ -453,7 +475,7 @@ function layerStyleFromRow(
 } {
   const font_size_px = defaultLayerFontPx(layer, row?.font_size_px, projectHandle);
   const font_weight = row?.font_weight ?? layer.font_weight ?? 700;
-  const color_hex = row?.color_hex ?? layer.color_hex ?? "#111111";
+  const color_hex = resolveEditorTextColorHex(row, layer);
   const font_family = row?.font_family ?? layer.font_family ?? "";
   const font_style_italic = row?.font_style_italic ?? layer.font_style_italic ?? false;
   return { font_size_px, font_weight, color_hex, font_family, font_style_italic };
@@ -463,12 +485,15 @@ function seedOverrideForLayer(
   layer: DocAiLayerBox,
   savedRow: DocAiLayerOverride | undefined,
   templateBgMode: boolean,
-  projectHandle?: string
+  projectHandle?: string,
+  fullBleedMode?: boolean
 ): DocAiLayerOverride {
   const key = layer.layer_key;
   const text = templateBgMode
     ? templateBgLayerSeedText(layer, savedRow, projectHandle ?? "")
-    : (savedRow?.text ?? layer.text);
+    : fullBleedMode
+      ? (layer.text ?? savedRow?.text ?? "")
+      : (savedRow?.text ?? layer.text);
   const baseFont = defaultLayerFontPx(layer, savedRow?.font_size_px, projectHandle);
   const x_px = savedRow?.x_px ?? layer.x_px;
   const y_px = savedRow?.y_px ?? layer.y_px;
@@ -902,7 +927,7 @@ export function MimicDocAiLayerPositionEditor({
           if (isCustomLayerKey(layer.layer_key)) continue;
           const key = layer.layer_key;
           if (next[key]) continue;
-          next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle);
+          next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle, fullBleedMode);
           changed = true;
         }
         if (!changed) return prev;
@@ -923,7 +948,7 @@ export function MimicDocAiLayerPositionEditor({
     for (const layer of layers) {
       if (isCustomLayerKey(layer.layer_key)) continue;
       const key = layer.layer_key;
-      next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle);
+      next[key] = seedOverrideForLayer(layer, resolveSaved(key), templateBgMode, projectHandle, fullBleedMode);
     }
     for (const savedRow of initialOverrides ?? []) {
       if (!isCustomLayerKey(savedRow.layer_key) || savedRow.hidden) continue;
@@ -1071,14 +1096,14 @@ export function MimicDocAiLayerPositionEditor({
           layersRef.current.find((l) => l.layer_key === key) ??
           customLayersRef.current.find((l) => l.layer_key === key);
         if (!layer) return prev;
-        row = seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle);
+        row = seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle, fullBleedMode);
       }
       const layer =
         layersRef.current.find((l) => l.layer_key === key) ??
         customLayersRef.current.find((l) => l.layer_key === key);
       const merged = { ...row, ...patch, layer_key: key };
       if (patch.text === undefined) {
-        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle);
+        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle, fullBleedMode);
         if (copyText && copyText !== merged.text) {
           merged.text = copyText;
         }
@@ -1086,7 +1111,7 @@ export function MimicDocAiLayerPositionEditor({
       const shouldReflow = patch.text != null || patch.font_size_px != null;
       let nextRow = merged;
       if (shouldReflow && patch.x_px == null && patch.y_px == null && patch.w_px == null && patch.h_px == null) {
-        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle);
+        const copyText = resolveEditorLayerText(layer, merged, templateBgMode, projectHandle, fullBleedMode);
         const open = openHighlightBoxForText(
           copyText,
           merged.font_size_px ?? MIN_FONT_PX,
@@ -1192,7 +1217,7 @@ export function MimicDocAiLayerPositionEditor({
     if (row) return row;
     const layer = displayLayers.find((l) => l.layer_key === selectedKey);
     if (!layer) return null;
-    return seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle);
+    return seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle, fullBleedMode);
   }, [selectedKey, overrides, displayLayers, templateBgMode, projectHandle]);
 
   useEffect(() => {
@@ -1203,7 +1228,7 @@ export function MimicDocAiLayerPositionEditor({
       if (prev[selectedKey]) return prev;
       const next = {
         ...prev,
-        [selectedKey]: seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle),
+        [selectedKey]: seedOverrideForLayer(layer, undefined, templateBgMode, projectHandle, fullBleedMode),
       };
       programmaticEmitKeysRef.current.add(overrideEmitKey(Object.values(next)));
       return next;
@@ -1284,7 +1309,7 @@ export function MimicDocAiLayerPositionEditor({
         const key = layer.layer_key;
         const row = next[key];
         if (!row || row.hidden) continue;
-        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle, fullBleedMode);
         if (!copyText) continue;
         const fontSize = defaultLayerFontPx(layer, row.font_size_px, projectHandle);
         const fitted = openHighlightBoxForText(
@@ -1338,7 +1363,7 @@ export function MimicDocAiLayerPositionEditor({
     const layer =
       layersRef.current.find((l) => l.layer_key === key) ??
       customLayersRef.current.find((l) => l.layer_key === key);
-    const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+    const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle, fullBleedMode);
     const open = openHighlightBoxForText(
       copyText,
       defaultLayerFontPx(layer, row.font_size_px, projectHandle),
@@ -1357,7 +1382,7 @@ export function MimicDocAiLayerPositionEditor({
         const layer =
           layersRef.current.find((l) => l.layer_key === key) ??
           customLayersRef.current.find((l) => l.layer_key === key);
-        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+        const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle, fullBleedMode);
         const open = openHighlightBoxForText(
           copyText,
           defaultLayerFontPx(layer, row.font_size_px, projectHandle),
@@ -1599,7 +1624,7 @@ export function MimicDocAiLayerPositionEditor({
           {visibleLayers.map((layer) => {
             const key = layer.layer_key;
             const row = overrides[key];
-            const preview = (row?.text ?? layer.text).trim();
+            const preview = resolveEditorLayerText(layer, row, templateBgMode, projectHandle, fullBleedMode).trim();
             const short = preview.length > 36 ? `${preview.slice(0, 36)}…` : preview || "(empty)";
             const active = selectedKey === key;
             const displayIndex = visibleLayers.indexOf(layer);
@@ -1668,7 +1693,7 @@ export function MimicDocAiLayerPositionEditor({
                 };
                 const style = layerStyleFromRow(layer, row, projectHandle);
                 const fontSizePx = style.font_size_px;
-                const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle);
+                const copyText = resolveEditorLayerText(layer, row, templateBgMode, projectHandle, fullBleedMode);
                 // Paint at the stored size so a manual resize (incl. shrinking) sticks.
                 // Boxes are kept fitted to copy by the seed + auto-fit + type-reflow paths.
                 const boxW = Math.max(MIN_BOX_W, row.w_px ?? MIN_BOX_W);
@@ -1847,7 +1872,7 @@ export function MimicDocAiLayerPositionEditor({
               <label className="filter-label">Text</label>
               <textarea
                 ref={textInputRef}
-                value={resolveEditorLayerText(selectedLayerForPanel, selected, templateBgMode, projectHandle)}
+                value={resolveEditorLayerText(selectedLayerForPanel, selected, templateBgMode, projectHandle, fullBleedMode)}
                 rows={2}
                 readOnly={templateBgMode}
                 onChange={(e) => {

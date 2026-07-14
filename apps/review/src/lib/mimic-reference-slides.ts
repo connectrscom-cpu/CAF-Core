@@ -68,10 +68,6 @@ function referenceUrlForArchiveIndex(
     if (url) return url;
   }
 
-  if (refIndex1Based >= 1 && refIndex1Based <= items.length) {
-    const cycled = items[refIndex1Based - 1];
-    return cycled ? pickUrl(cycled) || undefined : undefined;
-  }
   return undefined;
 }
 
@@ -136,6 +132,11 @@ export function mimicReferenceUrlForSlide(
   const sourceIdx = mimicV1
     ? sourceSlideIndexForMimicOutput(mimicV1 as Parameters<typeof sourceSlideIndexForMimicOutput>[0], slideIndex1Based)
     : slideIndex1Based;
+
+  const byOutputIndex = items.find((item) => Number(item.index) === slideIndex1Based);
+  if (byOutputIndex) {
+    pushCandidate(pickUrl(byOutputIndex));
+  }
 
   const mode = String(mimicV1?.mode ?? "").trim();
   if (mode === "template_bg" && totalSlides != null && totalSlides > 0 && mimicV1) {

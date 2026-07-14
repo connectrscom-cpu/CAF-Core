@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       "@": reviewSrc,
       "@caf-core-carousel/mimic-copy-slots": path.join(coreServices, "mimic-copy-slots.ts"),
+      "@caf-core-carousel/mimic-output-slide-index": path.join(coreDomain, "mimic-output-slide-index.ts"),
       "@caf-core-carousel/mimic-template-bg-copy": path.join(coreDomain, "mimic-template-bg-copy.ts"),
       "@caf-core-carousel/slide-copy-lines": path.join(coreDomain, "slide-copy-lines.ts"),
     },
