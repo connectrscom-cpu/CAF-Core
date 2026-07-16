@@ -19,6 +19,32 @@ function pipelineStatus(hasData: boolean, hasRecent: boolean): ResearchPipelineS
   return "stale";
 }
 
+/** Header/switcher-only brand row — no Core fan-out (stats are zeros). */
+export function toLiteBrandSummary(project: ProjectAdminRow): BrandSummary {
+  const displayName = (project.display_name ?? "").trim() || project.slug;
+  return {
+    slug: project.slug,
+    displayName,
+    accentColor: project.color ?? null,
+    isActive: project.active,
+    stats: {
+      pendingReview: 0,
+      needsEdits: 0,
+      approved: 0,
+      scheduledPosts: 0,
+      activeContent: 0,
+    },
+    researchStatus: "not_started",
+    intelligenceStatus: "not_started",
+    ideasReady: 0,
+    lastActivityAt: project.updated_at ?? project.created_at ?? null,
+    setupWarnings: [],
+    onboardingProgress: 0,
+    onboardingStepsComplete: 0,
+    onboardingStepsTotal: 0,
+  };
+}
+
 export function toBrandSummary(input: BrandSummaryInput): BrandSummary {
   const { project, counts } = input;
   const displayName = (project.display_name ?? "").trim() || project.slug;

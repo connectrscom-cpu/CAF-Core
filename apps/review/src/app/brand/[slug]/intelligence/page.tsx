@@ -15,7 +15,7 @@ function IntelligencePageInner() {
 
   useEffect(() => {
     if (!slug) return;
-    fetch("/api/workspace/brands")
+    fetch("/api/workspace/brands?lite=1")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => setBrand(j?.brands?.find((b: BrandSummary) => b.slug === slug) ?? null))
       .catch(() => setBrand(null));

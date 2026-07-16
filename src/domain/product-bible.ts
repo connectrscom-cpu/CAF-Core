@@ -77,6 +77,18 @@ export interface ProductBibleV1 {
   schema_version: typeof PRODUCT_BIBLE_SCHEMA;
   application_guide: ProductBibleApplicationGuide;
   products: ProductBibleModule[];
+  /** Creator-style hosts for product UGC videos (synced to product_ugc_avatar_pool_json). */
+  heygen_ugc_presenters: ProductBibleHeygenPresenter[];
+}
+
+/** Same shape as brand bible HeyGen presenters — avatar+voice pairs. */
+export interface ProductBibleHeygenPresenter {
+  label: string | null;
+  avatar_id: string;
+  voice_id: string | null;
+  avatar_name: string | null;
+  voice_name: string | null;
+  preview_image_url: string | null;
 }
 
 export interface ProductBibleSnapshotV1 extends ProductBibleV1 {
@@ -190,6 +202,26 @@ function parseApplicationGuide(raw: unknown): ProductBibleApplicationGuide {
   };
 }
 
+function parseHeygenPresenters(raw: unknown): ProductBibleHeygenPresenter[] {
+  const out: ProductBibleHeygenPresenter[] = [];
+  for (const item of asArray(raw)) {
+    const rec = asRecord(item);
+    if (!rec) continue;
+    const avatar_id = str(rec.avatar_id ?? rec.avatarId, 120);
+    if (!avatar_id) continue;
+    out.push({
+      label: str(rec.label, 120),
+      avatar_id,
+      voice_id: str(rec.voice_id ?? rec.voiceId, 120),
+      avatar_name: str(rec.avatar_name ?? rec.avatarName, 120),
+      voice_name: str(rec.voice_name ?? rec.voiceName, 120),
+      preview_image_url: str(rec.preview_image_url ?? rec.previewImageUrl, 2000),
+    });
+    if (out.length >= 12) break;
+  }
+  return out;
+}
+
 /** Tolerant parser. Returns null when there is no usable bible signal. */
 export function parseProductBible(raw: unknown): ProductBibleV1 | null {
   const rec = asRecord(raw);
@@ -199,11 +231,13 @@ export function parseProductBible(raw: unknown): ProductBibleV1 | null {
     schema_version: PRODUCT_BIBLE_SCHEMA,
     application_guide: parseApplicationGuide(rec.application_guide),
     products: parseProducts(rec.products),
+    heygen_ugc_presenters: parseHeygenPresenters(rec.heygen_ugc_presenters),
   };
 
   const guide = bible.application_guide;
   const hasSignal =
     bible.products.length > 0 ||
+    bible.heygen_ugc_presenters.length > 0 ||
     guide.instructions.length > 0 ||
     guide.heygen_policy ||
     guide.flux_policy;
@@ -220,6 +254,7 @@ export function emptyProductBibleDraft(): ProductBibleV1 {
       flux_policy: null,
     },
     products: [],
+    heygen_ugc_presenters: [],
   };
 }
 

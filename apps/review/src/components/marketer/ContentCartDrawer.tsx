@@ -1,8 +1,18 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
 import { useContentCart, useContentCartOptional } from "@/components/marketer/ContentCartContext";
-import { normalizeCartItemFlow, resolveCartFlowForIdea, ideaShapeFromCartItem } from "@/lib/marketer/cart-flow-resolve";
-import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
+import {
+  filterGenerationStrategiesByEnabledFlows,
+  GENERATION_STRATEGY_OPTIONS,
+} from "@/lib/marketer/generation-strategy";
+import {
+  isCartItemAllowedByEnabledFlows,
+  normalizeCartItemFlow,
+  resolveCartFlowForIdea,
+  ideaShapeFromCartItem,
+} from "@/lib/marketer/cart-flow-resolve";
 import {
   flowTypeForVideoIntent,
   isVideoTopPerformerItem,
@@ -22,10 +32,42 @@ export function ContentCartDrawer() {
     setDrawerOpen,
     setReviewOpen,
   } = useContentCart();
+  const params = useParams();
+  const slug = typeof params?.slug === "string" ? params.slug : "";
+  const [enabledFlowTypes, setEnabledFlowTypes] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!slug) return;
+    let cancelled = false;
+    fetch(`/api/brand/${encodeURIComponent(slug)}/content-routes`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j?.lanes) return;
+        const flows = new Set<string>();
+        for (const lane of j.lanes as Array<{ enabled: boolean; flow_types: string[] }>) {
+          if (!lane.enabled) continue;
+          for (const ft of lane.flow_types ?? []) flows.add(ft);
+        }
+        setEnabledFlowTypes([...flows]);
+      })
+      .catch(() => {
+        if (!cancelled) setEnabledFlowTypes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
+
+  const strategyOptions = useMemo(
+    () => filterGenerationStrategiesByEnabledFlows(enabledFlowTypes),
+    [enabledFlowTypes]
+  );
 
   if (!drawerOpen) return null;
 
-  const displayItems = items.map(normalizeCartItemFlow);
+  const displayItems = items
+    .map(normalizeCartItemFlow)
+    .filter((item) => isCartItemAllowedByEnabledFlows(item, enabledFlowTypes));
 
   function updateIdeaStrategy(itemId: string, strategy: GenerationStrategy) {
     const item = items.find((x) => x.id === itemId);
@@ -102,7 +144,7 @@ export function ContentCartDrawer() {
                           value={item.generationStrategy ?? "caf_recommended"}
                           onChange={(e) => updateIdeaStrategy(item.id, e.target.value as GenerationStrategy)}
                         >
-                          {GENERATION_STRATEGY_OPTIONS.map((o) => (
+                          {strategyOptions.map((o) => (
                             <option key={o.id} value={o.id}>
                               {o.label}
                             </option>

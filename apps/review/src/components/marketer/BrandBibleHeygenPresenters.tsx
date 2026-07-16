@@ -26,6 +26,8 @@ type Props = {
   onChange: (next: BrandBibleHeygenPresenter[]) => void;
   /** Hide section title when parent already provides a header (e.g. Brand profile tab). */
   embedded?: boolean;
+  title?: string;
+  description?: string;
 };
 
 function emptyPresenter(): BrandBibleHeygenPresenter {
@@ -39,7 +41,14 @@ function emptyPresenter(): BrandBibleHeygenPresenter {
   };
 }
 
-export function BrandBibleHeygenPresenters({ slug, presenters, onChange, embedded = false }: Props) {
+export function BrandBibleHeygenPresenters({
+  slug,
+  presenters,
+  onChange,
+  embedded = false,
+  title = "HeyGen video presenters",
+  description = "Approved avatar + voice pairs for brand talking-head videos. Synced into HeyGen config on save.",
+}: Props) {
   const [avatars, setAvatars] = useState<CatalogAvatar[]>([]);
   const [voices, setVoices] = useState<CatalogVoice[]>([]);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -162,10 +171,9 @@ export function BrandBibleHeygenPresenters({ slug, presenters, onChange, embedde
       ) : (
         <div className="brand-bible-heygen-section__head">
           <div>
-            <h3 className="profile-section-title">HeyGen video presenters</h3>
+            <h3 className="profile-section-title">{title}</h3>
             <p className="profile-field-hint" style={{ marginBottom: 0 }}>
-              Browse avatar previews and voice samples, then save approved pairs to your brand bible. Combos sync to
-              project video defaults when you save.
+              {description}
             </p>
           </div>
           <button type="button" className="btn-ghost btn-sm" onClick={() => void loadCatalog()} disabled={loading}>

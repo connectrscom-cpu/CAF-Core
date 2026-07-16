@@ -19,6 +19,7 @@ import { insertBrandBibleVersion } from "../repositories/brand-bibles.js";
 import { replaceSourceTabRows } from "../repositories/inputs-sources.js";
 import { parseBrandBible } from "../domain/brand-bible.js";
 import { parseBrandProfile } from "../domain/brand-profile.js";
+import { parseContentRouteLaneIdsFromText } from "../domain/content-routes.js";
 import {
   extractHexPalette,
   isGapValue,
@@ -28,6 +29,7 @@ import {
   type OnboardingSectionKey,
   type ResearchTabKey,
 } from "./onboarding-pack-parser.js";
+import { applyContentRoutes } from "./content-routes-apply.js";
 
 export interface OnboardingPackImportOptions {
   slug_override?: string | null;
@@ -156,7 +158,8 @@ function buildProductPatch(sections: ReturnType<typeof parseOnboardingPack>["sec
 function buildBrandProfileJson(sections: ReturnType<typeof parseOnboardingPack>["sections"], displayName: string): Record<string, unknown> | null {
   const visual = sections.visual ?? {};
   const voice = sections.voice ?? {};
-  const paletteText = visual["palette (hex + roles)"] ?? visual["palette"] ?? "";
+  const paletteText =
+    visual["palette (hex + roles)"] ?? visual["palette (hex and roles)"] ?? visual["palette"] ?? "";
   const profile = {
     schema_version: "brand_profile_v1",
     brand_name: displayName || null,
@@ -182,7 +185,8 @@ function buildBrandProfileJson(sections: ReturnType<typeof parseOnboardingPack>[
 
 function buildBrandBibleJson(sections: ReturnType<typeof parseOnboardingPack>["sections"]): Record<string, unknown> | null {
   const visual = sections.visual ?? {};
-  const paletteText = visual["palette (hex + roles)"] ?? visual["palette"] ?? "";
+  const paletteText =
+    visual["palette (hex + roles)"] ?? visual["palette (hex and roles)"] ?? visual["palette"] ?? "";
   const contentAims = visual["content aims"] ?? "";
   const bible = {
     schema_version: "brand_bible_v1",
@@ -205,6 +209,7 @@ function buildBrandBibleJson(sections: ReturnType<typeof parseOnboardingPack>["s
     },
     asset_refs: [],
     heygen_presenters: [],
+    heygen_ugc_presenters: [],
     flux_prompt_asset_ids: [],
   };
   return parseBrandBible(bible) ? bible : null;
@@ -245,6 +250,11 @@ function summarizePlan(parsed: ReturnType<typeof parseOnboardingPack>): Record<s
   const researchCount = Object.values(parsed.researchLists).reduce((n, xs) => n + (xs?.length ?? 0), 0);
   if (researchCount > 0) applied.research_sources = researchCount;
   if (parsed.sections.formats) applied.platform = 1;
+  const routeText =
+    parsed.sections.formats?.["enabled content routes"] ??
+    parsed.sections.formats?.["enabled formats"] ??
+    "";
+  if (parseContentRouteLaneIdsFromText(routeText).length > 0) applied.content_routes = 1;
   return applied;
 }
 
@@ -360,7 +370,11 @@ export async function importProjectFromOnboardingPack(
   if (researchCount > 0) result.applied.research_sources = researchCount;
 
   const formatsText = parsed.sections.formats?.["instagram rules"] ?? "";
-  if (formatsText.trim()) {
+  const enabledRoutesText =
+    parsed.sections.formats?.["enabled content routes"] ??
+    parsed.sections.formats?.["enabled formats"] ??
+    "";
+  if (formatsText.trim() || enabledRoutesText.trim()) {
     await upsertPlatformConstraints(db, project.id, {
       platform: "Instagram",
       caption_max_chars: null,
@@ -376,10 +390,10 @@ export async function importProjectFromOnboardingPack(
       emoji_allowed: true,
       link_allowed: false,
       tag_allowed: true,
-      formatting_rules: formatsText,
+      formatting_rules: formatsText || null,
       posting_frequency_limit: null,
       best_posting_window: null,
-      notes: parsed.sections.formats?.["enabled formats"] ?? null,
+      notes: enabledRoutesText || null,
       carousel_headline_font_px: null,
       carousel_body_font_px: null,
       carousel_kicker_font_px: null,
@@ -388,6 +402,12 @@ export async function importProjectFromOnboardingPack(
       carousel_font_scale: null,
     });
     result.applied.platform = 1;
+  }
+
+  const laneIds = parseContentRouteLaneIdsFromText(enabledRoutesText);
+  if (laneIds.length > 0) {
+    await applyContentRoutes(db, project.id, laneIds);
+    result.applied.content_routes = laneIds.length;
   }
 
   if (parsed.readiness) {

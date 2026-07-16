@@ -192,6 +192,13 @@ export const VIDEO_PLAN_CAP_GROUPS: readonly PlanCapGroupDef[] = [
     keys: ["FLOW_VID_HOOK_FIRST"],
   },
   {
+    id: "ugc_video",
+    label: "UGC creator video (peer voice + UGC hosts)",
+    category: "niche_core_video",
+    uiChannel: "video",
+    keys: ["FLOW_VID_UGC"],
+  },
+  {
     id: "heygen_render",
     label: "HeyGen render-only step",
     category: "niche_core_video",

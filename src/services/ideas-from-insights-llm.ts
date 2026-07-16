@@ -43,13 +43,15 @@ export const IDEAS_FROM_INSIGHTS_IDEA_FIELD_CONTRACT = `Each idea object MUST in
 - three_liner: string (<=1200)
 - thesis: string (<=800)
 - who_for: string (<=200)
-- format: "carousel" | "video" | "post" | "thread"
-- platform: string (Instagram, TikTok, Reddit, Facebook, Multi — when format=carousel use Instagram or Facebook only)
+- format: "carousel" | "video" | "post" | "thread" | "linkedin_text" | "linkedin_document" | "reddit_post" | "instagram_thread"
+- platform: string (Instagram, TikTok, Reddit, Facebook, LinkedIn, Multi — when format=carousel use Instagram or Facebook only; text formats use their native platform)
 - content_lens: "niche" | "product"
 - execution_profile: string (see bucket/group constraints)
 - carousel_style: "text_heavy" | "visual_first" | "mixed" (when format=carousel)
-- video_style: "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" (when format=video)
+- video_style: "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" | "ugc" (when format=video)
 - hook_opener_concept: string (optional, when video_style=hook_first) — cinematic 4–8s scroll-stop visual; no avatar VO
+- ugc_hook_line: string (optional, when video_style=ugc) — reaction/confession on-screen hook (≤12 words)
+- ugc_setting: string (optional, when video_style=ugc) — casual selfie setting (car, couch, kitchen, …)
 - product_angle: problem|feature|comparison|usecase|social_proof|offer (required when content_lens=product and format=video)
 - why_now: string (<=800)
 - key_points: string[] (3–10 items)
@@ -122,9 +124,31 @@ export function bucketConstraintLines(bucket: IdeaGenerationBucketDef & { count:
     lines.push(`carousel_style MUST be "${bucket.execution_profile}"`);
     lines.push(CAROUSEL_IDEA_PLATFORM_RULE);
   }
+  if (bucket.format === "linkedin_text") {
+    lines.push('platform MUST be "LinkedIn"');
+    lines.push("Text-only LinkedIn post idea — no companion images or carousel slides.");
+  }
+  if (bucket.format === "linkedin_document") {
+    lines.push('platform MUST be "LinkedIn"');
+    lines.push("LinkedIn post with 2–3 companion images — insight-led copy plus visual support.");
+  }
+  if (bucket.format === "reddit_post") {
+    lines.push('platform MUST be "Reddit"');
+    lines.push("Community-native discussion post — title hook + substantive body; ground in Reddit evidence when present.");
+  }
+  if (bucket.format === "instagram_thread") {
+    lines.push('platform MUST be "Instagram"');
+    lines.push("Multi-part Instagram thread — narrative split across 3–8 short caption parts.");
+  }
   if (bucket.format === "video") lines.push(`video_style MUST be "${bucket.execution_profile}"`);
   if (bucket.execution_profile === "hook_first") {
     lines.push("Include hook_opener_concept: one sentence describing the cinematic 4–8s opener visual (no avatar, no on-screen text).");
+  }
+  if (bucket.execution_profile === "ugc") {
+    lines.push("Include ugc_hook_line (≤12 words reaction/confession) and ugc_setting (casual selfie location).");
+    lines.push(
+      "CRITICAL: ground every UGC idea in INSIGHT CONTEXT — pick specific insight ids in grounding_insight_ids; the hook must grow from evidence/mechanics, not invent a disconnected skit."
+    );
   }
   if (bucket.product_angle) lines.push(`product_angle MUST be "${bucket.product_angle}"`);
   else if (bucket.content_lens === "product" && bucket.format === "video") {
@@ -147,9 +171,11 @@ export function buildIdeasBucketSystemPrompt(bucket: IdeaGenerationBucketDef & {
     bucket.format === "video" && bucket.execution_profile === "hook_first"
       ? `\n\n${HOOK_FIRST_VIDEO_IDEAS_ADDENDUM}`
       : "";
+  const ugcBlock =
+    bucket.format === "video" && bucket.execution_profile === "ugc" ? `\n\n${UGC_VIDEO_IDEAS_ADDENDUM}` : "";
   return `${IDEAS_SYSTEM_PREAMBLE}
 
-${bucketConstraintLines(bucket)}${hookFirstBlock}
+${bucketConstraintLines(bucket)}${hookFirstBlock}${ugcBlock}
 
 Every idea needs title, three_liner, thesis, who_for, platform, content_lens, execution_profile, why_now, key_points, novelty_angle, cta, cta_class, grounding_insight_ids, expected_outcome. Never propose app downloads, quizzes, or unsupported CTAs.`;
 }
@@ -159,6 +185,14 @@ export const HOOK_FIRST_VIDEO_IDEAS_ADDENDUM = `Hook-first hybrid video ideas (F
 - Each idea needs a scroll-stopping cinematic opener concept (emotion, pattern interrupt, hyper-real or stylized B-roll) in hook_opener_concept — NO on-camera avatar in the opener.
 - The three_liner / thesis should describe how the body (avatar script or VO) continues the same topic after the visual hook.
 - Prefer ideas where a dramatic visual moment naturally hands off to an explainer (meal prep reveal, reaction → tip, before/after shock → how-to).`;
+
+export const UGC_VIDEO_IDEAS_ADDENDUM = `UGC creator video ideas (FLOW_VID_UGC) — MUST be grounded in insight context:
+- Set video_style to ugc. execution_profile MUST be ugc.
+- Write for a peer / everyday creator — NOT a brand spokesperson. First-person, conversational, reaction energy.
+- Every idea MUST cite grounding_insight_ids from the provided INSIGHT CONTEXT. The hook, thesis, and three_liner must clearly grow from those insights (pain, mechanic, emotion, why_it_worked) — do not invent a disconnected skit.
+- Required creative seeds: ugc_hook_line (≤12 words, reaction/confession/gossip energy) and ugc_setting (car, couch, kitchen, hallway, desk — selfie energy).
+- Prefer ideas that feel like "someone telling a friend" about a moment the insight describes — then a soft tip or product beat if content_lens=product.
+- Platforms: prefer TikTok / Instagram / Facebook Reels-style portrait talking-head.`;
 
 export const CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM = `Carousel new-visual ideas (separate lane from manual mimic picks):
 - Propose NEW original brand carousel concepts — inspired by category mechanics when insights exist, but execution is not a competitor replica.
@@ -187,6 +221,10 @@ export function buildIdeasGroupSystemPrompt(group: {
 
   const visualFirstBlock = hasVisualFirstCarousel ? `\n\n${CAROUSEL_VISUAL_FIRST_IDEAS_ADDENDUM}` : "";
 
+  const hasUgc =
+    group.format === "video" && group.buckets.some((b) => b.execution_profile === "ugc");
+  const ugcBlock = hasUgc ? `\n\n${UGC_VIDEO_IDEAS_ADDENDUM}` : "";
+
   return `${IDEAS_SYSTEM_PREAMBLE}
 
 Generate EXACTLY ${group.total} ideas.
@@ -202,7 +240,7 @@ Rules:
 - If content_lens=product and format=video, include product_angle (problem|feature|comparison|usecase|social_proof|offer).
 - Never propose app downloads, quizzes, giveaways, or unsupported CTAs.${
     group.format === "carousel" ? `\n- ${CAROUSEL_IDEA_PLATFORM_RULE}.` : ""
-  }${visualFirstBlock}`;
+  }${visualFirstBlock}${ugcBlock}`;
 }
 
 export function groupIdeaGenerationBuckets(
@@ -903,8 +941,10 @@ export function buildLlmIdeaSchema() {
       content_lens: z.enum(["niche", "product"]).optional(),
       execution_profile: z.string().min(1).max(40).optional(),
       carousel_style: z.enum(["text_heavy", "visual_first", "mixed"]).optional(),
-      video_style: z.enum(["script_avatar", "prompt_avatar", "no_avatar", "hook_first"]).optional(),
+      video_style: z.enum(["script_avatar", "prompt_avatar", "no_avatar", "hook_first", "ugc"]).optional(),
       hook_opener_concept: z.string().min(1).max(800).optional(),
+      ugc_hook_line: z.string().min(1).max(200).optional(),
+      ugc_setting: z.string().min(1).max(200).optional(),
       product_angle: z
         .enum(["problem", "feature", "comparison", "usecase", "social_proof", "offer"])
         .optional(),
@@ -941,12 +981,15 @@ function normalizeCarouselStyle(raw: unknown, fallback: string): "text_heavy" | 
 function normalizeVideoStyle(
   raw: unknown,
   fallback: string
-): "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" {
+): "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" | "ugc" {
   const s = String(raw ?? fallback)
     .toLowerCase()
     .replace(/-/g, "_");
   if (s.includes("hook_first") || s.includes("hookfirst") || (s.includes("hook") && s.includes("hybrid"))) {
     return "hook_first";
+  }
+  if (s === "ugc" || s.includes("ugc_avatar") || s.includes("ugc_creator") || s.includes("creator_ugc")) {
+    return "ugc";
   }
   if (s.includes("script")) return "script_avatar";
   if (s.includes("prompt")) return "prompt_avatar";
@@ -955,9 +998,10 @@ function normalizeVideoStyle(
     fallback === "script_avatar" ||
     fallback === "prompt_avatar" ||
     fallback === "no_avatar" ||
-    fallback === "hook_first"
+    fallback === "hook_first" ||
+    fallback === "ugc"
   ) {
-    return fallback as "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first";
+    return fallback as "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" | "ugc";
   }
   return "no_avatar";
 }
@@ -1093,6 +1137,10 @@ function coerceLlmIdeaRecord(
     coerced.video_style = normalizeVideoStyle(rec.video_style ?? execution_profile, bucket?.execution_profile ?? "no_avatar");
     const hookConcept = String(rec.hook_opener_concept ?? rec.hook_scene_concept ?? "").trim();
     if (hookConcept) coerced.hook_opener_concept = hookConcept.slice(0, 800);
+    const ugcHook = String(rec.ugc_hook_line ?? rec.on_screen_hook ?? "").trim();
+    if (ugcHook) coerced.ugc_hook_line = ugcHook.slice(0, 200);
+    const ugcSetting = String(rec.ugc_setting ?? rec.setting_vibe ?? "").trim();
+    if (ugcSetting) coerced.ugc_setting = ugcSetting.slice(0, 200);
   }
   const productAngle = normalizeProductAngle(rec.product_angle ?? bucket?.product_angle);
   if (productAngle) coerced.product_angle = productAngle;

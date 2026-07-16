@@ -44,6 +44,7 @@ import { estimateHeyGenVideoUsd } from "./render-cost-estimate.js";
 import { enforceHeygenSpokenScriptWordLaw } from "./heygen-spoken-script-enforcement.js";
 import { buildRoughSrt } from "./caption-generator.js";
 import { fetchVideoAssemblyJobOutput, parseVideoAssemblyJson, pollVideoAssemblyJob } from "./video-assembly-client.js";
+import { ugcPreferProductPresenterPool } from "../domain/ugc-video.js";
 
 function rowMatchesPlatformAndFlow(
   r: HeygenConfigRow,
@@ -209,7 +210,13 @@ function pickVoiceFromRowsIgnoringRenderMode(
   return undefined;
 }
 
-const AVATAR_POOL_CONFIG_KEYS = ["prompt_avatar_pool_json", "script_avatar_pool_json", "avatar_pool_json"] as const;
+const AVATAR_POOL_CONFIG_KEYS = [
+  "prompt_avatar_pool_json",
+  "script_avatar_pool_json",
+  "avatar_pool_json",
+  "ugc_avatar_pool_json",
+  "product_ugc_avatar_pool_json",
+] as const;
 type AvatarPoolConfigKey = (typeof AVATAR_POOL_CONFIG_KEYS)[number];
 
 function mergedHasHeygenAvatarSource(merged: Record<string, unknown>): boolean {
@@ -318,6 +325,8 @@ const HEYGEN_INTERNAL_CONFIG_KEYS = new Set([
   "prompt_avatar_pool_json",
   "script_avatar_pool_json",
   "avatar_pool_json",
+  "ugc_avatar_pool_json",
+  "product_ugc_avatar_pool_json",
   "prompt_avatar_id",
   "script_avatar_id",
   "script_voice_id",
@@ -332,6 +341,7 @@ function stripInternalHeygenConfigKeys(body: Record<string, unknown>): void {
 export function isScriptLedHeygenFlow(flowType: string | null | undefined): boolean {
   const ft = flowType ?? "";
   if (/\bFLOW_VID_SCRIPT\b/i.test(ft)) return true;
+  if (/\bFLOW_VID_UGC\b/i.test(ft) || /ugc_video|VID_UGC/i.test(ft)) return true;
   return /Video_Script|video_script|script_generator|Script_HeyGen|HEYGEN_AVATAR_SCRIPT|FLOW_HEYGEN_AVATAR_SCRIPT/i.test(
     ft
   );
@@ -351,14 +361,20 @@ export function isPromptLedHeygenFlow(flowType: string | null | undefined): bool
 /** HeyGen v3 (recommended). `/v2/video/generate` kept only for `voice.type: silence` (visual-only) which has no v3 equivalent. */
 export type HeygenGeneratePath = "/v3/videos" | "/v3/video-agents" | "/v2/video/generate";
 
+/** HeyGen v3: sidecar SRT + burned-in MP4 at `captioned_video_url` when `style` is set (see HeyGen OpenAPI `CaptionSetting`). */
+export const HEYGEN_DEFAULT_CAPTION_SETTING = {
+  file_format: "srt" as const,
+  style: "default" as const,
+};
+
+
 /**
  * n8n `3.2.2 - Video_Render - HeyGen` routing, upgraded to v3:
  * - Script + avatar → `POST /v3/videos` (unless silence-voice visual-only → legacy v2).
  * - Prompt avatar + no-avatar agent → `POST /v3/video-agents`.
  *
- * v3 has no caption parameter on the create endpoint, so captions are added afterwards by
- * `runHeygenForContentJob` (download SRT from `data.subtitle_url` or synthesize, then burn via
- * the video-assembly `/burn-subtitles` service).
+ * Script-led `POST /v3/videos` requests `caption.style` so HeyGen returns `captioned_video_url`.
+ * Local ffmpeg burn via video-assembly is opt-in (`HEYGEN_BURN_SUBTITLES`).
  */
 export function resolveHeygenGeneratePath(
   flowType: string | null | undefined,
@@ -485,20 +501,37 @@ function mergeCharacterWithAvatarId(
  */
 export function applyHeygenAvatarFromSheetConfig(
   body: Record<string, unknown>,
-  opts: { flowType?: string | null; pickSeed?: string | null }
+  opts: { flowType?: string | null; pickSeed?: string | null; preferProductUgcPool?: boolean }
 ): void {
   const ft = opts.flowType ?? "";
   if (/no_avatar|heygen_no|HEYGEN_NO_AVATAR|NoAvatar/i.test(ft)) return;
 
   const scriptLed = isScriptLedHeygenFlow(ft);
   const promptLed = isPromptLedHeygenFlow(ft);
+  const ugcLed = /\bFLOW_VID_UGC\b/i.test(ft) || /ugc_video|VID_UGC/i.test(ft);
 
   /** Prefer flow-specific pool key first, then shared pools — one `prompt_avatar_pool_json` can back both script and prompt avatar flows. */
-  const poolKeys = scriptLed
-    ? (["script_avatar_pool_json", "avatar_pool_json", "prompt_avatar_pool_json"] as const)
-    : promptLed
-      ? (["prompt_avatar_pool_json", "avatar_pool_json", "script_avatar_pool_json"] as const)
-      : (["avatar_pool_json", "prompt_avatar_pool_json", "script_avatar_pool_json"] as const);
+  const poolKeys = ugcLed
+    ? opts.preferProductUgcPool
+      ? ([
+          "product_ugc_avatar_pool_json",
+          "ugc_avatar_pool_json",
+          "script_avatar_pool_json",
+          "avatar_pool_json",
+          "prompt_avatar_pool_json",
+        ] as const)
+      : ([
+          "ugc_avatar_pool_json",
+          "product_ugc_avatar_pool_json",
+          "script_avatar_pool_json",
+          "avatar_pool_json",
+          "prompt_avatar_pool_json",
+        ] as const)
+    : scriptLed
+      ? (["script_avatar_pool_json", "avatar_pool_json", "prompt_avatar_pool_json"] as const)
+      : promptLed
+        ? (["prompt_avatar_pool_json", "avatar_pool_json", "script_avatar_pool_json"] as const)
+        : (["avatar_pool_json", "prompt_avatar_pool_json", "script_avatar_pool_json"] as const);
 
   const seed = opts.pickSeed != null && String(opts.pickSeed).trim() !== "" ? String(opts.pickSeed) : "";
 
@@ -900,9 +933,8 @@ function trimUrlString(v: unknown): string | undefined {
  * n8n `3.2.2 - Video_Render - HeyGen` downloads `data.video_url_caption || video_url_caption` for Supabase upload
  * (burned-in captions, only ever set for v2 / proofread workflows). Plain `video_url` is the non-caption render.
  *
- * v3 `POST /v3/videos` with `caption: { file_format: "srt" }` returns `data.subtitle_url` (standalone SRT) — the
- * MP4 itself is **not** modified. CAF burns that SRT into the video locally via video-assembly. `durationSec` is
- * surfaced when HeyGen exposes it so we can synthesize a fallback SRT for paths that don't return one.
+ * v3 `POST /v3/videos` with `caption: { file_format: "srt", style: "default" }` returns
+ * `data.captioned_video_url` (burned-in) and `data.subtitle_url` (sidecar SRT).
  */
 export function pickHeyGenDownloadUrlFromStatus(json: Record<string, unknown>): {
   url: string | null;
@@ -1495,15 +1527,12 @@ export function mapHeyGenV2StyleBodyToV3CreateVideoAvatar(body: Record<string, u
   }
   if (typeof body.remove_background === "boolean") out.remove_background = body.remove_background;
 
-  // Script-led only: this mapper is invoked from runHeygenForContentJob's `/v3/videos` branch (Video Agent has
-  // its own builder). Ask HeyGen to render an SRT sidecar (`data.subtitle_url`) so the script-led burn step can
-  // burn captions into the MP4 locally — HeyGen v3 does not burn captions itself. Caller can pass `caption: false`
-  // (or `caption: { file_format: ... }`) to override. Per HeyGen v3 OpenAPI: `caption` accepts `boolean` or
-  // `CaptionSetting`.
+  // Script-led `/v3/videos`: ask HeyGen to burn captions into the MP4 (`captioned_video_url`).
+  // Caller can pass `caption: false` to opt out. Local ffmpeg burn is separate (`HEYGEN_BURN_SUBTITLES`).
   if (body.caption !== undefined) {
     if (body.caption !== false) out.caption = body.caption;
   } else {
-    out.caption = { file_format: "srt" };
+    out.caption = { ...HEYGEN_DEFAULT_CAPTION_SETTING };
   }
 
   return out;
@@ -1569,6 +1598,8 @@ export function buildHeyGenRequestBody(
     avatarPickSeed?: string | null;
     /** Seconds for HeyGen `voice: { type: "silence" }` when there is only a visual prompt (no spoken script). */
     visualOnlySilenceDurationSec?: number;
+    /** Prefer product bible UGC hosts over brand UGC hosts. */
+    preferProductUgcPool?: boolean;
   }
 ): Record<string, unknown> {
   const script = extractSpokenScriptText(gen, 1);
@@ -1579,6 +1610,7 @@ export function buildHeyGenRequestBody(
   applyHeygenAvatarFromSheetConfig(body, {
     flowType: opts?.flowType,
     pickSeed: opts?.avatarPickSeed ?? opts?.taskId,
+    preferProductUgcPool: opts?.preferProductUgcPool,
   });
 
   if (typeof body.video_inputs === "undefined" && (script || prompt)) {
@@ -1780,12 +1812,13 @@ export async function runHeygenVideoWithBody(
       videoId,
       { maxMs: appConfig.HEYGEN_POLL_MAX_MS }
     );
-  if (!polled.usedVideoUrlCaption) {
+    if (!polled.usedVideoUrlCaption) {
       polled = await retryPollForCaptionedHeyGenUrl(
         apiKey,
         appConfig.HEYGEN_API_BASE,
         videoId,
-        polled
+        polled,
+        { maxMs: appConfig.HEYGEN_CAPTION_POLL_MAX_MS }
       );
     }
     if (audit) {
@@ -1857,6 +1890,91 @@ export async function runHeygenVideoWithBody(
   }
 }
 
+/** Resume polling a previously submitted HeyGen video — no new POST (avoids double-billing). */
+export async function resumeHeygenVideoPoll(
+  appConfig: AppConfig,
+  videoId: string,
+  audit?: HeyGenRunAudit | null,
+  opts?: { postPath?: HeygenGeneratePath }
+): Promise<{
+  videoUrl: string;
+  videoId: string;
+  usedVideoUrlCaption: boolean;
+  subtitleUrl: string | null;
+  durationSec: number | null;
+}> {
+  const apiKey = appConfig.HEYGEN_API_KEY?.trim();
+  if (!apiKey) throw new Error("HEYGEN_API_KEY not configured");
+  const postPath = opts?.postPath ?? "/v3/video-agents";
+  try {
+    let polled = await pollHeyGenUntilComplete(apiKey, appConfig.HEYGEN_API_BASE, videoId, {
+      maxMs: appConfig.HEYGEN_POLL_MAX_MS,
+    });
+    if (!polled.usedVideoUrlCaption) {
+      polled = await retryPollForCaptionedHeyGenUrl(
+        apiKey,
+        appConfig.HEYGEN_API_BASE,
+        videoId,
+        polled,
+        { maxMs: appConfig.HEYGEN_CAPTION_POLL_MAX_MS }
+      );
+    }
+    if (audit) {
+      const billableSec =
+        polled.durationSec != null && Number.isFinite(polled.durationSec) && polled.durationSec > 0
+          ? polled.durationSec
+          : null;
+      await tryInsertApiCallAudit(audit.db, {
+        projectId: audit.projectId,
+        runId: audit.runId,
+        taskId: audit.taskId,
+        step: audit.step,
+        provider: "heygen",
+        model: null,
+        ok: true,
+        requestJson: {
+          resume_video_id: videoId,
+          post_path: postPath,
+          scene_index: audit.scene_index,
+        },
+        responseJson: {
+          video_id: videoId,
+          video_url: polled.videoUrl,
+          used_video_url_caption: polled.usedVideoUrlCaption,
+          subtitle_url: polled.subtitleUrl,
+          duration_sec: polled.durationSec,
+        },
+        billableVideoSeconds: billableSec,
+        estimatedCostUsd: estimateHeyGenVideoUsd(polled.durationSec, appConfig.CAF_COST_HEYGEN_USD_PER_VIDEO_MINUTE),
+      });
+    }
+    return {
+      videoUrl: polled.videoUrl,
+      videoId,
+      usedVideoUrlCaption: polled.usedVideoUrlCaption,
+      subtitleUrl: polled.subtitleUrl,
+      durationSec: polled.durationSec,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (audit) {
+      await tryInsertApiCallAudit(audit.db, {
+        projectId: audit.projectId,
+        runId: audit.runId,
+        taskId: audit.taskId,
+        step: audit.step,
+        provider: "heygen",
+        model: null,
+        ok: false,
+        errorMessage: msg.slice(0, 4000),
+        requestJson: { resume_video_id: videoId, post_path: postPath },
+        responseJson: {},
+      });
+    }
+    throw err;
+  }
+}
+
 export async function runHeygenForContentJob(
   db: Pool,
   appConfig: AppConfig,
@@ -1904,6 +2022,7 @@ export async function runHeygenForContentJob(
       flowType: job.flow_type,
       taskId: job.task_id,
       visualOnlySilenceDurationSec: appConfig.HEYGEN_VISUAL_ONLY_SILENCE_DURATION_SEC,
+      preferProductUgcPool: ugcPreferProductPresenterPool(gen, job.generation_payload),
     });
     if (firstHeyGenVideoInputUsesSilenceVoice(body)) {
       postPath = "/v2/video/generate";
@@ -2032,19 +2151,28 @@ export async function runHeygenForContentJob(
     // Supabase optional in dev
   }
 
-  const burnReport = await maybeBurnHeygenSubtitles(db, appConfig, job, {
-    videoId,
-    videoUrl,
-    postPath,
-    usedVideoUrlCaption,
-    subtitleUrl,
-    durationSec,
-    spokenScript: extractSpokenScriptText(gen) || null,
-    storedObjectPath,
-    storedPublicUrl: publicUrl,
-    safeRun,
-    safeTask,
-  });
+  const burnReport = appConfig.HEYGEN_BURN_SUBTITLES
+    ? await maybeBurnHeygenSubtitles(db, appConfig, job, {
+        videoId,
+        videoUrl,
+        postPath,
+        usedVideoUrlCaption,
+        subtitleUrl,
+        durationSec,
+        spokenScript: extractSpokenScriptText(gen) || null,
+        storedObjectPath,
+        storedPublicUrl: publicUrl,
+        safeRun,
+        safeTask,
+      })
+    : {
+        burned: false,
+        subtitleSource: null,
+        skippedReason: "HEYGEN_BURN_SUBTITLES=false",
+        error: null,
+        replacedObjectPath: null,
+        replacedPublicUrl: null,
+      };
   if (burnReport.replacedObjectPath) {
     storedObjectPath = burnReport.replacedObjectPath;
     publicUrl = burnReport.replacedPublicUrl;
@@ -2115,8 +2243,7 @@ export async function runHeygenForContentJob(
 }
 
 /**
- * Ensure a HeyGen MP4 has burned-in subtitles when `HEYGEN_BURN_SUBTITLES` is enabled.
- * Prefers HeyGen's pre-captioned `video_url_caption` when available; otherwise burns SRT locally.
+ * Return the canonical HeyGen MP4 URL. Prefers HeyGen's `captioned_video_url`; local ffmpeg burn is opt-in.
  */
 export async function ensureHeygenVideoWithSubtitles(
   db: Pool,
@@ -2135,7 +2262,10 @@ export async function ensureHeygenVideoWithSubtitles(
     storageSuffix?: string;
   }
 ): Promise<string> {
-  if (polled.usedVideoUrlCaption) return polled.videoUrl;
+  /** Prefer HeyGen's burned-in `captioned_video_url` (see `HEYGEN_DEFAULT_CAPTION_SETTING` on create). */
+  if (polled.usedVideoUrlCaption || !appConfig.HEYGEN_BURN_SUBTITLES) {
+    return polled.videoUrl;
+  }
 
   const safeTask = job.task_id.replace(/[^a-zA-Z0-9_-]/g, "_");
   const safeRun = job.run_id.replace(/[^a-zA-Z0-9_-]/g, "_");

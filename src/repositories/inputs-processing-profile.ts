@@ -35,12 +35,55 @@ const DEFAULT_CRITERIA: Record<string, unknown> = {
   pre_llm: {
     enabled: false,
     min_primary_text_chars: 12,
+    subject_relevance: {
+      min_score: 0.2,
+      subject_weight: 0.5,
+      performance_weight: 0.5,
+      apply_to_kinds: [
+        "instagram_post",
+        "tiktok_video",
+        "facebook_post",
+        "linkedin_post",
+        "reddit_post",
+      ],
+      include_keywords: [],
+      include_hashtags: [],
+      exclude_keywords: [
+        "wedding anniversary",
+        "happy anniversary",
+        "years married",
+        "our wedding",
+        "wedding day",
+        "baby shower",
+        "gender reveal",
+        "honeymoon",
+      ],
+    },
   },
   /** Labels for custom_label_1..3 in broad LLM prompts (Phase 2; optional). */
   insight_column_labels: {
     custom_label_1: "",
     custom_label_2: "",
     custom_label_3: "",
+  },
+  /**
+   * Market intelligence options. `linkedin_targeting` is compiled from free text
+   * (roles / geo / topics) and drives LinkedIn soft ranking + intelligence views.
+   */
+  market_intelligence: {
+    llm_brief: true,
+    linkedin_targeting: {
+      schema_version: 1,
+      free_text: "",
+      roles: [],
+      industries: [],
+      company_size_bands: [],
+      companies: [],
+      geo: { languages: [], person_locations: [], company_hq: [] },
+      topics_include: [],
+      topics_exclude: [],
+      soft_only: true,
+    },
   },
   /** Top-performer deep tier: stricter pre-LLM cutoff + row cap (Phase 2; optional). */
   top_performer: {

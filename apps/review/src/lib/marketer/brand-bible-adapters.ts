@@ -100,7 +100,7 @@ function parseAssetRefs(raw: unknown): BrandBibleAssetRef[] {
   return out;
 }
 
-function parseHeygenPresenters(raw: unknown): BrandBibleHeygenPresenter[] {
+export function parseHeygenPresenters(raw: unknown): BrandBibleHeygenPresenter[] {
   if (!Array.isArray(raw)) return [];
   const out: BrandBibleHeygenPresenter[] = [];
   for (const item of raw) {
@@ -142,6 +142,7 @@ export function toBrandBible(
     applicationGuide: parseGuide(p.application_guide as Record<string, unknown> | undefined),
     assetRefs: parseAssetRefs(p.asset_refs),
     heygenPresenters: parseHeygenPresenters(p.heygen_presenters),
+    heygenUgcPresenters: parseHeygenPresenters(p.heygen_ugc_presenters),
     fluxPromptAssetIds: parseFluxPromptAssetIds(p.flux_prompt_asset_ids),
     hasActiveVersion: version != null,
     version,
@@ -182,6 +183,16 @@ export function toBrandBibleJson(edit: BrandBible): Record<string, unknown> {
         voice_name: p.voiceName.trim() || null,
         preview_image_url: p.previewImageUrl.trim() || null,
       })),
+    heygen_ugc_presenters: edit.heygenUgcPresenters
+      .filter((p) => p.avatarId.trim())
+      .map((p) => ({
+        label: p.label.trim() || null,
+        avatar_id: p.avatarId.trim(),
+        voice_id: p.voiceId.trim() || null,
+        avatar_name: p.avatarName.trim() || null,
+        voice_name: p.voiceName.trim() || null,
+        preview_image_url: p.previewImageUrl.trim() || null,
+      })),
     flux_prompt_asset_ids: edit.fluxPromptAssetIds
       .map((id) => id.trim())
       .filter(Boolean)
@@ -207,6 +218,7 @@ export function brandBibleIsConfigured(bible: BrandBible): boolean {
     bible.assetRefs.length > 0 ||
     bible.fluxPromptAssetIds.length > 0 ||
     bible.heygenPresenters.length > 0 ||
+    bible.heygenUgcPresenters.length > 0 ||
     bible.allowedMotifs.length > 0 ||
     bible.forbiddenMotifs.length > 0 ||
     Boolean(bible.visualMode) ||

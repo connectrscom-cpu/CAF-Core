@@ -57,6 +57,7 @@ import { ensureVideoPromptInPayload } from "./video-prompt-generator.js";
 import { ensureHookFirstVideoInPayload } from "./hook-first-video-prep.js";
 import { runHookFirstVideoPipeline } from "./hook-first-video-pipeline.js";
 import { isHookFirstVideoFlow, isHookFirstFailedConcatRetryEligible } from "../domain/hook-first-video.js";
+import { isUgcVideoFlow } from "../domain/ugc-video.js";
 import { pollVideoAssemblyJob, runScenePipeline } from "./scene-pipeline.js";
 import { warmupRenderer } from "./renderer-warmup.js";
 import { warnIfRendererBaseUrlIsCafCore } from "./renderer-url-guard.js";
@@ -1579,6 +1580,11 @@ async function ensureHeygenPayloadForFlowType(
   if (ft === "FLOW_VID_HOOK_FIRST" || isHookFirstVideoFlow(ft)) {
     const r = await ensureHookFirstVideoInPayload(db, config, jobId);
     if (!r.ok) throw new Error(r.error ?? "hook-first video prep failed");
+    return;
+  }
+  if (ft === "FLOW_VID_UGC" || isUgcVideoFlow(ft)) {
+    const r = await ensureVideoScriptInPayload(db, config, jobId);
+    if (!r.ok) throw new Error(r.error ?? "UGC video script prep failed");
     return;
   }
   if (ft === "FLOW_VID_SCRIPT" || /video_script|script_generator/i.test(ft)) {
@@ -3296,7 +3302,11 @@ async function processVideoJob(
   const priorStatus = job.status;
   await updateJobStatus(db, job.id, "RENDERING");
   // Shallow-merge so retries/reprocess keep provider-specific resume keys (e.g. HeyGen video_id).
-  await mergeJobRenderState(db, job.id, { provider: "video", status: "pending" });
+  if (isHookFirstVideoFlow(job.flow_type)) {
+    await mergeJobRenderState(db, job.id, { provider: "hook-first-video", status: "in_progress" });
+  } else {
+    await mergeJobRenderState(db, job.id, { provider: "video", status: "pending" });
+  }
 
   if (run && priorStatus !== "RENDERING") {
     await insertJobStateTransition(db, {
@@ -3474,14 +3484,31 @@ async function processVideoJob(
     });
   } catch (err) {
     if (err instanceof HeygenPollTimeoutError) {
-      await updateJobRenderState(db, job.id, {
-        provider: "heygen",
-        status: "pending",
-        phase: "polling",
-        video_id: err.videoId,
-        note: "poll_timeout_not_failed",
-        max_poll_ms: err.maxMs,
-      });
+      if (isHookFirstVideoFlow(job.flow_type)) {
+        const freshRs = await qOne<{ render_state: unknown }>(
+          db,
+          `SELECT render_state FROM caf_core.content_jobs WHERE id = $1`,
+          [job.id]
+        );
+        const phase = pickRenderState(freshRs?.render_state).phase || "hook_clip";
+        await mergeJobRenderState(db, job.id, {
+          provider: "hook-first-video",
+          status: "in_progress",
+          phase,
+          video_id: err.videoId,
+          note: "poll_timeout_not_failed",
+          max_poll_ms: err.maxMs,
+        });
+      } else {
+        await updateJobRenderState(db, job.id, {
+          provider: "heygen",
+          status: "pending",
+          phase: "polling",
+          video_id: err.videoId,
+          note: "poll_timeout_not_failed",
+          max_poll_ms: err.maxMs,
+        });
+      }
       throw new RenderNotReadyError(err.message);
     }
     if (err instanceof SoraPollTimeoutError) {

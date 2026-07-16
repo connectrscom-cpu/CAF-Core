@@ -107,6 +107,46 @@ export interface HooksDigestView {
   keyTakeaways: string[];
 }
 
+export interface LinkedInAttributedQuoteView {
+  personName: string;
+  roleOrHeadline?: string | null;
+  company?: string | null;
+  followers?: number | null;
+  profileUrl?: string | null;
+  postUrl?: string | null;
+  quote: string;
+  insightsId: string;
+}
+
+export interface LinkedInTopicView {
+  id: string;
+  title: string;
+  summary: string;
+  evidenceCount: number;
+  sourceInsightIds: string[];
+  quotes: LinkedInAttributedQuoteView[];
+}
+
+export interface LinkedInVoiceView {
+  personName: string;
+  roleOrHeadline?: string | null;
+  company?: string | null;
+  followers?: number | null;
+  profileUrl?: string | null;
+  postCount: number;
+  avgPriority: number;
+  sourceInsightIds: string[];
+  sampleTopics: string[];
+}
+
+export interface LinkedInIntelligenceView {
+  weeklyTopics: LinkedInTopicView[];
+  relevantVoices: LinkedInVoiceView[];
+  distinctPeople: number;
+  distinctCompanies: number;
+  geoSignals: Array<{ key: string; count: number }>;
+}
+
 export interface InsightColumnLabelsView {
   customLabel1: string;
   customLabel2: string;
@@ -156,6 +196,8 @@ export interface MarketIntelligenceView {
   customLabelStats?: CustomLabelStatView[];
   insightColumnLabels?: InsightColumnLabelsView;
   hooksDigest?: HooksDigestView;
+  /** LinkedIn person-first intelligence when present on the brief. */
+  linkedin?: LinkedInIntelligenceView;
   /** Aggregated pattern count (synthesized view). */
   totalPatterns: number;
   /** @deprecated Raw row count — prefer totalPatterns when synthesized. */
@@ -689,6 +731,59 @@ export function buildMarketIntelligenceViewFromV1(
       }
     : undefined;
 
+  const linkedinRaw = asRecord(v1Raw.linkedin);
+  const linkedin: LinkedInIntelligenceView | undefined = linkedinRaw
+    ? {
+        weeklyTopics: asArray(linkedinRaw.weekly_topics)
+          .map((x) => asRecord(x))
+          .filter((x): x is Record<string, unknown> => x != null)
+          .map((t) => ({
+            id: str(t.id) || `topic_${str(t.title).slice(0, 24)}`,
+            title: sanitizeMarketerText(str(t.title), 100),
+            summary: sanitizeMarketerText(str(t.summary), 320),
+            evidenceCount: Number(t.evidence_count) || 0,
+            sourceInsightIds: asArray(t.source_insight_ids).map((id) => str(id)).filter(Boolean),
+            quotes: asArray(t.quotes)
+              .map((q) => asRecord(q))
+              .filter((q): q is Record<string, unknown> => q != null)
+              .map((q) => ({
+                personName: sanitizeMarketerText(str(q.person_name), 80),
+                roleOrHeadline: sanitizeMarketerText(str(q.role_or_headline), 120) || null,
+                company: sanitizeMarketerText(str(q.company), 80) || null,
+                followers: typeof q.followers === "number" ? q.followers : null,
+                profileUrl: str(q.profile_url) || null,
+                postUrl: str(q.post_url) || null,
+                quote: sanitizeMarketerText(str(q.quote), 280),
+                insightsId: str(q.insights_id),
+              }))
+              .filter((q) => q.personName && q.quote),
+          }))
+          .filter((t) => t.title),
+        relevantVoices: asArray(linkedinRaw.relevant_voices)
+          .map((x) => asRecord(x))
+          .filter((x): x is Record<string, unknown> => x != null)
+          .map((v) => ({
+            personName: sanitizeMarketerText(str(v.person_name), 80),
+            roleOrHeadline: sanitizeMarketerText(str(v.role_or_headline), 120) || null,
+            company: sanitizeMarketerText(str(v.company), 80) || null,
+            followers: typeof v.followers === "number" ? v.followers : null,
+            profileUrl: str(v.profile_url) || null,
+            postCount: Number(v.post_count) || 0,
+            avgPriority: Number(v.avg_priority) || 0,
+            sourceInsightIds: asArray(v.source_insight_ids).map((id) => str(id)).filter(Boolean),
+            sampleTopics: asArray(v.sample_topics).map((t) => sanitizeMarketerText(str(t), 80)).filter(Boolean),
+          }))
+          .filter((v) => v.personName),
+        distinctPeople: Number(linkedinRaw.distinct_people) || 0,
+        distinctCompanies: Number(linkedinRaw.distinct_companies) || 0,
+        geoSignals: asArray(linkedinRaw.geo_signals)
+          .map((x) => asRecord(x))
+          .filter((x): x is Record<string, unknown> => x != null)
+          .map((g) => ({ key: str(g.key), count: Number(g.count) || 0 }))
+          .filter((g) => g.key),
+      }
+    : undefined;
+
   return {
     summaryBullets: summaryBullets.slice(0, 6),
     researchBriefTitle: str(v1Raw.research_brief_title) || undefined,
@@ -717,6 +812,10 @@ export function buildMarketIntelligenceViewFromV1(
     customLabelStats: customLabelStats.length ? customLabelStats : undefined,
     insightColumnLabels,
     hooksDigest,
+    linkedin:
+      linkedin && (linkedin.weeklyTopics.length > 0 || linkedin.relevantVoices.length > 0)
+        ? linkedin
+        : undefined,
     totalPatterns:
       typeof v1Raw.total_patterns === "number"
         ? v1Raw.total_patterns

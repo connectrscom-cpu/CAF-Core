@@ -14,6 +14,8 @@
  * format (listicle, talking_head, …), NOT by media lane (carousel vs video). Use media lanes here.
  */
 
+import { looksLikePersonalLifeMilestone } from "./content-subject-guards.js";
+
 /** Top-performer vision analysis tiers on `inputs_evidence_row_insights`. */
 export const TOP_PERFORMER_ANALYSIS_TIERS = [
   "top_performer_carousel",
@@ -166,12 +168,30 @@ function emptyLaneSlice(lane: TopPerformerMediaLane): TopPerformerMediaLaneSlice
   };
 }
 
+function entryLooksOffTopicForExamples(entry: Record<string, unknown>): boolean {
+  const blob = [
+    entry.hook_snippet,
+    entry.title,
+    entry.why_it_worked,
+    entry.visual_consistency,
+    entry.deck_as_whole_summary,
+    entry.video_as_whole_summary,
+    entry.caption,
+    entry.hook_text,
+  ]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
+  return looksLikePersonalLifeMilestone(blob);
+}
+
 function buildContentFormatGroups(entries: Record<string, unknown>[]): TopPerformerContentFormatGroup[] {
   const byKey = new Map<string, TopPerformerContentFormatGroup>();
   for (const entry of entries) {
     const pattern = String(entry.format_pattern ?? "unknown").trim() || "unknown";
     const key = contentFormatKey(pattern);
     const insId = String(entry.insights_id ?? "").trim();
+    const offTopic = entryLooksOffTopicForExamples(entry);
     let g = byKey.get(key);
     if (!g) {
       g = {
@@ -182,12 +202,16 @@ function buildContentFormatGroups(entries: Record<string, unknown>[]): TopPerfor
       };
       byKey.set(key, g);
     }
-    if (insId && g.example_insights_ids.length < 12 && !g.example_insights_ids.includes(insId)) {
-      g.example_insights_ids.push(insId);
-    }
-    for (const field of ["why_it_worked", "visual_consistency", "deck_as_whole_summary", "video_as_whole_summary"]) {
-      const s = String(entry[field] ?? "").trim();
-      if (s.length >= 4 && !g.cues.includes(s)) g.cues.push(s.length > 220 ? `${s.slice(0, 220)}…` : s);
+    // Personal-life milestones can stay in the corpus as noise, but must not become
+    // "examples from research" or drive format takeaways.
+    if (!offTopic) {
+      if (insId && g.example_insights_ids.length < 12 && !g.example_insights_ids.includes(insId)) {
+        g.example_insights_ids.push(insId);
+      }
+      for (const field of ["why_it_worked", "visual_consistency", "deck_as_whole_summary", "video_as_whole_summary"]) {
+        const s = String(entry[field] ?? "").trim();
+        if (s.length >= 4 && !g.cues.includes(s)) g.cues.push(s.length > 220 ? `${s.slice(0, 220)}…` : s);
+      }
     }
   }
   return [...byKey.values()].sort((a, b) => b.cues.length - a.cues.length);

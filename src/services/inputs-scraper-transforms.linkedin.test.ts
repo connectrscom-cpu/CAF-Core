@@ -43,7 +43,8 @@ describe("extractLinkedInProfileUrl", () => {
 
 describe("transformLinkedInApifyPost", () => {
   it("maps harvestapi post payload into CAF evidence shape", () => {
-    const row = transformLinkedInApifyPost({
+    const row = transformLinkedInApifyPost(
+      {
       type: "post",
       id: "7329207003942125568",
       linkedinUrl:
@@ -63,7 +64,9 @@ describe("transformLinkedInApifyPost", () => {
         },
       ],
       engagement: { likes: 2916, comments: 328, shares: 153 },
-    });
+    },
+      { discovery_source: "post_search", discovery_query: "child mortality" }
+    );
 
     expect(row).toMatchObject({
       platform: "LinkedIn",
@@ -76,6 +79,8 @@ describe("transformLinkedInApifyPost", () => {
       comments: 328,
       shares: 153,
       caption: "The leading causes of childhood death reveal a stark truth.",
+      discovery_source: "post_search",
+      discovery_query: "child mortality",
     });
     expect(row?.image_url).toContain("licdn.com");
   });

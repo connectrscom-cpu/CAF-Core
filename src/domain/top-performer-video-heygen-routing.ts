@@ -105,6 +105,12 @@ export function heygenLaneLabelForIntent(intent: VideoPipelineIntent): string {
       return "HeyGen · No avatar";
     case "hook_first":
       return "HeyGen · Hook-first hybrid";
+    case "ugc":
+      return "HeyGen · UGC";
+    default: {
+      const _exhaustive: never = intent;
+      return `HeyGen · ${String(_exhaustive)}`;
+    }
   }
 }
 

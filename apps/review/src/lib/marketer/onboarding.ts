@@ -76,6 +76,14 @@ export function buildBrandOnboardingSteps(input: {
       complete: input.hasProfile,
     },
     {
+      id: "content_routes",
+      title: "Confirm content routes",
+      description:
+        "Routes should already be set from your project setup pack. Confirm or adjust which carousels, videos, and text formats this brand will make.",
+      href: `${base}/profile?tab=routes`,
+      complete: input.hasProfile,
+    },
+    {
       id: "brand_bible",
       title: "Build your brand moodboard",
       description: "Upload style references, palette, and rules so CAF keeps your visual identity on every post.",

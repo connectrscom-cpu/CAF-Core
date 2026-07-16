@@ -41,6 +41,9 @@
       "@caf-core-carousel/mimic-output-slide-index": [
         "../../src/domain/mimic-output-slide-index.ts"
       ],
+      "@caf-core-carousel/visual-first-carousel-visual-direction": [
+        "../../src/domain/visual-first-carousel-visual-direction.ts"
+      ],
       "@caf-core-carousel/*": [
         "../../src/services/*"
       ]

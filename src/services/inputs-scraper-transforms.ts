@@ -663,8 +663,26 @@ export function transformLinkedInApifyPost(
     author_name: author.name ?? null,
     author_handle: author.publicIdentifier ?? author.public_identifier ?? null,
     author_url: author.linkedinUrl ?? author.linkedin_url ?? null,
-    author_headline: author.info ?? author.headline ?? null,
+    author_headline: author.info ?? author.headline ?? author.occupation ?? null,
+    author_title: author.title ?? author.occupation ?? null,
     author_type: author.type ?? null,
+    author_followers:
+      author.followerCount ??
+      author.followersCount ??
+      author.followers ??
+      author.follower_count ??
+      item.authorFollowers ??
+      null,
+    author_company: (() => {
+      const c = author.companyName ?? author.company ?? null;
+      if (c && typeof c === "object" && !Array.isArray(c)) {
+        return String((c as Record<string, unknown>).name ?? "").trim() || null;
+      }
+      return c != null ? String(c).trim() || null : null;
+    })(),
+    author_location: author.location ?? author.geoLocationName ?? author.addressWithCountry ?? null,
+    company_hq: author.companyHeadquarters ?? author.company_hq ?? null,
+    author_language: author.language ?? item.language ?? null,
     posted_at: postedAt.date ?? postedAt.timestamp ?? null,
     posted_at_text: postedAt.postedAgoText ?? postedAt.posted_ago_text ?? null,
     like_count: engagement.likes ?? item.likes ?? null,
@@ -678,6 +696,9 @@ export function transformLinkedInApifyPost(
     mentions: extractMentions(content).join(","),
     source_name: context.Name ?? context.name ?? author.name ?? null,
     source_url: context.Link ?? context.link ?? author.linkedinUrl ?? null,
+    discovery_source: context.discovery_source ?? null,
+    discovery_query: context.discovery_query ?? null,
+    seed_profile_url: context.seed_profile_url ?? null,
     fetched_at: new Date().toISOString(),
   };
 }

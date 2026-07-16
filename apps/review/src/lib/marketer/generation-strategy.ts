@@ -35,3 +35,15 @@ export const GENERATION_STRATEGY_OPTIONS: GenerationStrategyOption[] = [
 export function getGenerationStrategyOption(id: GenerationStrategy): GenerationStrategyOption | undefined {
   return GENERATION_STRATEGY_OPTIONS.find((o) => o.id === id);
 }
+
+/** Keep strategies whose resolved flow is enabled (or caf_recommended with no fixed flow). */
+export function filterGenerationStrategiesByEnabledFlows(
+  enabledFlowTypes: Iterable<string>
+): GenerationStrategyOption[] {
+  const enabled = new Set([...enabledFlowTypes].map((f) => f.trim()).filter(Boolean));
+  if (enabled.size === 0) return GENERATION_STRATEGY_OPTIONS;
+  return GENERATION_STRATEGY_OPTIONS.filter((opt) => {
+    if (!opt.resolvedFlowType) return true;
+    return enabled.has(opt.resolvedFlowType);
+  });
+}

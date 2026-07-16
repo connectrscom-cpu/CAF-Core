@@ -14,11 +14,11 @@ import {
   extractLinkedInProfileUrl,
   facebookUrlsFromSources,
   linkedinSearchQueryFromSource,
-  linkedinUrlsFromSources,
   prepareInstagramSources,
   subredditLinksFromSources,
   tiktokProfilesFromSources,
 } from "./inputs-scraper-transforms.js";
+import { personProfileUrlsFromAccountSources } from "./linkedin-discovery.js";
 
 /** USD per Apify actor run — conservative ballparks for SNS-scale scrapes. */
 export const APIFY_RUN_COST_USD = {
@@ -28,7 +28,10 @@ export const APIFY_RUN_COST_USD = {
   reddit: { min: 0.04, max: 0.1, mid: 0.06 },
   facebook_per_page: { min: 0.025, max: 0.07, mid: 0.04 },
   linkedin_posts: { min: 0.06, max: 0.18, mid: 0.1 },
+  linkedin_company_posts: { min: 0.06, max: 0.18, mid: 0.1 },
   linkedin_profile_search: { min: 0.04, max: 0.12, mid: 0.07 },
+  linkedin_post_search: { min: 0.05, max: 0.15, mid: 0.08 },
+  linkedin_profile_scraper: { min: 0.03, max: 0.1, mid: 0.05 },
   html: { min: 0, max: 0, mid: 0 },
 } as const;
 
@@ -200,17 +203,25 @@ export function estimateScraperLine(
       };
     }
     case "linkedin": {
-      const accountUrls = linkedinUrlsFromSources(sources);
+      const li = projectConfig.scrapers?.linkedin ?? {};
+      const { allUrls: accountUrls, similarSeedUrls } = personProfileUrlsFromAccountSources(sources, li);
       const cappedAccounts = applySourceCap(accountUrls, cap);
       const searchQueries = hashtagSources
         .map((row) => linkedinSearchQueryFromSource(row))
         .filter(Boolean);
       const cappedSearches = applySourceCap(searchQueries, cap);
-      const li = projectConfig.scrapers?.linkedin ?? {};
-      const searchRuns =
+      const profileSearchRuns =
         li.profileSearchEnabled !== false && cappedSearches.length > 0 ? cappedSearches.length : 0;
-      const postRuns = cappedAccounts.length > 0 || searchRuns > 0 ? 1 : 0;
-      const runs = searchRuns + postRuns;
+      const postSearchRuns =
+        li.nichePostSearchEnabled !== false && cappedSearches.length > 0 ? cappedSearches.length : 0;
+      const profilePostRuns = cappedAccounts.length > 0 || profileSearchRuns > 0 ? 1 : 0;
+      const companyPostRuns = cappedAccounts.some((u) => /\/company\//i.test(u)) ? 1 : 0;
+      const similarRuns =
+        similarSeedUrls.length > 0 &&
+        (li.deriveSimilarProfilesEnabled === true || similarSeedUrls.length > 0)
+          ? 1 + Math.min(similarSeedUrls.length, 5)
+          : 0;
+      const runs = profileSearchRuns + postSearchRuns + profilePostRuns + companyPostRuns + similarRuns;
       return {
         scraper_key: scraperKey,
         enabled: true,
@@ -218,19 +229,31 @@ export function estimateScraperLine(
         sources_after_cap: cappedAccounts.length + cappedSearches.length,
         max_sources: cap,
         apify_runs_estimated: runs,
-        run_mode: "profile_search_then_posts",
+        run_mode: "niche_profile_post_company_similar",
         cost_estimate_usd: {
           min: roundUsd(
-            APIFY_RUN_COST_USD.linkedin_profile_search.min * searchRuns +
-              APIFY_RUN_COST_USD.linkedin_posts.min * postRuns
+            APIFY_RUN_COST_USD.linkedin_profile_search.min * profileSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_post_search.min * postSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.min * profilePostRuns +
+              APIFY_RUN_COST_USD.linkedin_company_posts.min * companyPostRuns +
+              APIFY_RUN_COST_USD.linkedin_profile_scraper.min * (similarSeedUrls.length > 0 ? 1 : 0) +
+              APIFY_RUN_COST_USD.linkedin_profile_search.min * Math.max(0, similarRuns - 1)
           ),
           max: roundUsd(
-            APIFY_RUN_COST_USD.linkedin_profile_search.max * searchRuns +
-              APIFY_RUN_COST_USD.linkedin_posts.max * postRuns
+            APIFY_RUN_COST_USD.linkedin_profile_search.max * profileSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_post_search.max * postSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.max * profilePostRuns +
+              APIFY_RUN_COST_USD.linkedin_company_posts.max * companyPostRuns +
+              APIFY_RUN_COST_USD.linkedin_profile_scraper.max * (similarSeedUrls.length > 0 ? 1 : 0) +
+              APIFY_RUN_COST_USD.linkedin_profile_search.max * Math.max(0, similarRuns - 1)
           ),
           mid: roundUsd(
-            APIFY_RUN_COST_USD.linkedin_profile_search.mid * searchRuns +
-              APIFY_RUN_COST_USD.linkedin_posts.mid * postRuns
+            APIFY_RUN_COST_USD.linkedin_profile_search.mid * profileSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_post_search.mid * postSearchRuns +
+              APIFY_RUN_COST_USD.linkedin_posts.mid * profilePostRuns +
+              APIFY_RUN_COST_USD.linkedin_company_posts.mid * companyPostRuns +
+              APIFY_RUN_COST_USD.linkedin_profile_scraper.mid * (similarSeedUrls.length > 0 ? 1 : 0) +
+              APIFY_RUN_COST_USD.linkedin_profile_search.mid * Math.max(0, similarRuns - 1)
           ),
         },
       };

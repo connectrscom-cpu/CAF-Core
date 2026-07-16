@@ -27,6 +27,49 @@ describe("resolveCartFlowForIdea", () => {
     );
     expect(r.flowTypeRaw).toBe("FLOW_VID_SCRIPT");
   });
+
+  it("maps linkedin_text format to FLOW_LINKEDIN_TEXT_POST", () => {
+    const r = resolveCartFlowForIdea(
+      { format: "linkedin_text", targetFlowType: "", platform: "LinkedIn" },
+      "caf_recommended"
+    );
+    expect(r.flowTypeRaw).toBe("FLOW_LINKEDIN_TEXT_POST");
+  });
+
+  it("maps linkedin_document format to FLOW_LINKEDIN_DOCUMENT_POST", () => {
+    const r = resolveCartFlowForIdea(
+      { format: "linkedin_document", targetFlowType: "", platform: "LinkedIn" },
+      "caf_recommended"
+    );
+    expect(r.flowTypeRaw).toBe("FLOW_LINKEDIN_DOCUMENT_POST");
+  });
+
+  it("maps reddit_post format to FLOW_REDDIT_POST", () => {
+    const r = resolveCartFlowForIdea(
+      { format: "reddit_post", targetFlowType: "", platform: "Reddit" },
+      "caf_recommended"
+    );
+    expect(r.flowTypeRaw).toBe("FLOW_REDDIT_POST");
+  });
+
+  it("maps instagram_thread format to FLOW_INSTAGRAM_THREAD", () => {
+    const r = resolveCartFlowForIdea(
+      { format: "instagram_thread", targetFlowType: "", platform: "Instagram" },
+      "caf_recommended"
+    );
+    expect(r.flowTypeRaw).toBe("FLOW_INSTAGRAM_THREAD");
+  });
+
+  it("maps generic post and thread to FLOW_TEXT", () => {
+    expect(
+      resolveCartFlowForIdea({ format: "post", targetFlowType: "", platform: "LinkedIn" }, "caf_recommended")
+        .flowTypeRaw
+    ).toBe("FLOW_TEXT");
+    expect(
+      resolveCartFlowForIdea({ format: "thread", targetFlowType: "", platform: "Instagram" }, "caf_recommended")
+        .flowTypeRaw
+    ).toBe("FLOW_TEXT");
+  });
 });
 
 describe("normalizeCartItemFlow", () => {

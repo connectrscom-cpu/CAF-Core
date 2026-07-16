@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { q, qOne } from "../db/queries.js";
+import { stringifyForPostgresJson } from "../lib/postgres-json.js";
 
 export interface SignalPackRow {
   id: string;
@@ -97,11 +98,11 @@ export async function insertSignalPack(
     ) RETURNING id`,
     [
       data.run_id, data.project_id, data.source_window ?? null,
-      JSON.stringify(data.overall_candidates_json),
-      JSON.stringify(jobs),
-      JSON.stringify(jobs),
-      JSON.stringify(data.ideas_v2_json ?? []),
-      JSON.stringify(data.selected_idea_ids_json ?? []),
+      stringifyForPostgresJson(data.overall_candidates_json),
+      stringifyForPostgresJson(jobs),
+      stringifyForPostgresJson(jobs),
+      stringifyForPostgresJson(data.ideas_v2_json ?? []),
+      stringifyForPostgresJson(data.selected_idea_ids_json ?? []),
       data.source_inputs_idea_list_id ?? null,
       j(data.ig_summary_json), j(data.tiktok_summary_json),
       j(data.reddit_summary_json), j(data.fb_summary_json), j(data.html_summary_json),
@@ -109,7 +110,7 @@ export async function insertSignalPack(
       j(data.tiktok_archetypes_json), j(data.tiktok_7day_plan_json), j(data.tiktok_top_examples_json),
       j(data.reddit_archetypes_json), j(data.reddit_top_examples_json),
       j(data.html_findings_raw_json), j(data.reddit_subreddit_insights_json),
-      JSON.stringify(data.derived_globals_json ?? {}),
+      stringifyForPostgresJson(data.derived_globals_json ?? {}),
       data.upload_filename ?? null,
       data.notes ?? null,
       data.source_inputs_import_id ?? null,
@@ -129,7 +130,7 @@ export async function updateSignalPackIdeasV2(
         SET ideas_v2_json = $2::jsonb
       WHERE id = $1
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify(ideasV2 ?? [])]
+    [signalPackId, stringifyForPostgresJson(ideasV2 ?? [])]
   );
   return row ? 1 : 0;
 }
@@ -146,7 +147,7 @@ export async function updateSignalPackIdeasJson(
         SET ideas_json = $2::jsonb, jobs_json = $2::jsonb
       WHERE id = $1
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify(rows)]
+    [signalPackId, stringifyForPostgresJson(rows)]
   );
   return row ? 1 : 0;
 }
@@ -170,7 +171,7 @@ export async function updateSignalPackSelectedIdeaIds(
         SET selected_idea_ids_json = $2::jsonb
       WHERE id = $1
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify(selectedIdeaIds ?? [])]
+    [signalPackId, stringifyForPostgresJson(selectedIdeaIds ?? [])]
   );
   return row ? 1 : 0;
 }
@@ -203,7 +204,7 @@ export async function mergeSignalPackDerivedGlobalsJson(
         SET derived_globals_json = COALESCE(derived_globals_json, '{}'::jsonb) || $2::jsonb
       WHERE id = $1::uuid
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify(patch ?? {})]
+    [signalPackId, stringifyForPostgresJson(patch ?? {})]
   );
   return row ? 1 : 0;
 }
@@ -228,7 +229,7 @@ export async function setSignalPackMimicModeOverride(
             )
       WHERE id = $1::uuid
       RETURNING 1::text AS n`,
-    [signalPackId, JSON.stringify({ [insightsId]: modeOverride })]
+    [signalPackId, stringifyForPostgresJson({ [insightsId]: modeOverride })]
   );
   return row ? 1 : 0;
 }
@@ -260,5 +261,12 @@ export async function updateSignalPackNotes(
 
 function j(v: unknown): string | null {
   if (v == null) return null;
-  return typeof v === "string" ? v : JSON.stringify(v);
+  if (typeof v === "string") {
+    try {
+      return stringifyForPostgresJson(JSON.parse(v));
+    } catch {
+      return stringifyForPostgresJson(v);
+    }
+  }
+  return stringifyForPostgresJson(v);
 }

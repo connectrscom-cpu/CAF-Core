@@ -236,6 +236,26 @@ export function adminProcessingBody(currentSlug: string): string {
                       <span>Relative page performance</span>
                     </label>
                   </div>
+                  <details id="prellm-subject-panel" class="prellm-subject-panel" style="margin-bottom:12px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--bg)">
+                    <summary style="font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px">Subject relevance</summary>
+                    <p class="runs-ops-hint" style="font-size:12px;margin:0 0 8px;line-height:1.45">Blend keyword match with performance. Keywords load from Research → LinkedIn keywords when empty. Applies to LinkedIn posts by default.</p>
+                    <label style="font-size:12px;display:block;margin-bottom:8px">Include keywords
+                      <textarea id="prellm-subject-include" rows="5" placeholder="One per line — e.g. secure AI, #DocumentAI" style="display:block;width:100%;margin-top:4px;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);resize:vertical"></textarea>
+                    </label>
+                    <label style="font-size:12px;display:block;margin-bottom:8px">Exclude keywords
+                      <textarea id="prellm-subject-exclude" rows="2" placeholder="One per line — e.g. crypto, generic AI news" style="display:block;width:100%;margin-top:4px;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--card);color:var(--text);resize:vertical"></textarea>
+                    </label>
+                    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+                      <label style="font-size:12px;display:flex;align-items:center;gap:6px">Subject weight <input id="prellm-subject-weight" type="number" min="0" max="1" step="0.05" style="width:72px;font-size:13px;padding:4px 6px" /></label>
+                      <label style="font-size:12px;display:flex;align-items:center;gap:6px">Performance weight <input id="prellm-perf-weight" type="number" min="0" max="1" step="0.05" style="width:72px;font-size:13px;padding:4px 6px" /></label>
+                      <label style="font-size:12px;display:flex;align-items:center;gap:6px">Subject min <input id="prellm-subject-min" type="number" min="0" max="1" step="0.05" style="width:72px;font-size:13px;padding:4px 6px" /></label>
+                    </div>
+                    <label style="font-size:12px;display:flex;align-items:center;gap:6px;margin-bottom:8px">
+                      <input type="checkbox" id="prellm-subject-enabled" checked />
+                      <span>Apply to LinkedIn posts</span>
+                    </label>
+                    <button type="button" class="btn-ghost btn-sm" id="prellm-load-research-keywords">Load from Research keywords</button>
+                  </details>
                   <div id="prellm-weights-wrap" style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--bg)"></div>
                   <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
                     <button type="button" class="btn-ghost btn-sm" id="prellm-add-weight">Add feature</button>
@@ -1013,6 +1033,7 @@ var PRELLM_SUGGESTED={
   tiktok_video:{min_score:0.1,weights:{tt_plays:0.35,tt_likes:0.2,tt_comments:0.15,tt_author_followers:0.15,text_signal:0.15}},
   instagram_post:{min_score:0.08,weights:{ig_likes:0.45,ig_comments:0.25,text_signal:0.3}},
   facebook_post:{min_score:0.06,weights:{fb_likes:0.35,fb_comments:0.25,fb_shares:0.2,text_signal:0.2}},
+  linkedin_post:{min_score:0.06,weights:{li_likes:0.4,li_comments:0.25,li_shares:0.15,text_signal:0.2}},
   scraped_page:{min_score:0.05,weights:{scraped_main:0.55,scraped_title:0.15,text_signal:0.3}},
   source_registry:{min_score:0.02,weights:{registry_has_link:0.35,registry_topic:0.35,registry_followers:0.3}},
   _default:{min_score:0,weights:{text_signal:1}}
@@ -1022,6 +1043,7 @@ var PRELLM_SUGGESTED_RELATIVE={
   tiktok_video:{min_score:0.1,weights:{page_relative_engagement:0.35,page_relative_reach:0.35,text_signal:0.3}},
   instagram_post:{min_score:0.08,weights:{page_relative_engagement:0.55,page_relative_comments:0.2,text_signal:0.25}},
   facebook_post:{min_score:0.06,weights:{page_relative_engagement:0.45,page_relative_shares:0.2,text_signal:0.35}},
+  linkedin_post:{min_score:0.06,weights:{li_likes:0.4,li_comments:0.25,li_shares:0.15,text_signal:0.2}},
   scraped_page:PRELLM_SUGGESTED.scraped_page,
   source_registry:PRELLM_SUGGESTED.source_registry,
   _default:PRELLM_SUGGESTED._default
@@ -1044,6 +1066,7 @@ function kindLabel(kind,mode){
     facebook_post:'FB',
     reddit_post:'RDT',
     tiktok_video:'TT',
+    linkedin_post:'LINKED',
     scraped_page:'WEB',
     source_registry:'SRC'
   };
@@ -1094,7 +1117,7 @@ function renderFunnel(totals){
     '<span class="badge '+(after>0?'badge-g':'badge-y')+'" data-caf-term="funnelCutoff">CUTOFF '+esc(fmtN(after))+'</span>'+
     '<span style="color:var(--muted)">-></span>'+
     '<span class="badge '+(after>0?'badge-g':'badge-y')+'" data-caf-term="funnelFinal">FINAL '+esc(fmtN(after))+'</span>';
-  hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' | Below profile min dropped: '+fmtN(belowDrop);
+  hint.textContent='Sparse text dropped: '+fmtN(sparseDrop)+' | Off-topic (subject) dropped: '+fmtN(Number(t.off_topic_subject_dropped||0))+' | Below profile min dropped: '+fmtN(belowDrop);
   bindCafTerms(root);
 }
 
@@ -2314,12 +2337,19 @@ function renderActiveWeightsStrip(d){
   var el=document.getElementById('prellm-active-weights-strip');
   if(!el)return;
   var w=d&&d.active_weights&&typeof d.active_weights==='object'?d.active_weights:null;
-  if(!w||!Object.keys(w).length){el.textContent='';return;}
+  var sr=d&&d.subject_relevance&&typeof d.subject_relevance==='object'?d.subject_relevance:null;
+  if((!w||!Object.keys(w).length)&&!sr){el.textContent='';return;}
   var parts=[];
-  var keys=Object.keys(w).sort();
-  for(var i=0;i<keys.length;i++){
-    var k=keys[i];
-    parts.push('<span class="mono">'+esc(k)+'</span>=<strong>'+esc(String(w[k]))+'</strong>');
+  if(w){
+    var keys=Object.keys(w).sort();
+    for(var i=0;i<keys.length;i++){
+      var k=keys[i];
+      parts.push('<span class="mono">'+esc(k)+'</span>=<strong>'+esc(String(w[k]))+'</strong>');
+    }
+  }
+  if(sr){
+    parts.push('<span class="mono">subject</span>=<strong>'+esc(String(sr.subject_weight!=null?sr.subject_weight:0.35))+'</strong>');
+    parts.push('<span class="mono">performance</span>=<strong>'+esc(String(sr.performance_weight!=null?sr.performance_weight:0.65))+'</strong>');
   }
   el.innerHTML='Active weights | '+parts.join(' <span style="color:var(--muted)">|</span> ');
 }
@@ -2547,6 +2577,7 @@ async function loadPrellmPreview(){
     renderFunnel(t);
     renderPrellmLiveTotals(t);
     renderActiveWeightsStrip(d);
+    if(d.subject_relevance)renderSubjectRelevanceEditor(d.subject_relevance);
     renderStepper();
     counts.textContent=JSON.stringify({
       evidence_kind:d.evidence_kind,
@@ -2554,6 +2585,7 @@ async function loadPrellmPreview(){
       profile_min_score:d.profile_min_score,
       rows_in_kind:t.rows_in_kind,
       sparse_text_dropped:t.sparse_text_dropped,
+      off_topic_subject_dropped:t.off_topic_subject_dropped,
       below_profile_min_dropped:t.below_profile_min_dropped,
       passing_profile_min:t.passing_profile_min,
       after_user_cutoff:t.after_user_cutoff,
@@ -2824,6 +2856,72 @@ function renderWeightsTable(weights){
   bindCafTerms(wrap);
 }
 
+function subjectRelevanceDefaults(){
+  return {
+    min_score:0.2,
+    subject_weight:0.35,
+    performance_weight:0.65,
+    apply_to_kinds:['instagram_post','tiktok_video','facebook_post','linkedin_post','reddit_post'],
+    include_keywords:[],
+    include_hashtags:[],
+    exclude_keywords:['wedding anniversary','happy anniversary','years married','our wedding','wedding day','baby shower','gender reveal','honeymoon']
+  };
+}
+
+function renderSubjectRelevanceEditor(sr){
+  var incEl=document.getElementById('prellm-subject-include');
+  var excEl=document.getElementById('prellm-subject-exclude');
+  var subWEl=document.getElementById('prellm-subject-weight');
+  var perfWEl=document.getElementById('prellm-perf-weight');
+  var minEl=document.getElementById('prellm-subject-min');
+  var enabledEl=document.getElementById('prellm-subject-enabled');
+  var panel=document.getElementById('prellm-subject-panel');
+  if(!incEl||!excEl||!subWEl||!perfWEl||!minEl)return;
+  var cfg=sr&&typeof sr==='object'?sr:subjectRelevanceDefaults();
+  var includes=[].concat(cfg.include_keywords||[],cfg.include_hashtags||[]);
+  incEl.value=includes.join('\\n');
+  excEl.value=(cfg.exclude_keywords||[]).join('\\n');
+  subWEl.value=String(cfg.subject_weight!=null?cfg.subject_weight:0.35);
+  perfWEl.value=String(cfg.performance_weight!=null?cfg.performance_weight:0.65);
+  minEl.value=String(cfg.min_score!=null?cfg.min_score:0.2);
+  if(enabledEl){
+    var kinds=cfg.apply_to_kinds||['instagram_post','tiktok_video','facebook_post','linkedin_post','reddit_post'];
+    enabledEl.checked=kinds.length>0;
+  }
+  if(panel)panel.open=prellmKind==='linkedin_post';
+}
+
+function readSubjectRelevanceFromEditor(){
+  var incEl=document.getElementById('prellm-subject-include');
+  var excEl=document.getElementById('prellm-subject-exclude');
+  var subWEl=document.getElementById('prellm-subject-weight');
+  var perfWEl=document.getElementById('prellm-perf-weight');
+  var minEl=document.getElementById('prellm-subject-min');
+  var enabledEl=document.getElementById('prellm-subject-enabled');
+  var parseLines=function(el){
+    return String(el&&el.value||'').split(/\\n+/).map(function(s){return s.trim();}).filter(Boolean);
+  };
+  var includes=parseLines(incEl);
+  var hashtags=includes.filter(function(k){return k.indexOf('#')===0;});
+  var keywords=includes.filter(function(k){return k.indexOf('#')!==0;});
+  var subW=parseFloat(subWEl&&subWEl.value||'0.35');
+  var perfW=parseFloat(perfWEl&&perfWEl.value||'0.65');
+  var minScore=parseFloat(minEl&&minEl.value||'0.2');
+  if(!Number.isFinite(subW)||subW<0)subW=0.35;
+  if(!Number.isFinite(perfW)||perfW<0)perfW=0.65;
+  if(!Number.isFinite(minScore))minScore=0.2;
+  minScore=Math.max(0,Math.min(1,minScore));
+  return {
+    include_keywords:keywords,
+    include_hashtags:hashtags,
+    exclude_keywords:parseLines(excEl),
+    subject_weight:subW,
+    performance_weight:perfW,
+    min_score:minScore,
+    apply_to_kinds:(enabledEl&&enabledEl.checked)?['instagram_post','tiktok_video','facebook_post','linkedin_post','reddit_post']:[]
+  };
+}
+
 async function renderPrellmFormulaEditor(opts){
   opts=opts||{};
   if(!SLUG||!prellmKind)return;
@@ -2851,11 +2949,18 @@ async function renderPrellmFormulaEditor(opts){
   minEl.value=String(Math.max(0,Math.min(1,minScore)));
   var mt=(typeof pre.min_primary_text_chars==='number')?pre.min_primary_text_chars:12;
   minTextEl.value=String(mt);
-  if(hint)hint.textContent='Score = sum(feature_i x weight_i) / sum(weights). Features are normalized 0-1 in code. Platform: '+prellmKind+(isPrellmRelativeOn()?'. Relative page performance ON — social rows use engagement vs followers when available.':'')+'.';
+  if(hint){
+    var base='Performance = sum(feature_i x weight_i) / sum(weights). Features normalized 0-1. Platform: '+prellmKind+(isPrellmRelativeOn()?'. Relative page performance ON.':'')+'.';
+    if(prellmKind==='linkedin_post'){
+      base+=' Final score blends performance + subject relevance (keyword match on caption/hashtags).';
+    }
+    hint.textContent=base;
+  }
   if(saveMsg){
     saveMsg.textContent=hasCustom?'':'Suggested defaults loaded (not saved yet).';
     saveMsg.style.color=hasCustom?'var(--muted)':'var(--muted)';
   }
+  renderSubjectRelevanceEditor(pre.subject_relevance||null);
   renderWeightsTable(weights);
   bindCafTerms(document.getElementById('prellm-root'));
 }
@@ -2896,6 +3001,26 @@ bind('prellm-add-weight','click',function(){
   renderWeightsTable(weights);
 });
 
+bind('prellm-load-research-keywords','click',async function(){
+  if(!SLUG){alert('Select a project first.');return;}
+  try{
+    var r=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/rows?tab=linkedinkeywords');
+    var d=await r.json().catch(function(){return {};});
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'Load failed'));
+    var lines=(d.rows||[]).map(function(row){
+      var p=row.payload_json||{};
+      return String(p.Name||p.keyword||'').trim();
+    }).filter(Boolean);
+    if(!lines.length){alert('No LinkedIn keywords saved in Research yet.');return;}
+    var incEl=document.getElementById('prellm-subject-include');
+    if(incEl)incEl.value=lines.join('\\n');
+    var saveMsgEl=document.getElementById('prellm-save-msg');
+    if(saveMsgEl){saveMsgEl.textContent='Loaded '+lines.length+' keywords from Research.';saveMsgEl.style.color='var(--muted)';}
+  }catch(e){
+    alert(String(e.message||e));
+  }
+});
+
 bind('prellm-save-formula','click',async function(){
   var msg=document.getElementById('prellm-save-msg');
   if(!SLUG||!prellmKind){if(msg)msg.textContent='Select a platform first.';return;}
@@ -2915,6 +3040,7 @@ bind('prellm-save-formula','click',async function(){
     criteria.pre_llm.enabled=true;
     criteria.pre_llm.relative_page_performance=isPrellmRelativeOn();
     criteria.pre_llm.kinds[prellmKind]={min_score:minScore,weights:readWeightsFromEditor()};
+    criteria.pre_llm.subject_relevance=readSubjectRelevanceFromEditor();
     var body={criteria_json:criteria};
     var r=await cafFetch('/v1/inputs-processing/'+encodeURIComponent(SLUG)+'/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     var d=await r.json().catch(function(){return {};});
@@ -4218,12 +4344,17 @@ function defaultIdeaBucketCountsClient(target,angles){
   set('niche_carousel_text',Math.floor(nicheCarousel*0.45));
   set('niche_carousel_visual',nicheCarousel-(out.niche_carousel_text||0));
   var nicheVideo=Math.round(video*0.7);
-  set('niche_video_no_avatar',Math.floor(nicheVideo*0.3));
-  set('niche_video_prompt_avatar',Math.floor(nicheVideo*0.35));
-  set('niche_video_hook_first',Math.max(0,Math.floor(nicheVideo*0.15)));
-  set('niche_video_script_avatar',nicheVideo-(out.niche_video_no_avatar||0)-(out.niche_video_prompt_avatar||0)-(out.niche_video_hook_first||0));
+  set('niche_video_no_avatar',Math.floor(nicheVideo*0.25));
+  set('niche_video_prompt_avatar',Math.floor(nicheVideo*0.3));
+  set('niche_video_hook_first',Math.max(0,Math.floor(nicheVideo*0.12)));
+  set('niche_video_ugc',Math.max(0,Math.floor(nicheVideo*0.15)));
+  set('niche_video_script_avatar',nicheVideo-(out.niche_video_no_avatar||0)-(out.niche_video_prompt_avatar||0)-(out.niche_video_hook_first||0)-(out.niche_video_ugc||0));
   set('niche_post',Math.max(0,Math.round(post*0.85)));
   set('niche_thread',Math.max(0,Math.round(thread*0.85)));
+  set('niche_linkedin_text',0);
+  set('niche_linkedin_document',0);
+  set('niche_reddit_post',0);
+  set('niche_instagram_thread',0);
   var productCarousel=Math.max(0,carousel-nicheCarousel);
   set('product_carousel_text',Math.floor(productCarousel*0.4));
   set('product_carousel_visual',productCarousel-(out.product_carousel_text||0));
@@ -4233,9 +4364,16 @@ function defaultIdeaBucketCountsClient(target,angles){
     ['problem','feature','comparison','usecase','social_proof','offer'].forEach(function(a,i){
       set('product_video_'+a,per+(i<rem?1:0));
     });
-  }else set('product_video',productVideo);
+  }else{
+    set('product_video_ugc',Math.max(0,Math.floor(productVideo*0.25)));
+    set('product_video',Math.max(0,productVideo-(out.product_video_ugc||0)));
+  }
   set('product_post',Math.max(0,post-(out.niche_post||0)));
   set('product_thread',Math.max(0,thread-(out.niche_thread||0)));
+  set('product_linkedin_text',0);
+  set('product_linkedin_document',0);
+  set('product_reddit_post',0);
+  set('product_instagram_thread',0);
   return out;
 }
 function applyDefaultIdeaBuckets(){

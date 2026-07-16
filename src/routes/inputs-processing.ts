@@ -6,6 +6,10 @@ import {
   ideaGenerationQuotasSchema,
   readIdeaGenerationQuotasFromCriteria,
 } from "../domain/idea-structure.js";
+import {
+  filterIdeaQuotasByEnabledLanes,
+  readEnabledContentRouteIdsFromCriteria,
+} from "../domain/content-routes.js";
 import { ensureProject } from "../repositories/core.js";
 import { listApiCallAuditsForInputsPipeline } from "../repositories/api-call-audit.js";
 import { listInsightsPacks } from "../repositories/insights-packs.js";
@@ -35,6 +39,7 @@ import {
 import { computeInputHealth, persistImportHealth } from "../services/input-health.js";
 import { buildSignalPackFromEvidenceImport } from "../services/inputs-to-signal-pack.js";
 import { getPreLlmEvidencePreview } from "../services/inputs-pre-llm-preview.js";
+import { enrichCriteriaWithLinkedInKeywords } from "../domain/pre-llm-subject-relevance.js";
 import {
   estimateBroadInsightsForImport,
   previewBroadInsightsPrompt,
@@ -140,6 +145,96 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     return { ok: true, profile: row };
   });
 
+  app.post("/v1/inputs-processing/:project_slug/linkedin-targeting/compile", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = z
+      .object({
+        free_text: z.string().max(8000),
+        persist: z.boolean().optional(),
+        apply_to_sources: z.boolean().optional(),
+      })
+      .safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_body" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const { compileLinkedInTargetingFromFreeText } = await import("../services/linkedin-targeting-compile.js");
+    const {
+      keywordLinesFromLinkedInTargeting,
+      mergeLinkedInTargetingIntoCriteria,
+      nicheLinesFromLinkedInTargeting,
+    } = await import("../domain/linkedin-targeting-profile.js");
+    const targeting = await compileLinkedInTargetingFromFreeText(body.data.free_text, config);
+
+    let profile = await getInputsProcessingProfile(db, project.id);
+    if (!profile) {
+      profile = await upsertInputsProcessingProfile(db, project.id, { criteria_json: defaultCriteriaJson() });
+    }
+
+    if (body.data.persist !== false) {
+      const nextCriteria = mergeLinkedInTargetingIntoCriteria(profile.criteria_json ?? {}, targeting);
+      // Also seed subject-relevance keywords from topics when empty or when applying.
+      const pre = (nextCriteria.pre_llm && typeof nextCriteria.pre_llm === "object"
+        ? { ...(nextCriteria.pre_llm as Record<string, unknown>) }
+        : {}) as Record<string, unknown>;
+      const sr = (pre.subject_relevance && typeof pre.subject_relevance === "object"
+        ? { ...(pre.subject_relevance as Record<string, unknown>) }
+        : {}) as Record<string, unknown>;
+      sr.include_keywords = targeting.topics_include;
+      sr.exclude_keywords = targeting.topics_exclude;
+      sr.apply_to_kinds = ["linkedin_post"];
+      pre.subject_relevance = sr;
+      nextCriteria.pre_llm = pre;
+      profile = await upsertInputsProcessingProfile(db, project.id, { criteria_json: nextCriteria });
+    }
+
+    let sources_applied: { niches: number; keywords: number } | null = null;
+    if (body.data.apply_to_sources) {
+      const { replaceSourceTabRows } = await import("../repositories/inputs-sources.js");
+      const nicheLines = nicheLinesFromLinkedInTargeting(targeting);
+      const keywordLines = keywordLinesFromLinkedInTargeting(targeting);
+      const nicheRows = nicheLines.map((line, i) => ({
+        row_index: i,
+        enabled: true,
+        payload_json: {
+          Name: line,
+          Link: line,
+          searchQuery: line,
+          Platform: "LinkedIn",
+          source_tab: "linkedinsearches",
+        },
+      }));
+      const keywordRows = keywordLines.map((line, i) => {
+        const excl = /^(?:-|exclude:)\s*(.+)$/i.exec(line.trim());
+        const term = excl ? excl[1]!.trim() : line.trim();
+        return {
+          row_index: i,
+          enabled: true,
+          payload_json: {
+            Name: line,
+            Link: term,
+            keyword: term,
+            role: excl ? "exclude" : "include",
+            Platform: "LinkedIn",
+            source_tab: "linkedinkeywords",
+          },
+        };
+      });
+      if (nicheRows.length) await replaceSourceTabRows(db, project.id, "linkedinsearches", nicheRows);
+      if (keywordRows.length) await replaceSourceTabRows(db, project.id, "linkedinkeywords", keywordRows);
+      sources_applied = { niches: nicheRows.length, keywords: keywordRows.length };
+    }
+
+    return {
+      ok: true,
+      targeting,
+      niche_lines: nicheLinesFromLinkedInTargeting(targeting),
+      keyword_lines: keywordLinesFromLinkedInTargeting(targeting),
+      profile,
+      sources_applied,
+    };
+  });
+
   app.get("/v1/inputs-processing/:project_slug/import/:import_id/stats", async (request, reply) => {
     const params = z
       .object({ project_slug: z.string(), import_id: z.string() })
@@ -230,6 +325,7 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
       profile = await upsertInputsProcessingProfile(db, project.id, { criteria_json: defaultCriteriaJson() });
     }
     let criteria = (profile.criteria_json ?? {}) as Record<string, unknown>;
+    criteria = await enrichCriteriaWithLinkedInKeywords(db, project.id, criteria);
     if (query.data.relative_page_performance !== undefined) {
       const preIn = criteria.pre_llm;
       const pre =
@@ -475,9 +571,13 @@ export function registerInputsProcessingRoutes(app: FastifyInstance, deps: { db:
     const contextInsightCap = body.data.context_insight_cap ?? Number(profile.max_insights_for_ideas_llm ?? 200);
     const minTop = body.data.min_top_performer_in_context ?? Number(profile.min_top_performer_insights_for_ideas_llm ?? 20);
     const extra = body.data.extra_instructions ?? profile.extra_instructions ?? "";
-    const ideaQuotas =
+    const ideaQuotasRaw =
       body.data.idea_quotas ??
       readIdeaGenerationQuotasFromCriteria(profile.criteria_json, targetIdeaCount);
+    const routeIds = readEnabledContentRouteIdsFromCriteria(profile.criteria_json);
+    const ideaQuotas = routeIds?.length
+      ? filterIdeaQuotasByEnabledLanes(ideaQuotasRaw, routeIds)
+      : ideaQuotasRaw;
 
     const result = await synthesizeIdeasJsonFromInsightsLlm(db, config, project.id, {
       importId: params.data.import_id,

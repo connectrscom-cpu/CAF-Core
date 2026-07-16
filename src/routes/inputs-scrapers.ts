@@ -7,6 +7,7 @@ import {
   INPUTS_SOURCE_TABS,
   deleteSourceRow,
   getScraperConfig,
+  getScraperRun,
   listScraperRuns,
   listSourceRows,
   replaceSourceTabRows,
@@ -28,6 +29,11 @@ import {
   SCRAPER_CONFIG_FIELDS,
 } from "../services/inputs-scraper-apify-config.js";
 import { hasApifyToken } from "../services/apify-client.js";
+import {
+  apifyRunIdsFromScraperStats,
+  recoverInputsScraperFromApify,
+  type RecoverableScraperKey,
+} from "../services/inputs-scraper-recover.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -292,4 +298,89 @@ export function registerInputsScraperRoutes(
     const runs = await listScraperRuns(db, project.id, query.data.limit);
     return { ok: true, runs };
   });
+
+  const recoverBodySchema = z.object({
+    scraper: z.enum(["instagram", "tiktok", "facebook", "reddit", "linkedin"]),
+    apify_run_ids: z.array(z.string().min(1)).max(20).optional(),
+    scraper_run_id: z.string().uuid().optional(),
+  });
+
+  app.post("/v1/inputs-sources/:project_slug/recover-apify-import", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const body = recoverBodySchema.safeParse(request.body ?? {});
+    if (!body.success) return reply.code(400).send({ ok: false, error: "bad_body" });
+
+    const project = await ensureProject(db, params.data.project_slug);
+    let runIds = body.data.apify_run_ids ?? [];
+    if (body.data.scraper_run_id && runIds.length === 0) {
+      const run = await getScraperRun(db, project.id, body.data.scraper_run_id);
+      if (!run) return reply.code(404).send({ ok: false, error: "not_found" });
+      runIds = apifyRunIdsFromScraperStats(
+        run.stats_json,
+        body.data.scraper as RecoverableScraperKey
+      );
+    }
+    try {
+      const result = await recoverInputsScraperFromApify(db, config, project.id, {
+        scraperKey: body.data.scraper as RecoverableScraperKey,
+        apifyRunIds: runIds,
+        scraperRunId: body.data.scraper_run_id ?? null,
+      });
+      return { ok: true, ...result };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: "recover_failed", message: msg });
+    }
+  });
+
+  app.post(
+    "/v1/inputs-sources/:project_slug/scraper-runs/:run_id/recover",
+    async (request, reply) => {
+      const params = z
+        .object({ project_slug: z.string(), run_id: z.string() })
+        .safeParse(request.params);
+      if (!params.success || !UUID_RE.test(params.data.run_id)) {
+        return reply.code(400).send({ ok: false, error: "bad_params" });
+      }
+      const body = z
+        .object({
+          scraper: z.enum(["instagram", "tiktok", "facebook", "reddit", "linkedin"]).optional(),
+          apify_run_ids: z.array(z.string().min(1)).max(20).optional(),
+        })
+        .safeParse(request.body ?? {});
+      if (!body.success) return reply.code(400).send({ ok: false, error: "bad_body" });
+
+      const project = await ensureProject(db, params.data.project_slug);
+      const run = await getScraperRun(db, project.id, params.data.run_id);
+      if (!run) return reply.code(404).send({ ok: false, error: "not_found" });
+
+      const scraperKey =
+        body.data.scraper ??
+        (run.scraper_key === "all"
+          ? ("linkedin" as RecoverableScraperKey)
+          : (run.scraper_key as RecoverableScraperKey));
+
+      if (scraperKey === "all" as string) {
+        return reply.code(400).send({ ok: false, error: "bad_body", message: "Specify scraper platform" });
+      }
+
+      const apifyRunIds =
+        body.data.apify_run_ids?.length
+          ? body.data.apify_run_ids
+          : apifyRunIdsFromScraperStats(run.stats_json, scraperKey as RecoverableScraperKey);
+
+      try {
+        const result = await recoverInputsScraperFromApify(db, config, project.id, {
+          scraperKey: scraperKey as RecoverableScraperKey,
+          apifyRunIds,
+          scraperRunId: params.data.run_id,
+        });
+        return { ok: true, ...result };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return reply.code(400).send({ ok: false, error: "recover_failed", message: msg });
+      }
+    }
+  );
 }

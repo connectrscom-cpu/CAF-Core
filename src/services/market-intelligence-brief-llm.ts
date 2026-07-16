@@ -9,10 +9,12 @@ import type {
   TopPerformerBriefHighlight,
 } from "../domain/market-intelligence-synthesis.js";
 import { insightColumnLabelsFromCriteria } from "../domain/insight-column-labels.js";
+import { researchPlatformLabel, type ResearchBriefPlatformId } from "../domain/research-brief-platform.js";
 import { getInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
 import { openaiChat } from "./openai-chat.js";
 import { parseJsonObjectFromLlmText } from "./llm-json-extract.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
+import { looksLikePersonalLifeMilestone } from "../domain/content-subject-guards.js";
 
 const briefOutSchema = z.object({
   research_brief_title: z.string().min(8).max(120).optional(),
@@ -285,7 +287,14 @@ function compactInsightRow(r: SynthesisInsightRowInput) {
 /** Broad per-post insights only — stratified across all platforms in the import. */
 export function compactInsightsForBrief(rows: SynthesisInsightRowInput[]) {
   const broad = rows.filter((r) => r.analysis_tier === "broad_llm");
-  const mapped = broad.map(compactInsightRow);
+  const mapped = broad
+    .map(compactInsightRow)
+    .filter((row) => {
+      const blob = [row.hook_text, row.why_it_worked, row.caption_style, row.hashtags]
+        .map((x) => String(x ?? ""))
+        .join(" ");
+      return !looksLikePersonalLifeMilestone(blob);
+    });
   const picked = stratifiedSampleByPlatform(mapped, (x) => x.score, { perPlatform: 12, maxTotal: 72 });
   return picked.map(({ score: _score, ...rest }) => rest);
 }
@@ -308,15 +317,26 @@ export function compactTopPerformersForBrief(derivedGlobals: Record<string, unkn
     if (!e) continue;
     const tier = str(e.analysis_tier);
     if (!tier.startsWith("top_performer")) continue;
+    const title = str(e.title) || str(e.hook_snippet) || str(e.caption_snippet);
+    const why = str(e.why_it_worked) || str(e.why_mimic_hint) || str(e.strategic_summary);
+    const blob = [
+      title,
+      why,
+      str(e.aesthetic_summary),
+      str(e.deck_as_whole_summary),
+      str(e.hook_snippet),
+      str(e.caption),
+    ].join(" ");
+    if (looksLikePersonalLifeMilestone(blob)) continue;
     mapped.push({
       insights_id: str(e.insights_id),
       analysis_tier: tier,
       platform: resolveTopPerformerPlatform(e),
       format: str(e.format_pattern) || tier.replace(/_/g, " "),
       creator: str(e.creator) || str(e.account_handle) || str(e.owner_username) || null,
-      title: str(e.title) || str(e.hook_snippet) || str(e.caption_snippet),
+      title,
       hook: str(e.hook_snippet) || str(e.hook_text),
-      why_it_worked: str(e.why_it_worked) || str(e.why_mimic_hint) || str(e.strategic_summary),
+      why_it_worked: why,
       aesthetic_summary: str(e.aesthetic_summary),
       deck_summary: str(e.deck_as_whole_summary),
       caption_style: str(e.caption_style),
@@ -353,6 +373,30 @@ function compactDraftForLlm(
       category: p.category,
       evidence_count: p.evidence_count,
     })),
+    linkedin_intelligence: draft.linkedin
+      ? {
+          weekly_topics: draft.linkedin.weekly_topics.slice(0, 8).map((t) => ({
+            title: t.title,
+            evidence_count: t.evidence_count,
+            quotes: t.quotes.slice(0, 3).map((q) => ({
+              person: q.person_name,
+              role: q.role_or_headline,
+              company: q.company,
+              quote: q.quote,
+            })),
+          })),
+          relevant_voices: draft.linkedin.relevant_voices.slice(0, 12).map((v) => ({
+            person: v.person_name,
+            role: v.role_or_headline,
+            company: v.company,
+            followers: v.followers,
+            post_count: v.post_count,
+            topics: v.sample_topics,
+          })),
+          distinct_people: draft.linkedin.distinct_people,
+          distinct_companies: draft.linkedin.distinct_companies,
+        }
+      : undefined,
   };
 }
 
@@ -553,6 +597,12 @@ Your ONLY source material is:
 
 Do NOT rely on pre-written summaries, stats tables, hashtag leaderboards, or brand profile fields — synthesize everything from insights + top_performers.
 
+RELEVANCE (critical):
+- Feature posts that teach how to create **on-niche** content for the brand (for a food brand: cooking, recipes, product, audience tips — not a creator’s private life).
+- Never turn personal-life milestones (weddings, anniversaries, funerals, baby showers, honeymoons) into format examples, top_performer_highlights, standout_example, or Story/carousel cards — even if likes are huge and the creator is in-category.
+- A one-line aside in competitive_landscape overview is OK (“Creator X posted a personal anniversary this month”); never as a research example.
+- Prefer captions/visuals about the niche, product category, or audience problem.
+
 MULTI-PLATFORM (required):
 - **platforms_in_evidence** lists every platform present. Your brief must cover **all** of them — not an Instagram-only narrative when TikTok, Reddit, Facebook, YouTube, etc. are also in the data.
 - Call out platform-specific wins and format differences where the evidence supports it.
@@ -579,6 +629,34 @@ RULES:
 - Avoid operator jargon (task_id, pipeline, DocAI, FLUX, etc.).
 - Synthesize polished prose — do not copy raw fragments verbatim.`;
 
+const LINKEDIN_SYSTEM_PROMPT = `You write LinkedIn market intelligence briefs for B2B marketers — person-first, not viral Meta creative analysis.
+
+Your ONLY source material is:
+1. **insights** — LinkedIn post analyses (themes, why_it_worked, creators).
+2. **linkedin_intelligence** — weekly topic clusters with attributed quotes (person + role + company) and relevant voices.
+3. **top_performers** — only when present (often sparse on LinkedIn).
+
+LinkedIn is NOT Instagram/TikTok:
+- Do NOT emphasize hooks, carousels, reels, or visual formats as the main story.
+- ALWAYS attribute claims to who said them (person, role/headline, company when known).
+- Lead with "what relevant people are talking about this week" and "which voices matter."
+- Influence (followers) is context, not the ranking reason by itself.
+
+OUTPUT QUALITY BAR:
+- research_brief_title like "LinkedIn · AI security voices · Jul 2026".
+- market_overview: which roles/companies are shaping the conversation in this niche.
+- what_worked: topics and angles that resonate when said by the right people — not hook formulas.
+- executive_summary: 4–6 bullets on topics + attributed voices + geo if present.
+- action_playbook: 4–6 content themes the brand should speak to this week (with who to watch).
+- competitive_landscape: treat "brands" as people/companies — use real handles/names from insights.
+- Skip media_lanes / hooks_digest emphasis unless evidence clearly supports them.
+
+RULES:
+- Return ONLY valid JSON matching the user schema.
+- Do NOT invent people, companies, or posts.
+- Every pattern in "patterns" MUST use an id from pattern_ids when pattern_ids is non-empty.
+- Avoid operator jargon.`;
+
 export async function generateResearchBriefWithLlm(
   db: Pool,
   config: AppConfig,
@@ -591,6 +669,7 @@ export async function generateResearchBriefWithLlm(
     signal_pack_id?: string | null;
     import_id?: string | null;
     brand_display_name?: string | null;
+    platform_scope?: ResearchBriefPlatformId | null;
   }
 ): Promise<MarketIntelligenceV1> {
   const profile = await getInputsProcessingProfile(db, projectId).catch(() => null);
@@ -607,11 +686,18 @@ export async function generateResearchBriefWithLlm(
     (compact as Record<string, unknown>).insight_column_labels = columnLabels;
   }
 
+  const isLinkedInBrief =
+    opts.platform_scope === "linkedin" ||
+    (Boolean(draft.linkedin) &&
+      opts.insight_rows.length > 0 &&
+      opts.insight_rows.every((r) => /linkedin/i.test(r.evidence_kind)));
+
   const user = `Brand label (display only): ${brand}
 Posts analyzed: ${draft.rows_analyzed}
 Platforms in evidence: ${(compact.platforms_in_evidence as string[]).join(", ") || "unknown"}
-
-Synthesize the research brief from insights + top_performers only (all platforms above).
+${opts.platform_scope ? `\nPlatform scope: ${researchPlatformLabel(opts.platform_scope)} ONLY — write a platform-specific brief for this network. Do not discuss other platforms.\n` : ""}
+${isLinkedInBrief ? "\nThis is a LINKEDIN person-first brief. Prioritize attributed topics and relevant voices over hooks/formats.\n" : ""}
+Synthesize the research brief from insights + top_performers${isLinkedInBrief ? " + linkedin_intelligence" : ""} only (${opts.platform_scope ? `scoped to ${researchPlatformLabel(opts.platform_scope)}` : "all platforms above"}).
 
 Generate JSON:
 {
@@ -640,7 +726,7 @@ ${JSON.stringify(compact).slice(0, 98_000)}`;
       apiKey,
       {
         model,
-        system_prompt: SYSTEM_PROMPT,
+        system_prompt: isLinkedInBrief ? LINKEDIN_SYSTEM_PROMPT : SYSTEM_PROMPT,
         user_prompt: user,
         max_tokens: 12000,
         response_format: "json_object",
@@ -667,7 +753,7 @@ ${JSON.stringify(compact).slice(0, 98_000)}`;
 
     const knownIds = new Set(allPatterns(draft).map((p) => p.id));
     const validPatches = parsed.data.patterns.filter((p) => knownIds.has(p.id));
-    if (validPatches.length < Math.min(2, knownIds.size)) {
+    if (knownIds.size > 0 && validPatches.length < Math.min(2, knownIds.size)) {
       logPipelineEvent("warn", "plan", "Too few pattern patches — using deterministic draft", {
         project_id: projectId,
         data: { patched: validPatches.length, expected: knownIds.size },

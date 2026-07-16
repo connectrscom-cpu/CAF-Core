@@ -1,8 +1,8 @@
 /**
  * Parse a CAF Project Onboarding Pack (markdown or plain text).
  *
- * Accepts ChatGPT output from `apps/review/CHATGPT_PROJECT_SETUP_GUIDE.md` §10
- * and operator-authored packs with the same section structure.
+ * Accepts ChatGPT output from `docs/PROJECT_SETUP_CHECKLIST.md` (Required output)
+ * / Review New brand pack paste, and operator-authored packs with the same section structure.
  */
 export type OnboardingSectionKey =
   | "brand_snapshot"
@@ -57,7 +57,11 @@ const SECTION_ALIASES: Array<{ key: OnboardingSectionKey; patterns: RegExp[] }> 
   },
   {
     key: "formats",
-    patterns: [/formats?\s*(?:&|and)\s*platforms?/i],
+    patterns: [
+      /formats?\s*(?:&|and)\s*platforms?/i,
+      /content\s*routes?\s*(?:&|and)\s*platforms?/i,
+      /^content\s*routes?$/i,
+    ],
   },
   {
     key: "publishing",
@@ -507,10 +511,16 @@ https://www.example.com/
 - Competitors: Competitor A — why it matters.
 - Winning formats: Carousels; short-form video.
 
-## 6. Formats & platforms
-- Enabled formats: Instagram carousels: Yes; HeyGen video: Yes.
+## 6. Content routes & platforms
+- Enabled content routes: Niche carousels; Brand visual carousels
+- Disabled / deferred routes: Why Mimic carousels
+- Route priorities: Start with niche + brand visual carousels only.
+- Product bible needed?: No
+- Brand bible assets needed?: Yes — style refs and logo
 - Instagram rules: 1080×1350 canvas; 5–9 slides; 3–8 hashtags at end.
 - Other platform rules: TikTok hook in first 3 seconds.
+- Research platforms: Instagram; Web / blogs
+- Publish platforms: Instagram
 
 ## 7. Publishing
 - Channels: Instagram; TikTok.

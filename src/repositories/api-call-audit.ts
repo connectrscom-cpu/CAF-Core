@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { stringifyForPostgresJson } from "../lib/postgres-json.js";
 
 const MAX_JSON_STRING = 120_000;
 
@@ -60,8 +61,8 @@ export async function insertApiCallAudit(db: Pool, row: ApiCallAuditInsert): Pro
       row.model ?? null,
       row.ok !== false,
       row.errorMessage ?? null,
-      JSON.stringify(req ?? {}),
-      JSON.stringify(res ?? {}),
+      stringifyForPostgresJson(req ?? {}),
+      stringifyForPostgresJson(res ?? {}),
       row.tokenUsage ?? null,
       row.latencyMs ?? null,
       row.billableVideoSeconds ?? null,

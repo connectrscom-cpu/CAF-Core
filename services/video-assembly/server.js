@@ -13,7 +13,7 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 /** Must match CAF Core `SUPABASE_ASSETS_BUCKET` (default assets). */
 const SUPABASE_BUCKET = process.env.SUPABASE_BUCKET || process.env.SUPABASE_ASSETS_BUCKET || "assets";
 const WORK_DIR = path.join(__dirname, "workdir");
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 
 if (!fs.existsSync(WORK_DIR)) fs.mkdirSync(WORK_DIR, { recursive: true });
 
@@ -38,6 +38,47 @@ function supabase() {
 
 function ffmpegAvailable() {
   try { execFileSync("ffmpeg", ["-version"], { stdio: "pipe" }); return true; } catch { return false; }
+}
+
+function ffprobeHasAudioStream(filePath) {
+  try {
+    const out = execFileSync(
+      "ffprobe",
+      ["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", filePath],
+      { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] }
+    );
+    return String(out).trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Concat demuxer requires every segment to carry an audio stream — add silent stereo for visual-only clips. */
+async function ensureMp4HasAudioTrack(inputPath, outputPath) {
+  if (ffprobeHasAudioStream(inputPath)) return inputPath;
+  await runFfmpeg(
+    [
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=channel_layout=stereo:sample_rate=44100",
+      "-i",
+      inputPath,
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "128k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      "-y",
+      outputPath,
+    ],
+    "add-silent-audio"
+  );
+  return outputPath;
 }
 
 const asyncJobs = new Map();
@@ -225,15 +266,16 @@ async function concatVideoFiles(videoUrls, jobDir) {
   for (let i = 0; i < videoUrls.length; i++) {
     const dest = path.join(jobDir, `part_${String(i).padStart(3, "0")}.mp4`);
     await downloadFile(videoUrls[i], dest);
-    files.push(dest);
+    const withAudio = path.join(jobDir, `part_${String(i).padStart(3, "0")}_a.mp4`);
+    files.push(await ensureMp4HasAudioTrack(dest, withAudio));
   }
   const listFile = path.join(jobDir, "concat.txt");
   const lines = files.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join("\n");
   fs.writeFileSync(listFile, lines);
   const outPath = path.join(jobDir, "merged.mp4");
   /**
-   * IMPORTANT: `-c copy` concat is fragile — it may silently output only the first clip when streams differ
-   * (codec/profile/timebase/metadata). Re-encode to a consistent H.264 stream so multi-scene jobs don't truncate.
+   * Re-encode to a consistent H.264 + AAC stream. Scene assembly muxes separate TTS after concat;
+   * hook-first keeps HeyGen body narration embedded in the second clip — never use `-an` here.
    */
   await runFfmpeg(
     [
@@ -251,7 +293,14 @@ async function concatVideoFiles(videoUrls, jobDir) {
       "fast",
       "-crf",
       "23",
-      "-an",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
       "-movflags",
       "+faststart",
       "-y",

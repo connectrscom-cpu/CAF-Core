@@ -27,7 +27,10 @@ import {
   applyPostMaxAgeToConfig,
   buildFacebookApifyInput,
   buildInstagramApifyInput,
+  buildLinkedInCompanyPostsApifyInput,
   buildLinkedInPostsApifyInput,
+  buildLinkedInPostSearchApifyInput,
+  buildLinkedInProfileScraperApifyInput,
   buildLinkedInProfileSearchApifyInput,
   buildRedditApifyInputFromConfig,
   buildTiktokApifyInput,
@@ -36,15 +39,32 @@ import {
   mergeScraperConfig,
   parseHashtagList,
   resolveActorId,
+  resolveLinkedInCompanyPostsActorId,
   resolveLinkedInPostsActorId,
+  resolveLinkedInPostSearchActorId,
+  resolveLinkedInProfileScraperActorId,
   resolveLinkedInProfileSearchActorId,
+  scaledLinkedInDatasetLimit,
+  scaledLinkedInWaitSec,
   type ScraperProjectConfig,
 } from "./inputs-scraper-apify-config.js";
+import {
+  authorProfileUrlFromPost,
+  buildSimilarProfileSearchInputFromScrapedProfile,
+  linkedinPostDedupeKey,
+  mergeDiscoveryContext,
+  nicheTextFromSource,
+  parseLinkedInNicheLine,
+  personProfileUrlsFromAccountSources,
+  postEngagementLikes,
+  postSearchQueryFromNiche,
+  splitLinkedInTargetUrls,
+  type LinkedInDiscoverySource,
+} from "./linkedin-discovery.js";
 import {
   enabledWebsiteSources,
   extractLinkedInProfileUrl,
   facebookUrlsFromSources,
-  linkedinUrlsFromSources,
   prepareInstagramSources,
   subredditLinksFromSources,
   tiktokProfilesFromSources,
@@ -58,7 +78,7 @@ import {
 import {
   ApifyError,
   abortApifyRun,
-  getApifyDatasetItems,
+  getAllApifyDatasetItems,
   hasApifyToken,
   runApifyActor,
   apifyConsoleRunUrl,
@@ -74,6 +94,7 @@ import {
   requestScraperRunAbort,
   ScraperRunAbortedError,
   trackApifyRun,
+  getTrackedApifyRunIds,
 } from "./inputs-scraper-run-registry.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
 
@@ -101,6 +122,20 @@ function apifyAbortHooks(ctx?: ScraperAbortContext): {
   return {
     shouldAbort: () => isScraperRunAborted(ctx.projectId, ctx.cafRunId),
     onRunStarted: (run) => trackApifyRun(ctx.projectId, ctx.cafRunId, run.id),
+  };
+}
+
+function mergeApifyRunStarted(
+  apifyRunIds: string[],
+  abortCtx?: ScraperAbortContext
+): { shouldAbort?: () => boolean; onRunStarted?: (run: ApifyRunResult) => void } {
+  const hooks = apifyAbortHooks(abortCtx);
+  return {
+    shouldAbort: hooks.shouldAbort,
+    onRunStarted: (run) => {
+      apifyRunIds.push(run.id);
+      hooks.onRunStarted?.(run);
+    },
   };
 }
 
@@ -209,7 +244,7 @@ async function scrapeInstagram(
       ...apifyAbortHooks(abortCtx),
     });
     apifyRunIds.push(run.id);
-    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+    const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
     const ctx = prepared[0] ?? {};
     for (const item of items) out.push(transformInstagramApifyPost(item, ctx));
     return { payloads: out, apifyRunIds };
@@ -224,7 +259,7 @@ async function scrapeInstagram(
       ...apifyAbortHooks(abortCtx),
     });
     apifyRunIds.push(run.id);
-    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+    const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
     for (const item of items) out.push(transformInstagramApifyPost(item, src));
   }
   return { payloads: out, apifyRunIds };
@@ -266,7 +301,7 @@ async function scrapeTiktok(
     waitForFinishSec: wait,
     ...apifyAbortHooks(abortCtx),
   });
-  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+  const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
   const out: Record<string, unknown>[] = [];
   for (const item of items) {
     const row = transformTiktokApifyItem(item);
@@ -294,7 +329,7 @@ async function scrapeReddit(
     waitForFinishSec: wait,
     ...apifyAbortHooks(abortCtx),
   });
-  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+  const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
   return { payloads: transformRedditApifyDataset(items), apifyRunIds: [run.id] };
 }
 
@@ -322,7 +357,7 @@ async function scrapeFacebook(
       ...apifyAbortHooks(abortCtx),
     });
     apifyRunIds.push(run.id);
-    const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
+    const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
     for (const item of items) {
       const row = transformFacebookApifyPost(item, filterOpts);
       if (row) out.push(row);
@@ -341,49 +376,200 @@ async function scrapeLinkedIn(
 ): Promise<ScrapePayloadResult> {
   checkScraperAbort(abortCtx);
   const li = cfg.scrapers?.linkedin ?? {};
-  const targetUrls = applySourceCap(linkedinUrlsFromSources(accountSources), maxSources);
+  const wait = apifyWaitSec(cfg);
+  const baseLimit = datasetLimitFor(cfg, "linkedin");
   const apifyRunIds: string[] = [];
+  const out: Record<string, unknown>[] = [];
+  const seenPostKeys = new Set<string>();
 
-  if (li.profileSearchEnabled !== false && searchSources.length > 0) {
-    const searchActorId = resolveLinkedInProfileSearchActorId(li);
-    const wait = apifyWaitSec(cfg);
-    const searchLimit = datasetLimitFor(cfg, "linkedin");
-    for (const src of applySourceCap(searchSources, maxSources)) {
-      checkScraperAbort(abortCtx);
+  type ProfileProvenance = {
+    discovery_source: LinkedInDiscoverySource;
+    discovery_query?: string | null;
+    seed_profile_url?: string | null;
+  };
+  const profileProvenance = new Map<string, ProfileProvenance>();
+
+  const stampProfile = (url: string, ctx: ProfileProvenance) => {
+    const normalized = url.trim();
+    if (!normalized) return;
+    const existing = profileProvenance.get(normalized);
+    if (!existing || existing.discovery_source === "manual_account") {
+      profileProvenance.set(normalized, ctx);
+    }
+  };
+
+  const pushPost = (item: Record<string, unknown>, ctx: ProfileProvenance) => {
+    const row = transformLinkedInApifyPost(item, mergeDiscoveryContext({}, ctx));
+    if (!row) return;
+    const key = linkedinPostDedupeKey(row);
+    if (seenPostKeys.has(key)) return;
+    seenPostKeys.add(key);
+    out.push(row);
+  };
+
+  const provenanceForScrapedPost = (item: Record<string, unknown>): ProfileProvenance => {
+    const authorUrl = authorProfileUrlFromPost(item);
+    if (authorUrl) {
+      const hit = profileProvenance.get(authorUrl);
+      if (hit) return hit;
+    }
+    return { discovery_source: "manual_account" };
+  };
+
+  const cappedAccounts = applySourceCap(accountSources, maxSources);
+  const { allUrls: manualUrls, similarSeedUrls } = personProfileUrlsFromAccountSources(cappedAccounts, li);
+  const { profileUrls: manualProfileUrls, companyUrls: manualCompanyUrls } = splitLinkedInTargetUrls(manualUrls);
+
+  for (const url of manualProfileUrls) {
+    stampProfile(url, { discovery_source: "manual_account" });
+  }
+
+  const profileTargets = new Set<string>(manualProfileUrls);
+  const companyTargets = new Set<string>(manualCompanyUrls);
+
+  const cappedSearches = applySourceCap(searchSources, maxSources);
+  const searchActorId = resolveLinkedInProfileSearchActorId(li);
+  const postSearchActorId = resolveLinkedInPostSearchActorId(li);
+
+  for (const src of cappedSearches) {
+    checkScraperAbort(abortCtx);
+    const niche = parseLinkedInNicheLine(nicheTextFromSource(src));
+    if (!niche.raw && !niche.searchQuery && !niche.currentJobTitles?.length) continue;
+    const discoveryQuery = postSearchQueryFromNiche(niche) || niche.raw;
+
+    if (li.profileSearchEnabled !== false) {
       const input = buildLinkedInProfileSearchApifyInput(cfg, src);
-      if (!input) continue;
-      const run = await runApifyActor(token, searchActorId, input, {
-        waitForFinishSec: wait,
-        ...apifyAbortHooks(abortCtx),
-      });
-      apifyRunIds.push(run.id);
-      const profiles = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, {
-        limit: searchLimit,
-      });
-      for (const profile of profiles) {
-        const url = extractLinkedInProfileUrl(profile);
-        if (url) targetUrls.push(url);
+      if (input) {
+        const run = await runApifyActor(token, searchActorId, input, {
+          waitForFinishSec: wait,
+          ...mergeApifyRunStarted(apifyRunIds, abortCtx),
+        });
+        const profiles = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, baseLimit);
+        for (const profile of profiles) {
+          const url = extractLinkedInProfileUrl(profile);
+          if (!url) continue;
+          profileTargets.add(url);
+          stampProfile(url, { discovery_source: "profile_search", discovery_query: discoveryQuery });
+        }
+      }
+    }
+
+    if (li.nichePostSearchEnabled !== false) {
+      const query = postSearchQueryFromNiche(niche);
+      if (query) {
+        const run = await runApifyActor(
+          token,
+          postSearchActorId,
+          buildLinkedInPostSearchApifyInput(cfg, [query]),
+          { waitForFinishSec: wait, ...mergeApifyRunStarted(apifyRunIds, abortCtx) }
+        );
+        const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, baseLimit);
+        const promoteAuthors = li.promoteAuthorsFromPostSearch !== false;
+        const minLikes = li.promoteAuthorsMinLikes ?? 25;
+        const promoteMax = li.promoteAuthorsMax ?? 15;
+        let promoted = 0;
+
+        for (const item of items) {
+          pushPost(item, { discovery_source: "post_search", discovery_query: query });
+          if (!promoteAuthors || promoted >= promoteMax) continue;
+          if (postEngagementLikes(item) < minLikes) continue;
+          const authorUrl = authorProfileUrlFromPost(item);
+          if (!authorUrl || profileTargets.has(authorUrl)) continue;
+          profileTargets.add(authorUrl);
+          stampProfile(authorUrl, { discovery_source: "post_search", discovery_query: query });
+          promoted++;
+        }
       }
     }
   }
 
-  const uniqueTargets = [...new Set(targetUrls.map((u) => u.trim()).filter(Boolean))];
-  if (uniqueTargets.length === 0) return { payloads: [], apifyRunIds };
+  if (similarSeedUrls.length > 0) {
+    checkScraperAbort(abortCtx);
+    const scraperActorId = resolveLinkedInProfileScraperActorId(li);
+    const run = await runApifyActor(
+      token,
+      scraperActorId,
+      buildLinkedInProfileScraperApifyInput(cfg, similarSeedUrls),
+      { waitForFinishSec: wait, ...mergeApifyRunStarted(apifyRunIds, abortCtx) }
+    );
+    const scrapedProfiles = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, baseLimit);
 
-  const postsActorId = resolveLinkedInPostsActorId(li);
-  const wait = apifyWaitSec(cfg);
-  const limit = datasetLimitFor(cfg, "linkedin");
-  const run = await runApifyActor(token, postsActorId, buildLinkedInPostsApifyInput(cfg, uniqueTargets), {
-    waitForFinishSec: wait,
-    ...apifyAbortHooks(abortCtx),
-  });
-  apifyRunIds.push(run.id);
-  const items = await getApifyDatasetItems<Record<string, unknown>>(token, run.defaultDatasetId, { limit });
-  const out: Record<string, unknown>[] = [];
-  for (const item of items) {
-    const row = transformLinkedInApifyPost(item);
-    if (row) out.push(row);
+    const maxTotal = li.similarProfilesMaxTotal ?? 30;
+    let similarAdded = 0;
+    for (const profile of scrapedProfiles) {
+      if (similarAdded >= maxTotal) break;
+      checkScraperAbort(abortCtx);
+      const seedUrl =
+        extractLinkedInProfileUrl(profile) ??
+        authorProfileUrlFromPost({ author: profile }) ??
+        similarSeedUrls[0] ??
+        null;
+      const searchInput = buildSimilarProfileSearchInputFromScrapedProfile(profile, li);
+      if (!searchInput) continue;
+
+      const searchRun = await runApifyActor(token, searchActorId, searchInput, {
+        waitForFinishSec: wait,
+        ...mergeApifyRunStarted(apifyRunIds, abortCtx),
+      });
+      const found = await fetchApifyDataset<Record<string, unknown>>(token, searchRun.defaultDatasetId, baseLimit);
+      for (const foundProfile of found) {
+        if (similarAdded >= maxTotal) break;
+        const url = extractLinkedInProfileUrl(foundProfile);
+        if (!url || profileTargets.has(url)) continue;
+        if (seedUrl && url === seedUrl) continue;
+        profileTargets.add(url);
+        stampProfile(url, {
+          discovery_source: "similar_profile",
+          seed_profile_url: seedUrl,
+        });
+        similarAdded++;
+      }
+    }
   }
+
+  const uniqueProfileTargets = [...profileTargets];
+  const uniqueCompanyTargets = [...companyTargets];
+  const limit = scaledLinkedInDatasetLimit(cfg, uniqueProfileTargets.length, uniqueCompanyTargets.length);
+
+  if (uniqueProfileTargets.length === 0 && uniqueCompanyTargets.length === 0 && out.length === 0) {
+    return { payloads: [], apifyRunIds };
+  }
+
+  if (uniqueProfileTargets.length > 0) {
+    checkScraperAbort(abortCtx);
+    const postsActorId = resolveLinkedInPostsActorId(li);
+    const postsWait = scaledLinkedInWaitSec(wait, uniqueProfileTargets.length);
+    logPipelineEvent("info", "other", "linkedin profile posts scrape starting", {
+      data: { profile_targets: uniqueProfileTargets.length, wait_sec: postsWait },
+    });
+    const run = await runApifyActor(
+      token,
+      postsActorId,
+      buildLinkedInPostsApifyInput(cfg, uniqueProfileTargets),
+      { waitForFinishSec: postsWait, maxWaitSec: postsWait, ...mergeApifyRunStarted(apifyRunIds, abortCtx) }
+    );
+    const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
+    for (const item of items) {
+      pushPost(item, provenanceForScrapedPost(item));
+    }
+  }
+
+  if (uniqueCompanyTargets.length > 0) {
+    checkScraperAbort(abortCtx);
+    const companyActorId = resolveLinkedInCompanyPostsActorId(li);
+    const companyWait = scaledLinkedInWaitSec(wait, uniqueCompanyTargets.length);
+    const run = await runApifyActor(
+      token,
+      companyActorId,
+      buildLinkedInCompanyPostsApifyInput(cfg, uniqueCompanyTargets),
+      { waitForFinishSec: companyWait, maxWaitSec: companyWait, ...mergeApifyRunStarted(apifyRunIds, abortCtx) }
+    );
+    const items = await fetchApifyDataset<Record<string, unknown>>(token, run.defaultDatasetId, limit);
+    for (const item of items) {
+      pushPost(item, { discovery_source: "manual_account" });
+    }
+  }
+
   return { payloads: out, apifyRunIds };
 }
 
@@ -431,6 +617,14 @@ function apifyRunRefs(scraperKey: string, runIds: string[]): ScraperApifyRunRef[
     run_id,
     console_url: apifyConsoleRunUrl(run_id),
   }));
+}
+
+async function fetchApifyDataset<T extends Record<string, unknown>>(
+  token: string,
+  datasetId: string,
+  maxItems: number
+): Promise<T[]> {
+  return getAllApifyDatasetItems<T>(token, datasetId, { maxItems });
 }
 
 const SCRAPER_SOURCE_TAB: Record<string, string> = {
@@ -565,13 +759,34 @@ async function executeInputsScraperRunCore(
     } catch (e) {
       if (isAbortError(e)) throw e;
       const msg = e instanceof Error ? e.message : String(e);
+      for (const apifyId of getTrackedApifyRunIds(projectId, runId)) {
+        if (!apifyRuns.some((r) => r.run_id === apifyId)) {
+          apifyRuns.push({
+            scraper_key: key,
+            run_id: apifyId,
+            console_url: apifyConsoleRunUrl(apifyId),
+          });
+        }
+      }
       logPipelineEvent("warn", "other", `inputs scraper ${key} skipped`, { data: { error: msg } });
       rowsByScraper[key] = 0;
     }
   }
 
   if (allRows.length === 0) {
-    throw new Error("No scraper produced rows (check sources, APIFY_API_TOKEN, and scraper config)");
+    const detail = Object.entries(rowsByScraper)
+      .map(([k, n]) => `${k}:${n}`)
+      .join(", ");
+    await updateScraperRun(db, runId, projectId, {
+      stats_json: {
+        apify_runs: apifyRuns,
+        rows_by_scraper: rowsByScraper,
+        recoverable: apifyRuns.length > 0,
+      },
+    });
+    throw new Error(
+      `No scraper produced rows (check sources, APIFY_API_TOKEN, and scraper config). Per-platform: ${detail || "none"}`
+    );
   }
 
   const label =

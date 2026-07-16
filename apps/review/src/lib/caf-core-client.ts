@@ -942,11 +942,26 @@ export async function listProjects(): Promise<{ ok: boolean; projects: ProjectAd
   return coreGet<{ ok: boolean; projects: ProjectAdminRow[] }>(`/v1/projects`);
 }
 
-export async function createProject(slug: string, displayName?: string | null) {
-  return corePost<{ ok: boolean; project: { id: string; slug: string; display_name: string | null; active: boolean; color?: string | null } }>(
-    `/v1/projects`,
-    { slug, display_name: displayName ?? undefined }
-  );
+export async function createProject(
+  slug: string,
+  displayName?: string | null,
+  opts?: {
+    color?: string | null;
+    enabled_content_routes?: string[];
+    apply_default_content_routes?: boolean;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    created?: boolean;
+    project: { id: string; slug: string; display_name: string | null; active: boolean; color?: string | null };
+  }>(`/v1/projects`, {
+    slug,
+    display_name: displayName ?? undefined,
+    color: opts?.color ?? undefined,
+    enabled_content_routes: opts?.enabled_content_routes,
+    apply_default_content_routes: opts?.apply_default_content_routes,
+  });
 }
 
 export async function updateProject(
@@ -1034,6 +1049,224 @@ export async function saveFlowType(projectSlug: string, data: Record<string, unk
   return corePut<{ ok: boolean; flow_type: Record<string, unknown> }>(
     `/v1/projects/${encodeURIComponent(projectSlug)}/flow-types`, data
   );
+}
+
+export async function getContentRoutes(projectSlug: string) {
+  return coreGet<{
+    ok: boolean;
+    lanes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      group: string;
+      advanced: boolean;
+      default_enabled: boolean;
+      flow_types: string[];
+      enabled: boolean;
+    }>;
+    enabled_lane_ids: string[];
+    managed_flow_types: string[];
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/content-routes`);
+}
+
+export async function saveContentRoutes(
+  projectSlug: string,
+  body: { enabled_lane_ids: string[]; target_idea_count?: number }
+) {
+  return corePut<{
+    ok: boolean;
+    lanes: Array<{
+      id: string;
+      label: string;
+      description: string;
+      group: string;
+      advanced: boolean;
+      default_enabled: boolean;
+      flow_types: string[];
+      enabled: boolean;
+    }>;
+    enabled_lane_ids: string[];
+  }>(`/v1/projects/${encodeURIComponent(projectSlug)}/content-routes`, body);
+}
+
+export async function runBroadInsightsForImport(
+  projectSlug: string,
+  importId: string,
+  body?: {
+    rescan?: boolean;
+    max_rows?: number;
+    evidence_kind?: string | null;
+    min_pre_llm_score?: number;
+    dry_run?: boolean;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    dry_run?: boolean;
+    rows_scanned?: number;
+    rows_eligible_new?: number;
+    rows_would_send?: number;
+    rows_sent?: number;
+    upserted?: number;
+    batches?: number;
+    broad_insights_total?: number;
+    processed?: number;
+    error?: string;
+    message?: string;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/run-broad-insights`,
+    body ?? { rescan: false }
+  );
+}
+
+export async function getPreLlmEvidencePreview(
+  projectSlug: string,
+  importId: string,
+  opts: {
+    evidence_kind: string;
+    min_score?: number;
+    limit?: number;
+    include_below_cutoff?: boolean;
+  }
+) {
+  const qs = new URLSearchParams();
+  qs.set("evidence_kind", opts.evidence_kind);
+  if (opts.min_score != null) qs.set("min_score", String(opts.min_score));
+  if (opts.limit != null) qs.set("limit", String(opts.limit));
+  if (opts.include_below_cutoff) qs.set("include_below_cutoff", "1");
+  return coreGet<{
+    ok: boolean;
+    evidence_kind: string;
+    min_score_cutoff: number;
+    profile_min_score: number;
+    totals: {
+      rows_in_kind: number;
+      sparse_text_dropped: number;
+      below_profile_min_dropped: number;
+      passing_profile_min: number;
+      after_user_cutoff: number;
+      off_topic_subject_dropped?: number;
+    };
+    active_weights?: Record<string, number>;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/pre-llm-evidence?${qs}`
+  );
+}
+
+export async function saveOperatorCutoffSnapshot(
+  projectSlug: string,
+  importId: string,
+  body: {
+    evidence_kind: string;
+    min_score_cutoff: number;
+    profile_min_score: number;
+    totals: {
+      rows_in_kind: number;
+      sparse_text_dropped: number;
+      below_profile_min_dropped: number;
+      passing_profile_min: number;
+      after_user_cutoff: number;
+    };
+    active_weights?: Record<string, number> | null;
+  }
+) {
+  return corePut<{ ok: boolean }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/operator-cutoff-snapshot`,
+    body
+  );
+}
+
+export async function getImportEvidenceStats(projectSlug: string, importId: string) {
+  return coreGet<{
+    ok: boolean;
+    stats?: {
+      total_rows: number;
+      by_kind: Record<string, number>;
+      kinds?: Array<{ evidence_kind: string; cnt: string }>;
+    };
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/stats`
+  );
+}
+
+export async function runDeepCarouselInsights(
+  projectSlug: string,
+  importId: string,
+  body?: {
+    max_rows?: number;
+    rating_top_fraction?: number;
+    rescan?: boolean;
+    progress_id?: string;
+    disable_rating_percentile_gate?: boolean;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    qualifying_carousel_rows?: number;
+    rows_sent?: number;
+    error?: string;
+    message?: string;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/run-deep-carousel-insights`,
+    body ?? {}
+  );
+}
+
+export async function runDeepVideoInsights(
+  projectSlug: string,
+  importId: string,
+  body?: {
+    max_rows?: number;
+    rating_top_fraction?: number;
+    rescan?: boolean;
+    disable_rating_percentile_gate?: boolean;
+  }
+) {
+  return corePost<{
+    ok: boolean;
+    qualifying_video_rows?: number;
+    rows_sent?: number;
+    error?: string;
+    message?: string;
+  }>(
+    `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/run-deep-video-insights`,
+    body ?? {}
+  );
+}
+
+export async function getProcessingPassProgress(progressId: string) {
+  return coreGet<{
+    ok: boolean;
+    progress?: {
+      pass: string;
+      started_at: string;
+      finished_at: string | null;
+      ok: boolean | null;
+      lines: Array<{ at: string; message: string; stage?: string }>;
+    };
+  }>(`/v1/inputs-processing/pass-progress/${encodeURIComponent(progressId)}`);
+}
+
+export async function importOnboardingPack(body: {
+  pack: string;
+  slug?: string;
+  default_display_name?: string;
+  dry_run?: boolean;
+}) {
+  const qs = new URLSearchParams();
+  if (body.slug) qs.set("slug", body.slug);
+  if (body.default_display_name) qs.set("default_display_name", body.default_display_name);
+  if (body.dry_run) qs.set("dry_run", "true");
+  const q = qs.toString();
+  return corePost<{
+    ok: boolean;
+    project?: { id: string; slug: string; display_name: string | null };
+    applied?: Record<string, number>;
+    gaps?: string[];
+    warnings?: string[];
+    errors?: string[];
+    error?: string;
+  }>(`/v1/projects/import-onboarding-pack${q ? `?${q}` : ""}`, { pack: body.pack });
 }
 
 export async function getProjectRiskRules(projectSlug: string) {
@@ -1137,12 +1370,24 @@ export async function syncBrandAssetToHeygen(projectSlug: string, assetId: strin
 
 export async function saveHeygenDefaults(
   projectSlug: string,
-  data: { voice_id?: string | null; avatar_id?: string | null; avatar_pool_json?: string | null }
+  data: {
+    voice_id?: string | null;
+    avatar_id?: string | null;
+    avatar_pool_json?: string | null;
+    ugc_avatar_pool_json?: string | null;
+    product_ugc_avatar_pool_json?: string | null;
+  }
 ) {
   return corePut<{
     ok: boolean;
     project: { id: string; slug: string };
-    applied: { voice_id: string | null; avatar_id: string | null; avatar_pool_count: number };
+    applied: {
+      voice_id: string | null;
+      avatar_id: string | null;
+      avatar_pool_count: number;
+      ugc_avatar_pool_count?: number;
+      product_ugc_avatar_pool_count?: number;
+    };
   }>(`/v1/projects/${encodeURIComponent(projectSlug)}/heygen-defaults`, data);
 }
 
@@ -1554,6 +1799,32 @@ export async function getRunDetail(
   );
 }
 
+/** All content jobs for a run (includes PLANNED / GENERATING / RENDERING — not only review-queue tabs). */
+export async function listAdminJobsForRun(
+  projectSlug: string,
+  runId: string,
+  opts?: { limit?: number }
+): Promise<{
+  ok: boolean;
+  rows: Array<{
+    task_id: string;
+    status: string | null;
+    flow_type: string | null;
+    platform: string | null;
+    flow_label?: string | null;
+    updated_at?: string;
+  }>;
+  total: number;
+} | null> {
+  const qs = new URLSearchParams({
+    project: projectSlug,
+    run_id: runId,
+    limit: String(opts?.limit ?? 100),
+    page: "1",
+  });
+  return coreGet(`/v1/admin/jobs?${qs.toString()}`);
+}
+
 export async function createRunForPack(
   projectSlug: string,
   body: {
@@ -1754,6 +2025,7 @@ export type SignalPackListRow = {
   upload_filename: string | null;
   notes: string | null;
   created_at: string;
+  source_inputs_import_id?: string | null;
   overall_candidates_count?: number;
   ideas_count?: number;
 };
@@ -1952,6 +2224,20 @@ export async function buildSignalPackFromImport(
     `/v1/inputs-processing/${encodeURIComponent(projectSlug)}/import/${encodeURIComponent(importId)}/build-signal-pack`,
     body ?? {}
   );
+}
+
+export async function compileLinkedInTargeting(
+  projectSlug: string,
+  body: { free_text: string; persist?: boolean; apply_to_sources?: boolean }
+) {
+  return corePostRequired<{
+    ok: boolean;
+    targeting?: Record<string, unknown>;
+    niche_lines?: string[];
+    keyword_lines?: string[];
+    sources_applied?: { niches: number; keywords: number } | null;
+    error?: string;
+  }>(`/v1/inputs-processing/${encodeURIComponent(projectSlug)}/linkedin-targeting/compile`, body);
 }
 
 // ── Publication placements (Review → n8n) ─────────────────────────────────

@@ -11,7 +11,8 @@ COPY apps/review ./apps/review
 COPY src ./src
 COPY tsconfig.json ./
 RUN cd apps/review && npm run build
-RUN cp -r apps/review/.next/static apps/review/.next/standalone/.next/static
+RUN cp -r apps/review/.next/static apps/review/.next/standalone/.next/static \
+  && cp -r apps/review/public apps/review/.next/standalone/public
 
 FROM node:20-slim AS builder
 WORKDIR /app

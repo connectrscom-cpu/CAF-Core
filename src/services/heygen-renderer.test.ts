@@ -338,7 +338,7 @@ describe("mapHeyGenV2StyleBodyToV3CreateVideoAvatar", () => {
     expect(v3.script).toBe("Hello from the script.");
   });
 
-  it("injects caption: { file_format: 'srt' } so HeyGen returns subtitle_url for the local-burn flow", () => {
+  it("requests HeyGen burned-in captions (caption.style) on script-led v3 create", () => {
     const v3 = mapHeyGenV2StyleBodyToV3CreateVideoAvatar({
       orientation: "portrait",
       video_inputs: [
@@ -349,7 +349,7 @@ describe("mapHeyGenV2StyleBodyToV3CreateVideoAvatar", () => {
         },
       ],
     });
-    expect(v3.caption).toEqual({ file_format: "srt" });
+    expect(v3.caption).toEqual({ file_format: "srt", style: "default" });
   });
 
   it("preserves caller-provided caption setting (does not overwrite explicit value)", () => {

@@ -185,6 +185,26 @@ function tryParseSupabaseStorageObjectUrl(url: string): { bucket: string; object
 }
 
 /**
+ * URL that caf-renderer / video-assembly can fetch over HTTP. Same-project Supabase Storage objects
+ * are signed here because anonymous GET on `/object/public/...` often returns 400 on private buckets
+ * and the renderer may not have service-role credentials configured.
+ */
+export async function fetchableUrlForVideoAssembly(config: AppConfig, url: string): Promise<string> {
+  const u = url.trim();
+  if (!u) return u;
+  const parsed = tryParseSupabaseStorageObjectUrl(u);
+  const base = config.SUPABASE_URL?.trim();
+  if (!parsed || !base) return u;
+  try {
+    if (new URL(u).hostname !== new URL(base).hostname) return u;
+  } catch {
+    return u;
+  }
+  const signed = await createSignedUrlForObjectKey(config, parsed.bucket, parsed.objectPath, 14_400);
+  return "signedUrl" in signed ? signed.signedUrl : u;
+}
+
+/**
  * Download bytes from a URL. For same-project Supabase public URLs, uses the service-role client so
  * fetches work even when anonymous GET on the public URL fails (e.g. policy quirks, malformed double-bucket paths).
  */

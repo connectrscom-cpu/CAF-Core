@@ -11,6 +11,7 @@ export const INPUTS_SOURCE_TABS = [
   "facebook",
   "linkedinaccounts",
   "linkedinsearches",
+  "linkedinkeywords",
   "hashtags",
 ] as const;
 
@@ -250,9 +251,15 @@ export async function listCompletedScraperRunsForPlatform(
             evidence_import_id::text, created_at::text
        FROM caf_core.inputs_scraper_runs
       WHERE project_id = $1
-        AND scraper_key = $2
         AND status = 'completed'
         AND evidence_import_id IS NOT NULL
+        AND (
+          scraper_key = $2
+          OR (
+            scraper_key = 'all'
+            AND COALESCE((stats_json->'rows_by_scraper'->>$2)::int, 0) > 0
+          )
+        )
       ORDER BY created_at DESC
       LIMIT $3`,
     [projectId, scraperKey, lim]

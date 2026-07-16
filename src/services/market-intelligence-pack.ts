@@ -15,6 +15,9 @@ import { mergeSignalPackDerivedGlobalsJson } from "../repositories/signal-packs.
 import { generateResearchBriefWithLlm } from "./market-intelligence-brief-llm.js";
 import { postUrlForTopPerformerPreview } from "./inputs-top-performer-qualifying-preview.js";
 import { getInputsProcessingProfile } from "../repositories/inputs-processing-profile.js";
+import type { ResearchBriefPlatformId } from "../domain/research-brief-platform.js";
+import { insightRowMatchesResearchPlatform } from "../domain/research-brief-platform.js";
+import { pickLinkedInTargetingFromCriteria } from "../domain/linkedin-targeting-profile.js";
 
 function asRecord(v: unknown): Record<string, unknown> | null {
   if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
@@ -62,6 +65,7 @@ function toSynthesisInput(
     created_at: r.created_at,
     creator: extractCreator(r.evidence_kind, payload) || null,
     source_url: postUrlForTopPerformerPreview(r.evidence_kind, payload),
+    evidence_payload: Object.keys(payload).length ? payload : null,
   };
 }
 
@@ -87,7 +91,7 @@ export function readStoredMarketIntelligenceV1(
 export function marketIntelligenceNeedsRefresh(v1: MarketIntelligenceV1 | null | undefined): boolean {
   if (!v1) return true;
   if (!v1.research_stats) return true;
-  if (!v1.hooks_digest) return true;
+  if (!v1.hooks_digest && !v1.linkedin) return true;
   return false;
 }
 
@@ -103,6 +107,7 @@ export async function buildMarketIntelligenceForImport(
     derived_globals?: Record<string, unknown> | null;
     limit?: number;
     brand_display_name?: string | null;
+    platform_scope?: ResearchBriefPlatformId | null;
   }
 ): Promise<MarketIntelligenceV1> {
   const limit = opts?.limit ?? 500;
@@ -112,17 +117,22 @@ export async function buildMarketIntelligenceForImport(
     limit,
     offset: 0,
   });
-  const rows = raw.map((r) =>
+  let rows = raw.map((r) =>
     toSynthesisInput(projectSlug, importId, opts?.signal_pack_id ?? null, opts?.run_id ?? null, r)
   );
+  if (opts?.platform_scope) {
+    rows = rows.filter((r) => insightRowMatchesResearchPlatform(r.evidence_kind, opts.platform_scope!));
+  }
 
   const profile = await getInputsProcessingProfile(db, projectId).catch(() => null);
   const columnLabels = columnLabelsFromProfile(profile?.criteria_json ?? null);
+  const linkedinTargeting = pickLinkedInTargetingFromCriteria(profile?.criteria_json ?? null);
 
   const draft = buildMarketIntelligenceV1({
     insightRows: rows,
     derivedGlobals: opts?.derived_globals ?? null,
     insight_column_labels: columnLabels,
+    linkedin_targeting: linkedinTargeting,
   });
 
   return generateResearchBriefWithLlm(db, config, projectId, projectSlug, draft, {
@@ -131,6 +141,7 @@ export async function buildMarketIntelligenceForImport(
     signal_pack_id: opts?.signal_pack_id ?? null,
     import_id: importId,
     brand_display_name: opts?.brand_display_name ?? null,
+    platform_scope: opts?.platform_scope ?? null,
   });
 }
 

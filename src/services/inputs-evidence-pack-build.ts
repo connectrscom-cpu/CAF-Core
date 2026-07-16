@@ -17,6 +17,7 @@ import {
   buildSheetStatsFromRows,
   writeInputsEvidenceImport,
 } from "./inputs-evidence-import-write.js";
+import { SCRAPER_OUTPUT_SHEETS } from "./inputs-source-sync.js";
 
 export type EvidencePackSlotsInput = Partial<Record<EvidencePackPlatform, string>>;
 
@@ -44,6 +45,7 @@ export async function listEvidencePackRunOptions(
       evidence_import_id: string;
       created_at: string;
       total_rows: number | null;
+      scraper_key: string;
     }>
   >
 > {
@@ -54,17 +56,29 @@ export async function listEvidencePackRunOptions(
       evidence_import_id: string;
       created_at: string;
       total_rows: number | null;
+      scraper_key: string;
     }>
   >;
   for (const platform of EVIDENCE_PACK_PLATFORMS) {
     const runs = await listCompletedScraperRunsForPlatform(db, projectId, platform, limitPerPlatform);
-    result[platform] = runs.map((r) => ({
-      scraper_run_id: r.id,
-      evidence_import_id: r.evidence_import_id!,
-      created_at: r.created_at,
-      total_rows:
-        typeof r.stats_json?.total_rows === "number" ? r.stats_json.total_rows : null,
-    }));
+    result[platform] = runs.map((r) => {
+      const rowsByScraper = r.stats_json?.rows_by_scraper as Record<string, number> | undefined;
+      const platformRows =
+        r.scraper_key === platform
+          ? typeof r.stats_json?.total_rows === "number"
+            ? r.stats_json.total_rows
+            : null
+          : typeof rowsByScraper?.[platform] === "number"
+            ? rowsByScraper[platform]
+            : null;
+      return {
+        scraper_run_id: r.id,
+        evidence_import_id: r.evidence_import_id!,
+        created_at: r.created_at,
+        total_rows: platformRows,
+        scraper_key: r.scraper_key,
+      };
+    });
   }
   return result;
 }
@@ -94,23 +108,34 @@ export async function buildInputsEvidencePack(
     if (run.status !== "completed") {
       throw new Error(`Scraper run ${runId} is not completed (${run.status})`);
     }
-    if (run.scraper_key !== platform) {
+    const rowsByScraper = run.stats_json?.rows_by_scraper as Record<string, number> | undefined;
+    if (run.scraper_key !== platform && run.scraper_key !== "all") {
       throw new Error(`Run ${runId} is ${run.scraper_key}, expected ${platform}`);
+    }
+    if (run.scraper_key === "all") {
+      const platformRows = rowsByScraper?.[platform] ?? 0;
+      if (platformRows <= 0) {
+        throw new Error(`Run ${runId} (all) has no ${platform} rows`);
+      }
     }
     if (!run.evidence_import_id) {
       throw new Error(`Scraper run ${runId} has no evidence import`);
     }
 
+    const platformSheet = SCRAPER_OUTPUT_SHEETS[platform];
     const sourceRows = await listAllInputsEvidenceRowsForImport(
       db,
       projectId,
       run.evidence_import_id
     );
-    if (sourceRows.length === 0) {
+    const platformRows = platformSheet
+      ? sourceRows.filter((row) => row.sheet_name === platformSheet)
+      : sourceRows;
+    if (platformRows.length === 0) {
       throw new Error(`Scraper run ${runId} (${platform}) produced no rows`);
     }
 
-    for (const row of sourceRows) {
+    for (const row of platformRows) {
       const nextIdx = (sheetRowNext.get(row.sheet_name) ?? 0) + 1;
       sheetRowNext.set(row.sheet_name, nextIdx);
       mergedRows.push({
@@ -125,9 +150,9 @@ export async function buildInputsEvidencePack(
     resolvedSlots[platform] = {
       scraper_run_id: run.id,
       evidence_import_id: run.evidence_import_id,
-      row_count: sourceRows.length,
+      row_count: platformRows.length,
     };
-    rowsByPlatform[platform] = sourceRows.length;
+    rowsByPlatform[platform] = platformRows.length;
   }
 
   const packLabel =

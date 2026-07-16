@@ -1,7 +1,7 @@
 "use client";
 
 import { ReviewNavLink } from "@/components/ReviewNavLink";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IntelEvidenceModal } from "@/components/marketer/IntelEvidenceModal";
 import { IntelFormatExplorer } from "@/components/marketer/IntelFormatExplorer";
 import { useSyncCartBriefPack } from "@/components/marketer/ContentCartContext";
@@ -14,6 +14,8 @@ import {
   statBucketToInsight,
 } from "@/lib/marketer/intel-evidence";
 import { formatResearchPlatformLabels } from "@/lib/marketer/research-notes";
+import { filterResearchBriefsByPlatform } from "@/lib/marketer/research-adapters";
+import { ResearchBriefPlatformFilter } from "@/components/marketer/ResearchBriefPlatformFilter";
 import { useAbortableLoad } from "@/lib/marketer/use-abortable-load";
 import type { HashtagInsight, IntelEvidencePost, MarketInsight, ResearchBrief } from "@/lib/marketer/types";
 import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
@@ -109,9 +111,12 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
   useSyncCartBriefPack(packId || null);
   const [generating, setGenerating] = useState(false);
   const [genMessage, setGenMessage] = useState<string | null>(null);
-  const [selectedFormats, setSelectedFormats] = useState<string[]>(["carousel", "video"]);
-  const [selectedLens, setSelectedLens] = useState<string[]>(["niche", "product"]);
+  const [routeLanes, setRouteLanes] = useState<
+    Array<{ id: string; label: string; group: string; enabled: boolean }>
+  >([]);
+  const [routeQuotas, setRouteQuotas] = useState<Record<string, number>>({});
   const [openTopic, setOpenTopic] = useState<string | null>(null);
+  const [briefPlatformFilter, setBriefPlatformFilter] = useState("all");
   const packIdRef = useRef(packId);
   packIdRef.current = packId;
   const [evidenceModal, setEvidenceModal] = useState<{
@@ -125,6 +130,32 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
   useEffect(() => {
     if (initialPackId != null) setPackId(initialPackId);
   }, [initialPackId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/brand/${encodeURIComponent(slug)}/content-routes`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j?.lanes) return;
+        const enabled = (j.lanes as Array<{ id: string; label: string; group: string; enabled: boolean }>).filter(
+          (l) => l.enabled
+        );
+        setRouteLanes(enabled);
+        setRouteQuotas((prev) => {
+          const next: Record<string, number> = {};
+          for (const lane of enabled) {
+            next[lane.id] = prev[lane.id] ?? (lane.group === "carousel" ? 8 : lane.group === "video" ? 4 : 2);
+          }
+          return next;
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setRouteLanes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   const openEvidence = useCallback(
     (insight: MarketInsight, resolved?: IntelEvidencePost[]) => {
@@ -201,6 +232,19 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
 
   const { loading, error, setError } = useAbortableLoad([slug, packId], load);
 
+  const filteredBriefs = useMemo(
+    () => filterResearchBriefsByPlatform(data?.briefs ?? [], briefPlatformFilter),
+    [data?.briefs, briefPlatformFilter]
+  );
+
+  useEffect(() => {
+    if (!filteredBriefs.length) return;
+    const current = packId || data?.packId || "";
+    if (!current || !filteredBriefs.some((b) => b.id === current)) {
+      setPackId(filteredBriefs[0]!.id);
+    }
+  }, [filteredBriefs, packId, data?.packId]);
+
   async function generateIdeas() {
     setGenerating(true);
     setGenMessage(null);
@@ -211,8 +255,7 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           packId: packId || data?.packId,
-          formats: selectedFormats,
-          contentLens: selectedLens,
+          routeQuotas,
         }),
       });
       const j = await res.json();
@@ -229,13 +272,10 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
     }
   }
 
-  function toggleFormat(f: string) {
-    setSelectedFormats((prev) => (prev.includes(f) ? prev.filter((x) => x !== f) : [...prev, f]));
-  }
-
-  function toggleLens(l: string) {
-    setSelectedLens((prev) => (prev.includes(l) ? prev.filter((x) => x !== l) : [...prev, l]));
-  }
+  const totalIdeaTarget = useMemo(
+    () => Object.values(routeQuotas).reduce((a, n) => a + (Number(n) || 0), 0),
+    [routeQuotas]
+  );
 
   if (loading) return <p className="workspace-muted">Loading market intelligence…</p>;
   if (error && !data) return <p className="workspace-error">{error}</p>;
@@ -251,20 +291,38 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
       intel.summaryBullets.length > 0 ||
       intel.marketOverview ||
       intel.whatWorked ||
-      intel.competitiveLandscape);
+      intel.competitiveLandscape ||
+      (intel.linkedin &&
+        (intel.linkedin.weeklyTopics.length > 0 || intel.linkedin.relevantVoices.length > 0)));
 
   if (!data || !hasContent) {
     return (
       <div className="workspace-empty">
         <h3>No intelligence yet</h3>
         <p>
-          Once research is analyzed into a signal pack, CAF surfaces winning patterns, hooks, hashtags, and format
-          takeaways here.
+          Once research is analyzed into a signal pack, CAF surfaces market patterns here. LinkedIn briefs emphasize
+          attributed topics and relevant voices; Meta briefs emphasize hooks, formats, and hashtags.
         </p>
         <div className="section-stub-actions">
           <ReviewNavLink href={navHref(`/brand/${encodeURIComponent(slug)}/research`)} className="btn-primary">
             Start market research
           </ReviewNavLink>
+        </div>
+      </div>
+    );
+  }
+
+  if ((data.briefs ?? []).length > 0 && filteredBriefs.length === 0) {
+    return (
+      <div className="intel-board">
+        <div className="intel-toolbar">
+          <ResearchBriefPlatformFilter value={briefPlatformFilter} onChange={setBriefPlatformFilter} />
+        </div>
+        <div className="workspace-empty workspace-empty--compact">
+          <p>No research briefs match this platform filter.</p>
+          <button type="button" className="btn-ghost btn-sm" onClick={() => setBriefPlatformFilter("all")}>
+            Show all platforms
+          </button>
         </div>
       </div>
     );
@@ -290,10 +348,11 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
   return (
     <div className="intel-board">
       <div className="intel-toolbar">
+        <ResearchBriefPlatformFilter value={briefPlatformFilter} onChange={setBriefPlatformFilter} />
         <label className="intel-pack-select">
           <span>Research brief</span>
           <select value={packId || data.packId || ""} onChange={(e) => setPackId(e.target.value)}>
-            {(data.briefs ?? []).map((b) => (
+            {filteredBriefs.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.label}
               </option>
@@ -326,6 +385,104 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
         <section className="intel-hero intel-hero--secondary">
           <h3 className="intel-group-title">What worked</h3>
           <p className="intel-hero-text">{intel.whatWorked}</p>
+        </section>
+      )}
+
+      {intel.linkedin && (intel.linkedin.weeklyTopics.length > 0 || intel.linkedin.relevantVoices.length > 0) && (
+        <section className="intel-linkedin">
+          <h3 className="intel-group-title">LinkedIn intelligence</h3>
+          <p className="intel-hero-text">
+            {intel.linkedin.distinctPeople} relevant voices across {intel.linkedin.distinctCompanies} companies
+            {intel.linkedin.geoSignals.length
+              ? ` · ${intel.linkedin.geoSignals
+                  .slice(0, 3)
+                  .map((g) => g.key)
+                  .join(", ")}`
+              : ""}
+          </p>
+
+          {intel.linkedin.weeklyTopics.length > 0 && (
+            <div className="intel-li-topics">
+              <h4>What to talk about this week</h4>
+              <div className="intel-li-topic-grid">
+                {intel.linkedin.weeklyTopics.map((topic) => (
+                  <article key={topic.id} className="intel-li-topic-card">
+                    <header>
+                      <h5>{topic.title}</h5>
+                      <span className="intel-tp-meta">{topic.evidenceCount} posts</span>
+                    </header>
+                    <p>{topic.summary}</p>
+                    <ul className="intel-li-quotes">
+                      {topic.quotes.slice(0, 4).map((q) => (
+                        <li key={`${q.insightsId}_${q.personName}`}>
+                          <blockquote>“{q.quote}”</blockquote>
+                          <div className="intel-li-attr">
+                            <strong>{q.personName}</strong>
+                            {q.roleOrHeadline ? ` · ${q.roleOrHeadline}` : ""}
+                            {q.company ? ` @ ${q.company}` : ""}
+                            {q.followers != null ? ` · ${q.followers.toLocaleString()} followers` : ""}
+                            {q.postUrl ? (
+                              <>
+                                {" · "}
+                                <a href={q.postUrl} target="_blank" rel="noreferrer">
+                                  View post
+                                </a>
+                              </>
+                            ) : null}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                    {topic.sourceInsightIds.length > 0 && (
+                      <IntelInspectButton
+                        label="Inspect evidence"
+                        onClick={() =>
+                          openEvidence({
+                            id: topic.id,
+                            category: "winning_pattern",
+                            title: topic.title,
+                            summary: topic.summary,
+                            evidenceCount: topic.evidenceCount,
+                            confidence: null,
+                            sourceInsightIds: topic.sourceInsightIds,
+                          })
+                        }
+                      />
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {intel.linkedin.relevantVoices.length > 0 && (
+            <div className="intel-li-voices">
+              <h4>Relevant voices</h4>
+              <div className="intel-li-voice-grid">
+                {intel.linkedin.relevantVoices.map((voice) => (
+                  <article key={`${voice.personName}_${voice.profileUrl ?? ""}`} className="intel-li-voice-card">
+                    <h5>
+                      {voice.profileUrl ? (
+                        <a href={voice.profileUrl} target="_blank" rel="noreferrer">
+                          {voice.personName}
+                        </a>
+                      ) : (
+                        voice.personName
+                      )}
+                    </h5>
+                    <p className="intel-tp-meta">
+                      {[voice.roleOrHeadline, voice.company].filter(Boolean).join(" · ")}
+                      {voice.followers != null ? ` · ${voice.followers.toLocaleString()} followers` : ""}
+                      {` · ${voice.postCount} posts`}
+                    </p>
+                    {voice.sampleTopics.length > 0 && (
+                      <p className="intel-li-voice-topics">Topics: {voice.sampleTopics.join(" · ")}</p>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -681,7 +838,7 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
                   <p>{tp.why}</p>
                   {tp.postUrl && (
                     <a href={tp.postUrl} target="_blank" rel="noopener noreferrer" className="intel-evidence-link">
-                      View on Instagram →
+                      View on {tp.platform || "LinkedIn"} →
                     </a>
                   )}
                   {tp.applyThis && <p className="intel-tp-apply"><strong>Apply:</strong> {tp.applyThis}</p>}
@@ -760,40 +917,47 @@ export function IntelligenceBoard({ slug, initialPackId }: IntelligenceBoardProp
         <details className="intel-generate-advanced">
           <summary>Generate a fresh idea set (1–3 minutes)</summary>
           <p className="section-stub-note">
-            Creates a new research brief with additional ideas from the same evidence. Useful when you want more
-            angles — not required if you already have enough ideas above.
+            Ideas are created only for your enabled content routes. Set how many you want per route (total{" "}
+            {totalIdeaTarget}).
           </p>
-          <div className="intel-generate-options">
-            <div>
-              <span className="intel-generate-label">Formats</span>
-              {["carousel", "video"].map((f) => (
-                <label key={f} className="intel-check">
-                  <input type="checkbox" checked={selectedFormats.includes(f)} onChange={() => toggleFormat(f)} />
-                  {f}
+          {routeLanes.length === 0 ? (
+            <p className="section-stub-note">
+              Enable content routes in your project setup pack (or Brand profile → Content routes) first.
+            </p>
+          ) : (
+            <div className="intel-route-quotas">
+              {routeLanes.map((lane) => (
+                <label key={lane.id} className="intel-route-quota-row">
+                  <span>{lane.label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={50}
+                    value={routeQuotas[lane.id] ?? 0}
+                    onChange={(e) =>
+                      setRouteQuotas((prev) => ({
+                        ...prev,
+                        [lane.id]: Math.max(0, Math.min(50, Number(e.target.value) || 0)),
+                      }))
+                    }
+                  />
                 </label>
               ))}
             </div>
-            <div>
-              <span className="intel-generate-label">Content lens</span>
-              {["niche", "product"].map((l) => (
-                <label key={l} className="intel-check">
-                  <input type="checkbox" checked={selectedLens.includes(l)} onChange={() => toggleLens(l)} />
-                  {l}
-                </label>
-              ))}
-            </div>
-          </div>
+          )}
           <button
             type="button"
             className="btn-ghost"
-            disabled={generating || !data.importId}
+            disabled={generating || !data.importId || totalIdeaTarget < 1}
             onClick={() => void generateIdeas()}
           >
-            {generating ? "Generating… (this can take a few minutes)" : "Generate new idea set"}
+            {generating
+              ? "Generating… (this can take a few minutes — chill)"
+              : `Generate ${totalIdeaTarget} ideas`}
           </button>
           {!data.importId && (
             <p className="section-stub-note">
-              This brief isn&apos;t linked to processed evidence yet — complete processing first.
+              Finish Research → Build research brief first so this brief is linked to evidence.
             </p>
           )}
         </details>

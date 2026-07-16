@@ -124,4 +124,38 @@ describe("inputs-pre-llm-rank", () => {
     expect(f.tt_plays).toBeGreaterThan(0);
     expect(f.tt_likes).toBeGreaterThan(0);
   });
+
+  it("evaluatePreLlmRow drops off-topic LinkedIn posts via subject relevance", () => {
+    const criteria = {
+      pre_llm: {
+        enabled: true,
+        kinds: { linkedin_post: { min_score: 0, weights: { li_likes: 1 } } },
+        subject_relevance: {
+          include_keywords: ["secure AI", "document AI"],
+          exclude_keywords: ["crypto"],
+          min_score: 0.2,
+          subject_weight: 0.5,
+          performance_weight: 0.5,
+          apply_to_kinds: ["linkedin_post"],
+        },
+      },
+    };
+    const onTopic = evaluatePreLlmRow(
+      "linkedin_post",
+      {
+        likes: 5000,
+        comments: 200,
+        caption: "Secure AI for document AI workflows in enterprise legal teams today",
+      },
+      criteria
+    );
+    const offTopic = evaluatePreLlmRow(
+      "linkedin_post",
+      { likes: 50_000, comments: 5000, caption: "Bitcoin crypto market update and trading tips" },
+      criteria
+    );
+    expect(onTopic.dropped_reason).toBeNull();
+    expect(onTopic.subject_score).toBeGreaterThan(0);
+    expect(offTopic.dropped_reason).toBe("off_topic_subject");
+  });
 });

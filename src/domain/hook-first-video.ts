@@ -146,11 +146,12 @@ export function isHookFirstFailedConcatRetryEligible(
 
 /** System addendum for primary LLM generation and render-time prep. */
 export const HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM = `Hook-first hybrid video JSON (mandatory fields):
-- \`hook_line\`: short scroll-stopping line (≤ 12 words) that the hook visual dramatizes.
-- \`hook_scene_prompt\`: 4–8 second **cinematic AI video** prompt only — dramatic emotional reaction imagery, pattern interrupt, hyper-real or stylized B-roll. **No avatar, no voiceover, no on-screen text** in the hook clip.
+- \`hook_line\`: short scroll-stopping line (≤ 12 words) — **spoken in the hook clip** as off-screen VO or in-scene reaction (no on-screen talking head).
+- \`hook_scene_prompt\`: 4–8 second **cinematic AI video** prompt — dramatic emotional reaction imagery, pattern interrupt, hyper-real or stylized B-roll. **No avatar, no on-screen text** in the hook clip; **audio required** (spoken hook_line + cinematic SFX/ambient).
 - \`hook_duration_sec\`: number 4–8 (target hook clip length).
+- Optional \`hook_audio_direction\`: SFX/ambient cues for the hook (e.g. "sizzle, gasp, tense kitchen ambience").
 - \`bridge_line\`: one sentence that **connects** the hook visual to the body (e.g. "And that's exactly why…").
-- \`spoken_script\`: voiceover for the **body segment only** (after the hook). Start with \`bridge_line\` or a natural continuation — do **not** repeat the hook_line verbatim as the opening VO.
+- \`spoken_script\`: voiceover for the **body segment only** (after the hook). Start with \`bridge_line\` or a natural continuation — do **not** repeat the hook_line verbatim as the opening body VO.
 - \`body_lane\`: one of \`script_avatar\` | \`prompt_avatar\` | \`no_avatar\` — how the body renders in HeyGen (default \`script_avatar\`).
 - \`caption\`, \`hashtags\`, \`cta\` / \`cta_line\`: standard publication fields.
 - Optional \`visual_direction\`, \`on_screen_text\` for the body segment only.

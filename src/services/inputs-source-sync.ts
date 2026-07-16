@@ -165,6 +165,11 @@ const WORKBOOK_TEMPLATE_SHEETS: Array<{
         Link: "https://www.linkedin.com/in/satyanadella/",
         Platform: "LinkedIn",
       },
+      {
+        Name: "alice",
+        Link: "https://www.linkedin.com/in/alice/ | similar",
+        Platform: "LinkedIn",
+      },
     ],
   },
   {
@@ -174,6 +179,11 @@ const WORKBOOK_TEMPLATE_SHEETS: Array<{
       {
         Name: "content marketing director",
         Link: "content marketing director",
+        Platform: "LinkedIn",
+      },
+      {
+        Name: "title: VP Marketing",
+        Link: "title: VP Marketing",
         Platform: "LinkedIn",
       },
     ],

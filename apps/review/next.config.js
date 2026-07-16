@@ -39,6 +39,10 @@ const nextConfig = {
       coreDomain,
       "mimic-output-slide-index.ts"
     );
+    config.resolve.alias["@caf-core-carousel/visual-first-carousel-visual-direction"] = path.join(
+      coreDomain,
+      "visual-first-carousel-visual-direction.ts"
+    );
     config.plugins.push(
       new webpack.NormalModuleReplacementPlugin(/^\.\/supabase-storage\.js$/, path.join(coreServices, "supabase-storage.ts")),
       new webpack.NormalModuleReplacementPlugin(

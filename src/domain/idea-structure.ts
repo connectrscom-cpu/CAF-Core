@@ -12,17 +12,31 @@ import {
   FLOW_PRODUCT_USECASE,
 } from "./product-flow-types.js";
 import { CANONICAL_FLOW_TYPES } from "./canonical-flow-types.js";
+import {
+  defaultPlatformForTextIdeaFormat,
+  flowTypeForTextIdeaFormat,
+  isTextIdeaFormat,
+} from "./text-content-flow-types.js";
 
 export const CONTENT_LENS_VALUES = ["niche", "product"] as const;
 export type ContentLens = (typeof CONTENT_LENS_VALUES)[number];
 
-export const IDEA_FORMAT_VALUES = ["carousel", "video", "post", "thread"] as const;
+export const IDEA_FORMAT_VALUES = [
+  "carousel",
+  "video",
+  "post",
+  "thread",
+  "linkedin_text",
+  "linkedin_document",
+  "reddit_post",
+  "instagram_thread",
+] as const;
 export type IdeaFormat = (typeof IDEA_FORMAT_VALUES)[number];
 
 export const CAROUSEL_EXECUTION_PROFILES = ["text_heavy", "visual_first", "mixed"] as const;
 export type CarouselExecutionProfile = (typeof CAROUSEL_EXECUTION_PROFILES)[number];
 
-export const VIDEO_EXECUTION_PROFILES = ["script_avatar", "prompt_avatar", "no_avatar", "hook_first"] as const;
+export const VIDEO_EXECUTION_PROFILES = ["script_avatar", "prompt_avatar", "no_avatar", "hook_first", "ugc"] as const;
 export type VideoExecutionProfile = (typeof VIDEO_EXECUTION_PROFILES)[number];
 
 export const POST_EXECUTION_PROFILES = ["text", "image_led"] as const;
@@ -67,13 +81,23 @@ export type IdeaGenerationBucketId =
   | "niche_video_prompt_avatar"
   | "niche_video_script_avatar"
   | "niche_video_hook_first"
+  | "niche_video_ugc"
   | "niche_post"
   | "niche_thread"
+  | "niche_linkedin_text"
+  | "niche_linkedin_document"
+  | "niche_reddit_post"
+  | "niche_instagram_thread"
   | "product_carousel_text"
   | "product_carousel_visual"
   | "product_video"
+  | "product_video_ugc"
   | "product_post"
   | "product_thread"
+  | "product_linkedin_text"
+  | "product_linkedin_document"
+  | "product_reddit_post"
+  | "product_instagram_thread"
   | `product_video_${ProductAngle}`;
 
 export interface IdeaGenerationBucketDef {
@@ -138,6 +162,14 @@ export const IDEA_GENERATION_BUCKET_DEFS: readonly IdeaGenerationBucketDef[] = [
     section: "niche",
   },
   {
+    id: "niche_video_ugc",
+    label: "Niche video — UGC creator",
+    format: "video",
+    content_lens: "niche",
+    execution_profile: "ugc",
+    section: "niche",
+  },
+  {
     id: "niche_post",
     label: "Niche post",
     format: "post",
@@ -149,6 +181,38 @@ export const IDEA_GENERATION_BUCKET_DEFS: readonly IdeaGenerationBucketDef[] = [
     id: "niche_thread",
     label: "Niche thread",
     format: "thread",
+    content_lens: "niche",
+    execution_profile: "text",
+    section: "niche",
+  },
+  {
+    id: "niche_linkedin_text",
+    label: "LinkedIn text post",
+    format: "linkedin_text",
+    content_lens: "niche",
+    execution_profile: "text",
+    section: "niche",
+  },
+  {
+    id: "niche_linkedin_document",
+    label: "LinkedIn post with images",
+    format: "linkedin_document",
+    content_lens: "niche",
+    execution_profile: "image_led",
+    section: "niche",
+  },
+  {
+    id: "niche_reddit_post",
+    label: "Reddit post",
+    format: "reddit_post",
+    content_lens: "niche",
+    execution_profile: "text",
+    section: "niche",
+  },
+  {
+    id: "niche_instagram_thread",
+    label: "Instagram thread",
+    format: "instagram_thread",
     content_lens: "niche",
     execution_profile: "text",
     section: "niche",
@@ -178,6 +242,14 @@ export const IDEA_GENERATION_BUCKET_DEFS: readonly IdeaGenerationBucketDef[] = [
     section: "product",
   },
   {
+    id: "product_video_ugc",
+    label: "Product video — UGC creator",
+    format: "video",
+    content_lens: "product",
+    execution_profile: "ugc",
+    section: "product",
+  },
+  {
     id: "product_post",
     label: "Product post",
     format: "post",
@@ -189,6 +261,38 @@ export const IDEA_GENERATION_BUCKET_DEFS: readonly IdeaGenerationBucketDef[] = [
     id: "product_thread",
     label: "Product thread",
     format: "thread",
+    content_lens: "product",
+    execution_profile: "text",
+    section: "product",
+  },
+  {
+    id: "product_linkedin_text",
+    label: "LinkedIn text post",
+    format: "linkedin_text",
+    content_lens: "product",
+    execution_profile: "text",
+    section: "product",
+  },
+  {
+    id: "product_linkedin_document",
+    label: "LinkedIn post with images",
+    format: "linkedin_document",
+    content_lens: "product",
+    execution_profile: "image_led",
+    section: "product",
+  },
+  {
+    id: "product_reddit_post",
+    label: "Reddit post",
+    format: "reddit_post",
+    content_lens: "product",
+    execution_profile: "text",
+    section: "product",
+  },
+  {
+    id: "product_instagram_thread",
+    label: "Instagram thread",
+    format: "instagram_thread",
     content_lens: "product",
     execution_profile: "text",
     section: "product",
@@ -234,15 +338,18 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
 }
 
+/** Legacy format split used when deriving default bucket quotas (carousel/video/post/thread only). */
+export type LegacyIdeaFormat = "carousel" | "video" | "post" | "thread";
+
 /** Legacy 40/30/10/10 split when no bucket quotas are configured. */
-export function legacyFormatQuotas(target: number): Record<IdeaFormat, number> {
+export function legacyFormatQuotas(target: number): Record<LegacyIdeaFormat, number> {
   const n = clamp(target, 1, 200);
   let carousel = Math.floor(n * 0.4);
   let video = Math.floor(n * 0.3);
   let post = Math.floor(n * 0.1);
   let thread = Math.floor(n * 0.1);
   let used = carousel + video + post + thread;
-  const order: IdeaFormat[] = ["carousel", "video", "post", "thread"];
+  const order: LegacyIdeaFormat[] = ["carousel", "video", "post", "thread"];
   let idx = 0;
   while (used < n) {
     const k = order[idx % order.length]!;
@@ -280,17 +387,24 @@ export function defaultIdeaGenerationQuotas(target: number, productAnglesEnabled
   buckets.niche_carousel_visual = nicheCarousel - buckets.niche_carousel_text;
 
   const nicheVideo = Math.max(0, Math.round(fmt.video * 0.7));
-  buckets.niche_video_no_avatar = Math.floor(nicheVideo * 0.3);
-  buckets.niche_video_prompt_avatar = Math.floor(nicheVideo * 0.35);
-  buckets.niche_video_hook_first = Math.max(0, Math.floor(nicheVideo * 0.15));
+  buckets.niche_video_no_avatar = Math.floor(nicheVideo * 0.25);
+  buckets.niche_video_prompt_avatar = Math.floor(nicheVideo * 0.3);
+  buckets.niche_video_hook_first = Math.max(0, Math.floor(nicheVideo * 0.12));
+  buckets.niche_video_ugc = Math.max(0, Math.floor(nicheVideo * 0.15));
   buckets.niche_video_script_avatar =
     nicheVideo -
     buckets.niche_video_no_avatar -
     buckets.niche_video_prompt_avatar -
-    buckets.niche_video_hook_first;
+    buckets.niche_video_hook_first -
+    buckets.niche_video_ugc;
 
   buckets.niche_post = Math.max(0, Math.round(fmt.post * 0.85));
   buckets.niche_thread = Math.max(0, Math.round(fmt.thread * 0.85));
+
+  buckets.niche_linkedin_text = 0;
+  buckets.niche_linkedin_document = 0;
+  buckets.niche_reddit_post = 0;
+  buckets.niche_instagram_thread = 0;
 
   const productCarousel = Math.max(0, fmt.carousel - nicheCarousel);
   buckets.product_carousel_text = Math.floor(productCarousel * 0.4);
@@ -305,11 +419,17 @@ export function defaultIdeaGenerationQuotas(target: number, productAnglesEnabled
       if (rem > 0) rem--;
     }
   } else {
-    buckets.product_video = productVideo;
+    buckets.product_video_ugc = Math.max(0, Math.floor(productVideo * 0.25));
+    buckets.product_video = Math.max(0, productVideo - buckets.product_video_ugc);
   }
 
-  buckets.product_post = Math.max(0, fmt.post - buckets.niche_post);
-  buckets.product_thread = Math.max(0, fmt.thread - buckets.niche_thread);
+  buckets.product_post = Math.max(0, fmt.post - (buckets.niche_post ?? 0));
+  buckets.product_thread = Math.max(0, fmt.thread - (buckets.niche_thread ?? 0));
+
+  buckets.product_linkedin_text = 0;
+  buckets.product_linkedin_document = 0;
+  buckets.product_reddit_post = 0;
+  buckets.product_instagram_thread = 0;
 
   // Normalize total to target
   let sum = Object.values(buckets).reduce((a, b) => a + b, 0);
@@ -419,8 +539,31 @@ export function applyIdeaStructureToPlannerRow(row: Record<string, unknown>): Re
     if (vs === "hook_first") {
       out.target_flow_type = CANONICAL_FLOW_TYPES.VID_HOOK_FIRST;
     }
+    if (vs === "ugc") {
+      out.target_flow_type = CANONICAL_FLOW_TYPES.VID_UGC;
+    }
     const targetFt = resolveTargetFlowTypeFromIdea(out);
     if (targetFt) out.target_flow_type = targetFt;
+  }
+
+  if (isTextIdeaFormat(format)) {
+    const flow = flowTypeForTextIdeaFormat(format);
+    if (flow) out.target_flow_type = flow;
+    const platform = defaultPlatformForTextIdeaFormat(format);
+    if (platform && !String(out.platform ?? "").trim()) {
+      out.platform = platform;
+      out.target_platform = platform;
+    }
+    if (format === "linkedin_document") {
+      out.execution_profile = "image_led";
+    } else if (!out.execution_profile) {
+      out.execution_profile = "text";
+    }
+  }
+
+  if ((format === "post" || format === "thread") && !out.target_flow_type) {
+    out.target_flow_type = CANONICAL_FLOW_TYPES.TEXT;
+    if (!out.execution_profile) out.execution_profile = "text";
   }
 
   if (row.product_angle) out.product_angle = String(row.product_angle).trim().toLowerCase();

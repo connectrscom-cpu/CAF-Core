@@ -85,6 +85,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
           notes: p.notes,
           ideas_count: p.ideas_count,
           upload_filename: p.upload_filename,
+          source_inputs_import_id: p.source_inputs_import_id ?? null,
         },
         displayName
       ),
@@ -110,42 +111,22 @@ export async function GET(req: NextRequest, ctx: Ctx) {
   let sourceWindow: string | null = null;
 
   if (packIdParam === "all") {
+    // Aggregate ideas across briefs without visual-media hydrate or per-import evidence scans.
     const fullPacks = await Promise.all(
-      packs.map((p) =>
-        getSignalPackForProject(slug, p.id, { hydrate_visual_media: true }).catch(() => null)
-      )
+      packs.map((p) => getSignalPackForProject(slug, p.id).catch(() => null))
     );
     const seenIdea = new Set<string>();
     const seenTp = new Set<string>();
-    const importIds = new Set<string>();
-    for (const brief of briefs) {
-      if (brief.importId) importIds.add(brief.importId);
-    }
-    const insightsByImport = new Map<string, Record<string, unknown>[]>();
-    await Promise.all(
-      [...importIds].map(async (importId) => {
-        const res = await listEvidenceInsightsForImport(slug, importId, { limit: 300 }).catch(() => null);
-        insightsByImport.set(importId, (res?.insights ?? []) as Record<string, unknown>[]);
-      })
-    );
     for (let i = 0; i < fullPacks.length; i++) {
       const resp = fullPacks[i];
       const pack = resp?.signal_pack ?? null;
       if (!pack) continue;
-      const brief = briefs[i];
-      const importId = importIdForPack(pack, brief?.importId);
-      const rows = importId ? insightsByImport.get(importId) ?? [] : [];
-      const thumbMap = rows.length ? buildEvidenceThumbnailMap(rows, pack) : new Map<string, string | null>();
-      for (const idea of enrichIdeasWithPreviews(parseIdeasFromPack(pack), thumbMap)) {
+      for (const idea of parseIdeasFromPack(pack)) {
         if (seenIdea.has(idea.id)) continue;
         seenIdea.add(idea.id);
         ideas.push(idea);
       }
-      let packTps = parseTopPerformersForPack(pack);
-      if (rows.length) {
-        packTps = enrichTopPerformersWithEvidence(packTps, thumbMap);
-      }
-      for (const tp of packTps) {
+      for (const tp of parseTopPerformersForPack(pack)) {
         if (seenTp.has(tp.id)) continue;
         seenTp.add(tp.id);
         topPerformers.push(tp);
@@ -165,9 +146,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
       });
     }
     const [packResp, synthesizedRes] = await Promise.all([
-      getSignalPackForProject(slug, target.id, {
-        hydrate_visual_media: true,
-      }).catch(() => null),
+      getSignalPackForProject(slug, target.id).catch(() => null),
       getMarketIntelligenceForPack(slug, target.id).catch(() => null),
     ]);
     const pack = packResp?.signal_pack ?? null;

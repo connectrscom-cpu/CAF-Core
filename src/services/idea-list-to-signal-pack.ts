@@ -10,8 +10,10 @@ import { getSignalPackById } from "../repositories/signal-packs.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
 import { MARKET_INTELLIGENCE_V1_KEY } from "../domain/market-intelligence-synthesis.js";
+import { serializeMarketerResearchBriefNotes } from "../domain/research-brief-platform.js";
 import { buildMarketIntelligenceForImport } from "./market-intelligence-pack.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
+import { spawnPlatformScopedResearchBriefPacks } from "./research-brief-platform-packs.js";
 
 export type IdeaFormatLimitBucket = "carousel" | "video" | "post" | "thread" | "other";
 
@@ -126,8 +128,22 @@ export async function buildSignalPackFromIdeaList(
     list.inputs_import_id,
     { derived_globals: derivedWithTpk, brand_display_name: project.display_name }
   );
+  const platformsFound = [
+    ...new Set(
+      ideasJson
+        .map((raw) => {
+          const rec = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+          return rec ? String(rec.platform ?? "").trim() : "";
+        })
+        .filter(Boolean)
+    ),
+  ];
   const packNotes = marketIntelligenceV1.research_brief_title
-    ? JSON.stringify({ marketer: { marketer_title: marketIntelligenceV1.research_brief_title } })
+    ? serializeMarketerResearchBriefNotes({
+        marketerTitle: marketIntelligenceV1.research_brief_title,
+        briefScope: "overall",
+        platforms: platformsFound,
+      })
     : (opts?.notes ?? `Built from inputs idea list ${ideaListId}`);
   const pack = await insertSignalPack(db, {
     run_id: runId,
@@ -139,12 +155,26 @@ export async function buildSignalPackFromIdeaList(
     source_inputs_idea_list_id: ideaListId,
     derived_globals_json: {
       ...derivedWithTpk,
+      research_brief_scope: "overall",
       [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
     },
     notes: packNotes,
     upload_filename: `from_idea_list:${ideaListId}`,
     source_inputs_import_id: list.inputs_import_id,
   });
+
+  await spawnPlatformScopedResearchBriefPacks(db, config, {
+    projectId: project.id,
+    projectSlug,
+    brandDisplayName: project.display_name,
+    importId: list.inputs_import_id,
+    parentPackId: pack.id,
+    packRunId: runId,
+    parentDerivedGlobals: derivedWithTpk,
+    ideasJson,
+    overallCandidates: [],
+    marketerResearchMeta: null,
+  }).catch(() => ({ platform_pack_ids: [], platforms_spawned: [] }));
 
   const displayName = trimRunDisplayName(opts?.run_name ?? null);
   const run = await createRun(db, {

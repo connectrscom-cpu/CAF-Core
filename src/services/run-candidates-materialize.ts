@@ -614,7 +614,10 @@ function formatForCartManifest(targetFlowType: string, format?: string): string 
   if (explicit) return explicit;
   const ft = targetFlowType.toUpperCase();
   if (ft.includes("CAROUSEL")) return "carousel";
-  if (ft.includes("LINKEDIN")) return "linkedin_document";
+  if (ft.includes("LINKEDIN_TEXT")) return "linkedin_text";
+  if (ft.includes("LINKEDIN_DOCUMENT") || ft.includes("LINKEDIN")) return "linkedin_document";
+  if (ft.includes("REDDIT")) return "reddit_post";
+  if (ft.includes("INSTAGRAM_THREAD") || ft.includes("THREAD")) return "instagram_thread";
   if (ft.includes("VID") || ft.includes("VIDEO")) return "video";
   return "post";
 }
@@ -649,37 +652,6 @@ function syntheticPlannerRowFromCartManifest(
   return base;
 }
 
-function syntheticMimicPlannerRowFromCartManifest(
-  item: CartManifestItem,
-  insightsId: string
-): Record<string, unknown> {
-  const format = formatForCartManifest(item.target_flow_type, item.format);
-  const platform = item.platform ?? "Instagram";
-  const ideaId = `mimic_${insightsId}`;
-  const title = String(item.title ?? `Mimic · ${insightsId}`).trim();
-  return {
-    idea_id: ideaId,
-    candidate_id: ideaId,
-    platform,
-    target_platform: platform,
-    format,
-    content_idea: title,
-    summary: title,
-    confidence: 0.88,
-    confidence_score: 0.88,
-    novelty_score: 0.55,
-    platform_fit: 0.82,
-    past_performance: 0.85,
-    recommended_route: "HUMAN_REVIEW",
-    grounding_insight_ids: [insightsId],
-    target_flow_type: item.target_flow_type,
-    manual_mimic_pick: true,
-    mimic_kind: item.mimic_kind ?? "video",
-    content_cart_pick: true,
-    provenance: "marketer_content_cart.manifest",
-  };
-}
-
 function plannerRowFromManifestMimicItem(
   pack: SignalPackRow,
   item: CartManifestItem,
@@ -688,26 +660,26 @@ function plannerRowFromManifestMimicItem(
   const insightsId = String(item.insights_id ?? normalizeTpInsightsId(item.cart_item_id)).trim();
   const mimicKind = item.mimic_kind;
   if (insightsId && mimicKind) {
-    try {
-      const rows = plannerRowsFromMimicPicks(
-        pack,
-        [
-          {
-            insights_id: insightsId,
-            mimic_kind: mimicKind,
-            ...(item.video_intent ? { video_intent: item.video_intent } : {}),
-          },
-        ],
-        runIdHint
-      );
-      if (rows[0]) {
-        return { ...rows[0], content_cart_pick: true, target_flow_type: item.target_flow_type };
-      }
-    } catch {
-      /* pack entry missing — fall back to cart manifest row */
+    const rows = plannerRowsFromMimicPicks(
+      pack,
+      [
+        {
+          insights_id: insightsId,
+          mimic_kind: mimicKind,
+          ...(item.video_intent ? { video_intent: item.video_intent } : {}),
+        },
+      ],
+      runIdHint
+    );
+    if (rows[0]) {
+      return { ...rows[0], content_cart_pick: true, target_flow_type: item.target_flow_type };
     }
   }
-  return syntheticMimicPlannerRowFromCartManifest(item, insightsId || normalizeTpInsightsId(item.cart_item_id));
+  const fallbackId = insightsId || normalizeTpInsightsId(item.cart_item_id);
+  throw new Error(
+    `Cart top_performer pick could not resolve insights_id ${fallbackId} (${item.mimic_kind ?? "mimic"}) in the signal pack visual_guidelines_pack_v1. ` +
+      "Rebuild the signal pack or re-add the reference from Market Intelligence before starting the cart run."
+  );
 }
 
 /**

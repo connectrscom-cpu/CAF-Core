@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import { z } from "zod";
-import { ensureProject, updateProjectBySlug } from "../repositories/core.js";
+import { ensureProject, updateProjectBySlug, getProjectBySlug } from "../repositories/core.js";
 import {
   getStrategyDefaults, upsertStrategyDefaults,
   getBrandConstraints, upsertBrandConstraints,
@@ -38,6 +38,7 @@ import {
   importProjectFromOnboardingPack,
 } from "../services/onboarding-pack-import.js";
 import { ONBOARDING_PACK_TEMPLATE } from "../services/onboarding-pack-parser.js";
+import { applyContentRoutes, getContentRoutesState } from "../services/content-routes-apply.js";
 import { exportProjectAsCsv } from "../services/project-csv-export.js";
 import { buildRiskQcStatus, riskRulesNotEnforcedNotice } from "../services/risk-qc-status.js";
 
@@ -61,12 +62,31 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
   // ── Create/update project ────────────────────────────────────────────
   app.post("/v1/projects", async (request, reply) => {
     const body = z.object({
-      slug: z.string(),
+      slug: z.string().min(1).max(64),
       display_name: z.string().optional(),
+      color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+      /** When set, apply these content routes after create (or upsert). */
+      enabled_content_routes: z.array(z.string()).optional(),
+      /** When true and enabled_content_routes omitted, enable niche + visual-first defaults. */
+      apply_default_content_routes: z.boolean().optional(),
     }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ ok: false, error: "invalid_body" });
+    const existed = await getProjectBySlug(db, body.data.slug.trim());
     const project = await ensureProject(db, body.data.slug, body.data.display_name);
-    return { ok: true, project };
+    if (body.data.color) {
+      await updateProjectBySlug(db, project.slug, { color: body.data.color });
+    }
+    const shouldApplyRoutes =
+      body.data.enabled_content_routes != null ||
+      (body.data.apply_default_content_routes === true && !existed);
+    if (shouldApplyRoutes) {
+      const lanes =
+        body.data.enabled_content_routes ??
+        ["niche_carousels", "visual_first_carousels"];
+      await applyContentRoutes(db, project.id, lanes);
+    }
+    const refreshed = await ensureProject(db, project.slug);
+    return { ok: true, project: refreshed, created: !existed };
   });
 
   // ── Import a project from CSV ────────────────────────────────────────
@@ -785,6 +805,33 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     return { ok: true, flow_type: row };
   });
 
+  // ── Content routes (marketer lanes → flows + idea quotas) ────────────
+  app.get("/v1/projects/:project_slug/content-routes", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    if (!params.success) return reply.code(400).send({ ok: false, error: "bad_params" });
+    const project = await ensureProject(db, params.data.project_slug);
+    const state = await getContentRoutesState(db, project.id);
+    return { ok: true, ...state };
+  });
+
+  app.put("/v1/projects/:project_slug/content-routes", async (request, reply) => {
+    const params = z.object({ project_slug: z.string() }).safeParse(request.params);
+    const body = z
+      .object({
+        enabled_lane_ids: z.array(z.string()).min(0).max(40),
+        target_idea_count: z.number().int().min(1).max(200).optional(),
+      })
+      .safeParse(request.body);
+    if (!params.success || !body.success) {
+      return reply.code(400).send({ ok: false, error: "invalid_request" });
+    }
+    const project = await ensureProject(db, params.data.project_slug);
+    const state = await applyContentRoutes(db, project.id, body.data.enabled_lane_ids, {
+      target_idea_count: body.data.target_idea_count,
+    });
+    return { ok: true, ...state };
+  });
+
   // ── Reference Posts ──────────────────────────────────────────────────
   app.get("/v1/projects/:project_slug/reference-posts", async (request, reply) => {
     const params = z.object({ project_slug: z.string() }).safeParse(request.params);
@@ -1117,6 +1164,10 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
       avatar_id: z.string().nullish(),
       /** JSON array of { avatar_id, voice_id? } (same value as heygen_config `avatar_pool_json`). */
       avatar_pool_json: z.string().nullish(),
+      /** Brand bible UGC hosts → heygen_config `ugc_avatar_pool_json`. */
+      ugc_avatar_pool_json: z.string().nullish(),
+      /** Product bible UGC hosts → heygen_config `product_ugc_avatar_pool_json`. */
+      product_ugc_avatar_pool_json: z.string().nullish(),
       /** Allow clients to target a project besides the path param; path still wins when provided. */
       project_slug: z.string().optional(),
     })
@@ -1162,6 +1213,12 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
     const voiceId = typeof body.data.voice_id === "string" ? body.data.voice_id.trim() : "";
     const avatarId = typeof body.data.avatar_id === "string" ? body.data.avatar_id.trim() : "";
     const avatarPoolRaw = typeof body.data.avatar_pool_json === "string" ? body.data.avatar_pool_json.trim() : "";
+    const ugcPoolRaw =
+      typeof body.data.ugc_avatar_pool_json === "string" ? body.data.ugc_avatar_pool_json.trim() : "";
+    const productUgcPoolRaw =
+      typeof body.data.product_ugc_avatar_pool_json === "string"
+        ? body.data.product_ugc_avatar_pool_json.trim()
+        : "";
 
     let avatarPoolNormalized: string | null = null;
     let poolCount = 0;
@@ -1177,6 +1234,51 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
         const msg = e instanceof Error ? e.message : String(e);
         return reply.code(400).send({ ok: false, error: "avatar_pool_invalid", message: msg.slice(0, 300) });
       }
+    }
+
+    async function upsertNamedPool(
+      configId: string,
+      configKey: string,
+      raw: string,
+      notes: string
+    ): Promise<number> {
+      if (!raw) return 0;
+      const parsed = parseAvatarPoolJson(raw);
+      if (parsed.count === 0) {
+        throw new Error(`${configKey} parsed but contained no valid avatar_id entries`);
+      }
+      await upsertHeygenConfig(db, project.id, {
+        config_id: configId,
+        platform: null,
+        flow_type: null,
+        config_key: configKey,
+        value: parsed.normalized,
+        render_mode: null,
+        value_type: "string",
+        is_active: true,
+        notes,
+      });
+      return parsed.count;
+    }
+
+    let ugcPoolCount = 0;
+    let productUgcPoolCount = 0;
+    try {
+      ugcPoolCount = await upsertNamedPool(
+        "ugc_avatar_pool",
+        "ugc_avatar_pool_json",
+        ugcPoolRaw,
+        "Brand bible UGC hosts (managed by heygen-defaults)"
+      );
+      productUgcPoolCount = await upsertNamedPool(
+        "product_ugc_avatar_pool",
+        "product_ugc_avatar_pool_json",
+        productUgcPoolRaw,
+        "Product bible UGC hosts (managed by heygen-defaults)"
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return reply.code(400).send({ ok: false, error: "ugc_avatar_pool_invalid", message: msg.slice(0, 300) });
     }
 
     // Voice: write a single broad-scope row (platform/flow/render_mode null).
@@ -1252,6 +1354,8 @@ export function registerProjectConfigRoutes(app: FastifyInstance, deps: { db: Po
         voice_id: voiceId || null,
         avatar_id: avatarPoolNormalized ? null : avatarId || null,
         avatar_pool_count: avatarPoolNormalized ? poolCount : 0,
+        ugc_avatar_pool_count: ugcPoolCount,
+        product_ugc_avatar_pool_count: productUgcPoolCount,
       },
     };
   });

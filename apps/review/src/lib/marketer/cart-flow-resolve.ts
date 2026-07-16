@@ -14,6 +14,14 @@ const VIDEO_PROFILE_TO_FLOW: Record<string, string> = {
   prompt_avatar: "FLOW_VID_PROMPT",
   no_avatar: "FLOW_VID_PROMPT_NO_AVATAR",
   hook_first: "FLOW_VID_HOOK_FIRST",
+  ugc: "FLOW_VID_UGC",
+};
+
+const TEXT_FORMAT_TO_FLOW: Record<string, string> = {
+  linkedin_text: "FLOW_LINKEDIN_TEXT_POST",
+  linkedin_document: "FLOW_LINKEDIN_DOCUMENT_POST",
+  reddit_post: "FLOW_REDDIT_POST",
+  instagram_thread: "FLOW_INSTAGRAM_THREAD",
 };
 
 export function resolveCartFlowForIdea(
@@ -46,15 +54,10 @@ export function resolveCartFlowForIdea(
     flowTypeRaw = VIDEO_PROFILE_TO_FLOW[profile] ?? "FLOW_VID_PROMPT";
   } else if (format === "carousel") {
     flowTypeRaw = CAROUSEL_PROFILE_TO_FLOW[profile] ?? "FLOW_CAROUSEL";
+  } else if (TEXT_FORMAT_TO_FLOW[format]) {
+    flowTypeRaw = TEXT_FORMAT_TO_FLOW[format]!;
   } else if (format === "post" || format === "thread") {
     flowTypeRaw = "FLOW_TEXT";
-  } else if (format === "linkedin_document") {
-    flowTypeRaw = "FLOW_LINKEDIN_DOCUMENT_POST";
-  }
-
-  const platform = String(idea.platform ?? "").toLowerCase();
-  if (!raw.startsWith("FLOW_") && platform.includes("linkedin") && (format === "post" || format === "carousel")) {
-    flowTypeRaw = "FLOW_LINKEDIN_DOCUMENT_POST";
   }
 
   return {
@@ -119,6 +122,17 @@ export interface CartCreationLine {
       linkedin_aspect_ratio?: ContentCartItem["linkedinAspectRatio"];
       linkedin_image_count?: ContentCartItem["linkedinImageCount"];
       use_brand_visual_system?: boolean;
+}
+
+/** True when the cart item's resolved flow is allowed by project content routes. */
+export function isCartItemAllowedByEnabledFlows(
+  item: ContentCartItem,
+  enabledFlowTypes: Iterable<string>
+): boolean {
+  const enabled = new Set([...enabledFlowTypes].map((f) => f.trim()).filter(Boolean));
+  if (enabled.size === 0) return true;
+  const normalized = normalizeCartItemFlow(item);
+  return enabled.has(normalized.flowTypeRaw);
 }
 
 export function buildCartCreationPayload(slug: string, items: ContentCartItem[]): {

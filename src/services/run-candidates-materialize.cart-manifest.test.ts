@@ -19,7 +19,39 @@ const CUISINA_13_MANIFEST: CartManifestItem[] = [
 ];
 
 describe("plannerRowsFromCartManifest", () => {
-  it("returns 13 stamped rows even when pack only has 3 stale jobs_json ideas", () => {
+  it("throws when top_performer cart picks cannot resolve visual guideline entries", () => {
+    const pack = {
+      id: "pack-1",
+      project_id: "proj-1",
+      run_id: "712_MRIA25ST",
+      jobs_json: [],
+      ideas_json: [],
+      overall_candidates_json: [],
+      derived_globals_json: {},
+    } as unknown as SignalPackRow;
+
+    expect(() => plannerRowsFromCartManifest(pack, CUISINA_13_MANIFEST, "RUN_TEST")).toThrow(
+      /visual guideline entry|visual_guidelines_pack_v1/
+    );
+  });
+
+  it("returns stamped rows when pack has matching visual guideline entries", () => {
+    const tpVideoEntry = {
+      insights_id: "ins_894d424d84_28762_cdeep",
+      analysis_tier: "top_performer_video",
+      hook_text_preview: "Which sign is the chaos gremlin?",
+      why_it_worked: "Sign-specific listicle hook",
+      format_pattern: "story",
+      evidence_kind: "instagram_post",
+    };
+    const tpCarouselEntry = {
+      insights_id: "ins_894d424d84_28808_cdeep",
+      analysis_tier: "top_performer_carousel",
+      hook_text_preview: "Carousel hook",
+      why_it_worked: "Strong saves",
+      format_pattern: "listicle",
+      evidence_kind: "instagram_post",
+    };
     const pack = {
       id: "pack-1",
       project_id: "proj-1",
@@ -27,24 +59,36 @@ describe("plannerRowsFromCartManifest", () => {
       jobs_json: [
         { id: "idea_712_MRIA25ST_19", title: "Hook 1", format: "video", platform: "Instagram" },
         { id: "idea_712_MRIA25ST_18", title: "Hook 2", format: "video", platform: "Instagram" },
-        { id: "idea_712_MRIA25ST_20", title: "Hook 3", format: "video", platform: "Instagram" },
       ],
       ideas_json: [
         { id: "idea_712_MRIA25ST_19", title: "The Secret to Meal Variety", format: "video", platform: "Instagram" },
         { id: "idea_712_MRIA25ST_18", title: "Dinner Time Dilemmas Solved", format: "video", platform: "Instagram" },
       ],
       overall_candidates_json: [],
-      derived_globals_json: {},
+      derived_globals_json: {
+        visual_guidelines_pack_v1: {
+          entries: [
+            tpVideoEntry,
+            { ...tpVideoEntry, insights_id: "ins_894d424d84_28767_vdeep", format_pattern: "mixed" },
+            { ...tpVideoEntry, insights_id: "ins_894d424d84_28770_vdeep", format_pattern: "unknown" },
+            { ...tpVideoEntry, insights_id: "ins_894d424d84_28657_vdeep", format_pattern: "mixed" },
+            {
+              ...tpVideoEntry,
+              insights_id: "ins_894d424d84_28765_vdeep",
+              format_pattern: "text_on_screen",
+            },
+            tpCarouselEntry,
+          ],
+        },
+      },
     } as unknown as SignalPackRow;
 
     const rows = plannerRowsFromCartManifest(pack, CUISINA_13_MANIFEST, "RUN_TEST");
 
     expect(rows).toHaveLength(13);
     expect(rows.filter((r) => r.target_flow_type === "FLOW_VID_HOOK_FIRST")).toHaveLength(2);
-    expect(rows.filter((r) => r.target_flow_type === "FLOW_VISUAL_FIRST_CAROUSEL")).toHaveLength(3);
-    expect(rows.filter((r) => r.target_flow_type === "FLOW_CAROUSEL")).toHaveLength(2);
+    expect(rows.filter((r) => r.target_flow_type === "FLOW_VID_PROMPT")).toHaveLength(4);
     expect(rows.every((r) => r.content_cart_pick === true)).toBe(true);
-    expect(rows[7]?.target_flow_type).toBe("FLOW_VID_PROMPT");
-    expect(rows[8]?.target_flow_type).toBe("FLOW_TOP_PERFORMER_MIMIC_CAROUSEL");
+    expect(String(rows[7]?.content_idea ?? "")).toContain("chaos gremlin");
   });
 });

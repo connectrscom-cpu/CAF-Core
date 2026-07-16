@@ -1,6 +1,6 @@
 /** HeyGen video lanes for top-performer video references (mirrors Core video-flow-routing). */
 
-export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first";
+export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" | "ugc";
 
 export const VIDEO_LANE_OPTIONS: ReadonlyArray<{
   id: VideoPipelineIntent;
@@ -12,7 +12,7 @@ export const VIDEO_LANE_OPTIONS: ReadonlyArray<{
     id: "script_avatar",
     label: "Script avatar",
     flowTypeRaw: "FLOW_VID_SCRIPT",
-    description: "Avatar reads a verbatim spoken script (talking head / UGC).",
+    description: "Avatar reads a verbatim spoken script (talking head).",
   },
   {
     id: "prompt_avatar",
@@ -31,6 +31,12 @@ export const VIDEO_LANE_OPTIONS: ReadonlyArray<{
     label: "Hook-first hybrid",
     flowTypeRaw: "FLOW_VID_HOOK_FIRST",
     description: "Cinematic AI hook clip (4–8s) + HeyGen body — stitched in CAF.",
+  },
+  {
+    id: "ugc",
+    label: "UGC creator",
+    flowTypeRaw: "FLOW_VID_UGC",
+    description: "Peer-voice UGC script + creator hosts from brand/product bible.",
   },
 ] as const;
 
@@ -54,7 +60,8 @@ export function resolveRecommendedVideoIntent(formatPattern: string): VideoPipel
     .toLowerCase()
     .trim();
 
-  if (pattern === "talking_head" || pattern === "ugc") return "script_avatar";
+  if (pattern === "talking_head") return "script_avatar";
+  if (pattern === "ugc") return "ugc";
   if (pattern === "product_demo" || pattern === "mixed") return "prompt_avatar";
   if (pattern === "b_roll" || pattern === "text_on_screen") return "no_avatar";
   return "prompt_avatar";

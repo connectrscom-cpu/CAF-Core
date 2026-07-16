@@ -2,10 +2,18 @@
  * Apify actor input builders — aligned with n8n INPUTS scraper flows.
  * Stored in `inputs_scraper_config.config_json` and edited from Admin → Inputs → Scrapers.
  */
+import {
+  buildProfileSearchInputFromNiche,
+  nicheTextFromSource,
+  parseLinkedInNicheLine,
+} from "./linkedin-discovery.js";
 
 export const LINKEDIN_ACTOR_IDS = {
   posts: "harvestapi/linkedin-profile-posts",
+  companyPosts: "harvestapi/linkedin-company-posts",
   profileSearch: "harvestapi/linkedin-profile-search",
+  postSearch: "harvestapi/linkedin-post-search",
+  profileScraper: "harvestapi/linkedin-profile-scraper",
 } as const;
 
 export const DEFAULT_ACTOR_IDS = {
@@ -14,7 +22,10 @@ export const DEFAULT_ACTOR_IDS = {
   facebook: "KoJrdxJCTtpon81KY",
   reddit: "oAuCIx3ItNrs2okjQ",
   linkedin_posts: LINKEDIN_ACTOR_IDS.posts,
+  linkedin_company_posts: LINKEDIN_ACTOR_IDS.companyPosts,
   linkedin_profile_search: LINKEDIN_ACTOR_IDS.profileSearch,
+  linkedin_post_search: LINKEDIN_ACTOR_IDS.postSearch,
+  linkedin_profile_scraper: LINKEDIN_ACTOR_IDS.profileScraper,
 } as const;
 
 export interface ApifyGlobalConfig {
@@ -107,8 +118,26 @@ export interface LinkedInScraperConfig {
   postsActorId?: string;
   /** harvestapi/linkedin-profile-search — optional niche/profile discovery */
   profileSearchActorId?: string;
-  /** Run profile search on `linkedinsearches` sources before post scrape. */
+  /** harvestapi/linkedin-post-search — topic/keyword post discovery */
+  postSearchActorId?: string;
+  /** harvestapi/linkedin-company-posts — company page timelines */
+  companyPostsActorId?: string;
+  /** harvestapi/linkedin-profile-scraper — enrich seeds for similar-profile expansion */
+  profileScraperActorId?: string;
+  /** Run profile search on `linkedinsearches` niche lines before post scrape. */
   profileSearchEnabled?: boolean;
+  /** Also run post search for each niche line (linkedinsearches). */
+  nichePostSearchEnabled?: boolean;
+  /** Expand person seed profiles into similar profiles via profile-scraper + profile-search. */
+  deriveSimilarProfilesEnabled?: boolean;
+  similarProfilesPerSeed?: number;
+  similarProfilesMaxTotal?: number;
+  /** Max posts per post-search query (Apify `maxPosts`). */
+  postSearchMaxPosts?: number;
+  /** Promote post-search authors into profile post scrape when likes ≥ threshold. */
+  promoteAuthorsFromPostSearch?: boolean;
+  promoteAuthorsMinLikes?: number;
+  promoteAuthorsMax?: number;
   /** Max posts per profile/company URL (Apify `maxPosts`). */
   maxPosts?: number;
   /** Max profiles returned per search query (Apify `maxItems`). */
@@ -137,7 +166,7 @@ export interface ScraperProjectConfig {
   /** Deep-merge overrides onto built actor input (power users). */
   actorInputExtras?: Partial<
     Record<
-      "instagram" | "tiktok" | "reddit" | "facebook" | "linkedin_posts" | "linkedin_profile_search",
+      "instagram" | "tiktok" | "reddit" | "facebook" | "linkedin_posts" | "linkedin_company_posts" | "linkedin_profile_search" | "linkedin_post_search" | "linkedin_profile_scraper",
       Record<string, unknown>
     >
   >;
@@ -218,8 +247,16 @@ export function defaultScraperConfig(): ScraperProjectConfig {
       linkedin: {
         enabled: true,
         profileSearchEnabled: true,
+        nichePostSearchEnabled: true,
+        deriveSimilarProfilesEnabled: false,
         maxPosts: 20,
         profileSearchMaxItems: 20,
+        postSearchMaxPosts: 20,
+        similarProfilesPerSeed: 10,
+        similarProfilesMaxTotal: 30,
+        promoteAuthorsFromPostSearch: true,
+        promoteAuthorsMinLikes: 25,
+        promoteAuthorsMax: 15,
         postedLimit: "month",
         includeQuotePosts: false,
         includeReposts: false,
@@ -264,7 +301,7 @@ export function mergeScraperConfig(stored: Record<string, unknown> | null | unde
 }
 
 /** CAF injects these at run time from Sources — empty arrays in saved JSON must not wipe them. */
-const ACTOR_INJECT_ARRAY_KEYS = new Set(["directUrls", "profiles", "startUrls"]);
+const ACTOR_INJECT_ARRAY_KEYS = new Set(["directUrls", "profiles", "startUrls", "targetUrls", "searchQueries", "urls"]);
 
 function deepMergeActorInput(
   base: Record<string, unknown>,
@@ -297,6 +334,18 @@ export function resolveLinkedInPostsActorId(cfg: LinkedInScraperConfig | undefin
 
 export function resolveLinkedInProfileSearchActorId(cfg: LinkedInScraperConfig | undefined): string {
   return cfg?.profileSearchActorId?.trim() || LINKEDIN_ACTOR_IDS.profileSearch;
+}
+
+export function resolveLinkedInCompanyPostsActorId(cfg: LinkedInScraperConfig | undefined): string {
+  return cfg?.companyPostsActorId?.trim() || LINKEDIN_ACTOR_IDS.companyPosts;
+}
+
+export function resolveLinkedInPostSearchActorId(cfg: LinkedInScraperConfig | undefined): string {
+  return cfg?.postSearchActorId?.trim() || LINKEDIN_ACTOR_IDS.postSearch;
+}
+
+export function resolveLinkedInProfileScraperActorId(cfg: LinkedInScraperConfig | undefined): string {
+  return cfg?.profileScraperActorId?.trim() || LINKEDIN_ACTOR_IDS.profileScraper;
 }
 
 export function buildInstagramApifyInput(
@@ -446,19 +495,61 @@ export function buildLinkedInPostsApifyInput(
   const input: Record<string, unknown> = {
     targetUrls: [...new Set(targetUrls.map((u) => u.trim()).filter(Boolean))],
     maxPosts: li.maxPosts ?? 20,
+    ...linkedInPostActorOptions(li),
   };
-  if (li.postedLimit?.trim()) input.postedLimit = li.postedLimit.trim();
-  if (li.includeQuotePosts === true) input.includeQuotePosts = true;
-  if (li.includeReposts === true) input.includeReposts = true;
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_posts);
+}
+
+function linkedInPostActorOptions(li: LinkedInScraperConfig): Record<string, unknown> {
+  const opts: Record<string, unknown> = {};
+  if (li.postedLimit?.trim()) opts.postedLimit = li.postedLimit.trim();
+  if (li.includeQuotePosts === true) opts.includeQuotePosts = true;
+  if (li.includeReposts === true) opts.includeReposts = true;
   if (li.scrapeReactions === true) {
-    input.scrapeReactions = true;
-    if (li.maxReactions != null) input.maxReactions = li.maxReactions;
+    opts.scrapeReactions = true;
+    if (li.maxReactions != null) opts.maxReactions = li.maxReactions;
   }
   if (li.scrapeComments === true) {
-    input.scrapeComments = true;
-    if (li.maxComments != null) input.maxComments = li.maxComments;
+    opts.scrapeComments = true;
+    if (li.maxComments != null) opts.maxComments = li.maxComments;
   }
-  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_posts);
+  return opts;
+}
+
+export function buildLinkedInCompanyPostsApifyInput(
+  cfg: ScraperProjectConfig,
+  targetUrls: string[]
+): Record<string, unknown> {
+  const li = cfg.scrapers?.linkedin ?? {};
+  const input: Record<string, unknown> = {
+    targetUrls: [...new Set(targetUrls.map((u) => u.trim()).filter(Boolean))],
+    maxPosts: li.maxPosts ?? 20,
+    ...linkedInPostActorOptions(li),
+  };
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_company_posts);
+}
+
+export function buildLinkedInPostSearchApifyInput(
+  cfg: ScraperProjectConfig,
+  searchQueries: string[]
+): Record<string, unknown> {
+  const li = cfg.scrapers?.linkedin ?? {};
+  const input: Record<string, unknown> = {
+    searchQueries: [...new Set(searchQueries.map((q) => q.trim()).filter(Boolean))],
+    maxPosts: li.postSearchMaxPosts ?? li.maxPosts ?? 20,
+    ...linkedInPostActorOptions(li),
+  };
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_post_search);
+}
+
+export function buildLinkedInProfileScraperApifyInput(
+  cfg: ScraperProjectConfig,
+  profileUrls: string[]
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {
+    urls: [...new Set(profileUrls.map((u) => u.trim()).filter(Boolean))],
+  };
+  return deepMergeActorInput(input, cfg.actorInputExtras?.linkedin_profile_scraper);
 }
 
 export function buildLinkedInProfileSearchApifyInput(
@@ -466,20 +557,11 @@ export function buildLinkedInProfileSearchApifyInput(
   sourceRow: Record<string, unknown>
 ): Record<string, unknown> | null {
   const li = cfg.scrapers?.linkedin ?? {};
-  const searchQuery = String(
-    sourceRow.searchQuery ??
-      sourceRow.SearchQuery ??
-      sourceRow.query ??
-      sourceRow.Name ??
-      sourceRow.name ??
-      ""
-  ).trim();
-  if (!searchQuery) return null;
+  const niche = parseLinkedInNicheLine(nicheTextFromSource(sourceRow));
+  const fromNiche = buildProfileSearchInputFromNiche(niche, li);
+  if (!fromNiche) return null;
 
-  const input: Record<string, unknown> = {
-    searchQuery,
-    maxItems: li.profileSearchMaxItems ?? 20,
-  };
+  const input: Record<string, unknown> = { ...fromNiche };
 
   const passthroughKeys = [
     "locations",
@@ -494,9 +576,10 @@ export function buildLinkedInProfileSearchApifyInput(
     "profileLanguages",
     "companyHeadcount",
     "recentlyPostedOnLinkedIn",
+    "searchQuery",
   ] as const;
   for (const key of passthroughKeys) {
-    const v = sourceRow[key];
+    const v = sourceRow[key] ?? sourceRow[key === "searchQuery" ? "SearchQuery" : key];
     if (v != null && v !== "") input[key] = v;
   }
 
@@ -521,6 +604,24 @@ export function apifyWaitSec(cfg: ScraperProjectConfig): number {
   const w = cfg.apify?.waitForFinishSec;
   if (w == null || !Number.isFinite(w)) return 600;
   return Math.min(Math.max(w, 30), 3600);
+}
+
+/** Scale dataset fetch for large LinkedIn batches (profiles × maxPosts, cap 20k). */
+export function scaledLinkedInDatasetLimit(
+  cfg: ScraperProjectConfig,
+  profileTargetCount: number,
+  companyTargetCount = 0
+): number {
+  const base = datasetLimitFor(cfg, "linkedin");
+  const maxPosts = cfg.scrapers?.linkedin?.maxPosts ?? 20;
+  const estimated = Math.max(profileTargetCount, 0) * maxPosts + Math.max(companyTargetCount, 0) * maxPosts;
+  return Math.min(Math.max(base, estimated), 20_000);
+}
+
+/** Scale Apify wait for large LinkedIn profile-post batches (~3s per profile, cap 3600s). */
+export function scaledLinkedInWaitSec(baseWait: number, profileTargetCount: number): number {
+  const scaled = Math.max(baseWait, Math.ceil(Math.max(profileTargetCount, 1) * 3));
+  return Math.min(Math.max(scaled, 30), 3600);
 }
 
 export function datasetLimitFor(
@@ -628,7 +729,37 @@ export const SCRAPER_CONFIG_FIELDS = {
       type: "text" as const,
       placeholder: LINKEDIN_ACTOR_IDS.profileSearch,
     },
-    { key: "profileSearchEnabled", label: "Run profile search (linkedinsearches tab)", type: "checkbox" as const },
+    {
+      key: "postSearchActorId",
+      label: "Post search actor ID",
+      type: "text" as const,
+      placeholder: LINKEDIN_ACTOR_IDS.postSearch,
+    },
+    {
+      key: "companyPostsActorId",
+      label: "Company posts actor ID",
+      type: "text" as const,
+      placeholder: LINKEDIN_ACTOR_IDS.companyPosts,
+    },
+    {
+      key: "profileScraperActorId",
+      label: "Profile scraper actor ID",
+      type: "text" as const,
+      placeholder: LINKEDIN_ACTOR_IDS.profileScraper,
+    },
+    { key: "profileSearchEnabled", label: "Run profile search for niche lines", type: "checkbox" as const },
+    { key: "nichePostSearchEnabled", label: "Run post search for niche lines", type: "checkbox" as const },
+    {
+      key: "deriveSimilarProfilesEnabled",
+      label: "Derive similar profiles from all seed profiles",
+      type: "checkbox" as const,
+    },
+    { key: "postSearchMaxPosts", label: "maxPosts (per post-search query)", type: "number" as const, min: 1, max: 100 },
+    { key: "similarProfilesPerSeed", label: "Similar profiles per seed", type: "number" as const, min: 1, max: 50 },
+    { key: "similarProfilesMaxTotal", label: "Similar profiles max total", type: "number" as const, min: 1, max: 200 },
+    { key: "promoteAuthorsFromPostSearch", label: "Promote post-search authors to profile scrape", type: "checkbox" as const },
+    { key: "promoteAuthorsMinLikes", label: "Promote authors min likes", type: "number" as const, min: 0, max: 100000 },
+    { key: "promoteAuthorsMax", label: "Promote authors max count", type: "number" as const, min: 0, max: 100 },
     { key: "maxPosts", label: "maxPosts (per profile/company)", type: "number" as const, min: 1, max: 100 },
     { key: "profileSearchMaxItems", label: "maxItems (per search query)", type: "number" as const, min: 1, max: 500 },
     {

@@ -10,6 +10,7 @@ import {
   OPENAI_PLACEHOLDER_MODEL,
 } from "./openai-generation-placeholder.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { ensureOpenAiJsonObjectPromptHints } from "./openai-json-mode-prompt.js";
 import type { OpenAiAuditContext } from "./openai-chat.js";
 import {
   formatChatCompletionsHttpError,
@@ -68,10 +69,18 @@ export async function openaiChatMultimodal(
 
   const apiUrl = transport?.endpoint?.trim() || OPENAI_API_URL;
   const auditProvider = transport?.provider?.trim() || "openai";
+  const userTextForJsonCheck = params.user_content
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join("\n");
+  let systemPrompt = params.system_prompt;
+  if (params.response_format === "json_object") {
+    systemPrompt = ensureOpenAiJsonObjectPromptHints(systemPrompt, userTextForJsonCheck).system_prompt;
+  }
   const body: Record<string, unknown> = {
     model: params.model,
     messages: [
-      { role: "system", content: params.system_prompt },
+      { role: "system", content: systemPrompt },
       { role: "user", content: params.user_content },
     ],
     max_tokens: openAiMaxTokens(params.max_tokens),

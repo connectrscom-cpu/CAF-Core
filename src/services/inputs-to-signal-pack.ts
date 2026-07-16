@@ -32,6 +32,8 @@ import { replaceSignalPackIdeas } from "../repositories/signal-pack-ideas.js";
 import { getInsightRowUuidsByInsightsIds, backfillTopPerformerInsightPerformanceReviews } from "../repositories/inputs-evidence-insights.js";
 import { computeHashtagLeaderboardForEvidenceImport } from "./hashtag-leaderboard.js";
 import { mergeTopPerformerKnowledgeIntoDerivedGlobals } from "../domain/signal-pack-top-performer-knowledge.js";
+import { serializeMarketerResearchBriefNotes } from "../domain/research-brief-platform.js";
+import { spawnPlatformScopedResearchBriefPacks } from "./research-brief-platform-packs.js";
 import { MARKET_INTELLIGENCE_V1_KEY } from "../domain/market-intelligence-synthesis.js";
 import { buildVisualGuidelinesPackForImport } from "./visual-guidelines-pack.js";
 import { buildMarketIntelligenceForImport } from "./market-intelligence-pack.js";
@@ -404,11 +406,20 @@ export async function buildSignalPackFromEvidenceImport(
   });
 
   const packNotes = marketIntelligenceV1.research_brief_title
-    ? JSON.stringify({ marketer: { marketer_title: marketIntelligenceV1.research_brief_title } })
+    ? serializeMarketerResearchBriefNotes({
+        marketerTitle: marketIntelligenceV1.research_brief_title,
+        briefScope: "overall",
+        platforms: marketerResearchMeta?.platforms
+          ? (marketerResearchMeta.platforms as string[])
+          : (derivedWithTpk.platforms_found as string[] | undefined) ?? [],
+        postMaxAgeDays:
+          typeof marketerResearchMeta?.postMaxAgeDays === "number" ? marketerResearchMeta.postMaxAgeDays : null,
+      })
     : `Synthesized from inputs evidence import ${importId} (${rated} rows rated).`;
 
   const derived_globals_json = {
     ...derivedWithTpk,
+    research_brief_scope: "overall",
     [MARKET_INTELLIGENCE_V1_KEY]: marketIntelligenceV1,
   };
 
@@ -486,6 +497,19 @@ export async function buildSignalPackFromEvidenceImport(
     // non-fatal
   }
 
+  const platformPacks = await spawnPlatformScopedResearchBriefPacks(db, config, {
+    projectId: project.id,
+    projectSlug,
+    brandDisplayName: project.display_name,
+    importId,
+    parentPackId: pack.id,
+    packRunId,
+    parentDerivedGlobals: derivedWithTpk,
+    ideasJson,
+    overallCandidates: normalized,
+    marketerResearchMeta,
+  }).catch(() => ({ platform_pack_ids: [], platforms_spawned: [] }));
+
   const insights = await insertInsightsPack(db, {
     project_id: project.id,
     inputs_import_id: importId,
@@ -499,6 +523,8 @@ export async function buildSignalPackFromEvidenceImport(
       overall_candidates_count: normalized.length,
       ideas_count: ideasJson.length,
       ideas_from_insights_llm: (derivedWithTpk as Record<string, unknown>).ideas_from_insights_llm,
+      platform_brief_pack_ids: platformPacks.platform_pack_ids,
+      platform_briefs_spawned: platformPacks.platforms_spawned,
     },
     evidence_refs_json: [
       {

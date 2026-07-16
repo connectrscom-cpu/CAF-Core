@@ -40,10 +40,13 @@ export interface PreLlmEvidencePreviewResult {
   totals: {
     rows_in_kind: number;
     sparse_text_dropped: number;
+    off_topic_subject_dropped: number;
     below_profile_min_dropped: number;
     passing_profile_min: number;
     after_user_cutoff: number;
   };
+  /** Present when subject relevance is configured for this kind. */
+  subject_relevance?: import("../domain/pre-llm-subject-relevance.js").SubjectRelevanceConfig | null;
   rows: PreLlmEvidencePreviewRow[];
   offset: number;
   limit: number;
@@ -52,7 +55,19 @@ export interface PreLlmEvidencePreviewResult {
 
 export type PreLlmEvidencePreviewSort = "score_desc" | "score_asc";
 
-function contributionBreakdown(features: Record<string, number>, weights: Record<string, number>): Record<string, number> {
+function contributionBreakdown(
+  features: Record<string, number>,
+  weights: Record<string, number>,
+  subjectBlend?: { performance_score: number; subject_score: number; performance_weight: number; subject_weight: number } | null
+): Record<string, number> {
+  if (subjectBlend) {
+    const total = subjectBlend.performance_weight + subjectBlend.subject_weight;
+    if (total <= 0) return {};
+    return {
+      performance_score: Math.round(((subjectBlend.performance_score * subjectBlend.performance_weight) / total) * 10000) / 10000,
+      subject_relevance: Math.round(((subjectBlend.subject_score * subjectBlend.subject_weight) / total) * 10000) / 10000,
+    };
+  }
   let wsum = 0;
   for (const [, wt] of Object.entries(weights)) {
     if (wt > 0) wsum += wt;
@@ -86,6 +101,7 @@ export async function getPreLlmEvidencePreview(
   const kindProf = cfg.kinds?.[evidenceKind] ?? cfg.default_kind ?? { min_score: 0, weights: { text_signal: 1 } };
   const profileMinScore = kindProf.min_score;
   const activeWeights = { ...kindProf.weights };
+  const subjectCfg = cfg.subject_relevance;
 
   const [dbRows, registryRows] = await Promise.all([
     listEvidenceRowsByImportAndKind(db, projectId, importId, evidenceKind, 15_000),
@@ -95,16 +111,27 @@ export async function getPreLlmEvidencePreview(
   const featureOpts = { registryFollowerLookup };
 
   let sparseTextDropped = 0;
+  let offTopicDropped = 0;
   let belowProfileMinDropped = 0;
 
   const evaluated = dbRows.map((r) => {
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
     const ev = evaluatePreLlmRow(evidenceKind, payload, criteria, featureOpts);
     if (ev.dropped_reason === "sparse_primary_text") sparseTextDropped++;
+    else if (ev.dropped_reason === "off_topic_subject") offTopicDropped++;
     else if (ev.dropped_reason === "below_min_pre_llm_score") belowProfileMinDropped++;
     const disp = extractEvidenceDisplayFields(evidenceKind, payload);
     const rowProf = resolvePreLlmProfileForRow(cfg, evidenceKind, ev.pre_llm_breakdown);
-    const contrib = contributionBreakdown(ev.pre_llm_breakdown, rowProf.weights);
+    const subjectBlend =
+      ev.subject_score != null && subjectCfg
+        ? {
+            performance_score: ev.performance_score ?? ev.pre_llm_breakdown.performance_score ?? 0,
+            subject_score: ev.subject_score,
+            performance_weight: subjectCfg.performance_weight ?? 0.65,
+            subject_weight: subjectCfg.subject_weight ?? 0.35,
+          }
+        : null;
+    const contrib = contributionBreakdown(ev.pre_llm_breakdown, rowProf.weights, subjectBlend);
     return {
       id: r.id,
       evidence_kind: r.evidence_kind,
@@ -153,10 +180,12 @@ export async function getPreLlmEvidencePreview(
     totals: {
       rows_in_kind: dbRows.length,
       sparse_text_dropped: sparseTextDropped,
+      off_topic_subject_dropped: offTopicDropped,
       below_profile_min_dropped: belowProfileMinDropped,
       passing_profile_min: passingProfile.length,
       after_user_cutoff: afterUserCutoff.length,
     },
+    subject_relevance: subjectCfg ?? null,
     rows: slice,
     offset: off,
     limit: lim,

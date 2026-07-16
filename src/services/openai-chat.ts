@@ -6,6 +6,7 @@ import { loadConfig } from "../config.js";
 import { openAiMaxTokens } from "./openai-coerce.js";
 import { isOpenAiPlaceholderMode, openAiPlaceholderChatResult } from "./openai-generation-placeholder.js";
 import { tryInsertApiCallAudit } from "../repositories/api-call-audit.js";
+import { ensureOpenAiJsonObjectPromptHints } from "./openai-json-mode-prompt.js";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
@@ -54,10 +55,19 @@ export async function openaiChat(
 
   const body: Record<string, unknown> = {
     model: params.model,
-    messages: [
-      { role: "system", content: params.system_prompt },
-      { role: "user", content: params.user_prompt },
-    ],
+    messages: (() => {
+      let system = params.system_prompt;
+      let user = params.user_prompt;
+      if (params.response_format === "json_object") {
+        const hinted = ensureOpenAiJsonObjectPromptHints(system, user);
+        system = hinted.system_prompt;
+        user = hinted.user_prompt;
+      }
+      return [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ];
+    })(),
     max_tokens: openAiMaxTokens(params.max_tokens),
   };
   if (params.response_format === "json_object") {

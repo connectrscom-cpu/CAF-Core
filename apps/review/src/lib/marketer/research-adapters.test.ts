@@ -4,7 +4,11 @@ import {
   buildSourceRowPayload,
   handlesToSourceRows,
   parseHandlesInput,
+  parseResearchPaste,
   toResearchSourceGroups,
+  filterResearchBriefsByPlatform,
+  normalizeResearchBriefPlatforms,
+  normalizeResearchPlatformId,
 } from "./research-adapters.js";
 
 describe("research-adapters", () => {
@@ -16,12 +20,21 @@ describe("research-adapters", () => {
       "hashtags",
       "subreddits",
       "facebook",
+      "linkedinaccounts",
+      "linkedinsearches",
+      "linkedinkeywords",
       "websites_blogs",
     ]);
   });
 
   it("parses pasted handles, hashtags, and subreddits", () => {
     expect(parseHandlesInput("@brand\n#tag\nr/marketing")).toEqual(["brand", "tag", "marketing"]);
+  });
+
+  it("preserves LinkedIn niche and keyword lines verbatim", () => {
+    const paste = "title: VP Marketing\n#SecureAI\nexclude: noise";
+    expect(parseResearchPaste(paste, "linkedinsearches")).toEqual(["title: VP Marketing", "#SecureAI", "exclude: noise"]);
+    expect(parseResearchPaste(paste, "linkedinkeywords")).toEqual(["title: VP Marketing", "#SecureAI", "exclude: noise"]);
   });
 
   it("builds scraper-ready rows for each watchlist tab", () => {
@@ -66,6 +79,66 @@ describe("research-adapters", () => {
     expect(groups.find((g) => g.id === "hashtags")?.handles).toEqual(["#saas"]);
   });
 
+  it("round-trips LinkedIn accounts, niches, and keywords for textarea preview", () => {
+    const groups = toResearchSourceGroups({
+      linkedinaccounts: [
+        {
+          payload_json: {
+            Name: "gleanwork",
+            Link: "https://www.linkedin.com/company/gleanwork/",
+            deriveSimilar: true,
+          },
+        },
+      ],
+      linkedinsearches: [
+        {
+          payload_json: {
+            searchQuery: "title: VP Marketing",
+            Name: "title: VP Marketing",
+            Link: "title: VP Marketing",
+          },
+        },
+      ],
+      linkedinkeywords: [
+        {
+          payload_json: {
+            Name: "#SecureAI",
+            keyword: "SecureAI",
+            role: "include",
+          },
+        },
+        {
+          payload_json: {
+            Name: "exclude: unrelated topic",
+            keyword: "unrelated topic",
+            role: "exclude",
+          },
+        },
+      ],
+    });
+    expect(groups.find((g) => g.id === "linkedin")?.handles).toEqual([
+      "https://www.linkedin.com/company/gleanwork | similar",
+    ]);
+    expect(groups.find((g) => g.id === "linkedin_searches")?.handles).toEqual(["title: VP Marketing"]);
+    expect(groups.find((g) => g.id === "linkedin_keywords")?.handles).toEqual([
+      "#SecureAI",
+      "exclude: unrelated topic",
+    ]);
+  });
+
+  it("builds LinkedIn keyword rows with include/exclude roles", () => {
+    expect(buildSourceRowPayload("#SecureAI", "linkedinkeywords", "LinkedIn")).toMatchObject({
+      Name: "#SecureAI",
+      keyword: "#SecureAI",
+      role: "include",
+    });
+    expect(buildSourceRowPayload("exclude: noise", "linkedinkeywords", "LinkedIn")).toMatchObject({
+      Name: "exclude: noise",
+      keyword: "noise",
+      role: "exclude",
+    });
+  });
+
   it("derives display handles from Link when Name is empty (workbook import)", () => {
     const groups = toResearchSourceGroups({
       igaccounts: [{ payload_json: { Link: "https://www.instagram.com/acme/" } }],
@@ -78,5 +151,23 @@ describe("research-adapters", () => {
     expect(groups).toHaveLength(RESEARCH_SOURCE_GROUPS.length);
     expect(groups.every((g) => g.handles.length === 0)).toBe(true);
     expect(groups.map((g) => g.id)).toEqual(RESEARCH_SOURCE_GROUPS.map((g) => g.id));
+  });
+
+  it("normalizes platform labels and filters research briefs by platform", () => {
+    expect(normalizeResearchPlatformId("Instagram")).toBe("instagram");
+    expect(normalizeResearchPlatformId("linkedin_post")).toBe("linkedin");
+    expect(normalizeResearchPlatformId("Websites & blogs")).toBe("websites & blogs");
+
+    const briefs = [
+      { id: "a", platforms: ["instagram", "tiktok"] },
+      { id: "b", platforms: ["LinkedIn"] },
+      { id: "c", platforms: [] },
+    ];
+
+    expect(normalizeResearchBriefPlatforms(["Instagram", "linkedin_post"])).toEqual(["instagram", "linkedin"]);
+    expect(filterResearchBriefsByPlatform(briefs, "all").map((b) => b.id)).toEqual(["a", "b", "c"]);
+    expect(filterResearchBriefsByPlatform(briefs, "instagram").map((b) => b.id)).toEqual(["a", "c"]);
+    expect(filterResearchBriefsByPlatform(briefs, "linkedin").map((b) => b.id)).toEqual(["b", "c"]);
+    expect(filterResearchBriefsByPlatform(briefs, "reddit").map((b) => b.id)).toEqual(["c"]);
   });
 });

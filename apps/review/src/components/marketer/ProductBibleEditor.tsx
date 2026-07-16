@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BrandAssetImage } from "@/components/marketer/BrandAssetImage";
+import { BrandBibleHeygenPresenters } from "@/components/marketer/BrandBibleHeygenPresenters";
 import type { MoodboardAsset } from "@/components/marketer/BrandBibleAssetInspectModal";
 import {
   emptyProductBible,
@@ -338,6 +339,14 @@ export function ProductBibleEditor({ slug, displayName }: { slug: string; displa
       {!configured ? (
         <p className="profile-field-hint">Add at least one product module or application guide to enable product evidence on jobs.</p>
       ) : null}
+
+      <BrandBibleHeygenPresenters
+        slug={slug}
+        presenters={bible.heygenUgcPresenters}
+        onChange={(heygenUgcPresenters) => setBible((prev) => (prev ? { ...prev, heygenUgcPresenters } : prev))}
+        title="Product UGC hosts"
+        description="Creator-style hosts for product UGC videos. Synced to the product UGC pool on save — preferred when the idea is product-lens."
+      />
 
       <section className="profile-section">
         <h3>How CAF should use product evidence</h3>

@@ -20,7 +20,7 @@ import {
 } from "./llm-generator-helpers.js";
 import { budgetCreationPackForCarouselFlow, budgetCreationPackForMimicFlow } from "./llm-creation-pack-budget.js";
 import { logPipelineEvent } from "./pipeline-logger.js";
-import { isCarouselFlow, isVideoFlow, isLinkedInDocumentPostFlow } from "../decision_engine/flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isLinkedInDocumentPostFlow, isLinkedInTextPostFlow, isRedditPostFlow, isInstagramThreadFlow } from "../decision_engine/flow-kind.js";
 import {
   isProductImageFlow,
   isProductVideoFlow,
@@ -49,6 +49,13 @@ import {
 import { loadProjectOpenAiGenerationMode } from "./project-generation-config.js";
 import { pickGeneratedOutputOrEmpty } from "../domain/generation-payload-output.js";
 import { HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM, isHookFirstVideoFlow } from "../domain/hook-first-video.js";
+import { UGC_VIDEO_OUTPUT_ADDENDUM, isUgcVideoFlow } from "../domain/ugc-video.js";
+import {
+  appendTopPerformerVideoKnowledgeToUserPrompt,
+  TOP_PERFORMER_VIDEO_GROUNDING_MISSING_MESSAGE,
+  topPerformerVideoHeygenSystemSuffix,
+} from "../domain/top-performer-video-knowledge.js";
+import { isTopPerformerVideoGroundedRow } from "../domain/top-performer-grounding.js";
 import { pickMimicPayload } from "../domain/mimic-payload.js";
 import { buildMimicRenderContextForLlm } from "../domain/mimic-render-context.js";
 import {
@@ -74,6 +81,21 @@ import {
   LINKEDIN_DOCUMENT_POST_LLM_SYSTEM_APPENDIX,
   mergeLinkedInDocumentPostV1,
 } from "../domain/linkedin-document-post.js";
+import {
+  buildLinkedInTextPostV1FromGenerated,
+  LINKEDIN_TEXT_POST_LLM_SYSTEM_APPENDIX,
+  mergeLinkedInTextPostV1,
+} from "../domain/linkedin-text-post.js";
+import {
+  buildRedditPostV1FromGenerated,
+  REDDIT_POST_LLM_SYSTEM_APPENDIX,
+  mergeRedditPostV1,
+} from "../domain/reddit-post.js";
+import {
+  buildInstagramThreadV1FromGenerated,
+  INSTAGRAM_THREAD_LLM_SYSTEM_APPENDIX,
+  mergeInstagramThreadV1,
+} from "../domain/instagram-thread.js";
 import {
   buildVisualFirstCarouselCopySystemBlock,
   enforceVisualFirstCarouselCopyBudget,
@@ -622,6 +644,9 @@ export async function generateForJob(
     } else if (isHookFirstVideoFlow(ft)) {
       systemPrompt = withVideoScriptDurationPolicy(systemPrompt, appCfg, { multiScene: false });
       systemPrompt = `${systemPrompt.trim()}\n\n${HOOK_FIRST_VIDEO_OUTPUT_ADDENDUM}`.trim();
+    } else if (isUgcVideoFlow(ft)) {
+      systemPrompt = withVideoScriptDurationPolicy(systemPrompt, appCfg, { multiScene: false });
+      systemPrompt = `${systemPrompt.trim()}\n\n${UGC_VIDEO_OUTPUT_ADDENDUM}`.trim();
     } else if (
       ((/Video_Prompt|video_prompt|Prompt_HeyGen|HeyGen_NoAvatar|PROMPT/i.test(ft) &&
         !/Video_Script|video_script|Script_HeyGen|script_generator/i.test(ft)) ||
@@ -668,6 +693,32 @@ export async function generateForJob(
       appCfg,
       isVideoPlan ? "video_plan" : "script_json"
     );
+  }
+
+  if (isVideoFlow(job.flow_type) && isTopPerformerVideoGroundedRow(candidateData, derivedGlobals)) {
+    systemPrompt = `${systemPrompt.trim()}${topPerformerVideoHeygenSystemSuffix(creationPack)}`.trim();
+    const tpVideoKnowledge = asRecord(creationPack.top_performer_video_knowledge);
+    if (!tpVideoKnowledge) {
+      return {
+        draft_id: `d_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
+        task_id: job.task_id,
+        raw_output: "",
+        parsed_output: null,
+        model_used: model,
+        prompt_name: promptTemplate.prompt_name ?? promptId,
+        tokens_used: 0,
+        success: false,
+        error: TOP_PERFORMER_VIDEO_GROUNDING_MISSING_MESSAGE,
+      };
+    }
+    userPrompt = appendTopPerformerVideoKnowledgeToUserPrompt(userPrompt, tpVideoKnowledge);
+    const guidanceSlice = {
+      brand_constraints: creationPack.brand_constraints ?? {},
+      platform_constraints: creationPack.platform_constraints ?? {},
+      strategy: creationPack.strategy ?? {},
+      signal_pack_publication_hints: creationPack.signal_pack_publication_hints ?? {},
+    };
+    userPrompt = `${userPrompt.trim()}\n\n---\nBrand/strategy/signal hints (ground copy and hashtags here — do not invent generic motivational filler):\n${JSON.stringify(guidanceSlice)}`.trim();
   }
 
   if (isCarouselFlow(job.flow_type)) {
@@ -767,6 +818,15 @@ export async function generateForJob(
   if (isLinkedInDocumentPostFlow(job.flow_type)) {
     systemPrompt = `${systemPrompt.trim()}\n\n${LINKEDIN_DOCUMENT_POST_LLM_SYSTEM_APPENDIX}`.trim();
   }
+  if (isLinkedInTextPostFlow(job.flow_type)) {
+    systemPrompt = `${systemPrompt.trim()}\n\n${LINKEDIN_TEXT_POST_LLM_SYSTEM_APPENDIX}`.trim();
+  }
+  if (isRedditPostFlow(job.flow_type)) {
+    systemPrompt = `${systemPrompt.trim()}\n\n${REDDIT_POST_LLM_SYSTEM_APPENDIX}`.trim();
+  }
+  if (isInstagramThreadFlow(job.flow_type)) {
+    systemPrompt = `${systemPrompt.trim()}\n\n${INSTAGRAM_THREAD_LLM_SYSTEM_APPENDIX}`.trim();
+  }
 
   /** Carousel JSON is slide-heavy; low DB defaults truncate copy before it reaches the renderer. */
   const carouselFloor = 5500;
@@ -776,6 +836,12 @@ export async function generateForJob(
   }
   if (isLinkedInDocumentPostFlow(job.flow_type)) {
     maxTokens = Math.max(maxTokens, 4500);
+  }
+  if (isLinkedInTextPostFlow(job.flow_type) || isRedditPostFlow(job.flow_type)) {
+    maxTokens = Math.max(maxTokens, 3500);
+  }
+  if (isInstagramThreadFlow(job.flow_type)) {
+    maxTokens = Math.max(maxTokens, 4000);
   }
   if (isEditorialRework && hf) {
     const notes = (hf.notes ?? "").trim();
@@ -1414,6 +1480,18 @@ export async function generateForJob(
           candidateData
         );
         Object.assign(merge, mergeLinkedInDocumentPostV1({}, liSlice));
+      }
+      if (isLinkedInTextPostFlow(job.flow_type) && storedOutput && typeof storedOutput === "object") {
+        const liText = buildLinkedInTextPostV1FromGenerated(storedOutput as Record<string, unknown>);
+        Object.assign(merge, mergeLinkedInTextPostV1({}, liText));
+      }
+      if (isRedditPostFlow(job.flow_type) && storedOutput && typeof storedOutput === "object") {
+        const reddit = buildRedditPostV1FromGenerated(storedOutput as Record<string, unknown>);
+        Object.assign(merge, mergeRedditPostV1({}, reddit));
+      }
+      if (isInstagramThreadFlow(job.flow_type) && storedOutput && typeof storedOutput === "object") {
+        const thread = buildInstagramThreadV1FromGenerated(storedOutput as Record<string, unknown>);
+        Object.assign(merge, mergeInstagramThreadV1({}, thread));
       }
       merge.content_display = contentDisplay;
       if (draftPackageValidation) {

@@ -1,6 +1,11 @@
 import { PRODUCT_VIDEO_FLOW_TYPES } from "./product-flow-types.js";
 import { FLOW_LINKEDIN_DOCUMENT_POST } from "./linkedin-document-post-flow-types.js";
 import {
+  FLOW_INSTAGRAM_THREAD,
+  FLOW_LINKEDIN_TEXT_POST,
+  FLOW_REDDIT_POST,
+} from "./text-content-flow-types.js";
+import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   FLOW_VISUAL_FIRST_CAROUSEL,
@@ -35,6 +40,8 @@ export const CANONICAL_FLOW_TYPES = {
   VID_SCRIPT: "FLOW_VID_SCRIPT",
   /** Cinematic AI hook clip (4–8s) + HeyGen body segment, stitched in Core. */
   VID_HOOK_FIRST: "FLOW_VID_HOOK_FIRST",
+  /** UGC creator-style talking head — peer voice script + UGC host pool → HeyGen script-led. */
+  VID_UGC: "FLOW_VID_UGC",
   VID_SCENES: "FLOW_VID_SCENES",
 } as const;
 
@@ -87,6 +94,8 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
   if (c === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR) return CANONICAL_FLOW_TYPES.VID_PROMPT;
   /** Hook-first uses script templates as base; hook fields enforced via addendum. */
   if (c === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST) return CANONICAL_FLOW_TYPES.VID_SCRIPT;
+  /** UGC uses script templates as base; UGC voice/fields enforced via addendum. */
+  if (c === CANONICAL_FLOW_TYPES.VID_UGC) return CANONICAL_FLOW_TYPES.VID_SCRIPT;
   /** Mimic flows inherit carousel schema + fallback prompts until native rows exist. */
   if (c === FLOW_TOP_PERFORMER_MIMIC_CAROUSEL || c === FLOW_TOP_PERFORMER_MIMIC_IMAGE) {
     return CANONICAL_FLOW_TYPES.CAROUSEL;
@@ -94,6 +103,9 @@ export function resolveFlowEngineTemplateFlowType(flowType: string): string {
   if (c === FLOW_VISUAL_FIRST_CAROUSEL) return FLOW_VISUAL_FIRST_CAROUSEL;
   if (c === FLOW_WHY_MIMIC_CAROUSEL) return FLOW_WHY_MIMIC_CAROUSEL;
   if (c === FLOW_LINKEDIN_DOCUMENT_POST) return CANONICAL_FLOW_TYPES.TEXT;
+  if (c === FLOW_LINKEDIN_TEXT_POST || c === FLOW_REDDIT_POST || c === FLOW_INSTAGRAM_THREAD) {
+    return CANONICAL_FLOW_TYPES.TEXT;
+  }
   return c;
 }
 
@@ -140,6 +152,15 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
       "Hook-first hybrid video — cinematic AI hook clip (Sora/HeyGen) + HeyGen body (script/prompt/no-avatar) → concat",
   },
   {
+    flow_type: CANONICAL_FLOW_TYPES.VID_UGC,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 6,
+    allowed_platforms: null,
+    notes:
+      "UGC creator video — peer-voice spoken_script + UGC host pool (brand/product bible) → HeyGen script-led avatar",
+  },
+  {
     flow_type: CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR,
     default_variation_count: 1,
     requires_signal_pack: true,
@@ -149,11 +170,43 @@ export const CANONICAL_ALLOWED_FLOW_SEEDS: readonly CanonicalAllowedFlowSeed[] =
       "Single video — prompt JSON → HeyGen Video Agent (no on-camera avatar; narration + motion/stock/graphics)",
   },
   {
+    flow_type: CANONICAL_FLOW_TYPES.TEXT,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 5,
+    allowed_platforms: null,
+    notes: "Generic text post — platform-agnostic copy (post or thread shape); no render",
+  },
+  {
+    flow_type: FLOW_LINKEDIN_TEXT_POST,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 5,
+    allowed_platforms: "LinkedIn",
+    notes: "LinkedIn text-only post — copy, no companion images",
+  },
+  {
     flow_type: FLOW_LINKEDIN_DOCUMENT_POST,
     default_variation_count: 1,
     requires_signal_pack: true,
     priority_weight: 5,
     allowed_platforms: "LinkedIn",
-    notes: "LinkedIn document post — long copy + 2–3 companion images (1:1 or 4:5)",
+    notes: "LinkedIn post with images — long copy + 2–3 companion images (1:1 or 4:5)",
+  },
+  {
+    flow_type: FLOW_REDDIT_POST,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 4,
+    allowed_platforms: "Reddit",
+    notes: "Reddit text post — title + body (community-native tone)",
+  },
+  {
+    flow_type: FLOW_INSTAGRAM_THREAD,
+    default_variation_count: 1,
+    requires_signal_pack: true,
+    priority_weight: 4,
+    allowed_platforms: "Instagram",
+    notes: "Instagram thread — multi-part caption chain (3–8 parts)",
   },
 ] as const;

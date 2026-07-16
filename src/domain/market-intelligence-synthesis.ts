@@ -5,6 +5,11 @@
 import { buildInsightReadModelItem, type InsightReadModelItem, type InsightReadType } from "./insights-read-model.js";
 import { normalizeHookType } from "./hook-type-normalize.js";
 import { pickTopPerformerKnowledgeFromDerivedGlobals } from "./signal-pack-top-performer-knowledge.js";
+import {
+  buildLinkedInMarketIntelligence,
+  type LinkedInMarketIntelligenceV1,
+} from "./linkedin-intelligence.js";
+import type { LinkedInTargetingProfile } from "./linkedin-targeting-profile.js";
 
 export const MARKET_INTELLIGENCE_V1_KEY = "market_intelligence_v1";
 
@@ -140,6 +145,11 @@ export interface MarketIntelligenceV1 {
   insight_column_labels?: InsightColumnLabelsV1;
   /** Compact hook list + synthesis — prefer over per-hook cards in UI. */
   hooks_digest?: HooksDigestV1;
+  /**
+   * LinkedIn person-first intelligence (topics + attributed voices).
+   * Present when the brief includes LinkedIn evidence.
+   */
+  linkedin?: LinkedInMarketIntelligenceV1;
   total_patterns: number;
   rows_analyzed: number;
 }
@@ -174,6 +184,8 @@ export interface SynthesisInsightRowInput {
   creator?: string | null;
   /** Permalink to the scraped post when available. */
   source_url?: string | null;
+  /** Evidence payload slice for LinkedIn person/company attribution. */
+  evidence_payload?: Record<string, unknown> | null;
 }
 
 function nonEmpty(s: unknown): string | null {
@@ -901,6 +913,7 @@ export function buildMarketIntelligenceV1(input: {
   insightRows: SynthesisInsightRowInput[];
   derivedGlobals?: Record<string, unknown> | null;
   insight_column_labels?: InsightColumnLabelsV1 | null;
+  linkedin_targeting?: LinkedInTargetingProfile | null;
 }): MarketIntelligenceV1 {
   const paired = input.insightRows.map((raw) => ({
     raw,
@@ -970,24 +983,57 @@ export function buildMarketIntelligenceV1(input: {
   const custom_label_stats = buildCustomLabelStats(input.insightRows, columnLabels);
   const hooks_digest = buildHooksDigest(hooks, hookRows);
 
-  const executive_summary = buildExecutiveSummary(allPatterns, media_lanes, research_stats);
+  const linkedin = buildLinkedInMarketIntelligence({
+    rows: input.insightRows.map((r) => ({
+      insights_id: r.insights_id,
+      evidence_kind: r.evidence_kind,
+      pre_llm_score: r.pre_llm_score,
+      why_it_worked: r.why_it_worked,
+      hook_text: r.hook_text,
+      custom_label_1: r.custom_label_1,
+      custom_label_2: r.custom_label_2,
+      custom_label_3: r.custom_label_3,
+      creator: r.creator,
+      source_url: r.source_url,
+      evidence_payload: r.evidence_payload ?? null,
+    })),
+    targeting: input.linkedin_targeting ?? null,
+  });
+
+  const linkedinOnly =
+    input.insightRows.length > 0 && input.insightRows.every((r) => /linkedin/i.test(r.evidence_kind));
+
+  let executive_summary = buildExecutiveSummary(allPatterns, media_lanes, research_stats);
+  if (linkedin && linkedinOnly) {
+    const topicLine = linkedin.weekly_topics[0]
+      ? `Top conversation: ${linkedin.weekly_topics[0].title} (${linkedin.weekly_topics[0].evidence_count} attributed posts).`
+      : null;
+    const voiceLine =
+      linkedin.distinct_people > 0
+        ? `${linkedin.distinct_people} relevant LinkedIn voices across ${linkedin.distinct_companies} companies in this window.`
+        : null;
+    executive_summary = [topicLine, voiceLine, ...executive_summary.filter((l) => !/hook|carousel|reel/i.test(l))]
+      .filter((x): x is string => Boolean(x))
+      .slice(0, 6);
+  }
 
   return {
     schema_version: 1,
     generated_at: new Date().toISOString(),
     executive_summary,
     winning_patterns: winningPatterns,
-    hooks,
-    emotions,
-    visual_patterns: visualPatterns,
+    hooks: linkedinOnly ? [] : hooks,
+    emotions: linkedinOnly ? emotions.slice(0, 4) : emotions,
+    visual_patterns: linkedinOnly ? [] : visualPatterns,
     opportunities,
     avoid,
-    media_lanes,
+    media_lanes: linkedinOnly ? [] : media_lanes,
     deep_dive: buildDeepDive(allPatterns, input.insightRows, columnLabels),
     research_stats,
     custom_label_stats: custom_label_stats.length ? custom_label_stats : undefined,
     insight_column_labels: columnLabels ?? undefined,
-    hooks_digest,
+    hooks_digest: linkedinOnly ? undefined : hooks_digest,
+    linkedin: linkedin ?? undefined,
     total_patterns: allPatterns.length,
     rows_analyzed: input.insightRows.length,
   };

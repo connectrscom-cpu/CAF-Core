@@ -40,4 +40,11 @@ describe("buildTopPerformerVideoKnowledgeForLlm", () => {
   it("returns null when no video tier match", () => {
     expect(buildTopPerformerVideoKnowledgeForLlm(null, ["ins_missing"])).toBeNull();
   });
+
+  it("appendTopPerformerVideoKnowledgeToUserPrompt adds reference block", async () => {
+    const { appendTopPerformerVideoKnowledgeToUserPrompt } = await import("./top-performer-video-knowledge.js");
+    const out = appendTopPerformerVideoKnowledgeToUserPrompt("Base", { insights_id: "ins_1", hook_visual: "Face" });
+    expect(out).toContain("Top-performer video reference");
+    expect(out).toContain("ins_1");
+  });
 });

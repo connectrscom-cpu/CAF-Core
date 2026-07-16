@@ -83,6 +83,8 @@ export interface BrandBibleV1 {
   application_guide: BrandBibleApplicationGuide;
   asset_refs: BrandBibleAssetRef[];
   heygen_presenters: BrandBibleHeygenPresenter[];
+  /** Creator-style hosts for UGC video lane (synced to ugc_avatar_pool_json). */
+  heygen_ugc_presenters: BrandBibleHeygenPresenter[];
   /** Ordered asset ids (max 7) injected as per-line Flux prompt references when set. */
   flux_prompt_asset_ids: string[];
 }
@@ -202,6 +204,7 @@ export function parseBrandBible(raw: unknown): BrandBibleV1 | null {
     application_guide: parseApplicationGuide(rec.application_guide),
     asset_refs: parseAssetRefs(rec.asset_refs ?? rec.assets),
     heygen_presenters: parseHeygenPresenters(rec.heygen_presenters),
+    heygen_ugc_presenters: parseHeygenPresenters(rec.heygen_ugc_presenters),
     flux_prompt_asset_ids: parseFluxPromptAssetIds(rec.flux_prompt_asset_ids),
   };
 
@@ -213,6 +216,7 @@ export function parseBrandBible(raw: unknown): BrandBibleV1 | null {
     bible.forbidden_motifs.length > 0 ||
     bible.asset_refs.length > 0 ||
     bible.heygen_presenters.length > 0 ||
+    bible.heygen_ugc_presenters.length > 0 ||
     bible.flux_prompt_asset_ids.length > 0 ||
     guide.instructions.length > 0 ||
     guide.mimic_policy ||
@@ -238,6 +242,7 @@ export function emptyBrandBibleDraft(): BrandBibleV1 {
     },
     asset_refs: [],
     heygen_presenters: [],
+    heygen_ugc_presenters: [],
     flux_prompt_asset_ids: [],
   };
 }
@@ -547,6 +552,16 @@ export function buildBrandBibleHeygenPromptBlock(
     }
   }
 
+  if (snapshot.heygen_ugc_presenters?.length) {
+    const names = snapshot.heygen_ugc_presenters
+      .map((p) => p.label ?? p.avatar_name ?? p.avatar_id)
+      .filter(Boolean)
+      .slice(0, 4);
+    if (names.length) {
+      lines.push(`- UGC hosts (HeyGen): ${names.join("; ")} — use only for UGC creator video flows.`);
+    }
+  }
+
   lines.push(
     "- INVARIANT: stay on-brand for every scene — palette, motifs, and tone; never invent off-brand neon, stock clichés, or competitor looks."
   );
@@ -647,6 +662,16 @@ export function buildBrandBiblePromptBlock(
       .slice(0, 4);
     if (names.length) {
       lines.push(`- Video presenters (HeyGen): ${names.join("; ")} — use approved avatar+voice pairs for video flows.`);
+    }
+  }
+
+  if (snapshot.heygen_ugc_presenters?.length) {
+    const names = snapshot.heygen_ugc_presenters
+      .map((p) => p.label ?? p.avatar_name ?? p.avatar_id)
+      .filter(Boolean)
+      .slice(0, 4);
+    if (names.length) {
+      lines.push(`- UGC hosts (HeyGen): ${names.join("; ")} — use only for UGC creator video flows.`);
     }
   }
 

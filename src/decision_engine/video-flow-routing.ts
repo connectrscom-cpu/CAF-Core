@@ -11,7 +11,7 @@ import { normalizeContentLens } from "../domain/idea-structure.js";
 import { isVideoFlow } from "./flow-kind.js";
 import { DEFAULT_VIDEO_FLOW_PLAN_CAP } from "./default-plan-caps.js";
 
-export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first";
+export type VideoPipelineIntent = "script_avatar" | "prompt_avatar" | "no_avatar" | "hook_first" | "ugc";
 
 export type VideoRouteConfidence = "explicit" | "heuristic" | "platform" | "default";
 
@@ -36,7 +36,7 @@ export const DEFAULT_VIDEO_ROUTING: VideoRoutingConfig = {
   },
 };
 
-const VALID_INTENTS = new Set<VideoPipelineIntent>(["script_avatar", "prompt_avatar", "no_avatar", "hook_first"]);
+const VALID_INTENTS = new Set<VideoPipelineIntent>(["script_avatar", "prompt_avatar", "no_avatar", "hook_first", "ugc"]);
 
 /** Canonical + legacy flow_type keys per intent (first match among enabled wins). */
 export const FLOW_KEYS_BY_VIDEO_INTENT: Record<VideoPipelineIntent, readonly string[]> = {
@@ -66,6 +66,7 @@ export const FLOW_KEYS_BY_VIDEO_INTENT: Record<VideoPipelineIntent, readonly str
     "HEYGEN_NO_AVATAR_PROMPT",
   ],
   hook_first: [CANONICAL_FLOW_TYPES.VID_HOOK_FIRST],
+  ugc: [CANONICAL_FLOW_TYPES.VID_UGC],
 };
 
 const BROLL_HINTS =
@@ -85,6 +86,7 @@ export function normalizeVideoStyle(raw: unknown): VideoPipelineIntent | null {
   if (s === "prompt_avatar" || s === "prompt" || s === "prompt_led") return "prompt_avatar";
   if (s === "no_avatar" || s === "noavatar" || s === "b_roll" || s === "broll") return "no_avatar";
   if (s === "hook_first" || s === "hookfirst" || (s.includes("hook") && s.includes("hybrid"))) return "hook_first";
+  if (s === "ugc" || s === "ugc_avatar" || s === "ugc_creator" || s === "creator_ugc") return "ugc";
   if (s === "multi_scene" || s === "multiscene" || s === "scene") return "no_avatar";
   return null;
 }
@@ -230,6 +232,9 @@ export function flowTypeMatchesVideoIntent(
   if (intent === "hook_first") {
     return ft === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST || /hook_first|VID_HOOK_FIRST/i.test(ft);
   }
+  if (intent === "ugc") {
+    return ft === CANONICAL_FLOW_TYPES.VID_UGC || /\bFLOW_VID_UGC\b|ugc_video|VID_UGC/i.test(ft);
+  }
   return false;
 }
 
@@ -292,6 +297,7 @@ export const CORE_VIDEO_INTENTS: readonly VideoPipelineIntent[] = [
   "script_avatar",
   "no_avatar",
   "hook_first",
+  "ugc",
 ];
 
 export interface VideoPlanningCaps {
@@ -391,6 +397,21 @@ export function assignVideoFlowForPlanningRow(
         route: {
           intent: "hook_first",
           reason: "target_flow_type hook-first hybrid video",
+          confidence: "explicit",
+        },
+      };
+    }
+  }
+  if (targetFlow === CANONICAL_FLOW_TYPES.VID_UGC) {
+    if (!budget || budget.canAssign(targetFlow)) {
+      if (budget) budget.assign(targetFlow);
+      return {
+        flowType: targetFlow,
+        matchedIntent: "ugc",
+        assignment: "natural",
+        route: {
+          intent: "ugc",
+          reason: "target_flow_type UGC creator video",
           confidence: "explicit",
         },
       };

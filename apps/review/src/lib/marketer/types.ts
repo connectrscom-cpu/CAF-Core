@@ -252,6 +252,8 @@ export interface BrandBible {
   applicationGuide: BrandBibleApplicationGuide;
   assetRefs: BrandBibleAssetRef[];
   heygenPresenters: BrandBibleHeygenPresenter[];
+  /** Creator-style hosts for UGC video lane. */
+  heygenUgcPresenters: BrandBibleHeygenPresenter[];
   /** Ordered ids (max 7) described per-line in Flux image prompts when BVS is on. */
   fluxPromptAssetIds: string[];
   hasActiveVersion: boolean;
@@ -300,6 +302,7 @@ export interface ProductBible {
   slug: string;
   applicationGuide: ProductBibleApplicationGuide;
   products: ProductBibleModule[];
+  heygenUgcPresenters: BrandBibleHeygenPresenter[];
   hasActiveVersion: boolean;
   version: number | null;
 }

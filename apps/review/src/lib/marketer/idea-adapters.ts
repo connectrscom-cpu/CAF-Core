@@ -1,4 +1,5 @@
 import { humanizeFlowType } from "./language";
+import { normalizeResearchBriefPlatforms } from "./research-adapters";
 import { applyResearchBriefDisplayNames, parsePackNotes } from "./research-notes";
 import type { ContentIdea, HashtagInsight, IdeaStatus, ResearchBrief, TopPerformerRef } from "./types";
 import {
@@ -72,6 +73,9 @@ function resolveFlowType(row: Record<string, unknown>, format: string): { raw: s
     }
     if (format === "video" && profile === "hook_first") {
       return { raw: "FLOW_VID_HOOK_FIRST", label: humanizeFlowType("FLOW_VID_HOOK_FIRST") };
+    }
+    if (format === "video" && profile === "ugc") {
+      return { raw: "FLOW_VID_UGC", label: humanizeFlowType("FLOW_VID_UGC") };
     }
     return { raw: profile, label: profile.replace(/_/g, " ") };
   }
@@ -426,14 +430,17 @@ export function toResearchBrief(
   const platformsFromDerived = asArray(derived?.platforms_found)
     .map((p) => str(p))
     .filter(Boolean);
-  const platforms =
-    marketer.platforms?.length
+  const platforms = normalizeResearchBriefPlatforms(
+    marketer.brief_scope === "platform" && marketer.platforms?.length
       ? marketer.platforms
-      : asArray(meta?.platforms)
-          .map((p) => str(p))
-          .filter(Boolean).length
-        ? asArray(meta?.platforms).map((p) => str(p)).filter(Boolean)
-        : platformsFromDerived;
+      : marketer.platforms?.length
+        ? marketer.platforms
+        : asArray(meta?.platforms)
+              .map((p) => str(p))
+              .filter(Boolean).length
+            ? asArray(meta?.platforms).map((p) => str(p)).filter(Boolean)
+            : platformsFromDerived
+  );
 
   const postMaxAgeDays =
     marketer.postMaxAgeDays ??
@@ -475,9 +482,9 @@ export function enrichResearchBriefFromScraperRun(
   const opts = run.config_snapshot_json.run_options;
   const ro = opts != null && typeof opts === "object" && !Array.isArray(opts) ? (opts as Record<string, unknown>) : null;
   if (!ro) return brief;
-  const platforms = Array.isArray(ro.platforms)
-    ? ro.platforms.map((p) => str(p)).filter(Boolean)
-    : brief.platforms;
+  const platforms = normalizeResearchBriefPlatforms(
+    Array.isArray(ro.platforms) ? ro.platforms.map((p) => str(p)).filter(Boolean) : brief.platforms
+  );
   const postMaxAgeDays =
     typeof ro.post_max_age_days === "number"
       ? ro.post_max_age_days

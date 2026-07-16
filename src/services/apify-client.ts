@@ -57,12 +57,16 @@ export async function abortApifyRun(token: string, runId: string): Promise<void>
   }
 }
 
+const APIFY_TERMINAL_STATUSES = ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"] as const;
+
 export async function runApifyActor(
   token: string,
   actorId: string,
   input: Record<string, unknown>,
   opts?: {
     waitForFinishSec?: number;
+    /** Hard ceiling for polling (defaults to max(wait, 3600)). */
+    maxWaitSec?: number;
     shouldAbort?: () => boolean;
     onRunStarted?: (run: ApifyRunResult) => void;
   }
@@ -84,7 +88,8 @@ export async function runApifyActor(
 
   if (wait <= 0) return run;
 
-  const deadline = Date.now() + wait * 1000;
+  const maxWait = opts?.maxWaitSec ?? Math.max(wait, 3600);
+  const deadline = Date.now() + maxWait * 1000;
   let current = run;
   while (Date.now() < deadline) {
     if (opts?.shouldAbort?.()) {
@@ -95,8 +100,9 @@ export async function runApifyActor(
       }
       throw new ApifyError("Apify run aborted by operator", undefined, current.id);
     }
-    const terminal = ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"];
-    if (terminal.includes(current.status)) break;
+    if (APIFY_TERMINAL_STATUSES.includes(current.status as (typeof APIFY_TERMINAL_STATUSES)[number])) {
+      break;
+    }
     await sleep(3000);
     current = await getApifyRun(token, current.id);
   }
@@ -117,6 +123,8 @@ export async function getApifyRun(token: string, runId: string): Promise<ApifyRu
   return data.data;
 }
 
+const APIFY_DATASET_PAGE_SIZE = 1000;
+
 export async function getApifyDatasetItems<T = Record<string, unknown>>(
   token: string,
   datasetId: string,
@@ -134,6 +142,29 @@ export async function getApifyDatasetItems<T = Record<string, unknown>>(
   }
   const items = (await res.json()) as T[];
   return Array.isArray(items) ? items : [];
+}
+
+/** Fetch dataset items with offset pagination up to `maxItems`. */
+export async function getAllApifyDatasetItems<T = Record<string, unknown>>(
+  token: string,
+  datasetId: string,
+  opts?: { maxItems?: number }
+): Promise<T[]> {
+  const maxItems = Math.min(Math.max(opts?.maxItems ?? 20_000, 1), 20_000);
+  const out: T[] = [];
+  let offset = 0;
+  while (out.length < maxItems) {
+    const pageSize = Math.min(APIFY_DATASET_PAGE_SIZE, maxItems - out.length);
+    const page = await getApifyDatasetItems<T>(token, datasetId, {
+      limit: pageSize,
+      offset,
+    });
+    if (page.length === 0) break;
+    out.push(...page);
+    if (page.length < pageSize) break;
+    offset += page.length;
+  }
+  return out;
 }
 
 function sleep(ms: number): Promise<void> {

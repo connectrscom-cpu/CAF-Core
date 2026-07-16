@@ -104,7 +104,7 @@ describe("isHookFirstRenderingSafelyRetryable", () => {
     ).toBe(true);
   });
 
-  it("blocks retry when a HeyGen video_id is already persisted", () => {
+  it("allows retry when HeyGen video_id is persisted for hook-first resume poll", () => {
     expect(
       isHookFirstRenderingSafelyRetryable("FLOW_VID_HOOK_FIRST", "RENDERING", {
         provider: "hook-first-video",
@@ -112,6 +112,6 @@ describe("isHookFirstRenderingSafelyRetryable", () => {
         phase: "hook_clip",
         video_id: "abc123",
       })
-    ).toBe(false);
+    ).toBe(true);
   });
 });

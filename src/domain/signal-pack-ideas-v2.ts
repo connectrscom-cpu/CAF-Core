@@ -7,7 +7,7 @@ import {
 } from "./idea-structure.js";
 
 export const ideaPlatformSchema = z
-  .enum(["Instagram", "TikTok", "Reddit", "Facebook", "Multi"])
+  .enum(["Instagram", "TikTok", "Reddit", "Facebook", "LinkedIn", "Multi"])
   .or(z.string().min(1));
 
 export const ideaFormatSchema = z

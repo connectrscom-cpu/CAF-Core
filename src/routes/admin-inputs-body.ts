@@ -11,6 +11,7 @@ const SOURCE_TABS = [
   { id: "facebook", label: "Facebook" },
   { id: "linkedinaccounts", label: "LinkedIn Accounts" },
   { id: "linkedinsearches", label: "LinkedIn Searches" },
+  { id: "linkedinkeywords", label: "LinkedIn Keywords" },
   { id: "hashtags", label: "Hashtags" },
 ] as const;
 
@@ -261,6 +262,22 @@ ${adminPageHeaderHtml(adminCafTermHtml("inputs", "Inputs & imports"), "evidence"
           <button type="button" class="btn btn-sm btn-danger" id="btn-abort-scraper" style="width:100%;margin-top:8px;display:none">Abort running scraper</button>
           <div class="tp-pass-status" id="scraper-status-all" style="margin-top:8px"></div>
           <p style="font-size:11px;color:var(--muted);margin:8px 0 0">Creates one evidence import with all output sheets (InstagramPostData, Tiktok_Videos, …).</p>
+        </div>
+        <div class="tp-sidebar-card">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px">Recover Apify run</div>
+          <p style="font-size:11px;color:var(--muted);margin:0 0 8px">Import a finished Apify dataset without re-scraping. Paste the run ID from <a href="https://console.apify.com/actors/runs" target="_blank" rel="noopener noreferrer">Apify console</a> (profile-posts actor for LinkedIn).</p>
+          <label class="scraper-cap-field" for="recover-apify-scraper">Platform</label>
+          <select id="recover-apify-scraper" style="width:100%;padding:7px 8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);margin:0 0 8px">
+            <option value="linkedin">LinkedIn</option>
+            <option value="instagram">Instagram</option>
+            <option value="tiktok">TikTok</option>
+            <option value="reddit">Reddit</option>
+            <option value="facebook">Facebook</option>
+          </select>
+          <label class="scraper-cap-field" for="recover-apify-run-ids">Apify run ID(s)</label>
+          <input type="text" id="recover-apify-run-ids" placeholder="e.g. abc123XYZ (comma-separated)" style="width:100%;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);margin:0 0 8px" />
+          <button type="button" class="btn btn-sm" id="btn-recover-apify-import" style="width:100%">Recover import</button>
+          <div class="tp-pass-status" id="recover-apify-status" style="margin-top:8px"></div>
         </div>
       </aside>
       <div class="tp-main">
@@ -588,7 +605,8 @@ async function loadEvidencePackOptions(){
       runs.forEach(function(run){
         var when=String(run.created_at||'').slice(0,16).replace('T',' ');
         var rows=run.total_rows!=null?String(run.total_rows)+' rows':'';
-        html+='<option value="'+esc(run.scraper_run_id)+'">'+esc(when)+(rows?' · '+esc(rows):'')+'</option>';
+        var allHint=run.scraper_key==='all'?' · all-run':'';
+        html+='<option value="'+esc(run.scraper_run_id)+'">'+esc(when)+(rows?' · '+esc(rows):'')+esc(allHint)+'</option>';
       });
       html+='</select></div>';
     });
@@ -807,6 +825,75 @@ function renderScraperRunDone(st,d){
     st.className='tp-pass-status';
   }
 }
+function apifyRunIdsFromStats(stats, platform){
+  var runs=(stats&&stats.apify_runs)||[];
+  if(!Array.isArray(runs))return [];
+  var out=[];
+  runs.forEach(function(r){
+    if(!r)return;
+    if(platform&&r.scraper_key&&r.scraper_key!==platform)return;
+    var id=String(r.run_id||'').trim();
+    if(id)out.push(id);
+  });
+  return out;
+}
+async function recoverScraperRun(runId, scraperKey){
+  if(!SLUG||!runId)return;
+  var scraper=String(scraperKey||'linkedin');
+  if(scraper==='all'){
+    scraper=window.prompt('Which platform to recover from this run?','linkedin');
+    if(!scraper)return;
+  }
+  var extra=window.prompt(
+    'Apify run ID(s) to import — paste from Apify console (profile-posts for LinkedIn). Leave blank to use IDs saved on this CAF run if available:',
+    ''
+  );
+  if(extra===null)return;
+  var ids=String(extra||'').split(/[\s,;]+/).map(function(s){return s.trim();}).filter(Boolean);
+  var body={scraper:scraper};
+  if(ids.length)body.apify_run_ids=ids;
+  var st=document.getElementById('recover-apify-status');
+  if(st){st.textContent='Recovering…';st.className='tp-pass-status is-run';}
+  try{
+    var url='/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/scraper-runs/'+encodeURIComponent(runId)+'/recover';
+    var r=await cafFetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(st){
+      st.innerHTML='Recovered: '+esc(String(d.total_rows))+' rows · '+inspectImportButton(d.evidence_import_id,'Inspect')+' · <a href="'+esc(processingHref(d.evidence_import_id))+'">Process</a>';
+      st.className='tp-pass-status';
+    }
+    await loadScraperRuns();
+    await loadEvidencePackOptions();
+    await loadImports();
+  }catch(e){
+    if(st){st.textContent=String(e.message||e);st.className='tp-pass-status is-err';}
+    else alert(String(e.message||e));
+  }
+}
+async function recoverApifyImportStandalone(){
+  if(!SLUG){alert('Select a project first.');return;}
+  var scraper=document.getElementById('recover-apify-scraper')?.value||'linkedin';
+  var raw=String(document.getElementById('recover-apify-run-ids')?.value||'').trim();
+  var ids=raw.split(/[\s,;]+/).map(function(s){return s.trim();}).filter(Boolean);
+  if(!ids.length){alert('Paste at least one Apify run ID.');return;}
+  var st=document.getElementById('recover-apify-status');
+  if(st){st.textContent='Recovering…';st.className='tp-pass-status is-run';}
+  try{
+    var r=await cafFetch('/v1/inputs-sources/'+encodeURIComponent(SLUG)+'/recover-apify-import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scraper:scraper,apify_run_ids:ids})});
+    var d=await r.json();
+    if(!r.ok||!d.ok)throw new Error(apiErr(d,'HTTP '+r.status));
+    if(st){
+      st.innerHTML='Recovered: '+esc(String(d.total_rows))+' rows · '+inspectImportButton(d.evidence_import_id,'Inspect')+' · <a href="'+esc(processingHref(d.evidence_import_id))+'">Process</a>';
+      st.className='tp-pass-status';
+    }
+    await loadScraperRuns();
+    await loadEvidencePackOptions();
+    await loadImports();
+  }catch(e){
+    if(st){st.textContent=String(e.message||e);st.className='tp-pass-status is-err';}
+  }
+}
 async function abortScraperRun(runId){
   if(!SLUG||!runId)return;
   if(!confirm('Abort this scraper run?'))return;
@@ -868,18 +955,29 @@ async function loadScraperRuns(opts){
       var apify=formatApifyRunLinks(stats,x.scraper_key);
       var link=x.evidence_import_id?(inspectImportButton(x.evidence_import_id,'Inspect')+' <a class="btn-ghost btn-sm" href="'+esc(processingHref(x.evidence_import_id))+'">Process</a>'):'';
       var abort='';
+      var recover='';
       if(x.status==='running'||x.status==='pending'){
         hasRunning=true;
         if(!activeScraperRunId)activeScraperRunId=x.id;
         abort=' <button type="button" class="btn-ghost btn-sm btn-abort-scraper-run" data-run-id="'+esc(x.id)+'">Abort</button>';
       }
-      var statusCls=x.status==='cancelled'?' style="color:var(--yellow)"':'';
-      tb+='<tr><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.scraper_key)+'</td><td'+statusCls+'>'+esc(x.status)+'</td><td>'+esc(n)+'</td><td>'+apify+'</td><td>'+link+abort+'</td></tr>';
+      if((x.status==='failed'||x.status==='cancelled')&&!x.evidence_import_id){
+        recover=' <button type="button" class="btn btn-sm btn-recover-scraper-run" data-run-id="'+esc(x.id)+'" data-scraper-key="'+esc(x.scraper_key)+'">Recover</button>';
+      }
+      var statusCls=x.status==='cancelled'?' style="color:var(--yellow)"':(x.status==='failed'?' style="color:var(--red)"':'');
+      var statusLabel=x.status;
+      if(x.status==='failed'&&x.error_message)statusLabel=x.status+' — '+x.error_message;
+      tb+='<tr><td>'+esc(String(x.created_at||'').slice(0,19))+'</td><td>'+esc(x.scraper_key)+'</td><td'+statusCls+'>'+esc(statusLabel)+'</td><td>'+esc(n)+'</td><td>'+apify+'</td><td>'+link+recover+abort+'</td></tr>';
     });
     tb+='</tbody></table>';
     root.innerHTML=tb;
     root.querySelectorAll('.btn-abort-scraper-run').forEach(function(btn){
       btn.addEventListener('click',function(){abortScraperRun(btn.getAttribute('data-run-id'));});
+    });
+    root.querySelectorAll('.btn-recover-scraper-run').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        recoverScraperRun(btn.getAttribute('data-run-id'), btn.getAttribute('data-scraper-key'));
+      });
     });
     bindInspectScrapeButtons(root);
     if(hasRunning){
@@ -920,6 +1018,7 @@ document.getElementById('btn-build-evidence-pack')?.addEventListener('click',bui
 document.getElementById('btn-save-scraper-config')?.addEventListener('click',saveScraperConfig);
 document.getElementById('btn-reset-scraper-config')?.addEventListener('click',resetScraperConfig);
 document.getElementById('btn-run-all-scrapers')?.addEventListener('click',function(){runScraper('all');});
+document.getElementById('btn-recover-apify-import')?.addEventListener('click',recoverApifyImportStandalone);
 document.getElementById('btn-abort-scraper')?.addEventListener('click',function(){
   if(activeScraperRunId)abortScraperRun(activeScraperRunId);
 });

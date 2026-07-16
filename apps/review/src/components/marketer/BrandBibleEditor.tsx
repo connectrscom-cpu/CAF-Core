@@ -337,6 +337,13 @@ export function BrandBibleEditor({ slug, displayName }: { slug: string; displayN
             presenters={bible.heygenPresenters}
             onChange={(heygenPresenters) => patchBible({ heygenPresenters })}
           />
+          <BrandBibleHeygenPresenters
+            slug={slug}
+            presenters={bible.heygenUgcPresenters}
+            onChange={(heygenUgcPresenters) => patchBible({ heygenUgcPresenters })}
+            title="UGC creator hosts"
+            description="Creator-style avatar + voice pairs for UGC videos only. Synced to the UGC host pool on save — not used for brand presenter videos."
+          />
           <div className="profile-editor-actions">
             <button type="button" className="btn-primary" onClick={() => void save()} disabled={saving || !configured}>
               {saving ? "Saving…" : "Save brand bible"}

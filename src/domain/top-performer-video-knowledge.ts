@@ -97,3 +97,20 @@ export function topPerformerVideoHeygenSystemSuffix(pack: Record<string, unknown
   }
   return "";
 }
+
+export const TOP_PERFORMER_VIDEO_GROUNDING_MISSING_MESSAGE =
+  "Top-performer video job is missing visual guideline grounding in the signal pack (top_performer_video_knowledge). Rebuild the signal pack, confirm the cart insight exists under visual_guidelines_pack_v1, then re-run.";
+
+/** Append scoped TP video reference JSON when Flow Engine templates only inject {{script_input}} (candidate). */
+export function appendTopPerformerVideoKnowledgeToUserPrompt(
+  userPrompt: string,
+  knowledge: Record<string, unknown> | null | undefined,
+  maxJsonChars = 12_000
+): string {
+  if (!knowledge || typeof knowledge !== "object" || Array.isArray(knowledge)) return userPrompt;
+  let json = JSON.stringify(knowledge);
+  if (json.length > maxJsonChars) {
+    json = `${json.slice(0, maxJsonChars)}…`;
+  }
+  return `${userPrompt.trim()}\n\n---\nTop-performer video reference (adapt format pattern and beats — do not copy transcript or on-screen text verbatim):\n${json}`.trim();
+}

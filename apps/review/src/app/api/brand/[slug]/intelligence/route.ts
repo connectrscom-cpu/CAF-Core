@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildIdeasFromImport,
   buildSignalPackFromImport,
+  getContentRoutes,
   getMarketIntelligenceForPack,
   getSignalPackForProject,
   listEvidenceInsightsForImport,
@@ -40,7 +41,7 @@ async function loadPack(
   if (!target) return { pack: null, packs, brief: null, synthesized: null as Record<string, unknown> | null };
 
   const [full, synthesizedRes] = await Promise.all([
-    getSignalPackForProject(slug, target.id, { hydrate_visual_media: true }).catch(() => null),
+    getSignalPackForProject(slug, target.id).catch(() => null),
     getMarketIntelligenceForPack(slug, target.id).catch(() => null),
   ]);
 
@@ -110,6 +111,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
           notes: p.notes,
           ideas_count: p.ideas_count,
           upload_filename: p.upload_filename,
+          source_inputs_import_id: p.source_inputs_import_id ?? null,
         },
         displayName
       ),
@@ -136,8 +138,7 @@ export async function POST(req: NextRequest, ctx: Ctx) {
 
   const body = (await req.json()) as {
     packId?: string;
-    formats?: string[];
-    contentLens?: string[];
+    routeQuotas?: Record<string, number>;
     targetIdeaCount?: number;
   };
 
@@ -156,15 +157,56 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     );
   }
 
-  const quotas: Record<string, unknown> = {};
-  if (body.formats?.length) quotas.formats = body.formats;
-  if (body.contentLens?.length) quotas.content_lens = body.contentLens;
+  const routeQuotas = body.routeQuotas ?? {};
+  // Quotas only drive idea_quotas buckets — do not rewrite enabled content routes
+  // (a lane with 0 ideas this run should stay enabled for cart/strategy).
+  const routes = await getContentRoutes(slug).catch(() => null);
+  const buckets: Record<string, number> = {};
+  // Map lane counts onto primary idea buckets (same ids as Core content-routes).
+  const LANE_BUCKETS: Record<string, string[]> = {
+    niche_carousels: ["niche_carousel_text"],
+    product_carousels: ["product_carousel_text"],
+    visual_first_carousels: ["niche_carousel_visual", "product_carousel_visual"],
+    avatar_video_script: ["niche_video_script_avatar"],
+    avatar_video_prompt: ["niche_video_prompt_avatar"],
+    video_no_avatar: ["niche_video_no_avatar"],
+    hook_first_video: ["niche_video_hook_first"],
+    ugc_video: ["niche_video_ugc", "product_video_ugc"],
+    product_marketing_videos: ["product_video"],
+    linkedin_posts: ["niche_linkedin_text", "niche_linkedin_document"],
+    reddit_posts: ["niche_reddit_post"],
+    instagram_threads: ["niche_instagram_thread"],
+  };
+  for (const [laneId, count] of Object.entries(routeQuotas)) {
+    const n = Math.max(0, Math.min(50, Number(count) || 0));
+    if (n <= 0) continue;
+    const ids = LANE_BUCKETS[laneId] ?? [];
+    if (!ids.length) continue;
+    const each = Math.max(1, Math.floor(n / ids.length));
+    let left = n;
+    ids.forEach((bid, i) => {
+      const take = i === ids.length - 1 ? left : Math.min(each, left);
+      buckets[bid] = (buckets[bid] ?? 0) + take;
+      left -= take;
+    });
+  }
+  const target =
+    body.targetIdeaCount ??
+    (Object.values(buckets).reduce((a, n) => a + n, 0) || 30);
 
   try {
     const ideasResult = await buildIdeasFromImport(slug, importId, {
       title: `Ideas from ${brief?.userTitle ?? brief?.label ?? "research"}`,
-      target_idea_count: body.targetIdeaCount ?? 30,
-      idea_quotas: Object.keys(quotas).length ? quotas : undefined,
+      target_idea_count: target,
+      idea_quotas:
+        Object.keys(buckets).length > 0
+          ? {
+              buckets,
+              product_angles_enabled: Boolean(
+                routes?.enabled_lane_ids?.includes("product_marketing_videos")
+              ),
+            }
+          : undefined,
     });
 
     if (!ideasResult?.ok || !ideasResult.idea_list_id) {

@@ -1,5 +1,53 @@
 import { pickInspectionMediaPreviewUrl, pickRenderableThumb } from "./inspection-media";
 
+/** Personal-life milestones (wedding anniversary, etc.) must not appear as format examples. */
+function looksLikePersonalLifeMilestone(text: string): boolean {
+  const t = String(text ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+  if (!t) return false;
+  const strong = [
+    "wedding anniversary",
+    "happy anniversary",
+    "years married",
+    "years of marriage",
+    "our wedding",
+    "wedding day",
+    "got married",
+    "my wife",
+    "my husband",
+    "baby shower",
+    "gender reveal",
+    "honeymoon",
+  ];
+  if (strong.some((p) => t.includes(p))) return true;
+  if (
+    t.includes("wedding") &&
+    (t.includes("married") || t.includes("marriage") || t.includes("bride") || t.includes("groom"))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function entryLooksOffTopicForExamples(entry: Record<string, unknown>): boolean {
+  const blob = [
+    entry.hook_snippet,
+    entry.title,
+    entry.why_it_worked,
+    entry.visual_consistency,
+    entry.deck_as_whole_summary,
+    entry.video_as_whole_summary,
+    entry.caption,
+    entry.hook_text,
+  ]
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
+  return looksLikePersonalLifeMilestone(blob);
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -188,8 +236,23 @@ export function resolveFormatGroupExamples(
 ): FormatGroupExample[] {
   const ids =
     explicitIds?.length ? explicitIds : exampleIdsFromPack(pack, lane, formatKey);
+  // Prefer pack-listed ids, then fall back to other same-format VG entries.
+  const fallbackIds = vgEntries(pack)
+    .filter((e) => {
+      const key = normalizeFormatKey(str(e.format_pattern) || str(e.content_format_key) || "");
+      return key === normalizeFormatKey(formatKey) || !formatKey;
+    })
+    .map((e) => str(e.insights_id))
+    .filter(Boolean);
+  const orderedIds = [...ids];
+  for (const id of fallbackIds) {
+    if (!orderedIds.includes(id)) orderedIds.push(id);
+  }
+
   const out: FormatGroupExample[] = [];
-  for (const id of ids) {
+  for (const id of orderedIds) {
+    const entry = entryByInsightsId(pack, id);
+    if (entry && entryLooksOffTopicForExamples(entry)) continue;
     const ex = buildFormatGroupExample(pack, id, lane);
     if (ex) out.push(ex);
     if (out.length >= limit) break;

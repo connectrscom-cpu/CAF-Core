@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   extractHexPalette,
@@ -7,6 +10,8 @@ import {
   parseOnboardingPack,
   researchEntryToPayload,
 } from "./onboarding-pack-parser.js";
+
+const VAULTLM_PACK_PATH = join(dirname(fileURLToPath(import.meta.url)), "../data/vaultlm-onboarding-pack.md");
 
 describe("parseOnboardingPack", () => {
   it("parses the built-in template", () => {
@@ -38,6 +43,25 @@ Problem: Decision fatigue.
     expect(parsed.sections.strategy?.audience).toBe("Busy households.");
   });
 
+  it("parses the VaultLM onboarding pack", () => {
+    const text = readFileSync(VAULTLM_PACK_PATH, "utf8");
+    const parsed = parseOnboardingPack(text);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.title).toBe("VaultLM");
+    expect(parsed.readiness).toBe("MVP");
+    expect(parsed.sections.brand_snapshot?.slug).toBe("VAULTLM");
+    expect(parsed.sections.brand_snapshot?.["display name"]).toBe("VaultLM");
+    expect(parsed.sections.strategy?.positioning).toContain("safe layer");
+    expect(parsed.researchLists.hashtags).toEqual(expect.arrayContaining(["#SecureAI", "#VaultLM"]));
+    expect(parsed.researchLists.websites_blogs).toEqual(
+      expect.arrayContaining(["https://vaultlm.eu/en/", "https://sharesafe.ai/"])
+    );
+    expect(extractHexPalette(parsed.sections.visual?.["palette (hex and roles)"] ?? "")).toEqual(
+      expect.arrayContaining(["#2455C3", "#2F66FF", "#0EA37F"])
+    );
+    expect(parsed.gaps.length).toBeGreaterThan(0);
+  });
+
   it("skips GAP values and collects them", () => {
     const text = `## 1. Brand snapshot
 - Instagram: [GAP — not in project knowledge]
@@ -50,6 +74,23 @@ Problem: Decision fatigue.
     expect(parsed.sections.brand_snapshot?.instagram).toBeUndefined();
     expect(parsed.sections.brand_snapshot?.website).toBe("https://cuisina.it");
     expect(parsed.gaps.length).toBeGreaterThan(0);
+  });
+
+  it("parses Content routes & platforms section", () => {
+    const text = `# CAF Project Onboarding Pack — Demo
+
+## 1. Brand snapshot
+- Display name: Demo
+- Slug: DEMO
+
+## 6. Content routes & platforms
+- Enabled content routes: Niche carousels; Brand visual carousels
+- Instagram rules: 5–9 slides
+`;
+    const parsed = parseOnboardingPack(text);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.sections.formats?.["enabled content routes"]).toContain("Niche carousels");
+    expect(parsed.sections.formats?.["instagram rules"]).toContain("5–9");
   });
 });
 

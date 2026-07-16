@@ -4,15 +4,17 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BrandBibleEditor } from "@/components/marketer/BrandBibleEditor";
 import { ProductBibleEditor } from "@/components/marketer/ProductBibleEditor";
+import { ContentRoutesEditor } from "@/components/marketer/ContentRoutesEditor";
 import { BrandPageHeader } from "@/components/marketer/BrandPageHeader";
 import { BrandProfileEditor } from "@/components/marketer/BrandProfileEditor";
 import type { BrandSummary } from "@/lib/marketer/types";
 
-type ProfileTab = "profile" | "bible" | "product-bible";
+type ProfileTab = "profile" | "bible" | "product-bible" | "routes";
 
 function tabFromParam(tab: string | null): ProfileTab {
   if (tab === "bible") return "bible";
   if (tab === "product-bible") return "product-bible";
+  if (tab === "routes") return "routes";
   return "profile";
 }
 
@@ -29,7 +31,7 @@ export default function BrandProfilePage() {
 
   useEffect(() => {
     if (!slug) return;
-    fetch("/api/workspace/brands")
+    fetch("/api/workspace/brands?lite=1")
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => setBrand(j?.brands?.find((b: BrandSummary) => b.slug === slug) ?? null))
       .catch(() => setBrand(null));
@@ -48,7 +50,9 @@ export default function BrandProfilePage() {
             ? "Build your moodboard — references, palette, and how CAF applies your visual identity"
             : tab === "product-bible"
               ? "Product screenshots and feature evidence for product videos and visual-first content"
-              : "Voice, audience, visual style, brand kit, and brand rules"
+              : tab === "routes"
+                ? "Choose which content types this brand will make — ideas and jobs follow these routes"
+                : "Voice, audience, visual style, brand kit, and brand rules"
         }
       />
 
@@ -59,6 +63,13 @@ export default function BrandProfilePage() {
           data-agent-id="brand-profile-tab-profile"
         >
           Brand profile
+        </a>
+        <a
+          href={`${base}?tab=routes`}
+          className={`tab ${tab === "routes" ? "active" : ""}`}
+          data-agent-id="brand-profile-tab-routes"
+        >
+          Content routes
         </a>
         <a
           href={`${base}?tab=bible`}
@@ -80,6 +91,8 @@ export default function BrandProfilePage() {
         <BrandBibleEditor slug={slug} displayName={brand?.displayName ?? slug} />
       ) : tab === "product-bible" ? (
         <ProductBibleEditor slug={slug} displayName={brand?.displayName ?? slug} />
+      ) : tab === "routes" ? (
+        <ContentRoutesEditor slug={slug} />
       ) : (
         <BrandProfileEditor slug={slug} />
       )}

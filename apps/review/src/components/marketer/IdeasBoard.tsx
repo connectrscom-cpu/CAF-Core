@@ -8,8 +8,12 @@ import { useReviewProject } from "@/components/ReviewProjectContext";
 import { useAbortableLoad } from "@/lib/marketer/use-abortable-load";
 import { PreviewMediaCard } from "@/components/marketer/PreviewMediaCard";
 import { contentPreviewMissing } from "@/lib/marketer/preview-resolver";
-import { GENERATION_STRATEGY_OPTIONS } from "@/lib/marketer/generation-strategy";
+import {
+  filterGenerationStrategiesByEnabledFlows,
+} from "@/lib/marketer/generation-strategy";
 import { resolveCartFlowForIdea } from "@/lib/marketer/cart-flow-resolve";
+import { filterResearchBriefsByPlatform } from "@/lib/marketer/research-adapters";
+import { ResearchBriefPlatformFilter } from "@/components/marketer/ResearchBriefPlatformFilter";
 import {
   flowTypeForVideoIntent,
   labelForVideoIntent,
@@ -103,11 +107,39 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   const [tpVideoLane, setTpVideoLane] = useState<Record<string, VideoPipelineIntent>>({});
   const [staleBriefNotice, setStaleBriefNotice] = useState(false);
   const [queueHint, setQueueHint] = useState<string | null>(null);
+  const [briefPlatformFilter, setBriefPlatformFilter] = useState("all");
+  const [enabledFlowTypes, setEnabledFlowTypes] = useState<string[]>([]);
   const packIdRef = useRef(packId);
   packIdRef.current = packId;
 
+  const strategyOptions = useMemo(
+    () => filterGenerationStrategiesByEnabledFlows(enabledFlowTypes),
+    [enabledFlowTypes]
+  );
+
   useEffect(() => {
     setLocal(readLocal(slug));
+  }, [slug]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/brand/${encodeURIComponent(slug)}/content-routes`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (cancelled || !j?.lanes) return;
+        const flows = new Set<string>();
+        for (const lane of j.lanes as Array<{ enabled: boolean; flow_types: string[] }>) {
+          if (!lane.enabled) continue;
+          for (const ft of lane.flow_types ?? []) flows.add(ft);
+        }
+        setEnabledFlowTypes([...flows]);
+      })
+      .catch(() => {
+        if (!cancelled) setEnabledFlowTypes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [slug]);
 
   // Sync from external links (e.g. View all →) without router.replace — avoids Next.js nav deadlocks.
@@ -120,8 +152,8 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
     async (signal: AbortSignal) => {
       const qs = new URLSearchParams();
       const pid = packIdRef.current;
+      // Default to latest brief (omit packId) — avoid hydrating every pack on first paint.
       if (pid) qs.set("packId", pid);
-      else qs.set("packId", "all");
       const res = await fetch(`/api/brand/${encodeURIComponent(slug)}/ideas?${qs}`, { signal });
       if (!res.ok) throw new Error("Failed to load ideas");
       const j = (await res.json()) as IdeasResponse;
@@ -133,9 +165,9 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
       if (j.packIdStale && pid && pid !== "all") {
         setStaleBriefNotice(true);
         cart.detachBriefPackId();
-        const fallback = j.briefs?.[0]?.id ?? "all";
+        const fallback = j.briefs?.[0]?.id ?? "";
         setPackId(fallback);
-        if (fallback !== "all") cart.attachBriefPackId(fallback, { keepItems: true });
+        if (fallback) cart.attachBriefPackId(fallback, { keepItems: true });
       } else {
         setStaleBriefNotice(false);
         if (!pid && j.packId) setPackId(j.packId);
@@ -145,6 +177,17 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   );
 
   const { loading, error } = useAbortableLoad([slug, packId], load);
+
+  const filteredBriefs = useMemo(
+    () => filterResearchBriefsByPlatform(briefs, briefPlatformFilter),
+    [briefs, briefPlatformFilter]
+  );
+
+  useEffect(() => {
+    if (packId && packId !== "all" && !filteredBriefs.some((b) => b.id === packId)) {
+      setPackId(filteredBriefs[0]?.id ?? "all");
+    }
+  }, [filteredBriefs, packId]);
 
   function resolveQueuePackId(): string | null {
     if (packId && packId !== "all") return packId;
@@ -194,12 +237,19 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
   );
 
   const filteredIdeas = useMemo(() => {
-    if (formatTab === "new_visual") return ideasInLens.filter((i) => i.isNewVisualCarousel);
-    if (formatTab === "carousel")
-      return ideasInLens.filter((i) => i.format === "carousel" && !i.isNewVisualCarousel);
-    if (formatTab === "video") return ideasInLens.filter((i) => i.format === "video");
-    return ideasInLens;
-  }, [ideasInLens, formatTab]);
+    let list = ideasInLens;
+    if (formatTab === "new_visual") list = list.filter((i) => i.isNewVisualCarousel);
+    else if (formatTab === "carousel")
+      list = list.filter((i) => i.format === "carousel" && !i.isNewVisualCarousel);
+    else if (formatTab === "video") list = list.filter((i) => i.format === "video");
+
+    if (enabledFlowTypes.length === 0) return list;
+    const enabled = new Set(enabledFlowTypes);
+    return list.filter((idea) => {
+      const resolved = resolveCartFlowForIdea(idea, "caf_recommended");
+      return enabled.has(resolved.flowTypeRaw);
+    });
+  }, [ideasInLens, formatTab, enabledFlowTypes]);
 
   const formatCounts = useMemo(
     () => ({
@@ -256,6 +306,14 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
         </div>
 
         <div className="ideas-toolbar-row">
+          <ResearchBriefPlatformFilter
+            value={briefPlatformFilter}
+            onChange={(next) => {
+              setBriefPlatformFilter(next);
+              setStaleBriefNotice(false);
+              setQueueHint(null);
+            }}
+          />
           <label className="intel-pack-select">
             <span>Research context</span>
             <select
@@ -267,7 +325,7 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
               }}
             >
               <option value="all">All research briefs</option>
-              {briefs.map((b) => (
+              {filteredBriefs.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.label}
                 </option>
@@ -593,7 +651,7 @@ export function IdeasBoard({ slug }: IdeasBoardProps) {
                           value={strategy ?? "caf_recommended"}
                           onChange={(e) => setStrategy(idea, e.target.value as GenerationStrategy)}
                         >
-                          {GENERATION_STRATEGY_OPTIONS.map((o) => (
+                          {strategyOptions.map((o) => (
                             <option key={o.id} value={o.id}>
                               {o.label}
                             </option>

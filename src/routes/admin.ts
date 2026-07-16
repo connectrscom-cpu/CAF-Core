@@ -8124,17 +8124,22 @@ async function loadConfig(){
     'Video_Script_Generator':{label:'Video – Single (Script path)',cat:'Video (generic)',defaultNotes:'HeyGen script path (full dialogue).'},
     'FLOW_VID_PROMPT':{label:'Video – Prompt',cat:'Video (generic)',defaultNotes:'Video plan/prompt JSON for prompt-led HeyGen Video Agent.'},
     'FLOW_VID_HOOK_FIRST':{label:'Hook-first hybrid video',cat:'Video (generic)',defaultNotes:'HeyGen AI hook clip (4–8s, no avatar) + HeyGen body (script avatar / video agent by body_lane) → concat in Core.'},
+    'FLOW_VID_UGC':{label:'UGC creator video',cat:'Video (generic)',defaultNotes:'Peer-voice spoken_script + UGC host pool (brand/product bible) → HeyGen script-led avatar.'},
     'FLOW_VID_PROMPT_NO_AVATAR':{label:'Video prompt — no avatar',cat:'Video (generic)',defaultNotes:'HeyGen Video Agent only (no on-camera avatar): narration + motion/stock/graphics; uses FLOW_VID_PROMPT templates.'},
     'Video_Prompt_Generator':{label:'Video – Single (Prompt path)',cat:'Video (generic)',defaultNotes:'HeyGen prompt path (short-form).'},
     'FLOW_HOOKS':{label:'Hooks',cat:'Hooks & Scripts',defaultNotes:'Hook variations list + rationale.'},
     'Hook_Variations':{label:'Hook Variations',cat:'Hooks & Scripts',defaultNotes:'Hook text experiments; feeds carousel/reel flows.'},
     'FLOW_CTA':{label:'CTA',cat:'Hooks & Scripts',defaultNotes:'CTA phrase variants list.'},
-    'FLOW_TEXT':{label:'Text Post',cat:'Hooks & Scripts',defaultNotes:'Text-only post output (caption-like).'},
+    'FLOW_TEXT':{label:'Text Post (generic)',cat:'Text content',defaultNotes:'Platform-agnostic text copy — post or short thread shape; no render.'},
+    'FLOW_LINKEDIN_TEXT_POST':{label:'LinkedIn text post',cat:'Text content',defaultNotes:'LinkedIn copy-only — no companion images.'},
+    'FLOW_LINKEDIN_DOCUMENT_POST':{label:'LinkedIn post with images',cat:'Text content',defaultNotes:'LinkedIn long copy + 2–3 companion images (Flux/BVS render).'},
+    'FLOW_REDDIT_POST':{label:'Reddit post',cat:'Text content',defaultNotes:'Reddit title + body — community-native tone.'},
+    'FLOW_INSTAGRAM_THREAD':{label:'Instagram thread',cat:'Text content',defaultNotes:'Multi-part Instagram caption thread (3–8 parts).'},
     'FLOW_ANGLE':{label:'Angle',cat:'Other',defaultNotes:'Angle fields only (no publishable copy).'},
     'FLOW_STRUCTURE':{label:'Structure',cat:'Other',defaultNotes:'Slide-purpose plan only.'},
     'Reel_Script':{label:'Reel Script',cat:'Hooks & Scripts',defaultNotes:'Short-form Instagram/TikTok reel script.'}
   };
-  const FORMAT_ORDER={'Carousel':1,'Video (generic)':2,'Product Video':3,'Product Image Ad':4,'Hooks & Scripts':5,'Other':9};
+  const FORMAT_ORDER={'Carousel':1,'Video (generic)':2,'Product Video':3,'Product Image Ad':4,'Hooks & Scripts':5,'Text content':6,'Other':9};
   const toTitle=function(s){return String(s||'').split(' ').filter(Boolean).map(function(w){return w.charAt(0).toUpperCase()+w.slice(1).toLowerCase();}).join(' ');};
   function ftMeta(id){
     if(FT_META_STATIC[id])return FT_META_STATIC[id];

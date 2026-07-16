@@ -1,4 +1,5 @@
 import type {
+  BrandBibleHeygenPresenter,
   ProductBible,
   ProductBibleApplicationGuide,
   ProductBibleAssetRef,
@@ -6,6 +7,7 @@ import type {
   ProductBibleFeature,
   ProductBibleModule,
 } from "./types";
+import { parseHeygenPresenters } from "./brand-bible-adapters";
 
 function slugKey(label: string): string {
   return label
@@ -101,6 +103,7 @@ export function emptyProductBible(slug: string): ProductBible {
     slug,
     applicationGuide: { instructions: "", heygenPolicy: "", fluxPolicy: "" },
     products: [],
+    heygenUgcPresenters: [],
     hasActiveVersion: false,
     version: null,
   };
@@ -116,6 +119,7 @@ export function toProductBible(
     slug,
     applicationGuide: parseGuide(rec.application_guide as Record<string, unknown> | undefined),
     products: parseProducts(rec.products),
+    heygenUgcPresenters: parseHeygenPresenters(rec.heygen_ugc_presenters),
     hasActiveVersion: version != null,
     version,
   };
@@ -152,6 +156,16 @@ export function toProductBibleJson(edit: ProductBible): Record<string, unknown> 
       })),
       asset_refs: p.assetRefs.map(assetRefToJson),
     })),
+    heygen_ugc_presenters: edit.heygenUgcPresenters
+      .filter((p) => p.avatarId.trim())
+      .map((p) => ({
+        label: p.label.trim() || null,
+        avatar_id: p.avatarId.trim(),
+        voice_id: p.voiceId.trim() || null,
+        avatar_name: p.avatarName.trim() || null,
+        voice_name: p.voiceName.trim() || null,
+        preview_image_url: p.previewImageUrl.trim() || null,
+      })),
   };
 }
 
@@ -160,7 +174,13 @@ export function productBibleIsConfigured(bible: ProductBible): boolean {
   const hasAssets = bible.products.some(
     (p) => p.assetRefs.length > 0 || p.features.some((f) => f.assetRefs.length > 0)
   );
-  return bible.products.length > 0 || g.instructions.length > 0 || g.heygenPolicy.length > 0 || hasAssets;
+  return (
+    bible.products.length > 0 ||
+    bible.heygenUgcPresenters.length > 0 ||
+    g.instructions.length > 0 ||
+    g.heygenPolicy.length > 0 ||
+    hasAssets
+  );
 }
 
 export function newProductModule(label = "New product"): ProductBibleModule {

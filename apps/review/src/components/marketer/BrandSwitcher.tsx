@@ -20,7 +20,7 @@ export function BrandSwitcher() {
 
   useEffect(() => {
     if (!ready) return;
-    fetch("/api/workspace/brands")
+    fetch("/api/workspace/brands?lite=1")
       .then((r) => (r.ok ? r.json() : null))
       .then((j: BrandsResponse | null) => {
         if (j?.brands) setBrands(j.brands);

@@ -8,6 +8,20 @@ import {
   buildRegistryFollowerLookup,
   enrichPayloadFollowerBaseline,
 } from "../domain/evidence-relative-performance.js";
+import {
+  appliesSubjectRelevance,
+  blendPerformanceAndSubject,
+  computeSubjectRelevanceScore,
+  hasSubjectRelevanceLists,
+  parseSubjectRelevanceConfig,
+  type SubjectRelevanceConfig,
+} from "../domain/pre-llm-subject-relevance.js";
+import {
+  linkedInAuthorContextFromPayload,
+  pickLinkedInTargetingFromCriteria,
+  scoreLinkedInFit,
+  type LinkedInTargetingProfile,
+} from "../domain/linkedin-targeting-profile.js";
 import { listEvidenceRowsForPreLlmScoring } from "../repositories/inputs-evidence.js";
 import type { SelectionSnapshot } from "./inputs-selection.js";
 import { DEFAULT_SELECTION_CAPS } from "./inputs-selection.js";
@@ -25,12 +39,16 @@ export interface PreLlmKindProfile {
 export interface PreLlmConfig {
   enabled?: boolean;
   /**
-   * When true, IG/FB/TT rows with follower counts score on engagement relative to page size.
+   * When true, IG/FB/TT/LI rows with follower counts score on engagement relative to page size.
    * Rows without follower data fall back to raw volume features for that row only.
    */
   relative_page_performance?: boolean;
   /** For post-like rows: require at least this many chars in title/body/caption/main_text. */
   min_primary_text_chars?: number;
+  /** Optional subject-relevance blend (keywords, weights, apply_to_kinds). */
+  subject_relevance?: SubjectRelevanceConfig | null;
+  /** Optional LinkedIn person/company/geo targeting for soft entity-fit blend. */
+  linkedin_targeting?: LinkedInTargetingProfile | null;
   kinds?: Record<string, PreLlmKindProfile>;
   /** Used when `evidence_kind` has no dedicated profile. */
   default_kind?: PreLlmKindProfile;
@@ -131,10 +149,12 @@ function extractRawPreLlmFeatures(evidenceKind: string, payload: Record<string, 
       const likes = numFromPayload(payload, ["likes", "like_count", "Likes"]);
       const comments = numFromPayload(payload, ["comments", "comment_count", "Comments"]);
       const shares = numFromPayload(payload, ["shares", "share_count", "Shares"]);
+      const followers = numFromPayload(payload, ["author_followers", "authorFollowers", "followers_count"]);
       return {
         li_likes: normLog1p(likes, 500_000),
         li_comments: normLog1p(comments, 50_000),
         li_shares: normLog1p(shares, 25_000),
+        li_author_followers: normLog1p(followers, 1_000_000),
         text_signal,
       };
     }
@@ -227,7 +247,14 @@ function defaultRawKindProfile(kind: string): PreLlmKindProfile {
     case "linkedin_post":
       return {
         min_score: 0.06,
-        weights: { li_likes: 0.4, li_comments: 0.25, li_shares: 0.15, text_signal: 0.2 },
+        // Person-first: engagement matters, but less than Meta; author reach is a soft signal.
+        weights: {
+          li_likes: 0.22,
+          li_comments: 0.18,
+          li_shares: 0.1,
+          li_author_followers: 0.2,
+          text_signal: 0.3,
+        },
       };
     case "scraped_page":
       return {
@@ -281,11 +308,13 @@ function rowHasFollowerBaseline(features: Record<string, number>): boolean {
 
 export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConfig {
   const raw = criteria.pre_llm;
+  const targeting = pickLinkedInTargetingFromCriteria(criteria);
   const base: PreLlmConfig = {
     enabled: false,
     min_primary_text_chars: 12,
     default_kind: { min_score: 0, weights: { text_signal: 1 } },
     kinds: {},
+    linkedin_targeting: targeting,
   };
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return base;
   const p = raw as Record<string, unknown>;
@@ -342,6 +371,8 @@ export function mergePreLlmConfig(criteria: Record<string, unknown>): PreLlmConf
       typeof p.min_primary_text_chars === "number" && p.min_primary_text_chars >= 0
         ? Math.floor(p.min_primary_text_chars)
         : base.min_primary_text_chars,
+    subject_relevance: parseSubjectRelevanceConfig(p.subject_relevance),
+    linkedin_targeting: pickLinkedInTargetingFromCriteria(criteria),
     kinds: mergedKinds,
     default_kind: defaultKind,
   };
@@ -394,6 +425,113 @@ const POST_KINDS_TEXT_GATE = new Set([
   "linkedin_post",
 ]);
 
+export type PreLlmDroppedReason = "sparse_primary_text" | "off_topic_subject" | "below_min_pre_llm_score";
+
+function scorePreLlmRow(
+  evidenceKind: string,
+  payload: Record<string, unknown>,
+  cfg: PreLlmConfig,
+  options?: PreLlmFeatureOptions
+): {
+  pre_llm_score: number;
+  pre_llm_breakdown: Record<string, number>;
+  profile_min_score: number;
+  passes_text_gate: boolean;
+  dropped_reason: PreLlmDroppedReason | null;
+  performance_score: number;
+  subject_score: number | null;
+} {
+  const minText = cfg.min_primary_text_chars ?? 12;
+  const features = extractPreLlmFeatures(evidenceKind, payload, options);
+  const prof = resolvePreLlmProfileForRow(cfg, evidenceKind, features);
+  if (POST_KINDS_TEXT_GATE.has(evidenceKind) && textLen(payload) < minText) {
+    return {
+      pre_llm_score: 0,
+      pre_llm_breakdown: features,
+      profile_min_score: prof.min_score,
+      passes_text_gate: false,
+      dropped_reason: "sparse_primary_text",
+      performance_score: 0,
+      subject_score: null,
+    };
+  }
+
+  const performanceScore = weightedFeatureScore(features, prof.weights);
+  const subjectCfg = cfg.subject_relevance;
+  let subjectScore: number | null = null;
+  let finalScore = performanceScore;
+  let entityPriority: number | null = null;
+
+  if (subjectCfg && appliesSubjectRelevance(evidenceKind, subjectCfg)) {
+    const subject = computeSubjectRelevanceScore(payload, subjectCfg);
+    subjectScore = subject.score;
+    if (subject.matched_excludes.length > 0) {
+      return {
+        pre_llm_score: 0,
+        pre_llm_breakdown: { ...features, performance_score: performanceScore, subject_relevance: 0 },
+        profile_min_score: prof.min_score,
+        passes_text_gate: true,
+        dropped_reason: "off_topic_subject",
+        performance_score: performanceScore,
+        subject_score: 0,
+      };
+    }
+    if (hasSubjectRelevanceLists(subjectCfg) && subjectScore < (subjectCfg.min_score ?? 0)) {
+      return {
+        pre_llm_score: Math.round(subjectScore * 10000) / 10000,
+        pre_llm_breakdown: { ...features, performance_score: performanceScore, subject_relevance: subjectScore },
+        profile_min_score: prof.min_score,
+        passes_text_gate: true,
+        dropped_reason: "off_topic_subject",
+        performance_score: performanceScore,
+        subject_score: subjectScore,
+      };
+    }
+    finalScore = blendPerformanceAndSubject(performanceScore, subjectScore, subjectCfg);
+  }
+
+  // LinkedIn: soft-blend person/company/geo/topic fit (never hard-drops on miss).
+  if (evidenceKind === "linkedin_post" && cfg.linkedin_targeting) {
+    const author = linkedInAuthorContextFromPayload(payload);
+    const postText = String(payload.content ?? payload.caption ?? payload.text ?? "");
+    const fit = scoreLinkedInFit(cfg.linkedin_targeting, author, postText);
+    entityPriority = fit.priority;
+    finalScore = clamp(finalScore * 0.45 + fit.priority * 0.55, 0, 1);
+  }
+
+  const rounded = Math.round(finalScore * 10000) / 10000;
+  const breakdown: Record<string, number> = { ...features };
+  if (subjectScore != null) {
+    breakdown.performance_score = Math.round(performanceScore * 10000) / 10000;
+    breakdown.subject_relevance = Math.round(subjectScore * 10000) / 10000;
+  }
+  if (entityPriority != null) {
+    breakdown.linkedin_entity_priority = Math.round(entityPriority * 10000) / 10000;
+  }
+
+  if (finalScore < prof.min_score) {
+    return {
+      pre_llm_score: rounded,
+      pre_llm_breakdown: breakdown,
+      profile_min_score: prof.min_score,
+      passes_text_gate: true,
+      dropped_reason: "below_min_pre_llm_score",
+      performance_score: performanceScore,
+      subject_score: subjectScore,
+    };
+  }
+
+  return {
+    pre_llm_score: rounded,
+    pre_llm_breakdown: breakdown,
+    profile_min_score: prof.min_score,
+    passes_text_gate: true,
+    dropped_reason: null,
+    performance_score: performanceScore,
+    subject_score: subjectScore,
+  };
+}
+
 /**
  * Evaluate one row the same way as `rankImportRowsForLlm` (for Admin preview + APIs).
  */
@@ -407,38 +545,20 @@ export function evaluatePreLlmRow(
   pre_llm_breakdown: Record<string, number>;
   profile_min_score: number;
   passes_text_gate: boolean;
-  dropped_reason: "sparse_primary_text" | "below_min_pre_llm_score" | null;
+  dropped_reason: PreLlmDroppedReason | null;
+  performance_score?: number;
+  subject_score?: number | null;
 } {
   const cfg = mergePreLlmConfig(criteria);
-  const minText = cfg.min_primary_text_chars ?? 12;
-  const features = extractPreLlmFeatures(evidenceKind, payload, options);
-  const prof = resolvePreLlmProfileForRow(cfg, evidenceKind, features);
-  if (POST_KINDS_TEXT_GATE.has(evidenceKind) && textLen(payload) < minText) {
-    return {
-      pre_llm_score: 0,
-      pre_llm_breakdown: features,
-      profile_min_score: prof.min_score,
-      passes_text_gate: false,
-      dropped_reason: "sparse_primary_text",
-    };
-  }
-  const score = weightedFeatureScore(features, prof.weights);
-  const rounded = Math.round(score * 10000) / 10000;
-  if (score < prof.min_score) {
-    return {
-      pre_llm_score: rounded,
-      pre_llm_breakdown: features,
-      profile_min_score: prof.min_score,
-      passes_text_gate: true,
-      dropped_reason: "below_min_pre_llm_score",
-    };
-  }
+  const scored = scorePreLlmRow(evidenceKind, payload, cfg, options);
   return {
-    pre_llm_score: rounded,
-    pre_llm_breakdown: features,
-    profile_min_score: prof.min_score,
-    passes_text_gate: true,
-    dropped_reason: null,
+    pre_llm_score: scored.pre_llm_score,
+    pre_llm_breakdown: scored.pre_llm_breakdown,
+    profile_min_score: scored.profile_min_score,
+    passes_text_gate: scored.passes_text_gate,
+    dropped_reason: scored.dropped_reason,
+    performance_score: scored.performance_score,
+    subject_score: scored.subject_score,
   };
 }
 
@@ -473,41 +593,21 @@ export async function rankImportRowsForLlm(
   const ranked: PreLlmRankedRow[] = [];
   let droppedSparse = 0;
   let droppedScore = 0;
+  let droppedOffTopic = 0;
 
   for (const r of dbRows) {
     const payload = (r.payload_json ?? {}) as Record<string, unknown>;
     const kind = r.evidence_kind || "unknown";
-    const features = extractPreLlmFeatures(kind, payload, featureOpts);
-    const prof = resolvePreLlmProfileForRow(cfg, kind, features);
-    if (POST_KINDS_TEXT_GATE.has(kind) && textLen(payload) < minText) {
-      droppedSparse++;
-      ranked.push({
-        id: r.id,
-        evidence_kind: kind,
-        pre_llm_score: 0,
-        pre_llm_breakdown: features,
-        dropped_reason: "sparse_primary_text",
-      });
-      continue;
-    }
-    const score = weightedFeatureScore(features, prof.weights);
-    if (score < prof.min_score) {
-      droppedScore++;
-      ranked.push({
-        id: r.id,
-        evidence_kind: kind,
-        pre_llm_score: Math.round(score * 10000) / 10000,
-        pre_llm_breakdown: features,
-        dropped_reason: "below_min_pre_llm_score",
-      });
-      continue;
-    }
+    const scored = scorePreLlmRow(kind, payload, cfg, featureOpts);
+    if (scored.dropped_reason === "sparse_primary_text") droppedSparse++;
+    else if (scored.dropped_reason === "off_topic_subject") droppedOffTopic++;
+    else if (scored.dropped_reason === "below_min_pre_llm_score") droppedScore++;
     ranked.push({
       id: r.id,
       evidence_kind: kind,
-      pre_llm_score: Math.round(score * 10000) / 10000,
-      pre_llm_breakdown: features,
-      dropped_reason: null,
+      pre_llm_score: scored.pre_llm_score,
+      pre_llm_breakdown: scored.pre_llm_breakdown,
+      dropped_reason: scored.dropped_reason,
     });
   }
 
@@ -549,6 +649,7 @@ export async function rankImportRowsForLlm(
       rows_sent_to_llm: selected_row_ids.length,
       dropped_below_min_score: droppedScore,
       dropped_sparse_text: droppedSparse,
+      dropped_off_topic_subject: droppedOffTopic,
       by_kind_sent,
       profiles_used,
     },

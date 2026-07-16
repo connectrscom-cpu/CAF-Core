@@ -6,7 +6,7 @@
  * cross-format fallback for declared carousel or video ideas.
  */
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
-import { isCarouselFlow, isVideoFlow, isImageFlow, isLinkedInDocumentPostFlow } from "./flow-kind.js";
+import { isCarouselFlow, isVideoFlow, isImageFlow, isLinkedInDocumentPostFlow, isLinkedInTextPostFlow, isRedditPostFlow, isInstagramThreadFlow } from "./flow-kind.js";
 import {
   FLOW_TOP_PERFORMER_MIMIC_IMAGE,
   isTopPerformerMimicCarouselFlow,
@@ -49,8 +49,8 @@ export function bucketForIdeaFormat(raw: unknown): IdeaFormatBucket | null {
   if (!f) return null;
   if (f === "carousel") return "carousel";
   if (f === "video") return "video";
-  if (f === "post" || f === "linkedin_document") return "post";
-  if (f === "thread") return "thread";
+  if (f === "post" || f === "linkedin_document" || f === "linkedin_text" || f === "reddit_post") return "post";
+  if (f === "thread" || f === "instagram_thread") return "thread";
   return "other";
 }
 
@@ -60,6 +60,8 @@ export function bucketForFlowType(flowType: string): IdeaFormatBucket {
   if (isVideoFlow(flowType)) return "video";
   if (isImageFlow(flowType)) return "post";
   if (isLinkedInDocumentPostFlow(flowType)) return "post";
+  if (isLinkedInTextPostFlow(flowType) || isRedditPostFlow(flowType)) return "post";
+  if (isInstagramThreadFlow(flowType)) return "thread";
   return "other";
 }
 
@@ -111,6 +113,9 @@ export function planningLaneForFlowType(flowType: string): string {
   if (isTopPerformerMimicCarouselFlow(flowType)) return "mimic_carousel";
   if (isTopPerformerMimicImageFlow(flowType)) return "mimic_image";
   if (isLinkedInDocumentPostFlow(flowType)) return "linkedin_document_post";
+  if (isLinkedInTextPostFlow(flowType)) return "linkedin_text_post";
+  if (isRedditPostFlow(flowType)) return "reddit_post";
+  if (isInstagramThreadFlow(flowType)) return "instagram_thread";
   if (isCarouselFlow(flowType)) return "carousel";
   if (isVideoFlow(flowType)) return "video";
   return bucketForFlowType(flowType);

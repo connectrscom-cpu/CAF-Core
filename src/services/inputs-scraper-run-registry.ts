@@ -60,6 +60,11 @@ export function clearScraperRun(projectId: string, runId: string): void {
   active.delete(key(projectId, runId));
 }
 
+export function getTrackedApifyRunIds(projectId: string, runId: string): string[] {
+  const row = active.get(key(projectId, runId));
+  return row ? [...row.apifyRunIds] : [];
+}
+
 export function isScraperRunActive(projectId: string, runId: string): boolean {
   return active.has(key(projectId, runId));
 }

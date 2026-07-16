@@ -82,7 +82,8 @@ export function carouselRendererStatus(renderState: unknown): string {
 
 /**
  * Hook-first hybrid jobs use multi-segment render_state (`prep` → `hook_clip` → `body_heygen` → `concat`).
- * Safe to re-enter when the worker died mid-segment and no HeyGen resume key is held for the current segment.
+ * Safe to re-enter when stuck mid-segment — the hook-first pipeline resumes HeyGen polls via persisted
+ * `video_id` / `session_id` instead of re-submitting (see `resumeHeygenVideoPoll` in hook-first-video-pipeline).
  */
 export function isHookFirstRenderingSafelyRetryable(
   flowType: string | null | undefined,
@@ -95,7 +96,6 @@ export function isHookFirstRenderingSafelyRetryable(
   const provider = String(rs.raw.provider ?? "").toLowerCase();
   if (provider && provider !== "hook-first-video") return false;
   if (String(rs.raw.status ?? "").toLowerCase() === "completed") return false;
-  if (hasActiveProviderSession(renderState)) return false;
   const phase = rs.phase;
   return (
     phase === "" ||

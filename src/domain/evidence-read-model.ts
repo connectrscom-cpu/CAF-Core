@@ -61,6 +61,7 @@ export function platformSlugFromEvidenceKind(evidenceKind: string): string {
   if (k === "tiktok_video") return "tiktok";
   if (k === "reddit_post") return "reddit";
   if (k === "facebook_post") return "facebook";
+  if (k === "linkedin_post") return "linkedin";
   if (k === "scraped_page" || k === "html_summary") return "web";
   if (k === "source_registry" || k === "reference_pool") return "sources";
   return k.replace(/_post$/, "").replace(/_video$/, "") || "unknown";
@@ -81,6 +82,7 @@ export function evidenceKindFromPlatformQuery(platform: string | null | undefine
     rdt: "reddit_post",
     facebook: "facebook_post",
     fb: "facebook_post",
+    linkedin: "linkedin_post",
     web: "scraped_page",
   };
   return map[p] ?? null;
@@ -149,6 +151,13 @@ export function extractCreator(evidenceKind: string, payload: Record<string, unk
   }
   if (k === "facebook_post") {
     return String(payload.page_name ?? payload.pageName ?? payload.author ?? "").trim() || null;
+  }
+  if (k === "linkedin_post") {
+    return (
+      String(payload.author_name ?? payload.authorName ?? "").trim() ||
+      String(payload.author_handle ?? payload.authorHandle ?? "").trim() ||
+      null
+    );
   }
   return (
     String(payload.author ?? payload.owner ?? payload.sourceName ?? payload.Name ?? payload.name ?? "").trim() || null

@@ -5,6 +5,13 @@ import { isProductVideoFlow } from "../domain/product-flow-types.js";
 import { CANONICAL_FLOW_TYPES, resolveCanonicalFlowType } from "../domain/canonical-flow-types.js";
 import { isLinkedInDocumentPostFlow } from "../domain/linkedin-document-post-flow-types.js";
 import {
+  isInstagramThreadFlow,
+  isLinkedInTextPostFlow,
+  isPlainTextContentFlow,
+  isRedditPostFlow,
+  isTextContentFlow,
+} from "../domain/text-content-flow-types.js";
+import {
   FLOW_TOP_PERFORMER_MIMIC_CAROUSEL,
   FLOW_TOP_PERFORMER_MIMIC_VIDEO,
   FLOW_VISUAL_FIRST_CAROUSEL,
@@ -12,7 +19,7 @@ import {
   isTopPerformerMimicImageFlow,
 } from "../domain/top-performer-mimic-flow-types.js";
 
-export { isLinkedInDocumentPostFlow };
+export { isLinkedInDocumentPostFlow, isLinkedInTextPostFlow, isRedditPostFlow, isInstagramThreadFlow, isPlainTextContentFlow, isTextContentFlow };
 
 export function isCarouselFlow(flowType: string): boolean {
   const raw = flowType ?? "";
@@ -40,6 +47,7 @@ export function isVideoFlow(flowType: string): boolean {
     ft === CANONICAL_FLOW_TYPES.VID_PROMPT_NO_AVATAR ||
     ft === CANONICAL_FLOW_TYPES.VID_SCRIPT ||
     ft === CANONICAL_FLOW_TYPES.VID_HOOK_FIRST ||
+    ft === CANONICAL_FLOW_TYPES.VID_UGC ||
     ft === CANONICAL_FLOW_TYPES.VID_SCENES
   ) {
     return true;

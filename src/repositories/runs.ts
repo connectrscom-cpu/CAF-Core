@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import { RUN_DISPLAY_NAME_METADATA_KEY } from "../lib/run-display-name.js";
+import { stringifyForPostgresJson } from "../lib/postgres-json.js";
 import { deleteAllJobsForRun } from "./jobs.js";
 import { q, qOne } from "../db/queries.js";
 import type { RunPromptVersionsSnapshot } from "../services/run-prompt-versions-snapshot.js";
@@ -44,7 +45,7 @@ export async function createRun(
     VALUES ($1, $2, $3, $4, $5::jsonb)
     RETURNING *`,
     [data.run_id, data.project_id, data.source_window ?? null,
-     data.signal_pack_id ?? null, JSON.stringify(data.metadata_json ?? {})]);
+     data.signal_pack_id ?? null, stringifyForPostgresJson(data.metadata_json ?? {})]);
   if (!row) throw new Error("Failed to create run");
   return row;
 }
@@ -135,7 +136,7 @@ export async function updateRunCandidatesJson(
   provenance: Record<string, unknown>
 ): Promise<RunRow | null> {
   const rows = candidates ?? [];
-  const metaPatch = JSON.stringify({ candidates_provenance: provenance, planned_jobs_provenance: provenance });
+  const metaPatch = stringifyForPostgresJson({ candidates_provenance: provenance, planned_jobs_provenance: provenance });
   return qOne<RunRow>(
     db,
     `UPDATE caf_core.runs SET
@@ -145,7 +146,7 @@ export async function updateRunCandidatesJson(
       updated_at = now()
      WHERE id = $1
      RETURNING *`,
-    [runUuid, JSON.stringify(rows), metaPatch]
+    [runUuid, stringifyForPostgresJson(rows), metaPatch]
   );
 }
 

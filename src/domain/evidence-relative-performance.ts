@@ -84,6 +84,15 @@ const FOLLOWER_KEYS_BY_KIND: Record<string, string[]> = {
     "Followers",
   ],
   facebook_post: ["page_followers", "pageFollowers", "followers_count", "fan_count", "pageFans", "Followers"],
+  linkedin_post: [
+    "author_followers",
+    "authorFollowers",
+    "followers_count",
+    "followerCount",
+    "followersCount",
+    "followers",
+    "Followers",
+  ],
 };
 
 const OWNER_FOLLOWER_KEYS = [
@@ -179,6 +188,19 @@ export function extractSocialAccountHandle(
       const v = payload[k];
       if (v != null && String(v).trim()) return normalizeSocialHandle(String(v));
     }
+  } else if (evidenceKind === "linkedin_post") {
+    for (const layer of collectPayloadLayers(payload)) {
+      for (const k of ["author_handle", "authorHandle", "publicIdentifier", "public_identifier"]) {
+        const v = layer[k];
+        if (v != null && String(v).trim()) return normalizeSocialHandle(String(v));
+      }
+      const author = layer.author;
+      if (author && typeof author === "object" && !Array.isArray(author)) {
+        const a = author as Record<string, unknown>;
+        const id = a.publicIdentifier ?? a.public_identifier;
+        if (id != null && String(id).trim()) return normalizeSocialHandle(String(id));
+      }
+    }
   }
   return null;
 }
@@ -258,7 +280,7 @@ export function augmentPreLlmFeaturesWithRelative(
   payload: Record<string, unknown>,
   base: Record<string, number>
 ): Record<string, number> {
-  const socialKinds = new Set(["instagram_post", "tiktok_video", "facebook_post"]);
+  const socialKinds = new Set(["instagram_post", "tiktok_video", "facebook_post", "linkedin_post"]);
   if (!socialKinds.has(evidenceKind)) return base;
 
   const followers = extractFollowerCount(evidenceKind, payload);
@@ -290,6 +312,13 @@ export function augmentPreLlmFeaturesWithRelative(
     // Plays per follower: ~10× audience is a strong reach signal.
     const reachRatio = plays / followers;
     out.page_relative_reach = clamp(Math.log1p(reachRatio) / Math.log1p(10), 0, 1);
+  } else if (evidenceKind === "linkedin_post") {
+    const likes = numFromPayload(payload, ["likes", "like_count", "Likes"]);
+    const comments = numFromPayload(payload, ["comments", "comment_count", "Comments"]);
+    const shares = numFromPayload(payload, ["shares", "share_count", "Shares"]);
+    const engagement = likes + comments * 2 + shares * 3;
+    out.page_relative_engagement = normPageRelativeEngagementRate(engagement / followers);
+    out.page_relative_comments = normPerFollowerRatio(comments, followers, 0.015);
   }
 
   return out;

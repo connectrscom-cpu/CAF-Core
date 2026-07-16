@@ -58,4 +58,41 @@ describe("idea-structure", () => {
     });
     expect(row.use_brand_visual_system).toBe(true);
   });
+
+  it("maps generic post idea to FLOW_TEXT", () => {
+    const row = applyIdeaStructureToPlannerRow({
+      format: "post",
+      content_lens: "niche",
+      platform: "LinkedIn",
+      title: "Governance insight",
+    });
+    expect(row.target_flow_type).toBe("FLOW_TEXT");
+  });
+
+  it("maps linkedin_text idea to FLOW_LINKEDIN_TEXT_POST", () => {
+    const row = applyIdeaStructureToPlannerRow({
+      format: "linkedin_text",
+      content_lens: "niche",
+      title: "Vault insight post",
+    });
+    expect(row.target_flow_type).toBe("FLOW_LINKEDIN_TEXT_POST");
+    expect(row.platform).toBe("LinkedIn");
+  });
+
+  it("maps reddit_post idea to FLOW_REDDIT_POST", () => {
+    const row = applyIdeaStructureToPlannerRow({
+      format: "reddit_post",
+      content_lens: "niche",
+      title: "AMA thread idea",
+    });
+    expect(row.target_flow_type).toBe("FLOW_REDDIT_POST");
+    expect(row.platform).toBe("Reddit");
+  });
+
+  it("default quotas use generic post/thread buckets", () => {
+    const q = defaultIdeaGenerationQuotas(40, false);
+    expect(q.buckets.niche_post).toBeGreaterThan(0);
+    expect(q.buckets.niche_thread).toBeGreaterThan(0);
+    expect(q.buckets.niche_linkedin_text ?? 0).toBe(0);
+  });
 });

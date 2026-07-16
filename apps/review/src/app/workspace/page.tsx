@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { BrandCard } from "@/components/marketer/BrandCard";
 import { MARKETER_LABELS } from "@/lib/marketer/language";
 import { WORKSPACE_FUNNEL_STEPS } from "@/lib/marketer/onboarding";
@@ -13,11 +14,20 @@ interface BrandsResponse {
 }
 
 export default function WorkspacePage() {
+  const router = useRouter();
   const [brands, setBrands] = useState<BrandSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [displayName, setDisplayName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [color, setColor] = useState("#2F6FED");
+  const [packMarkdown, setPackMarkdown] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  useEffect(() => {
+  function reloadBrands() {
+    setLoading(true);
     fetch("/api/workspace/brands")
       .then((r) => {
         if (!r.ok) throw new Error("Could not load brands");
@@ -26,9 +36,48 @@ export default function WorkspacePage() {
       .then((j: BrandsResponse) => setBrands(j.brands ?? []))
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    reloadBrands();
   }, []);
 
   const needsAttention = brands.filter((b) => b.stats.pendingReview > 0 || b.setupWarnings.length > 0);
+
+  async function createBrand(e: React.FormEvent) {
+    e.preventDefault();
+    setCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch("/api/workspace/brands", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: displayName.trim(),
+          slug: slug.trim() || undefined,
+          color,
+          onboardingPack: packMarkdown.trim() || undefined,
+        }),
+      });
+      const j = (await res.json()) as {
+        ok?: boolean;
+        message?: string;
+        brand?: { slug: string };
+      };
+      if (!res.ok || !j.ok || !j.brand?.slug) {
+        throw new Error(j.message ?? "Could not create brand");
+      }
+      setShowCreate(false);
+      setDisplayName("");
+      setSlug("");
+      setPackMarkdown("");
+      router.push(`/brand/${encodeURIComponent(j.brand.slug)}/profile`);
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setCreating(false);
+    }
+  }
 
   return (
     <div className="workspace-page" data-agent-id="workspace-page">
@@ -39,7 +88,107 @@ export default function WorkspacePage() {
             Manage all your brands in one place. Pick a brand to see what needs your attention, from research to publishing.
           </p>
         </div>
+        <button
+          type="button"
+          className="btn-primary"
+          data-agent-id="workspace-new-brand"
+          onClick={() => setShowCreate((v) => !v)}
+        >
+          {showCreate ? "Cancel" : "New brand"}
+        </button>
       </header>
+
+      {showCreate && (
+        <section className="workspace-create" data-agent-id="workspace-create-brand">
+          <h2 className="workspace-section-title">Create a brand</h2>
+          <div className="workspace-setup-downloads" data-agent-id="workspace-setup-downloads">
+            <p className="workspace-muted">
+              <strong>Recommended:</strong> download the project setup checklist → paste it into your brand’s ChatGPT
+              project → upload the filled pack below. Content routes are chosen in that pack. Visual/product{" "}
+              <em>image</em> files use the separate asset checklists.
+            </p>
+            <ul className="workspace-setup-download-list">
+              <li>
+                <a href="/setup/PROJECT_SETUP_CHECKLIST.md" download>
+                  Project setup checklist
+                </a>{" "}
+                — strategy, voice, content routes, research (fill &amp; upload)
+              </li>
+              <li>
+                <a href="/setup/BRAND_BIBLE_ASSET_CHECKLIST.md" download>
+                  Brand Bible asset checklist
+                </a>{" "}
+                — generate/upload visual assets after the pack
+              </li>
+              <li>
+                <a href="/setup/PRODUCT_BIBLE_ASSET_CHECKLIST.md" download>
+                  Product Bible asset checklist
+                </a>{" "}
+                — product screenshots if product routes are on
+              </li>
+            </ul>
+          </div>
+          <form onSubmit={(e) => void createBrand(e)} className="workspace-create-form">
+            <label>
+              Display name
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Cuisina"
+                required
+                data-agent-id="workspace-create-name"
+              />
+            </label>
+            <label>
+              Slug (optional)
+              <input
+                value={slug}
+                onChange={(e) => setSlug(e.target.value.toUpperCase())}
+                placeholder="CUISINA"
+                data-agent-id="workspace-create-slug"
+              />
+            </label>
+            <label>
+              Accent color
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                data-agent-id="workspace-create-color"
+              />
+            </label>
+            <label>
+              Filled project setup pack (optional)
+              <textarea
+                rows={6}
+                value={packMarkdown}
+                onChange={(e) => setPackMarkdown(e.target.value)}
+                placeholder="Paste the filled CAF Project Onboarding Pack markdown here…"
+                data-agent-id="workspace-create-pack"
+              />
+            </label>
+            <p className="workspace-muted" style={{ fontSize: 12 }}>
+              Paste or upload the checklist <em>after</em> ChatGPT fills it. That auto-fills strategy, voice, visuals
+              text, research lists, and enabled content routes. Or create empty and fill Profile later.
+            </p>
+            <input
+              type="file"
+              accept=".md,.txt,text/markdown,text/plain"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                const text = await file.text();
+                setPackMarkdown(text);
+              }}
+            />
+            {createError && <p className="workspace-error">{createError}</p>}
+            <button type="submit" className="btn-primary" disabled={creating || !displayName.trim()}>
+              {creating ? "Creating…" : "Create brand"}
+            </button>
+          </form>
+        </section>
+      )}
 
       <section className="workspace-funnel" aria-label="How CAF works">
         <h2 className="workspace-section-title">How it works</h2>
@@ -75,10 +224,10 @@ export default function WorkspacePage() {
         {!loading && brands.length === 0 && (
           <div className="workspace-empty">
             <h3>No brands yet</h3>
-            <p>Brands are created in CAF Admin. Once a project exists, it will appear here as a brand.</p>
-            <p className="workspace-muted">
-              Ask your CAF operator to add a brand, or enable multi-project mode to see all projects on this instance.
-            </p>
+            <p>Create your first brand to set up voice, visuals, research, and content routes — all in Review.</p>
+            <button type="button" className="btn-primary" onClick={() => setShowCreate(true)}>
+              New brand
+            </button>
           </div>
         )}
         {!loading && brands.length > 0 && (

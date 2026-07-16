@@ -21,6 +21,7 @@
     "seed:cuisina-product-bible": "node --import tsx src/cli/seed-cuisina-product-bible.ts",
     "seed:flow-engine": "node --import tsx src/cli/seed-flow-engine.ts",
     "import:project-csv": "node --import tsx src/cli/import-project-csv.ts",
+    "import:onboarding-pack": "node --import tsx src/cli/import-onboarding-pack.ts",
     "sync:sheets": "node --import tsx src/cli/sync-sheets.ts",
     "sync:supabase": "node --import tsx src/cli/sync-supabase.ts",
     "editorial-analysis": "node dist/cli/run-editorial-analysis.js",

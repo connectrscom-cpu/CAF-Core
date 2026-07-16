@@ -5,6 +5,8 @@ export interface MarketerPackNotes {
   platforms?: string[];
   postMaxAgeDays?: number;
   startedAt?: string;
+  brief_scope?: "overall" | "platform";
+  parent_signal_pack_id?: string;
 }
 
 export function parsePackNotes(raw: string | null | undefined): {

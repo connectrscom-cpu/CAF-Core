@@ -43,6 +43,7 @@ export interface SelectionSnapshotPreLlmMeta {
   rows_sent_to_llm: number;
   dropped_below_min_score: number;
   dropped_sparse_text: number;
+  dropped_off_topic_subject?: number;
   by_kind_sent: Record<string, number>;
   /** Effective per-kind profiles (weights + min_score) after merge with defaults. */
   profiles_used: Record<string, { min_score: number; weights: Record<string, number> }>;

@@ -696,23 +696,21 @@ const envSchema = z.object({
    */
   HEYGEN_SCENE_AGENT_CLIP_MIN_SEC: z.coerce.number().int().min(5).max(60).default(12),
   /**
-   * HeyGen v3 `POST /v3/videos` accepts `caption: { file_format: "srt" }` which causes HeyGen to render an SRT
-   * sidecar (exposed as `data.subtitle_url` in the v3 status response) — but the MP4 itself is **not** modified.
-   * When this flag is on (default) CAF downloads the SRT (or synthesizes one from `spoken_script` when HeyGen
-   * omits it), calls the local video-assembly `/burn-subtitles` service to burn captions into the MP4, and
-   * stores the captioned version as the canonical asset. Applies to script-led `/v3/videos` and Video Agent
-   * `/v3/video-agents` when an SRT or spoken script is available. Also retries HeyGen's pre-captioned
-   * `video_url_caption` / `captioned_video_url` when HeyGen provides one.
+   * **Off by default.** When false, CAF uses HeyGen's `captioned_video_url` from `POST /v3/videos`
+   * (`caption.style: "default"` on create) and does **not** run local ffmpeg burn via video-assembly.
+   * Set to `1`/`true` only for legacy fallback when HeyGen omits `captioned_video_url`.
    */
   HEYGEN_BURN_SUBTITLES: z
     .string()
     .optional()
     .transform((v) => {
-      if (v === undefined || v === "") return true;
+      if (v === undefined || v === "") return false;
       const s = v.trim().toLowerCase();
-      if (s === "0" || s === "false" || s === "no") return false;
-      return true;
+      if (s === "1" || s === "true" || s === "yes") return true;
+      return false;
     }),
+  /** Max time to poll HeyGen status for `captioned_video_url` after the plain `video_url` appears. */
+  HEYGEN_CAPTION_POLL_MAX_MS: z.coerce.number().int().min(10_000).max(7_200_000).default(300_000),
   /** Max time to poll video-assembly /burn-subtitles for the HeyGen post-render burn step. */
   HEYGEN_BURN_SUBTITLES_POLL_MAX_MS: z.coerce.number().int().min(60_000).max(7_200_000).default(900_000),
   /** Optional ffmpeg `force_style` for HeyGen burn-in (overrides MUX_BURN_SUBTITLE_FORCE_STYLE for HeyGen jobs only). */

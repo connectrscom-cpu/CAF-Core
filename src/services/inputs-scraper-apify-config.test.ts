@@ -7,6 +7,8 @@ import {
   hashtagsFromSourceRows,
   mergeScraperConfig,
   parseHashtagList,
+  scaledLinkedInDatasetLimit,
+  scaledLinkedInWaitSec,
 } from "./inputs-scraper-apify-config.js";
 
 describe("buildInstagramApifyInput", () => {
@@ -77,5 +79,18 @@ describe("mergeScraperConfig", () => {
     const merged = mergeScraperConfig({ scrapers: { instagram: { resultsLimit: 25 } } });
     expect(merged.scrapers?.instagram?.resultsLimit).toBe(25);
     expect(merged.scrapers?.instagram?.scrapeReels).toBe(true);
+  });
+});
+
+describe("scaledLinkedIn helpers", () => {
+  it("scales wait for large profile batches", () => {
+    expect(scaledLinkedInWaitSec(600, 933)).toBe(2799);
+    expect(scaledLinkedInWaitSec(600, 10)).toBe(600);
+  });
+
+  it("scales dataset limit from profile count × maxPosts", () => {
+    const cfg = defaultScraperConfig();
+    expect(scaledLinkedInDatasetLimit(cfg, 933, 0)).toBe(18_660);
+    expect(scaledLinkedInDatasetLimit(cfg, 5, 0)).toBe(2000);
   });
 });

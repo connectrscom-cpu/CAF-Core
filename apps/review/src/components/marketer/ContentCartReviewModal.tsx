@@ -19,6 +19,9 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
     admin_runs_url: string;
     message: string;
   } | null>(null);
+  const [jobRows, setJobRows] = useState<
+    Array<{ task_id: string; status: string; flow_type: string | null; title: string | null }>
+  >([]);
 
   const normalized = useMemo(() => items.map(normalizeCartItemFlow), [items]);
   const payload = useMemo(() => buildCartCreationPayload(slug, normalized), [slug, normalized]);
@@ -28,11 +31,37 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
     setPhase("idle");
     setError(null);
     setResult(null);
+    setJobRows([]);
   }, [setReviewOpen]);
 
   useEffect(() => {
     if (briefPackId && error) setError(null);
   }, [briefPackId, error]);
+
+  useEffect(() => {
+    if (phase !== "done" || !result?.run_id) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/brand/${encodeURIComponent(slug)}/runs/${encodeURIComponent(result.run_id)}/jobs`
+        );
+        if (!res.ok || cancelled) return;
+        const j = (await res.json()) as {
+          jobs?: Array<{ task_id: string; status: string; flow_type: string | null; title: string | null }>;
+        };
+        if (!cancelled) setJobRows(j.jobs ?? []);
+      } catch {
+        /* ignore */
+      }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [phase, result?.run_id, slug]);
 
   if (!reviewOpen) return null;
 
@@ -142,6 +171,23 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
               <p className="content-cart-review-success">
                 <strong>Run {result.run_id}</strong> is in progress. {result.message}
               </p>
+              <p className="content-cart-review-sub">
+                Generation and rendering can take several minutes. Status updates below — you can chill and come
+                back to Content when jobs show ready for review.
+              </p>
+              {jobRows.length > 0 ? (
+                <ul className="content-cart-job-status">
+                  {jobRows.map((j) => (
+                    <li key={j.task_id}>
+                      <span className={`job-status-pill job-status-pill--${j.status}`}>{j.status}</span>
+                      <span>{j.title || j.task_id}</span>
+                      {j.flow_type ? <code>{j.flow_type}</code> : null}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="workspace-muted">Waiting for job list…</p>
+              )}
               <div className="content-cart-review-links">
                 <Link href={result.content_url} className="btn-primary btn-sm" onClick={close}>
                   Go to Content
@@ -152,7 +198,14 @@ export function ContentCartReviewModal({ slug }: { slug: string }) {
               </div>
             </div>
           ) : phase === "starting" ? (
-            <p className="content-cart-review-sub">Starting run — planning jobs and kicking off generation…</p>
+            <div className="research-chill-card">
+              <p className="research-chill-title">Starting your content run</p>
+              <p className="content-cart-review-sub">
+                Planning jobs, then generating and rendering in the background. This can take a few minutes —
+                nothing is broken if you wait.
+              </p>
+              <div className="research-pulse" aria-hidden />
+            </div>
           ) : (
             <p className="section-stub-note">
               This creates a CAF run from your cart, materializes planner rows, starts the run, then runs generation
